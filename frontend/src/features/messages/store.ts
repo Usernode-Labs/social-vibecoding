@@ -730,7 +730,10 @@ export async function loadDiscussion(slug: string): Promise<void> {
   const want = validSlug(slug);
   if (!want) return;
   try {
-    const response = await fetch(`/api/apps/${encodeURIComponent(want)}`);
+    // `manifest=summary`: the same address AppView and the Improve target read,
+    // so the service worker's cached copy is shared rather than kept twice;
+    // nothing here reads the manifest's declared tests or platform env.
+    const response = await fetch(`/api/apps/${encodeURIComponent(want)}?manifest=summary`);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json().catch(() => null);
     const app = (data && (data.app || data)) || null;

@@ -15,6 +15,7 @@ const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
+const listTestResults = require('../services/list-test-results');
 const communities = require('../services/communities');
 const appAdmins = require('../services/app-admins');
 const { effectiveSessionCaps } = require('../services/session-caps');
@@ -4176,7 +4177,8 @@ function voteRoutes(config) {
       }
 
       res.json({
-        promoted: rows,
+        // `?results=failing`: the shell's list form (services/list-test-results.js).
+        promoted: listTestResults.forListing(req, rows),
         // services/main-watch.js: the unit suite's verdict on the last
         // merge commit, and whether it is pausing this app's merges.
         mainCheck,
@@ -4568,7 +4570,11 @@ function voteRoutes(config) {
         };
       }
 
-      res.json({ merged: rows, hasMore, total, deployment, ...(shipped ? { shipped } : {}) });
+      res.json({
+        // `?results=failing`: the shell's list form (services/list-test-results.js).
+        merged: listTestResults.forListing(req, rows),
+        hasMore, total, deployment, ...(shipped ? { shipped } : {}),
+      });
     } catch (err) {
       log.error('votes', 'Failed to list merged', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });

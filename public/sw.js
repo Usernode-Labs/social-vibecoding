@@ -1188,6 +1188,45 @@ if (typeof module !== 'undefined' && module.exports) {
   const awaitingNetwork = new Set();
   const CORRECTION_WAIT_MS = 10000;
 
+  // ── One network request for identical reads in flight ─────────────────
+  //
+  // A screen is assembled from components that each load what they draw, and
+  // several ask for the same read in the same moment: measured across the
+  // shell, the Notifications screen fetched its list twice, Create read the
+  // app allowance three times, a change's page its own row and status twice,
+  // a request's page its issue and comments twice. Each duplicate is a round
+  // trip on a phone, and on a six-connection HTTP/1.1 link it queues behind
+  // the others.
+  //
+  // So an API GET for a URL that went to the network within the last
+  // API_SHARE_WINDOW_MS waits for that request instead of starting another.
+  // Every asker still gets its own Response (a clone; the shared original is
+  // never read), and nothing is kept once the request settles.
+  //
+  // Only reads asked for in the same moment share. A request can be seconds
+  // in flight on a slow link, and a read that joined it late could get an
+  // answer the server gave before something the page has since done: vote,
+  // then reload the list the vote changed. So a request stops taking joiners
+  // after the window, and any write the page sends (the fetch handler below)
+  // ends sharing for every request already in flight. A read asked for after
+  // either is a new request, exactly as before.
+  const API_SHARE_WINDOW_MS = 100;
+  const inflightApi = new Map();
+
+  function sharedApiFetch(request) {
+    const key = request.url;
+    const now = Date.now();
+    const open = inflightApi.get(key);
+    if (open && now - open.startedAt <= API_SHARE_WINDOW_MS) {
+      return open.pending.then((res) => res.clone());
+    }
+    const entry = { pending: fetch(request), startedAt: now };
+    inflightApi.set(key, entry);
+    const settle = () => { if (inflightApi.get(key) === entry) inflightApi.delete(key); };
+    entry.pending.then(settle, settle);
+    return entry.pending.then((res) => res.clone());
+  }
+
   async function networkFirstApi(event) {
     const cache = await caches.open(API_CACHE);
     // Did we answer this request from cache while the network was still in
@@ -1211,7 +1250,7 @@ if (typeof module !== 'undefined' && module.exports) {
       : laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 
     const { response, pending } = await raceNetworkAndCache({
-      startFetch: () => fetch(event.request).then((res) => {
+      startFetch: () => sharedApiFetch(event.request).then((res) => {
         // Only genuine successes are worth replaying offline; 401/403/500
         // must never mask a later real answer. Clone before returning —
         // once the page starts reading the body the response is locked.
@@ -1539,6 +1578,10 @@ if (typeof module !== 'undefined' && module.exports) {
 
   self.addEventListener('fetch', (event) => {
     const req = event.request;
+
+    // A write ends sharing: no read asked for after it may join one that
+    // could have been answered before it (sharedApiFetch). A logout is one.
+    if (req.method !== 'GET' && req.method !== 'HEAD') inflightApi.clear();
 
     // Belt-and-braces logout isolation: a logout passing through (never
     // intercepted — it's a POST) still wipes the per-user API cache.

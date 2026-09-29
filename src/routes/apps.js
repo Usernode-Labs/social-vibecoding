@@ -770,6 +770,11 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         const contributorCount = contributorCounts.get(a.id) || 0;
         return {
           ...appAccess.stripAppSecrets(a),
+          // The launcher's copy of the manifest: everything but the declared
+          // tests and platform env, which no client reads and which were most
+          // of this payload (see summarizeManifestSnapshot). GET
+          // /api/apps/:slug still answers the whole snapshot.
+          manifest_snapshot: appAccess.summarizeManifestSnapshot(a.manifest_snapshot),
           contributor_count: contributorCount,
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
@@ -1347,6 +1352,13 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const contributorCount = contributorCounts.get(appRow.id) || 0;
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        // `?manifest=summary`: the shell's own reads of an app (the Improve
+        // target, AppView) use only the snapshot's description, and the
+        // platform's snapshot alone is ~280 KB. Without the flag the whole
+        // snapshot is answered, as it always was.
+        ...(req.query.manifest === 'summary'
+          ? { manifest_snapshot: appAccess.summarizeManifestSnapshot(appRow.manifest_snapshot) }
+          : {}),
         demo_partner: demoPartner,
         contributor_count: contributorCount,
         directory: discoveryCuration.describe(appRow),

@@ -151,6 +151,7 @@ const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
 const { createLeadership, withMigrationLock } = require('./src/services/leadership');
 const { publicApiCors } = require('./src/middleware/public-cors');
+const { responseCompression } = require('./src/middleware/response-compression');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
 const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
@@ -169,6 +170,13 @@ app.use(trustedProxyClientIp({
   hostname: config.trustedProxyHost,
   trustDirectPeer: config.appRuntime === 'kubernetes',
 }));
+
+// Brotli / gzip for the shell's own text responses — its scripts, styles,
+// document and JSON. Nothing in front of this process compresses, so without
+// it every byte crossed the network as written. Mounted ahead of every route
+// so each one's answer passes through it; GET/HEAD only, and never a stream.
+// See src/middleware/response-compression.js.
+app.use(responseCompression());
 
 // Cross-origin support for the anonymous `/api/public/*` tier, and for
 // nothing else. Marketing pages the platform does not host (the waitlist

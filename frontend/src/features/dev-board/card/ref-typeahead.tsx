@@ -118,8 +118,10 @@ export function spliceRef(
   return { value: before + insert + value.slice(caret), caret: before.length + insert.length };
 }
 
+// `results=failing`: the Workshop's list form (AppView._listQS), so this
+// reads the copy the board already holds; numbers and titles are all it needs.
 export function promotedPath(slug: string): string {
-  return `/api/apps/${encodeURIComponent(slug)}/promoted`;
+  return `/api/apps/${encodeURIComponent(slug)}/promoted?results=failing`;
 }
 
 export function githubIssuesPath(slug: string): string {

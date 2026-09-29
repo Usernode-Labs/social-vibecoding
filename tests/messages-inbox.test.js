@@ -481,7 +481,7 @@ test('bug h: the discussion context carries the app artwork, for a header with n
   const saved = { window: globalThis.window, fetch: globalThis.fetch };
   globalThis.window = { location: { search: '', hash: '' }, App: { user: { id: 7 } } };
   globalThis.fetch = async (url) => {
-    const m = /^\/api\/apps\/([^/?]+)$/.exec(url);
+    const m = /^\/api\/apps\/([^/?]+)(?:\?manifest=summary)?$/.exec(url);
     if (m && APPS[m[1]]) return { ok: true, json: async () => ({ app: APPS[m[1]] }) };
     if (String(url).startsWith('/api/messages/app-discussions')) return { ok: true, json: async () => ({ discussions: [] }) };
     return { ok: false, json: async () => null };

@@ -64,7 +64,45 @@ const Home = {
     return !!App.user?.canCreateApps;
   },
 
-  async load() {
+  // ── One catalog load at a time ─────────────────────────────────────
+  //
+  // load() is called from a dozen live paths — every app_status,
+  // app_redeploy_status, app_version_changed and session_update on the
+  // socket, the late-arrival correction, pull-to-refresh, the card menu's
+  // actions — and each call was a full GET /api/apps, the platform's largest
+  // read (300-700 KB). They arrive in bursts: one redeploy is several status
+  // frames, and a warm boot is a correction plus a session update. Measured
+  // on a 1.6 Mbps link, a warm open of Home pulled the catalog five times in
+  // five seconds, all five downloading at once and sharing the link, so the
+  // one that mattered finished last.
+  //
+  // So a call that lands while a load is running does not start a second: it
+  // queues exactly ONE more, which starts when the running one settles, and
+  // every later caller in that window shares it. Nothing is dropped — the
+  // queued load begins after the last trigger, so the grid always ends on an
+  // answer at least as new as the newest event, which parallel loads could
+  // not promise (whichever finished last painted, however old its request).
+  // A caller that awaits load() after its own write gets the queued load, so
+  // it still sees its change.
+  _loadInFlight: null,
+  _loadQueued: null,
+
+  load() {
+    if (Home._loadInFlight) {
+      if (!Home._loadQueued) {
+        const rerun = () => { Home._loadQueued = null; return Home.load(); };
+        Home._loadQueued = Home._loadInFlight.then(rerun, rerun);
+      }
+      return Home._loadQueued;
+    }
+    const run = Home._loadOnce();
+    Home._loadInFlight = run;
+    const settle = () => { if (Home._loadInFlight === run) Home._loadInFlight = null; };
+    run.then(settle, settle);
+    return run;
+  },
+
+  async _loadOnce() {
     // Re-render guard: Home.load() is invoked from many WS/event paths
     // (app_status / app_update in app.js, notifications.js), any of
     // which would wholesale-replace the grid mid-drag and yank the
