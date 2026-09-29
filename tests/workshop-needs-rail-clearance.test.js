@@ -30,3 +30,13 @@ test('the wide layout, where the rail stands beside the card, gives the room bac
   assert.match(css, /\.dev-ws-item-title \{ font-size: 32px; line-height: 1\.14; margin-right: 0;/);
   assert.match(css, /\.dev-ws-item-summary \{ font-size: 19px; line-height: 1\.45; margin-right: 0;/);
 });
+
+test('above the rail, the head takes the full width', () => {
+  // The rail sits at the item's foot on a phone; text that ends above it has
+  // nothing to keep clear of. workshop.tsx measures and marks the item.
+  assert.match(css, /\n\.dev-ws-item\[data-ws-head\] > \.dev-ws-item-by,\n\.dev-ws-item\[data-ws-head\] > \.dev-ws-item-title,\n\.dev-ws-item\[data-ws-head="all"\] > \.dev-ws-item-summary \{ margin-right: 0; \}/);
+  const src = fs.readFileSync(path.join(__dirname, '../frontend/src/features/dev-board/workshop/workshop.tsx'), 'utf8');
+  assert.match(src, /data-ws-head=\{railClear && head !== 'none' \? head : undefined\}/);
+  assert.match(src, /setHead\(head === 'all' \? 'title' : 'none'\);/, 'the summary gives way first, then the title');
+  assert.match(src, /railClear=\{wide \? 0 : railClear\}/, 'never on a wide window');
+});
