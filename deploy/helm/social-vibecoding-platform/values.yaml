@@ -19,6 +19,9 @@ platform:
   # Activation/rollback requires draining all flag-off/on platform Pods;
   # see docs/kubernetes-operations.md. Mixed coordination modes are unsafe.
   previewLifecycleEnabled: false
+  # Agent-authored visual evidence is default-on. Set false only as an
+  # emergency kill switch; legacy default-root screenshots stay suppressed.
+  visualEvidenceV2Enabled: true
   replicas: 1
   image:
     repository: ghcr.io/replace-me/social-vibecoding-platform
@@ -39,6 +42,12 @@ platform:
       cpu: "4"
       memory: 3Gi
       ephemeral-storage: 4Gi
+  # Node's heap ceiling for the platform process. Without it Node stops at
+  # about 1.5 GB whatever limits.memory says, and on 2026-09-25 the platform
+  # crash-looped on "JavaScript heap out of memory" with half its container
+  # unused. Keep it below limits.memory: buffers, code and stacks live outside
+  # the heap. An empty value leaves Node's default.
+  nodeOptions: "--max-old-space-size=2304"
   tmpSizeLimit: 2Gi
 
 postgresql:
@@ -95,6 +104,8 @@ config:
   domain: social-vibecoding.example.invalid
   # Empty retains the historical <slug>.<domain> layout.
   appsDomain: ""
+  # Optional waitlist OAuth callback origin. Empty uses the application's canonical origin.
+  waitlistOauthOrigin: ""
   platformRepository: https://github.com/replace-me/social-vibecoding
   nodeRpcUrl: http://replace-me.invalid:3000
   # Explorer host[:port] without a scheme. Public hosts use HTTPS; private
@@ -109,7 +120,7 @@ config:
   logLevel: INFO
   workerMemory: 2g
   workerCpus: "2"
-  captureMemory: 4g
+  captureMemory: 6g
   captureCpus: "8"
   # Match application defaults here; each cluster declares its own capacity.
   dbPoolMax: 10
@@ -144,6 +155,11 @@ secrets:
   # Optional X account-linking OAuth credentials. Set both in encrypted external values.
   xLinkClientId: ""
   xLinkClientSecret: ""
+  # Optional waitlist OAuth credentials. Set each pair in encrypted external values.
+  waitlistGithubClientId: ""
+  waitlistGithubClientSecret: ""
+  waitlistXClientId: ""
+  waitlistXClientSecret: ""
   anthropicApiKey: ""
   anthropicAdminKey: ""
   # Optional OpenRouter management credential, supplied through encrypted external values.

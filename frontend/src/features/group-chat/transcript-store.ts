@@ -97,6 +97,85 @@ export interface Quote {
 export type MessageKind = 'message' | 'system' | 'vote' | 'spec_share';
 
 /**
+ * One of the two proposal events the general chat draws: a proposal put up
+ * for a vote, or a proposal merged. Decided by `GroupChat._proposalEvent`
+ * from the row's kind and the server's own wording, which is that module's
+ * vocabulary; ./proposal-event.tsx only draws it, as a message from whoever
+ * did it. `sender` is that name: the actor where there is one, else the app
+ * itself announcing a merge its vote decided. `icon` is the Dev board's glyph
+ * for the same proposal, from its own table, or null where app-view.js is
+ * not loaded.
+ */
+/** One line of the Friday card (#1688): a change that landed, or a proposal waiting. */
+export interface WeeklyItem {
+  id: number | null;
+  prNumber: string;
+  title: string;
+  author: string;
+  /** Whose Yes counted when it merged; empty on an open proposal. */
+  backers: string[];
+}
+
+/** The Friday card's data (#1688): what went live this week and what is waiting on votes. */
+export interface WeeklyCard {
+  app: string;
+  slug: string;
+  merged: WeeklyItem[];
+  mergedTotal: number;
+  open: WeeklyItem[];
+  openTotal: number;
+}
+
+export interface ProposalEvent {
+  /**
+   * #1688 adds `weekly`: the Friday card, a message from the app itself.
+   * `vote` and `notice` exist only on a change page's own Discussion
+   * (`GroupChat._threadEvent`), where every row is drawn in this language:
+   * a vote cast, and any other notice the platform posted about the change.
+   */
+  type: 'submitted' | 'merged' | 'weekly' | 'vote' | 'notice';
+  /** `vote` rows: which way, and the line the voter left, if any. */
+  vote?: 'yes' | 'no';
+  reason?: string;
+  /** `notice` rows: the notice, reworded for the page it is on. */
+  text?: string;
+  /**
+   * True on the proposal's OWN page: the row names the act without the
+   * number and title ("Proposed this change for a vote"), and is no door.
+   */
+  here?: boolean;
+  /** The Friday card's data; set only when `type` is `weekly`. */
+  weekly?: WeeklyCard | null;
+  /** The session id from the row's metadata tag, or '' on an older row. */
+  sessionId: string;
+  prNumber: string;
+  /** The PR title parsed out of the line, or '' when it carried none. */
+  title: string;
+  /** Who put it up for a vote, or the admin who force-merged it; '' otherwise. */
+  actor: string;
+  /** The name on the row's header line: `actor`, or the app's name. */
+  sender: string;
+  /** True when the actor is the viewer: the row sits on the right, as their messages do. */
+  mine: boolean;
+  force: boolean;
+  /** "a/b", the tally the merge announced; '' on a submission. */
+  votes: string;
+  icon: { tint: string; path: string; small?: boolean; title?: string } | null;
+  /**
+   * #1688: who the merge announcement named — the proposer, the Yes voters
+   * whose votes counted, and whoever shaped it. Null on a submission, a
+   * force merge, and an announcement from before names were carried.
+   */
+  credits?: { author: string; backers: string[]; shapers: string[] } | null;
+  /**
+   * A merge on the platform's own app, whose release runs after the merge
+   * (follow-up to #2897): the announcement said it "will be live in a few
+   * minutes" rather than "is live". Absent on every other row.
+   */
+  liveSoon?: boolean;
+}
+
+/**
  * One file on a message, as its chip draws it.
  *
  * Resolved by the module, which owns the app slug the URL is built from and
@@ -117,10 +196,32 @@ export interface Attachment {
   badge: string | null;
 }
 
+/** #2387: a reply thread's summary, as the chip under its first message draws it. */
+export interface ThreadSummaryView {
+  replyCount: number;
+  lastReplyAt: string | null;
+  participants: string[];
+  /** The newest reply, which the card under the message shows (#2387 follow-up). */
+  lastReply?: { name: string; text: string } | null;
+}
+
+/**
+ * A reply-thread reply read as part of the GENERAL stream (#2387 follow-up):
+ * which thread it is in, and the start of that thread's first message, which
+ * its line there names. The general transcript draws it as a card where it
+ * landed; a thread's own transcript draws it as the row it always was.
+ */
+export interface ReplyInStream {
+  rootId: number;
+  rootText: string;
+  rootDeleted: boolean;
+}
+
 export interface TranscriptMessage {
   id: number | null;
   kind: MessageKind;
   username: string;
+  senderId?: number | null;
   /**
    * Rendered stamp — formatted by the module, whose locale rules these are.
    * The time of day alone for today's messages, prefixed with the date once
@@ -129,6 +230,8 @@ export interface TranscriptMessage {
   time: string;
   /** The same instant with nothing elided, for `title`. */
   timeTitle: string;
+  /** #2783: the raw instant (ISO), which consecutive messages group on. */
+  at?: string | null;
   /** Sanitized markdown for an ordinary message; plain text for a system row. */
   bodyHtml: string;
   systemText: string;
@@ -139,6 +242,13 @@ export interface TranscriptMessage {
   editedTitle: string | null;
   unread: boolean;
   bookmarked: boolean;
+  /**
+   * #2236: 'agent' when a coding agent posted the message on the author's
+   * behalf through the connector; the row wears the "via agent" chip. The
+   * module reads it off either spelling of the row (`posted_via` loaded,
+   * `postedVia` live) and never off anything the composer sent.
+   */
+  postedVia?: 'agent' | null;
   /**
    * The 1.5s highlight a jump-to-original lands on. On the MODEL because the
    * row is React's: `_handleQuotedClick` used to `classList.add` it, which the
@@ -169,6 +279,46 @@ export interface TranscriptMessage {
   voteRef: VoteRef | null;
   /** Spec-share rows only — see SpecShareView. Null on every other kind. */
   specShare: SpecShareView | null;
+  /**
+   * Vote rows only: whether the pull request this row is about is still up
+   * for a vote. `open` is what the general chat's event row marks as still
+   * wanting the reader (./proposal-event.tsx); `settled` is merged, merging,
+   * or gone from the votable set; `unknown` means the vote snapshot has not
+   * arrived and reads as open, since a vote shown as over when it is not is
+   * the failure that matters. Written by `_messageView` and patched by
+   * `refreshVoteControls` in public/js/group-chat.js, which is where
+   * `AppView.voteState` lives. Absent on every other kind.
+   */
+  votePhase?: 'open' | 'settled' | 'unknown';
+  /**
+   * The proposal event the general chat draws this row as, or null. The
+   * general chat draws a row of kind `system` or `vote` ONLY when this is
+   * set; the thread transcript ignores it and draws every row.
+   */
+  event?: ProposalEvent | null;
+  /**
+   * Where the event row leads — the proposal's page — or null while the
+   * session behind it is unknown, in which case the row is not a link. A
+   * field of its own, patched by `refreshVoteControls`, because a patch
+   * compares by identity and `event` is an object.
+   */
+  eventHref?: string | null;
+  /**
+   * #2387: the message's own words, unrendered — what "Copy text" copies.
+   * `bodyHtml` is the markdown pipeline's output, which is not what someone
+   * pasting it elsewhere wants.
+   */
+  text?: string;
+  /** #2387: deleted by its author — drawn as a placeholder with no controls. */
+  deleted?: boolean;
+  /** #2387: the reply thread under this message, or null when it has none. */
+  thread?: ThreadSummaryView | null;
+  /** #2387: whether a reply thread can hang off this row (the general chat's people and specs). */
+  canThread?: boolean;
+  /** #2387: this row is the message a reply thread hangs off, drawn at the thread's head. */
+  threadRoot?: boolean;
+  /** Set on a reply-thread reply; the general transcript draws it as activity. */
+  replyOf?: ReplyInStream | null;
 }
 
 /**
@@ -203,6 +353,31 @@ export interface TranscriptLead {
   earlier: boolean;
   /** The placeholder line, or null when there are messages to show. */
   placeholder: string | null;
+  /**
+   * #2992: the history request failed — the line to show with a "Try again"
+   * control, drawn whether or not live rows have landed since. Null or absent
+   * when the last load succeeded.
+   */
+  error?: string | null;
+  /**
+   * The general chat's quiet card, drawn AFTER the rows when nobody has
+   * posted a message of their own among the loaded ones — the activity
+   * notices land in this stream on their own, so "empty" is rare and "no
+   * conversation" is what a visitor actually meets. The module supplies the
+   * three facts the card cannot know: whether it has paged back to the
+   * beginning (`exhausted`, which is the difference between "yet" and
+   * "lately"), whether the viewer has a composer to answer with, and the
+   * app's name. Null or absent on the thread transcript, which has its own
+   * placeholder above.
+   */
+  quiet?: { exhausted: boolean; canPost: boolean; appName: string; variant?: 'app' | 'change' } | null;
+  /**
+   * How a THREAD transcript draws its rows. 'chat' is the change page's
+   * Discussion: bubbles for people, and every notice as a message from
+   * whoever did it, the general chat's language. Absent or 'flat', the
+   * thread keeps its flat named rows and centred lines (an issue's page).
+   */
+  language?: 'chat' | 'flat';
 }
 
 export interface TranscriptView {

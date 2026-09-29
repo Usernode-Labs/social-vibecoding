@@ -47,13 +47,13 @@ test('the row shell borrows the chip menu’s geometry', () => {
 test('every action row has a glyph, and every glyph is decoration', () => {
   const menu = FRAME.slice(FRAME.indexOf('id="dev-plus-menu"'));
   const rows = menu.match(/<PlusRow\b/g) || [];
-  // Eight calls for seven rows: the members row is written as two, one per
+  // Nine calls for eight rows: the members row is written as two, one per
   // label pair, because tests/dev-plus-menu.test.js reads the two branches
   // separately to prove the self-hosted wording never leaks into the other.
-  assert.equal(rows.length, 8,
-    'issue, import-pr, featured-illustration, members x2, rename, secrets, fork');
+  assert.equal(rows.length, 9,
+    'issue, import-pr, app-settings, featured-illustration, members x2, rename, secrets, fork');
   const icons = menu.match(/icon=\{<([A-Za-z]+Icon) className=\{PLUS_ICON_CLS\} aria-hidden="true" \/>\}/g) || [];
-  assert.equal(icons.length, 8, 'one glyph per row, all aria-hidden');
+  assert.equal(icons.length, rows.length, 'one glyph per row, all aria-hidden');
   // No <button data-plus> survives outside the shared shell — a hand-written
   // row would miss both the glyph column and the title marker.
   assert.doesNotMatch(menu, /<button\s+data-plus=/);
@@ -68,6 +68,14 @@ test('the subtitles survive: this is not the chip menu’s one-line row', () => 
   assert.match(FRAME, /const PLUS_SUB_CLS = 'block text-xs/);
 });
 
+test('App settings is an access surface for app managers, not only deleters (#2304)', () => {
+  const settings = FRAME.slice(FRAME.indexOf('data-plus="app-settings"') - 300);
+  assert.match(settings.slice(0, 700), /appData\?\.can_manage && !selfHosted/);
+  assert.match(settings.slice(0, 900), /Manage who can use and build this app/);
+  assert.match(FRAME, /title="Members &amp; approvals"/);
+  assert.doesNotMatch(FRAME, /title="Members &amp; visibility"/);
+});
+
 test('the touch action sheet reads the title by name, not by position', () => {
   // The regression this prevents: a glyph or a wrapper arriving before the
   // title would have labelled every sheet row with the wrong text, or ''.
@@ -77,6 +85,19 @@ test('the touch action sheet reads the title by name, not by position', () => {
   // marked yet still gets a label rather than none.
   const sheet = APP_VIEW.slice(APP_VIEW.indexOf("querySelector('[data-plus-title]')"));
   assert.match(sheet.slice(0, 400), /\|\|\s*node\.querySelector\('span'\)/);
+});
+
+test('the touch action sheet carries each row\u2019s glyph, as the desktop menu does (#1930)', () => {
+  const fn = APP_VIEW.slice(APP_VIEW.indexOf('  _wirePlusMenu(content) {'));
+  const touch = fn.slice(0, fn.indexOf('PlatformUI.actionSheet(') + 3000);
+  // Every action row in the frame leads with an icon; the sheet takes it.
+  assert.match(FRAME, /icon=\{<[A-Za-z]+Icon className=\{PLUS_ICON_CLS\}/);
+  // A clone, because the kit adopts iconEl into the sheet and the original
+  // lives in the hidden desktop menu — stripped of its Tailwind sizing, which
+  // would otherwise outrank the kit's own row-icon size.
+  assert.match(touch, /const glyph = node\.querySelector\('svg'\)\?\.cloneNode\(true\);/);
+  assert.match(touch, /if \(glyph\) glyph\.removeAttribute\('class'\);/);
+  assert.match(touch, /iconEl: glyph \|\| undefined,/);
 });
 
 test('the secrets row keeps its legacy-owned state leaf inside the title', () => {

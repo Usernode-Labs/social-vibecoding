@@ -1,4 +1,4 @@
-// Send Feedback dialog — the "Put a kudos bounty on this" row (#964).
+// Send Feedback dialog — the "Put a kudos on this" row (#964, #2586).
 //
 // The contract that's easy to break later:
 //   - the row and its checkbox exist in the modal markup, so the
@@ -44,11 +44,20 @@ test('the feedback modal carries the bounty row, checkbox and note', () => {
   assert.match(html, /id="feedback-bounty-row"/);
   assert.match(html, /id="feedback-bounty-checkbox"/);
   assert.match(html, /id="feedback-bounty-note"/);
-  assert.match(html, /Put a kudos bounty on this/);
-  // #1582: the row's own line says what a bounty DOES and nothing else. The
+  assert.match(html, /Put a kudos on this/);
+  // #1582: the row's own line says what a kudos DOES and nothing else. The
   // price of ticking the box moved to the note below, which is where the
   // live figure already was — it did not go away, and the next test pins it.
-  assert.match(html, /encourages someone to take it up and solve it/);
+  // #2586 turned that line into one sentence about who the kudos thanks, so
+  // this reads the row's rendered TEXT: the emphasised run and the plain run
+  // are separate nodes, and the space between them is what the sentence
+  // depends on.
+  const rowText = html
+    .slice(html.indexOf('id="feedback-bounty-row"'), html.indexOf('id="feedback-status"'))
+    .replace(/<[^>]*>/g, '');
+  assert.match(rowText, /Put a kudos on this to thank whoever solves it/);
+  assert.doesNotMatch(html, /kudos bounty on this/);
+  assert.doesNotMatch(html, /encourages someone to take it up and solve it/);
   assert.doesNotMatch(html, /pledges 1 of your weekly kudos/);
 });
 

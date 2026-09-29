@@ -25,7 +25,14 @@ function CopyableCode({ label, value }: { label: string; value: string }) {
   const [buttonLabel, setButtonLabel] = useState('Copy');
   return (
     <div className="mt-2 flex min-w-0 items-stretch overflow-hidden rounded-md border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-900">
-      <pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre px-3 py-2 text-xs font-mono text-zinc-700 dark:text-zinc-300"><code>{value}</code></pre>
+      {/* Focusable, and named (QA 2026-09-24 Q20): a long line scrolls
+          sideways, and a region that scrolls must be reachable by keyboard. */}
+      <pre
+        tabIndex={0}
+        role="region"
+        aria-label={label}
+        className="min-w-0 flex-1 overflow-x-auto whitespace-pre px-3 py-2 text-xs font-mono text-zinc-700 dark:text-zinc-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-500"
+      ><code>{value}</code></pre>
       <Button
         type="button"
         layout="shrink"

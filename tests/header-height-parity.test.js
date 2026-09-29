@@ -3,8 +3,9 @@
 //
 // The two authored top bars — #platform-header (signed-in shell: home, app
 // view, leaderboard, profile, settings, admin console) and #landing-header
-// (anonymous shell) — are `pt-3 pb-5` around a 28px CONTENT ROW, i.e.
-// 60px + env(safe-area-inset-top), everywhere.
+// (anonymous shell) — are `pt-2 pb-4` around a 28px CONTENT ROW, i.e.
+// 52px + env(safe-area-inset-top), everywhere. One app.css rule trims the
+// kit's safe-area top padding to match pt-2 for both bars (#2305).
 //
 // It was `py-3` (52px) until the bottom padding grew. #platform-header also
 // carries `-mb-2`, which pulls the screen below it 8px UP into the bar to cut
@@ -12,7 +13,8 @@
 // 8px overlap, i.e. four pixels, between them and whatever came next. On the
 // routes where that next thing is a raised sheet with a 28px radius and a
 // shadow reaching up (inside an app, inside a proposal session) the chip, the
-// bell and Improve sat on its lip. `pb-5` restores the 12px the notch spends.
+// bell and Improve sat on its lip. `pb-5` restored 12px; #2305 ("the top bar
+// steals too much vertical space") settled on `pb-4`, which leaves 8px.
 //
 // It was 53px until the reskin, when both bars lost the 1px `border-b`
 // hairline they had carried: the widget language draws no rule under a top
@@ -94,10 +96,10 @@ const BARS = [
   { id: 'landing-header', slice: headerSlice('landing-header') },
 ];
 
-test('both top bars carry the identical shape: pt-3/pb-5, no hairline, safe-area', () => {
+test('both top bars carry the identical shape: pt-2/pb-4, no hairline, safe-area', () => {
   for (const bar of BARS) {
     const tag = openingTag(bar.slice);
-    // 12px above and 20px below the content row. NOT symmetric, and not by
+    // 8px above and 16px below the content row (#2305). NOT symmetric, and not by
     // accident: `-mb-2` on #platform-header pulls the screen below it 8px up
     // to cut the notch every platform surface reads as its rounded top, and
     // that 8px comes out of the bottom padding. At py-3 the controls had four
@@ -106,11 +108,13 @@ test('both top bars carry the identical shape: pt-3/pb-5, no hairline, safe-area
     // screen root. pb-5 buys it back.
     //
     // PARITY, NOT SYMMETRY, is what this file is for: both bars carry the
-    // same pair, so both are 60px and the bar does not jump as you sign in.
-    assert.match(tag, /\bpt-3\b/,
-      `#${bar.id} keeps pt-3 — 12px above the row`);
-    assert.match(tag, /\bpb-5\b/,
-      `#${bar.id} keeps pb-5 — 20px below it, 8px of which the notch spends`);
+    // same pair, so both are 52px and the bar does not jump as you sign in.
+    assert.match(tag, /\bpt-2\b/,
+      `#${bar.id} keeps pt-2 — 8px above the row (#2305)`);
+    // #2305 took it to pb-4: 16px, 8px of which the notch spends, still
+    // double the clearance whose absence made pb-5 necessary.
+    assert.match(tag, /\bpb-4\b/,
+      `#${bar.id} keeps pb-4 — 16px below it, 8px of which the notch spends`);
     assert.doesNotMatch(tag, /\bpy-\d/,
       `#${bar.id} states its vertical padding once, as the pt/pb pair`);
     // A bottom border is part of the height (border-box), so it is part of
@@ -165,55 +169,75 @@ test('FLOOR: each bar holds its 28px content row open', () => {
   }
 });
 
-test('CEILING: the Improve button is exactly the 28px row', () => {
-  // THE UI OVERHAUL replaced #app-mode-switch with #improve-btn, and the
-  // invariant transferred WITH it: this is the one child that appears in the
-  // bar when an app opens, so its height IS the in-app header height. The
-  // switch it replaced was 30px for a while (24px segments + 4px p-0.5 + 2px
-  // border), which quietly made the in-app header 2px taller than every other
-  // screen's — the whole of #909. Pinning the replacement to h-7 is what stops
-  // that recurring with a differently-shaped control.
-  const tag = html.match(/<button id="improve-btn"[\s\S]*?>/)[0];
+test('CEILING: the Homeroom mark is exactly the 28px row', () => {
+  // THE UI OVERHAUL replaced #app-mode-switch with #improve-btn and the
+  // invariant transferred WITH it; #2718 retired that pill in turn and it
+  // transferred again, to #platform-mark-btn. The chain matters less than what
+  // it is a chain OF: whichever control is the tallest thing in the bar when
+  // an app opens, its height IS the in-app header height. The switch that
+  // started it was 30px for a while (24px segments + 4px p-0.5 + 2px border),
+  // which quietly made the in-app header 2px taller than every other screen's
+  // — the whole of #909. Pinning each successor to h-7 is what stops that
+  // recurring with a differently-shaped control.
+  const tag = html.match(/<button id="platform-mark-btn"[\s\S]*?>/)[0];
   assert.match(tag, /\bh-7\b/,
-    "the Improve button is pinned to the header's 28px content row");
+    "the mark is pinned to the header's 28px content row");
   assert.doesNotMatch(tag, /\b(?:sm:)?py-\d/,
-    'the Improve button carries no vertical padding — h-7 owns the height');
-  // It has a text label as well as a glyph, so it must centre its content
-  // vertically rather than letting the two children set their own baseline.
+    'the mark carries no vertical padding — h-7 owns the height');
+  // Artwork beside a chevron, so it must centre its content vertically rather
+  // than letting the two children set their own baseline. The tile is 26px
+  // inside the 28px row, which is where the 1px of air above and below it
+  // comes from.
   assert.match(tag, /\bitems-center\b/,
-    'the Improve button centres its glyph and label vertically');
-  assert.match(tag, /\binline-flex\b/, 'the Improve button is a flex box');
-  // …and SPACES them. There was no gap at all, so the glyph and the "I" of
-  // Improve met — one smudged mark rather than a state cue in front of a
-  // label, worst on the spinner (whose arc carries no bounding whitespace)
-  // and on the arrow-path (whose head reaches the glyph box's edge). A gap
-  // is a horizontal cost only, so the 28px ceiling above is untouched.
-  assert.match(tag, /\bgap-1\.5\b/,
-    'the glyph and the label are spaced like the header group they sit in');
+    'the mark centres its tile and chevron vertically');
+  assert.match(tag, /\binline-flex\b/, 'the mark is a flex box');
+  // …and SPACES them, though barely: 2px, because the chevron is a disclosure
+  // ON the mark rather than a second control beside it. A gap is a horizontal
+  // cost only, so the 28px ceiling above is untouched either way.
+  assert.match(tag, /\bgap-0\.5\b/,
+    'the tile and its chevron are spaced, not fused');
+  const tile = html.match(/<svg[^>]*class="platform-mark-glyph[^"]*"/)[0];
+  assert.match(tile, /(?:^|\s)h-\[26px\](?:\s|$)/,
+    'the sparkle is 26px, so it fits the row with a pixel to spare');
 });
 
-test('CEILING: the landing CTAs stay 28px at every width', () => {
-  const landing = BARS.find((b) => b.id === 'landing-header').slice;
-  const ctaBlock = landing.slice(landing.indexOf('id="landing-header-ctas"'));
-  const anchors = ctaBlock.match(/<a [^>]*>/g) || [];
-  // Sign in, Join waitlist, and the "Your queue status" variant.
-  assert.equal(anchors.length, 3, 'three landing CTAs (incl. the waiting-room variant)');
-  for (const a of anchors) {
-    // Pinned, not padding-sized. Padding-sizing broke this bar twice: the
-    // `sm:py-2 sm:text-sm` bump made them 36px (a 61px bar on desktop), and
-    // even at py-1.5 the BORDERED "Join waitlist" was 30px to its
-    // borderless siblings' 28px — the 1px border is part of the box.
-    assert.match(a, /\bh-7\b/, 'landing CTA is pinned to the 28px content row');
-    assert.match(a, /\binline-flex\b/, 'landing CTA is a flex box so its label can centre');
-    assert.match(a, /\bitems-center\b/, 'landing CTA centres its label in those 28px');
-    assert.doesNotMatch(a, /\b(?:sm:)?py-\d/,
-      'no vertical padding on a landing CTA — the h-7 box owns the height');
-    assert.doesNotMatch(a, /\bsm:text-(?:sm|base|lg|xl)\b/,
-      'no responsive font-size bump on a landing CTA — a taller line box grows the bar');
-    assert.match(a, /\btext-xs\b/, 'landing CTA keeps its 16px line box');
-    // Desktop presence is bought horizontally, which costs no height.
-    assert.match(a, /\bsm:px-5\b/, 'landing CTA still widens on desktop');
-  }
+test('CEILING: the landing bar is the wordmark at 28px, and carries no CTA', () => {
+  const bar = withoutComments(BARS.find((b) => b.id === 'landing-header').slice);
+
+  // THE CTA ROW IS GONE, and with it the only thing that ever broke this
+  // ceiling on this bar. It held three anchors — Sign in, Join waitlist and
+  // the waiting-room variant — and it broke the 28px row twice over:
+  // `sm:py-2 sm:text-sm` made them 36px at `sm` and up (a 61px bar on
+  // desktop), and even at `py-1.5` the BORDERED one was 30px to its
+  // borderless siblings' 28px, because the 1px border top and bottom is part
+  // of the box. Pinning them to `h-7` fixed the height and left the real
+  // problem: a stranger's two ways into the product were 28px chips in the
+  // top-right corner, read at the moment they knew least about it. Both are
+  // full-width pills in the body now, under the sentence that says what this
+  // place is — so the ceiling here is kept by there being nothing to size.
+  //
+  // Asserted as "no anchor" rather than "no #landing-header-ctas": the row
+  // could come back under any id, and what must not come back is a control
+  // in this bar that carries its own padding.
+  assert.deepEqual(bar.match(/<a[\s>]/g) || [], [],
+    'the landing bar carries no anchor — both ways in are pills in the body');
+
+  // What took over the row's other job, saying which product this is: the
+  // logotype, drawn at the content row's own height. `h-7` is this bar's
+  // ceiling AND the mark's only size, and `w-auto` leaves the width to the
+  // drawing's own ratio — so there is no dimension of it that can grow the
+  // bar. (The mark swaps to the open app's NAME while the viewer is running;
+  // that branch is plain text in an element already pinned to `text-lg`.)
+  const title = bar.slice(bar.indexOf('id="landing-header-title"'));
+  const mark = title.match(/<svg[^>]*\bclass="([^"]*)"/);
+  assert.ok(mark, '#landing-header-title draws the wordmark');
+  assert.match(mark[1], /\bh-7\b/, 'the wordmark is exactly the 28px content row');
+  assert.match(mark[1], /\bw-auto\b/, 'and takes its width from its own aspect ratio');
+
+  // The bar still answers "Homeroom" to a screen reader. The heading used to
+  // spell the word out; a drawing has to be told to.
+  assert.match(title.slice(0, 400), /aria-label="Homeroom"/,
+    'the mark carries the name the heading used to spell out');
 });
 
 test('CEILING: nothing in either bar is taller than the 28px row', () => {
@@ -250,9 +274,10 @@ test('badges still overflow the row rather than being clipped', () => {
   const platform = BARS.find((b) => b.id === 'platform-header').slice;
   assert.match(platform, /id="notifications-badge"[^>]*-top-1/,
     'the bell badge still hangs off the top-right corner');
-  assert.match(platform, /id="improve-working-dot"[^>]*-top-1/,
-    'and the Improve button\'s working dot hangs off the same corner (#1610 '
-    + 'retired the green count that used to sit there)');
+  assert.match(platform, /id="improve-working-dot"[^>]*-top-1\.5/,
+    'and the work dot hangs off the same corner of the mark it moved to when '
+    + '#2718 retired the Improve pill (#1610 had already retired the green '
+    + 'count that used to sit there)');
 });
 
 test('the invariant is documented where the next editor will look', () => {
@@ -269,11 +294,12 @@ test('the invariant is documented where the next editor will look', () => {
   // wrong for as long as it existed (it omitted the border), so the rule is
   // that the source comment names the CLASS that pins the height rather than
   // asserting an arithmetic result. #improve-btn inherited both the slot and
-  // the rule — see features/improve/improve-button.tsx.
-  const buttonSrc = fs.readFileSync(
-    path.join(root, 'frontend/src/features/improve/improve-button.tsx'), 'utf8');
-  assert.match(buttonSrc, /h-7` matches the header's 28px content-row ceiling|h-7`? matches the header/,
-    'the Improve button comment points at the class that pins its height');
+  // the rule, and #platform-mark-btn inherited them from it when #2718 retired
+  // that pill — see features/header/platform-mark.tsx.
+  const markSrc = fs.readFileSync(
+    path.join(root, 'frontend/src/features/header/platform-mark.tsx'), 'utf8');
+  assert.match(markSrc, /h-7` is the header's 28px content-row ceiling/,
+    'the mark comment points at the class that pins its height');
 });
 
 test('no JS sets a header height — the contract lives entirely in markup + CSS', () => {
@@ -339,4 +365,14 @@ test('the title is left-aligned on a phone by an explicit rule, not by a native 
     'and the decision goes through the one exported, tested function');
   assert.doesNotMatch(hook, /in-native-webview|isNative/,
     'alignment is one geometric rule for every surface');
+});
+
+test('#2305: both bars trim the kit\'s top padding to the inset + 8px, matching pt-2', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const rule = css.match(/@supports \(padding: env\(safe-area-inset-top\)\) \{\s*#platform-header\.un-safe-top-extend,\s*#landing-header\.un-safe-top-extend \{([^}]*)\}/);
+  assert.ok(rule, 'one rule, for BOTH bars — parity survives the trim');
+  assert.match(rule[1], /padding-top: calc\(0\.5rem \+ var\(--un-safe-inset-top, env\(safe-area-inset-top, 0px\)\)\) !important;/);
+  // The kit's own class is untouched for every other consumer.
+  const kit = fs.readFileSync(path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'), 'utf8');
+  assert.match(kit, /\.un-safe-top-extend \{\s*padding-top: calc\(0\.75rem \+ var\(--un-safe-inset-top, env\(safe-area-inset-top, 0px\)\)\) !important;/);
 });

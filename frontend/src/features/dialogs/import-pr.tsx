@@ -30,7 +30,7 @@
  * ── #846: the import POST is awaited IN PLACE ─────────────────────────
  *
  * Progress row, dimmed list, frozen buttons — and only a server-confirmed
- * import routes the user to its DISCUSSION page (`openTopic('session')`),
+ * import routes the user to its full change page (`openTopic('proposal')`),
  * never the dev-chat session view. An imported PR has no dev session by
  * design (see the sessionBtn / importedNote
  * branches in `_renderProposalCard` / `_proposalDetailsHtml`), and that view
@@ -72,7 +72,7 @@ type ListState =
   | { kind: 'error'; text: string };
 
 const NOTE_CLASS = 'text-sm text-zinc-500 dark:text-zinc-400 py-6 text-center';
-const ERROR_CLASS = 'text-sm text-red-400 py-6 text-center';
+const ERROR_CLASS = 'text-sm text-red-700 dark:text-red-400 py-6 text-center';
 
 /**
  * Turn an import failure into copy the user can act on.
@@ -216,7 +216,6 @@ export function ImportPrDialog() {
     setImportBusy(true, pr);
 
     let sessionId: string | null = null;
-    let status = 'active';
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/pr-import`, {
         method: 'POST',
@@ -237,20 +236,19 @@ export function ImportPrDialog() {
         return;
       }
       sessionId = data.sessionId;
-      status = data.status || 'active';
     } catch {
       setImportBusy(false);
       setError('Network error. Please try again.');
       return;
     }
 
-    // Import confirmed. Land on the imported item's discussion page, THEN close the
+    // Import confirmed. Land on the imported item's full change page, THEN close the
     // dialog — so it covers the transition instead of flashing the screen the
     // user came from.
     setImportBusy(false);
     try {
       await (appView?.openTopic as ((kind: string, id: string | null) => Promise<void>))(
-        status === 'promoted' ? 'proposal' : 'session',
+        'proposal',
         sessionId,
       );
     } catch {
@@ -392,7 +390,7 @@ export function ImportPrDialog() {
             Still working. GitHub is being slow, so don’t close this window.
           </div>
         </div>
-        <div id="import-pr-error" ref={errorRef} className="text-red-400 text-sm hidden mt-3">
+        <div id="import-pr-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden mt-3">
           {error}
         </div>
         <div className="flex gap-3 mt-5">

@@ -91,7 +91,7 @@ test('the Dockerfile compiles the stylesheet in a builder stage', () => {
     'the builder installs the locked compiler and dependencies');
   assert.match(dockerfile, /RUN npm run build/,
     'Docker and Paketo must use the same npm build entrypoint');
-  assert.match(dockerfile, /COPY --from=css \/build\/public\/tailwind\.css \.\/public\/tailwind\.css/,
+  assert.match(dockerfile, /COPY --chown=1000:1000 --from=css \/build\/public\/tailwind\.css \.\/public\/tailwind\.css/,
     'the runtime stage should copy the compiled stylesheet in');
 
   // The runtime image must stay production-only: tailwindcss lives in the
@@ -100,10 +100,18 @@ test('the Dockerfile compiles the stylesheet in a builder stage', () => {
   const runtime = dockerfile.slice(dockerfile.indexOf('RUN npm ci --omit=dev'));
   assert.ok(!runtime.includes('tailwindcss'), 'the runtime stage must not install tailwindcss');
 
-  // Ordering matters: COPY . . would clobber the compiled file if it landed
+  // Ordering matters: the source copy would clobber the compiled file if it landed
   // after the --from=css copy.
-  assert.ok(dockerfile.indexOf('COPY . .') < dockerfile.indexOf('COPY --from=css'),
+  assert.ok(dockerfile.indexOf('COPY --chown=1000:1000 . .') < dockerfile.indexOf('--from=css'),
     'the compiled stylesheet must be copied AFTER the source tree');
+
+  // App Deployments enforce runAsNonRoot without assigning a UID. A numeric
+  // image user is therefore part of the scaffold's Kubernetes contract.
+  assert.match(dockerfile, /^USER 1000:1000$/m);
+  assert.doesNotMatch(dockerfile, /^USER node$/m,
+    'the kubelet cannot verify a symbolic image user before startup');
+  assert.ok(dockerfile.indexOf('USER 1000:1000') < dockerfile.indexOf('CMD ["node", "server.js"]'),
+    'the runtime command must run as the declared non-root user');
 
   // Signal handling contract from the platform conventions is unchanged.
   assert.ok(dockerfile.includes('CMD ["node", "server.js"]'), 'CMD stays exec-form');

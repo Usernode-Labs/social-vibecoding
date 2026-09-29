@@ -31,10 +31,10 @@ const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app.js'),
   'utf8'
 );
-const SESSIONS_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
-  'utf8'
-);
+// #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+// turn.js comes first: the first broadcastGlobal literal must stay send()'s.
+const SESSIONS_SRC = [['src', 'services', 'mayor', 'turn.js'], ['src', 'routes', 'sessions.js']]
+  .map((p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8')).join('\n');
 
 // Build the global-WS payload EXACTLY the way the server's send() helper does,
 // by evaluating the real broadcastGlobal({ ... }) object literal from the route

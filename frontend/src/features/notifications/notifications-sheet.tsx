@@ -36,6 +36,14 @@
  * sheet: `#notifications-all-messages` opens the same #messages screen the
  * app chip's Messages row does.
  *
+ * AGENTS LIVE HERE TOO (#2815). The bell had a fourth tab, Agents, listing
+ * the running sessions; the Messages screen already puts agents in its chats
+ * beside people, so the bell now does the same. The Messages tab is one list,
+ * newest first: conversation rows, the agent notifications (a session
+ * finished, Claude asked you something, work it submitted — the `agent` flag
+ * screenViews sets in ./notifications.js) and the sessions themselves as the
+ * same <SessionRow> the Agents tab drew, each at its own last-activity time.
+ *
  * The rows on it are already collapsed per conversation — a run of
  * consecutive same-conversation notifications renders as one row with a
  * count, see collapseConversationRuns in ./notifications.js — so a friend
@@ -92,8 +100,10 @@
  * exactly what the SSG prerender ships.
  */
 
+import { OverlayScrim } from '../../lib/overlay-scrim-view';
 import { useState, type ReactNode } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
@@ -105,6 +115,9 @@ import { notificationsStore } from './notifications-store.js';
 import { notificationsSheetStore } from './notifications-sheet-store.js';
 import { NotificationsSheet } from './notifications-sheet-controller.js';
 import { NotificationsPinnedSections } from './notifications-list';
+import { improveStore } from '../improve/improve-store.js';
+import { SessionRow } from '../improve/session-row';
+import type { SessionRowView } from '../improve/session-row';
 import type { NotificationRowView } from './notifications-list';
 
 type ScreenRowView = NotificationRowView & {
@@ -120,6 +133,8 @@ type ScreenRowView = NotificationRowView & {
   by?: string | null;
   /** Set on a conversation row — what the Messages tab filters on. */
   conversation?: boolean;
+  /** Set on an agent-status row (#2815) — the Messages tab lists these too. */
+  agent?: boolean;
   conversationId?: number | null;
   /**
    * How many notifications this row stands for. Present only on a genuine
@@ -130,6 +145,15 @@ type ScreenRowView = NotificationRowView & {
 };
 
 type Tab = 'all' | 'unread' | 'messages';
+
+/**
+ * One entry on the Messages tab: a notification row, or a running session.
+ * Both carry `at` (ms) so the tab sorts them as one list, as the Messages
+ * screen's chats section does (see buildInbox in ../messages/inbox.ts).
+ */
+type MessagesEntry =
+  | { type: 'notif'; key: string; at: number; view: ScreenRowView }
+  | { type: 'session'; key: string; at: number; session: SessionRowView & { sortAt?: number } };
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
@@ -177,17 +201,46 @@ function SectionHead({ children }: { children: ReactNode }): ReactNode {
   );
 }
 
-function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
-  return (
-    <button
-      data-notif-id={view.id}
-      className={'notifications-row w-full text-left px-4 py-3.5 '
-        + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
+/**
+ * A row's own buttons, beside the tap that opens the thing (#1688).
+ *
+ * #2386: a row with TWO actions (a friend request's Accept and Decline) puts
+ * them on their own line under the text, lined up with it past the tile.
+ * Beside the text, two pills leave a phone's row a few letters wide. One
+ * action ("Still yes") keeps its place at the row's end.
+ */
+function RowActions({ view, actions }: {
+  view: { id: number };
+  actions: { key: string; label: string; primary?: boolean }[];
+}): ReactNode {
+  const buttons = actions.map((a) => (
+    // The widget language's filled pill, through the shell's <Button>:
+    // the accent one for the row's primary act, the neutral one beside it.
+    <Button
+      key={a.key}
+      type="button"
+      data-notif-action={a.key}
+      variant={a.primary ? 'pillAccent' : 'pillNeutral'}
+      size="default"
+      ink={a.primary ? 'solid' : 'neutral'}
+      className="shrink-0"
       onClick={(event) => {
         event.stopPropagation();
-        controller()?._onItemClick(view.id);
+        controller()?._onRowAction(view.id, a.key);
       }}
     >
+      {a.label}
+    </Button>
+  ));
+  if (actions.length > 1) return <div className="flex items-center gap-2 pl-[3.75rem]">{buttons}</div>;
+  return <>{buttons}</>;
+}
+
+function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
+  // Everything between the row's left edge and its chevron: the tile, the
+  // three lines, the count, the dot.
+  const body = (
+    <>
       <AvatarChip view={view} />
       <span className="flex-1 min-w-0">
         {/* WHAT KIND. Its own line since the subject stopped sharing one with
@@ -265,6 +318,46 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
         </span>
       ) : null}
       <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600" />
+    </>
+  );
+  // #1688: a row with an action of its own ("Still yes" on a re-confirm ask)
+  // keeps the row as the tap that opens the thing, and puts the action
+  // beside it as a real button — never a button inside a button.
+  const actions = view.actions || [];
+  if (actions.length) {
+    return (
+      <div
+        data-notif-id={view.id}
+        // #2386: two actions (a friend request's Accept and Decline) stack
+        // under the text; see RowActions.
+        className={actions.length > 1
+          ? 'notifications-row w-full px-4 py-3.5 flex flex-col gap-2'
+          : 'notifications-row w-full px-4 py-3.5 flex items-center gap-3'}
+      >
+        <button
+          className="min-w-0 flex-1 text-left flex items-center gap-4"
+          onClick={(event) => {
+            event.stopPropagation();
+            controller()?._onItemClick(view.id);
+          }}
+        >
+          {body}
+        </button>
+        <RowActions view={view} actions={actions} />
+      </div>
+    );
+  }
+  return (
+    <button
+      data-notif-id={view.id}
+      className={'notifications-row w-full text-left px-4 py-3.5 '
+        + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
+      onClick={(event) => {
+        event.stopPropagation();
+        controller()?._onItemClick(view.id);
+      }}
+    >
+      {body}
     </button>
   );
 }
@@ -287,7 +380,9 @@ export function NotificationsSheetView() {
 
   // `?shot=notifications-messages` lands on the Messages tab, so the capture
   // pipeline and the declared checks can reach a view that is otherwise only
-  // one click away and therefore invisible to both.
+  // one click away and therefore invisible to both. It is also the address of
+  // the agent session rows: they were the Improve panel's, then the Agents
+  // tab's (#2718 review), and are the Messages tab's since #2815.
   //
   // In an effect and not in the initial state, for the reason every deep link
   // in this bundle is: the SSG pass renders this island in Node, where there
@@ -303,16 +398,54 @@ export function NotificationsSheetView() {
 
   const all = snap.screenList || [];
   const unread = all.filter((view) => view.unread);
-  const messages = all.filter((view) => view.conversation);
-  const rows = tab === 'unread' ? unread : tab === 'messages' ? messages : all;
+  const messages = all.filter((view) => view.conversation || view.agent);
+  // WHAT YOU ARE WORKING ON, from the store that already answers it (#2718
+  // review). The Improve panel splits the same list in two — this app's and
+  // everywhere else — because it is standing inside an app; the bell is not,
+  // so it is one list and every row names its app. No second fetch and no
+  // second model: a tab that recomputed "which sessions are live" would be a
+  // second answer to a question the platform already answers once.
+  const improve = useStoreState(improveStore) as {
+    sessions: (SessionRowView & { sortAt?: number })[];
+    otherSessions: (SessionRowView & { sortAt?: number })[];
+    sessionsLoaded: boolean;
+  };
+  const agentRows = [...(improve.sessions || []), ...(improve.otherSessions || [])];
+  const rows = tab === 'unread' ? unread
+    : tab === 'messages' ? messages : all;
+  // #2815: the Messages tab interleaves the sessions with its notification
+  // rows by time, one list, newest first — the order the Messages screen's
+  // chats section keeps. Stable sort, so a tie keeps notifications first.
+  const messageEntries: MessagesEntry[] = tab === 'messages'
+    ? [
+      ...messages.map((view): MessagesEntry => (
+        { type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view })),
+      ...agentRows.map((session): MessagesEntry => (
+        { type: 'session', key: `s:${session.key}`, at: session.sortAt || 0, session })),
+    ].sort((a, b) => b.at - a.at)
+    : [];
   // The tab counts NOTIFICATIONS, not rows. A collapsed conversation row
   // stands for `count` of them, so summing is what keeps this number equal to
   // the one on the bell — after collapsing, `unread.length` would say 1 where
   // the badge says 4.
   const unreadCount = unread.reduce((sum, view) => sum + (view.count || 1), 0);
   const boundary = startOfToday();
-  const today = rows.filter((view) => view.createdAtMs >= boundary);
-  const earlier = rows.filter((view) => view.createdAtMs < boundary);
+  const entries: MessagesEntry[] = tab === 'messages' ? messageEntries
+    : rows.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
+  const today = entries.filter((entry) => entry.at >= boundary);
+  const earlier = entries.filter((entry) => entry.at < boundary);
+  const renderEntry = (entry: MessagesEntry): ReactNode => (entry.type === 'session' ? (
+    // The same <SessionRow> the Improve panel and then the Agents tab drew,
+    // so a session reads the same wherever you meet it and its busy /
+    // awaiting-input state cannot say two different things in two places.
+    // `showApp` because the bell is the platform's, not one app's.
+    <SessionRow
+      key={entry.key}
+      session={entry.session}
+      showApp
+      onNavigate={() => { NotificationsSheet.close?.(); }}
+    />
+  ) : <ScreenRow key={entry.key} view={entry.view} />);
 
   // `whitespace-nowrap`: "Unread (12)" is two words and the strip is a flex
   // row inside a phone-width sheet, so the count wrapped onto a second line
@@ -417,6 +550,8 @@ export function NotificationsSheetView() {
             kudos notification, and it is the one kind you answer rather than
             just read. It sits next to Unread because both are filters on what
             still wants something from you; All is the archive behind them.
+            Agents are in it too (#2815), as they are on the Messages screen:
+            there is no separate Agents tab.
         */}
         <button
           id="notifications-tab-messages"
@@ -506,7 +641,7 @@ export function NotificationsSheetView() {
           <SectionHead>
             Today
           </SectionHead>
-          {today.map((view) => <ScreenRow key={view.id} view={view} />)}
+          {today.map(renderEntry)}
         </>
       ) : null}
       {earlier.length ? (
@@ -514,10 +649,10 @@ export function NotificationsSheetView() {
           <SectionHead>
             Earlier
           </SectionHead>
-          {earlier.map((view) => <ScreenRow key={view.id} view={view} />)}
+          {earlier.map(renderEntry)}
         </>
       ) : null}
-      {!rows.length ? (
+      {!entries.length ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
           {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
         </p>
@@ -584,6 +719,7 @@ export function NotificationsSheetView() {
       ) : null}
       </div>
       </div>
+      <OverlayScrim panelId="notifications-sheet" backdropId="notifications-sheet-overlay" />
     </>
   );
 }

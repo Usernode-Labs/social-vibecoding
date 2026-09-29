@@ -98,6 +98,7 @@ function makeDom() {
       onload: null,
       onerror: null,
       _src: attrs.src === undefined ? null : attrs.src,
+      _attrs: { sandbox: attrs.sandbox === undefined ? null : attrs.sandbox },
       _text: '',
       _html: '',
       htmlWrites: 0,
@@ -105,10 +106,10 @@ function makeDom() {
       set src(v) { el._src = String(v); },
       getAttribute(name) {
         if (name === 'src') return el._src;
-        return null;
+        return Object.prototype.hasOwnProperty.call(el._attrs, name) ? el._attrs[name] : null;
       },
-      setAttribute() {},
-      removeAttribute() {},
+      setAttribute(name, value) { el._attrs[name] = String(value); },
+      removeAttribute(name) { delete el._attrs[name]; },
       set textContent(v) { el._text = String(v); },
       get textContent() { return el._text; },
       set innerHTML(v) {
@@ -152,11 +153,13 @@ function makeDom() {
       }
       const classM = /\bclass="([^"]*)"/.exec(attrs);
       const srcM = /\bsrc="([^"]*)"/.exec(attrs);
+      const sandboxM = /\bsandbox="([^"]*)"/.exec(attrs);
       mkEl(idM[1], {
         tagName,
         dataset,
         class: classM ? classM[1] : '',
         src: srcM ? srcM[1] : undefined,
+        sandbox: sandboxM ? sandboxM[1] : undefined,
       });
     }
   }
@@ -399,7 +402,7 @@ test('beginLaunch mounts the app frame and its cover, and points it at the app i
 
   const iframe = dom.els.get('app-iframe');
   assert.ok(iframe, 'frame mounted');
-  assert.equal(iframe.src, 'https://notes.apps.example/?token=tok-1',
+  assert.equal(iframe.src, 'https://notes.apps.example/?token=tok-1&un-theme=light',
     'src assigned synchronously, with the app-scoped token');
   assert.equal(iframe.style.opacity, undefined, 'not revealed yet (opacity comes from the markup)');
   assert.match(dom.els.get('app-content').innerHTML, /style="opacity:0"/,
@@ -436,7 +439,7 @@ test('without a warm token the frame mounts src-less and is pointed at the app o
 
   release();
   await flush();
-  assert.equal(iframe.src, 'https://notes.apps.example/?token=tok-late');
+  assert.equal(iframe.src, 'https://notes.apps.example/?token=tok-late&un-theme=light');
   assert.equal(AppView._launchAdopt.src, iframe.src);
 });
 
@@ -580,16 +583,21 @@ test('a render whose src differs (deep link) rebuilds rather than adopting', () 
   AppView.pendingInnerPath = '/t/123';
   AppView.renderAppTab();
   assert.equal(content.htmlWrites, writesAfterLaunch + 1, 'rebuilt');
-  assert.match(dom.els.get('app-iframe').src, /\/t\/123\?token=tok-1$/, 'at the deep-linked path');
+  assert.match(dom.els.get('app-iframe').src, /\/t\/123\?token=tok-1&un-theme=light$/, 'at the deep-linked path');
 });
 
 test('the rebuilt frame keeps the sandbox/allow contract in one place', () => {
-  const { AppView, content } = launchThenRender();
+  const { AppView, content, dom } = launchThenRender();
   AppView.renderAppTab();
   AppView.renderAppTab();
-  assert.match(content.innerHTML,
-    /sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"/);
-  assert.match(content.innerHTML, /allow="clipboard-write; pointer-lock; geolocation"/);
+  assert.match(content.innerHTML, /sandbox=""/,
+    'the source-less blank frame starts fully restricted');
+  assert.equal(dom.els.get('app-iframe').getAttribute('sandbox'),
+    'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock',
+    'the app sandbox is installed immediately before its safe navigation');
+  // #2219: the UNGATED BASE. `geolocation` left this constant when it became
+  // a per-user, per-app grant; a frame with no grants delegates exactly this.
+  assert.match(content.innerHTML, /allow="clipboard-write"/);
 });
 
 test('a non-running render retires the launch generation', () => {
@@ -598,6 +606,116 @@ test('a non-running render retires the launch generation', () => {
   AppView.renderAppTab();
   assert.ok(AppView._launchId > before, 'pending launch callbacks go inert');
   assert.equal(AppView._launchAdopt, null);
+});
+
+// ── 5b. The permission policy rides the mint (#2219) ─────────────────────
+//
+// A frame's Permissions Policy is computed from `allow` when it NAVIGATES,
+// so the granted set has to be in hand on the line before `src` is assigned.
+// That is why it comes back from the token mint rather than from a second
+// fetch, and these pin the plumbing end to end: mint answer → held state →
+// the attribute a browser actually reads.
+
+const tokenWithPermissions = (effective, token = 'tok-1') => async (url) => {
+  if (url.startsWith('/api/iframe-token')) {
+    return {
+      ok: true,
+      json: async () => ({
+        token,
+        permissions: { declared: effective.map((c) => ({ capability: c, reason: null })), granted: effective, effective },
+      }),
+    };
+  }
+  return { ok: true, json: async () => ({ app: { ...RUNNING } }) };
+};
+
+test('a granted capability reaches the frame allow attribute', async () => {
+  const { AppView, dom } = makeAppView({ fetchImpl: tokenWithPermissions(['camera', 'geolocation']) });
+  await AppView.refreshToken('notes');
+  AppView.appData = { ...RUNNING };
+  AppView.renderAppTab();
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write; geolocation; camera'
+  );
+});
+
+test('an app with no grants gets the ungated base and nothing else', async () => {
+  const { AppView, dom } = makeAppView({ fetchImpl: tokenWithPermissions([]) });
+  await AppView.refreshToken('notes');
+  AppView.appData = { ...RUNNING };
+  AppView.renderAppTab();
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write'
+  );
+});
+
+test('a mint that answers no permissions at all delegates only the base', async () => {
+  // A platform that predates the field, or the best-effort read failing
+  // server-side. Failing closed is the whole point.
+  const { AppView, dom } = makeAppView({ fetchImpl: okToken() });
+  await AppView.refreshToken('notes');
+  AppView.appData = { ...RUNNING };
+  AppView.renderAppTab();
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write'
+  );
+});
+
+test('one app’s grants never ride another app’s navigation', async () => {
+  // The held permissions are slug-checked exactly like the held token. A
+  // camera grant for `notes` must not be delegated to `other` just because
+  // it is the value still sitting in memory.
+  const { AppView, dom } = makeAppView({ fetchImpl: tokenWithPermissions(['camera']) });
+  await AppView.refreshToken('notes');
+  assert.deepEqual([...AppView.grantedForSlug('notes')], ['camera']);
+  assert.deepEqual([...AppView.grantedForSlug('other')], []);
+
+  AppView.appData = { ...RUNNING, slug: 'other', url: 'https://other.example' };
+  AppView.renderAppTab();
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write',
+    'the other app navigates with the base only'
+  );
+});
+
+test('a failed mint drops the held permissions with the token', async () => {
+  const { AppView } = makeAppView({
+    fetchImpl: async (url) => (url.startsWith('/api/iframe-token')
+      ? { ok: false, json: async () => ({}) }
+      : { ok: true, json: async () => ({ app: { ...RUNNING } }) }),
+  });
+  AppView.iframePermissions = { declared: [], granted: [], effective: ['camera'] };
+  AppView.iframePermissionsSlug = 'notes';
+  await AppView.refreshToken('notes');
+  assert.equal(AppView.iframePermissions, null);
+  assert.deepEqual([...AppView.grantedForSlug('notes')], []);
+});
+
+test('the eager launch path delegates the prewarmed grant set', async () => {
+  // beginLaunch assigns src synchronously off the freshness cache. The
+  // permissions were cached by that same mint and must be published on the
+  // same lines, or the tap-launched frame navigates with the base while the
+  // token says the app is fully launched.
+  const { AppView, dom } = makeAppView({ fetchImpl: tokenWithPermissions(['microphone']) });
+  await AppView._mintToken('notes');
+  assert.ok(AppView.hasFreshToken('notes'), 'the prewarm landed');
+  AppView.beginLaunch('notes');
+  assert.equal(
+    dom.els.get('app-iframe').getAttribute('allow'),
+    'clipboard-write; microphone'
+  );
+});
+
+test('the pending source-less frame delegates the base before it navigates', () => {
+  const { AppView, dom, content } = launchThenRender();
+  AppView.renderAppTab();
+  AppView.renderAppTab();
+  assert.match(content.innerHTML, /allow="clipboard-write"/);
+  assert.ok(dom.els.get('app-iframe'));
 });
 
 // ── 6. AppView.open parallelization ─────────────────────────────────────
@@ -649,6 +767,46 @@ test('open tears the launch down when the server will not confirm the app', asyn
   // what matters is that nothing will reveal an orphan frame under it.
   dom.els.get('app-iframe').onload();
   assert.equal(cover.classList.contains('app-launch-cover--out'), false);
+});
+
+// ── 6b. AppView.open ownership ────────────────────────────────────────
+
+test('an older app detail response cannot replace the app opened after it', async () => {
+  const releases = {};
+  const { AppView, sandbox } = makeAppView({
+    fetchImpl: (url) => {
+      if (url.startsWith('/api/iframe-token')) {
+        const slug = new URL(url, 'https://platform.example').searchParams.get('app');
+        return Promise.resolve({ ok: true, json: async () => ({ token: `tok-${slug}` }) });
+      }
+      const slug = String(url).split('/').pop();
+      return new Promise((resolve) => {
+        releases[slug] = () => resolve({
+          ok: true,
+          json: async () => ({ app: { ...RUNNING, slug, name: slug } }),
+        });
+      });
+    },
+  });
+  // These effects are unrelated to the ownership race and would start
+  // background work the harness deliberately does not model.
+  AppView.prefetchDevData = () => {};
+  AppView.startActivityTracking = () => {};
+  AppView.startTokenRefresh = () => {};
+
+  sandbox.App.currentApp = 'older-app';
+  const older = AppView.open('older-app', { needsToken: false });
+  sandbox.App.currentApp = 'newer-app';
+  const newer = AppView.open('newer-app', { needsToken: false });
+
+  releases['newer-app']();
+  await newer;
+  assert.equal(AppView.appData.slug, 'newer-app');
+
+  releases['older-app']();
+  await older;
+  assert.equal(AppView.appData.slug, 'newer-app',
+    'a superseded request must not overwrite the current app context');
 });
 
 // ── 7. Screenshot state ─────────────────────────────────────────────────

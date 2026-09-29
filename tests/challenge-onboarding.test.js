@@ -106,8 +106,11 @@ test('event-scoped reads resolve onboarding across the season and reuse prior te
 // HTTP coverage of the actual list handlers. Authentication has dedicated
 // suites; inject an authenticated identity here and exercise the same handler
 // registered for web sessions and native tokens against one catalog/ledger.
-function makeApp(counts = [0, 0, 0]) {
-  const state = { counts };
+function makeApp(counts = [0, 0, 0], credits = {}) {
+  // `blocks` is the viewer's newest leaderboard snapshot for the event — the
+  // only place a block score is ever written, and what challenge 9 below is
+  // counted from.
+  const state = { counts, credits, blocks: 0 };
   const rows = Array.from({ length: 9 }, (_, i) => {
     const id = i + 1;
     return {
@@ -115,17 +118,27 @@ function makeApp(counts = [0, 0, 0]) {
       t_goal: ['Try Three Apps', 'Propose a Change', 'Join Network Operation',
         'Identity Level 1', 'Identity Level 2'][i] || `Weekly ${id}`,
       t_task: 'Existing task', t_reward: '500 pts',
-      metric_type: id === 1 ? 'count' : null,
-      metric_target: id === 1 ? 3 : null,
+      // Challenge 9 is the block-production card (#2492): its metric counts
+      // blocks, which never reach `user_activities`, so its progress can only
+      // come from the snapshot read.
+      metric_type: id === 1 ? 'count' : (id === 9 ? 'blocks_produced' : null),
+      metric_target: id === 1 ? 3 : (id === 9 ? 500 : null),
+      metric_label: id === 9 ? 'blocks' : null,
       event_type: 'season', event_name: 'Current season',
     };
   });
   const done = (id) => (state.counts[id - 1] || 0) >= (id === 1 ? 3 : 1);
   const pool = { query: async (raw, params = []) => {
     const sql = raw.replace(/\s+/g, ' ').trim();
+    if (sql.startsWith('/* challenge event blocks */')) {
+      return { rows: (params[1] || []).map((eventId) => ({ season_event_id: eventId, blocks: state.blocks })) };
+    }
     if (sql.startsWith('/* challenge onboarding */')) {
       return { rows: intro(params[0] === 7 ? state.counts : [0, 0, 0]) };
     }
+    // The public list's scoring-cadence read (#3185). No rule scores anything
+    // in this fixture, so every card's `scoring` is null.
+    if (sql.startsWith('/* challenge scoring cadence */')) return { rows: [] };
     if (sql.includes('SELECT home_panels_hidden FROM users')) return { rows: [{ home_panels_hidden: [] }] };
     if (sql.includes('FROM seasons')) return { rows: [{ id: 2, name: 'Current season', internal: false }] };
     if (sql.startsWith('SELECT id, type, name')) return { rows: [{ id: 10, type: 'season' }, { id: 11, type: 'regular' }] };
@@ -136,21 +149,53 @@ function makeApp(counts = [0, 0, 0]) {
       // The totals statement counts the open scope and the whole catalog in one
       // pass (#1824), so `AS all_total` is what identifies it now. Nothing here
       // models completion or scheduling windows, so both counts are the same.
+      // The row query narrows its WHERE by the gate ($4); the totals statement
+      // gates each aggregate ($3) and, only while locked, adds `hidden_count`.
       if (sql.includes('my_activity_count') || sql.includes('AS all_total')) {
         const totals = sql.includes('AS all_total');
-        const allowed = sql.includes('AND c.id = ANY') ? params[totals ? 2 : 3] : null;
+        const allowed = totals
+          ? (sql.includes('AS hidden_count') ? params[2] : null)
+          : (sql.includes('AND c.id = ANY') ? params[3] : null);
         const selected = rows.filter((r) => !allowed || allowed.includes(r.id));
         if (totals) return { rows: [{
           total: selected.length, all_total: selected.length,
           done: selected.filter((r) => done(r.id)).length,
           open_rewards: selected.filter((r) => !done(r.id)).map((r) => r.t_reward),
+          ...(allowed ? { hidden_count: rows.length - selected.length } : {}),
         }] };
         return { rows: [...selected].sort((a, b) => Number(done(a.id)) - Number(done(b.id)))
           .slice(0, params[2]).map((r) => ({ ...r, my_done: done(r.id), my_activity_count: 0 })) };
       }
       return { rows: params[0] === 11 ? rows.filter((r) => r.id > 5) : rows };
     }
-    if (sql.includes('FROM user_activities')) return { rows: [] };
+    // The per-viewer credit count the challenge lists now attach to EVERY
+    // challenge, not only the gate's three. `state.credits` maps a challenge
+    // id to how many ledger rows the viewer has on it.
+    if (sql.includes('FROM user_activities') && sql.includes('GROUP BY challenge_id')) {
+      const ids = params[1] || [];
+      return {
+        rows: Object.entries(state.credits || {})
+          .filter(([id]) => ids.includes(Number(id)))
+          .map(([id, credits]) => ({ challenge_id: Number(id), credits })),
+      };
+    }
+    // The personalised list loads the viewer's rows themselves and counts
+    // them in JS, where the public list asks Postgres for the count. Two
+    // shapes, one fixture.
+    if (sql.includes('FROM user_activities')) {
+      const ids = params[1] || [];
+      const out = [];
+      for (const [id, credits] of Object.entries(state.credits || {})) {
+        if (!ids.includes(Number(id))) continue;
+        for (let i = 0; i < credits; i += 1) {
+          out.push({
+            challenge_id: Number(id), points: 100, description: null,
+            activity_at: new Date(),
+          });
+        }
+      }
+      return { rows: out };
+    }
     throw new Error(`Unexpected SQL: ${sql}`);
   } };
 
@@ -203,12 +248,22 @@ test('public, web-session, and mobile lists unlock on the third completion', asy
       assert.deepEqual(locked.data.map((c) => c.id), [1, 2, 3]);
       assert.equal(locked.onboarding.completed, 2);
       assert.equal(locked.data[0].progress.done, false);
+      // The web's event list says how many of its challenges the gate hides
+      // (the "6 challenges locked" placeholder). The native lists keep their
+      // exact summary shape.
+      if (path.startsWith('/api/v4/season-events/')) assert.equal(locked.onboarding.hidden_count, 6);
+      else assert.equal('hidden_count' in locked.onboarding, false, path);
     }
+    // Scoped to THIS event: event 11 lists four weekly challenges, all hidden.
+    const weekly = await get('/api/v4/season-events/11/challenges');
+    assert.deepEqual(weekly.data, []);
+    assert.equal(weekly.onboarding.hidden_count, 4);
     state.counts = [3, 1, 1];
     for (const path of ['/api/v4/season-events/10/challenges', '/api/v4/mobile/challenges?season_id=2']) {
       const unlocked = await get(path);
       assert.equal(unlocked.data.length, 9);
       assert.equal(unlocked.onboarding.unlocked, true);
+      assert.equal('hidden_count' in unlocked.onboarding, false, path);
       const identity = unlocked.data.find((c) => c.id === 4);
       assert.equal(identity.category || identity.activity_type.category, 'PERSISTENT');
       assert.equal(unlocked.data[0].progress.done, true);
@@ -241,13 +296,91 @@ test('home counts and expanded lists respect the same gate and existing lifetime
       assert.equal(panel.done, 2);
       assert.equal(panel.points_remaining, 500);
       assert.deepEqual(panel.challenges.map((c) => c.id).sort(), [1, 2, 3]);
+      assert.equal(panel.onboarding.hidden_count, 6, path);
     }
     state.counts = [3, 1, 1];
     const panel = (await get('/api/home-panels?expand=challenges')).panels.find((p) => p.key === 'challenges');
     assert.equal(panel.total, 9);
     assert.equal(panel.done, 3);
     assert.equal(panel.onboarding.unlocked, true);
+    assert.equal('hidden_count' in panel.onboarding, false);
     assert.equal(panel.challenges.find((c) => c.id === 4).label, 'PERSISTENT');
     assert.equal(panel.challenges.find((c) => c.id === 1).progress.done, true);
   });
+});
+
+test('a finished challenge outside the gate reports done, not merely started', () => {
+  // The lists used to carry progress for the gate's three challenges alone,
+  // because nothing credited the others without an admin typing it in. The
+  // card reads `progress.done`, so a persistent challenge somebody had
+  // finished AND been paid for showed "Started" for good. Automatic scoring
+  // makes that the normal state of most of a season, so every challenge now
+  // carries the viewer's progress.
+  const { app, state } = makeApp([3, 1, 1], { 6: 1, 7: 2 });
+  return withServer(app, async (get) => {
+    for (const path of ['/api/v4/season-events/10/challenges', '/challenges-api/challenges?season_id=2']) {
+      const body = await get(path);
+      const byId = new Map(body.data.map((c) => [c.id, c]));
+      assert.equal(byId.get(6).progress.done, true, `${path}: a credited weekly challenge is done`);
+      assert.equal(byId.get(8).progress.done, false, `${path}: an uncredited one is not`);
+    }
+    // And the gate's own rows keep the onboarding service's answer.
+    const body = await get('/api/v4/season-events/10/challenges');
+    assert.equal(body.data.find((c) => c.id === 1).progress.current, 3);
+    assert.equal(state.credits[6], 1);
+  });
+});
+
+test('a block-production card carries the snapshot count, as Home always has (#2492)', () => {
+  // The bug: block scores live in leaderboard snapshots and never in the
+  // points ledger, so these lists attached no progress at all to a
+  // `blocks_produced` challenge and its card drew a ring with nothing beside
+  // it — while Home, reading the same snapshot, showed "180/500 blocks" for
+  // the very same challenge. The row now carries the count itself.
+  const { app, state } = makeApp([3, 1, 1]);
+  state.blocks = 180;
+  return withServer(app, async (get) => {
+    for (const path of ['/api/v4/season-events/10/challenges',
+      '/challenges-api/challenges?season_id=2', '/api/v4/mobile/challenges?season_id=2']) {
+      const block = (await get(path)).data.find((c) => c.id === 9);
+      assert.deepEqual(block.progress, { done: false, current: 180, target: 500 },
+        `${path}: counted from the snapshot, not from ledger rows`);
+    }
+    // Nothing produced yet is still a FACT, which is what lets the card say
+    // "Not started" rather than nothing at all.
+    state.blocks = 0;
+    const none = (await get('/api/v4/season-events/10/challenges')).data.find((c) => c.id === 9);
+    assert.deepEqual(none.progress, { done: false, current: 0, target: 500 });
+    // And a viewer at or past the target has finished it.
+    state.blocks = 500;
+    const done = (await get('/api/v4/mobile/challenges?season_id=2')).data.find((c) => c.id === 9);
+    assert.deepEqual(done.progress, { done: true, current: 500, target: 500 });
+  });
+});
+
+test('the snapshot read is one query, and the lists and Home share its SQL (#2492)', async () => {
+  const onboarding = require('../src/services/topochain/challenge-onboarding');
+  const panels = require('../src/routes/home-panels');
+  assert.equal(panels.MY_BLOCKS_SQL, onboarding.NEWEST_EVENT_BLOCKS_SQL,
+    'home-panels re-exports the shared subquery rather than keeping a second copy');
+
+  let calls = 0;
+  let query = null;
+  const pool = { query: async (sql, params) => {
+    calls += 1;
+    query = { sql: sql.replace(/\s+/g, ' ').trim(), params };
+    return { rows: [{ season_event_id: 10, blocks: '42' }, { season_event_id: 11, blocks: null }] };
+  } };
+  const blocks = await onboarding.loadEventBlocks(pool, 7, [10, 11, 10]);
+  assert.equal(calls, 1, 'one query for the whole list, however many events it spans');
+  assert.deepEqual(query.params, [7, [10, 11]], 'deduplicated, viewer first');
+  assert.ok(query.sql.includes(onboarding.NEWEST_EVENT_BLOCKS_SQL.replace(/\s+/g, ' ')),
+    'and it runs the same subquery Home embeds');
+  assert.deepEqual([...blocks], [[10, 42], [11, null]]);
+
+  // A signed-out viewer, or a list with no block card on it, asks nothing.
+  calls = 0;
+  assert.equal((await onboarding.loadEventBlocks(pool, null, [10])).size, 0);
+  assert.equal((await onboarding.loadEventBlocks(pool, 7, [])).size, 0);
+  assert.equal(calls, 0);
 });

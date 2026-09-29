@@ -56,12 +56,12 @@ type BodyView =
   | { state: 'private'; disclaimer: string | null }
   | {
       state: 'noentries';
-      challengeLine: { completed: string; total: string } | null;
+      challengeLine: { done: string | null; total: string } | null;
       disclaimer: string | null;
     }
   | {
       state: 'table';
-      challengeLine: { completed: string; total: string } | null;
+      challengeLine: { done: string | null; total: string } | null;
       disclaimer: string | null;
       isSeason: boolean;
       columns: ColumnKey[];
@@ -121,13 +121,20 @@ function Disclaimer({ text }: { text: string | null }): ReactNode {
  * event selection survives it.
  */
 function ChallengeLine(
-  { line }: { line: { completed: string; total: string } | null },
+  { line }: { line: { done: string | null; total: string } | null },
 ): ReactNode {
   if (!line) return null;
   return (
     <p id="tc-lb-challenge-link" className="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
-      {`${line.completed} of ${line.total} challenges completed `}
-      <span className="text-zinc-500 dark:text-zinc-500">·</span>
+      {/* The tally is the VIEWER's, and a signed-out reader has none — then
+          the cross-link stands on its own rather than carrying a zero that
+          reads as theirs. "done" is the word Home uses for this same number;
+          the two must not drift apart again. */}
+      {line.done == null ? null : `${line.done} of ${line.total} challenges done `}
+      {/* QA 2026-09-24 Q32c: a space after the dot as well as before it,
+          inside the span rather than as a whitespace-only child (React
+          #418, see notifications-list.tsx). */}
+      <span className="text-zinc-500 dark:text-zinc-500">{'· '}</span>
       <button
         id="tc-lb-to-challenges"
         className="font-medium text-violet-700 dark:text-violet-400 hover:underline"
@@ -235,9 +242,9 @@ function Pagination(
 /**
  * The standings' loading state, at the TABLE's own shape.
  *
- * This is the pane the bare `#leaderboard` address lands on, so it is the
- * first thing the screen shows — and it was the word "Loading…" on an
- * otherwise blank panel.
+ * This was the pane the bare `#leaderboard` address landed on until #2374
+ * made Challenges the default, so it was the first thing the screen showed —
+ * and it was the word "Loading…" on an otherwise blank panel.
  *
  * The container is the table's own (`rounded-lg` + the hairline), with a
  * header strip in the same `bg-zinc-50` the real `<thead>` uses, so the table

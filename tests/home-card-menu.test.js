@@ -104,6 +104,11 @@ function makeHomeEnv(user) {
     location: { search: '', origin: 'https://sv.test' },
     addEventListener: () => {},
     removeEventListener: () => {},
+    // home.js imports detectInstallHost (../mobile-install/environment); the
+    // stripped import binds nothing, so declare a laptop here. Off a phone the
+    // "Add to Home Screen" item never renders, which keeps every exact key
+    // list below as it was. tests/app-install-sheet-row.test.js pins the item.
+    detectInstallHost: () => 'none',
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -252,7 +257,17 @@ test('card layout: centered launcher tile, no visible border, capped title width
 test('card: Retry remains available on errored cards', () => {
   const Home = makeHome({ id: ME });
   const html = Home.renderAppCard(baseApp({ status: 'error', created_by: ME }));
-  assert.match(html, /retry-btn[^"]*absolute top-2 right-2/, 'Retry corner-pinned');
+  // QA 2026-09-24 Q9: no longer corner-pinned. The icon covered a
+  // `top-2 right-2` Retry on phones and it sat ~90px from the icon on
+  // desktop. It is a pill in the caption lane, beside "Error", and the tile
+  // greys only its icon so the control does not look disabled.
+  assert.doesNotMatch(html, /retry-btn[^"]* absolute /, 'Retry is not corner-pinned');
+  assert.doesNotMatch(html, /retry-btn[^"]*top-2 right-2/);
+  assert.match(html, /class="app-card-retry[^"]*"><p class="app-card-status[^"]*"[^>]*>Error<\/p><button type="button" class="retry-btn /,
+    'Retry follows "Error" in the caption lane');
+  assert.match(html, /aria-label="Retry [^"]+">Retry<\/button>/);
+  assert.match(html, /class="relative w-14 h-14 shrink-0 grayscale-\[0\.75\]"/, 'the icon is greyed');
+  assert.doesNotMatch(html.match(/class="(app-card [^"]*)"/)[1], /grayscale/, 'the card is not');
   assert.doesNotMatch(html, /card-menu-btn/, 'launcher badge removed');
   // No Retry on a running card.
   assert.doesNotMatch(Home.renderAppCard(baseApp({ created_by: ME })), /retry-btn/);
@@ -417,7 +432,7 @@ const keys = (items) => Array.from(items, (i) => i.key);
 test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
     'nothing admin-gated leaks');
   assert.equal(items[2].label, 'Add to Your apps');
 });
@@ -575,39 +590,47 @@ test('menu: every app carries a favorite entry — no card menu omits it', () =>
   }
 });
 
-test('menu: full admin on a running repo app gets check-updates, lock and delete', () => {
+test('menu: full admin on a running repo app gets check-updates, lock and safe app settings', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'check-updates', 'lock', 'delete']);
+    ['app-details', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
-  assert.equal(items.find((i) => i.key === 'delete').danger, true);
+  assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
 
-test('menu: a sole contributor gets Delete app without admin-only controls (#1897)', () => {
+test('menu: a sole contributor gets App settings without a destructive menu action (#1897)', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({
     created_by: ME,
     contributor_count: 1,
     can_delete: true,
   }));
-  assert.ok(keys(items).includes('delete'));
+  assert.ok(keys(items).includes('app-settings'));
+  assert.ok(!keys(items).includes('delete'));
   assert.ok(!keys(items).includes('lock'), 'sole contributor is not made an admin');
-  assert.equal(items.find((i) => i.key === 'delete').danger, true);
+  assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
 
-test('menu: an ineligible creator or app admin gets no Delete app action (#1897)', () => {
+test('menu: creators and app admins keep App settings without gaining Delete', () => {
   const Home = makeHome({ id: ME });
-  assert.ok(!keys(Home.menuItemsFor(baseApp({
+  const creatorItems = keys(Home.menuItemsFor(baseApp({
     created_by: ME,
+    can_manage: true,
     contributor_count: 2,
     can_delete: false,
-  }))).includes('delete'));
-  assert.ok(!keys(Home.menuItemsFor(baseApp({
+    delete_block: 'shared',
+  })));
+  assert.ok(creatorItems.includes('app-settings'));
+  assert.ok(!creatorItems.includes('delete'));
+  const appAdminItems = keys(Home.menuItemsFor(baseApp({
     created_by: OTHER,
     can_manage: true,
     can_delete: false,
-  }))).includes('delete'), 'general app management does not grant deletion');
+    delete_block: 'not_owner',
+  })));
+  assert.ok(appAdminItems.includes('app-settings'), 'general app management exposes access settings');
+  assert.ok(!appAdminItems.includes('delete'), 'general app management does not grant deletion');
 });
 
 test('menu: locked app offers Unlock', () => {
@@ -630,7 +653,7 @@ test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', (
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
   // App details is navigation, not a mutation, so it survives the gate.
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite'],
+  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications'],
     'no retry/check/lock/delete');
 });
 
@@ -638,7 +661,7 @@ test('menu: errored app adds Retry + View build log for the creator (#416)', () 
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ status: 'error', created_by: ME }));
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'retry', 'build-log']);
+    ['app-details', 'github', 'favorite', 'notifications', 'retry', 'build-log']);
 });
 
 // ── "View build log" gating (#416) ────────────────────────────────
@@ -705,7 +728,7 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'add-to-homescreen']);
+    ['app-details', 'github', 'favorite', 'notifications', 'add-to-homescreen']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'
@@ -2520,4 +2543,46 @@ test('the anchor snapshot survives the kit dismissing on pointerdown (#1838)', a
   assert.equal(Home._menuAnchor, null);
   env.doc('pointerdown');
   assert.equal(Home._menuAnchorAtPress, null);
+});
+
+test('App settings opens the named app without making a deletion request (#2158)', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME, canAdminWrite: true });
+  let opened;
+  sandbox.UsernodeReact = { dialogs: { appSettings: { open(payload) { opened = payload.slug; } } } };
+  sandbox.fetch = () => { throw new Error('Opening settings must not mutate the app'); };
+  const app = baseApp();
+  Home.menuItemsFor(app).find((item) => item.key === 'app-settings').run();
+  assert.equal(opened, app.slug);
+  assert.ok(!Home.menuItemsFor(app).some((item) => item.key === 'delete'));
+});
+
+// QA 2026-09-24 Q9, on the React tile the launcher actually renders
+// (frontend/src/features/home/app-grid.tsx): the same caption-lane Retry as
+// renderAppCard above, the icon greyed and the card not.
+test('grid tile: Retry sits beside "Error" and the card is not greyed', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { INITIAL_GRID } = require('./helpers/home-grid-store');
+  const app = {
+    slug: 'broken', name: 'Broken App', status: 'error', icon: { kind: 'letter', letter: 'B' },
+    locked: false, demo: false, statusLabel: 'Error', isAwaiting: false, isError: true,
+    clickable: false, failureReason: 'Build failed: x', showRetry: true, forkName: null,
+  };
+  const render = (a) => {
+    const state = { ...INITIAL_GRID, ready: true, items: [{ kind: 'card', placement: { col: 0, row: 0, w: 1, h: 1 }, app: a }] };
+    const gridStore = { get: () => state, subscribe: () => () => {} };
+    const { AppGrid } = loadTsx('frontend/src/features/home/app-grid.tsx', { stubs: { './grid-store': { gridStore } } });
+    return renderToHtml(createElement(AppGrid, {}));
+  };
+  const html = render(app);
+  const card = html.match(/<div[^>]*class="(app-card [^"]*)"[^>]*data-slug="broken"/)[1];
+  assert.doesNotMatch(card, /grayscale/);
+  assert.match(card, /cursor-not-allowed/);
+  assert.match(html, /<div class="relative w-14 h-14 shrink-0 grayscale-\[0\.75\]">/);
+  assert.match(html, /<div class="app-card-retry flex items-center justify-center gap-1"><p class="app-card-status text-\[color:var\(--state-blocked\)\]" title="Build failed: x">Error<\/p><button type="button" class="retry-btn relative inline-flex/);
+  assert.match(html, /aria-label="Retry Broken App">Retry<\/button>/);
+  assert.doesNotMatch(html, /top-2 right-2/);
+  // Without Retry (someone else's errored app) the tile is greyed whole, as before.
+  const other = render({ ...app, showRetry: false });
+  assert.match(other.match(/class="(app-card [^"]*)"/)[1], /cursor-not-allowed grayscale-\[0\.75\]/);
+  assert.doesNotMatch(other, /retry-btn/);
 });

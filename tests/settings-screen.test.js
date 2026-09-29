@@ -41,6 +41,7 @@ const { shellMarkup } = require('./lib/shell-markup');
 const html = shellMarkup();
 const appJs = read('public/js/app.js');
 const settingsJs = read('frontend/src/features/settings/settings.js');
+const passwordTsx = read('frontend/src/features/settings/sections/password.tsx');
 // #1079: #settings-usernode-section's markup moved to a component; its tests
 // read both halves — the DECISIONS here, the SHAPES there.
 const usernodeTsx = read('frontend/src/features/settings/sections/usernode.tsx');
@@ -589,21 +590,32 @@ test('the header back button consults Settings.handleBack behind _inSettings', (
     'and home is the fallback for one that named none');
 });
 
-test("Settings is reached from the chip's menu, by a real anchor", () => {
+test('Settings is reached from the Me tab, by a real anchor', () => {
   // It was a hamburger row; #1431 retired the hamburger and parked it in the
   // Profile screen's account group; #1443 gave the shell a menu again and
-  // Settings went back into it, because it has its own page and the menu's
-  // rule is that everything in it does. One entrance, one hop, from anywhere.
-  const panel = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(panel, /id="switcher-row-settings"[\s\S]{0,80}href="#settings"/,
-    'navigation rides the anchor hash, like Challenges / Profile');
-  assert.match(panel, /id="switcher-byok-dot"/, 'the BYOK indicator dot survives');
+  // Settings went into it; #2718 took the platform's destinations back out,
+  // because the menu holds the APP's options now and the tab bar carries the
+  // platform's places. It is a Profile row again — one entrance, two hops
+  // from anywhere: the Me tab, then the row.
+  const panel = read('frontend/src/features/profile/account-panel.tsx');
+  assert.match(panel, /id="profile-row-settings"[\s\S]{0,120}href="#settings"/,
+    'navigation rides the anchor hash, like Challenges beside it');
   // The row does not call Settings.open — the hash does the navigating and
-  // always did. It DOES dismiss the menu it sits in, which is the one thing
-  // the Profile-screen version of this row had nothing to do: a menu that
-  // stays open over the screen it just sent you to is the bug.
-  assert.match(panel, /AppContext\.dismissForNav\(\)/,
-    'activating a row closes the menu before the hash lands');
+  // always did. Nor does it dismiss anything: it is on a screen rather than
+  // in a sheet, which is the whole of what changed.
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.doesNotMatch(menu, /id="switcher-row-settings"/,
+    'and there is no second entrance left in the menu');
+});
+
+test('the BYOK dot went with the row it marked', () => {
+  // It was `#switcher-byok-dot` on the menu's Settings row, published by
+  // settings.js. The row left; the dot has no seat on the Profile row yet and
+  // is not rendered anywhere, which is the honest state — a published flag
+  // with no reader is dead, and a dot invented on a new row without a design
+  // board is worse than none.
+  const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.doesNotMatch(menu, /switcher-byok-dot/);
 });
 
 // ── Two-level layout ───────────────────────────────────────────────────
@@ -700,7 +712,10 @@ test('the level-2 chevron points where handleBack actually goes (#1565)', () => 
   assert.match(up, /window\.App\.previousRoute\(\) \|\| undefined/,
     'otherwise the address the viewer came from; home falls back to the home href');
   const chrome = sliceMethod(settingsJs, '_syncChrome');
-  assert.match(chrome, /setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/);
+  // ONE GLYPH, TWO TARGETS since #2718's review: _upHref from inside a
+  // section, the Me tab from the root. See the note in the _syncChrome test
+  // below for why the root stopped drawing the house.
+  assert.match(chrome, /setBackIcon\('arrow', inSection \? Settings\._upHref\(\) : '#profile'\)/);
 });
 
 test('a menu tap is a real hash navigation', () => {
@@ -732,14 +747,18 @@ test('the nav components render what the module shapes, and nothing else', () =>
   assert.match(navTsx, /className=\{item\.className\}/,
     'the component renders that string rather than recomputing it');
 
-  // A tab set on desktop, a LIST on mobile. dapp.json line 1660 selects on
-  // [data-settings-nav="cli"][aria-selected="true"], so the first half is a
+  // Section links on desktop, a LIST on mobile. dapp.json selects on
+  // [data-settings-nav="cli"][aria-current="page"], so the first half is a
   // declared check, and the second half is what makes the two differ.
-  assert.match(navTsx, /role="tab"/, 'the sidebar is a tab set');
-  assert.match(navTsx, /aria-selected=\{item\.active \? 'true' : 'false'\}/);
+  // QA 2026-09-24 Q20: the sidebar was `role="tab"` + `aria-selected` with no
+  // tablist parent (axe aria-required-parent); it is the <nav>'s links now.
+  const navRowFn = navTsx.slice(navTsx.indexOf('function NavRow('), navTsx.indexOf('function SettingsLabel('));
+  assert.doesNotMatch(navRowFn, /role="tab"|aria-selected=/, 'the sidebar rows are not orphan tabs');
+  assert.match(navRowFn, /aria-current=\{item\.active \? 'page' : undefined\}/,
+    'the current section is announced as the current page');
   const menuFn = navTsx.slice(navTsx.indexOf('export function SettingsMobileMenu'));
-  assert.doesNotMatch(menuFn, /role="tab"|aria-selected/,
-    'the level-1 menu is a list of rows, not a second tab set');
+  assert.doesNotMatch(menuFn, /role="tab"|aria-selected|aria-current/,
+    'the level-1 menu is a list of rows, with no current marker');
 
   // Both hosts route through one handler; neither re-binds listeners.
   assert.equal((navTsx.match(/onClick=\{\(\) => navClick\(item\.key\)\}/g) || []).length, 2);
@@ -762,14 +781,19 @@ test('the nav hosts still ship EMPTY, so the prerender is unchanged', () => {
 
 test('_syncChrome drives the header through App, not the DOM', () => {
   const fn = settingsJs.slice(settingsJs.indexOf('    _syncChrome() {'));
-  const head = fn.slice(0, 1400);
+  // The method's own closing brace, not a character count — see the note on
+  // the same move in the refresh() test at the foot of this file.
+  const head = fn.slice(0, fn.indexOf('\n    },\n'));
   // #1036: the second argument is the anchor's href — inside a section the
   // chevron pops to whatever is below it, which _upHref resolves (#1565).
-  // LEVEL 2 ONLY: the mobile drill-in's chevron is the only way up a level
-  // inside this screen, while the root's arrow is gone with the other two
-  // account screens' (Profile and Admin — see App.navigateToProfile).
-  // `'home'` is hidden.
-  assert.match(head, /App\.setBackIcon\(inSection \? 'arrow' : 'home', inSection \? Settings\._upHref\(\) : undefined\)/);
+  //
+  // AND THE ROOT DRAWS ONE TOO since #2718's review. It did not while
+  // Settings hung off Home's account row — the row was one tap behind you and
+  // an arrow duplicating it was chrome — but the Me tab replaced that row,
+  // and the house it was swapped for sends you past the screen you came from
+  // to one the bar's Home tab already reaches, with the Me tab still lit.
+  // Settings, Admin and the Challenges pane all moved together.
+  assert.match(head, /App\.setBackIcon\('arrow', inSection \? Settings\._upHref\(\) : '#profile'\)/);
   assert.match(head, /App\.setHeaderTitle\(/,
     'setHeaderTitle mirrors document.title for the native AppBar');
   assert.doesNotMatch(head, /getElementById\('header-title'\)/,
@@ -962,6 +986,30 @@ test('dapp.json covers the settings screen and its deep links', () => {
     'and that the traversal landed back on the default section rather than the drilled-in one');
 });
 
+test('the native-only password creation link has a read-only browser review state (#2282)', () => {
+  const checks = (manifest.tests || []).filter((t) =>
+    (t.path || '').includes('shot=password-create'));
+  assert.equal(checks.length, 1,
+    'exactly one declared check drives the password-creation screenshot state');
+  assert.equal(checks[0].path, '/?shot=password-create#settings/password');
+  assert.equal(checks[0].expectText, 'Don’t have a password? Create one');
+  assert.match(passwordTsx, /Don’t have a password\? Create one/,
+    'the component renders the user-facing copy the check expects');
+
+  assert.match(sliceMethod(settingsJs, '_passwordCreateDemo'),
+    /this\._demoParam\('shot'\) === 'password-create'/,
+    'the fixed UI state is selected only by its own screenshot value');
+  assert.match(sliceMethod(settingsJs, '_renderChangePasswordSection'),
+    /this\._passwordCreateDemo\(\)\s*\|\|\s*\(isNative && !!this\.state\.usernodePubkey\)/,
+    'the screenshot state reveals the same link without weakening the real native gate');
+
+  const submit = sliceMethod(settingsJs, 'changePasswordWithWallet');
+  const nativeGate = submit.indexOf("typeof window.signMessage !== 'function'");
+  const firstRequest = submit.indexOf('fetch(');
+  assert.ok(nativeGate > -1 && firstRequest > nativeGate,
+    'a browser using the review state cannot reach the wallet request path');
+});
+
 // ── #1102: route() is idempotent, so a duplicate dispatch cannot repaint
 // inside the first dispatch's uncaptured snapshot window ─────────────────
 //
@@ -1128,7 +1176,7 @@ test('a failed read still leaves the snapshot-independent blocks up', () => {
 
   // These read the snapshot, so every one of them must be guarded.
   for (const guarded of [
-    's.nodeSleepEnabled', 's.facematchStrict', 's.debugMode', 's.authStatus',
+    's.facematchStrict', 's.debugMode', 's.authStatus',
   ]) {
     const at = view.indexOf(guarded);
     assert.ok(at > -1, `${guarded} still drives its control`);
@@ -1724,7 +1772,7 @@ test('the wallet-recovery demo deep link is read-only and declared', () => {
 test('sign-out closes once, then uses terminal protocol 2 or web navigation',
   () => {
   const logout = settingsJs.slice(
-    settingsJs.indexOf('    async logout() {'),
+    settingsJs.indexOf('    async logout({ accountDeleted = false } = {}) {'),
     settingsJs.indexOf('    _clearSwApiCache() {'),
   );
   const closeAt = logout.indexOf('NativeChrome.prepareWebLogout()');
@@ -1850,6 +1898,80 @@ test('settings.js publishes the rows rather than building them', () => {
   assert.match(render, /status\.textContent = 'Demo data/);
 });
 
+// ── App AI permissions rows (#1957) ───────────────────────────────────
+//
+// `#llm-grants-list` is features/settings/grants-list.tsx's, driven by what
+// `Settings._renderLlmGrants` publishes. A revoked row used to be the badge
+// and nothing else: the only way back was the app's own consent dialog, which
+// an app that never asks again never opens. Re-enable is that way back, and
+// the branch renders differently, so it gets executed coverage like the CLI
+// rows above rather than a source grep.
+
+const GRANTS_LIST = 'frontend/src/features/settings/grants-list.tsx';
+const grantRows = (state) => renderComponent(GRANTS_LIST, 'GrantsListView', state);
+const grantView = (over) => ({
+  appId: 11, appName: 'Demo App', appSlug: 'demo-app', revoked: false,
+  spent: '0.37', cap: '1.00', capValue: '1.00', capCents: 100,
+  showByok: false, allowByok: false, ...over,
+});
+
+test('the permissions list renders its host states, and idle draws nothing', () => {
+  // `idle` is the PRERENDER state: the shipped host is an empty div, and a
+  // first render that drew a line would mismatch on hydration.
+  assert.equal(grantRows({ phase: 'idle', grants: [] }), '');
+  assert.equal(shellMarkup().includes('<div id="llm-grants-list" class="space-y-2"></div>'),
+    true, 'and the prerendered document agrees');
+  assert.match(grantRows({ phase: 'loading', grants: [] }), /Loading…/);
+  assert.match(grantRows({ phase: 'error', grants: [] }), /Failed to load app permissions\./);
+  assert.match(grantRows({ phase: 'ready', grants: [] }), /No apps have asked to use AI yet\./);
+});
+
+test('a revoked app permission offers Re-enable; an active one offers Revoke (#1957)', () => {
+  const html2 = grantRows({
+    phase: 'ready',
+    grants: [
+      grantView(),
+      grantView({
+        appId: 12, appName: 'Quiet App', appSlug: 'quiet-app', revoked: true,
+        cap: '2.50', capValue: '2.50', capCents: 250, allowByok: true,
+      }),
+    ],
+  });
+  assert.equal((html2.match(/>Revoke</g) || []).length, 1, 'exactly one Revoke, on the active row');
+  assert.equal((html2.match(/>Re-enable</g) || []).length, 1, 'exactly one Re-enable, on the revoked row');
+  assert.match(html2, /data-role="re-enable"/,
+    'the control is addressable, which is what the declared #settings/app-ai check selects on');
+  // The copy beside it names what comes back, so the click is an informed one.
+  assert.match(html2, /Re-enabling restores its \$2\.50 daily cap\./);
+  // The revoked row keeps its muted badge — Re-enable sits beside it, not in
+  // place of it — and grows no cap editor or BYOK toggle: those are the
+  // ACTIVE row's controls and take over once the grant is back.
+  assert.match(html2, />Revoked</);
+  assert.equal((html2.match(/data-role="cap"/g) || []).length, 1, 'one cap editor, on the active row');
+  assert.equal((html2.match(/data-role="byok"/g) || []).length, 0, 'no BYOK toggle without a key on file');
+  // The language's compact accent action, not a bespoke box.
+  assert.match(html2, /data-role="re-enable" class="shrink-0 rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 font-medium text-white transition-colors"/);
+});
+
+test('Re-enable re-grants by slug with the cap and BYOK choice the row carries (#1957)', () => {
+  const view = sliceMethod(settingsJs, '_grantView');
+  assert.match(view, /appSlug: String\(g\.appSlug \?\? ''\)/,
+    'the view carries the slug the re-grant endpoint is keyed on');
+  assert.match(view, /capCents: Number\(g\.dailyCapCents\) \|\| 0/,
+    'and the previous cap, in the cents the endpoint takes');
+  const handler = code(sliceMethod(settingsJs, '_onGrantReenable'));
+  assert.match(handler, /fetch\('\/api\/me\/llm-grants', \{\s*method: 'POST'/,
+    "the consent dialog's own upsert — a PATCH on the revoked id would not re-activate it");
+  assert.match(handler, /appSlug: grant\.appSlug, allowByok: !!grant\.allowByok/,
+    'the BYOK consent the user gave before is restored, never widened');
+  assert.match(handler, /dailyCapCents: grant\.capCents/, 'the previous cap is what comes back');
+  assert.match(handler, /r\.status === 400 && !j\.code/,
+    'a cap the allowance no longer covers falls back to the default cap instead of stranding the row');
+  assert.match(handler, /this\._isDemoGrant\(grant\.appId\)/, 'staging demo rows never reach the API');
+  assert.match(handler, /this\._renderLlmGrants\(\)/, 'success re-renders, so the row comes back active');
+  assert.doesNotMatch(handler, /ConfirmModal/, 're-enabling is not destructive and asks nothing twice');
+});
+
 
 // ── The connector cards (#1191) ───────────────────────────────────────
 
@@ -1924,44 +2046,196 @@ test('the social block renders its four host states', () => {
     /Could not load social accounts/);
 });
 
-test('the tier card carries its tone as well as its wording', () => {
-  const locked = socialHtml({ ...socialBase, tier: { tone: 'warn', title: 'Layer 1 locked · $0/day', detail: 'Connect either.' } });
-  assert.match(locked, /border-amber-300/, 'a locked tier is amber');
-  assert.match(locked, /Layer 1 locked · \$0\/day/);
-  const open = socialHtml({ ...socialBase, tier: { tone: 'ok', title: 'Layer 1 unlocked · $10.00/day', detail: 'Verified.' } });
-  assert.match(open, /border-emerald-300/, 'an unlocked one is emerald');
-  // The three neutral states (unavailable, legacy policy, admin override)
-  // share the plain card — they are statements of fact, not outcomes.
-  const plain = socialHtml({ ...socialBase, tier: { tone: 'plain', title: 'Administrator-set allowance: $25.00/day', detail: 'Override.' } });
-  assert.doesNotMatch(plain, /border-amber-300|border-emerald-300/);
+// #2370: the tier is the FIRST ROW of one list now, not a tinted card over
+// two more cards. These drive the real view builder rather than hand-written
+// fixtures, because the defect worth catching is the builder and the markup
+// disagreeing about what a state says.
+const tierView = () => new Function(`return ({${[
+  sliceMethod(settingsJs, '_socialIdentityMoney'),
+  sliceMethod(settingsJs, '_socialIdentityTierView'),
+].join(',')}})`)();
+
+test('the head row says where the account stands, in words a reader has', () => {
+  const view = tierView();
+  const locked = view._socialIdentityTierView({
+    policy: 'tiered', limitCents: 0, verificationRequired: true, entitlementAvailable: true,
+  });
+  const html2 = socialHtml({ ...socialBase, tier: locked });
+  assert.match(html2, />Signed in</);
+  assert.match(html2, />\$0 \/ day</);
+  assert.match(html2, /id="github-link-tier-note"[^>]*>Either one is enough\./,
+    'the one sentence the ladder needs sits under the list');
+  assert.doesNotMatch(html2, /Layer 1/,
+    'the policy\'s internal tier name means nothing without a Layer 0 or 2 beside it');
+  assert.doesNotMatch(html2, /border-amber-300/,
+    'a locked ladder is the next thing to do, not a warning');
 });
 
-test('a demo Connect control is inert but present, and matches the live one', () => {
+test('off the credit ladder the list promises nothing a connection cannot deliver', () => {
+  const view = tierView();
+  // `legacy` is IDENTITY_CREDIT_POLICY's default, so this is the state most
+  // deployments are in: a flat allowance that connecting does not change.
+  const legacy = view._socialIdentityTierView({
+    policy: 'legacy', limitCents: 2500, verificationRequired: false, entitlementAvailable: true,
+  });
+  assert.equal(legacy.title, 'Your credits');
+  assert.equal(legacy.amount, '$25 / day');
+  assert.match(legacy.note, /do not depend on a connected account/);
+  const override = view._socialIdentityTierView({
+    policy: 'tiered', tier: 'override', limitCents: 5050, entitlementAvailable: true,
+  });
+  assert.equal(override.amount, '$50.50 / day', 'a part-dollar amount keeps its cents');
+  assert.match(override.note, /administrator set this amount/i);
+  for (const tier of [legacy, override]) {
+    assert.doesNotMatch(socialHtml({ ...socialBase, tier }), /Signed in|Either one is enough/);
+  }
+
+  const rows = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const unlinked = { available: true, linked: false };
+  assert.equal(rows._socialIdentityRowView('github', unlinked, { policy: 'legacy' }, false).amount, null,
+    'no "$10 / day" beside Connect where connecting unlocks no $10');
+  assert.equal(
+    rows._socialIdentityRowView('github', unlinked, { policy: 'tiered', verificationRequired: true }, false).amount,
+    '$10 / day');
+});
+
+test('a second proof never reads as a second $10', () => {
+  // src/services/limits.js: "provider proofs replace one another; they do
+  // not stack". Two rows each saying "$10 / day" would say the opposite.
+  const rows = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const tiered = { policy: 'tiered', tier: 'social', verificationRequired: false };
+  const github = { available: true, linked: true, handle: 'octo' };
+  const x = { available: true, linked: true, handle: 'octo' };
+  const both = { github, x };
+  assert.equal(rows._socialIdentityRowView('github', github, tiered, false, both).amount, '$10 / day');
+  const second = rows._socialIdentityRowView('x', x, tiered, false, both);
+  assert.equal(second.amount, null);
+  assert.equal(second.state.text, 'No extra credits');
+  // …and an unconnected X beside a connected GitHub carries no figure either.
+  assert.equal(
+    rows._socialIdentityRowView('x', { available: true }, tiered, false, { github, x: {} }).amount, null);
+});
+
+test('an unverifiable entitlement is the one head row that reads as a fault', () => {
+  const down = tierView()._socialIdentityTierView({ entitlementAvailable: false });
+  assert.equal(down.amount, null, 'no figure is shown when none could be checked');
+  const html2 = socialHtml({ ...socialBase, tier: down });
+  assert.match(html2, /text-amber-800[^"]*"[^>]*>Daily credits unavailable</);
+  assert.match(html2, /Your own API key still works/);
+});
+
+test('a not-connected row is one full-width control, inert but present in a fixture', () => {
   const row = {
     provider: 'github',
     name: 'GitHub',
     heading: 'GitHub',
-    state: { tone: 'muted', text: 'Not connected.' },
+    state: { tone: 'muted', text: '' },
+    amount: '$10 / day',
+    done: false,
     linkedAt: null,
     noToken: null,
-    connect: { label: 'Connect GitHub', href: '/api/me/social-identities/github/connect' },
+    connect: {
+      label: 'Connect',
+      href: '/api/me/social-identities/github/connect?intent=connect',
+      intent: 'connect',
+    },
+    refresh: null,
+    replace: null,
+    visibility: null,
+    pendingReplacement: null,
     unlink: null,
     strandedNote: null,
     diagnostics: null,
   };
   const live = socialHtml({ ...socialBase, providers: [row] });
-  assert.match(live, /<a href="\/api\/me\/social-identities\/github\/connect"/,
+  assert.match(live, /<a [^>]*href="\/api\/me\/social-identities\/github\/connect\?intent=connect"/,
     'the real control is an ANCHOR — the OAuth flow is a top-level navigation');
+  // The WHOLE row is that anchor (#2370): title, figure and the Connect
+  // affordance are inside it, and nothing interactive is nested in it.
+  const anchor = live.slice(live.indexOf('<a '), live.indexOf('</a>'));
+  assert.match(anchor, />GitHub</);
+  assert.match(anchor, />\$10 \/ day</);
+  assert.match(anchor, /<span[^>]*>Connect<\/span>/, 'an affordance, not a nested control');
+  assert.doesNotMatch(anchor.slice(3), /<button|<a /);
   // The ?demo= twin must not navigate out of the fixture, so it is a disabled
-  // button — and it has to LOOK the same, which one shared constant is what
-  // guarantees (see the file's header and the primitive allow-list entry).
+  // button — and it has to LOOK the same. One component (ListRow) spells both,
+  // so with the tag, the href and the fixture's dimmed pill set aside the two
+  // renders are the same string.
   const demo = socialHtml({
     ...socialBase,
-    providers: [{ ...row, connect: { label: 'Connect GitHub', href: null } }],
+    providers: [{ ...row, connect: { label: 'Connect', href: null, intent: 'connect' } }],
   });
-  assert.match(demo, /<button type="button" disabled/);
-  const surface = 'rounded-md bg-violet-600 px-2 py-1 text-xs font-medium text-white';
-  assert.ok(live.includes(surface) && demo.includes(surface), 'one surface, both spellings');
+  assert.match(demo, /<button type="button"[^>]* disabled=""/);
+  const shape = (html3) => html3
+    .replace('<a ', '<ROW ').replace(/ href="[^"]*"/, '').replace('</a>', '</ROW>')
+    .replace('<button type="button" ', '<ROW ').replace('</button>', '</ROW>')
+    .replace(' disabled=""', '').replace(' opacity-50', '');
+  assert.equal(shape(demo), shape(live), 'one surface, both spellings');
+});
+
+test('a connected provider offers refresh, safe replacement, visibility and disconnect separately', () => {
+  const view = new Function(`return ({${sliceMethod(settingsJs, '_socialIdentityRowView')}})`)();
+  const row = view._socialIdentityRowView('github', {
+    available: true,
+    linked: true,
+    handle: 'octo-current',
+    linkedAt: '2026-09-15T10:00:00Z',
+    access: 'identity',
+    publicVisible: false,
+  }, { policy: 'tiered' }, false);
+
+  assert.deepEqual(row.refresh, {
+    label: 'Refresh handle',
+    href: '/api/me/social-identities/github/connect?intent=refresh',
+    intent: 'refresh',
+  });
+  assert.deepEqual(row.replace, {
+    label: 'Change account',
+    href: '/api/me/social-identities/github/connect?intent=replace',
+    intent: 'replace',
+  });
+  assert.deepEqual(row.visibility, { checked: false, disabled: false });
+  assert.deepEqual(row.unlink, { disabled: false });
+  assert.equal(row.connect, null);
+});
+
+test('a verified replacement is reviewable and cancellable before the active account changes', () => {
+  const html2 = socialHtml({
+    ...socialBase,
+    providers: [{
+      provider: 'github',
+      name: 'GitHub',
+      heading: 'GitHub · @octo-current',
+      badge: { text: 'Connected', tone: 'emerald' },
+      state: { tone: 'emerald', text: 'Ownership verified.' },
+      linkedAt: 'linked 15 Sep',
+      noToken: 'Homeroom holds no GitHub access token for your account.',
+      connect: null,
+      refresh: { label: 'Refresh handle', href: null, intent: 'refresh' },
+      replace: { label: 'Change account', href: null, intent: 'replace' },
+      visibility: { checked: true, disabled: true },
+      pendingReplacement: {
+        currentHandle: 'octo-current',
+        replacementHandle: 'octo-next',
+        expiresAt: '2026-09-15T10:10:00Z',
+        disabled: false,
+      },
+      unlink: { disabled: false },
+      strandedNote: null,
+      diagnostics: null,
+    }],
+  });
+
+  assert.match(html2, /id="github-replacement-confirmation"/);
+  assert.match(html2, /Nothing changes until you confirm/);
+  // #2370: a connected row folds its actions away, but NOT while a decision is
+  // waiting — dapp.json reads the sentence above as rendered text.
+  assert.match(html2, /<details[^>]* open=""/, 'a row with a decision pending arrives open');
+  assert.match(html2, /Current[\s\S]*@octo-current/);
+  assert.match(html2, /Verified replacement[\s\S]*@octo-next/);
+  assert.match(html2, /Show the replacement on my public profile/);
+  assert.match(html2, />Cancel<\/button>/);
+  assert.match(html2, />Replace account<\/button>/);
 });
 
 test('unfinished social connections describe the symptom without diagnosing the callback (#1543)', () => {
@@ -1989,6 +2263,10 @@ test('the reviewable claims travel with the row that makes them', () => {
       linkedAt: 'linked 1 Jan',
       noToken: 'Homeroom holds no GitHub access token for your account.',
       connect: null,
+      refresh: null,
+      replace: null,
+      visibility: { checked: true, disabled: false },
+      pendingReplacement: null,
       unlink: { disabled: false },
       strandedNote: 'Your last GitHub connection attempt didn’t complete.',
       diagnostics: null,
@@ -2001,4 +2279,10 @@ test('the reviewable claims travel with the row that makes them', () => {
     'top-level, because the shell is framed and github.com is not frameable');
   assert.match(html2, /id="github-link-pending-note"/, 'the stranded-attempt note keeps its id');
   assert.match(html2, />Disconnect</);
+  // #2370: Disconnect lives in the row's panel, never on the row. The summary
+  // is the row's whole width, and a destructive action must not be what a
+  // stray thumb lands on.
+  const summary = html2.slice(html2.indexOf('<summary'), html2.indexOf('</summary>'));
+  assert.doesNotMatch(summary, /Disconnect|<button|<a /);
+  assert.doesNotMatch(html2, /<details[^>]* open=""/, 'and a settled row stays folded');
 });

@@ -36,6 +36,19 @@ function reviewedHeadForSession(session) {
     : (session?.reviewed_head_sha || null);
 }
 
+// The commit a stored preview artifact must describe before it may be shown.
+// Promoted/imported proposals have a reviewed head; active native handoffs can
+// have screenshots before promotion, so their current checks/handoff pin is
+// the strongest available provenance. NULL means the caller genuinely has no
+// revision to compare; once a head is known, unknown-provenance artifacts are
+// hidden rather than guessed current.
+function visualHeadForSession(session) {
+  return reviewedHeadForSession(session)
+    || session?.checks_commit_sha
+    || session?.handoff_head_sha
+    || null;
+}
+
 function checkedAlias(alias) {
   if (!/^[a-z_][a-z0-9_]*$/i.test(alias || '')) {
     throw new Error(`Invalid SQL alias: ${alias}`);
@@ -74,6 +87,7 @@ function sameSha(a, b) {
 
 module.exports = {
   reviewedHeadForSession,
+  visualHeadForSession,
   reviewedHeadSql,
   currentVotePredicateSql,
   sameSha,

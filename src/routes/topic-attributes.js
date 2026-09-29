@@ -111,10 +111,16 @@ function topicAttributeRoutes(config) {
       // #780: a category is now free text, so keep the normalized pair —
       // castVote needs the typed LABEL to register a brand-new option with
       // the casing the user typed, while the vote itself stores the slug.
-      const category = field === 'category'
+      const typed = field === 'category'
         ? attrs.normalizeCategoryInput(req.body?.value) : null;
-      const value = field === 'category'
-        ? (category && category.slug) : attrs.normalizeValue(field, req.body?.value);
+      // Resolve a typed name against the vocabulary the app already has,
+      // under either spelling: the key is a slug now, but values stored
+      // under #780's bare lower-cased rule are still out there, and typing
+      // "dev experience" must keep voting for the row it always did rather
+      // than minting "dev-experience" beside it.
+      const value = typed
+        ? await attrs.resolveCategoryKey(pool, app.id, typed.typed)
+        : attrs.normalizeValue(field, req.body?.value);
       if (value == null) {
         let error;
         if (field === 'priority') {
@@ -132,14 +138,15 @@ function topicAttributeRoutes(config) {
       try {
         data = await attrs.castVote(
           pool, app.id, t.targetType, t.targetRef, field, value, req.user.id, linkedIssues,
-          category ? category.label : null
+          typed ? typed.label : null
         );
       } catch (err) {
-        // The app is already at its custom-category cap and this is a NEW
-        // slug — a user error, not a server fault.
+        // The cap counts LIVE rows, so this is reachable only when the group
+        // itself is holding every slot — the model's own discards retire
+        // themselves. Saying so is more useful than the raw number alone.
         if (err.message === attrs.CATEGORY_CAP_ERROR) {
           return res.status(400).json({
-            error: `This app already has the maximum of ${attrs.MAX_CUSTOM_CATEGORIES_PER_APP} custom categories.`,
+            error: `This app already has the maximum of ${attrs.MAX_CUSTOM_CATEGORIES_PER_APP} categories in use. Retire one by moving its cards elsewhere.`,
           });
         }
         throw err;

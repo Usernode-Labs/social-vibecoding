@@ -2,6 +2,30 @@ const crypto = require('crypto');
 const { bech32m } = require('bech32');
 const platformJwt = require('./services/platform-jwt');
 const { PRODUCTION_ORIGIN } = require('./services/cli-auth-constants');
+const {
+  DEFAULT_MARKETING_BASE_URL,
+  normalizeBaseUrl,
+} = require('./services/marketing-links');
+const {
+  DEFAULT_MODEL: DEFAULT_GLOBAL_CHAT_MODEL,
+  DEFAULT_REASONING_EFFORT: DEFAULT_GLOBAL_CHAT_REASONING_EFFORT,
+  // One effort scale for the whole platform (minimal, low, medium, high,
+  // xhigh). Global Chat happens to declare it, but it is not Global Chat's:
+  // the coding-agent default below is validated against the same list so the
+  // two profiles can never drift onto different vocabularies.
+  REASONING_EFFORTS: REASONING_EFFORT_LEVELS,
+} = require('./services/global-chat/prompt');
+const { parseOpenRouterHarnessMap } = require('./agents/registry');
+
+// #2600: the default reasoning effort for an OpenRouter CODING turn when the
+// user has not picked one in Settings. It is 'xhigh' — the top of the scale
+// above, the Opus 5.5 "max" equivalent — because the models the platform
+// recommends for coding (GLM 5.3 Flash, DeepSeek v4.1 Flash) are cheap enough
+// per token that thinking longer is the better trade on repository work: a
+// change that lands first time costs less than a cheap one that has to be
+// re-run. Global Chat is a SEPARATE profile and deliberately stays at its own
+// low default; do not collapse the two.
+const DEFAULT_CODEX_REASONING_EFFORT = 'xhigh';
 
 const REQUIRED = [
   'DATABASE_URL',
@@ -241,14 +265,20 @@ function load() {
     console.error('[config] NATIVE_SESSION_V2_TESTNET_CHAIN_ID must be a canonical Rust ChainId.');
     process.exit(1);
   }
-  const openrouterManagedRequireVerifiedIdentityValue =
-    process.env.OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY || 'false';
-  if (!['true', 'false'].includes(openrouterManagedRequireVerifiedIdentityValue)) {
-    console.error('[config] OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY must be either true or false.');
+  const globalChatDefaultReasoningEffort =
+    process.env.OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING
+      || DEFAULT_GLOBAL_CHAT_REASONING_EFFORT;
+  if (!REASONING_EFFORT_LEVELS.has(globalChatDefaultReasoningEffort)) {
+    console.error('[config] OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING must be minimal, low, medium, high, or xhigh.');
     process.exit(1);
   }
-  const openrouterManagedRequireVerifiedIdentity =
-    openrouterManagedRequireVerifiedIdentityValue === 'true';
+  const codexDefaultReasoningEffort =
+    process.env.OPENROUTER_DEFAULT_CODEX_REASONING
+      || DEFAULT_CODEX_REASONING_EFFORT;
+  if (!REASONING_EFFORT_LEVELS.has(codexDefaultReasoningEffort)) {
+    console.error('[config] OPENROUTER_DEFAULT_CODEX_REASONING must be minimal, low, medium, high, or xhigh.');
+    process.exit(1);
+  }
   let cliAuthOrigin = null;
   let cliAuthEnabled = !staging;
   if (cliAuthEnabled && cliLocalMode) {
@@ -296,6 +326,9 @@ function load() {
     // Required protocol-2 deployment binding outside the self-app staging
     // preview. There is one supported network mapping and no caller input.
     nativeSessionV2Network,
+    // Read-only receiver for the same admitted chain. Epoch metrics never
+    // query an embedded node; the browser sees only our authenticated adapter.
+    stakingObservabilityUrl: process.env.STAKING_OBSERVABILITY_URL || 'https://observability.preseason-testnet.apps.beta.usernodelabs.org',
     // Signing keys. Read straight from env by services/platform-jwt.js
     // at call time; mirrored here for the boot log and for the container
     // env builders that need the PUBLIC half.
@@ -306,24 +339,72 @@ function load() {
     // user has a usable key; Claude remains the safe fallback for accounts
     // that have not configured or claimed one.
     codexOpenrouterEnabled: String(process.env.CODEX_OPENROUTER_ENABLED || 'true') === 'true',
+    // #2809/#2810: an OpenRouter session's chat runs through the Mayor, on the
+    // session's own OpenRouter model and key (services/openrouter-mayor.js),
+    // so it gets the same plan, spec and wrap-up flow as a Claude session.
+    // False restores the direct path, where the coding agent answers alone.
+    openrouterSessionMayorEnabled:
+      String(process.env.OPENROUTER_SESSION_MAYOR_ENABLED || 'true') === 'true',
+    // #2779: agent sessions (docs/agent-sessions.md), behind an experimental
+    // per-user flag. The default applies to a user who has not chosen (a
+    // choice either way wins, so an opt-out survives the day this flips);
+    // the opt-in audience says who may make that choice at all. Stage 2 of
+    // the rollout: every user may opt in. AGENT_SESSIONS_OPT_IN=admins
+    // closes the switch to admins again without a code change.
+    agentSessionsDefault: String(process.env.AGENT_SESSIONS_DEFAULT || 'false') === 'true',
+    agentSessionsOptIn: process.env.AGENT_SESSIONS_OPT_IN === 'admins' ? 'admins' : 'all',
     // #717: collection-only emergency switch. Reporting remains readable so
     // operators can inspect already-recorded aggregates after disabling new
     // writes. This never changes provider/model/routing behaviour.
     llmTelemetryEnabled: String(process.env.LLM_TELEMETRY_ENABLED || 'true') === 'true',
-    openrouterBetaUserIds: (process.env.CODEX_OPENROUTER_BETA_USER_IDS || '')
-      .split(',').map((s) => s.trim()).filter(Boolean),
+    // #2568 retired CODEX_OPENROUTER_BETA_USER_IDS and
+    // OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY. Every account is created
+    // with its included OpenRouter key, so there is no allowlist to be on and
+    // no identity to prove first. CODEX_OPENROUTER_ENABLED above remains the
+    // one emergency switch. The deploy workflow still writes the verified-
+    // identity variable; nothing reads it, exactly as with
+    // OPENROUTER_MANAGED_DAILY_LIMIT_USD.
+    // #2819 reviewed MiMo-V2.6-Pro as a replacement on 2026-09-23 and kept
+    // GLM 5.3 Flash; docs/coding-agent-defaults.md has the evidence and
+    // what would change the answer.
     openrouterDefaultCodexModel: process.env.OPENROUTER_DEFAULT_CODEX_MODEL || 'z-ai/glm-5.3-flash',
-    // Curated badges in the model picker. Exact ids keep the recommendation
+    // #3296: which CLI runs each OpenRouter model — `claude` (Claude Code
+    // against OpenRouter's Anthropic-compatible endpoint) or `codex`. GLM 5.3
+    // Flash does better in Claude Code and DeepSeek v4.1 Flash in Codex; a
+    // model not listed here stays on Codex. The name above predates this and
+    // still means "the default OpenRouter coding model", whichever CLI runs it.
+    openrouterModelHarnesses: parseOpenRouterHarnessMap(
+      process.env.OPENROUTER_MODEL_HARNESSES === undefined
+        ? 'z-ai/glm-5.3-flash=claude,deepseek/deepseek-v4.1-flash=codex'
+        : process.env.OPENROUTER_MODEL_HARNESSES,
+    ),
+    // The effort a coding turn runs at when the session carries no explicit
+    // choice. A user's Settings choice is stored on the session and still
+    // wins; this only fills the blank.
+    openrouterDefaultCodexReasoning: codexDefaultReasoningEffort,
+    // Global Chat is a separate profile from repository development. Its
+    // inexpensive, minimal-effort defaults never rewrite the coding-agent choice.
+    openrouterDefaultGlobalChatModel:
+      process.env.OPENROUTER_DEFAULT_GLOBAL_CHAT_MODEL || DEFAULT_GLOBAL_CHAT_MODEL,
+    openrouterDefaultGlobalChatReasoning: globalChatDefaultReasoningEffort,
+    openrouterGlobalChatFallbackModels:
+      (process.env.OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS || 'deepseek/deepseek-v4-flash-0731')
+        .split(',').map((s) => s.trim()).filter(Boolean),
+    // Curated badges in the model picker, and — since #2569 — the OpenRouter
+    // models a new account STARTS with. Exact ids keep the recommendation
     // deliberate: adding a provider prefix here would label dozens of old,
     // batch, and specialist variants and make the badge meaningless.
+    //
+    // #2569 cut this from five to two. The picker is one flat list of five
+    // starting models now, and the other three are Anthropic's, so five
+    // curated OpenRouter ids made a list of eight that nobody asked for.
+    // GLM leads because openrouterDefaultCodexModel above is GLM; the list
+    // order is what the picker shows after it.
     openrouterRecommendedModels: (() => {
       const configured = process.env.OPENROUTER_RECOMMENDED_MODELS === undefined
         ? [
-          'deepseek/deepseek-v4.1-flash',
           'z-ai/glm-5.3-flash',
-          'openai/gpt-6-astra',
-          'moonshotai/kimi-k3',
-          'anthropic/claude-opus-5',
+          'deepseek/deepseek-v4.1-flash',
         ].join(',')
         : String(process.env.OPENROUTER_RECOMMENDED_MODELS);
       if (configured.trim().toLowerCase() === 'none') return [];
@@ -339,7 +420,6 @@ function load() {
     openrouterManagedWorkspaceId: process.env.OPENROUTER_MANAGED_WORKSPACE_ID || '',
     // Default-open claim policy. Operators may opt into requiring a linked
     // GitHub or X identity before the one lifetime managed key is reserved.
-    openrouterManagedRequireVerifiedIdentity,
     // The former single shared JWT_SECRET is GONE. All four token
     // authorities (app identity RS256, worker, edge grant, edge cookie)
     // read their own key from env via services/platform-jwt.js, and a
@@ -347,6 +427,10 @@ function load() {
     // containers still receive a JWT_SECRET env var, but it carries the
     // RSA PUBLIC key — see services/app-identity-env.js.
     githubAppId: process.env.GITHUB_APP_ID || '',
+    // #2737: shared secret for POST /api/github/webhook. Empty means the
+    // route is OFF and answers 503 — deny by default, so a deployment that
+    // never sets it cannot be fed unsigned pull-request events.
+    githubWebhookSecret: process.env.GITHUB_WEBHOOK_SECRET || '',
     githubPrivateKey: (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
     // #555: Anthropic ADMIN API key (`sk-ant-admin…`) — a different
@@ -394,11 +478,24 @@ function load() {
     // Overrides the OAuth redirect_uri origin (staging); defaults to the
     // production origin in production, localhost in dev.
     waitlistOauthOrigin: process.env.WAITLIST_OAUTH_ORIGIN || '',
+    // Origin of the public marketing site, which owns the /waitlist page a
+    // shared invite link now lands on. Deliberately NOT the app's own
+    // origin: the app renders #waitlist for people already inside the
+    // shell, while a link pasted into a group chat should open the page
+    // that explains what this is. Trailing slashes are stripped so the
+    // builder can concatenate a path without doubling the separator.
+    marketingBaseUrl: normalizeBaseUrl(
+      process.env.MARKETING_BASE_URL,
+      DEFAULT_MARKETING_BASE_URL
+    ),
     logLevel: process.env.LOG_LEVEL || 'INFO',
     // Hard cap on non-errored apps per server. Protects against runaway
     // container / DB creation chewing through host resources. Admins bypass
     // the cap; errored rows don't count (they hold ~no resources and users
-    // can delete them to free a slot). See src/routes/apps.js.
+    // can delete them to free a slot). See src/routes/apps.js. This is the
+    // DEFAULT: an admin's setting in Admin → Limits overrides it, and every
+    // reader resolves the cap through services/app-limit.js, never this
+    // field directly. <= 0 switches the cap off, the setting included.
     maxApps: parseInt(process.env.MAX_APPS || '50', 10),
     // Concurrency caps on dev sessions. A "session" holds (or can lazily
     // spawn) a warm worker container + optional staging container, so
@@ -442,6 +539,41 @@ function load() {
     appRuntime,
     workerRuntime: process.env.WORKER_RUNTIME || appRuntime,
     captureRuntime: process.env.CAPTURE_RUNTIME || appRuntime,
+    // #2380 agent-authored visual evidence. The mechanism is ON by default:
+    // authors can submit intent, the platform executes it, and reviewers see
+    // the verified result without an operator rollout step. One emergency
+    // kill switch turns those three pieces off together. Enforcement remains
+    // advisory until a separate reviewed product change enables it; the kill
+    // switch must never revive legacy default-root screenshots.
+    visualEvidence: (() => {
+      const enabled = process.env.VISUAL_EVIDENCE_V2_ENABLED !== 'false';
+      const boundedInt = (name, fallback, minimum) => {
+        const parsed = Number.parseInt(process.env[name] || String(fallback), 10);
+        return Number.isFinite(parsed) ? Math.max(minimum, parsed) : fallback;
+      };
+      return {
+        enabled,
+        collect: enabled,
+        execute: enabled,
+        present: enabled,
+        enforce: false,
+        maxRunMs: boundedInt('VISUAL_EVIDENCE_MAX_RUN_MS', 1_440_000, 60_000),
+        maxAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_AGENT_MS', 480_000, 30_000),
+        maxRepairAgentMs: boundedInt('VISUAL_EVIDENCE_MAX_REPAIR_AGENT_MS', 240_000, 30_000),
+        failedMetadataRetentionDays: boundedInt('VISUAL_EVIDENCE_FAILED_RETENTION_DAYS', 30, 1),
+        failedArtifactRetentionHours: boundedInt('VISUAL_EVIDENCE_FAILED_ARTIFACT_RETENTION_HOURS', 24, 1),
+      };
+    })(),
+    // Automatic challenge scoring (services/topochain/challenge-scorer.js).
+    // `intervalMinutes` 0 switches the schedule off entirely — the admin's
+    // Run now button still works, which is what makes "off" a usable
+    // operating mode rather than a way to break the season.
+    // `aggregateHours` is how stale the leaderboard snapshots may get before
+    // a scoring run also rebuilds them; 0 leaves that to the admin button.
+    challengeScorer: {
+      intervalMinutes: parseInt(process.env.CHALLENGE_SCORER_INTERVAL_MINUTES || '10', 10),
+      aggregateHours: parseInt(process.env.CHALLENGE_SCORER_AGGREGATE_HOURS || '6', 10),
+    },
     kubernetes: {
       platformNamespace: process.env.PLATFORM_NAMESPACE || 'social-platform',
       platformDeployment: process.env.PLATFORM_DEPLOYMENT || 'social-vibecoding',
@@ -567,7 +699,7 @@ function load() {
     // GC destroys the CC volume (memory). The row + branch survive, so
     // unarchive still works afterward but Claude starts fresh. Set to 0
     // to keep CC volumes forever (no hard GC).
-    archivedRetentionMs: parseInt(process.env.ARCHIVED_RETENTION_MS || String(30 * 24 * 60 * 60 * 1000), 10),
+    archivedRetentionMs: parseInt(process.env.ARCHIVED_RETENTION_MS || String(7 * 24 * 60 * 60 * 1000), 10),
     // How often the stale-PR / archived-GC sweeper runs. These actions
     // are day-scale, so it polls infrequently. Default 1h.
     staleSweepIntervalMs: parseInt(process.env.STALE_SWEEP_INTERVAL_MS || String(60 * 60 * 1000), 10),
@@ -753,14 +885,18 @@ function load() {
   console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
   console.log(`  OPENROUTER_MANAGEMENT_API_KEY=${mask(config.openrouterManagementApiKey)}`);
   console.log(`  OPENROUTER_MANAGED_WORKSPACE_ID=${config.openrouterManagedWorkspaceId || '(default workspace)'}`);
-  console.log(`  OPENROUTER_MANAGED_REQUIRE_VERIFIED_IDENTITY=${config.openrouterManagedRequireVerifiedIdentity}`);
   console.log(`  OPENROUTER_DEFAULT_CODEX_MODEL=${config.openrouterDefaultCodexModel}`);
+  console.log(`  OPENROUTER_DEFAULT_CODEX_REASONING=${config.openrouterDefaultCodexReasoning}`);
+  console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_MODEL=${config.openrouterDefaultGlobalChatModel}`);
+  console.log(`  OPENROUTER_DEFAULT_GLOBAL_CHAT_REASONING=${config.openrouterDefaultGlobalChatReasoning}`);
+  console.log(`  OPENROUTER_GLOBAL_CHAT_FALLBACK_MODELS=${config.openrouterGlobalChatFallbackModels.join(',') || '(none)'}`);
   console.log(`  OPENROUTER_RECOMMENDED_MODELS=${config.openrouterRecommendedModels.join(',') || '(none)'}`);
   console.log(`  IDENTITY_CREDIT_POLICY=${config.identityCreditPolicy}`);
   console.log(`  GITHUB_LINK=${config.githubLinkClientId && config.githubLinkClientSecret ? '(enabled)' : '(disabled)'}`);
   console.log(`  X_LINK=${(config.xLinkClientId && config.xLinkClientSecret) || (config.waitlistXClientId && config.waitlistXClientSecret) ? '(enabled)' : '(disabled)'}`);
   console.log(`  WAITLIST_CONNECT=github:${config.waitlistGithubClientId && config.waitlistGithubClientSecret ? 'on' : 'off'} x:${config.waitlistXClientId && config.waitlistXClientSecret ? 'on' : 'off'} linkedin:${config.waitlistLinkedinClientId && config.waitlistLinkedinClientSecret ? 'on' : 'off'}`);
   console.log(`  WAITLIST_FOLLOW=x:${config.waitlistFollowXUrl ? 'set' : 'unset'} linkedin:${config.waitlistFollowLinkedinUrl ? 'set' : 'unset'} instagram:${config.waitlistFollowInstagramUrl ? 'set' : 'unset'}`);
+  console.log(`  MARKETING_BASE_URL=${config.marketingBaseUrl}${process.env.MARKETING_BASE_URL ? '' : ' (default)'}`);
   console.log(`  WAITLIST_INTEGRATION_KEYS=${(() => { const n = require('./services/waitlist-integrator').parseIntegrationKeys(config.waitlistIntegrationKeys).length; return n ? `(${n} configured)` : '(not set)'; })()}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);
   console.log(`  CLI_AUTH=${config.cliAuthEnabled ? config.cliAuthOrigin : '(disabled in staging)'}`);
@@ -782,6 +918,7 @@ function load() {
   }
   console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  APP_RUNTIME=${config.appRuntime} WORKER_RUNTIME=${config.workerRuntime} CAPTURE_RUNTIME=${config.captureRuntime}`);
+  console.log(`  VISUAL_EVIDENCE_V2=collect:${config.visualEvidence.collect} execute:${config.visualEvidence.execute} present:${config.visualEvidence.present} enforce:${config.visualEvidence.enforce}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);
   console.log(`  STAGING_IDLE_TEARDOWN_MS=${config.stagingIdleTeardownMs}${config.stagingIdleTeardownMs === 0 ? ' (disabled)' : ''}`);

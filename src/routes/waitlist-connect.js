@@ -30,7 +30,7 @@
 'use strict';
 
 const crypto = require('crypto');
-const { Router } = require('express');
+const { Router, json } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const waitlist = require('../services/waitlist');
@@ -64,7 +64,7 @@ function takeState(nonce) {
   return entry.expiresAt < Date.now() ? null : entry;
 }
 
-// state nonce → { token, status, provider, expiresAt }, for a round trip
+// state nonce → { token, status, provider, handle, expiresAt }, for a round trip
 // that has already finished.
 //
 // `takeState` consumes the nonce, so the SECOND request to a callback URL
@@ -80,21 +80,23 @@ function takeState(nonce) {
 // So a finished round trip remembers WHERE it landed, and a repeat replays
 // that same destination.
 //
-// It records the outcome, never the authorization code, and the replay is a
-// redirect and nothing else — the code is single-use at the provider, so
-// re-exchanging it could only turn a success into an error. Reading is
+// It records the outcome, never the authorization code, and the replay
+// reports that outcome and nothing else — the code is single-use at the
+// provider, so re-exchanging it could only turn a success into an error. Reading is
 // deliberately non-destructive: people reload more than once. The record
 // holds no more than the caller already has (they must present the state
 // nonce, which was minted for that token and rides in their own URL), and it
 // expires on the same clock as the pending state.
 const completed = new Map();
 
-function rememberOutcome(nonce, provider, token, status) {
+function rememberOutcome(nonce, provider, token, status, handle) {
   const now = Date.now();
   for (const [k, v] of completed) {
     if (v.expiresAt < now) completed.delete(k);
   }
-  completed.set(nonce, { token, status, provider, expiresAt: now + STATE_TTL_MS });
+  completed.set(nonce, {
+    token, status, provider, handle: handle || null, expiresAt: now + STATE_TTL_MS,
+  });
 }
 
 function peekOutcome(nonce, provider) {
@@ -112,6 +114,173 @@ function peekOutcome(nonce, provider) {
 // reaches any server log, ours or a proxy's.
 function formUrl(token, status) {
   return `/#more/${token}` + (status ? `?connect=${status}` : '');
+}
+
+// ── The callback's status page ─────────────────────────────────────────
+//
+// A standalone document, not the SPA: it has to paint before the exchange
+// finishes, for somebody who has no platform session, and it must not load
+// anything that could pass the code in its URL to another origin. So it is
+// inline and locked to a per-response nonce — nothing else can run or
+// style it — and the only request it can make is to this origin.
+//
+// It renders as "working" and its script fills in the outcome from
+// POST …/complete. The copy for every outcome lives in the script, because
+// the server only learns the outcome after the page is already on screen.
+
+const PROVIDER_LABELS = { github: 'GitHub', x: 'X', linkedin: 'LinkedIn' };
+
+function statusPageCsp(nonce) {
+  return [
+    "default-src 'none'",
+    `script-src 'nonce-${nonce}'`,
+    `style-src 'nonce-${nonce}'`,
+    "connect-src 'self'",
+    "img-src 'none'",
+    "base-uri 'none'",
+    "form-action 'none'",
+    "frame-ancestors 'none'",
+  ].join('; ');
+}
+
+// `provider` is one of PROVIDERS (the route 404s anything else) and the
+// label comes from the fixed map above, so nothing request-supplied is
+// interpolated into this document.
+function statusPageHtml(provider, nonce) {
+  const label = PROVIDER_LABELS[provider];
+  const page = JSON.stringify({ provider, label });
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Connecting ${label} · Homeroom</title>
+<style nonce="${nonce}">
+  :root { color-scheme: light dark; --ground: #eaeaea; --card: #ffffff; --ink: #1c1c1e;
+    --muted: #68686c; --line: #e3e3e6; --accent: #0a6ee0; --ok: #15803d; --warn: #b45309;
+    /* Filled button: the darker accent in both schemes, so white text keeps its contrast. */
+    --button: #0a6ee0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --ground: #0b0b0c; --card: #1c1c1e; --ink: #f5f5f7; --muted: #8e8e93;
+      --line: #3a3a3c; --accent: #5aa9ff; --ok: #4ade80; --warn: #fbbf24; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px;
+    background: var(--ground); color: var(--ink);
+    font: 16px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { width: min(26rem, 100%); padding: 2rem 1.5rem; border: 1px solid var(--line);
+    border-radius: 1.25rem; background: var(--card); text-align: center; }
+  .mark { width: 3rem; height: 3rem; margin: 0 auto 1rem; border-radius: 999px;
+    display: grid; place-items: center; font-size: 1.5rem; font-weight: 700; }
+  .mark.working { border: 3px solid var(--line); border-top-color: var(--accent);
+    animation: spin .9s linear infinite; }
+  .mark.ok { color: var(--ok); border: 2px solid currentColor; }
+  .mark.warn { color: var(--warn); border: 2px solid currentColor; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .mark.working { animation-duration: 3s; } }
+  h1 { margin: 0 0 .5rem; font-size: 1.25rem; line-height: 1.3; }
+  p { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+  .actions { margin-top: 1.5rem; }
+  .actions:empty { display: none; }
+  .button { display: inline-block; min-height: 44px; padding: .65rem 1.25rem; border: 0;
+    border-radius: 999px; background: var(--button); color: #fff; font: inherit;
+    font-weight: 600; text-decoration: none; cursor: pointer; }
+</style>
+</head>
+<body>
+<main id="waitlist-connect-status" data-state="working">
+  <div id="waitlist-connect-mark" class="mark working" aria-hidden="true"></div>
+  <div role="status" aria-live="polite">
+    <h1 id="waitlist-connect-title">Connecting your ${label} account…</h1>
+    <p id="waitlist-connect-detail">This takes a few seconds. Keep this tab open.</p>
+  </div>
+  <div id="waitlist-connect-actions" class="actions"></div>
+  <noscript><p>This page needs JavaScript to finish connecting. Turn it on and reload.</p></noscript>
+</main>
+<script nonce="${nonce}">
+(function () {
+  var page = ${page};
+  var label = page.label;
+  var root = document.getElementById('waitlist-connect-status');
+  var mark = document.getElementById('waitlist-connect-mark');
+  var title = document.getElementById('waitlist-connect-title');
+  var detail = document.getElementById('waitlist-connect-detail');
+  var actions = document.getElementById('waitlist-connect-actions');
+
+  function action(text, href) {
+    var a = document.createElement(href ? 'a' : 'button');
+    a.className = 'button';
+    a.textContent = text;
+    if (href) a.href = href;
+    else a.addEventListener('click', function () { location.reload(); });
+    actions.appendChild(a);
+  }
+
+  // Only ever a same-origin form route the server built; anything else is
+  // dropped rather than followed.
+  function formHref(r) {
+    return r && typeof r.redirect === 'string' && r.redirect.indexOf('/#more/') === 0
+      ? r.redirect : null;
+  }
+
+  function show(r) {
+    var status = r && r.status;
+    var form = formHref(r);
+    root.setAttribute('data-state', status || 'error');
+    actions.textContent = '';
+    if (status === 'ok') {
+      var who = r.handle ? (page.provider === 'linkedin' ? r.handle : '@' + r.handle) : '';
+      mark.className = 'mark ok';
+      mark.textContent = '\\u2713';
+      title.textContent = label + ' account connected';
+      detail.textContent = (who ? 'Verified as ' + who + '. ' : '')
+        + (form ? 'Taking you back to your waitlist form\\u2026' : '');
+      if (form) {
+        action('Back to your form', form);
+        setTimeout(function () { location.replace(form); }, 1500);
+      }
+      return;
+    }
+    mark.className = 'mark warn';
+    mark.textContent = '!';
+    if (status === 'denied') {
+      title.textContent = 'Connection cancelled';
+      detail.textContent = 'Access wasn\\u2019t approved on ' + label + ', so nothing was connected.';
+    } else if (status === 'failed') {
+      title.textContent = 'Couldn\\u2019t verify your account';
+      detail.textContent = label + ' didn\\u2019t confirm the account. Go back to your form and try again.';
+    } else if (status === 'unavailable') {
+      title.textContent = label + ' sign-in isn\\u2019t available yet';
+      detail.textContent = 'You can still add your handle on the waitlist form.';
+    } else if (status === 'expired') {
+      title.textContent = 'This link has expired';
+      detail.textContent = 'It was already used or is too old. Go back to the tab with your waitlist form and press Connect again.';
+      return;
+    } else {
+      title.textContent = 'Something went wrong';
+      detail.textContent = 'We couldn\\u2019t finish connecting your ' + label + ' account. Check your connection and try again.';
+      action('Try again');
+      return;
+    }
+    if (form) action('Back to your form', form);
+  }
+
+  var query = new URLSearchParams(location.search);
+  fetch('/waitlist/connect/' + page.provider + '/complete', {
+    method: 'POST',
+    credentials: 'omit',
+    cache: 'no-store',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ state: query.get('state') || '', code: query.get('code') || '' }),
+  })
+    .then(function (res) { if (!res.ok) throw new Error('HTTP ' + res.status); return res.json(); })
+    .then(show, function () { show(null); });
+})();
+</script>
+</body>
+</html>
+`;
 }
 
 function providerConfig(config, provider) {
@@ -320,37 +489,84 @@ function waitlistConnectRoutes(config) {
   });
 
   // ── GET /waitlist/connect/:provider/callback ─────────────────────────
-  // Provider redirect target: exchange the code, store the verified
-  // handle on the signup, land back on the stage-2 form.
-  router.get('/waitlist/connect/:provider/callback', async (req, res) => {
+  // Provider redirect target. It answers at once with a small standalone
+  // status page and does nothing else: no state is consumed and no code is
+  // exchanged here.
+  //
+  // It used to do the whole exchange and then 302 to the form. That took
+  // two provider calls, well past the service worker's 200ms navigation
+  // deadline, so a returning visitor saw the cached SPA — the platform home
+  // page — until the redirect finally won. A person who had just approved
+  // an OAuth prompt was shown an unrelated screen with no word about what
+  // was happening. The page below says what is happening, and the one that
+  // follows says how it went.
+  //
+  // Doing no work on GET has a second benefit: a link scanner or a prefetch
+  // that fetches this URL no longer spends the single-use code.
+  router.get('/waitlist/connect/:provider/callback', (req, res) => {
     const provider = req.params.provider;
     if (!PROVIDERS.has(provider)) return res.status(404).end();
+    const nonce = crypto.randomBytes(16).toString('base64');
+    res.set({
+      'Content-Type': 'text/html; charset=utf-8',
+      'Cache-Control': 'no-store',
+      // The URL carries the code and the state nonce; nothing on this page
+      // may hand them to another origin.
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': statusPageCsp(nonce),
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+    });
+    return res.send(statusPageHtml(provider, nonce));
+  });
 
-    const state = typeof req.query.state === 'string' ? req.query.state : '';
+  // ── POST /waitlist/connect/:provider/complete ────────────────────────
+  // Called by the status page with the `state` and `code` from its own
+  // URL: exchange the code, store the verified handle on the signup, and
+  // report the outcome plus where the form is. Always 200 with a JSON
+  // outcome — the page renders every one of them, and none is an HTTP error
+  // from the visitor's point of view.
+  // Its own small parser: the body is two short strings, and the route should
+  // not depend on a global parser having run first (a no-op when one has).
+  router.post('/waitlist/connect/:provider/complete', json({ limit: '4kb' }), async (req, res) => {
+    const provider = req.params.provider;
+    if (!PROVIDERS.has(provider)) return res.status(404).end();
+    res.set('Cache-Control', 'no-store');
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const state = typeof body.state === 'string' ? body.state : '';
+    const reply = (status, token, handle) => res.json({
+      status,
+      provider,
+      handle: handle || null,
+      redirect: token ? formUrl(token, status) : null,
+    });
+
     const entry = takeState(state);
     if (!entry || entry.provider !== provider) {
       // Already finished: a reload, the back button, or anything else that
-      // re-requests this URL. The first pass knows where it sent them; send
-      // them there again rather than to a landing page that answers a
-      // question they did not ask.
+      // re-requests this URL. The first pass knows how it ended; report that
+      // again rather than an error for a round trip that worked.
       const done = peekOutcome(state, provider);
-      if (done) return res.redirect(formUrl(done.token, done.status));
+      if (done) return reply(done.status, done.token, done.handle);
       // Genuinely unknown: no state record means no token, so there is no
-      // form to return to and the landing page is all that is left. Logged,
-      // because this used to be the one path through here that produced
-      // neither a redirect anybody could explain nor a line to grep for.
+      // form to return to. The page says the link has expired — which also
+      // covers a server restart while the person was at the provider, since
+      // the state lives in memory. Logged, because this used to be the one
+      // path through here that produced neither an explanation nor a line to
+      // grep for.
       log.info('waitlist-connect', 'Callback with unknown or expired state', { provider });
-      return res.redirect('/#landing');
+      return reply('expired', null, null);
     }
 
-    // Every exit below is terminal, so each one records where it sent the
-    // person before sending them.
-    const land = (status) => {
-      rememberOutcome(state, provider, entry.token, status);
-      return res.redirect(formUrl(entry.token, status));
+    // Every exit below is terminal, so each one records how it ended before
+    // answering.
+    const land = (status, handle) => {
+      rememberOutcome(state, provider, entry.token, status, handle);
+      return reply(status, entry.token, handle);
     };
 
-    const code = typeof req.query.code === 'string' ? req.query.code : '';
+    const code = typeof body.code === 'string' ? body.code : '';
     if (!code) {
       // User denied on the provider page.
       return land('denied');
@@ -366,13 +582,13 @@ function waitlistConnectRoutes(config) {
       const updated = await waitlist.setVerifiedHandle(pool, entry.token, provider, handle);
       if (!updated) {
         // The exchange worked but the token no longer resolves to a signup.
-        // Nothing to write and nothing to show, so the landing page stands —
-        // but say so, rather than leaving a silent bounce.
+        // Nothing to write and no form to go back to — but say so, rather
+        // than leaving a silent bounce.
         log.warn('waitlist-connect', 'Verified handle had no signup to write to', { provider });
-        return res.redirect('/#landing');
+        return reply('expired', null, null);
       }
       log.info('waitlist-connect', 'Social handle verified', { provider });
-      return land('ok');
+      return land('ok', handle);
     } catch (err) {
       log.error('waitlist-connect', 'OAuth exchange failed', {
         provider, message: err.message,

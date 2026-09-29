@@ -35,6 +35,7 @@ const worker = require('../src/services/worker');
 const {
   buildCodingAgentBuildGuidance,
   buildCodingAgentConventionsContext,
+  buildHostedCodingWorkflowGuidance,
   buildCodingAgentSpecContext,
   canReuseHostedClaudeScoutSpec,
   describeTurnError,
@@ -68,7 +69,20 @@ test('hosted Claude receives conventions once as system context, while unchanged
   assert.match(codex.promptBlock, /SENTINEL platform rule/);
 });
 
-test('hosted Claude references system build guidance while local and Codex prompts stay byte-identical', () => {
+test('hosted build guidance keeps proposal submission with the harness and evidence intent with the agent', () => {
+  const hosted = buildHostedCodingWorkflowGuidance();
+  assert.match(hosted, /HOSTED WORKER LIFECYCLE/);
+  assert.match(hosted, /record_visual_evidence_intent/);
+  assert.match(hosted, /harness handles push, pull request/);
+  assert.match(hosted, /Do not run\s+that skill, the social-vibecoding CLI/);
+  assert.match(hosted, /Do not create platform users or tokens/);
+  assert.equal(buildHostedCodingWorkflowGuidance({ runLocally: true }), '');
+  const sessionsSource = read('src/routes/sessions.js');
+  assert.match(sessionsSource, /const workflowGuidance = buildHostedCodingWorkflowGuidance\(\{ runLocally \}\)/);
+  assert.match(sessionsSource, /INSTRUCTIONS:\n\$\{workflowGuidance\}\n\$\{turnInstructions\}/);
+});
+
+test('hosted Claude references system build guidance while local and Codex share the reviewed inline contract', () => {
   const hosted = buildCodingAgentBuildGuidance({ authoritativeSystemContext: true });
   const local = buildCodingAgentBuildGuidance();
   const codex = buildCodingAgentBuildGuidance();
@@ -79,9 +93,10 @@ test('hosted Claude references system build guidance while local and Codex promp
   assert.equal(local.browserGuidance, IN_LOOP_BROWSER_GUIDANCE);
   assert.equal(
     crypto.createHash('sha256').update(localText).digest('hex'),
-    '3782d7e71930a9ab074e624f99a1ccfc6b13fb7148aaaeed0e8a0da902851655',
-    'the unchanged backends retain their exact pre-optimization guidance',
+    '2d33bc686d8ae4c2b5de08358078cd9503522891162926343c98be19b0ad905a',
+    'the non-system-prompt backends retain their exact reviewed guidance',
   );
+  assert.match(localText, /falls back to the home page and records that\n\s+default/);
 
   assert.match(hostedText, /authoritative system instructions/);
   assert.match(hostedText, /usernode-run-checks --changed/);
@@ -404,8 +419,8 @@ test('run-cc.sh pipes the prompt file to claude on stdin, never as a -p argument
 
   // A supplied system-prompt path is required and applied to every physical
   // Claude invocation, including resume failure's fresh retry.
-  assert.match(cc, /\[ "\$MODE" = "build" \] && \[ -z "\$SYSTEM_PROMPT_FILE" \]/,
-    'hosted builds fail closed if the system-context transport is omitted');
+  assert.match(cc, /\{ \[ "\$MODE" = "build" \] \|\| \[ "\$MODE" = "evidence" \]; \} && \[ -z "\$SYSTEM_PROMPT_FILE" \]/,
+    'hosted builds and evidence turns fail closed if system context is omitted');
   assert.match(cc, /\[ -s "\$SYSTEM_PROMPT_FILE" \]/);
   const systemPromptInvocations = cc.match(/\$SYSTEM_PROMPT_FLAGS --verbose/g) || [];
   assert.equal(systemPromptInvocations.length, 3,

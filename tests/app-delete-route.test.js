@@ -2,6 +2,12 @@
 // while they are the app's sole contributor. Full admins keep the existing
 // operational override. The route must re-read the shared contributor count
 // before any destructive teardown rather than trusting a client payload.
+//
+// Issue #2161 adds, in front of the teardown: a core app (self_hosted, or
+// the configured self-app slug) is never deletable, admins included; the
+// typed app name is verified server-side; and a shared app refuses a plain
+// delete. A full admin may override with acknowledge_shared:true, and the
+// other contributors are notified of the attempt and of the deletion.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -33,6 +39,18 @@ let appRow = null;
 let contributorCount = 0;
 let contributorReads = 0;
 
+// The contributor set behind `contributorCount`: the creator (42) first, then
+// synthetic others, so the notification fan-out has real ids to exclude
+// the actor from.
+function contributorRows() {
+  const rows = [];
+  for (let i = 0; i < contributorCount; i++) {
+    rows.push({ app_id: appRow.id, user_id: i === 0 ? 42 : 100 + i, username: `u${i}` });
+  }
+  return rows;
+}
+const notified = { attempts: [], deletions: [] };
+
 const pool = {
   async query(sql, params = []) {
     const source = String(sql);
@@ -44,6 +62,17 @@ const pool = {
       return contributorCount > 0
         ? { rows: [{ app_id: appRow.id, cnt: contributorCount }] }
         : { rows: [] };
+    }
+    if (/WITH contributor_ids AS/.test(source) && /u\.username/.test(source)) {
+      return { rows: contributorRows() };
+    }
+    if (/INSERT INTO notifications/.test(source) && /'app_delete_attempted'/.test(source)) {
+      notified.attempts.push({ appId: params[0], actorId: params[1], recipients: params[2] });
+      return { rows: [] };
+    }
+    if (/INSERT INTO notifications/.test(source) && /'app_deleted'/.test(source)) {
+      notified.deletions.push({ actorId: params[0], name: params[1], recipients: params[2] });
+      return { rows: [] };
     }
     if (/DELETE FROM apps WHERE id = \$1/.test(source)) {
       teardown.deletedRows.push(params[0]);
@@ -62,8 +91,14 @@ let server;
 
 test.before(async () => {
   const app = express();
+  app.use(express.json());
   app.use((req, _res, next) => { req.user = currentUser; next(); });
-  app.use(appRoutes({}));
+  // #2523: production defaults SELF_APP_PUBLIC_VOTING to true
+  // (`process.env.SELF_APP_PUBLIC_VOTING !== 'false'`), so the harness says
+  // so too. Leaving it undefined made the self-app gate fire in every test,
+  // which is the opposite of the shipped default. The admin-only case has
+  // its own server at the bottom of this file.
+  app.use(appRoutes({ selfAppSlug: 'usernode-2d5619', selfAppPublicVoting: true }));
   server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
 });
@@ -74,7 +109,14 @@ test.beforeEach(() => {
   appRow = {
     id: 7,
     slug: 'throwaway',
+    name: 'Throwaway',
     created_by: 42,
+    // #2523: the row now goes through appAccess.getAppForUser, which reads
+    // the visibility columns. Real rows always carry them (NOT NULL DEFAULT
+    // 'public' in schema.sql); this fixture was hand-built without them.
+    view_visibility: 'public',
+    collab_visibility: 'public',
+    self_hosted: false,
     runtime_name: null,
     container_id: null,
     runtime_kind: null,
@@ -84,11 +126,18 @@ test.beforeEach(() => {
   teardown.drops.length = 0;
   teardown.prefixes.length = 0;
   teardown.deletedRows.length = 0;
+  notified.attempts.length = 0;
+  notified.deletions.length = 0;
 });
 
-async function remove() {
+// The dialog's request: the typed name, plus the shared-app acknowledgement
+// when the caller ticks it. `body: null` sends the bare request a script
+// would.
+async function remove(body = { confirm_name: 'Throwaway' }) {
   const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/throwaway`, {
     method: 'DELETE',
+    headers: body ? { 'Content-Type': 'application/json' } : {},
+    body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
 }
@@ -115,7 +164,9 @@ test('the creator is rejected before teardown when another contributor exists', 
   contributorCount = 2;
   const result = await remove();
   assert.equal(result.status, 403);
-  assert.match(result.body.error, /sole contributor/);
+  // #2161: the refusal now says why (the old copy was "sole contributor").
+  assert.equal(result.body.reason, 'shared');
+  assert.match(result.body.error, /cannot delete it alone/);
   assert.equal(contributorReads, 1);
   assertNoTeardown();
 });
@@ -128,13 +179,110 @@ test('a non-owner is rejected without a contributor scan or teardown', async () 
   assertNoTeardown();
 });
 
-test('a full admin retains the existing delete override', async () => {
+test('a full admin retains the delete override on an unshared app', async () => {
   currentUser = { id: 1, username: 'admin', canAdminWrite: true };
-  contributorCount = 8;
+  contributorCount = 1;
   const result = await remove();
   assert.equal(result.status, 200);
-  assert.equal(contributorReads, 0, 'the admin override does not need the aggregate');
+  assert.equal(contributorReads, 1, 'the count decides whether the app is shared');
   assert.deepEqual(teardown.deletedRows, [7]);
+  assert.deepEqual(notified.deletions, [], 'nobody else to tell');
+});
+
+// ── #2161 ──────────────────────────────────────────────────────────────
+
+test('a core app is never deletable, full admin included (#2161)', async () => {
+  // isAdmin as well as canAdminWrite: a full admin carries both in
+  // production, and the self-app gate (#2523) keys on isAdmin like the four
+  // sibling routes do.
+  currentUser = { id: 1, username: 'admin', isAdmin: true, canAdminWrite: true };
+  appRow.self_hosted = true;
+  let result = await remove();
+  assert.equal(result.status, 403);
+  assert.equal(result.body.reason, 'core');
+  assert.match(result.body.error, /core platform app/);
+  assert.equal(contributorReads, 0, 'refused before any read');
+  assertNoTeardown();
+
+  // The configured self-app slug is the second signal, for a platform row
+  // that predates the self_hosted seed.
+  appRow.self_hosted = false;
+  appRow.slug = 'usernode-2d5619';
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/usernode-2d5619`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm_name: 'Throwaway' }),
+  });
+  result = { status: res.status, body: await res.json() };
+  assert.equal(result.status, 403);
+  assert.equal(result.body.reason, 'core');
+  assertNoTeardown();
+});
+
+test('the typed app name is verified on the server, not only in the dialog (#2161)', async () => {
+  currentUser = { id: 42, username: 'creator', canAdminWrite: false };
+  for (const body of [null, {}, { confirm_name: 'throwaway' }, { confirm_name: 'Throwaway ' + 'x' }]) {
+    const result = await remove(body);
+    assert.equal(result.status, 400, JSON.stringify(body));
+    assert.equal(result.body.reason, 'confirm_name');
+    assertNoTeardown();
+  }
+  const result = await remove({ confirm_name: '  Throwaway  ' });
+  assert.equal(result.status, 200, 'surrounding whitespace is not a mismatch');
+});
+
+test('the creator of a shared app is told why, and the others are told of the attempt (#2161)', async () => {
+  currentUser = { id: 42, username: 'creator', canAdminWrite: false };
+  contributorCount = 3;
+  const result = await remove();
+  assert.equal(result.status, 403);
+  assert.equal(result.body.reason, 'shared');
+  assert.equal(result.body.contributor_count, 3);
+  assert.match(result.body.error, /2 other contributors/);
+  assert.match(result.body.error, /group's agreement/);
+  assertNoTeardown();
+  assert.deepEqual(notified.attempts, [{ appId: 7, actorId: 42, recipients: [101, 102] }]);
+});
+
+test('a full admin gets a plain delete of a shared app refused with the governance pointer (#2161)', async () => {
+  currentUser = { id: 1, username: 'admin', canAdminWrite: true };
+  contributorCount = 2;
+  let result = await remove({ confirm_name: 'Throwaway' });
+  assert.equal(result.status, 409);
+  assert.equal(result.body.reason, 'shared');
+  assert.equal(result.body.contributor_count, 2);
+  assert.match(result.body.error, /1 other contributor who/);
+  assert.match(result.body.error, /group vote/);
+  assertNoTeardown();
+  // The admin is not a contributor here, so both contributors are told.
+  assert.deepEqual(notified.attempts, [{ appId: 7, actorId: 1, recipients: [42, 101] }]);
+
+  // A truthy-but-not-true acknowledgement does not count.
+  result = await remove({ confirm_name: 'Throwaway', acknowledge_shared: 'yes' });
+  assert.equal(result.status, 409);
+  assertNoTeardown();
+});
+
+test('a full admin who acknowledges the other contributors deletes, and they are notified (#2161)', async () => {
+  currentUser = { id: 1, username: 'admin', canAdminWrite: true };
+  contributorCount = 3;
+  const result = await remove({ confirm_name: 'Throwaway', acknowledge_shared: true });
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, { ok: true });
+  assert.deepEqual(teardown.deletedRows, [7]);
+  // The response is sent before the fan-out; give it a tick.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(notified.deletions, [{ actorId: 1, name: 'Throwaway', recipients: [42, 101, 102] }]);
+  assert.deepEqual(notified.attempts, [], 'a completed delete is not also an attempt');
+});
+
+test('an acknowledging admin who is themselves a contributor is not notified of their own delete (#2161)', async () => {
+  currentUser = { id: 42, username: 'creator-admin', canAdminWrite: true };
+  contributorCount = 2;
+  const result = await remove({ confirm_name: 'Throwaway', acknowledge_shared: true });
+  assert.equal(result.status, 200);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(notified.deletions, [{ actorId: 42, name: 'Throwaway', recipients: [101] }]);
 });
 
 test('a view-only admin may still delete their own sole-contributor app', async () => {
@@ -149,4 +297,111 @@ test('a view-only admin may still delete their own sole-contributor app', async 
   assert.equal(result.status, 200);
   assert.equal(contributorReads, 1);
   assert.deepEqual(teardown.deletedRows, [7]);
+});
+
+// ── #2523: the route stops answering questions about apps you cannot see ──
+//
+// It used to load the row with a bare slug lookup and no access check, then
+// branch: 404 meant the slug was free, `reason: 'core'` meant it existed and
+// was core, `reason: 'not_owner'` meant it existed and was somebody else's.
+// Any signed-in account could read all three off a PRIVATE app.
+//
+// These exercise the real route over HTTP, so they assert the answer a
+// prober actually receives rather than the shape of the code.
+
+test('a private app answers a stranger exactly as a missing one does', async () => {
+  appRow.view_visibility = 'private';
+  appRow.collab_visibility = 'private';
+  currentUser = { id: 999, username: 'stranger', canAdminWrite: false };
+  const hidden = await remove();
+
+  // …and the control: a slug that genuinely does not exist.
+  appRow = null;
+  const missing = await remove();
+
+  assert.equal(hidden.status, 404, 'the private app must not be distinguishable');
+  assert.deepEqual(hidden.body, missing.body,
+    'byte-identical to a slug that was never taken');
+  assert.equal(hidden.status, missing.status);
+  assertNoTeardown();
+});
+
+test('a private CORE app does not leak that it is core', async () => {
+  appRow.slug = 'usernode-2d5619';
+  appRow.view_visibility = 'private';
+  currentUser = { id: 999, username: 'stranger', canAdminWrite: false };
+  const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/usernode-2d5619`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ confirm_name: 'Throwaway' }),
+  });
+  assert.equal(res.status, 404);
+  assert.deepEqual(await res.json(), { error: 'App not found' },
+    "reason: 'core' told a stranger the app existed AND what it was");
+  assertNoTeardown();
+});
+
+test('someone who CAN see the app still gets the real reason', async () => {
+  // Closing the oracle must not flatten the errors an owner needs. A public
+  // app is visible to everyone, so a non-owner gets not_owner, not a 404.
+  currentUser = { id: 999, username: 'other', canAdminWrite: false };
+  const res = await remove();
+  assert.equal(res.status, 403);
+  assert.equal(res.body.reason, 'not_owner');
+  assertNoTeardown();
+});
+
+test('an admin still reaches a private app', async () => {
+  appRow.view_visibility = 'private';
+  currentUser = { id: 1, username: 'admin', isAdmin: true, canAdminWrite: true };
+  const res = await remove();
+  assert.equal(res.status, 200, 'checkAppAccess short-circuits on isAdmin');
+  assert.deepEqual(teardown.deletedRows, [7]);
+});
+
+test('the self-app is hidden from non-admins when public voting is off', async () => {
+  // Found by an adversarial review of the fix above, and it is the case most
+  // worth closing: `view_visibility` on the seeded self-app row is 'public',
+  // so the access wall alone lets a non-admin through and `reason: 'core'`
+  // confirms the platform app exists. The self-app's real gate is the
+  // SELF_APP_PUBLIC_VOTING flag, which four other routes already apply.
+  const appsMod = require('../src/routes/apps');
+  const express2 = require('express');
+  const gated = express2();
+  gated.use(express2.json());
+  gated.use((req, _res, next) => { req.user = currentUser; next(); });
+  gated.use(appsMod.appRoutes({ selfAppSlug: 'usernode-2d5619', selfAppPublicVoting: false }));
+  const srv = gated.listen(0);
+  await new Promise((r) => srv.once('listening', r));
+  try {
+    currentUser = { id: 999, username: 'stranger', canAdminWrite: false };
+    const probe = async () => {
+      const res = await fetch(`http://127.0.0.1:${srv.address().port}/api/apps/usernode-2d5619`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm_name: 'Throwaway' }),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+
+    // The flagged row.
+    appRow.slug = 'usernode-2d5619';
+    appRow.self_hosted = true;
+    let res = await probe();
+    assert.equal(res.status, 404);
+    assert.deepEqual(res.body, { error: 'App not found' });
+
+    // And the row that is core by SLUG only, with the flag unset. Found by
+    // an adversarial review: `isCoreApp` recognises both shapes, so a gate
+    // keyed on `self_hosted` alone would leave this one answering
+    // `reason: 'core'` to a stranger. Historical and staging platform rows
+    // take this shape, which is why isCoreApp accepts it at all.
+    appRow.self_hosted = false;
+    res = await probe();
+    assert.equal(res.status, 404, 'a slug-identified core row is hidden too');
+    assert.deepEqual(res.body, { error: 'App not found' });
+    assertNoTeardown();
+  } finally {
+    srv.close();
+  }
 });

@@ -12,13 +12,41 @@
  * ── The `<select>` is a plain one, deliberately ────────────────────────
  *
  * `@/components/ui/select` exists and is the shell's field-styled native
- * select. It is not used here: its base is `w-full` and its variants pad
- * `px-3 py-2`, where this picker is `max-w-[16rem]` at `px-2 py-1.5`. Routing
- * it through the primitive would move the control's size on a screen whose
- * contract for this conversion is that nothing moves. The classes below are
- * already in the widget language — the reskin reached them through the token
- * layer — so what is left is a sizing decision with its own evidence to
- * gather, not part of a renderer swap.
+ * select: a filled `bg-zinc-100` box at `rounded-lg`, drawn for forms. The
+ * ITERATION 03 board draws this picker as something else, a full-width white
+ * pill on the card surface with the event's name at 15px and a blue chevron.
+ * So it stays a native `<select>` (the value/onChange contract and the
+ * dapp.json anchor on `#tc-ev-select` are unchanged) with the chevron drawn
+ * over it. The visible "Event" label went with the board; `aria-label` keeps
+ * the control named.
+ *
+ * ── Challenges draws no hero ───────────────────────────────────────────
+ *
+ * The Challenges tab names the event in its own progress ("3/9 done in
+ * Season 2") and in the picker, so a hero card repeating the name and dates
+ * above it is left out there. Standings keeps its hero until a slice of its own.
+ * The section comes from ./section-store.ts, the seam the tab strip reads.
+ *
+ * ── Challenges is the current season, once (issue #3049) ───────────────
+ *
+ * The picker listed every public event, past seasons included, so on the
+ * Challenges tab the season was named three times in a row — the picker,
+ * the standing card ("Season 3 · #3") and the progress line ("done in this
+ * event · Season 3") — and the past seasons were listed a second time beside
+ * the History tab that exists for them. On Challenges the picker now offers
+ * only the current season's events (see `challengesChoices`), is left out
+ * when that leaves nothing to choose between, and a "Past seasons" link
+ * hands the rest to History. Standings keeps the full picker and its hero.
+ *
+ * ── Only a viewer with the season history gets a bar at all ────────────
+ *
+ * The picker reaches standings other than the ones on screen. A member
+ * enrolled fresh into the season on screen, or anyone signed out, has none
+ * to reach, so for them the bar is nothing — not an empty picker, not a hero
+ * — on both event tabs (issue #2495). An admin always has it. The server
+ * decides on the events list (`viewer.history`);
+ * ./topochain-event-context.js carries the verdict into the store, and this
+ * component only reads it.
  *
  * ── `hidden` on the host is still someone else's ───────────────────────
  *
@@ -30,12 +58,16 @@
  * renders the host's CHILDREN, never the host.
  */
 
+import { ChevronDownIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { eventBarStore } from './event-bar-store.js';
+import { useLeaderboardSection } from './section-store';
 
 interface EventOptionView {
   id: number;
   label: string;
+  /** The event's season, or null when the server did not say. */
+  seasonId?: number | null;
 }
 
 type HeroView =
@@ -63,7 +95,39 @@ interface EventBarState {
   placeholder: string | null;
   selectedId: number | null;
   hero: HeroView | null;
+  /** An admin, or a member with a trace in a season other than the default event's. */
+  history: boolean;
+  /** The season the screen opens on; null when unknown (nothing is filtered). */
+  currentSeasonId?: number | null;
 }
+
+/**
+ * What the Challenges tab's picker offers: the current season's events, plus
+ * the selection itself when it sits elsewhere (picked on Standings), so the
+ * control never shows a value it does not list and the way back is one pick.
+ * An event of ANOTHER season is History's; one the server gave no season
+ * stays. With no known current season nothing is filtered.
+ */
+export function challengesChoices(
+  options: EventOptionView[],
+  currentSeasonId: number | null | undefined,
+  selectedId: number | null,
+): { choices: EventOptionView[]; past: boolean } {
+  if (currentSeasonId == null) return { choices: options, past: false };
+  const elsewhere = (o: EventOptionView) => o.seasonId != null && o.seasonId !== currentSeasonId;
+  return {
+    choices: options.filter((o) => !elsewhere(o) || o.id === selectedId),
+    past: options.some(elsewhere),
+  };
+}
+
+// The hand-off to History: the tab strip's own path, so the hash, the pane
+// switch and History's lazy mount all run exactly as a tap on the tab.
+function openHistory() {
+  (window as any).Leaderboard?._setSection?.('seasons');
+}
+
+const PAST_LINK = 'text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline';
 
 function context(): any {
   return (typeof window !== 'undefined' ? (window as any).TopochainEventContext : null) || null;
@@ -118,18 +182,36 @@ function Hero({ hero }: { hero: HeroView }) {
   );
 }
 
+const PICKER = 'w-full appearance-none rounded-2xl border border-zinc-200 dark:border-zinc-800 '
+  + 'bg-white dark:bg-zinc-900 py-3 pl-4 pr-11 text-[0.9375rem] font-medium text-zinc-800 '
+  + 'dark:text-zinc-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500';
+
 export function EventBarView({
-  mounted, options, placeholder, selectedId, hero,
-}: EventBarState) {
-  if (!mounted) return null;
+  mounted, options, placeholder, selectedId, hero, history, currentSeasonId, section,
+}: EventBarState & { section?: string }) {
+  if (!mounted || !history) return null;
+  const onChallenges = section === 'challenges';
+  const showHero = hero != null && !onChallenges;
+  // Challenges: the current season's events only, a picker only when there
+  // is a choice among them, and never a placeholder picker (it would flash
+  // in and back out on a re-open while the list reloads).
+  const { choices, past } = onChallenges
+    ? challengesChoices(options, currentSeasonId, selectedId)
+    : { choices: options, past: false };
+  const showPicker = !onChallenges || (placeholder === null && choices.length > 1);
+  const showPast = onChallenges && placeholder === null && past;
+  if (!showPicker && !showPast) return null;
+  // The gap below the bar travels with the bar: the host's own className is
+  // a constant (see ./index.tsx), so a margin there would stand even when
+  // nothing is drawn.
   return (
-    <>
-      <div className="flex flex-wrap items-center justify-end gap-3 mb-3">
-        <label className="flex items-center gap-2 text-sm">
-          <span className="text-zinc-500 dark:text-zinc-400">Event</span>
+    <div className="w-full mb-4">
+      {showPicker ? (
+        <div className="relative w-full sm:max-w-xs">
           <select
             id="tc-ev-select"
-            className="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm max-w-[16rem]"
+            aria-label="Event"
+            className={PICKER}
             // A `<select>`'s onChange IS the native `change` event — it fires
             // on commit, not per keystroke — so the paged-query rule that
             // applies to text inputs does not apply here.
@@ -141,19 +223,34 @@ export function EventBarView({
             }}
           >
             {placeholder !== null ? <option value="">{placeholder}</option> : null}
-            {options.map((ev) => (
+            {choices.map((ev) => (
               <option key={ev.id} value={String(ev.id)}>{ev.label}</option>
             ))}
           </select>
-        </label>
+          <ChevronDownIcon
+            aria-hidden="true"
+            className="pointer-events-none absolute right-4 top-1/2 h-[1.125rem] w-[1.125rem] -translate-y-1/2 text-violet-600 dark:text-violet-400"
+          />
+        </div>
+      ) : null}
+      {showPast ? (
+        <button
+          type="button"
+          id="tc-ev-past-seasons"
+          className={showPicker ? `mt-3 ${PAST_LINK}` : PAST_LINK}
+          onClick={openHistory}
+        >
+          Past seasons →
+        </button>
+      ) : null}
+      <div id="tc-ev-hero" className={showHero ? 'mt-3' : undefined}>
+        {showHero && hero ? <Hero hero={hero} /> : null}
       </div>
-      <div id="tc-ev-hero">
-        {hero ? <Hero hero={hero} /> : null}
-      </div>
-    </>
+    </div>
   );
 }
 
 export function EventBar() {
-  return <EventBarView {...useStoreState<EventBarState>(eventBarStore)} />;
+  const { section } = useLeaderboardSection();
+  return <EventBarView {...useStoreState<EventBarState>(eventBarStore)} section={section} />;
 }

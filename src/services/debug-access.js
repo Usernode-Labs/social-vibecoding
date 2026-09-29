@@ -84,14 +84,26 @@ const DENIED_TABLES = new Set([
   'conversation_message_objects', // private shared-object activity
   'chat_session_spec_conversation_shares', // private spec access grants
   'user_blocks',          // private user safety relationships
+  'friendships',          // private friend graph and pending requests (#2386)
+  'friend_request_declines', // who declined whom — silent by product rule (#2386)
+  'friend_request_sends', // per-person request activity (#2386)
   'conversation_message_reports', // private abuse evidence and reporter identity
+  'app_reports',             // private mini-app report details and reporter identity
+  'chat_message_reports',    // private Workshop post evidence and reporter identity
   'mcp_clients',              // hosted-connector client registrations
   'mcp_authorization_codes',  // hosted-connector PKCE codes (hashed, short-lived)
   'mcp_tokens',               // hosted-connector bearer hashes and hints
+  'mcp_delegations',          // which of the platform's own agents holds a grant for whom (#2779)
   'mcp_auth_audit_events',    // security audit trail for connector credentials
   'user_social_identities',   // private provider ownership proofs
   'social_identity_oauth_states', // social-link state hashes + PKCE verifiers
+  'social_identity_pending_replacements', // short-lived verified account replacements
   'user_ai_credentials', // per-user AI/LLM provider keys (encrypted blobs, still deny)
+  'global_chat_threads', // private assistant summaries and ownership
+  'global_chat_messages', // private user/assistant transcript content
+  'global_chat_tool_runs', // private action inputs and authoritative results
+  'global_chat_action_tokens', // one-use action capabilities and sealed payloads
+  'agent_session_actions', // the agent-session Mayor's sealed confirmation cards (#2779)
 ]);
 
 const DENIED_COLUMNS = {
@@ -116,6 +128,18 @@ const DENIED_COLUMNS = {
   chat_session_attachments: [
     'data', // raw upload bytes — large and potentially private
   ],
+  global_chat_action_tokens: [
+    // The first hash locates a one-use write capability; the second is a
+    // fingerprint of that capability's exact private action payload.
+    'token_hash',
+    'input_hash',
+    'normalized_input',
+  ],
+  agent_session_actions: [
+    // The sealed exact input of a pending write and its fingerprint (#2779).
+    'input_hash',
+    'sealed_input',
+  ],
   onchain_accounts: [
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
     'registration_code', // topochain: single-use account claim code (SPEC §6)
@@ -124,6 +148,7 @@ const DENIED_COLUMNS = {
     'ip',         // submitter IP — same treatment as users.waitlist_ip
     'more_token', // stage-2 survey capability — editing rights over the signup's answers
     'invite_code', // shareable capability — anyone holding it is attributed as this signup's invitee
+    'project_invite_id', // which private app_email_invites row (project, inviter) brought this address in
   ],
 };
 

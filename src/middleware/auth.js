@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
+const agentSessionsFlag = require('../services/agent-sessions-flag');
 
 const PUBLIC_PATHS = [
   // Legacy standalone auth pages, now tiny redirect stubs into the SPA's
@@ -96,6 +97,31 @@ const PUBLIC_PATHS = [
   '/sw.js',
   '/manifest.webmanifest',
   '/icons/',
+  // The two icons browsers, crawlers and link previews look for at the root
+  // by convention, whatever the page links; without these they got a 302 to
+  // the root. Whole file names, so the prefix match opens nothing else there.
+  '/favicon.ico',
+  '/apple-touch-icon.png',
+  // Challenge artwork (public/illustrations/challenges/). The challenge list
+  // it decorates is public (/api/v4/), so the pictures must be too: an image
+  // request answered with a redirect body draws a broken picture instead of
+  // the card fallback. Same public tier as /icons/ above. Static SVG files
+  // only, no data access.
+  '/illustrations/',
+  // The brand assets the signed-out screens draw (public/brand/). The landing
+  // is the screen a stranger with no session meets, so its illustration has to
+  // be readable by exactly the tier that cannot get past the gate — and the
+  // gate answers an image request with a 302 to the root, which draws a broken
+  // picture rather than nothing. Caught on staging, where the landing rendered
+  // correctly around an empty box. Static image files only, no data access;
+  // same public tier as /icons/ and /illustrations/ above.
+  '/brand/',
+  // Uploaded challenge artwork (routes/topochain/challenge-illustrations.js),
+  // public for the same reason as the directory above: it decorates the same
+  // public challenge cards. The route mounts BEFORE this middleware, so this
+  // entry is belt-and-braces like the report share entry below. Access control
+  // is the unguessable 32-hex id, and the bytes are served under a sandbox CSP.
+  '/challenge-illustrations/',
   // Public report share links (routes/report-snapshots.js). The route is
   // mounted BEFORE this middleware in server.js, so requests normally
   // never get here — this entry is belt-and-braces so the public contract
@@ -133,6 +159,12 @@ const GATE_OPEN_PATHS = [
   // reaches this gate.)
   '/api/auth/',
   '/api/iframe-token',
+  // Following an invite link from the waiting room queues its community
+  // for the day the account is let in (services/community-invites.js).
+  // Only the by-token reads and redeem, and the queued list the waiting
+  // room shows: making and managing links stays behind the gate.
+  '/api/invite-links/by-token/',
+  '/api/invite-links/queued',
 ];
 
 // Documents owned by the platform SPA. Clean app URLs deliberately live in
@@ -141,9 +173,12 @@ const GATE_OPEN_PATHS = [
 // the routes themselves; this only lets the browser boot the same shell `/`
 // already serves. Keep this narrower than the catch-all so an unrelated typo
 // retains the existing redirect-to-root behaviour.
+// An invite link (`/invite/<token>`, routes/community-invites.js) is one
+// too: a visitor with no account is exactly who it is for.
 function isSpaDocumentPath(pathname) {
   return pathname === '/' || pathname === '/index.html'
-    || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(pathname);
+    || /^\/app\/[a-z0-9][a-z0-9-]{0,254}(?:\/.*)?$/.test(pathname)
+    || /^\/invite\/[A-Za-z0-9_-]{22}$/.test(pathname);
 }
 
 // Returns true when it handled the response (caller must return).
@@ -196,6 +231,76 @@ const STAGING_SESSION_DAYS = 7;
 const SELF_APP_ID = process.env.USERNODE_APP_ID;
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
 
+// Browser sessions now follow the mobile session's active-lease model: a
+// device that keeps using Homeroom stays signed in, while an abandoned device
+// eventually falls out. Mobile renews its 90-day lease when 89 days remain,
+// which coalesces activity to at most one write per day; use the same cadence
+// here so the two surfaces do not surprise the same person differently.
+//
+// The fixed cap is the extra browser-cookie safety boundary. A bearer cookie
+// that is continuously replayed must still require reauthentication
+// eventually, even though ordinary active use slides the idle lease.
+const SESSION_IDLE_DAYS = 90;
+const SESSION_MAX_DAYS = 365;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const SESSION_RENEW_BEFORE_MS = (SESSION_IDLE_DAYS - 1) * DAY_MS;
+
+/**
+ * Extend a live browser session's idle lease, without moving it beyond the
+ * absolute cap measured from `created_at`.
+ *
+ * Renewal is best-effort. The request has already authenticated by the time
+ * this runs, so a failure to extend must not turn it into an error. The helper
+ * is still awaited by the middleware: response cookies have to be written
+ * before a downstream handler sends the headers.
+ */
+async function renewCookieSession(pool, res, token, row) {
+  try {
+    const now = Date.now();
+    const currentExpiry = new Date(row.expires_at).getTime();
+    if (!Number.isFinite(currentExpiry)
+        || currentExpiry - now > SESSION_RENEW_BEFORE_MS) {
+      return null;
+    }
+
+    // `created_at` is non-null after the schema migration. If a malformed row
+    // somehow lacks it, fail closed on renewal and keep the existing expiry;
+    // extending without a trustworthy cap anchor would make the cap cosmetic.
+    const parsedCreatedAt = new Date(row.created_at).getTime();
+    if (!Number.isFinite(parsedCreatedAt)) return null;
+    const createdAt = parsedCreatedAt;
+    const ceiling = createdAt + SESSION_MAX_DAYS * DAY_MS;
+    const wanted = now + SESSION_IDLE_DAYS * DAY_MS;
+    const nextExpiry = Math.min(wanted, ceiling);
+    if (nextExpiry <= currentExpiry) return null;
+
+    const expiresAt = new Date(nextExpiry);
+    const { rows } = await pool.query(
+      `UPDATE sessions
+          SET expires_at = $1
+        WHERE token = $2 AND expires_at = $3 AND expires_at > NOW()
+        RETURNING expires_at`,
+      [expiresAt, token, row.expires_at]
+    );
+    // Logout, revocation, or another request may have changed/deleted the row
+    // after authentication. Never issue a cookie unless this exact lease was
+    // the one successfully advanced.
+    if (rows.length !== 1) return null;
+
+    const persistedExpiry = new Date(rows[0].expires_at);
+    res.cookie('session', token, {
+      httpOnly: true,
+      secure: SECURE_COOKIE,
+      sameSite: 'lax',
+      expires: persistedExpiry,
+    });
+    return persistedExpiry;
+  } catch (err) {
+    log.warn('auth', 'Session renewal failed', { message: err.message });
+    return null;
+  }
+}
+
 function authMiddleware(config) {
   const pool = getPool(config);
 
@@ -211,14 +316,18 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.session_bridge_enabled, u.locale, u.has_platform_access,
+          `SELECT s.user_id, s.expires_at, s.created_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.agent_sessions_enabled, u.session_bridge_enabled, u.locale, u.has_platform_access, u.is_synthetic,
              ${nativeWebSessionIsLive('s')} AS native_session_valid
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
         );
 
+        // A synthetic user (demo mode's partner, routes/demo-mode.js) never
+        // has a live session: it cannot sign in, and a session row that
+        // named it anyway reads as no session at all.
         if (rows.length > 0 && rows[0].native_session_valid !== false
+            && !rows[0].is_synthetic
             && new Date(rows[0].expires_at) >= new Date()) {
           // Staging identity switch: a request that carries a VALID iframe
           // JWT for a DIFFERENT user than the cookie session re-mints as
@@ -283,6 +392,10 @@ function authMiddleware(config) {
             aiProgressEstimate: !!rows[0].ai_progress_estimate,
             // #1281: opt-in for the session-CLI bridge venue. Default FALSE.
             sessionBridgeEnabled: !!rows[0].session_bridge_enabled,
+            // #2779: the user's own agent-sessions choice (NULL = none) and
+            // the value in effect once the deployment default fills it in.
+            agentSessionsChoice: agentSessionsFlag.choiceOf(rows[0].agent_sessions_enabled),
+            agentSessionsEnabled: agentSessionsFlag.effective(config, rows[0].agent_sessions_enabled),
             // Platform-level language preference (issue #757): a BCP-47
             // tag or null when unset. Surfaced via /api/auth/me.
             locale: rows[0].locale || null,
@@ -290,6 +403,10 @@ function authMiddleware(config) {
             // new signups until an admin releases them off the waitlist.
             hasPlatformAccess: !!rows[0].has_platform_access,
           };
+          // Placed after the staging identity-switch block: that path replaces
+          // the cookie outright, so renewing the credential it is discarding
+          // would both waste a write and set competing cookies on one response.
+          await renewCookieSession(pool, res, cookieToken, rows[0]);
           log.debug('auth', 'Session validated', { userId: req.user.id });
           if (enforcePlatformAccessGate(req, res, req.user)) return;
           return next();
@@ -362,7 +479,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, agent_sessions_enabled, session_bridge_enabled, locale, has_platform_access FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -416,6 +533,8 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
     sessionBridgeEnabled: !!userRow.session_bridge_enabled,
+    agentSessionsChoice: agentSessionsFlag.choiceOf(userRow.agent_sessions_enabled),
+    agentSessionsEnabled: agentSessionsFlag.effective(config, userRow.agent_sessions_enabled),
     locale: userRow.locale || null,
     hasPlatformAccess: !!userRow.has_platform_access,
   };
@@ -425,11 +544,18 @@ function redirectOrReject(req, res, next) {
   // The native app opens OAuth in the system browser, whose cookie jar may
   // be empty. Only these two account-pinned document navigations may resume
   // after login; ordinary unauthenticated API requests still receive 401.
+  const socialIntent = typeof req.query?.intent === 'string'
+    && /^(connect|refresh|replace)$/.test(req.query.intent)
+    ? req.query.intent
+    : null;
   if (req.method === 'GET'
       && /^\/api\/me\/social-identities\/(github|x)\/connect$/.test(req.path)
       && typeof req.query?.account === 'string'
-      && /^[1-9][0-9]*$/.test(req.query.account)) {
-    const target = `${req.path}?account=${req.query.account}`;
+      && /^[1-9][0-9]*$/.test(req.query.account)
+      && (req.query.intent === undefined || socialIntent)) {
+    const params = new URLSearchParams({ account: req.query.account });
+    if (socialIntent) params.set('intent', socialIntent);
+    const target = `${req.path}?${params.toString()}`;
     res.setHeader('Cache-Control', 'no-store');
     return res.redirect(302, '/?return_to=' + encodeURIComponent(target) + '#login');
   }
@@ -449,4 +575,10 @@ function redirectOrReject(req, res, next) {
   return res.redirect('/');
 }
 
-module.exports = { authMiddleware };
+module.exports = {
+  authMiddleware,
+  renewCookieSession,
+  SESSION_IDLE_DAYS,
+  SESSION_MAX_DAYS,
+  SESSION_RENEW_BEFORE_MS,
+};

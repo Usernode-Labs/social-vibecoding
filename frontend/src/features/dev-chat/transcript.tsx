@@ -6,7 +6,7 @@
  * ── What this component does NOT bind ─────────────────────────────────
  *
  * `initScrollTracking` binds click, keydown and scroll on `#dc-messages`
- * ITSELF, once per `renderChatView`, and that element stays dev-chat.js's. So
+ * ITSELF, once per element, and those listeners stay dev-chat.js's. So
  * the spec-preview card, the Q/A chips and their two action buttons keep their
  * `data-*` hooks and no onClick — exactly like the quick-reply pills, and for
  * the same reason: the host outlives every repaint of its contents, so the
@@ -18,9 +18,19 @@
  * stop. Those are onClick now, holding the closure instead of a global name.
  */
 
-import { useCallback, type ReactNode } from 'react';
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  type CSSProperties,
+  type ReactNode,
+  type SyntheticEvent,
+} from 'react';
 
 import { useStoreState } from '../../lib/use-store-state';
+import { createLogFollower, revealDisclosure, type LogFollower } from './log-follow';
 import {
   nowStore,
   streamStore,
@@ -48,6 +58,31 @@ function fmt(): any {
 }
 
 const STAMP_STYLE = { fontSize: '9px', opacity: 0.4, marginLeft: 'auto' } as const;
+
+/**
+ * Markup another module built, set as the element's html.
+ *
+ * Every html sink in this file goes through here, for one reason: React 19
+ * compares `dangerouslySetInnerHTML` by the IDENTITY of its `{ __html }`
+ * object and reassigns `innerHTML` whenever that object is new. An inline
+ * `{{ __html: … }}` is new on every render, so every republish tore down and
+ * rebuilt every message body in the transcript — its images reloading, its
+ * text selection lost — with identical text. The wrapper here is the same
+ * object while the string is the same (#3104 found and fixed the same thing in
+ * Messages; board-frame.tsx documents it too).
+ */
+function Html({ as: Tag = 'div', html, className, style }: {
+  as?: 'div' | 'span';
+  html: string;
+  className?: string;
+  style?: CSSProperties;
+}): ReactNode {
+  const inner = useMemo(() => ({ __html: html }), [html]);
+  return <Tag className={className} style={style} dangerouslySetInnerHTML={inner} />;
+}
+
+const VISUALS_STYLE = { margin: '6px 0 2px' } as const;
+const MORE_STYLE = { padding: '8px 10px' } as const;
 
 /** `<span style="font-size:9px;opacity:0.4;margin-left:auto">id ts</span>`. */
 function Stamp({ text }: { text: string }): ReactNode {
@@ -88,7 +123,7 @@ function Failure({ r }: { r: Extract<TranscriptRow, { t: 'failure' }> }): ReactN
       </span>
       <span className="dc-failure-body">
         {r.html !== undefined
-          ? <span className="dc-failure-text" dangerouslySetInnerHTML={{ __html: r.html }} />
+          ? <Html as="span" className="dc-failure-text" html={r.html} />
           : <span className="dc-failure-text">{r.text}</span>}
         {r.chips && r.chips.length ? (
           <span className="dc-failure-chips">
@@ -122,12 +157,30 @@ function Elapsed({ e }: { e: ElapsedSpec }): ReactNode {
   return <span className="dc-status-elapsed" data-elapsed-since={e.since}>{label}</span>;
 }
 
+/**
+ * #2597: the venue, under the heading.
+ *
+ * The running row used to say "Claude Code is running" or "OpenRouter is
+ * running" depending on where the turn happens to be executing — two
+ * sentences for one event, with the reader left to work out that the
+ * difference is plumbing. The heading says the event and this says the
+ * venue, in the muted second-line style the run card already uses for its
+ * guess and its cohort hint.
+ */
+function VenueCaption({ text }: { text: string | undefined }): ReactNode {
+  if (!text) return null;
+  return <span className="dc-status-venue">{text}</span>;
+}
+
 function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): ReactNode {
   return (
-    <div className="dc-status-line" style={r.dim ? { opacity: 0.8 } : undefined}>
+    <div
+      className={r.caption ? 'dc-status-line dc-status-line-captioned' : 'dc-status-line'}
+      style={r.dim ? { opacity: 0.8 } : undefined}
+    >
       <StatusIcon kind={r.icon} />
       {r.html !== undefined
-        ? <span dangerouslySetInnerHTML={{ __html: ` ${r.html} ` }} />
+        ? <Html as="span" html={` ${r.html} `} />
         : ` ${r.text} `}
       <Elapsed e={r.elapsed} />
       {r.forceStop ? (
@@ -137,6 +190,7 @@ function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): Reac
         >Force stop</button>
       ) : null}
       <Stamp text={r.stamp} />
+      <VenueCaption text={r.caption} />
     </div>
   );
 }
@@ -259,13 +313,53 @@ function ProgressNote(
   );
 }
 
+/**
+ * The log panel follows the run (#1944) — see ./log-follow.ts for the rule.
+ *
+ * The follower lives in a ref because the toggle is the reader's, not
+ * React's: the browser flips `open` and fires `toggle`, and no render
+ * happens between the two. So an open is handled in the toggle handler (the
+ * panel has just been laid out and can be scrolled), while the effect below
+ * covers the two cases a render does see — a persisted-open card mounting,
+ * and the log text growing under an open card.
+ */
+function useLogFollow(text: string | null, open: boolean) {
+  const pre = useRef<HTMLPreElement | null>(null);
+  const follower = useRef<LogFollower | null>(null);
+  if (!follower.current) follower.current = createLogFollower();
+  const onScroll = useCallback(() => {
+    if (pre.current) follower.current!.noteScroll(pre.current);
+  }, []);
+  const onOpened = useCallback(() => {
+    if (pre.current) follower.current!.noteOpened(pre.current);
+  }, []);
+  useEffect(() => {
+    if (open && text != null && pre.current) follower.current!.noteGrowth(pre.current);
+  }, [text, open]);
+  return { pre, onScroll, onOpened };
+}
+
 function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): ReactNode {
   const { open, onToggle } = useDetails(r.details);
+  const log = useLogFollow(r.body.kind === 'log' ? r.body.text : null, open);
+  // The reader's toggle, on top of the persistence write: an OPEN shows the
+  // latest line and brings the card into view. The transcript's own
+  // follow-to-bottom stays out of it (`initScrollTracking` ignores the `open`
+  // flip), because a card opened at the bottom of a phone-height pane used
+  // to be scrolled straight past — the head, with the toggle on it, off the
+  // top of the pane and the panel's stale first lines in view.
+  const onToggleAttached = useCallback((ev: SyntheticEvent<HTMLDetailsElement>) => {
+    onToggle(ev);
+    if (ev.currentTarget.open) {
+      log.onOpened();
+      revealDisclosure(ev.currentTarget);
+    }
+  }, [onToggle, log.onOpened]);
   return (
     <details
       className="dc-cc-attached" data-persist-id={r.details.persistId}
       data-default-open={r.details.defaultOpen ? '1' : '0'}
-      open={open} onToggle={onToggle}
+      open={open} onToggle={onToggleAttached}
     >
       {/* TWO ROWS INSIDE THE SUMMARY, not one line. Everything a collapsed
           card shows has to live in the <summary> — a <details> hides every
@@ -275,11 +369,12 @@ function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): Reac
         <span className="dc-cc-head">
           <StatusIcon kind={r.icon} />
           {r.html !== undefined
-            ? <span dangerouslySetInnerHTML={{ __html: ` ${r.html}` }} />
+            ? <Html as="span" html={` ${r.html}`} />
             : ` ${r.text}`}
           <span className="dc-cc-attached-chevron" aria-hidden="true"></span>
           <Stamp text={r.stamp} />
         </span>
+        <VenueCaption text={r.caption} />
         <span className="dc-cc-chips">
           {r.progress
             ? <ProgressChips p={r.progress} elapsed={r.elapsed} />
@@ -288,8 +383,15 @@ function Attached({ r }: { r: Extract<TranscriptRow, { t: 'attached' }> }): Reac
         {r.progress ? <ProgressNote p={r.progress} /> : null}
       </summary>
       {r.body.kind === 'log'
-        ? <pre className="dc-cc-attached-log" data-persist-id={r.body.persistId}>{r.body.text}</pre>
-        : <div className="dc-cc-attached-md" dangerouslySetInnerHTML={{ __html: r.body.html }} />}
+        ? (
+          <pre
+            className="dc-cc-attached-log" data-persist-id={r.body.persistId}
+            ref={log.pre} onScroll={log.onScroll}
+          >
+            {r.body.text}
+          </pre>
+        )
+        : <Html className="dc-cc-attached-md" html={r.body.html} />}
     </details>
   );
 }
@@ -309,7 +411,7 @@ function SpecCard({ r }: { r: Extract<TranscriptRow, { t: 'spec' }> }): ReactNod
           <span className="dc-spec-preview-title">{r.header}</span>
           <span className="dc-spec-preview-cta">View full spec →</span>
         </div>
-        <div className="dc-spec-preview-snippet" dangerouslySetInnerHTML={{ __html: r.snippetHtml }} />
+        <Html className="dc-spec-preview-snippet" html={r.snippetHtml} />
       </div>
     </>
   );
@@ -376,28 +478,35 @@ const MERGED_TITLE = 'This change is merged and now live in the app.';
 const PREVIEW_GONE = 'Preview removed after merge. This change is now live in the app';
 
 function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<TranscriptRow, { t: 'changes' }>; embedded?: boolean; historical?: boolean }): ReactNode {
-  const preview = (testing: boolean, url: string) => controller()?.previewStaging?.(url, testing);
   return (
     <>
       <StatusLine r={r.status} />
-      {/* `revealPrCard` adds `dc-pr-card-highlight` to this node for 1.5s to
-          flash it after the header's "PR #12" jump. That stays a classList
-          mutation, and it survives every repaint because this `className` is
-          a CONSTANT literal: React writes it once and never again unless the
-          prop VALUE changes. Rendering it from a variable would silently drop
-          the flash — the same rule the adopted dialog roots follow. */}
+      <PrCard r={r} embedded={embedded} historical={historical} />
+    </>
+  );
+}
+
+/**
+ * The card under a `changes` row's status line, on its own. `ChangesCard`
+ * draws both; `DevChatTranscript` draws this after the LAST row once later
+ * iterations follow the change (#1889), with the status line left in the
+ * timeline where the change landed.
+ */
+function PrCard({ r, embedded = false, historical = false }: { r: Extract<TranscriptRow, { t: 'changes' }>; embedded?: boolean; historical?: boolean }): ReactNode {
+  const preview = (testing: boolean, url: string) => controller()?.previewStaging?.(url, testing);
+  return (
+    <>
       <div className="dc-pr-card" id="dc-pr-card">
         <div className="dc-pr-card-header">
           {r.prUrl && !embedded
             ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{`PR #${r.prNumber}`}</a>
             : <span style={{ color: 'var(--text-muted)' }}>Changes ready</span>}
           {r.title ? <span className="dc-pr-title">{r.title}</span> : null}
-          {r.closesHtml ? <span className="contents" dangerouslySetInnerHTML={{ __html: r.closesHtml }} /> : null}
+          {r.closesHtml ? <Html as="span" className="contents" html={r.closesHtml} /> : null}
           <span style={{ fontSize: '9px', opacity: 0.4, marginLeft: '8px' }}>{r.stamp}</span>
         </div>
         {r.visualsHtml ? (
-          <div className="dc-pr-card-visuals" style={{ margin: '6px 0 2px' }}
-            dangerouslySetInnerHTML={{ __html: r.visualsHtml }} />
+          <Html className="dc-pr-card-visuals" style={VISUALS_STYLE} html={r.visualsHtml} />
         ) : null}
         {!embedded && !historical ? <div className="dc-pr-card-actions">
           <button
@@ -428,20 +537,19 @@ function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<T
               className="dc-pr-btn dc-pr-btn-promote"
               disabled={r.propose.kind !== 'ready'}
               aria-busy={r.propose.kind === 'pending' ? 'true' : undefined}
-              title={r.propose.kind === 'blocked' ? r.propose.reason : undefined}
+              title={r.propose.kind === 'ready' ? r.propose.note : undefined}
               onClick={r.propose.kind === 'ready' ? () => controller()?.promotePR?.() : undefined}
             >
               {r.propose.kind === 'pending'
                 ? <><span className="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>{' Proposing…'}</>
-                : r.propose.kind === 'completed' ? 'Already proposed'
-                  : r.propose.kind === 'blocked' ? r.propose.label : 'Submit for review'}
+                : r.propose.kind === 'completed' ? 'Already proposed' : 'Submit for review'}
             </button>
           ) : null}
           {r.status2.kind === 'merged'
             ? <span className="ms-badge ms-badge-violet" title={MERGED_TITLE}>✓ Merged, now live in the app</span>
             : null}
           {r.status2.kind === 'badge'
-            ? <span className="contents" dangerouslySetInnerHTML={{ __html: r.status2.html }} />
+            ? <Html as="span" className="contents" html={r.status2.html} />
             : null}
         </div> : <p className="dev-topic-note">{r.status2.kind === 'merged' ? 'Merged, now live in the app' : historical ? 'Earlier build result' : 'Build result. Current actions are above.'}</p>}
       </div>
@@ -460,7 +568,10 @@ function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<T
 function LiveContent({ rowKey, html }: { rowKey: string; html: string }): ReactNode {
   const s = useStoreState(streamStore);
   const live = s.key === rowKey ? s.html : '';
-  return <div className="dc-msg-content" dangerouslySetInnerHTML={{ __html: live || html }} />;
+  // `Html`, like every other sink: a transcript republish mid-turn (a
+  // progress line, a status row) re-renders this row with the same frame,
+  // and a new wrapper would rewrite the bubble the stream just painted.
+  return <Html className="dc-msg-content" html={live || html} />;
 }
 
 function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
@@ -488,7 +599,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
       </div>
       {r.live
         ? <LiveContent rowKey={r.key} html={r.contentHtml} />
-        : <div className="dc-msg-content" dangerouslySetInnerHTML={{ __html: r.contentHtml }} />}
+        : <Html className="dc-msg-content" html={r.contentHtml} />}
       {r.more ? (
         <details
           className="dc-cc-log" style={{ marginTop: '6px' }}
@@ -496,8 +607,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
           open={more.open} onToggle={more.onToggle}
         >
           <summary className="dc-cc-log-toggle">Full output</summary>
-          <div className="dc-msg-content" style={{ padding: '8px 10px' }}
-            dangerouslySetInnerHTML={{ __html: r.more.html }} />
+          <Html className="dc-msg-content" style={MORE_STYLE} html={r.more.html} />
         </details>
       ) : null}
       {r.attachments && r.attachments.length ? (
@@ -508,7 +618,7 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
             </a>
           ) : (
             <a key={a.href} className="dc-msg-att-chip" href={a.href} download={a.name} title={`Download ${a.name}`}>
-              <span className="contents" dangerouslySetInnerHTML={{ __html: a.badgeHtml || '' }} />
+              <Html as="span" className="contents" html={a.badgeHtml || ''} />
               <span className="dc-attach-name">{a.name}</span>
               <span className="dc-attach-size">{a.size}</span>
             </a>
@@ -612,7 +722,54 @@ function Bubble({ r }: { r: Extract<TranscriptRow, { t: 'msg' }> }): ReactNode {
   );
 }
 
-function Row({ r, embedded = false, historical = false }: { r: TranscriptRow; embedded?: boolean; historical?: boolean }): ReactNode {
+/**
+ * Two row models, compared by VALUE.
+ *
+ * The models are plain JSON-shaped data — strings, numbers, booleans, null,
+ * and arrays and objects of those (see ./transcript-store.ts) — and
+ * `_transcriptView` builds every one of them afresh on every publish, so
+ * identity never survives a republish and a shallow `memo` would skip
+ * nothing. The html strings inside them come out of `renderMarkdown`'s cache
+ * as the same string objects, so the comparison is mostly pointer checks.
+ */
+function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (!sameData(a[i], b[i])) return false;
+    return true;
+  }
+  const ka = Object.keys(a);
+  if (ka.length !== Object.keys(b).length) return false;
+  for (const k of ka) {
+    if (!Object.prototype.hasOwnProperty.call(b, k)) return false;
+    if (!sameData((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k])) return false;
+  }
+  return true;
+}
+
+interface RowProps { r: TranscriptRow; embedded?: boolean; historical?: boolean }
+
+function sameRowProps(a: RowProps, b: RowProps): boolean {
+  return !!a.embedded === !!b.embedded && !!a.historical === !!b.historical && sameData(a.r, b.r);
+}
+
+/*
+ * MEMOIZED, on the row's model by value. Every publish — a progress line, an
+ * estimate, a chip tap, a status poll — re-renders `DevChatTranscript`, and it
+ * used to re-render every row under it: each disclosure re-reading its open
+ * state out of localStorage, each body re-diffed. A row whose model did not
+ * change now skips all of that.
+ *
+ * What a row renders that is NOT in its model still updates, because each is
+ * a subscription of its own and a subscription re-renders its component
+ * whatever its parent did: the ticking labels (`nowStore`) and the live
+ * bubble (`streamStore`). The one other thing read at render time is a
+ * disclosure's persisted open state, and it only changes when the reader
+ * toggles that disclosure, which the DOM already shows.
+ */
+const Row = memo(function Row({ r, embedded = false, historical = false }: RowProps): ReactNode {
   switch (r.t) {
     case 'status': return <StatusLine r={r} />;
     case 'failure': return <Failure r={r} />;
@@ -625,11 +782,11 @@ function Row({ r, embedded = false, historical = false }: { r: TranscriptRow; em
     // into it (`.dc-credits-card > .dc-credits-options`, and its
     // `details[data-credits-dev]`), and the banner and the Generate-proposal
     // modal render the same builder. The sink generates no box.
-    case 'credits': return <span className="contents" dangerouslySetInnerHTML={{ __html: r.html }} />;
+    case 'credits': return <Html as="span" className="contents" html={r.html} />;
     case 'msg': return <Bubble r={r} />;
     default: return null;
   }
-}
+}, sameRowProps);
 
 /**
  * The rows, the walkthrough and the trailing dots.
@@ -650,20 +807,71 @@ function Row({ r, embedded = false, historical = false }: { r: TranscriptRow; em
  * matters for `_bindDevFlowVisibility` in particular: in a hand-off venue the
  * walkthrough renders in the composer's place instead of here, and that path
  * wires the card but not the visibility re-check.
+ *
+ * ── Where the Changes card sits (#1889) ───────────────────────────────
+ *
+ * A `changes` row is persisted by the turn that landed the change, but the
+ * card's actions are the SESSION's: Preview, Test, View on GitHub and Submit
+ * for review all read session state, which is why only the latest card
+ * carries them and every earlier one is `historical`. Anchored to its turn,
+ * that card was left mid-transcript by every later iteration that ended
+ * without a new one — a question answered, a run stopped or failed, a turn
+ * with nothing to commit — and the bottom of the chat had no way to submit.
+ *
+ * So once a later USER turn follows the latest card, the card renders after
+ * the last row, and its status line stays in the timeline as the record of
+ * when the change landed. Three things bound that rule:
+ *
+ *   - A single iteration is unchanged. The wrap-up bubble under the card is
+ *     the same turn, not a new one, and the card stays above it.
+ *   - A turn in flight keeps the card in its slot: the tail then belongs to
+ *     the run (its progress, #990's dots), and the actions come back to the
+ *     bottom with the `renderMessages` that settles the turn — or a new card
+ *     lands, and it is the latest.
+ *   - The embedded workspace never moves it: its cards carry no actions
+ *     (the change card above does), so there is nothing to keep at hand.
+ *
+ * One card either way — `#dc-pr-card`, with the visuals and the actions —
+ * so the declared checks under that id resolve wherever it sits.
  */
 export function DevChatTranscript({ embedded = false }: { embedded?: boolean }): ReactNode {
   const s = useStoreState(transcriptStore);
-  const latest = s.rows.findLast((r) => r.t === 'changes')?.key;
+  const latestAt = s.rows.findLastIndex((r) => r.t === 'changes');
+  const latest = latestAt >= 0 ? s.rows[latestAt] as Extract<TranscriptRow, { t: 'changes' }> : null;
+  // #1889: a later iteration — a user turn after the latest card — with the
+  // chat idle. See "Where the Changes card sits" in the header.
+  const trails = !!latest && !embedded && !s.busy
+    && s.rows.some((r, i) => i > latestAt && r.t === 'msg' && r.who === 'user');
   return (
     <>
-      {s.rows.map((r) => <Row key={r.key} r={r} embedded={embedded} historical={r.t === 'changes' && r.key !== latest} />)}
+      {/* #1942: what a new session is for, where the conversation will be.
+          Centered in the pane, the way a new chat opens in Claude or
+          ChatGPT, and gone the moment the first message arrives. */}
+      {s.empty ? (
+        <div id="dc-empty-state" className="dc-empty-state">
+          <div className="dc-empty-title">What should this session change?</div>
+          <p className="dc-empty-text">
+            Describe it in the box below. The agent works it out with you, builds it, and
+            gives you a preview to try before anything goes to a vote.
+          </p>
+        </div>
+      ) : null}
+      {s.rows.map((r, i) => {
+        if (r.t !== 'changes') return <Row key={r.key} r={r} embedded={embedded} />;
+        if (i !== latestAt) return <Row key={r.key} r={r} embedded={embedded} historical />;
+        // The status line keeps the change's place in the timeline; the
+        // card is drawn after the last row instead.
+        if (trails) return <Row key={r.key} r={r.status} embedded={embedded} />;
+        return <Row key={r.key} r={r} embedded={embedded} />;
+      })}
+      {trails && latest ? <PrCard r={latest} embedded={embedded} /> : null}
       {/* #1049: the walkthrough sits at the END of the transcript, so on an
           empty session it is the only thing in the pane and on a resumed one
           it stays next to the composer the brief is typed into. Another
           module's markup (`DevFlowSelect`), through a host that generates no
           box so the card stays a direct child of the scroll container. */}
       {s.devFlowHtml
-        ? <div className="contents" dangerouslySetInnerHTML={{ __html: s.devFlowHtml }} />
+        ? <Html className="contents" html={s.devFlowHtml} />
         : null}
       {/* #990's trailing dots, suppressed while a live coding run is already
           painting progress of its own. */}
@@ -677,4 +885,4 @@ export function DevChatTranscript({ embedded = false }: { embedded?: boolean }):
   );
 }
 
-export { StatusLine, Failure, Attached, ChangesCard, Bubble, LiveContent, Row };
+export { StatusLine, Failure, Attached, ChangesCard, Bubble, LiveContent, Row, Html };

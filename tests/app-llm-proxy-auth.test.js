@@ -48,7 +48,11 @@ function makeReq({ ip = '10.0.0.5', appToken = APP_TOKEN, userToken } = {}) {
   const headers = {};
   if (appToken != null) headers['x-usernode-app-token'] = appToken;
   if (userToken != null) headers['x-usernode-user-token'] = userToken;
-  return { clientIp: ip, headers, socket: {}, path: '/api/app-llm/v1/messages' };
+  // #2506: the gate reads the SOCKET PEER now, not req.clientIp — the whole
+  // point is that `clientIp` can be the ingress's address on a trusted-proxy
+  // DNS failure. A real request always has a socket peer; a fixture that set
+  // only `clientIp` was describing a request that cannot exist.
+  return { clientIp: ip, headers, socket: { remoteAddress: ip }, path: '/api/app-llm/v1/messages' };
 }
 
 // A real platform-minted user identity for THIS app.

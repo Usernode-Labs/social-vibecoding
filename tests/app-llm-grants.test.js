@@ -15,16 +15,27 @@ const assert = require('node:assert/strict');
 const poolMod = require('../src/db/pool');
 
 const state = {
+  // The retained-but-unenforced daily column (#2571).
   userLimit: 2500,
-  // #1788: the weekly cap, off by default (0 = "does not apply") so every
-  // pre-existing case here stays a daily-only account.
-  weeklyLimit: 0,
+  // #2571: the platform-default WEEKLY cap is the account's allowance and
+  // therefore the ceiling every per-app cap is validated against. $25 a
+  // week here, which is the figure the pre-existing cases below assume.
+  weeklyLimit: 2500,
   weeklyOverride: null,
   hasIdentity: false,
   identityLookupError: false,
   apiKeyEnc: null,
   grants: new Map(), // `${appId}:${userId}` -> row
-  apps: new Map([['demo-app', { id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null }]]),
+  // #2510: the routes resolve an app through appAccess.getAppForUser now, and
+  // checkAppAccess THROWS on a row missing `view_visibility` rather than
+  // failing open. Real rows always have it — `apps.view_visibility` is NOT
+  // NULL DEFAULT 'public' in schema.sql — so a fixture without it was a
+  // fixture bug that the old bare SELECT simply never exposed.
+  apps: new Map([['demo-app', {
+    id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null,
+    created_by: 7, self_hosted: false,
+    collab_visibility: 'public', view_visibility: 'public',
+  }]]),
   // Today's app_llm_usage row joined by the bootstrap query (issue
   // #655). NUMERIC(10,4) comes back from pg as strings.
   usage: { spent: null, byok: null },
@@ -47,14 +58,16 @@ function mockQuery(sql, params) {
   if (/SELECT value FROM platform_settings/.test(sql)) {
     return { rows: [{ value: String(params[0] === limits.KEY_WEEKLY ? state.weeklyLimit : 2500) }] };
   }
-  if (/SELECT id, name, slug FROM apps WHERE slug/.test(sql)) {
+  // Match the lookup, not one exact projection: getAppForUser builds the
+  // column list from ACCESS_COLUMNS plus whatever the route needs, so pinning
+  // the old `SELECT id, name, slug` text here made every route 404.
+  if (/FROM apps WHERE slug = \$1/.test(sql)) {
     const app = state.apps.get(params[0]);
     return { rows: app ? [app] : [] };
   }
-  if (/SELECT id, name, slug, manifest_snapshot FROM apps WHERE slug/.test(sql)) {
-    const app = state.apps.get(params[0]);
-    return { rows: app ? [app] : [] };
-  }
+  // appAccess.isCollaborator — the fixture app is public, so this is only
+  // reached for a private one and answers "no".
+  if (/app_collaborators/.test(sql)) return { rows: [] };
   if (/SELECT anthropic_key_enc FROM users/.test(sql)) {
     return { rows: state.apiKeyEnc ? [{ anthropic_key_enc: state.apiKeyEnc }] : [] };
   }
@@ -152,7 +165,7 @@ beforeEach(() => {
   limits.invalidate();
   state.grants.clear();
   state.userLimit = 2500;
-  state.weeklyLimit = 0;
+  state.weeklyLimit = 2500;
   state.weeklyOverride = null;
   state.hasIdentity = false;
   state.identityLookupError = false;
@@ -219,6 +232,57 @@ test('DELETE revokes; POST after revoke reactivates the same row', async () => {
     assert.equal(grant.dailyCapCents, 300);
     assert.equal(grant.allowByok, true);
     assert.equal(state.grants.get('11:7').revoked_at, null);
+  });
+});
+
+// #1957: Settings' Re-enable rests on two facts about this API — the list
+// still carries a revoked row's slug, cap and BYOK choice, and POSTing those
+// back is what re-activates it. Pin them together, since the client sends
+// exactly what the list gave it — plus the one fallback it takes.
+test('the list keeps a revoked grant with the slug and cap that Re-enable sends back', async () => {
+  await withServer(async (base) => {
+    const post = (body) => fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const listed = async () => (await (await fetch(`${base}/api/me/llm-grants`)).json())
+      .grants.find((g) => g.appId === 11);
+
+    await post({ appSlug: 'demo-app', dailyCapCents: 250, allowByok: true });
+    await fetch(`${base}/api/me/llm-grants/11`, { method: 'DELETE' });
+
+    const revoked = await listed();
+    assert.equal(revoked.status, 'revoked');
+    assert.equal(revoked.appSlug, 'demo-app', 'the re-grant endpoint is keyed on slug, so the list carries it');
+    assert.equal(revoked.dailyCapCents, 250, 'and the cap survives the revoke');
+    assert.equal(revoked.allowByok, true);
+
+    const re = await post({
+      appSlug: revoked.appSlug, dailyCapCents: revoked.dailyCapCents, allowByok: revoked.allowByok,
+    });
+    assert.equal(re.status, 200);
+    const active = await listed();
+    assert.equal(active.status, 'active');
+    assert.equal(active.dailyCapCents, 250, 'the grant comes back as it was');
+    assert.equal(active.allowByok, true);
+
+    // The fallback: a cap the allowance no longer covers is a 400 with no
+    // `code` (credit_required and byok_required both carry one), and a POST
+    // without a cap lands on the default — so the row is never stranded.
+    await fetch(`${base}/api/me/llm-grants/11`, { method: 'DELETE' });
+    state.weeklyOverride = 200;
+    limits.invalidate();
+    const tooBig = await post({ appSlug: 'demo-app', dailyCapCents: 250, allowByok: true });
+    assert.equal(tooBig.status, 400);
+    const refusal = await tooBig.json();
+    assert.equal(refusal.code, undefined, 'a cap refusal is the one 400 without a code');
+    assert.match(refusal.error, /\$2\.00/);
+    assert.equal((await listed()).status, 'revoked', 'a refused re-grant changes nothing');
+    const atDefault = await post({ appSlug: 'demo-app', allowByok: true });
+    assert.equal(atDefault.status, 200);
+    assert.equal((await atDefault.json()).grant.dailyCapCents, 100);
+    assert.equal((await listed()).status, 'active');
   });
 });
 
@@ -301,6 +365,8 @@ test('bootstrap endpoint reports zero spend when no usage row exists today', asy
 test('bootstrap endpoint sanitizes the manifest llm block and clamps the suggestion', async () => {
   state.apps.set('demo-app', {
     id: 11, name: 'Demo App', slug: 'demo-app',
+    created_by: 7, self_hosted: false,
+    collab_visibility: 'public', view_visibility: 'public',
     manifest_snapshot: {
       llm: { purpose: 'Summarizes things', suggested_daily_cap_cents: 999999 },
     },
@@ -317,7 +383,11 @@ test('bootstrap endpoint sanitizes the manifest llm block and clamps the suggest
     assert.equal(body.grant, null);
     assert.equal(body.hasApiKey, false);
   });
-  state.apps.set('demo-app', { id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null });
+  state.apps.set('demo-app', {
+    id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null,
+    created_by: 7, self_hosted: false,
+    collab_visibility: 'public', view_visibility: 'public',
+  });
 });
 
 test('tiered policy refuses an unverified app grant when no payer exists', async () => {
@@ -417,16 +487,15 @@ test('an entitlement lookup outage still permits an explicitly consented BYOK gr
   });
 });
 
-// ── #1788: a weekly-only account can still consent to an app ────────────
+// ── #2571: the weekly allowance is the ceiling ──────────────────────────
 //
-// The per-app cap is validated against the user's own allowance, and that
-// allowance used to be one number. With a daily cap of 0 now meaning "this
-// cap does not apply" rather than "blocked", reading only the daily figure
-// would leave a user with a healthy weekly allowance unable to grant an
-// app any cap at all.
+// The per-app cap is validated against the user's own allowance. That
+// allowance is the weekly cap and nothing else now — reading the stored
+// daily figure would leave a user with a healthy weekly allowance unable
+// to grant an app any cap at all.
 
-test('with the daily cap switched off, the weekly allowance is the cap ceiling', async () => {
-  state.userLimit = 0;         // admin switched the daily cap off
+test('the weekly allowance is the cap ceiling, whatever the stored daily figure says', async () => {
+  state.userLimit = 0;         // a stored daily figure, not enforced
   state.weeklyOverride = 5000; // $50 for the week
   await withServer(async (base) => {
     const ok = await fetch(`${base}/api/me/llm-grants`, {
@@ -447,8 +516,8 @@ test('with the daily cap switched off, the weekly allowance is the cap ceiling',
   });
 });
 
-test('with BOTH caps switched off there is nothing to grant', async () => {
-  state.userLimit = 0;
+test('with the weekly cap switched off there is nothing to grant', async () => {
+  state.userLimit = 2500;
   state.weeklyOverride = 0;
   await withServer(async (base) => {
     const res = await fetch(`${base}/api/me/llm-grants`, {

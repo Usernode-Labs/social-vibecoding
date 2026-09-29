@@ -6,7 +6,13 @@ const { rateLimit } = require('express-rate-limit');
 const { anthropicProxyAuth } = require('../middleware/anthropic-proxy-auth');
 const { getPool } = require('../db/pool');
 const limits = require('../services/limits');
+// #2513: fail CLOSED on a database error. Every refresher below used to
+// install `totalAtCheckpointCents: 0` — "no spend today" — and cache it for a
+// full TTL, so a Postgres blip removed the spending cap rather than the
+// traffic. Shared with app-llm-proxy.js so the two cannot drift.
+const spendCache = require('../services/spend-cache');
 const anthropicStream = require('../services/anthropic-stream');
+const budgetLive = require('../services/budget-live');
 const log = require('../services/logger');
 
 // Worker → platform Anthropic-proxy.
@@ -102,8 +108,8 @@ async function refreshSystemBudget(pool) {
     systemBudgetCache = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
     return systemBudgetCache;
   } catch (err) {
-    log.warn('anthropic-proxy', 'System budget refresh failed; failing open', { err: err.message });
-    systemBudgetCache = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    log.warn('anthropic-proxy', 'System budget refresh failed; failing closed', { err: err.message });
+    systemBudgetCache = spendCache.unavailable(systemBudgetCache, now, BUDGET_CACHE_TTL_MS);
     return systemBudgetCache;
   }
 }
@@ -141,12 +147,13 @@ async function refreshUserBudget(pool, userId) {
     userBudgetCache.set(userId, fresh);
     return fresh;
   } catch (err) {
-    log.warn('anthropic-proxy', 'Budget refresh failed; failing open', {
+    log.warn('anthropic-proxy', 'Budget refresh failed; failing closed', {
       userId, err: err.message,
     });
-    // Fail open on a transient DB hiccup rather than blocking traffic.
-    // The next refresh will catch up; bounded by TTL.
-    const fresh = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    // #2513: keep the last real figure rather than inventing zero, and retry
+    // sooner than a full TTL. With nothing known at all, refuse — an
+    // unbounded bill is worse than a retryable 429.
+    const fresh = spendCache.unavailable(cached, now, BUDGET_CACHE_TTL_MS);
     userBudgetCache.set(userId, fresh);
     return fresh;
   }
@@ -176,10 +183,10 @@ async function refreshUserWeeklySpend(pool, userId) {
     weeklyBudgetCache.set(userId, fresh);
     return fresh;
   } catch (err) {
-    log.warn('anthropic-proxy', 'Weekly budget refresh failed; failing open', {
+    log.warn('anthropic-proxy', 'Weekly budget refresh failed; failing closed', {
       userId, err: err.message,
     });
-    const fresh = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    const fresh = spendCache.unavailable(cached, now, BUDGET_CACHE_TTL_MS);
     weeklyBudgetCache.set(userId, fresh);
     return fresh;
   }
@@ -211,8 +218,8 @@ async function refreshGlobalSpend(pool) {
     globalBudgetCache = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
     return globalBudgetCache;
   } catch (err) {
-    log.warn('anthropic-proxy', 'Global spend refresh failed; failing open', { err: err.message });
-    globalBudgetCache = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    log.warn('anthropic-proxy', 'Global spend refresh failed; failing closed', { err: err.message });
+    globalBudgetCache = spendCache.unavailable(globalBudgetCache, now, BUDGET_CACHE_TTL_MS);
     return globalBudgetCache;
   }
 }
@@ -316,19 +323,53 @@ async function emitSwitchNotice(pool, sessionId, userId, window = 'daily') {
 // FIRE-AND-FORGET by contract: never awaited into the response path, and
 // a failure is a log.warn and nothing more. Bookkeeping must not be able
 // to fail or delay a turn — same posture as emitSwitchNotice above.
-function noteAgentSpend(pool, { sessionId, costCents, isSyncTurn }) {
+//
+// #2592: it records WHICH MODEL spent it, too. The ledger column has no
+// model dimension, so services/model-costs.js had to leave the agent's
+// spend out of its per-model aggregate entirely — which is why the
+// observed average and median on the Model costs console read far below
+// what a change really costs. The proxy is the one place that knows: the
+// stream reports the model it actually ran on (falling back to the one
+// the request asked for), so the breakdown is recorded rather than
+// inferred. A call whose model could not be determined still lands on the
+// ledger; it just adds no per-model row.
+//
+// ONE STATEMENT, not two. The breakdown rides on a CTE over the ledger
+// UPDATE so the pair cannot half-happen: a session's per-model rows sum to
+// its ledger, or neither was written. That is what lets a reader trust
+// either number on its own.
+const LEDGER_SQL =
+  `UPDATE chat_sessions SET agent_cost_cents = agent_cost_cents + $1 WHERE id = $2`;
+
+const LEDGER_WITH_MODEL_SQL =
+  `WITH ledger AS (
+     UPDATE chat_sessions SET agent_cost_cents = agent_cost_cents + $1 WHERE id = $2
+     RETURNING id
+   )
+   INSERT INTO chat_session_agent_model_costs (session_id, model, cost_cents)
+     SELECT ledger.id, $3::varchar, $1::numeric FROM ledger
+   ON CONFLICT (session_id, model) DO UPDATE
+     SET cost_cents = chat_session_agent_model_costs.cost_cents + EXCLUDED.cost_cents,
+         updated_at = NOW()`;
+
+// The breakdown column is VARCHAR(128); a model id is far shorter than
+// that, but an upstream that answered with something long must not turn a
+// bookkeeping write into an error.
+const MAX_MODEL_ID = 128;
+
+function noteAgentSpend(pool, { sessionId, costCents, isSyncTurn, model }) {
   if (isSyncTurn) return;
   if (!sessionId) return;
   const cents = Number(costCents);
   if (!Number.isFinite(cents) || cents <= 0) return;
+  const modelId = (typeof model === 'string' ? model.trim() : '').slice(0, MAX_MODEL_ID);
   Promise.resolve()
-    .then(() => pool.query(
-      `UPDATE chat_sessions SET agent_cost_cents = agent_cost_cents + $1 WHERE id = $2`,
-      [cents, sessionId]
-    ))
+    .then(() => (modelId
+      ? pool.query(LEDGER_WITH_MODEL_SQL, [cents, sessionId, modelId])
+      : pool.query(LEDGER_SQL, [cents, sessionId])))
     .catch((err) => {
       log.warn('anthropic-proxy', 'Failed to record agent spend on session', {
-        sessionId, costCents: cents, err: err.message,
+        sessionId, costCents: cents, model: modelId || null, err: err.message,
       });
     });
 }
@@ -346,7 +387,15 @@ function anthropicProxyRoutes(config) {
   // request bodies at 32MB, and a normal CC turn can carry several
   // MB of file context. See server.js comment near the global
   // express.json() mount for context.
-  router.use(express.json({ limit: '32mb' }));
+  //
+  // #2512: this is a route-chain step, NOT a `router.use`, so it runs AFTER
+  // `anthropicProxyAuth` and the rate limiter. Mounted on the router it ran
+  // first, and an unauthenticated caller could make the platform read and
+  // JSON.parse 32 MB before anything checked the worker JWT — the parse
+  // blocks the event loop, and the request needed no credential at all.
+  // Auth here reads headers only (middleware/anthropic-proxy-auth.js never
+  // touches req.body), so it does not need the body.
+  const parseBody = express.json({ limit: '32mb' });
 
   // Same shape as the push-proxy rate-limit in internal.js — bounds a
   // runaway CC turn (or a malicious prompt looping API calls) to
@@ -369,7 +418,7 @@ function anthropicProxyRoutes(config) {
 
   // Catch-all under the proxy prefix. Express 4 / path-to-regexp v0
   // matches `*` against the remainder, accessible as req.params[0].
-  router.all(`${ROUTE_PREFIX}*`, anthropicProxyAuth, proxyLimiter, async (req, res) => {
+  router.all(`${ROUTE_PREFIX}*`, anthropicProxyAuth, proxyLimiter, parseBody, async (req, res) => {
     const sessionId = req.workerSession?.sessionId;
     const userId = await resolveUserId(pool, sessionId);
     if (!userId) {
@@ -415,9 +464,31 @@ function anthropicProxyRoutes(config) {
     const weeklyBudget = caps.weeklyApplies
       ? await refreshUserWeeklySpend(pool, userId)
       : null;
-    const spentBeforeCall = budget.totalAtCheckpointCents + budget.liveDeltaCents;
+    // #2513: an UNREADABLE ledger is not the same thing as an exhausted cap,
+    // and must not be fed to the logic below as if it were. Left to arithmetic
+    // alone, the fail-closed sentinel reads as "over cap" — which on this path
+    // switches a user with a stored key onto BYOK and bills THEM for a
+    // Postgres blip, and on a failed global read lets a keyless caller
+    // through on the platform key. Both are the opposite of the intent.
+    // Refuse first, with a code that says "try again", and let the payer
+    // resolution below see only real numbers.
+    if (spendCache.isUnavailable(budget)
+      || (weeklyBudget && spendCache.isUnavailable(weeklyBudget))) {
+      log.warn('anthropic-proxy', 'Spend ledger unavailable; refusing rather than billing', {
+        sessionId, userId, isSyncTurn,
+        dailyUnavailable: spendCache.isUnavailable(budget),
+        weeklyUnavailable: !!weeklyBudget && spendCache.isUnavailable(weeklyBudget),
+      });
+      return res.status(429).json({
+        ok: false,
+        code: 'budget_unavailable',
+        message: 'Spending records are briefly unavailable. Try again in a moment.',
+      });
+    }
+
+    const spentBeforeCall = spendCache.spendTotal(budget);
     const weeklySpentBeforeCall = weeklyBudget
-      ? weeklyBudget.totalAtCheckpointCents + weeklyBudget.liveDeltaCents
+      ? spendCache.spendTotal(weeklyBudget)
       : 0;
     const dailyOver = caps.dailyApplies && spentBeforeCall >= caps.dailyLimitCents;
     const weeklyOver = caps.weeklyApplies && weeklySpentBeforeCall >= caps.weeklyLimitCents;
@@ -450,8 +521,20 @@ function anthropicProxyRoutes(config) {
       const userOver = dailyOver || weeklyOver || noAllowance;
       const globalCap = await limits.getGlobalLimitCents(pool);
       const globalSpend = await refreshGlobalSpend(pool);
-      const globalOver =
-        globalSpend.totalAtCheckpointCents + globalSpend.liveDeltaCents >= globalCap;
+      // #2513: same distinction. An unreadable GLOBAL ledger must refuse
+      // rather than resolve to "not over", which would let a keyless caller
+      // spend the platform key during an outage.
+      if (spendCache.isUnavailable(globalSpend)) {
+        log.warn('anthropic-proxy', 'Global spend ledger unavailable; refusing', {
+          sessionId, userId,
+        });
+        return res.status(429).json({
+          ok: false,
+          code: 'budget_unavailable',
+          message: 'Spending records are briefly unavailable. Try again in a moment.',
+        });
+      }
+      const globalOver = spendCache.spendTotal(globalSpend) >= globalCap;
       if (userOver || globalOver) {
         const byokKey = await limits.loadUserApiKey(pool, userId, config.dataEncryptionKey);
         if (byokKey) {
@@ -487,7 +570,7 @@ function anthropicProxyRoutes(config) {
           // #800: BYOK-paid work still costs the change the same at list
           // price, so it lands on the ledger identically.
           noteAgentSpend(pool, {
-            sessionId, costCents: result.costCents, isSyncTurn,
+            sessionId, costCents: result.costCents, isSyncTurn, model: result.model,
           });
           if (result.status === 401 || result.status === 403) {
             log.warn('anthropic-proxy', 'BYOK key rejected by Anthropic upstream', {
@@ -606,6 +689,19 @@ function anthropicProxyRoutes(config) {
         // as well, so a mid-turn weekly crossing is visible to the next call.
         const liveWeekly = weeklyBudgetCache.get(userId);
         if (liveWeekly) liveWeekly.liveDeltaCents += result.costCents;
+        // #2598: and to the user. This call has RETURNED and been priced —
+        // the same figure the kill gate above would refuse the next one on —
+        // so the weekly meter can tick now rather than when the turn's ledger
+        // receipt is written. Every coding-agent call the platform key pays
+        // for passes through here, which is what makes "$x left this week"
+        // move every few seconds during a build. Sync turns bill the system
+        // bucket, which is nobody's meter, and a BYOK-switched call (handled
+        // far above) draws nothing from the pool.
+        budgetLive.notifySpend(pool, userId, {
+          liveWeeklySpentCents: liveWeekly
+            ? liveWeekly.totalAtCheckpointCents + liveWeekly.liveDeltaCents
+            : null,
+        });
       }
       if (!isSyncTurn && globalBudgetCache) {
         globalBudgetCache.liveDeltaCents += result.costCents;
@@ -614,7 +710,9 @@ function anthropicProxyRoutes(config) {
     // #800: same cost, recorded durably against the change rather than
     // only in the in-memory trackers above. Counted on kills too, for the
     // same reason the trackers count them — the tokens were consumed.
-    noteAgentSpend(pool, { sessionId, costCents: result.costCents, isSyncTurn });
+    noteAgentSpend(pool, {
+      sessionId, costCents: result.costCents, isSyncTurn, model: result.model,
+    });
     if (result.killed) {
       log.info('anthropic-proxy', 'Killed call settled', {
         sessionId, userId,

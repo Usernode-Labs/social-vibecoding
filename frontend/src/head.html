@@ -1,6 +1,40 @@
 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <!-- THE PAGE OWNS THE STATUS-BAR STRIP, on an installed iOS web app (#1929).
+
+       Without this, a home-screen install gets iOS's OPAQUE status bar: the
+       system draws that strip itself, tints it from `theme-color`, and starts
+       the web view BELOW it. Two consequences, and the second is the bug:
+
+       - `env(safe-area-inset-top)` is 0, because the page never reaches the
+         unsafe area. Every reservation built for it — `--platform-safe-top`
+         below, the kit's `.un-safe-top-extend` on the header — quietly
+         resolves to nothing on the one platform they were written for.
+       - No page pixel can reach that strip, so a dialog's scrim cannot dim
+         it. Measured on an iPhone 17 Pro: opening a dialog drops the page
+         from luminance 241 to 145 while the strip holds 241, a 115-unit
+         cliff at exactly 62pt — the inset — that never moves in any frame of
+         the fade. That is what "the system header and the background fade at
+         different rates" is: the strip is not fading at all.
+
+       `black-translucent` hands those pixels to the page. `env(...)` then
+       reports the real 62px, the reservations that already exist start doing
+       their job, and the existing `inset: 0` scrim covers the strip for free
+       — one surface, one fade, nothing left to keep in step. Verified on a
+       real standalone install before writing this: same two rows read 130.8
+       and 130.8 with the scrim up, no edge anywhere in the top 400px.
+
+       iOS composites the clock, wifi and battery ON TOP of whatever the page
+       paints, so they survive the dim — measured at 24.4:1 against a dimmed
+       ground, where WCAG asks 4.5:1. The Dynamic Island is a hardware cutout
+       and stays black regardless.
+
+       `theme-color` above still matters and is NOT redundant: it paints
+       Android's address bar and the window ground a standalone install shows
+       before the document does. It simply stops owning the iOS strip. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <!-- THE PLATFORM'S NAME, not "dApps". This is the title the SERVICE WORKER
        serves: public/index.html is precached, so a cached load shows it in the
        tab, the task switcher and the native AppBar until the SPA routes and
@@ -88,9 +122,18 @@
       // way to press the drawer's theme segment, so without this every
       // screenshot of a dark-mode change shows the light shell. Read here
       // rather than in apply() so the drawer's segments agree with the page.
+      // `?theme=dark` / `?theme=light` pins the same way, for a route whose
+      // `shot` names another state (#1945's `?shot=app-tone-light&theme=dark`
+      // is a light app under the DARK shell: the state is the pair).
       let shot = null;
-      try { shot = new URLSearchParams(window.location.search).get('shot'); } catch {}
-      const PINNED = (shot === 'dark' || shot === 'light') ? shot : null;
+      let themeParam = null;
+      try {
+        const params = new URLSearchParams(window.location.search);
+        shot = params.get('shot');
+        themeParam = params.get('theme');
+      } catch {}
+      const PINNED = (shot === 'dark' || shot === 'light') ? shot
+        : (themeParam === 'dark' || themeParam === 'light') ? themeParam : null;
 
       function get() {
         if (PINNED) return PINNED;
@@ -362,6 +405,23 @@
   </script>
   <script src="/usernode-bridge.js"></script>
   <script>
+    // THIS DOCUMENT IS THE PLATFORM, and the bridge above needs telling.
+    //
+    // Its __USERNODE_PLATFORM_LINK__ block draws the Homeroom mark in the
+    // corner of a top-frame page served from an app's own subdomain — a
+    // shared link, where nothing else says the page is a Homeroom app. The
+    // shell loads that same bridge, in the top frame, from the platform's
+    // apex, and the two are indistinguishable by hostname shape alone:
+    // `<slug>.<domain>` and the platform's own `<domain>` are both a label
+    // in front of a registrable domain, and only the platform knows which
+    // of the two it is serving. So the shell says so outright rather than
+    // leaving the bridge to guess, and the guess it used to make instead
+    // is why the mark never appeared on a shared link at all.
+    //
+    // Read at DOMContentLoaded, which is strictly after this head-blocking
+    // script has run.
+    window.__usernodePlatformShell = true;
+
     // Mark the document when running as the top frame of the Homeroom
     // Flutter WebView. This used to hide the header title as well — the
     // shell shows the screen name in its own AppBar — but on a device
@@ -380,6 +440,8 @@
     // screenshots. Mirrors the kit's own `?un-platform=ios` skin override,
     // and is deliberately NOT staging-gated: a pure presentation flag with
     // no writes, so the "before" shot works the moment this ships.
+    // Classify native first: WebViews also report browser display mode,
+    // but their header must retain the status-bar inset.
     var forcedNative = false;
     try {
       forcedNative = new URLSearchParams(window.location.search)
@@ -387,6 +449,55 @@
     } catch (e) { /* no URL API / opaque origin — fall through */ }
     if (forcedNative || (window.usernode && window.usernode.isNative)) {
       document.documentElement.classList.add('in-native-webview');
+    }
+
+    // THE SIDE PANEL BESIDE A RUNNING APP (frontend/src/features/side-panel/).
+    // On a desktop window the pages about a running app open in a panel beside
+    // it, and that panel is this same platform loaded again in a frame at
+    // `/?panel=1#<route>`. `in-side-panel` on <html> is what hides every piece
+    // of chrome (public/css/app.css) and what tells the scripts that write
+    // state the top window owns to stand down (lib/side-panel-mode.ts, and
+    // App.embeddedPanel in public/js/app.js). Decided HERE, before the first
+    // paint, so the header and the tab bar never flash inside the panel.
+    //
+    // Honoured ONLY when this document really is framed by the platform: a
+    // direct child of a top window that is not this window, on this origin —
+    // reading a cross-origin top's location throws, which is the answer "no".
+    // A `?panel=1` address opened in a tab of its own, or framed by any other
+    // site, is the ordinary platform.
+    var inSidePanel = false;
+    try {
+      inSidePanel = new URLSearchParams(window.location.search).get('panel') === '1'
+        && window.top !== window
+        && window.parent === window.top
+        && window.top.location.origin === window.location.origin;
+    } catch (e) { inSidePanel = false; }
+    if (inSidePanel) document.documentElement.classList.add('in-side-panel');
+
+    // BROWSER-CHROME GUARD (#2509). Chrome on Android reports a nonzero
+    // env(safe-area-inset-top) even in a NORMAL browser tab, where the
+    // status bar belongs to the browser chrome and the page never owns
+    // those pixels. The shell's black-translucent install handling
+    // reserves that strip anyway (see the "page owns the status-bar
+    // strip" block above and --platform-safe-top in app.css), so a
+    // browser-tab load drew one status bar's worth of blank page above
+    // the header controls — the "excessive top margin" of #2509.
+    //
+    // Standalone display modes (installed PWA, fullscreen, minimal-ui)
+    // and the native WebView are the surfaces where the page really does
+    // reach the notch, and there the reservation stays. Everywhere else
+    // we tag <html> so app.css can zero the token for this load. Runs
+    // pre-paint in the same head-blocking pass as the theme module, so
+    // the reservation never lands and then retracts (no flash).
+    var isBrowserChrome = false;
+    try {
+      isBrowserChrome = !window.matchMedia(
+        '(display-mode: standalone), (display-mode: fullscreen), (display-mode: minimal-ui)'
+      ).matches;
+    } catch (e) { /* no matchMedia / opaque origin — leave the class off */ }
+    if (isBrowserChrome
+        && !document.documentElement.classList.contains('in-native-webview')) {
+      document.documentElement.classList.add('web-browser-chrome');
     }
   </script>
   <!-- Third-party browser libs, vendored into public/vendor/ by
@@ -477,7 +588,13 @@
        The manifest's own `background_color` is the install splash's and is
        necessarily static (a manifest is fetched with no theme to read), so it
        states the light ground, which is what the majority of loads settle
-       on. -->
+       on.
+       The icons are the Homeroom mark in brand cream on black, all generated by
+       scripts/generate-pwa-icons.js, which says what each file is framed
+       for. The touch icon is its own opaque 180px file, not a manifest icon:
+       iOS reads this link BEFORE the manifest and paints any transparent
+       pixel black, so the old pre-rounded 192 grew black corners there. -->
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
-  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <link rel="icon" href="/icons/v3/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">

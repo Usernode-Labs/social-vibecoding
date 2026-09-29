@@ -18,7 +18,8 @@
 // draggable blocks on the same canvas, with per-widget footprints looked up
 // from a server registry, per-column-count sizes, anchor cells, fit rows and a
 // reflow between two breakpoints. The overhaul made those three FIXED SECTIONS
-// stacked below the grid, so:
+// stacked below the grid (Create has since come back as the grid's trailing
+// tile, but DERIVED per paint rather than placed — see trailingCell), so:
 //
 //   * every item is an app, and every app is 1x1 — no registry, no `sizeOf`
 //     table, no `repair()` overlap resolution from a size change;
@@ -97,7 +98,7 @@ const HomeLayout = {
   // HOLES ARE STILL THE POINT. This does not re-pack, collapse or tidy
   // anything — the empty row stays exactly where the viewer left it and stays
   // a cell they can drop into. It simply stops reserving a whole tile's worth
-  // of vertical space to do it, which is what keeps the three fixed sections
+  // of vertical space to do it, which is what keeps the two fixed sections
   // below the grid from being pushed down by a viewer's deliberate gaps.
   //
   // A row qualifies iff it is ON the emitted template (0 <= row <=
@@ -271,7 +272,7 @@ const HomeLayout = {
   // then fill around them — packing apps first and slotting widgets into the
   // gaps had put them wherever the app count happened to leave room, so two
   // accounts with different numbers of apps got different-looking home
-  // screens. THE UI OVERHAUL made those three fixed sections BELOW the grid,
+  // screens. THE UI OVERHAUL made those fixed sections BELOW the grid,
   // which settles the question completely: there is nothing on the canvas but
   // apps, so a default arrangement is simply the reading order.
   deriveDefault({ apps, cols }) {
@@ -487,6 +488,66 @@ const HomeLayout = {
     return HomeLayout.readingOrder(
       (layout || []).filter((it) => it.row < HomeLayout.MAX_ROWS)
     );
+  },
+
+  // ── The Create tile's cell ─────────────────────────────────────────
+  //
+  // The launcher ENDS with a dashed "Create an app" tile (the prototype's
+  // scrHome: `.tile.create`, the grid's last child). It is not an ITEM of
+  // this model, and that is the whole design: it is never stored, never
+  // dragged, never displaced and never persisted. Its cell is DERIVED on
+  // every paint as the one straight after the last tile in reading order, so
+  // it follows the grid instead of holding a place in it:
+  //
+  //   * a drop onto the cell it is drawn in is an ordinary drop onto an empty
+  //     cell — the model has nothing there — and the next paint moves the
+  //     tile along behind the app that landed;
+  //   * a hole the viewer left earlier in the grid stays a hole. The tile
+  //     goes after the LAST tile, never into the first gap.
+  //
+  // `items` is what the caller is about to DRAW (the collapsed grid's shown
+  // rows, or the whole canvas), so "last" means last on screen. Overflow
+  // items are ignored here: they have no cell, and a caller drawing them
+  // flows the tile after them instead. An empty canvas answers (0, 0).
+  // Pure — unit-tested in tests/home-layout-model.test.js.
+  trailingCell(items, cols) {
+    let last = null;
+    for (const item of items || []) {
+      if (!item || item.row >= HomeLayout.MAX_ROWS) continue;
+      if (!last || item.row > last.row || (item.row === last.row && item.col > last.col)) {
+        last = item;
+      }
+    }
+    if (!last) return { col: 0, row: 0 };
+    const [w, h] = HomeLayout.sizeOf(last, cols);
+    const col = last.col + w;
+    return col < cols ? { col, row: last.row } : { col: 0, row: last.row + h };
+  },
+
+  // Whether a COLLAPSED grid holds the Create tile back (#3047).
+  //
+  // The tile follows the last tile shown (trailingCell). When that last shown
+  // row is FULL, the tile would start a row of its own — one past what the
+  // collapsed grid shows: a third row under a two-row launcher of eight apps,
+  // and on a phone that pushed "Show all N apps" and the Discover heading
+  // under the tab bar. The budget exists precisely to keep the sections below
+  // within reach (Home.visibleRowBudget).
+  //
+  // So the tile goes behind "Show all N apps" instead, exactly like an app
+  // past the bound: the collapsed grid never draws a row for the tile alone,
+  // and the expanded grid ends with it as always. It is never traded for a
+  // row of apps (the rule this replaced), and it never hides when it fits
+  // beside the last tile shown.
+  //
+  // `shown` is what the caller is about to draw and `bound` the last row
+  // index the collapsed window may draw (defaultRowBound). An empty `shown`
+  // never holds it back: an empty launcher's tile flows after the
+  // "No apps added yet" note and must always be there.
+  // Pure — unit-tested in tests/home-layout-model.test.js.
+  createTileCollapsed(shown, cols, bound) {
+    const onCanvas = (shown || []).filter((it) => it && it.row < HomeLayout.MAX_ROWS);
+    if (!onCanvas.length) return false;
+    return HomeLayout.trailingCell(onCanvas, cols).row > bound;
   },
 
   // The wire shape for PUT /api/home-layout: canvas items only (the server's

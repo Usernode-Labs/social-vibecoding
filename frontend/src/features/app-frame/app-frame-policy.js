@@ -1,0 +1,148 @@
+/**
+ * Security policy for the production App-tab iframe.
+ *
+ * The frame is mounted before its app URL is available so the launch animation
+ * can keep one stable DOM element. While it has no source it must stay fully
+ * restricted: giving that same-origin blank document both `allow-scripts` and
+ * `allow-same-origin` is what makes browsers report an escapable sandbox.
+ *
+ * Immediately before a verified cross-origin HTTP(S) navigation, the bridge
+ * switches the SAME element to APP_FRAME_SANDBOX. Sandbox changes apply to the
+ * next navigation, so the app keeps its origin-backed storage and APIs without
+ * granting those permissions to the pending blank document.
+ */
+
+export const PENDING_FRAME_SANDBOX = '';
+export const APP_FRAME_SANDBOX =
+  'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock';
+
+/**
+ * ── The permission policy (#2219) ──────────────────────────────────────
+ *
+ * `allow` behaves exactly like `sandbox` above: a frame's container policy
+ * is computed when it NAVIGATES, so the attribute has to be right on the
+ * line before `src` is assigned and cannot be widened afterwards. That is
+ * why the granted set rides the iframe-token response and why `setSrc`
+ * takes it — see ./app-frame-bridge.js.
+ *
+ * The browser copy of services/app-permissions.js. Two copies because one
+ * runs in node and one in the bundle; tests/app-permissions.test.js pins
+ * them against each other, the same arrangement the `allow` attribute's own
+ * two copies have always had.
+ */
+
+/**
+ * Delegated to every app frame, gate or no gate: a copy button and a game.
+ * `geolocation` used to be the third entry and is deliberately not here.
+ */
+export const UNGATED_CAPABILITIES = ['clipboard-write', 'pointer-lock'];
+
+/**
+ * The capabilities that need a per-user, per-app grant. Names are
+ * Permissions Policy tokens and the order is the catalogue's, so the
+ * attribute built from a given grant set is stable.
+ */
+export const GATED_CAPABILITIES = [
+  'geolocation',
+  'microphone',
+  'camera',
+  'display-capture',
+  'usb',
+  'serial',
+  'hid',
+  'bluetooth',
+  'midi',
+];
+
+/**
+ * Ungated capabilities that are NOT Permissions Policy features, and so are
+ * never written into `allow` (QA 2026-09-24 Q35).
+ *
+ * No browser recognises `pointer-lock` as a policy-controlled feature. Chrome
+ * parses every `allow` attribute it sees and logged "Unrecognized feature:
+ * 'pointer-lock'." on every page, because the staging frame is in the shell
+ * document, and it delegated nothing: pointer lock is governed by the
+ * `allow-pointer-lock` SANDBOX token, which APP_FRAME_SANDBOX above already
+ * carries for the App-tab frame, and the unsandboxed landing and staging
+ * frames never restricted it. So it stays in UNGATED_CAPABILITIES, which is
+ * what an app asking the shell about it is told ("granted"), and only leaves
+ * the attribute string.
+ */
+export const SANDBOX_DELEGATED = ['pointer-lock'];
+
+const ALLOW_BASE = UNGATED_CAPABILITIES.filter((c) => !SANDBOX_DELEGATED.includes(c));
+
+/**
+ * What a frame with no grants at all gets, and the whole story for the
+ * landing viewer and the staging preview.
+ *
+ * Neither of those delegates a gated capability. The landing viewer serves
+ * signed-out visitors, so there is no user to hold a grant; the staging
+ * preview shows a build the group has not voted in yet, and handing
+ * unreviewed code a camera is the thing the gate exists to stop. Both still
+ * relay the permission prompt (the shell answers them through
+ * `ownedFrameFor`), so an app can tell WHY it was refused there.
+ */
+export const BASE_ALLOW = ALLOW_BASE.join('; ');
+
+const GATED_SET = new Set(GATED_CAPABILITIES);
+
+/**
+ * The `allow` attribute for a granted set: the ungated base first, then
+ * whatever of `granted` is a real gated capability, in catalogue order.
+ *
+ * `granted` is filtered rather than trusted. This is the last line before a
+ * capability name reaches a live DOM attribute, and what it is handed came
+ * over the network.
+ */
+export function allowAttribute(granted) {
+  const wanted = new Set(Array.isArray(granted) ? granted.filter((c) => GATED_SET.has(c)) : []);
+  return ALLOW_BASE.concat(GATED_CAPABILITIES.filter((c) => wanted.has(c))).join('; ');
+}
+
+/**
+ * Only a real web origin distinct from the platform may enter #app-iframe.
+ * Both arguments are explicit so the policy stays pure and directly testable.
+ */
+export function isSafeAppFrameSrc(src, platformOrigin) {
+  if (!src || !platformOrigin) return false;
+  try {
+    const target = new URL(src);
+    const platform = new URL(platformOrigin);
+    if (target.protocol !== 'http:' && target.protocol !== 'https:') return false;
+    if (platform.protocol !== 'http:' && platform.protocol !== 'https:') return false;
+    return target.origin !== platform.origin;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * #3257: is `a` the same frame document as `b`? The shell writes the
+ * platform's resolved theme into every frame URL as `un-theme`, for the
+ * app's pre-paint read, and tells a running app about later changes over
+ * the bridge instead. So a theme toggle changes the URL a render WOULD
+ * build without changing the document the frame holds, and comparing the
+ * raw strings would reload the user's app on the next App → Dev → App.
+ * The comparison ignores that one parameter and nothing else.
+ *
+ * public/js/app-view.js carries the same function as AppView.sameFrameSrc
+ * (a classic script cannot import this); tests/app-theme-forwarding.test.js
+ * runs both against one table.
+ */
+export const FRAME_THEME_PARAM = 'un-theme';
+
+export function sameFrameSrc(a, b) {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  const strip = (src) => {
+    try {
+      const url = new URL(src);
+      url.searchParams.delete(FRAME_THEME_PARAM);
+      return url.toString();
+    } catch {
+      return src;
+    }
+  };
+  return strip(a) === strip(b);
+}

@@ -167,7 +167,12 @@ test('the tint goes through the model, and the fill does not', () => {
   // The row's class is React's, so it is patched, not written.
   assert.doesNotMatch(refresh[1], /classList/,
     'no class is written onto a row the transcript renders');
-  assert.match(refresh[1], /patchTranscriptMessage\(id, \{ voteRowClass: GroupChat\._rowVoteClass\(pr\) \}\)/);
+  // The phase rides in the same patch since the activity digest: a vote row
+  // learns here whether it stands or folds (tests/group-chat-activity-digest.test.js).
+  assert.match(
+    refresh[1],
+    /patchTranscriptMessage\(id, \{\s*voteRowClass: GroupChat\._rowVoteClass\(pr\),\s*votePhase: GroupChat\._votePhase\(pr\),\s*\}\)/,
+  );
   // And the component renders that class.
   const html = renderComponent(TRANSCRIPT, 'SystemRow', {
     msg: { ...base, kind: 'vote', voteRowClass: 'gc-vote-voted', voteRef: { sessionId: '1', prNumber: '' } },
@@ -228,8 +233,12 @@ test('a quoted reply draws its icon, who, and the snippet', () => {
   const html = quoted();
   assert.match(html, /<span class="gc-quoted-author">↩ alice<\/span>/);
   assert.match(html, /<span class="gc-quoted-snippet">the original message<\/span>/);
-  // Not "1 reply", which is the thread control and a different sentence.
-  assert.ok(!/\breply\b/.test(html), 'no thread-reply wording');
+  // Not "1 reply", which is the thread control and a different sentence. The
+  // quote block is what is checked: the row around it now carries the shared
+  // hover bar (#2387), whose Reply button is a different control.
+  const at = html.indexOf('<div class="gc-quoted"');
+  const block = html.slice(at, html.indexOf('</div>', at));
+  assert.ok(at >= 0 && !/\breply\b/i.test(block), 'no thread-reply wording');
 
   assert.match(quoted({ source: 'pr', username: 'PR #12', icon: '🔀', href: '/x' }),
     /class="gc-quoted-author">🔀 PR #12</);

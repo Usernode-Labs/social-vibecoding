@@ -61,7 +61,8 @@ function stagingDemoCards() {
 function workshopThemesRoutes(config) {
   const router = Router();
   const pool = getPool(config);
-  const APP_COLS = `${appAccess.ACCESS_COLUMNS}, name, repo_url`;
+  // `created_at` is where the week walk ends (#3293): the project's first week.
+  const APP_COLS = `${appAccess.ACCESS_COLUMNS}, name, repo_url, created_at`;
 
   router.get('/api/apps/:slug/workshop-themes', async (req, res) => {
     try {
@@ -79,7 +80,23 @@ function workshopThemesRoutes(config) {
       // stopped being substituted, and the declared check that asserts their
       // text failed. A preview is a demo or it is not; it cannot depend on
       // what production happens to be holding that day.
-      const digestCards = demo ? stagingDemoCards() : (result.digestCards || null);
+      const cards = demo ? stagingDemoCards() : (result.digestCards || null);
+      // #3293: every week before the two the model writes, derived from what
+      // landed in it, and the project's first week, so "Show past week" can
+      // walk all the way back to the start. Only beside a card set: with no
+      // walk there is nothing to extend, and the pane's derived sentence is
+      // what a board without one draws. Non-fatal: without the history the
+      // walk ends at last week and says that is as far as the summary goes,
+      // which is what it did before.
+      let digestCards = cards;
+      if (cards) {
+        try {
+          const history = await workshopThemes.fetchDigestHistory(pool, app.id, { createdAt: app.created_at });
+          digestCards = { ...cards, older: history.older, firstWeek: history.firstWeek };
+        } catch (err) {
+          log.warn('workshop-themes', 'digest history failed', { app: app.slug, message: err.message });
+        }
+      }
       res.json({
         themes,
         source: result.source,
@@ -98,11 +115,20 @@ function workshopThemesRoutes(config) {
         // placer (`unplaced`, also named by key), and not yet placed.
         coverage: result.coverage || null,
         unplaced: Array.isArray(result.unplaced) ? result.unplaced : [],
+        // The app's LIVE category vocabulary — the model's standing draft
+        // plus whatever the group has pinned — so a card's chip can offer it
+        // without a second round-trip, and `votes` so the view can show which
+        // cards the group placed itself rather than the model.
+        // Voting rides the existing topic-attributes POST: one grouping on one
+        // mechanism means this route still needs no write of its own.
+        registry: Array.isArray(result.registry) ? result.registry : [],
+        votes: result.votes && typeof result.votes === 'object' ? result.votes : {},
         // The three windowed lines the lander draws as cards — what landed
         // last week, what has landed this week, what the open work is about
         // — written by the model on the same reconcile that drafted the
         // themes. A field is an empty string when that window was genuinely
-        // empty, and its card is then not drawn.
+        // empty, and its card is then not drawn. `older` and `firstWeek` are
+        // the derived weeks behind them (#3293, above).
         digestCards,
         // The same answer flattened to prose. A row last written under the
         // previous digest prompt has only this, so serving both is what lets

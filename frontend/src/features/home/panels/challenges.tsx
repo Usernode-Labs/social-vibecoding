@@ -7,11 +7,22 @@
  * says so in one line. A block that silently vanishes between seasons leaves
  * the viewer with no way to tell "nothing is running" from "this broke".
  *
- * ── A PLATE OF CARDS, and the card is the Challenges tab's ─────────────
+ * ── A FLAT COLUMN OF CARDS, and the card is the Challenges tab's ───────
  *
- * One card per challenge on a translucent plate that holds them and the season
- * summary together (`.home-challenges-plate` in app.css): at 55% the grouping
- * reads and the wallpaper's washes carry on through.
+ * The ITERATION 03 board's Home screen draws this area straight on the page
+ * ground: the season summary, the group headers, one card per challenge and
+ * the footer, stacked in one column under the section heading. There is no
+ * plate around them (`PanelShell plate="none"`, as Discover) and no rule
+ * between them. The cards and the headers are surfaces of their own, so a
+ * translucent plate behind them was a second frame, and its 0.625rem padding
+ * pulled the whole block in from the heading's left edge.
+ *
+ * ONE RHYTHM: every band in the column is a 14px step from the one above it.
+ * The heading ends on `pb-1.5`, so each band here opens on `pt-2` and closes
+ * on `pb-1.5` (6px + 8px). Inside the rows list the cards, the headers and the
+ * locked placeholder sit `gap-2.5` (10px) apart, the same step as the featured
+ * apps rail (`.home-discover-rail` in app.css). Nothing is inset: the season line, the headers, the cards
+ * and the footer all start where the heading's label starts.
  *
  * THE CARD IS SHARED. It is `ChallengeCard` from
  * features/leaderboard/challenge-card.tsx, the same component the Leaderboard
@@ -22,11 +33,46 @@
  * root class `home-challenge-card` and `data-challenge-id` are this block's,
  * because the declared checks and the tests select on them.
  *
- * THE DEADLINE IS ON EVERY OPEN CARD, on the line under its title beside the
- * reward ("5d left · 500 pts"): the challenge's own end, else its event's,
- * else the season's. The ring says the season's only when no card on screen
- * shows one. It stays on the cards until deadline bands group the challenges
- * by when they end; then the band heading says it.
+ * A CARD'S DEADLINE sits on the line under its title beside the reward ("5d
+ * left · 500 pts"): the challenge's own end, else its event's, else the
+ * season's. Only Get started's open cards draw it; every other group's header
+ * carries the clock instead (below).
+ *
+ * ── Group headers, without counts ─────────────────────────────────────
+ *
+ * The cards are the Challenges tab's list in the tab's order: grouped by the
+ * board's categories (Get started, This week, Always open, the season's other
+ * challenges, and a finished Get started last). Expanded, the block draws
+ * that whole list. Collapsed, its four slots go to the viewer's unfinished
+ * challenges first (#2490), cutting a group mid-way when the cap falls inside
+ * it; finished challenges only fill the slots that are left, and they sit
+ * last under one "Done" header, so a finished card is never drawn above one
+ * still to do. EVERY group opens with the tab's `GroupHeader`, one group on
+ * screen included, static here: no toggle, no collapse and no count, because a
+ * collapsed block does not draw the whole group. The header owns the clock
+ * ("This week · 3d left", "Always open · no deadline") and the cards under it
+ * drop theirs; Get started's keep their own. The Done header carries no clock.
+ * HomePanels.orderRows, HomePanels.visibleSlots and HomePanels.challengeGroups
+ * decide all of it; the headers sit inside `.home-panel-rows` beside the
+ * cards, which the declared checks select through, so nothing comes between
+ * the season progress and the body. The Done header alone carries a class of
+ * its own, `home-challenge-done-head`, which the #2490 check selects on.
+ *
+ * ── While setup gates the season ──────────────────────────────────────
+ *
+ * The server sends only setup's challenges until setup is finished, plus how
+ * many it holds back (`lockedCount`). Those draw as ONE dashed placeholder
+ * after the last card, inside `.home-panel-rows` so it keeps the cards' 10px
+ * step, but it is not a `.home-challenge-card`: the declared checks and the
+ * tests count and select real cards. Its second line ("Finish setup to
+ * unlock") is the unlock note, so the note is not drawn beside it.
+ *
+ * The note itself sits UNDER the challenges, after `.home-panel-body`: the
+ * season progress leads, then the cards, then what they unlock. That keeps
+ * `.home-panel-season + .home-panel-body` adjacent in every state. It shows
+ * only while setup is locked and no placeholder draws (no count to draw):
+ * "Finish these to unlock the rest of the season." Once unlocked there is no
+ * note.
  *
  * ── The standings preview is GONE ─────────────────────────────────────
  *
@@ -37,104 +83,106 @@
  * tap from here — "Open challenges" (#1916), in this section's own heading,
  * which renders in every branch including the between-seasons one and lands
  * on the screen's Challenges tab, one tab from the standings.
+ *
+ * It is the ONLY one. The footer used to repeat "Open challenges" at its right
+ * end, one card below the heading's; that copy is gone, so the footer draws
+ * only when its "See all N challenges" toggle has something to reveal.
  */
 
-import { ProgressRing } from '@/components/ui/progress-ring';
+import { Fragment } from 'react';
+
 import { ChallengeCard } from '../../leaderboard/challenge-card';
-import type { ChallengesView, SeasonView } from '../panels-store';
+import { GroupHeader } from '../../leaderboard/group-header';
+import { LockedChallengesCard } from '../../leaderboard/locked-challenges-card';
+import { SeasonProgress } from '../../leaderboard/season-progress';
+import type { ChallengeGroupView, ChallengesView } from '../panels-store';
 import { PanelFooter, PanelShell, panels } from './ui';
-
-/**
- * The ring and the season's two numbers, at the top of the plate.
- *
- * It replaces the "· 1 of 6 · 3,900 pts left" that rode the section heading,
- * where at 12px after the area's name and its link it pushed the label into
- * an ellipsis on a phone. As a ring it is content: the first thing on the
- * plate, stating the one fact the block exists to state.
- *
- * The ring itself is `@/components/ui/progress-ring` — the geometry, the
- * twelve-o'clock start and the zero case all live there, because it is a
- * shape of the language rather than of this block, and because a raw SVG
- * element under `features/**` is a glyph that escaped icons.tsx as far as
- * tests/shell-icon-set.test.js is concerned; that scanner is a plain search
- * for the opening tag, comments included, so this sentence spells the tag out
- * in words rather than tripping the rule it is describing.
- *
- * NO PLATE OF ITS OWN. It sits directly on the block's plate rather than in a
- * card, so the four tinted cards below are the only card-shaped things here
- * and the summary reads as their caption.
- */
-function SeasonRing({ view }: { view: SeasonView }) {
-  return (
-    <div className="home-panel-season flex items-center gap-2.5 px-1 pb-2.5 pt-0.5">
-      <ProgressRing pct={view.pct} label={view.fraction} title={view.label} />
-      <div className="min-w-0">
-        <div className="truncate whitespace-nowrap text-[15px] font-semibold leading-tight text-zinc-900 dark:text-zinc-100">
-          {view.lead}
-        </div>
-        {view.sub ? (
-          <div className="truncate whitespace-nowrap text-[12.5px] leading-tight text-zinc-500 dark:text-zinc-400">
-            {view.sub}
-          </div>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 export function ChallengesPanel({ view }: { view: ChallengesView }) {
   if (!view.rows.length) {
+    // The line's hover is a text colour, not a tint: with no plate and no
+    // inset a background would fill a square box starting at the first glyph,
+    // and `.home-panel-body` clips overflow, so a negative-margin inset cannot
+    // widen it past the text either.
+    //
+    // It opens something, so it is a real <button> (#1918, #2989): Tailwind's
+    // preflight already strips a button's background, border, padding and
+    // font, and `w-full text-left` keep the box and the glyphs where the <p>
+    // put them. The accessible name starts with the visible text (so a voice
+    // command that reads it still matches) and then says where it goes. The
+    // focus ring is inset because `.home-panel-body` clips overflow.
     return (
-      <PanelShell panelKey={view.key} expanded={false} plate="soft" stamps={{ rows: 0 }}>
+      <PanelShell panelKey={view.key} expanded={false} plate="none" stamps={{ rows: 0 }}>
         <div className="home-panel-body">
-          <p
-            className="home-panel-rows home-panel-row flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors"
+          <button
+            type="button"
+            className="home-panel-rows home-panel-row flex w-full items-center text-left text-[13px] text-zinc-500 dark:text-zinc-400 cursor-pointer hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-violet-500"
             title="Go to the Challenges tab on the Leaderboard screen"
+            aria-label="No challenges are running right now. Go to the Challenges tab on the Leaderboard screen"
             onClick={() => panels()?.goToChallenges?.()}
           >
             No challenges are running right now
-          </p>
+          </button>
         </div>
       </PanelShell>
     );
   }
 
+  const groups: ChallengeGroupView[] = view.groups
+    ?? [{ key: 'all', heading: null, meta: null, rows: view.rows }];
+  const lockedCount = view.lockedCount ?? 0;
+  const hasFooter = view.expandable !== false;
+  const hasNote = !!view.onboardingNote && !(lockedCount > 0);
+
   return (
     <PanelShell
       panelKey={view.key}
       expanded={view.expanded}
-      plate="soft"
+      plate="none"
       stamps={{ rows: view.rows.length }}
-      footer={(
-        <PanelFooter
-          panelKey={view.key}
-          total={view.total}
-          expanded={view.expanded}
-          expandable={view.expandable !== false}
-        />
-      )}
+      footer={hasFooter ? (
+        <PanelFooter panelKey={view.key} total={view.total} expanded={view.expanded} />
+      ) : null}
     >
-      {view.season ? <SeasonRing view={view.season} /> : null}
-      {/* #1915: padded on BOTH sides. With `pb-3` alone the line sat flush
-          against the season ring's bottom hairline above it. */}
-      {view.onboardingNote ? (
-        <p className="px-1 py-3 text-sm text-zinc-500 dark:text-zinc-400" role="status">
+      {view.season ? <SeasonProgress view={view.season} className="home-panel-season pt-2 pb-1.5" /> : null}
+      {/* The body closes on `pb-1.5` only when a band follows it (the footer or
+          the note), as the first half of their 14px step. A block that ends at
+          its last card ends there, on the section's own bottom padding, as
+          Discover does. */}
+      <div className={hasFooter || hasNote ? 'home-panel-body pt-2 pb-1.5' : 'home-panel-body pt-2'}>
+        <div className="home-panel-rows flex flex-col gap-2.5">
+          {groups.map((g) => (
+            <Fragment key={g.key}>
+              {g.heading ? (
+                <GroupHeader
+                  heading={g.heading}
+                  meta={g.meta}
+                  className={g.key === 'done' ? 'home-challenge-done-head' : undefined}
+                />
+              ) : null}
+              {g.rows.map((row) => (
+                <ChallengeCard
+                  key={row.id}
+                  view={row}
+                  className="home-challenge-card"
+                  data-challenge-id={row.id}
+                  onClick={() => panels()?.goToChallenge?.(row.eventId, row.id)}
+                />
+              ))}
+            </Fragment>
+          ))}
+          <LockedChallengesCard count={lockedCount} className="home-challenge-locked" />
+        </div>
+      </div>
+      {/* #1915 kept this line off its neighbours. It still is, by the column's
+          one rhythm (`pt-2 pb-1.5`, see the header) rather than by a padding
+          of its own against a hairline that is gone. It follows the cards,
+          and the placeholder's own second line stands in for it. */}
+      {hasNote ? (
+        <p className="pt-2 pb-1.5 text-sm text-zinc-500 dark:text-zinc-400" role="status">
           {view.onboardingNote}
         </p>
       ) : null}
-      <div className="home-panel-body">
-        <div className="home-panel-rows flex flex-col gap-2">
-          {view.rows.map((row) => (
-            <ChallengeCard
-              key={row.id}
-              view={row}
-              className="home-challenge-card"
-              data-challenge-id={row.id}
-              onClick={() => panels()?.goToChallenges?.()}
-            />
-          ))}
-        </div>
-      </div>
     </PanelShell>
   );
 }

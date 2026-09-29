@@ -184,6 +184,23 @@ test('the head still offers exactly one Generate affordance, in its detail actio
   assert.ok(!hasAction(head, 'confirmAutoSession'),
     'the head card must not grow its own re-run — the detail list owns it');
   assert.ok(!AppView._detailActionsView('issue', item).pills.some((p) => p.key === 'generate'),
-    'AI building has one home in the Start work chooser');
+    'no separate AI-build pill on the issue head');
   assert.equal(detailActionsHtml(AppView, 'issue', item).includes('Start AI build'), false);
+});
+
+// #2376: automated sessions are switched off for now. Start work no longer
+// offers "Start AI build" — it goes straight to working with an agent. The vm
+// sandbox defines no PlatformUI, so a chooser sheet would throw here.
+test('Start work opens an agent session directly, with no AI-build choice', () => {
+  const AppView = makeAppView();
+  const opened = [];
+  let autoRuns = 0;
+  AppView.createPrForIssue = (n) => opened.push(n);
+  AppView.confirmAutoSession = () => { autoRuns += 1; };
+
+  AppView.chooseIssueWork(5);
+  assert.deepEqual(opened, [5], 'Start work opens the interactive session');
+  assert.equal(autoRuns, 0, 'never starts an automated run');
+  assert.doesNotMatch(SRC, /['`]Start AI build|Start work → Start AI build/,
+    'no label or hint offers the AI build any more');
 });

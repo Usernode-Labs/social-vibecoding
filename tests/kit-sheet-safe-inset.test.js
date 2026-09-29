@@ -50,12 +50,13 @@ const ADOPTED = ['platform-sheet-adopted', 'platform-panel-adopted'];
 
 /**
  * Every component that hands its root to the kit — the sheets built on
- * lib/sheet-controller.js plus the Improve panel, which adopts directly.
- * Listed rather than discovered so that a NEW adoptable sheet is a
- * deliberate addition here, and its safe-area element gets looked at.
+ * lib/sheet-controller.js. The Improve panel adopted directly and was the
+ * third entry here; it retired (#2718 review), and its two actions are rows
+ * of the app-context sheet below. Listed rather than discovered so that a NEW
+ * adoptable sheet is a deliberate addition here, and its safe-area element
+ * gets looked at.
  */
 const ADOPTABLE = [
-  'frontend/src/features/improve/improve-panel.tsx',
   'frontend/src/features/app-context/app-context-sheet.tsx',
   'frontend/src/features/notifications/notifications-sheet.tsx',
 ];
@@ -117,7 +118,10 @@ test('every adoptable sheet\'s safe-area element is reached by it', () => {
         `${path.basename(file)} carries .${cls} and the rule does not cover it`);
     }
   }
-  assert.ok(found >= 3,
+  // Derived from the list, not a literal: it was `>= 3` while the Improve
+  // panel was the third entry, so retiring the panel (#2718 review) would
+  // have failed this for a reason that has nothing to do with the inset.
+  assert.ok(found >= ADOPTABLE.length,
     `expected each adoptable sheet to reserve the strip; found ${found} of `
     + `${ADOPTABLE.length}. A sheet that stopped is fine, but check it did not `
     + 'just move the class to a wrapper this test cannot see');

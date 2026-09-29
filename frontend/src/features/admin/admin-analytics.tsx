@@ -198,7 +198,7 @@ function useTips(prefix: string, htmls: string[]): void {
 const INFO: Record<string, string> = {
   'include-admins': 'Admin accounts (including view-only admins) are excluded from every number on this page by default, so operator/test activity does not skew the stats. Tick this to include them.',
   counters: 'At-a-glance totals. WAU | MAU are two independent counts: distinct users active in the last 7 vs 30 days, not a ratio. "Promoted (open)" is sessions live in promoted/merging right now; the all-time counts never leave their bucket.',
-  spend: 'LLM spend per day for the last 30 days. <b>Platform key</b> is spend billed to the platform key (this is what the daily caps track); <b>User key</b> is spend billed to users\' own Anthropic keys (display only); <b>Both</b> stacks them.',
+  spend: 'LLM spend per day for the last 30 days. <b>Platform key</b> is spend billed to the platform (this is what the caps track: the platform\'s own daily cap, and each account\'s weekly one); <b>User key</b> is spend billed to users\' own Anthropic keys (display only); <b>Both</b> stacks them.',
   funnels: 'Each stage shows the count reaching that milestone and the step-over-step conversion. "Promoted" = a session opened for group vote; "Merged" = landed in production. Use the cohort buttons to scope to recent signups.',
   growth: 'New signups, apps, and promoted/merged PRs bucketed per ISO week. Hover any bar for that week\'s exact count.',
   'general-users': 'A general user is anyone active during the period (any tracked action: used a dapp, sent a chat message, or sent a dev-session message). <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
@@ -207,7 +207,7 @@ const INFO: Record<string, string> = {
   'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
   'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
   kudos: 'Per ISO week, how many users gave 0, 1, 2, 3, 4–5, 6–10 or 11+ kudos (everyone gets a budget of 20/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count. Counts direct PR kudos only. Issue-bounty pledges draw on the same weekly allowance but are not in this series.',
-  'spend-distribution': 'Per day, how many users\' platform-key AI spend (what the daily caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend, and it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ capped</b> (heavy spenders with no usable own key, blocked at the cap) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
+  'spend-distribution': 'Per day, how many users\' platform-funded AI spend (what the caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend, and it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ platform only</b> (heavy spenders with no usable own key) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). These are DAY buckets, not cap boundaries. The account cap is weekly, so a day above $20 is a heavy day rather than a refusal. The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
 };
 
 // Per-card Overview definitions (#341). Keyed by a stable card id, mirroring
@@ -223,7 +223,7 @@ const CARD_INFO: Record<string, string> = {
   'promoted-all': 'Every dev session that was ever opened for a group vote.',
   'merged-all': 'Every dev session that landed in production.',
   'kudos': 'Total kudos handed out across all users.',
-  'llm-today': 'Today\'s platform-key LLM spend (the spend the daily caps track), in dollars.',
+  'llm-today': 'Today\'s platform-funded LLM spend (the spend the caps track), in dollars.',
   'llm-week': 'Platform-key LLM spend so far this week, in dollars. The week runs Monday 00:00 UTC to Monday 00:00 UTC, the same window the per-user weekly cap enforces.',
 };
 
@@ -937,7 +937,9 @@ function Kudos({ weeks }: { weeks: any[] }) {
 
 // ── Daily spend distribution (last 30 days) ───────────────────
 // b0 first (bottom, muted), paid buckets ascending, $20+ split at the top:
-// capped (red) then kept-going-on-own-key (indigo). The $0 bucket is dropped
+// platform-only (red) then also-had-own-key (indigo). #2571 renamed the red
+// one: the per-user cap is weekly, so a $20 DAY is no longer a refusal and
+// calling it "capped" said something the data no longer means. The $0 bucket is dropped
 // when the "Hide $0" toggle is active so the paid buckets rescale to fill the
 // chart; totals/max, bars, legend and tooltip all derive from `segs`.
 const SPEND_DIST_SEGS = [
@@ -946,7 +948,7 @@ const SPEND_DIST_SEGS = [
   { key: 'b2', label: '$5–$10', color: '#a3e635' },
   { key: 'b3', label: '$10–$15', color: '#fbbf24' },
   { key: 'b4', label: '$15–$19.99', color: '#fb923c' },
-  { key: 'b5', label: '$20+ capped', color: '#ef4444' },
+  { key: 'b5', label: '$20+ platform only', color: '#ef4444' },
   { key: 'b6', label: '$20+ own key', color: '#a855f7' },
 ];
 
@@ -1558,7 +1560,7 @@ function AnalyticsSection() {
                 }} />
             </div>
             <p className={SUB}>
-              Number of users by daily AI spend bucket, last 30 days. The two $20+ bars split users who hit the daily cap from those who continued on their own API key. $0 (no-spend) users are hidden by default. Use &quot;Show $0&quot; to include them.
+              Number of users by daily AI spend bucket, last 30 days. The two $20+ bars split heavy days funded by the platform alone from those where the user also had their own API key. Day buckets, not cap boundaries: the account cap is weekly. $0 (no-spend) users are hidden by default. Use &quot;Show $0&quot; to include them.
             </p>
             <div id="spend-distribution">
               {d ? (((d.spendDistribution && d.spendDistribution.days) || []).length

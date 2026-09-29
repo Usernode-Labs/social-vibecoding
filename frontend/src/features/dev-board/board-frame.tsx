@@ -15,7 +15,7 @@
  *   * the header bar — the "+" button and its dropdown, including every
  *     `data-plus` row and the two `data-plus-group` headings. The Feed/Kanban
  *     tab strip is NOT here any more: the Board's two layouts are a choice
- *     under the Improve panel's Board row now (see improve-panel.tsx), because
+ *     under the Improve panel's Board row (both retired, #2718 review), because
  *     a strip whose first tab restated the destination the header chip had
  *     just named was navigation drawn twice;
  *   * `#dev-forum-scroll` and, on the kanban only, the General-discussion
@@ -67,12 +67,16 @@ import {
   PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
+import { Alert } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+
 import { DevActionsRow } from './actions-row';
 import { useStoreState } from '../../lib/use-store-state';
 import { useDevViewMode } from './view-mode-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { skeletonKanbanHtml, skeletonListHtml } from './card/skeleton';
-import { lockedNoticeStore, lockedNoticeText, type LockedNoticeState } from './locked-notice-store';
+import { mainPauseStore, mainPauseText, type MainPauseState } from './main-pause-store';
+import { releaseStallStore, releaseStallText, type ReleaseStallState } from './release-stall-store';
 
 /** `AppView.DEV_CARD_CLS`, unchanged. Passed in so there is one source of truth. */
 export interface DevBoardFrameProps {
@@ -121,7 +125,10 @@ export interface DevBoardFrameProps {
  * workshop/workshop.tsx), which replaced the Activity feed as the Dev
  * screen's lander; the kanban Done column renders its own completed rows.
  */
-const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(3) + '</div>' };
+// FOUR rows, the count workshop.tsx's own loading state draws a moment later
+// (`<CardSkeleton n={4}>`): the hand-off between the two is then invisible,
+// where three becoming four read as the page jumping on the way in (#2880).
+const DEV_BODY_WORKSHOP_INITIAL = { __html: '<div id="dev-workshop">' + skeletonListHtml(4) + '</div>' };
 const DEV_BODY_KANBAN_INITIAL = { __html: skeletonKanbanHtml() };
 
 /**
@@ -202,9 +209,92 @@ function DiscussionCard({ cardCls, cardHoverCls }: { cardCls: string; cardHoverC
             {preview}
           </span>
         </span>
-        <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" />
+        <ChevronRightIcon className="w-4 h-4 text-zinc-500 dark:text-zinc-500 shrink-0" aria-hidden="true" />
       </a>
     </div>
+  );
+}
+
+/**
+ * The "merges are paused" banner (./main-pause-store.ts). Amber, because it
+ * is a condition somebody may need to act on, and above the cards, because
+ * it is the one fact that applies to every card at once: a red main pauses
+ * the app's merges, whatever each proposal's own vote and checks say. The
+ * sentence names the test; for an admin it carries the verb, which calls
+ * the same `AppView.resumeMainMerges` the per-card ledger's button does, so
+ * there is one resume path and one toast.
+ */
+function MainPauseNotice(): ReactNode {
+  const s = useStoreState<MainPauseState>(mainPauseStore);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  if (!s.paused) return null;
+  const resume = () => {
+    if (!s.slug) return;
+    window.AppView?.resumeMainMerges?.(s.slug, btnRef.current);
+  };
+  return (
+    <Alert
+      variant="notice"
+      density="compact"
+      data-main-pause={s.confirming ? 'confirming' : 'paused'}
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex-1 min-w-0">{mainPauseText(s)}</span>
+        {s.canResume && !s.confirming ? (
+          <Button
+            ref={btnRef}
+            variant="neutral"
+            ink="neutral"
+            size="xs"
+            className="shrink-0"
+            onClick={resume}
+            title="Resume merges on this app while main’s unit suite is red. The pause returns if a later merge fails the suite again."
+          >
+            Resume merges
+          </Button>
+        ) : null}
+      </div>
+    </Alert>
+  );
+}
+
+/**
+ * The "merged but not released" banner (./release-stall-store.ts), for the
+ * platform's own app. Amber like the pause banner: a merged proposal reads
+ * "merged" on its card while production still serves the previous commit,
+ * and the people who can re-run the release need to hear it from the board
+ * rather than from a user asking why the fix is not live. The workflow run
+ * is a plain link: the URL is GitHub's own `html_url`, and the store only
+ * carries it when it is on github.com.
+ */
+function ReleaseStallNotice(): ReactNode {
+  const s = useStoreState<ReleaseStallState>(releaseStallStore);
+  if (!s.stalled) return null;
+  return (
+    <Alert
+      variant="notice"
+      density="compact"
+      data-release-stall={s.kind || 'unknown'}
+    >
+      <div className="flex items-start gap-3">
+        <span className="flex-1 min-w-0">
+          {/* One text child, then the link with its own leading margin: a
+              bare {' '} between them would be two adjacent text runs, which
+              hydration rejects (React #418; tests/shell-build.test.js). */}
+          {releaseStallText(s)}
+          {s.runUrl ? (
+            <a
+              href={s.runUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-1 underline underline-offset-2"
+            >
+              Open the workflow run
+            </a>
+          ) : null}
+        </span>
+      </div>
+    </Alert>
   );
 }
 
@@ -218,7 +308,8 @@ export function DevBoardFrame({
   cardCls,
   cardHoverCls,
 }: DevBoardFrameProps) {
-  const { locked, inviteOnly } = useStoreState<LockedNoticeState>(lockedNoticeStore);
+  const mainPaused = useStoreState<MainPauseState>(mainPauseStore).paused;
+  const releaseStalled = useStoreState<ReleaseStallState>(releaseStallStore).stalled;
   // The toolbar's home depends on the surface — see the DevActionsRow render
   // below. Subscribing the frame to the mode is safe for the one node this
   // file hands to the module: `#dev-body`'s `dangerouslySetInnerHTML` object
@@ -275,29 +366,26 @@ export function DevBoardFrame({
         />
       )}
 
-      {/* The card list: locked notice, general-chat card, session rows, the
+      {/* The card list: general-chat card, session rows, the
           intermixed feed, and the Completed section. */}
       <div
         id="dev-forum-scroll"
         className="flex-1 min-h-0 overflow-y-auto overscroll-contain platform-safe-scroll"
       >
         {/*
-            The locked-app banner. It used to be one of the leaves above — a
-            host the module toggled `hidden` on and wrote `innerHTML` into —
-            which meant TWO owners of one node's class attribute, tolerated only
-            because React rendered that class as a constant. It is a field on
-            the view-mode store now, so the node has one writer and the banner
-            has one spelling.
+            The merges-paused banner (services/main-watch.js). One store
+            field, one writer, one spelling. Absent — not hidden — while merges are not paused,
+            so a board that is fine carries no extra node.
         */}
-        <div id="dev-locked-notice" className={locked ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
-          {locked ? (
-            // #1896: who can build here, not a warning. The old amber "locked"
-            // line read as "you cannot build on this app", which was never
-            // true — the lock only adds an admin's approval to the vote.
-            <div className="rounded-xl border border-zinc-200 bg-zinc-50 px-3.5 py-2.5 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
-              {lockedNoticeText(inviteOnly)}
-            </div>
-          ) : null}
+        <div id="dev-main-pause-notice" className={mainPaused ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
+          <MainPauseNotice />
+        </div>
+        {/*
+            The merged-but-not-released banner (services/release-watch.js),
+            for the platform's own app. Same arrangement again.
+        */}
+        <div id="dev-release-stall-notice" className={releaseStalled ? 'px-3 pt-2' : 'px-3 pt-2 hidden'}>
+          <ReleaseStallNotice />
         </div>
         <DiscussionCard cardCls={cardCls} cardHoverCls={cardHoverCls} />
         {/* Body region: the Workshop mounts #dev-workshop here; Kanban mounts

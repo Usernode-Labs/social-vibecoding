@@ -186,7 +186,8 @@ test('the import writes parsed notes and defaults browser imports to active', ()
   assert.match(insert, /testing_md, testing_path, testing_paths/);
   // testing_paths is JSONB — the row stores the object form, same as the
   // in-platform path, so nothing downstream needs to know which path wrote it.
-  assert.match(insert, /\$13::jsonb/);
+  assert.match(insert, /\$14::jsonb/,
+    'the exact base SHA shifts testing_paths by one parameter without changing its JSONB type');
   assert.match(insert, /importTesting\.testingPaths \? JSON\.stringify\(importTesting\.testingPaths\) : null/);
   // Nulls, not empty strings — an import with no notes is byte-for-byte the
   // row this route wrote before the fields existed.

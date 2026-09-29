@@ -133,6 +133,8 @@
     // Notifications._onItemClick.
     _routeFor(info) {
       if (info?.kind === 'test_alert') return '#settings/alerts';
+      // #2779: a change an agent session started opens the conversation.
+      if (info && info.agentSessionId) return `#messages/agent/${info.agentSessionId}`;
       if (!info || !info.appSlug) return null;
       if (info.kind === 'auto_solve_done') {
         return info.headlessIssueNumber
@@ -140,7 +142,7 @@
           : `#app/${info.appSlug}/dev/issues`;
       }
       return info.sessionId
-        ? `#app/${info.appSlug}/dev/sessions/${info.sessionId}`
+        ? `#app/${info.appSlug}/dev/proposals/${info.sessionId}`
         : null;
     },
 
@@ -149,6 +151,10 @@
     // back to a hash assignment, exactly like the bell-menu click path.
     _navigate(info) {
       try { window.focus(); } catch {}
+      if (info && info.agentSessionId) {
+        window.location.hash = DevAlerts._routeFor(info);
+        return;
+      }
       if (info && info.appSlug && typeof App !== 'undefined' && App.openAppTab) {
         if (info.kind === 'auto_solve_done') {
           App.openAppTab(info.appSlug, 'dev', {
@@ -158,7 +164,10 @@
           return;
         }
         if (info.sessionId) {
-          App.openAppTab(info.appSlug, 'dev', { subTab: 'sessions', sessionId: info.sessionId });
+          App.openAppTab(info.appSlug, 'dev', {
+            subTab: 'topic',
+            ref: { kind: 'proposal', id: parseInt(info.sessionId, 10) },
+          });
           return;
         }
       }
@@ -206,11 +215,25 @@
       } catch { /* best-effort */ }
     },
 
+    // Is this the side panel's document? The class head.html puts on <html>
+    // when it is (frontend/src/lib/side-panel-mode.ts reads the same one).
+    _inSidePanel() {
+      try {
+        const root = document.documentElement;
+        return !!(root && root.classList && root.classList.contains('in-side-panel'));
+      } catch { return false; }
+    },
+
     // Single entry the notifications module calls when a completion
     // notification arrives: chime when the app is visible, OS notification
     // when it's hidden. The decision is made once, synchronously, here.
     onCompletion(info) {
       if (!DevAlerts.enabled()) return;
+      // The side panel's document (`?panel=1`, framed beside a running app)
+      // hears the same `notification_new` as the top window, over its own
+      // socket. The top window chimes; a second copy would chime twice, or
+      // raise the same OS notification twice.
+      if (DevAlerts._inSidePanel()) return;
       if (document.visibilityState === 'hidden') {
         DevAlerts.systemNotify(info);
       } else {

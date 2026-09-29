@@ -24,6 +24,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const { kanbanHtml } = require('./lib/dev-card-html');
+const checkCap = require('./lib/check-cap');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
@@ -186,10 +187,13 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);
   assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
   assert.match(KANBAN, /detail: 'actions',/, 'the Board seats Open card in the action band');
-  assert.match(KANBAN, /expand: 'page',/, 'and makes it a link to the item\u2019s page');
-  assert.match(LIST_ROWS, /detail=\{fold\.detail\} expand=\{fold\.expand\}/);
-  assert.match(FOLD, /expand: mode = 'inline',/, 'the Workshop, passing nothing, opens in place');
-  assert.match(FOLD, /mode === 'page' \? \(\s*href \? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a> : undefined\s*\)/);
+  assert.match(KANBAN, /sessionLink: false,/, 'and draws no session line under a column card');
+  assert.match(LIST_ROWS, /detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\}/);
+  // #1884 round two: "Open card" LEADS to the item's page on both surfaces,
+  // so there is no mode to pass and no branch to take — one anchor, one
+  // label, whichever screen the card was reached from.
+  assert.ok(!/OpenMode|expand[?:]/.test(FOLD), 'no open mode left to choose');
+  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>\s*: undefined;/);
   // #1886: no page link under the sheet any more — the Workshop's pill is
   // the page link once the card is open. The one line the sheet still draws
   // is #1887's, on a card about the viewer's OWN session: the session is a
@@ -198,10 +202,11 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.ok(!/>Open on its own page/.test(FOLD), 'no "Open on its own page" line under the sheet');
   assert.ok(!/href=\{href\} className="dev-ws-link"/.test(FOLD), 'the page href rides no link under the sheet');
   assert.equal(count(FOLD, /dev-ws-sheet-actions/g), 1, 'one line under the sheet, and it is the session\u2019s');
-  assert.match(FOLD, /\{session && mode === 'inline' \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
+  assert.match(FOLD, /\{session && sessionLink \? \((?:\s*\/\/[^\n]*)*\s*<div className="dev-ws-sheet-actions">\s*<a href=\{session\} className="dev-ws-link" data-ws-open-session=\{row\.key\}>Open session ›<\/a>\s*<\/div>\s*\) : null\}/,
     'the session link, on the Workshop, and nothing beside it');
-  assert.match(FOLD, /\) : detail && href \? \(\s*<a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>\{'Open page ›'\}<\/a>/,
-    'the open Workshop card\u2019s pill is the page link');
+  const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
+  assert.ok(!/\{'Open page ›'\}|'Close card' : 'Open card'/.test(unfolded),
+    'and no second step: the pill is the page link on its first tap');
   assert.match(FOLD, /detail: placement = 'actions',/, 'and the Workshop, passing nothing, gets the same seat');
   assert.match(FOLD, /<DevCard model=\{card\} actionEnd=\{placement \? openBtn : undefined\} headEnd=\{<FoldMark open onClick=\{onFold\} \/>\} \/>/);
   // The seat itself: DevCard renders `actionEnd` after its own pills and
@@ -210,13 +215,13 @@ test('the column owns which card is open, one per column, through the shared fol
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
   assert.match(CARD, /const hasActions = bandPrimary\.length > 0 \|\| !!actionEnd \|\| !!menuTrigger \|\| !!bandPreview;/);
   assert.match(CARD, /\{actionEnd\}\s*\{bandPreview\}\s*\{menuTrigger\}\s*<\/div>/);
-  assert.match(CARD, /if \(k\.dataset\.fold\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width');
+  assert.match(CARD, /if \(k\.dataset\.fold \|\| k === host\) continue;\s*used \+= k\.offsetWidth/, 'a child without data-fold is counted as used width (the kudos host apart: its pill is measured through it)');
   // A merged card's kudos slot is legacy-filled after every publish; a fold
   // happens between publishes, so the column re-runs the filler.
-  assert.match(KANBAN, /callAppView\('_fillKudosHosts', hostRef\.current\)/);
+  assert.match(KANBAN, /const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);/);
   // The row renderer hands a card to the fold when it is given one, and
   // draws the plain card otherwise.
-  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} expand=\{fold\.expand\} \/>/);
+  assert.match(LIST_ROWS, /<CardRowView row=\{row\} slug=\{fold\.slug\} canPost=\{fold\.canPost\} open=\{fold\.open\} onToggle=\{fold\.onToggle\} detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\} \/>/);
   assert.match(LIST_ROWS, /: <DevCard model=\{row\.card\} \/>/);
   // And the Workshop draws its rows from the SAME module — no second copy.
   // (`openHref` rides the same import since the Needs-you feed: its item title
@@ -229,11 +234,26 @@ test('the column owns which card is open, one per column, through the shared fol
 });
 
 test('the delegated #dev-body open handler leaves a fold’s clicks and keys to the fold', () => {
-  const click = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("if (e.target.closest('a, button, input, form')) return;"));
+  // ANCHORED TO THE HANDLER, not to the control guard. This used to slice
+  // from `a, button, input, form` and look for the fold check after it,
+  // which pinned a relative position the rule never cared about: #2361
+  // hoisted the fold check ABOVE that guard so the discussion row's branch
+  // could sit between the two (the row is a `<button>`, so the guard was
+  // eating it). The fold check moved earlier, which is the same rule, and
+  // the old anchor could not tell the difference between that and its
+  // deletion.
+  const body = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf("bodyEl.addEventListener('click'"));
+  const click = body.slice(0, body.indexOf('{ signal: devBodySignal }'));
   const guard = click.indexOf('if (AppView._inFoldWrapper(e)) return;');
   assert.ok(guard > 0, 'the click handler asks whether the event was inside a wrapper');
-  assert.ok(guard < click.indexOf("e.target.closest('[data-session-chip]')"),
-    'before it reads any of the item hooks, which both sizes now carry');
+  // Before it reads ANY of the item hooks, which both sizes now carry — all
+  // six, so a hook added to a branch below cannot quietly escape the fold.
+  for (const hook of ['data-session-chip', 'data-shared-session-row', 'data-discussion-row',
+    'data-issue-row', 'data-proposal-row', 'data-gov-row']) {
+    const at = click.indexOf(`e.target.closest('[${hook}]')`);
+    assert.ok(at > 0, `the handler reads ${hook}`);
+    assert.ok(guard < at, `and asks about the fold before reading ${hook}`);
+  }
   assert.match(APP_VIEW_SRC, /if \(AppView\._inFoldWrapper\(ev\)\) return;/,
     'and the keydown handler, which would otherwise open a session on the Enter that toggles its row');
   // The folded row carries the hooks, so a lookup by hook finds it either way.
@@ -298,7 +318,9 @@ test('the fold mark: the same two chevrons at both sizes, stretched open on the 
   const open = makeAppView({ search: '?cards=open&demo=1' });
   const n = cardRowsOf(open._kanbanView());
   const openHtml = kanbanHtml(open);
-  assert.equal(count(openHtml, new RegExp(esc('<button type="button" class="dev-fold-mark" data-open="1" aria-expanded="true" aria-label="Fold the card">' + GLYPH + '</button></div><div class="dev-card-meta">'), 'g')), n,
+  // `un-touch-target` (QA 2026-09-24 Q19): the 16px mark takes the kit's 44px
+  // hit-slop, so folding the card is not a 16px aim on a phone.
+  assert.equal(count(openHtml, new RegExp(esc('<button type="button" class="dev-fold-mark un-touch-target" data-open="1" aria-expanded="true" aria-label="Fold the card">' + GLYPH + '</button></div><div class="dev-card-meta">'), 'g')), n,
     'one open mark per card, closing the head');
   assert.ok(!openHtml.includes('<span class="dev-fold-mark"'), 'and no closed mark beside it');
   // The button folds through the fold's own toggle: the wrapper's
@@ -458,25 +480,932 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // conflict resolution kept and the repo unit suite then caught. A literal is
   // the right shape for this assertion precisely because that mismatch is
   // otherwise silent; it is the arithmetic that needed saying, not the check.
-  // 609 → 609: #2090 keeps the All items pane — and the search box in it —
+  // 609 → 610: #1823's Challenges row in the app menu, under Discover.
+  // 610 → 610: #2090 keeps the All items pane — and the search box in it —
   // on screen when a search matches nothing. It RETARGETS the Workshop
   // search-bar check rather than adding one (same box, the pane now opened
   // already narrowed by `?q=` to a search nothing matches, with the note
   // under it proving the search applied), so the count is unchanged.
-  // 609 → 611: the two #1960 checks on the draft-delete shot, one for the
+  // 610 → 612: the two #1960 checks on the draft-delete shot, one for the
   // count the trash left behind and one for which draft is still standing.
-  // 611 → 613: the two #2118 checks on the OpenRouter spend shot, one for
+  // 612 → 614: #1956 adds one direct hamburger-menu check for issue cards
+  // and one for proposal cards, both exercising the Share to Messages row.
+  // 614 → 616: the two #2118 checks on the OpenRouter spend shot, one for
   // what is left on the key and one for what the turn cost.
-  assert.equal(DAPP.tests.length, 613);
+  // 616 → 617: #2154 adds the settled half of the app-launch fixture, proving
+  // a terminal status that beats the detail response removes the spinner.
+  // 617 → 618: #2089 adds one board check opened through `?q=` on a word
+  // that appears only in a mock issue's BODY, pinning that the search now
+  // reads past the title.
+  // 617 → 618: the #2113 check on the demo group thread, for the attached
+  // screenshot whose macOS-style name used to make its download 500. Same
+  // base as #2089's bump, on the other side of a merge: two branches each
+  // took 617 to 618 independently, so together they land on 619.
+  // 619 → 621: the two #1892 checks on Settings → Connectors, one for the
+  // Codex CLI block's config.toml entry and one for the generic MCP-client
+  // walkthrough.
+  // 621 → 622: the #2161 check that opens App settings on the platform's own
+  // app (`?shot=app-settings`) and reads the danger zone's blocked notice.
+  // 621 → 622: #2172 adds one check on the Needs-you feed's end card, the
+  // summary one swipe past the last item, on the ?shot=needs-end route that
+  // opens on it.
+  // 621 → 622: the #1941 check on the session screen, pinning the compact
+  // session strip — py-1, wrapping only below sm — with the venue still a
+  // direct child beside the name.
+  // 621 → 622: #2183 adds one check on the since-list's Clear and its
+  // always-drawn Show older, reached through `?shot=since-visit`.
+  // 621 → 622: #2182 independently adds the check that the viewer's strip
+  // stays on screen when it is empty, reached through `?shot=mine-empty`.
+  // 622 → 626: the tallies above were computed on either side of a merge and
+  // cannot be read as one sequence. This branch took 621 → 622 alone, with
+  // the #2161 check above; main independently took the SAME 621 to 625 with
+  // the four entries listed above it. One +1 and one +4 against a shared 621
+  // is 626.
+  // 626 → 627: the #1919 check on the all-apps directory, pinning the phone
+  // pane's two parts — the search head and the list body — as siblings with
+  // the rows inside the body.
+  // 627 → 628: challenge illustrations, one check that a Home challenge card
+  // whose template names an artwork draws it (the demo rows carry slugs).
+  // 627 → 628: #1933 adds one board check that an issue card names the
+  // auto-drafted category the demo themes placed it in.
+  // 627 → 629: the two #1945 checks on the bar inside an app — a dark app
+  // under the light shell (`?shot=app-tone-dark`) and a light app under the
+  // dark shell (`?shot=app-tone-light&theme=dark`), each reading the tone
+  // the frame's page colour put on <html>.
+  // 627 → 629: #1910 adds two checks on the restyled create-app dialog: the
+  // form view on `/#create` (the name card and the segmented rail) and the
+  // import view reached through `?shot=create-import` — landed independently
+  // on both sides of this merge.
+  // 627 → 629: on another side of these merges, the invite link now points
+  // at the marketing site's /waitlist page instead of the in-app #waitlist
+  // route, so two checks read the link's own field on the more-to-do screen
+  // — one that its value is the marketing URL and carries no hash route, one
+  // that the copy affordance is still beside it — also landed independently
+  // on both sides.
+  // 629 → 631: #1962's two checks that sending a saved draft leaves the
+  // composer empty, one on the send and one on the screen the drafts list
+  // is actually painted on.
+  // 629 → 631: independently, #1944 adds two checks on the coding-run card
+  // opened through `?shot=cc-log-open` — the chevron still in the head row
+  // of an OPEN card (the flip rule has to reach it there), and the log panel
+  // under it.
+  // 631 → 639: the tallies above were computed across several independent
+  // merges and do not compose into one arithmetic sequence: this branch's
+  // #1933 check, main's #1945 pair, and the #1910, invite-link and #1962
+  // pairs each landed against a slightly different shared base than the
+  // others, and some of those pairs already landed once on both sides before
+  // this merge de-duplicated them. The number that matters is what the
+  // merged manifest actually holds, so this entry counts it directly rather
+  // than re-deriving it: 639.
+  // 639 → 642: #2201's three checks on a confirmed address re-joining the
+  // waitlist, landed independently on main — it lands on the settled panel,
+  // the copy reads back rather than congratulating, and it is never asked
+  // for a code.
+  // 642 → 646: #2219's four, counted the same way (642 was main's directly
+  // counted total after #2201, and this branch adds four on top of it). Two
+  // photograph the app-permission prompt through `?shot=app-permission` — the
+  // dialog an embedded app opens by calling usernode.requestPermission(),
+  // which no plain route can reach because it needs a running app that asks;
+  // two read the new Settings pane behind `?demo=1#settings/app-permissions`,
+  // one for the rows and one for the copy that must NOT promise a revoke
+  // lands while the app is still open.
+  // 646 → 648: #1911 adds two checks on the create-app dialog's steps, the
+  // start step's two choices on /#create and the access step through
+  // `?shot=create-access`; the #1910 name-card check moved to
+  // `?shot=create-details`, where that field is on screen.
+  // 646 → 647: independently on main, #838 adds one check on Spend limits,
+  // pinning the three per-tier weekly cap fields (unverified, GitHub and X,
+  // zkPassport).
+  // 648 → 649, 647 → 649: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took 646 → 648
+  // alone, with the #1911 checks above; main independently took the SAME
+  // 646 → 647 with the #838 check above. One +2 and one +1 against a shared
+  // 646 is 649.
+  // 649 → 650: #2236 adds one check for the "via agent" chip a note wears
+  // when a coding agent posted it through the connector on the author's
+  // behalf, on the demo issue's discussion. It reads the mock agent row the
+  // staging chat endpoint returns under `?demo=1` for a thread with no real
+  // messages. A second check on the Activity feed's reply preview was
+  // declared and withdrawn: the feed-comments shot unfolds the first issue
+  // row with GitHub comments, and on a production-cloned staging database
+  // that thread already has a genuine transcript, which always wins over the
+  // mock. The feed bubble's chip is pinned by tests/agent-posted-via.test.js.
+  // 649 → 650: independently on main, #2240 adds one check on the
+  // since-list's Clear in the state it was dead in — a reader with nothing
+  // new who walked `Show older` down past the baseline — reached through
+  // `?shot=since-seen`, which seeds the line at now and then presses the
+  // walk across it.
+  // 649 → 652: #1374's three, counted directly off the merged manifest for
+  // the same reason. Two photograph the per-app Notifications dialog through
+  // `?shot=app-notifications` — it is otherwise two taps inside a tile menu,
+  // which no route can reach — and one reads the Settings roll-up.
+  // 649 → 651: on yet another side of this merge, #2201 also gives the
+  // check-my-status address step an answer for a mistyped address, and
+  // declares the two things that state must show at
+  // `?shot=waitlist-not-found` — the note that says the address is not on
+  // the list, and the control that offers to join with it. Two and not
+  // three: the manifest is on the 20-slot floor under MAX_DECLARED_TESTS,
+  // so the third property (the code half still down) is asserted from
+  // source in tests/waitlist-two-step.test.js instead of spending a slot
+  // the next proposal needs.
+  // 650 → 655, 652 → 655, 651 → 655: the tallies above were computed on
+  // three different sides of this merge and cannot be read as one sequence.
+  // This branch took 649 → 650 alone, with the #2240 check above; main
+  // independently took the SAME 649 to both 652 (the #1374 checks above) and
+  // 651 (the #2201 not-found pair above). #2240 (+1), #1374 (+3) and the
+  // #2201 pair (+2) are three independent additions against the shared 649,
+  // which is 649 + 1 + 3 + 2 = 655.
+  // 655 → 657: #2241's two checks on the unsent-change screen, which has a
+  // route of its own (/dev/sessions/new) and no session behind it — one on
+  // the empty state's sentence, one on the live composer beside a header
+  // that offers no venue dropdown and no ⋯ menu, because there is nothing
+  // yet for either to act on. This one IS a plain sequence: the pair landed
+  // on a branch cut before #2240 / #1374 / #2201 and was merged after all
+  // three, so it adds to whatever the manifest holds, which is 655.
+  // 655 → 658: independently on main, off the SAME shared 655, #2086 makes a
+  // featured-illustration change a governance proposal and adds two checks
+  // on its card via the ?demo=1 mock row 9100008 — the proposed-beside-
+  // current preview on the open board card, and the same preview on the
+  // proposal's own discussion page — plus a second #2236 via-agent-chip
+  // check, on the topic's own discussion rather than the demo issue's, for
+  // a note a coding agent posted through the connector.
+  // 657 → 660, 658 → 660: this branch's #2241 pair and main's #2086/#2236
+  // trio are independent additions against the shared 655 — neither set
+  // overlaps the other — so the merged manifest holds every one of them:
+  // 655 + 2 (#2241) + 3 (#2086 pair + the second #2236 check) = 660.
+  // 660 → 661: the public waitlist CORS fix adds one check on
+  // GET /api/public/waitlist/options — the first declared check whose path is
+  // an API route rather than a screen. It is here because the fix's own
+  // endpoint (POST /api/public/waitlist/status) is registered for POST only,
+  // and a declared check can do nothing but navigate; its sibling GET on the
+  // same router, behind the same new CORS middleware, is what a navigation
+  // can actually prove is reachable anonymously. The preflight and response
+  // headers are pinned in tests/public-api-cors.test.js instead.
+  //
+  // #1884 gives the BOARD's unfolded card the sheet the Workshop's has had
+  // — the issue's comment tail and the app's own reply box under it — and
+  // declares it on the surface that gained it, independently on main. One
+  // slot, not two: the Workshop's own pair above already reads the same two
+  // regions, so a second copy of that claim would spend a slot to assert
+  // something already asserted. Room remains against MAX_DECLARED_TESTS
+  // (710).
+  //
+  // 661 → 662: the tallies above were computed on either side of THIS merge
+  // and, as with the 610 → 609 and 659 → 661 entries above, do not reconcile
+  // through the comment trail alone. This branch's own total before this
+  // merge was 661, counted directly above. Main independently carried the
+  // shared history through #1884's board-sheet check and the rest of the
+  // commits this merge brings in (verified social accounts on public
+  // profiles, #2250; the Home challenges regrouping, #2233; among others),
+  // landing on a manifest one entry larger than either side's own arithmetic
+  // predicts. The literal is the ground truth here, not the arithmetic:
+  // 662.
+  //
+  // #2260 adds one deterministic check for the verified-account replacement
+  // confirmation state in Connectors. That makes the reviewed total 663.
+  //
+  // #2266 adds one deterministic check for the password-reset completion
+  // state on the login screen. That makes the reviewed total 664.
+  //
+  // 663 → 664: independently on main, #1508 (per-app Add to Home Screen)
+  // declares one check on the seeded app's install page
+  // (/app/staging-demo-admins/install), a server-rendered document with the
+  // app's own manifest, asserting its #app-install root renders for a
+  // signed-in viewer.
+  //
+  // 663 → 664: also independently on main, #2253 adds one check on the admin
+  // console's App storage section, read through `?demo=1#admin/storage` so
+  // the preview shows the fixed demo rows (one frozen, one nearly full)
+  // rather than a cloned apps table with no figures in it.
+  //
+  // 664 → 666: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 663 → 664 alone,
+  // with #2266's check above; main independently took the SAME 663 to 665
+  // with the #1508 and #2253 checks above. One +1 and one +2 against a
+  // shared 663 is 666.
+  //
+  // 666 → 667: the waitlist connect callback's status page, loaded with a
+  // state no server has minted, so it renders the "link has expired"
+  // outcome without needing provider credentials on the preview.
+  // 667 → 669: Profile staking (#1551) adds Active and Delegated previews.
+  // 669 → 670: real staking context verifies preview network configuration.
+  //
+  // 667 → 672: independently on main, the Workshop screen (#workshop) — the
+  // app chip's Workshop row beside the amended Home-to-Discover adjacency
+  // check, and four on the screen itself, all read through `?demo=1#workshop`
+  // so the numbers come from the fixed demo rows rather than a cloned
+  // database whose `chat_sessions` the staging clone leaves empty. The four
+  // are not one claim four times: the visual one reads a row's identity, its
+  // link to that app's own Workshop page and its votes number together (it is
+  // also the scenario the before/after screenshots are shot on); the second
+  // reads the OTHER number beside it, which no screenshot can be asserted on;
+  // the third reads the ORDER, which is the screen's own argument — an app
+  // with a decision waiting leads; and the fourth reads the empty line's
+  // absence, which is the one thing a populated screenshot cannot show. Room
+  // remains against MAX_DECLARED_TESTS (710).
+  //
+  // 670 → 675, 672 → 675: the tallies above were computed on either side of
+  // THIS merge against the same shared 667 and do not reconcile through the
+  // comment trail alone. This branch's staking pair added 3; main's Workshop
+  // screen added 5; neither set overlaps the other, so the merged manifest
+  // holds every one of them: 667 + 3 + 5 = 675.
+  //
+  // 675 → 680: this branch's two All-items chunks, which computed their own
+  // tallies (672 → 674 → 677) against the pre-staking manifest and so cannot
+  // be read as continuing the line above; +2 and +3 are what each chunk
+  // actually adds, and neither touches a staking check.
+  //
+  // +2 — the Workshop's grouping strip moves out of the All-items pane head
+  // and up beside the tab pill on a wide window, so the check that read
+  // `.dev-ws-group + #dev-actions` inside the head describes an arrangement
+  // that no longer exists at the capture's 1280px viewport. It is REPLACED
+  // rather than removed — one check on the ear (the visual one, since this is
+  // the change a voter has to see), one on the head it left, one on the ear
+  // in the By-stage state, where the pane runs edge to edge and the ear has
+  // to track its right edge — which is net +2 against a manifest that loses
+  // one. tests/dev-workshop.test.js pins that no check still expects the old
+  // adjacency, so the swap cannot be half-done.
+  //
+  // +3 — the "Assigned to you" / "Created by you" quick filters move into
+  // the Filters dialog when the filter row cannot hold them on one line,
+  // which is a state the capture runner's fixed 1280x800 viewport cannot
+  // reach on its own — hence `?shot=quick-in-dialog`, which pins the
+  // handover on and opens the dialog. Three, because the move has three
+  // separately falsifiable halves: the dialog GROWS the two switches (the
+  // visual one, and the only one a screenshot can carry), the strip DROPS
+  // them in the same state (a dialog that gained them while the strip kept
+  // them is two owners of one value), and with room on the line the strip
+  // KEEPS them while the dialog does not offer them — the default, which is
+  // what a measurement bug would break first.
+  //
+  // 675 → 676: independently on main, the programme console's Challenge
+  // scoring screen, which has to render its schedule card and its rules list
+  // as siblings — the check selects across the two, because a screen that
+  // drew only one of them would still look loaded.
+  //
+  // 676 → 678: also independently on main, #2327 declares the author-only
+  // title editor once while a change is Underway and once while it is In
+  // review. They are distinct lifecycle renderers (_sharedSessionCardModel /
+  // _proposalCardModel), so pinning both prevents one half of the feature
+  // disappearing unnoticed.
+  //
+  // 680 → 683, 678 → 683: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took
+  // 675 → 680 alone, with its two All-items chunks (+2, +3); main
+  // independently took the same 675 to 678, with the Challenge scoring check
+  // (+1) and the title-editor pair (+2). Neither set overlaps the other, so
+  // the merged manifest holds every one of them: 675 + 2 + 3 + 1 + 2 = 683.
+  //
+  // 683 → 684: demo mode (routes/demo-mode.js) marks an app in demo mode in
+  // its settings dialog — a synthetic partner's proposals and votes must be
+  // seen for what they are — and that notice gets its own declared check, on
+  // the staging fork fixture the seed switches into demo mode.
+  //
+  // 683 → 688: independently on main, the general chat's proposal events —
+  // the open one as a message with its box, its header's sender, a merge
+  // from the app — a person's message in a bubble, and the quiet card.
+  //
+  // 684 → 689, 688 → 689: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took
+  // 683 → 684 alone, with the demo-mode check above; main independently took
+  // the same 683 to 688, with the five chat-proposal-event checks above.
+  // Neither set overlaps the other, so the merged manifest holds every one
+  // of them: 683 + 1 + 5 = 689.
+  //
+  // 689 → 690: the Improve button follows the open app's own redeploy (task
+  // 446). The landed state, the reload row and the arrow, gets a check on the
+  // staging fork fixture; the building state is the note and spinner the
+  // platform-updating check already photographs, and the manifest is one
+  // slot from its ceiling (tests/improve-session-spinner.test.js).
+  // #2423 extends the existing Done-column check above rather than consuming
+  // the final reserved slot: the same fixture now covers the completed
+  // change's in-app Closed-issue chip too.
+  //
+  // #1688 does the same with the In-review vote-button check: its column
+  // must now also hold a card whose button asks "Still yes?" (a Yes cast on
+  // an earlier version) and a fresh card whose kudos slot offers thanks by
+  // name — one check, no slot consumed.
+  //
+  // 690 → 690: the proposal page redesign (task 495) rewrote the checks the
+  // old page shape held — the sheet order, the two About halves, the path
+  // caption and its who-acts sub, the three conversation tabs, Explore in
+  // ⋯ — and folded its own claims into them with `:has()` on the same
+  // pages (the fold and the More sheet's accordion, the Review line, the
+  // Discussion in the general chat's language, the accent Re-run pill),
+  // merging the bare help-button check into the Review-line one. Its two
+  // new checks — the issue rows under What changes for you (9000013) and
+  // the one-line failing check (9000093) — take the two slots that merging
+  // freed, so the manifest keeps its 20 clear of the ceiling
+  // (tests/improve-session-spinner.test.js, tests/proposal-tests-manifest.test.js).
+  //
+  // 690 → 690: the change page as a Needs-you item (task 497) repointed the
+  // checks the previous shape held — the sheet order, the About halves, the
+  // folded summary, the numbered ledger path, the state tags — at the hero
+  // and the steps sheet, in place. No slot moved either way.
+  //
+  // 690 → 693: the first-run "Choose your username" step (#2563) is a new
+  // user-visible screen, so it declares checks of its own — one visual
+  // claim for the modal with its suggestion already in the field, and two
+  // that pin the copy the step depends on (the Continue button, which is
+  // the only way out of it, and the sentence that states the rules). It
+  // found the manifest exactly ON the 20-slot floor, so the ceiling moved
+  // with it (services/app-manifest.js, 710 → 730).
+  //
+  // 693 → 695: the "Model costs" admin section (#2570) is a new screen in
+  // the admin console — the per-model table of notes, shown estimates and
+  // observed spend, with the override field — so it declares two checks of
+  // its own: one visual claim for the table at /#admin/model-costs, and one
+  // that pins the override control an admin with write access acts on. The
+  // manifest stays 35 clear of the ceiling.
+  //
+  // 693 → 695: independently on main, the welcome tour (#2255) replaced the
+  // one-line #home-welcome banner with an eight-step overlay, and declares
+  // two checks of its own — that Settings offers the way back into it, and
+  // that the overlay ships hidden on Home so nobody's first paint meets it.
+  //
+  // 695 → 697: the tallies above were computed on either side of this merge
+  // against the same shared 693 and do not reconcile through the comment
+  // trail alone. This branch's #2570 pair and main's #2255 pair are
+  // independent additions against that shared 693, so the merged manifest
+  // holds every one of them: 693 + 2 + 2 = 697. The ceiling is untouched:
+  // 697 leaves 33 slots against MAX_DECLARED_TESTS (730), clear of the
+  // 20-slot floor.
+  //
+  // 697 → 699: the comment clamp (#2556) declares one check per surface it
+  // can actually reach from a URL — the Workshop's inline recent comments
+  // (the ?shot=feed-comments route, which already unfolds an issue row) and
+  // an issue's Discussion. Both assert the REVEALED control rather than the
+  // clamp alone, because the control is what a measurement puts there and a
+  // clamp with no control is the bug, not the feature. The third surface,
+  // the card's own reply thread, gets no check: it would need a long reply
+  // POSTED to the app's thread, and seeding one would be a fixture that
+  // fabricates activity rather than data. 699 leaves 31 slots against
+  // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  //
+  // 699 → 701: the running row's heading (#2597) is two assertions about
+  // one seeded transcript, not one — the heading now says what is happening
+  // ("Coding agent is running") and a second line says where ("Homeroom ·
+  // Claude"), and a single check could only pin one of them. Both ride the
+  // 990412 dev-session fixture the coding-run card already uses, so neither
+  // adds a route. 701 leaves 29 slots against MAX_DECLARED_TESTS (730),
+  // clear of the 20-slot floor.
+  //
+  // 701 → 702: #2607 put the venue dropdown on the unsent-change screen, so
+  // the check that pinned its ABSENCE there was retargeted to the new truth
+  // rather than deleted, and ONE check was added beside it — the dropdown
+  // is an enabled, direct-child control that names a venue and opens the
+  // sheet, which is the part a retargeted :not() cannot assert. The pick
+  // itself gets no check: every answer but the in-chat one creates a session
+  // row, and a declared check that creates one on every run would seed the
+  // staging clone with sessions nobody asked for. This branch's one addition
+  // and main's #2597 pair are independent additions against the shared 699,
+  // so the merged manifest holds all three: 699 + 2 + 1 = 702, which leaves
+  // 28 slots against MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  //
+  // 702 → 703: #2605 moved the build surface off a change's card page onto
+  // the dev session's own page. The four checks that pinned the Build sheet
+  // were retargeted rather than deleted — two now assert that a card page
+  // has NO build surface, one that an old `?conversation=workspace` link
+  // lands on the session page, one that a published chat renders read-only
+  // there — and ONE was added beside them: the old pair on the shared
+  // session's page asserted the transcript's body and its author
+  // attribution, and those now sit on two different pages, so the body
+  // needs a check of its own. 27 slots left against MAX_DECLARED_TESTS
+  // (730), clear of the 20-slot floor.
+  //
+  // 703 → 704: #2592 taught the Model costs console to count the coding
+  // agent's own spend, which is most of what a change costs and had been
+  // left out of the observed average and median entirely. The figure is
+  // only trustworthy if the screen states what it counted, so the
+  // paragraph under the heading now defines a change, and ONE check was
+  // added beside the existing "says where its estimates come from" to pin
+  // that sentence. 26 slots left against MAX_DECLARED_TESTS (730), clear
+  // of the 20-slot floor.
+  //
+  // 703 → 705: independently on main, #2603 put a line on a governance
+  // vote, and nothing in the manifest pinned either half of it. TWO checks,
+  // because they are two facts on two screens and no selector spans both:
+  // one that a governance card's vote is the picker button (the box opens
+  // with it, which is what makes a line possible at all), one that a close
+  // proposal's own page lists the votes cast on it with each voter's words.
+  //
+  // 703 → 704: also independently on main, #2492 added one check on the
+  // Challenges tab — every card's progress rail carries a spoken value.
+  // Block production used to reach the rail with an empty label and draw a
+  // ring with nothing beside it, and nothing declared caught it; the Home
+  // rail has had the same `[aria-valuetext]` check since Iteration 03.
+  //
+  // 704 → 707: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 703 → 704 alone,
+  // with the #2592 check above; main independently took the same 703 to
+  // 706, with the #2603 pair and the #2492 check above (703 + 2 + 1 = 706).
+  // Neither set overlaps the other, so the merged manifest holds every one
+  // of them: 703 + 1 + 2 + 1 = 707, which leaves 23 slots against
+  // MAX_DECLARED_TESTS (730), clear of the 20-slot floor.
+  //
+  // 707 → 708: #2490 added one check on Home's Challenges block. On the
+  // staging demo, finished challenges sit last under a Done header, after
+  // every unfinished one. That leaves 22 slots, still clear of the floor.
+  //
+  // 707 → 708: independently on main, #2688 added one check on the native
+  // Android header, pinning the status-bar inset classification regression.
+  //
+  // 708 → 709: the tallies above were computed on either side of this merge
+  // and cannot be read as one sequence. This branch took 707 → 708 alone,
+  // with the #2490 check above; main independently took the same 707 to 708
+  // with the #2688 check above. Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 707 + 1 + 1 = 709.
+  //
+  // 707 → 708: on a later side of main, #2679 and #2680 made the hand-off
+  // walkthrough's "Link GitHub" step a real link to GitHub's own
+  // authorization page instead of a hop to Settings, and no declared check
+  // had ever looked at that step: the staging fixture has always been
+  // linked, so the card never opened on it. ONE check, on the new
+  // ?order=link fixture shape, pins the anchor and its destination.
+  //
+  // 707 → 709: independently on that same side of main, #2684 adds the
+  // Homeroom bot's admin dashboard, with two declared checks on its section
+  // (the verdict table renders; the intro says shadow mode posts nothing).
+  //
+  // 708 → 711, 709 → 711: the tallies above were computed on either side of
+  // a DIFFERENT merge on main and cannot be read as one sequence either:
+  // main took 707 → 708 with the #2679/#2680 check and 707 → 709 with the
+  // #2684 pair, landing on 711 once the same native-Android-header check
+  // named above is folded in on that side too (707 + 1 + 2 + 1 = 711).
+  //
+  // 709 → 712: reconciling this branch's 709 with main's 711 would
+  // double-count the native-Android-header check — both sides already carry
+  // it from the same commit, this branch merged in at the 708 → 709 step
+  // above and main counted again inside its own 711. Only main's other two
+  // additions are new against the shared 709: the Link-GitHub check (+1)
+  // and the Homeroom-bot pair (+2). 709 + 1 + 2 = 712, which leaves 38 slots
+  // against MAX_DECLARED_TESTS (750) — comfortably clear of the 20-slot
+  // floor. The ceiling itself already moved from 730 to 750 on main's side,
+  // once its own total stood on the old ceiling's 20-slot floor; that move
+  // carries over unchanged (services/app-manifest.js).
+  //
+  // 712 → 714: the #2704 pair, one per tone. They select the launch cover
+  // inside #app-frame-host on the two tone shots — the surface whose ink the
+  // tone decides, and which those shots did not mount until that change —
+  // so each tone has a check that fails if the cover is inked for the
+  // shell's theme rather than for the ground it sits on. 712 + 2 = 714,
+  // leaving 36 slots against MAX_DECLARED_TESTS (750).
+  //
+  // 712 -> 713: independently on main, #2681 renames the dev walkthrough's
+  // footer button to "Build on the Homeroom platform instead", and no
+  // declared check asserted the old string, so the rename adds one rather
+  // than editing one.
+  //
+  // 712 → 715: also independently on main, #2707 declares three, all on the
+  // Send Feedback dialog — the unchosen destination row and its dead Submit
+  // on ?shot=feedback-choose, and the one-destination case on ?shot=feedback,
+  // which is the half a later refactor is most likely to lose (there, a
+  // destination IS selected and Submit IS live, because a tap with one
+  // possible answer is a tax).
+  //
+  // 713 → 716: the tallies above were computed on either side of that same
+  // merge on main and cannot be read as one sequence. Main took 712 → 713
+  // alone, with the #2681 check above, then independently 712 → 715 with the
+  // #2707 trio above. One +1 and one +3 against a shared 712 is 716.
+  //
+  // 716 → 720: #2706 puts the connector walkthrough inline on the dev
+  // session page instead of sending the reader to Settings, and that is a
+  // screen state with four things to pin — the steps themselves, the live
+  // MCP server URL beside them, the ChatGPT hand-off getting ChatGPT's
+  // steps rather than Claude's, and Settings still being one tap away. Both
+  // sides of the 713 → 716 merge happened to land on 716 from different
+  // additions, which is a coincidence and not a sequence: main reached it
+  // with #2681 and #2707, and these four are new against it.
+  //
+  // 714 → 718, 720 → 722: the tallies above were computed on either side of
+  // THAT merge and cannot be read as one sequence either. This branch took
+  // 712 → 714 alone, with the #2704 pair above; main independently took the
+  // same 712 to 720, with the #2681, #2707 and #2706 checks above. Neither
+  // set overlaps the other, so that merged manifest held every one of them:
+  // 712 + 2 + 1 + 3 + 4 = 722, which left 28 slots against
+  // MAX_DECLARED_TESTS (750) — comfortably clear of the 20-slot floor.
+  //
+  // 712 → 714 (again, independently): the share-view Homeroom mark (#2705)
+  // adds two, and both are assertions of an ABSENCE — that the platform's
+  // own document does not draw the mark the bridge draws on an app's
+  // subdomain. One rides the existing chromeless-view path, where a failure
+  // would be the mark sitting beside #chromeless-pill (the "not twice"
+  // case); one rides Home. Neither is a new screen, so neither is tagged
+  // visual: the surface the change is actually visible on is an app's own
+  // hostname, which no declared check can navigate to. That is where main
+  // stood alone, against the same shared 712 the #2704 pair stood against.
+  //
+  // 722 → 724: the tallies above were computed on either side of THIS merge
+  // and cannot be read as one sequence either. Both stand on the shared 720
+  // (712 + the #2681, #2707 and #2706 checks): this branch already carries
+  // that 720 forward to 722 with the #2704 pair, and main independently
+  // carries the same 720 to 722 with the #2705 pair. Neither pair overlaps
+  // the other, so the merged manifest holds every one of them: 720 + 2 + 2 =
+  // 724, which leaves 26 slots against MAX_DECLARED_TESTS (750) —
+  // comfortably clear of the 20-slot floor.
+  //
+  // 711, ceiling 730 → 750: main alone stood exactly ON the floor (710), so
+  // this branch's one check crossed it, and the two tests that state the
+  // floor (tests/improve-session-spinner.test.js and
+  // tests/proposal-tests-manifest.test.js) both say to move the ceiling
+  // rather than delete a check. It moved with this branch
+  // (services/app-manifest.js, 730 → 750, still not a coupled move), so
+  // 711 left 39 slots, clear of the 20-slot floor.
+  //
+  // 715 with #2718. The navigation change rewrote NINE checks in place — the
+  // app chip's menu no longer holds the platform's destinations, so each one
+  // names the control that carries it now (a tab, a Profile row, the app's
+  // own menu row) rather than being deleted — and ADDED four for what the
+  // change introduces: the mark as the header's menu button, About as the
+  // menu's second pane, the app strip inside a running app, and the bar's
+  // absence there. 715 leaves 35 slots, still clear of the floor.
+  //
+  // 716 with the same change's last commit, which retires #improve-btn. Seven
+  // MORE were rewritten in place on the same principle and none deleted: four
+  // asserted the header pill was on screen and now assert the menu row it
+  // became, two carried it as bar-shape context in a `:has()` chain (the mark
+  // is that context now), and one pinned that it wore no notification count —
+  // a claim that followed the two work dots onto the mark. The one ADDED is
+  // the retirement itself: a header with no #improve-btn in it, and a mark
+  // with both dots on it. A check that only says an id is gone would pass on
+  // a bar that lost the mark too, which is why it says both in one selector.
+  //
+  // 724 AND 716 ARE TWO TALLIES OF ONE MANIFEST, computed either side of
+  // this merge, and neither is a sequence the other continues. The block
+  // above is main's, ending at 724; the block below is #2718's, ending at
+  // 716. They stand on different shared totals because each counted its own
+  // additions against the base it was cut from.
+  //
+  // The merged manifest simply holds both sets: git took every entry from
+  // each side of dapp.json, and no check appears on both (the navigation
+  // change rewrote its nine in place and added thirteen; main's additions are
+  // the #2704 and #2705 pairs, the #2681 rename, #2707, #2706 and the
+  // Link-GitHub and Homeroom-bot checks). Counted rather than derived: the
+  // arithmetic on either side above is the reasoning each change owes for
+  // its OWN additions, and a third sum reconciling them would be a number
+  // nobody could check. 729 leaves 21 slots against MAX_DECLARED_TESTS
+  // (750) — clear of the 20-slot floor, and close enough to it that the next
+  // change to add checks should move the ceiling rather than squeeze.
+  //
+  // +1 (#2764): the folded-sidebar peek's toggle check, 730 — exactly the
+  // 20-slot floor, so the next addition moves the ceiling.
+  //
+  // +1 (#2760): the fifth tab named after the signed-in user, 731 — one past
+  // that floor, so the ceiling moved with it (services/app-manifest.js,
+  // 750 → 770, still not a coupled move).
+  //
+  // +1 (#2748): the waitlist analytics dashboard's Analytics button/panel
+  // check, landing beside #2760 rather than after it — both counted from
+  // the same 730 base, so together they put the manifest at 732, not 731
+  // twice. The ceiling already moved 750 → 770 above; 732 leaves 38 slots.
+  //
+  // +1 (#2784): the Homeroom menu opens anchored under the mark rather than
+  // centred mid-screen, 733 — 37 slots left under the 770 ceiling.
+  //
+  // +7 (#2783, #2778): the Messages channels — the sectioned list, the
+  // Channels filter, the "+" at the strip's end, #general's grouped rows and
+  // its title row, and a `#name` channel link beside a `#123` issue ref in a
+  // message. 740 leaves 30 slots under the 770 ceiling.
+  //
+  // +1 (#2824): the lit tab's sliding marker on the phone's bar, 741 — 29
+  // slots left under the 770 ceiling.
+  //
+  // 742 → 744, 742 → 744: the tallies above were computed on either side of
+  // this merge against the same shared 740 and do not reconcile through the
+  // comment trail alone. Main added #2799 and #2806 — the platform's own
+  // Workshop shows no close button, and an app's Workshop is the platform
+  // surface its header frosts over (+2); main also added #2807 and #2812 —
+  // the dev-chat model picker has no caption line under it, and stays
+  // usable while a turn runs (+2). Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 740 + 2 + 2 = 744, leaving 26
+  // slots under the 770 ceiling.
+  //
+  // +2 (#2803): the Homeroom menu takes a dark app's palette, and a light app
+  // under the dark shell leaves it in the shell's own dark mode. 746 leaves
+  // 24 slots under the 770 ceiling.
+  //
+  // 741 → 747: the tallies above were computed on either side of this merge
+  // against the same shared 740 and cannot be read as one sequence. This
+  // branch took 740 → 741 alone, with #2824 above; main independently took
+  // the same 740 to 746, with the #2799/#2806/#2807/#2812 checks (+4) and
+  // #2803 (+2). Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 740 + 1 + 6 = 747, leaving 23 slots under the 770
+  // ceiling.
+  //
+  // 747 → 749: independently on main, +2 (the side panel beside a running
+  // app): its host ships hidden and frameless after the app view, and a
+  // `?panel=1` address opened in a window of its own is the ordinary
+  // platform. 749, which leaves 21 slots under the 770 ceiling and 1 before
+  // the 20-slot floor at 750.
+  //
+  // 749 → 751: +2 (#2802, #2798): the desktop rail's Recents sitting between
+  // Workshop and Me, and the sidebar toggle and bell carrying their blue disc
+  // on hover only. 751 was one past the 20-slot floor under the 770
+  // ceiling, so the ceiling moved to 790 with it (services/app-manifest.js),
+  // leaving 39 slots.
+  //
+  // 751 → 753: +2 (#2813): a dev session opens in the Messages pane beside
+  // the list on a desktop, and that pane links to the session's full view.
+  // This branch counted them against an older shared base; main reached 751
+  // without them, so the merged manifest holds 751 + 2 = 753, leaving 37
+  // slots under the 790 ceiling.
+  //
+  // 753 → 756: the tallies above were computed on either side of this merge
+  // against the same shared 753 and do not reconcile through the comment
+  // trail alone. This branch took 753 → 754 alone, with #2886 above (the
+  // divider between a running app and its side panel ships as a vertical
+  // separator on the panel's edge); main independently took the same 753 to
+  // 755, with #2888 above (Send Feedback pressed with no destination turns
+  // the App/Platform row red) and #2800/#2878 above (Me is the rail's last
+  // row, straight after Recents, which is what places the thin rule drawn
+  // above it). Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 753 + 1 + 1 + 1 = 756, leaving 34 slots under the 790
+  // ceiling.
+  //
+  // 756 → 759: +3 (#2884): a run of four shared cards in #general draws as
+  // the first card and "… 3 more"; the plain message before it is not folded
+  // in; an app's channel in Messages folds its run of proposal cards the same
+  // way. Counted on a branch that already held main's Me-row check; main
+  // reached 756 without these three, so the merged manifest holds 756 + 3 =
+  // 759, leaving 31 slots under the 790 ceiling.
+  //
+  // 759 → 763: the tallies above were computed on either side of this merge
+  // against the same shared 759 and cannot be read as one sequence. This
+  // branch took 759 → 762 alone, +3 (#2902): an app kept loaded in the
+  // background carries a green dot on its Home tile; its hidden frame is
+  // inert, out of the tab order and the accessibility tree, and not
+  // #app-iframe; and an app nobody has opened carries no dot. Main
+  // independently took the same 759 to 760, +1 (#2894): a Your-apps tile
+  // dragged over the open Homeroom widget strip lights the strip up as its
+  // drop target (?shot=widget-drop). Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 759 + 3 + 1 = 763, leaving 27
+  // slots under the 790 ceiling.
+  //
+  // 763 → 778: independently on main, on top of the same #2894 already
+  // folded into the 763 above, the prototype-gaps proposal (Homeroom task
+  // 598) merges five streams of work into one change. What each adds, net of
+  // the checks it RE-POINTED rather than added (those do not count):
+  //   +3  About is the app's page (Open, Add to your apps, its builders with
+  //       what each has merged); About Homeroom carries the platform's own
+  //       figures; a cold load of any platform tab but Home points the mark's
+  //       menu at Homeroom.
+  //   +3  Discover's filter chips, the Featured chip's filtering
+  //       (?filter=featured), and Share on an app's page. The two Create
+  //       checks were re-pointed at the launcher grid's trailing tile.
+  //   +4  Me's "More" rows, Me's Your contributions, the Challenges page's
+  //       History tab, and the Message button on a person's page. Five more
+  //       were re-pointed (Me's card and stat cards, and the Admin, Node and
+  //       two staking rows that moved into Settings).
+  //   +3  An app's own Workshop has no back control; the app discussion's old
+  //       full-screen address climbs to Messages; a peek over a running app
+  //       never brings the sidebar toggle into the app's strip.
+  //   +2  An app's Workshop ends its view-tab strip with the "+" on Current
+  //       status too (prototype wsTabs), and the global chat's composer
+  //       wears the safe-bar contract, so on a phone it sits above the tab
+  //       bar. The four checks that pinned the "+" in All items' actions row
+  //       were re-pointed.
+  // Its streams were counted against main's own 760 (759 + the #2894 above),
+  // reaching 775; this branch's #2902 checks are not in that count, so the
+  // merged manifest holds 763 + 15 = 778. That is past the 20-slot floor
+  // under the 790 ceiling, so the ceiling moved to 810 with it
+  // (services/app-manifest.js), leaving 32 slots.
+  //
+  // 778 → 780: +2 (#2905), counted on this branch against the shared 759
+  // above and not yet folded into main's own count: a follow-up message in
+  // #general carries one ⋯ disc for report and block instead of three, and
+  // an app's chat in Messages draws no report/block text links in its rows.
+  // 780 leaves 30 slots under the 810 ceiling.
+  //
+  // 780 → 781: +1 (#2916), on this branch. A topic's back control moved
+  // from the header into the pane as the "‹ Workshop" chip: the two checks
+  // that pinned the header arrow on an issue (Workshop and kanban layouts)
+  // were re-pointed at the chip, and one new check pins it above a
+  // proposal's hero. The dev session's header arrow is still #2770's check.
+  //
+  // 780 → 782: independently on main, +2 (#2915): an app's Workshop opened
+  // on Current status with an All items search in the URL still draws the
+  // whole dashboard and no "nothing matches" note, and the All items tab
+  // wears the dot that says its search is still on.
+  //
+  // 780 → 781: also independently on main, +1 (#2919): the desktop rail's
+  // Recents folds everything older than five days ago behind a collapsed
+  // "Show N older" button at its foot.
+  //
+  // 780 → 781: also independently on main, +1 (#2912): the demo's unread
+  // conversations show as the Messages tab's quiet count, still inside the
+  // Messages tab (the badge left the icon for the row's end on the desktop
+  // rail by CSS alone, so the check pins the markup that move depends on).
+  //
+  // 781 → 785, 782 → 785, 781 → 785 (twice over): the tallies above were
+  // computed on different sides of this merge against the same shared 780
+  // and cannot be read as one sequence. This branch took 780 → 781 alone,
+  // with #2916 above; main independently took the same 780 to 784, with
+  // #2915, #2919 and #2912 above. Neither set overlaps the other, so the
+  // merged manifest holds every one of them: 780 + 1 + 2 + 1 + 1 = 785,
+  // leaving 25 slots under the 810 ceiling.
+  //
+  // 785 → 788: independently on main, +3 (#2866): this PR's own three
+  // checks exercise the owner menu, shared menu, and direct link.
+  //
+  // 788 → 790: +2 (#2779): an agent session in the desktop Messages pane
+  // beside its inbox row, with a pending card's Confirm and Not now; and its
+  // own screen's bar with the changes drawer open, on the staging-seeded
+  // conversation 990801. It had four; the manifest keeps 20 slots clear, so
+  // they were folded into two with :has() once main's three landed.
+  // Exactly 20 slots left under the 810 ceiling.
+  //
+  // 790 → 792: +2 (#2386): mutual friends. A person who asked you gets Accept
+  // and Decline under their name, and Me's private Friends section lists the
+  // requests to answer and then your friends. Five were folded into two with
+  // :has(); the button's other three states are rendered in
+  // tests/friends-ui.test.js. 790 was the floor already, so the ceiling moved
+  // to 830 (services/app-manifest.js), leaving 38 slots.
+  //
+  // 792 → 798: +6 (#2387): the Messages overhaul. The hover bar and the
+  // reply-count chip on a #general message; the reply thread beside its
+  // channel; a deleted message's placeholder reached by a message link, with
+  // the list toggle; the same bar, chip and placeholder in an app channel; a
+  // link to an app-channel reply opening its thread; and #2967's "Show N
+  // more". Ten were folded into six with :has(). 32 slots left under 830.
+  //
+  // 798 → 800: +2 (#2387 follow-up): a thread's replies drawn in the main
+  // transcript where they landed, one card for a run, with the thread card
+  // showing the newest reply — in #general and in an app channel. 30 slots
+  // left under 830.
+  //
+  // 800 → 802: +2 (#2387 follow-up): Full width moved to the right of every
+  // discussion pane's header — an app's channel ends its header with it, and
+  // a dev session's bar carries it after Open full view. The conversation
+  // header's place (just before ⋯) rides on the deleted-message check that
+  // already found the toggle. 28 slots left under 830.
+  //
+  // 802 → 803: +1 (#2779): an agent session's staging builds are cards: an
+  // older build superseded and the newest offering Open preview and View
+  // change, one selector over the staging conversation 990801's two build
+  // rows. 27 slots left under 830.
+  //
+  // 803 → 804: +1 (#2779): an agent session's saved draft above the message
+  // box, in a conversation whose Mayor reply shows what it cost: one
+  // selector over the staging conversation 990801's seeded draft. 26 slots
+  // left under 830.
+  //
+  // 804 → 810: +6 (QA 2026-09-24): the sweep's user-visible fixes.
+  // Discover's compact "Add" pill (Q10), the Skip to navigation link (Q18),
+  // sign-in's Back disc and the username rule under the register field (Q8,
+  // Q11), "Needs you" in a Messages row (Q29) and a group invitation's
+  // "Invitation pending" header (Q14). Seven more were drafted and left to
+  // unit tests (the conversation ⋯ as a menu button among them, pinned in
+  // tests/qa-menus-keyboard.test.js) to keep the 20 free slots the proposal
+  // suites require. 20 slots left under 830, the floor those suites allow.
+  //
+  // 810, unchanged (#2779): an agent session's "Build: Homeroom" and ⋯ ride
+  // on the saved-draft check over conversation 990801 as a :has(), since
+  // the floor above leaves no slot for a check of their own. (#3078 moved
+  // Build into the composer's "Build with"; the :has() reads Changes ~ ⋯.)
+  //
+  // 810 → 811: +1 (#4868): "Open app" lands as ONE check — its two halves
+  // (the button offered on an ordinary app's chat, absent on the platform's
+  // own) fold into a single :has()/:not(:has()) selector over the two
+  // staging conversations 990803 and 990801, the way #2779 folded its four.
+  // Main stood at 810 exactly, the 20-slot floor, so the ceiling moved to
+  // 840 with it (services/app-manifest.js), leaving 29 slots.
+  //
+  // 811 → 812: +1, the admin Support view's points card over staging user
+  // 900302 (#admin/support/900302), leaving 28 slots.
+  //
+  // 811 → 814: +3, independently on main: the Settings Node row refreshing
+  // without a tap, and the wallet's Block production card order/style in the
+  // producing and delegated states (the style assertions fold into the order
+  // check).
+  //
+  // 812 → 815, 814 → 815: the tallies above were computed on either side of
+  // this merge and cannot be read as one sequence. This branch took
+  // 811 → 812 alone, with the admin Support view check above; main
+  // independently took the same 811 to 814, with the Settings/wallet trio
+  // above. Neither set overlaps the other, so the merged manifest holds
+  // every one of them: 811 + 1 + 3 = 815.
+  //
+  // 815 → 816: +1, the all-apps Workshop's Needs you tab (#3051), reached
+  // with ?ws=needs because a declared check never clicks. The #2759 check
+  // that pinned the ABSENCE of the scope chip now pins its return (the owner
+  // reversed #2759), so that one changed in place rather than being added.
+  //
+  // 816 → 817: +1 (communities, stages 0–2): the community card on a
+  // project's Workshop page. It could not fold into the lander's route check
+  // (#app/<slug>/workshop "is the card area grouped by theme"), which holds
+  // no `:has()` by the standing rule in tests/dev-workshop.test.js, so it
+  // takes a plain chain of its own. Two other checks were REWRITTEN in place
+  // because what they pinned is gone by design, not deleted: "An app with a
+  // decision waiting leads the Workshop list" became the three-section order
+  // (the Workshop orders by recency within Communities / Groups / Just you),
+  // (#2967's "Show N more" over app channels was rewritten too, and then
+  // restored as it was when the channels stayed in Messages.)
+  //
+  // 817 → 818: +1 (communities, stage 3): the create dialog asks who a
+  // project is for, and a group names its people in it, reached with
+  // ?shot=create-group. Three create checks were REWRITTEN in place: the
+  // cold open reads the first step (who it is for) instead of the start
+  // step, the details card reads "Project name", and the retired access
+  // step's check pins the approval step (?shot=create-approve) instead.
+  // 818 leaves 22 slots against MAX_DECLARED_TESTS (840), clear of the
+  // 20-slot floor.
+  //
+  // 818 → 820: +2 (communities, stage 5): a new account's first run. The
+  // join screen ("What communities do you want to join?", ?shot=join-
+  // communities) and Home's Getting started card (?shot=getting-started),
+  // two new routes with nothing already declared on them to fold into.
+  // 820 leaves exactly the 20-slot floor against MAX_DECLARED_TESTS (840):
+  // the next proposal to add a check folds into an existing one or raises
+  // the cap, as tests/lib/check-cap.js says.
+  //
+  // 820 → 820: platform limit alerts FOLDED rather than added, per the note
+  // above. "The Notifications sheet renders notification rows" now also
+  // requires the mock platform_limit row (990210) with :has() and its copy
+  // ("40 of 50 apps in use.") as expectText; its name and path are unchanged,
+  // so its check history carries over.
+  //
+  // 820 → 820: #3186 folded rather than added. Me's "Your feedback" list is
+  // the Me route with `?feedback` on the fragment, so the "More" list check
+  // was REWRITTEN in place to open it (id profile.feedback-list): it still
+  // pins the rows in order, the new one included, and now pins the list's
+  // received and counted rows under a body:has(). The first-feedback check
+  // pins the moment's new "See your feedback" beside the board button.
+  //
+  // 820 → 820: the app limit card on Admin → Limits FOLDED rather than
+  // added. "The admin console's Limits section offers the Anthropic credit
+  // balance fields" now also requires #admin-app-limit (with its usage line)
+  // in the same section via :has(), and the card's description as
+  // expectText; its name and path are unchanged.
+  //
+  // A mismatch says what the count is, what it is pinned at, and what to do
+  // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
+  checkCap.assertPinned(DAPP.tests.length, 820);
 });
 
-test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and a bare sheet', () => {
+test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
+  // The checklist (#2061, dev-card.tsx RequirementsRow) is a <details> on
+  // the open proposal card, and its summary line — "Nothing needs you",
+  // "Waiting on an admin" — is what a reader taps to see the steps. The
+  // wrapper's click guard did not know it: the same tap that opened the
+  // list bubbled to the wrapper, which folded the card and unmounted the
+  // list just opened. The guard excludes `details` now — the whole element,
+  // because once open it is a list to read, like the two regions under the
+  // card — and nothing else about the tap changes: the disclosure is
+  // native, its open state the reader's, and no handler swallows the click.
+  const AppView = makeAppView({ search: '?cards=open&demo=1' });
+  AppView._proposals[0].mergeRequirements = { gates: [
+    { key: 'approvals', label: 'Approvals', actor: 'group', state: 'done', detail: { note: '3 of 3' } },
+    { key: 'integration', label: 'Up to date with main', actor: 'auto', state: 'active',
+      detail: { note: '2 commits behind, so the platform is merging main in' } },
+  ] };
+  const html = kanbanHtml(AppView);
+  // The checklist sits INSIDE the open card, inside the wrapper whose click
+  // folds it — so the guard is the only thing between the tap and the fold.
+  assert.match(html,
+    /class="dev-ws-rowwrap dev-ws-rowwrap-open"><div class="dev-feed-entry dev-ws-sheet"[^>]*><div class="gc-vote-item [^"]*dev-card-dense"[^>]*data-proposal-row="34"(?:(?!class="dev-ws-rowwrap)[\s\S])*?<details [^>]*data-merge-requirements="1"><summary [^>]*><span [^>]*data-req-headline[^>]*>Nothing needs you<\/span>/,
+    'the checklist, its summary line first, on the open card');
+  // The guard: `details` among the native controls, so a tap anywhere on the
+  // checklist — the summary, a step, its note — is the checklist's, and a
+  // tap on the rest of the card still folds it.
+  const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
+  assert.match(view,
+    /el\.closest\(\s*'a, button, input, textarea, select, form, details, \[data-attr-chip\], \[data-issue-chip\],'\s*\+ ' \.dev-feed-thread, \.dev-feed-comments',\s*\)\) return;\s*onToggle\(\);/,
+    'the open card’s guard excludes the disclosure, and folds on everything else');
+  // The checklist itself is untouched: the native disclosure, its open state
+  // seeded from the model and then the reader's, and neither a
+  // stopPropagation (the guard is the seam, as for every other control) nor
+  // a preventDefault (the tap must still open the list).
+  const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
+  const req = CARD.slice(CARD.indexOf('function RequirementsRow'), CARD.indexOf('function ExtraRow'));
+  assert.match(req, /<details\s[^>]*onToggle=\{\(e\) => setOpen\(\(e\.currentTarget as HTMLDetailsElement\)\.open\)\}/);
+  assert.ok(!/stopPropagation|preventDefault/.test(req), 'the row neither swallows the click nor blocks the native toggle');
+  // The folded row draws no checklist, and its own guard is unchanged: a tap
+  // on the row — its state chip included — still unfolds it.
+  const folded = kanbanHtml(makeAppView());
+  assert.ok(!folded.includes('data-merge-requirements'), 'no checklist on a folded row');
+  const rowView = FOLD.slice(FOLD.indexOf('function FoldedRow'), FOLD.indexOf('function UnfoldedRow'));
+  assert.match(rowView, /if \(\(e\.target as HTMLElement \| null\)\?\.closest\('a, button'\)\) return;\s*onToggle\(\);/);
+});
+
+test('the board’s fold rules: the column’s rhythm, not the wrapper’s, and the shared sheet', () => {
   assert.match(CSS, /#dev-kanban \.dev-ws-rowwrap \{ margin-bottom: 0; \}/);
-  assert.ok(!/#dev-kanban \.dev-ws-sheet-actions/.test(CSS), 'no line under the board\u2019s card to style');
-  // The Workshop's frosted sheet stays the Workshop's: on the board the open
-  // card is the column's tile, as it always was.
-  assert.ok(!/#dev-kanban \.dev-feed-entry \{/.test(CSS));
-  assert.match(CSS, /#dev-workshop \.dev-feed-entry \{/);
+  assert.ok(!/#dev-kanban \.dev-ws-sheet-actions/.test(CSS), 'no line under the board’s card to style');
+  // The frosted sheet used to be the Workshop's alone, and this asserted so:
+  // on the board the open card was the column's tile, because nothing hung
+  // under it. #1884 is what changed that premise — the board's cards carry
+  // the thread and the comment tail now, and #1885's rule above says in as
+  // many words that the sheet's padding is for what hangs UNDER the card. A
+  // reply box on the column's own background, with the next card's row
+  // starting 8px below it, has no boundary saying which card it belongs to.
+  //
+  // So the sheet is scoped to both hosts, and the quiet cards are unmoved:
+  // `:only-child` still pulls a card with nothing under it over every edge,
+  // so the frosting never shows and the column reads as it did. The one
+  // thing an open board card picks up is the sheet's 26px corner in place of
+  // its own 22px — which is the Workshop's open card, which is the point.
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-entry \{/);
+  assert.match(CSS, /:is\(#dev-workshop, #dev-kanban\) \.dev-feed-entry > div:is\(\.dev-card-dense, \.dev-card-topic\):only-child \{\s*margin-bottom: -12px;/);
+  assert.ok(!/#dev-kanban \.dev-feed-entry \{/.test(CSS), 'and the board grows no second copy of it');
 });
 
 test('the open card is the fold’s sheet, and never picks up the Needs-you deck’s dialog geometry', () => {
@@ -528,7 +1457,9 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
   assert.ok(at > 0, 'the band pill rule exists');
   const pill = CSS.slice(at, CSS.indexOf('\n}', at));
   assert.match(pill, /background: var\(--accent-tint\);/);
-  assert.match(pill, /color: var\(--accent\);/);
+  // The ink is the accent one step darker in light (QA 2026-09-24 Q20): the
+  // accent itself is 4.34:1 on its own tint, under AA for these 12px labels.
+  assert.match(pill, /color: var\(--accent-tint-ink\);/);
   assert.match(pill, /border-color: transparent;/);
   assert.match(CSS, /\.dev-vote-btn-yes[^{]*\{ background: var\(--accent-tint\); color: var\(--accent\); \}/, 'the pair the Yes state uses');
   // The ⋯ was a well in the card's top-right rail. The menu is where the
@@ -557,9 +1488,18 @@ test('every pill is foldable: the band shows as many as fit its line and the men
   // from folding (`i > 0`). With "Open card", the hamburger and Preview all
   // fixed at the band's right, a narrow column may leave no room before
   // them, so the fold may take the first pill too; only a kudos host stays.
-  assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\} hidden=\{i >= bandPrimary\.length - folded\.n\}/);
-  assert.match(CARD, /const foldable = primary\.filter\(\(a\) => a\.kudos == null\)\.length;/);
-  assert.match(CARD, /const hidden = n > 0 \? primary\.filter\(\(a\) => a\.kudos == null\)\.slice\(-n\) : \[\];/);
+  assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\}\s+hidden=\{folds && foldIndex >= foldable - folded\.n\}/);
+  // The initial `hidden` counts the same window the measurement does: the
+  // last n of the FOLDABLE specs. Counted from the end of every spec, a kudos
+  // slot or a Preview among them put it one pill off, and the next measure
+  // moved the row again.
+  assert.match(CARD, /const foldable = bandPrimary\.filter\(\(a\) => a\.kudos == null && !a\.preview\)\.length;/);
+  // The fold window is taken over the specs that DRAW a foldable pill: not
+  // the kudos host, and not the topic head's labelled Preview (an action
+  // spec too, drawn as the band's fixed control). Counting Preview put the
+  // window one spec off, and a folded first pill never reached the menu.
+  assert.match(CARD, /const foldSpecs = primary\.filter\(\(a\) => a\.kudos == null && !a\.preview\);\n\s*const foldable = foldSpecs\.length;/);
+  assert.match(CARD, /const hidden = n > 0 \? foldSpecs\.slice\(-n\) : \[\];/);
   assert.ok(!CARD.includes('ACTION_PRIMARY_MAX'), 'no count cap: the line is the cap');
   assert.ok(!/i > 0 && a\.kudos == null/.test(CARD));
   const html = kanbanHtml(makeAppView({ search: '?cards=open&demo=1' }));
@@ -630,23 +1570,29 @@ test('the open card’s meta line is tabbed in under the title, as the row’s i
   assert.match(CSS, /#dev-kanban \.dev-kanban-col > \.space-y-2 > :not\(\[hidden\]\) ~ :not\(\[hidden\]\) \{ margin-top: 4px; \}/);
 });
 
-test('Open card never answers a tap with nothing: the Board links out, and an in-place open with no body goes to the page', () => {
-  // The in-place body comes from `_workshopCardBody`, which the topic screen
-  // can build for an issue or a proposal only. A session, a merged change and
-  // a governance item all answer null — and the toggle used to set that null
-  // into state, so on those cards "Open card" did nothing at all.
+test('Open card is one anchor to the item\u2019s page, on every surface and every kind', () => {
+  // It used to be two controls wearing one word. On the Board it linked out;
+  // on the Workshop it opened the topic screen's sections in place and only
+  // relabelled to "Open page ›" on a second tap — and for a session, a merged
+  // change or a governance item `_workshopCardBody` answered null, so those
+  // navigated anyway. Three behaviours behind one label, decided by which
+  // screen you had reached the card from. Now: one anchor, one destination.
   const AppView = makeAppView({ search: '?cards=open&demo=1' });
-  assert.equal(AppView._workshopCardBody('gov:1'), null);
-  assert.equal(AppView._workshopCardBody('shared-session:71'), null);
-  assert.equal(AppView._workshopCardBody('merged:34'), null);
-  assert.ok(AppView._workshopCardBody('issue:1575'), 'an issue has one');
-  // So the Workshop's toggle goes to the item's page when there is nothing
-  // to open in place, and the Board's pill is that link to begin with.
-  assert.match(FOLD, /const body = readAppView<TopicBody>\('_workshopCardBody', key\);\s*if \(!body\) \{ if \(href\) window\.location\.hash = href; return; \}\s*setDetail\(body\);/);
   const html = kanbanHtml(AppView);
   for (const kind of ['issues/1575', 'proposals/34']) {
-    assert.match(html, new RegExp(`<a class="gc-vote-btn dev-ws-open-btn" href="#app/demo-app/dev/${kind}"`), `${kind}: a real link`);
+    assert.match(html, new RegExp(`<a class="gc-vote-btn dev-ws-open-btn" href="#app/demo-app/dev/${kind}"[^>]*>Open card</a>`),
+      `${kind}: a real link, labelled the same word`);
   }
+  // A real anchor, not a button that navigates: it middle-clicks, it copies,
+  // and the wrapper's click guard already excludes anchors so it does not
+  // fold the card on its way out.
+  assert.ok(!/<button[^>]*dev-ws-open-btn/.test(html), 'nothing draws it as a button');
+  // And the machinery the in-place open needed is gone rather than orphaned.
+  assert.ok(!/readAppView|TopicBodySections|dev-ws-detail/.test(FOLD),
+    'the fold builds no topic body and renders no in-place region');
+  assert.equal(typeof AppView._workshopCardBody, 'undefined',
+    'and app-view.js keeps no builder with nothing to build for');
+  assert.ok(!/\.dev-ws-detail/.test(CSS), 'nor app.css a rule for a region that never renders');
 });
 
 test('the declared checks follow the two rows and the row’s last line', () => {
@@ -689,7 +1635,7 @@ test('a merged card opens whole: the kudos slot is filled before paint, and the 
   // card on open. Both surfaces fill it from a LAYOUT effect now, and the
   // fold measurement watches the band's subtree so it re-folds around the
   // filled slot in the same frame.
-  assert.match(KANBAN, /useLayoutEffect\(\(\) => \{\s*if \(hostRef\.current\) callAppView\('_fillKudosHosts', hostRef\.current\);\s*\}, \[openKey, unfolded\]\);/);
+  assert.match(KANBAN, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_fillKudosHosts', host\);[\s\S]*?\}, \[openKey, unfolded\]\);/);
   assert.ok(!/\bimport \{[^}]*\buseEffect\b/.test(KANBAN), 'the column has no plain effect left to fill from');
   assert.match(WORKSHOP, /useLayoutEffect\(\(\) => \{\s*const host = hostRef\.current;\s*if \(!host\) return;\s*callAppView\('_wireFeedComments', host\);\s*callAppView\('_fillKudosHosts', host\);/);
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');

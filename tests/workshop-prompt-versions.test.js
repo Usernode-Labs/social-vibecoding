@@ -35,12 +35,21 @@ const STAGES = {
     // 2 puts the call on 'medium' effort: at the default ('high') it spent
     // its 16000 token budget thinking and hit the output limit before its
     // JSON finished, which froze one board's categories for 17 hours.
-    pinned: { 1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e' },
+    // 3 merges the Workshop's grouping with the voted categories onto one
+    // mechanism: "previousThemes" now carry `pinned`, and a pinned theme —
+    // one the group has voted cards into — must come back unchanged.
+    // 4 is the ONE-LIST merge: the grouping is the app's CATEGORIES again,
+    // `previousThemes` became `previousCategories`, and the draft is handed
+    // `builtInCategories` so it works around the six the platform ships.
+    pinned: { 1: '9561f5061d176cc6', 2: '27d59d0a5d9aa59e', 3: '5539cd0961999c6a', 4: 'd6ca79b69d490122' },
   },
   placement: {
     constant: 'WORKSHOP_PLACEMENT_VERSION',
     builder: llm.placeWorkshopItems,
-    pinned: { 1: 'd82abd8a00088937' },
+    // 2: the placer sorts into CATEGORIES, and the card's own category is no
+    // longer fed to it — that is the thing being decided, so offering it back
+    // would anchor the answer to the value already there.
+    pinned: { 1: 'd82abd8a00088937', 2: 'fdff738ca4ac4873' },
   },
   digest: {
     constant: 'WORKSHOP_DIGEST_VERSION',
@@ -54,7 +63,29 @@ const STAGES = {
     // 4 halves the length and swaps "name the breadth" for two rules that
     // survive twelve words: two clauses rather than a list, and lead by the
     // COUNT of items in an area rather than by how visible it is.
-    pinned: { 2: '14c1ca1864a4fb96', 3: '98f17a8ffee59b3b', 4: '5ae848d3fe65b9d1' },
+    // 5 is vocabulary only, but it is not cosmetic: the prompt told the model
+    // to call the grouping "CATEGORIES", which is the name of the OTHER axis
+    // (the voted feature/bug/docs field). The line it writes is user-facing,
+    // so the rows have to re-ask for it under the right noun.
+    // 6 breaks the shape every week was coming back in. Four of these lines
+    // are read one under another in the walk, and they all arrived as
+    // "Mostly X, alongside Y" — which is what the prompt's single worked
+    // example was, so the example had become a mould. It is gone, both of
+    // its words are banned outright, and the count the old prompt only
+    // ASKED for ("count before you lead") is now a required schema field
+    // ordered ahead of the lines, so the tally has to exist before there is
+    // a sentence to lead with. Every app's digest is re-drafted; that is one
+    // short call per app, and the lines are what the pane shows.
+    // 7 puts the noun back: the grouping is called categories again, so the
+    // user-facing line has to be re-asked under the right one.
+    pinned: {
+      2: '14c1ca1864a4fb96',
+      3: '98f17a8ffee59b3b',
+      4: '5ae848d3fe65b9d1',
+      5: 'fa7bbe7465b5aea4',
+      6: '84cedc3ec42f85d4',
+      7: '95951e15d7808fa2',
+    },
   },
 };
 

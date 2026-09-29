@@ -5,14 +5,15 @@ const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
 const messageBookmarks = require('../services/message-bookmarks');
 const mobilePushPreferences = require('../services/mobile-push-preferences');
+const notificationPreferences = require('../services/notification-preferences');
 const log = require('../services/logger');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // ── Staging mock data ──────────────────────────────────────────────────
-// Request-time (?demo=1) injection of the four session-related
-// notification kinds — session_done, auto_solve_done (failed), stale_pr,
-// check_failed — so the green session badge and the bell's EXCLUSION of
+// Request-time (?demo=1) injection of the session-related notification
+// kinds — session_done, session_stalled (#3181), auto_solve_done (failed),
+// stale_pr, check_failed — so the green session badge and the bell's EXCLUSION of
 // these kinds from its own count are reviewable in a staging preview
 // without waiting for a real session to finish, plus a
 // `conversation_message` row so the message notifications the bell counts
@@ -20,6 +21,29 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // in votes.js): fixed 99xxxx ids, "[Mock]" titles, never persisted,
 // strictly a no-op outside staging. Mark-read calls on these ids match
 // no DB row and no-op harmlessly.
+// #1374: fabricated per-app EXCEPTIONS for the Settings roll-up. The
+// notification_preferences table is staging:private and therefore always
+// empty in a clone, so the roll-up's whole point — "here is every app you
+// have set differently" — would photograph as an empty state. Behind
+// ?demo=1 + staging only, exactly like the mock feed below.
+function demoNotificationOverrides() {
+  return [
+    {
+      appId: -921, appSlug: 'staging-demo-app-a', appName: 'Staging demo app A',
+      categories: [
+        { key: 'new_proposals', label: 'New proposals to vote on', enabled: true },
+        { key: 'new_issues', label: 'New issues', enabled: true },
+      ],
+    },
+    {
+      appId: -922, appSlug: 'staging-demo-app-b', appName: 'Staging demo app B',
+      categories: [
+        { key: 'proposal_status', label: 'Your proposals', enabled: false },
+      ],
+    },
+  ];
+}
+
 function stagingMockNotifications() {
   const now = Date.now();
   const base = {
@@ -99,6 +123,34 @@ function stagingMockNotifications() {
       sessionTitle: '[Mock] Session titled but not yet proposed',
       prTitle: null, branchName: 'dev/mockuser-1700000000000',
       prNumber: null, headlessIssueNumber: null,
+    },
+    // #3181: a session whose turn stopped before finishing. A real one needs
+    // a turn to error, time out or lose its worker, which a preview cannot
+    // arrange on demand, so this row is how the new bell row is reviewable.
+    {
+      ...base,
+      id: 990211, kind: 'session_stalled',
+      createdAt: new Date(now - 6 * 60 * 1000).toISOString(),
+      sessionId: 990110,
+      sessionTitle: '[Mock] Session that stopped before finishing',
+      prTitle: null, branchName: 'dev/mockuser-1700000000004',
+      prNumber: null, headlessIssueNumber: null,
+    },
+    // A platform limit alert (services/platform-limit-alerts.js). A preview
+    // never sends a real one — its users are a production clone, so the
+    // service records the level there and notifies nobody — which leaves this
+    // row the only way a reviewer or a declared check sees the kind render.
+    // No app, like the real row: the cap belongs to the server. Its copy is
+    // built from the detail token, so the figures stand in for "[Mock]".
+    // Placed after 990201 (and timed between it and 990202) so the message
+    // pair above still leads and stays consecutive.
+    {
+      ...base,
+      id: 990210, kind: 'platform_limit',
+      createdAt: new Date(now - 8 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: 'apps_warn:40:50',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
     },
     {
       ...base,
@@ -287,6 +339,179 @@ function notificationsRoutes(config) {
     }
   });
 
+  // ── Per-app notification preferences (#1374) ────────────────────────
+  //
+  // The sibling of the two routes above, and a different question: those
+  // decide whether a notification that EXISTS may reach a phone, these
+  // decide whether it is created at all for a given app. See
+  // services/notification-preferences.js for why that distinction is what
+  // keeps the phone push and the on-platform row in sync.
+
+  // Resolve a slug to an app id and say whether this user administers it.
+  // `adminOnly` categories are hidden from everyone else, because the
+  // notifications behind them are only ever addressed to admins and the
+  // creator in the first place.
+  async function resolveApp(slug, userId) {
+    const { rows } = await pool.query(
+      `SELECT a.id, a.slug, a.name, a.created_by,
+              EXISTS (SELECT 1 FROM app_admins ad
+                       WHERE ad.app_id = a.id AND ad.user_id = $2) AS is_admin
+         FROM apps a WHERE a.slug = $1`,
+      [slug, userId]
+    );
+    const app = rows[0];
+    if (!app) return null;
+    return { ...app, isAdmin: !!app.is_admin || app.created_by === userId };
+  }
+
+  router.get('/api/apps/:slug/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const app = await resolveApp(req.params.slug, req.user.id);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const overrides = await notificationPreferences.readOverrides(pool, req.user.id, app.id);
+      return res.json({
+        app: { id: app.id, slug: app.slug, name: app.name },
+        categories: notificationPreferences.serializeAppCategories({
+          ...overrides,
+          isAdmin: app.isAdmin,
+        }),
+      });
+    } catch (err) {
+      log.error('notification-preferences', 'app read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.patch('/api/apps/:slug/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const app = await resolveApp(req.params.slug, req.user.id);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      // The allowed set is computed from THIS user's admin status, so a
+      // non-admin posting `app_health` is refused rather than quietly
+      // storing a preference for something they will never be sent.
+      const allowedKeys = notificationPreferences.APP_CATEGORY_DEFINITIONS
+        .filter((category) => !category.adminOnly || app.isAdmin)
+        .map((category) => category.key);
+      const { details, values } = notificationPreferences.validatePreferencePatch(
+        req.body, { allowedKeys }
+      );
+      if (Object.keys(details).length) {
+        return res.status(422).json({ error: 'The given data was invalid.', details });
+      }
+
+      const overrides = await notificationPreferences.writeOverrides(
+        pool, req.user.id, app.id, values
+      );
+      return res.json({
+        app: { id: app.id, slug: app.slug, name: app.name },
+        categories: notificationPreferences.serializeAppCategories({
+          ...overrides,
+          isAdmin: app.isAdmin,
+        }),
+      });
+    } catch (err) {
+      log.error('notification-preferences', 'app write failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The account-wide layer plus every per-app exception, for the Settings
+  // roll-up. The exceptions are what make the roll-up worth having: without
+  // them there is no way to find an app you muted months ago short of
+  // opening its tile menu and looking.
+  router.get('/api/me/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'private, no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+
+    if (req.query.demo === '1' && IS_STAGING) {
+      return res.json({
+        categories: notificationPreferences.serializeAccountCategories({}),
+        apps: demoNotificationOverrides(),
+        demo: true,
+      });
+    }
+
+    try {
+      const { accountOverrides } = await notificationPreferences.readOverrides(
+        pool, req.user.id, null
+      );
+      const { rows } = await pool.query(
+        `SELECT p.app_id, p.category, p.enabled, a.slug, a.name
+           FROM notification_preferences p
+           JOIN apps a ON a.id = p.app_id
+          WHERE p.user_id = $1 AND p.app_id IS NOT NULL
+          ORDER BY a.name ASC, p.category ASC`,
+        [req.user.id]
+      );
+      const byApp = new Map();
+      for (const row of rows) {
+        const definition = notificationPreferences.definitionFor(row.category);
+        if (!definition) continue;
+        if (!byApp.has(row.app_id)) {
+          byApp.set(row.app_id, {
+            appId: row.app_id, appSlug: row.slug, appName: row.name, categories: [],
+          });
+        }
+        byApp.get(row.app_id).categories.push({
+          key: row.category, label: definition.label, enabled: row.enabled,
+        });
+      }
+      return res.json({
+        categories: notificationPreferences.serializeAccountCategories({ accountOverrides }),
+        apps: [...byApp.values()],
+      });
+    } catch (err) {
+      log.error('notification-preferences', 'account read failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.patch('/api/me/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    const { details, values } = notificationPreferences.validatePreferencePatch(req.body);
+    if (Object.keys(details).length) {
+      return res.status(422).json({ error: 'The given data was invalid.', details });
+    }
+    try {
+      const { accountOverrides } = await notificationPreferences.writeOverrides(
+        pool, req.user.id, null, values
+      );
+      return res.json({
+        categories: notificationPreferences.serializeAccountCategories({ accountOverrides }),
+      });
+    } catch (err) {
+      log.error('notification-preferences', 'account write failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Clear every per-app exception for one app: the roll-up's "follow my
+  // defaults again" button. A DELETE of the overrides rather than writing
+  // them all to the default value, so the app goes back to INHERITING and
+  // keeps doing so if a default ever changes.
+  router.delete('/api/apps/:slug/notification-preferences', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const app = await resolveApp(req.params.slug, req.user.id);
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      await pool.query(
+        'DELETE FROM notification_preferences WHERE user_id = $1 AND app_id = $2',
+        [req.user.id, app.id]
+      );
+      return res.json({ ok: true });
+    } catch (err) {
+      log.error('notification-preferences', 'app reset failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Full dropdown payload: recent notifications (read and unread) + an
   // unread count so the badge and list stay in sync on initial page load.
   //
@@ -344,6 +569,15 @@ function notificationsRoutes(config) {
       };
       if (!before) {
         payload.unread = await notifications.countUnread(pool, req.user.id);
+        // #3050: the bell just learned the true total, so re-badge the
+        // iPhone to it. The icon changes only when a push carries
+        // `aps.badge` — the native shell does not implement the WebView's
+        // setSocialBadgeCount seam — so a clear that never announced
+        // itself (a kudos retraction, a conversation left or archived, a
+        // cascade) otherwise left the icon on a number the bell no longer
+        // shows, with nothing in the app able to correct it. Debounced per
+        // user and a no-op without a live iOS registration.
+        try { require('../services/mobile-push').scheduleBadgeSync(req.user.id); } catch {}
         // Pending collaborator invites for the drawer's pinned Invites
         // section. Sourced from app_collaborators (authoritative about
         // what's still actionable), not from collab_invite notification
@@ -456,7 +690,7 @@ function notificationsRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     const {
       id, all, chat_message_id: chatMessageId, app_id: appId,
-      conversation_id: conversationId,
+      conversation_id: conversationId, session_id: sessionId,
       kinds, exclude_kinds: excludeKinds,
     } = req.body || {};
     // Kind scoping for the split drawers (cog vs bell). Sanitize to
@@ -478,6 +712,31 @@ function notificationsRoutes(config) {
         }
         const cleared = await notifications.markReadForConversation(
           pool, req.user.id, parsedConversationId
+        );
+        const unread = await notifications.countUnread(pool, req.user.id);
+        if (cleared > 0) {
+          try {
+            const { pushNotificationToUser } = require('../services/ws');
+            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
+          } catch (err) {
+            log.warn('notifications', 'cross-tab push failed', { message: err.message });
+          }
+        }
+        return res.json({ unread, cleared });
+      }
+
+      // `{ session_id }` (#2847): the viewer opened or touched a proposal card
+      // on the dev board, which resolves that proposal's "New proposal" nudge
+      // (the registry's `proposal_opened`: pr_proposed only). Same validation
+      // and fan-out shape as the conversation branch above.
+      if (sessionId != null) {
+        const rawSessionId = String(sessionId);
+        const parsedSessionId = Number(rawSessionId);
+        if (!/^[1-9]\d{0,9}$/.test(rawSessionId) || parsedSessionId > 2147483647) {
+          return res.status(400).json({ error: 'Invalid session id' });
+        }
+        const cleared = await notifications.markReadForAction(
+          pool, req.user.id, 'proposal_opened', parsedSessionId
         );
         const unread = await notifications.countUnread(pool, req.user.id);
         if (cleared > 0) {

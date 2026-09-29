@@ -265,6 +265,30 @@ iOS applies `aps.badge` and Android launchers read
 exists for the live half — updating and clearing the badge while the
 user is inside the app.
 
+### Native history gestures (additive; `setBackNavigationEnabled`)
+
+`setBackNavigationEnabled({ enabled: boolean })` enables WebKit's native
+back/forward navigation gestures. Only WebKit clients implementing this method
+advertise the capability; callers must feature-detect it. This is a privileged
+top-frame call, so embedded apps cannot enable the shell's gesture.
+
+The platform header publishes `true` only for a visible Back arrow with a
+destination, outside embedded App-tab content. Workshop and other Dev screens
+remain eligible. A Workshop topic page (an issue, proposal, governance vote or
+shared session) draws its Back as the in-page "Workshop" chip instead of a
+header arrow (#2916), and publishes `true` for that chip's destination. Home
+icons and hidden headers publish `false`. WebKit still
+requires an existing history entry: a cold deep link with no previous page
+keeps its clickable header destination but cannot swipe back through history.
+The native flag also allows WebKit's standard forward gesture where forward
+history exists. Android's existing system-back handling is unchanged.
+
+The Flutter companion defaults the flag to disabled, revalidates the document
+before applying each request, serializes changes, and resets it on document
+load and disposal. The header republishes on `pageshow`, including restoration
+from the back/forward cache. Both the platform update and a native release
+containing this capability are required; older clients keep their behavior.
+
 ### Appearance (additive; `setAppearance`)
 
 #### `setAppearance({ scheme, background })` → resolves when stored
@@ -508,8 +532,12 @@ clock produces the node clock used for the displayed best-tip age.
   ready, and
 - on every pill-state transition.
 
-So chrome renders from the event stream and only calls `getNodeStatus()`
-for an initial value; no polling needed.
+So chrome renders from the event stream and calls `getNodeStatus()` for an
+initial value. Because events only fire on transitions (and can be missed
+while the WebView is suspended), chrome also re-reads `getNodeStatus()`
+every few seconds while the Settings Node row or the Node sheet is on screen
+and the page is visible, and once on each reveal or return to the
+foreground. Nothing is read while neither is showing.
 
 #### `getWalletState()` → wallet snapshot
 
@@ -667,6 +695,7 @@ recoverable rather than a dead end.
 | `setDebugMode(enabled)` | `{ enabled: bool }` | toggles the app's debug mode |
 | `setFacematchStrict(enabled)` | `{ enabled: bool }` | toggles strict ZK-passport facematch |
 | `requestPermissions()` | — | native alarm-permission prompt; snapshot plus a `granted` bool |
+| `requestAlarmPermissions()` | — | Android: opens the first missing producer permission only (the exact-alarm settings page, else the battery dialog), never the notification prompt; call again for the next step. Snapshot plus a `granted` bool (exact alarms) |
 
 `setIosKeepAlive` was removed in v4 with the iOS keep-alive service.
 
@@ -675,7 +704,7 @@ recoverable rather than a dead end.
 | Method | Effect |
 |---|---|
 | `resetZkChallenge()` | discards in-progress ZK identity registration (confirm web-side first) |
-| `openBatterySettings()` | opens Android battery-optimization settings |
+| `openBatterySettings()` | Android: shows the one-tap system "let this app always run in the background?" dialog while battery optimization is on, else the app's App info page |
 | `openNotificationSettings()` | opens the OS notification settings page for the app. The only way back from a **determined-denied** iOS notification permission: once the user has answered the OS prompt, `requestPermissions()` resolves immediately and presents no dialog, so a screen offering only "request" is a tap that does nothing forever. Capability-gated, and fails fast (probe timeout, not the 120 s permission timeout) — an *inconclusive* probe still calls through, per issue #978. |
 | `prepareForLogin()` | from an anonymous trusted shell, closes and drains any privately recovered native session before Social receives a session-mint request; no-op when native is already signed out |
 | `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); attempt web revocation and clear caches first, then invoke this as the terminal operation; `offlineLogout` permits API failure and guarantees native WebView cleanup |

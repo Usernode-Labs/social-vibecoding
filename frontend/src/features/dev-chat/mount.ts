@@ -24,6 +24,7 @@ import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 
 import { mountLegacyPortal } from '../../lib/legacy-portals';
+import { openNativeSocialConnect } from '../settings/native-social-connect.js';
 import './launchpad.js';
 import { attachStripStore, type AttachStripState } from './attach-strip-store';
 import { budgetPillStore, type BudgetPillState } from './budget-pill-store';
@@ -69,6 +70,11 @@ export interface DevChatBridge {
   publishStream(state: StreamState): void;
   publishSpecViewer(state: SpecViewerState): void;
   publishNow(now: number): void;
+  // #2679 / #2680: the walkthrough's "Link GitHub" inside the Homeroom app.
+  // The same account-pinned system-browser trip the Settings row makes
+  // (../settings/native-social-connect.js), published here because
+  // dev-chat.js reaches everything by name — see the header.
+  openNativeSocialConnect: typeof openNativeSocialConnect;
 }
 
 // Both of `renderChatView`'s converted STRIPS flush synchronously, and for the
@@ -212,6 +218,8 @@ export const devChatBridge: DevChatBridge = {
   publishNow(now) {
     nowStore.set({ now });
   },
+
+  openNativeSocialConnect,
 };
 
 if (typeof window !== 'undefined') {

@@ -471,3 +471,42 @@ test('registerServiceWorker still registers at root scope when it can', () => {
   assert.deepStrictEqual(calls, [['addEventListener', 'message'], ['register', '/sw.js']],
     'the api-updated listener is attached, then the worker registers at root scope');
 });
+
+
+// ── A refresh announces itself, and the worker listens ─────────────────
+//
+// The rule was already written where `correcting` is declared in sw.js — the
+// fast lane answers a BOOT, not a REFRESH — but only enforced after a stale
+// answer had gone out and been noticed. A pull is that rule known in advance.
+// Two halves, in two files, with nothing but this test holding them together.
+
+test('pull-to-refresh tells the worker before the screen reloads', () => {
+  const app = fs.readFileSync(path.join(PUBLIC, 'js/app.js'), 'utf8');
+  const fn = app.slice(app.indexOf('  _refreshOrReload(refresh) {'),
+    app.indexOf('  _announceRefreshIntent()'));
+  assert.ok(fn.length > 0, '_refreshOrReload located');
+  assert.match(fn, /App\._announceRefreshIntent\(\);\s*\n\s*return Promise\.all/,
+    'the announcement goes out BEFORE the loader runs, or the reads it covers have left already');
+  assert.match(app, /postMessage\(\{ type: 'refresh-intent' \}\)/,
+    'and it is the message the worker listens for');
+  // A refresh must never wait on the worker, and must not throw where there
+  // is none.
+  const announce = app.slice(app.indexOf('  _announceRefreshIntent() {'),
+    app.indexOf('  // ── Late-arrival correction'));
+  assert.match(announce, /navigator\.serviceWorker\?\.controller\?\./,
+    'optional all the way down: no worker is the ordinary case on a first load');
+  assert.match(announce, /catch/, 'and a browser that refuses the post must not break the pull');
+  assert.doesNotMatch(announce, /await|\.then\(/, 'fire and forget — a pull never waits on this');
+});
+
+test('the worker acts on refresh-intent and shuts the lane for a bounded window', () => {
+  const sw = fs.readFileSync(path.join(PUBLIC, 'sw.js'), 'utf8');
+  assert.match(sw, /if \(type === 'refresh-intent'\)/, 'the message is handled');
+  assert.match(sw, /refreshIntentUntil = Date\.now\(\) \+ REFRESH_INTENT_WINDOW_MS/,
+    'it arms a deadline rather than a flag somebody has to remember to clear');
+  assert.match(sw, /bootLaneApplies\(event\.request\.url, ORIGIN, Date\.now\(\), refreshIntentUntil\)/,
+    'and the fetch path consults it');
+  const { REFRESH_INTENT_WINDOW_MS } = require('../public/sw.js');
+  assert.ok(REFRESH_INTENT_WINDOW_MS > 0 && REFRESH_INTENT_WINDOW_MS <= 30_000,
+    'bounded: a stuck window would turn every later boot into a cold one');
+});

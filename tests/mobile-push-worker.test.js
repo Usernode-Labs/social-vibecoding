@@ -120,6 +120,35 @@ test('eligible delivery sends one contextual bound message and marks it sent', a
   });
 });
 
+test('new per-app notification kinds keep their context through provider handoff (#2273)', async () => {
+  const { worker, calls } = harness({
+    row: delivery({
+      kind: 'proposal_vote',
+      push_category: 'proposal_alerts',
+      source_username: 'alice',
+      detail: 'no',
+    }),
+  });
+  await worker.processDelivery(JOB);
+  assert.deepEqual(calls.sent[0].notification, {
+    title: '@alice voted no on "Fix login redirect loop" · MyPage',
+    body: 'Open the proposal to review their vote',
+  });
+  assert.equal(calls.finished[0].status, 'sent');
+});
+
+test('a platform merge push says the change is on its way, a child app merge says live (#2897)', async () => {
+  const send = async (row) => {
+    const { worker, calls } = harness({ row: delivery({ kind: 'pr_merged', push_category: 'proposal_alerts', ...row }) });
+    await worker.processDelivery(JOB);
+    assert.equal(calls.finished[0].status, 'sent');
+    return calls.sent[0].notification.body;
+  };
+  assert.equal(await send({ app_self_hosted: true }), 'The vote carried. Your change will be live in a few minutes');
+  assert.equal(await send({ app_self_hosted: false }), 'The vote carried. Your change is live');
+  assert.equal(await send({}), 'The vote carried. Your change is live');
+});
+
 test('the recipient unread total rides on the message as the icon badge', async () => {
   // #1445: countUnread runs per send, for the notification's recipient,
   // and lands as aps.badge (iOS) + notificationCount (Android launchers).
@@ -308,6 +337,7 @@ test('delivery reload includes the current deployment state and activation times
   assert.match(seen.sql, /LEFT JOIN conversation_messages conversation_message/);
   assert.match(seen.sql, /LEFT JOIN conversation_members conversation_member/);
   assert.match(seen.sql, /a\.name AS app_name/);
+  assert.match(seen.sql, /a\.self_hosted AS app_self_hosted/);
   assert.match(seen.sql, /su\.username AS source_username/);
   assert.match(seen.sql, /cm\.content AS message_content/);
   assert.match(seen.sql, /c\.title AS conversation_title/);

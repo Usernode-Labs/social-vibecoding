@@ -481,6 +481,56 @@ test('POST headless-session: generating and ready spec/code outcomes still 409',
   }
 });
 
+// ── 2b. Claiming the issue (#2364) ─────────────────────────────────────
+// Generating a proposal for an issue claims and assigns it for the clicking
+// user — the same write the Claim button makes (services/issue-claims.js).
+// Only an issue the route's own fetch returned as open is claimed.
+
+async function startHeadlessFor(issue) {
+  const pool = makeMockPool();
+  const loaded = loadSessions(pool, {
+    github: { fetchPublicIssue: async () => ({ issue }) },
+  });
+  const srv = await startTestServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/apps/my-app/issues/5/headless-session`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.equal(res.status, 201);
+    await waitFor(() => pool.state.terminal !== null);
+  } finally {
+    await srv.close();
+    loaded.restore();
+  }
+  return pool;
+}
+
+test('POST headless-session: an open issue is claimed and assigned for the clicking user', async () => {
+  const pool = await startHeadlessFor({ number: 5, title: 'Make it better', body: 'please', state: 'open' });
+  const claim = pool.calls.find((c) => /INSERT INTO issue_claims/.test(c.sql));
+  assert.ok(claim, 'a claim upsert was issued');
+  assert.match(claim.sql, /ON CONFLICT \(app_id, github_issue_number, user_id\)/);
+  assert.deepEqual(claim.params, [1, 5, 1]);
+  const vote = pool.calls.find((c) => /INSERT INTO topic_attribute_votes/.test(c.sql)
+    && c.params[1] === 'issue');
+  assert.ok(vote, 'the issue assignee vote was cast');
+  assert.deepEqual(vote.params, [1, 'issue', 5, 'assignee', 'alice', 1]);
+  // The claim lands after the session row, so a failed start claims nothing.
+  const sessionAt = pool.calls.findIndex((c) => /INSERT INTO chat_sessions/.test(c.sql));
+  assert.ok(sessionAt >= 0 && sessionAt < pool.calls.indexOf(claim));
+});
+
+test('POST headless-session: a closed or unconfirmed issue is not claimed', async () => {
+  for (const issue of [{ number: 5, title: 'Done', body: '', state: 'closed' }, null]) {
+    const pool = await startHeadlessFor(issue);
+    assert.ok(pool.calls.some((c) => /INSERT INTO chat_sessions/.test(c.sql)), 'the run still started');
+    assert.ok(!pool.calls.some((c) => /INSERT INTO issue_claims/.test(c.sql)),
+      `no claim for ${issue ? 'a closed' : 'an unconfirmed'} issue`);
+  }
+});
+
 // ── 3. Question-comment posting ─────────────────────────────────────────
 
 test('pure-text phase-1 turn posts the questions to the issue exactly once', async () => {

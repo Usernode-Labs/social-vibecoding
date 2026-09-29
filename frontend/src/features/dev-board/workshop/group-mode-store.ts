@@ -50,11 +50,27 @@ export type WorkshopGroup = (typeof WORKSHOP_GROUPS)[number];
 /**
  * Category is the default: it is what the Workshop has always shown, and the
  * stage pane is the board a viewer can already reach from the view strip.
+ *
+ * #2332 spelled it 'theme' for one release, on the argument that this pane
+ * groups by what the work is ABOUT while a category is what KIND of work it
+ * is. That split is gone — there is ONE grouping now and it is called a
+ * category, which is what the card chip's own tooltip had been saying all
+ * along. 'theme' is kept as the legacy spelling for the release that shipped
+ * it, so nobody's stored preference or link resolves to nothing.
  */
 export const DEFAULT_WORKSHOP_GROUP: WorkshopGroup = 'category';
 
+/** Spellings retired along the way, still honoured so a preference survives. */
+const LEGACY_GROUPS: Record<string, WorkshopGroup> = { theme: 'category' };
+
 export function isWorkshopGroup(value: unknown): value is WorkshopGroup {
   return typeof value === 'string' && (WORKSHOP_GROUPS as readonly string[]).includes(value);
+}
+
+/** A stored or linked value resolved onto a current one, or null. */
+export function migrateWorkshopGroup(value: unknown): WorkshopGroup | null {
+  if (isWorkshopGroup(value)) return value;
+  return (typeof value === 'string' && LEGACY_GROUPS[value]) || null;
 }
 
 export interface WorkshopGroupStore {
@@ -84,7 +100,7 @@ export function getWorkshopGroupStore(): WorkshopGroupStore {
  * `AppView._rerenderWorkshop()` before it publishes the view.
  */
 export function publishWorkshopGroup(mode: string): void {
-  const next = isWorkshopGroup(mode) ? mode : DEFAULT_WORKSHOP_GROUP;
+  const next = migrateWorkshopGroup(mode) || DEFAULT_WORKSHOP_GROUP;
   const store = getWorkshopGroupStore();
   if (store.mode === next) return;
   store.mode = next;

@@ -37,6 +37,9 @@ const DUMP_RESTORE_TIMEOUT_MS = Number(process.env.DB_CLONE_TIMEOUT_MS) || 10 * 
 // would need to special-case the literal to ever accept it, and we
 // don't.
 const STAGING_REDACTED_SENTINEL = '__staging_redacted__';
+// ctid renders as (block,offset): uint32 + uint16, at most 18 characters.
+// Leave room for the entire value rather than truncating its unique suffix.
+const MAX_CTID_TEXT_LENGTH = 18;
 
 function appDbName(slug) {
   return `app_${slug.replace(/[^a-z0-9_]/g, '_')}`;
@@ -45,6 +48,18 @@ function appDbName(slug) {
 function stagingDbName(slug, username, commitHash) {
   const shortHash = commitHash.substring(0, 6);
   return `app_${slug.replace(/[^a-z0-9_]/g, '_')}_staging_${username.replace(/[^a-z0-9_]/g, '_')}_${shortHash}`;
+}
+
+// Evidence clones deliberately do not use stagingDbName(): they are owned by
+// a short-lived evidence run rather than by the proposal preview sweeper.
+// Keep the database at 57 bytes so its `_owner` role also fits PostgreSQL's
+// 63-byte identifier limit.
+function evidenceDbName(slug, runId, side) {
+  if (!['base', 'head'].includes(side)) throw new Error('evidenceDbName: side must be base or head');
+  const cleanSlug = String(slug || '').toLowerCase().replace(/[^a-z0-9_]/g, '_') || 'app';
+  const token = crypto.createHash('sha256').update(String(runId || '')).digest('hex').slice(0, 12);
+  const suffix = `_evidence_${token}_${side === 'base' ? 'b' : 'h'}`;
+  return `app_${cleanSlug.slice(0, 57 - 4 - suffix.length)}${suffix}`;
 }
 
 function ownerRoleName(dbName) {
@@ -262,9 +277,14 @@ function stagingConnectionLimit() {
 // The ceiling is for previews only: cloneDatabase also serves app forks,
 // whose target is a real production database and must stay uncapped.
 const STAGING_CLONE_DB_RE = /^app_[a-z0-9_]+_staging_s\d+_([0-9a-f]{6}|latest)$/;
+const EVIDENCE_CLONE_DB_RE = /^app_[a-z0-9_]+_evidence_[0-9a-f]{12}_[bh]$/;
 
 function isStagingCloneDb(name) {
   return STAGING_CLONE_DB_RE.test(String(name || ''));
+}
+
+function isEvidenceCloneDb(name) {
+  return EVIDENCE_CLONE_DB_RE.test(String(name || ''));
 }
 
 /**
@@ -275,7 +295,7 @@ function isStagingCloneDb(name) {
  */
 async function applyStagingConnectionLimit(dbName, { execute = execInDb } = {}) {
   if (!SAFE_IDENT.test(dbName)) return null;
-  if (!isStagingCloneDb(dbName)) return null;
+  if (!isStagingCloneDb(dbName) && !isEvidenceCloneDb(dbName)) return null;
   const limit = stagingConnectionLimit();
   if (limit < 0) return null;
   try {
@@ -681,7 +701,7 @@ function templateIdle(sourceDb) {
 }
 
 // The fast clone: a file copy of the template, handed to a fresh role.
-async function cloneFromTemplate(templateDb, targetDb) {
+async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000, onProgress = null } = {}) {
   if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneFromTemplate: unsafe identifiers ${templateDb}/${targetDb}`);
   }
@@ -694,24 +714,123 @@ async function cloneFromTemplate(templateDb, targetDb) {
   const password = generatePassword();
   await withDatabaseConnection('usernode', async (execute) => {
     const admin = (sql, opts) => execute('usernode', sql, opts);
+    onProgress?.('drop_target');
     await dropDatabase(targetDb, { strict: true, execute: admin });
+    onProgress?.('create_role');
     await admin(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
+    onProgress?.('copy_template');
     await admin(`CREATE DATABASE ${targetDb} TEMPLATE ${templateDb} OWNER ${targetRole}`);
     await admin(`REVOKE CONNECT ON DATABASE ${targetDb} FROM PUBLIC`);
     await admin(`GRANT ALL PRIVILEGES ON DATABASE ${targetDb} TO ${targetRole}`);
-  });
+  }, { queryTimeoutMs });
   // One connection for the whole ownership/redaction pass, including discovery.
   // Never pool it: the caller may need to drop this database immediately on
   // failure, and a later preview must not inherit an administrative session.
   await withDatabaseConnection(targetDb, async (execute) => {
-    await reassignUserObjectsTo(targetDb, templateRole, targetRole, execute);
-    await truncatePrivateTables(targetDb, execute);
-    await scrubPrivateColumns(targetDb, execute);
-  });
+    for (const [phase, run] of [
+      ['reassign_ownership', () => reassignUserObjectsTo(targetDb, templateRole, targetRole, execute)],
+      ['truncate_private', () => truncatePrivateTables(targetDb, execute)],
+      ['scrub_private', () => scrubPrivateColumns(targetDb, execute)],
+    ]) {
+      onProgress?.(phase);
+      try { await run(); }
+      catch (error) {
+        error.message = `Database clone ${phase}: ${error.message}`;
+        throw error;
+      }
+    }
+  }, { queryTimeoutMs });
+  onProgress?.('redaction_complete');
   log.info('db-manager', 'Database cloned from staging template', {
     templateDb, targetDb, targetRole, durationMs: Date.now() - startedAt,
   });
   return { password };
+}
+
+// #2380: freeze ONE redacted staging-template generation for a paired
+// base/head evidence run. Calling cloneDatabase(..., { viaTemplate: true })
+// twice is not equivalent: the soft-age refresh can swap the shared template
+// between those calls. A prepared source is its own immutable, no-connections
+// database and therefore gives both sides byte-equivalent starting data.
+function preparedCloneSourceName(sourceDb, sourceId) {
+  if (!SAFE_IDENT.test(sourceDb)) {
+    throw new Error(`preparedCloneSourceName: unsafe sourceDb ${JSON.stringify(sourceDb)}`);
+  }
+  const token = crypto.createHash('sha256').update(String(sourceId || '')).digest('hex').slice(0, 12);
+  const suffix = `_evsrc_${token}`;
+  return `${sourceDb.slice(0, 63 - suffix.length)}${suffix}`;
+}
+
+function isPreparedCloneSource(name) {
+  return SAFE_IDENT.test(String(name || '')) && /_evsrc_[0-9a-f]{12}$/.test(String(name));
+}
+
+async function prepareStagingCloneSource(sourceDb, { sourceId } = {}) {
+  if (!sourceId) throw new Error('prepareStagingCloneSource: sourceId is required');
+  if (!stagingTemplatesEnabled()) {
+    throw new Error('prepareStagingCloneSource: staging templates are disabled');
+  }
+  return withTemplateLock(sourceDb, async () => {
+    const ensured = await ensureStagingTemplate(sourceDb);
+    const sharedTemplate = ensured.template;
+    const refreshedAtMs = await readTemplateRefreshedAt(sharedTemplate);
+    if (refreshedAtMs === null) throw new Error('prepareStagingCloneSource: template has no refresh provenance');
+
+    const preparedDb = preparedCloneSourceName(sourceDb, sourceId);
+    const preparedRole = ownerRoleName(preparedDb);
+    const sharedRole = ownerRoleName(sharedTemplate);
+    await dropDatabase(preparedDb, { strict: true });
+    await execInDb(`CREATE ROLE ${preparedRole} NOLOGIN`);
+    try {
+      await execInDb(`CREATE DATABASE ${preparedDb} TEMPLATE ${sharedTemplate} OWNER ${preparedRole}`);
+      await withDatabaseConnection(preparedDb, async (execute) => {
+        await reassignUserObjectsTo(preparedDb, sharedRole, preparedRole, execute);
+      });
+      await execInDb(`REVOKE CONNECT ON DATABASE ${preparedDb} FROM PUBLIC`);
+      const fingerprint = crypto.createHash('sha256')
+        .update(`${sourceDb}\n${sharedTemplate}\n${new Date(refreshedAtMs).toISOString()}\n${preparedDb}`)
+        .digest('hex');
+      await execInDb(
+        `COMMENT ON DATABASE ${preparedDb} IS 'evidence-clone-source source=${sourceDb} refreshed_at=${new Date(refreshedAtMs).toISOString()} fingerprint=${fingerprint}'`
+      );
+      await execInDb(`ALTER DATABASE ${preparedDb} WITH ALLOW_CONNECTIONS false`);
+      return {
+        templateDb: preparedDb,
+        sourceDb,
+        refreshedAt: new Date(refreshedAtMs).toISOString(),
+        fingerprint,
+      };
+    } catch (err) {
+      await dropDatabase(preparedDb).catch(() => {});
+      throw err;
+    }
+  });
+}
+
+async function cloneFromPreparedSource(prepared, targetDb, { onProgress = null } = {}) {
+  const templateDb = typeof prepared === 'string' ? prepared : prepared?.templateDb;
+  if (!isPreparedCloneSource(templateDb)) {
+    throw new Error(`cloneFromPreparedSource: invalid prepared source ${JSON.stringify(templateDb)}`);
+  }
+  // Paired evidence resets repeat this clone and have their own bounded
+  // lifetime. A large ownership/redaction query may exceed the ordinary
+  // preview's 30-second ceiling without being stuck.
+  const result = await cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs: 90_000, onProgress });
+  onProgress?.('connection_limit');
+  await applyStagingConnectionLimit(targetDb);
+  return {
+    ...result,
+    via: 'prepared-template',
+    fixtureFingerprint: typeof prepared === 'object' ? prepared.fingerprint || null : null,
+  };
+}
+
+async function releasePreparedCloneSource(prepared) {
+  const templateDb = typeof prepared === 'string' ? prepared : prepared?.templateDb;
+  if (!isPreparedCloneSource(templateDb)) {
+    throw new Error(`releasePreparedCloneSource: invalid prepared source ${JSON.stringify(templateDb)}`);
+  }
+  await dropDatabase(templateDb, { strict: true });
 }
 
 // Replacement for `REASSIGN OWNED BY <fromRole> TO <toRole>` in cases
@@ -961,15 +1080,16 @@ async function roleExists(roleName) {
 // connection within one clone phase. Other administration keeps its existing
 // one-shot behavior. SQL stays in autocommit: CREATE/DROP DATABASE cannot run
 // inside a transaction, and a failed redaction must not abort later attempts.
-async function withDatabaseConnection(dbName, fn) {
+async function withDatabaseConnection(dbName, fn, { queryTimeoutMs = 30_000 } = {}) {
   if (!SAFE_IDENT.test(dbName)) throw new Error(`Unsafe connection database: ${dbName}`);
+  const timeoutMs = Math.max(30_000, Math.min(120_000, Number(queryTimeoutMs) || 30_000));
   const url = adminConnection();
   url.pathname = `/${dbName}`;
   const client = new Client({
     connectionString: url.toString(),
     connectionTimeoutMillis: 30000,
-    statement_timeout: 30000,
-    query_timeout: 30000,
+    statement_timeout: timeoutMs,
+    query_timeout: timeoutMs,
     application_name: 'social-template-clone',
   });
   let lost;
@@ -1386,19 +1506,40 @@ SELECT n.nspname || '.' || c.relname,
       failures.push({ target: `${qualified}.${column}`, error: `unusable max length ${maxLength}` });
       continue;
     } else {
-      // NOT NULL columns can't accept NULL, and a single literal
-      // sentinel breaks any UNIQUE constraint on the column (the
-      // production incident: onchain_accounts.registration_code is
-      // NOT NULL UNIQUE, so writing '__staging_redacted__' into every
-      // row failed the whole clone). Derive a per-row-unique value from
-      // ctid — unique within the table for the life of this single
-      // UPDATE — sized to the column's max length when it has one (e.g.
-      // VARCHAR(64)) so it never overflows. Auth code should never
-      // accept this literal in any code path — bcrypt.compare against
-      // it returns false for every plaintext, which is the only place
-      // today that meaningfully reads users.password.
-      const base = `'${STAGING_REDACTED_SENTINEL}' || ctid::text`;
-      value = maxLength != null ? `left(${base}, ${maxLength})` : base;
+      // A template is scrubbed when built and again on each clone. Its
+      // existing placeholders contain the rows' OLD ctids; a later UPDATE
+      // can assign one of those values to a different row and hit a UNIQUE
+      // constraint. Give every scrub a fresh namespace, check that it is
+      // absent from the source column, and append the row's current ctid.
+      // Do not truncate the ctid: that would make multiple rows equal.
+      const compact = maxLength != null
+        && maxLength < STAGING_REDACTED_SENTINEL.length + 16 + 1 + MAX_CTID_TEXT_LENGTH;
+      const marker = compact ? '~' : STAGING_REDACTED_SENTINEL;
+      const nonceBytes = compact ? 4 : 8;
+      if (maxLength != null && maxLength < marker.length + nonceBytes * 2 + 1 + MAX_CTID_TEXT_LENGTH) {
+        failures.push({ target: `${qualified}.${column}`, error: `max length ${maxLength} cannot hold unique redaction values` });
+        continue;
+      }
+      let prefix = null;
+      try {
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          const candidate = `${marker}${crypto.randomBytes(nonceBytes).toString('hex')}:`;
+          const occupied = await execute(targetDb,
+            `SELECT EXISTS (SELECT 1 FROM ${qualified} WHERE left(${column}::text, ${candidate.length}) = '${candidate}')`,
+            { tuplesOnly: true });
+          if (String(occupied).trim() !== 'f') continue;
+          prefix = candidate;
+          break;
+        }
+      } catch (err) {
+        failures.push({ target: `${qualified}.${column}`, error: err.message });
+        continue;
+      }
+      if (!prefix) {
+        failures.push({ target: `${qualified}.${column}`, error: 'could not reserve a unique redaction namespace' });
+        continue;
+      }
+      value = `'${prefix}' || ctid::text`;
     }
     try {
       await execute(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
@@ -1421,9 +1562,106 @@ SELECT n.nspname || '.' || c.relname,
   return { scrubbed };
 }
 
+// ─── Per-app database storage cap (#2253) ───────────────────────────────
+//
+// Uploaded files have had a per-app ceiling since app-files.js grew
+// PER_APP_CAP; each app's own Postgres database had none, and a single app
+// writing rows in a loop could fill the volume every production app and
+// the platform itself share. services/app-storage-cap.js owns the policy
+// (the cap, the warning line, the freeze/thaw hysteresis); these are the
+// only Postgres-touching halves of it, kept here beside the naming scheme
+// and the SAFE_IDENT guard they depend on.
+//
+// Measurement is one catalog query, run as the admin user against the
+// platform's own database: pg_database_size() reads the data directory
+// and needs no connection to the app's database. Staging clones and
+// staging templates come back too, since they share the `app_` prefix,
+// and the sweep is what excludes them (isStagingCloneDb /
+// isStagingTemplateDb), so a preview never counts against the app it was
+// cloned from.
+const APP_DB_SIZES_SQL =
+  "SELECT datname, pg_database_size(datname) FROM pg_database "
+  + "WHERE datname LIKE 'app\\_%' AND NOT datistemplate";
+
+// `-At` output is one `datname|bytes` line per database. Anything that is
+// not exactly that shape (a NOTICE that leaked onto stdout, a blank line, a
+// name SAFE_IDENT would refuse to act on) is dropped rather than turned
+// into a NaN measurement, because a bad row here becomes a freeze decision.
+function parseDatabaseSizes(stdout) {
+  const out = [];
+  for (const line of String(stdout || '').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split('|');
+    if (parts.length !== 2) continue;
+    const [dbName, raw] = parts;
+    if (!SAFE_IDENT.test(dbName) || !/^\d+$/.test(raw)) continue;
+    const bytes = Number(raw);
+    if (!Number.isSafeInteger(bytes)) continue;
+    out.push({ dbName, bytes });
+  }
+  return out;
+}
+
+async function listAppDatabaseSizes({ execute = execInDb } = {}) {
+  const stdout = await execute(APP_DB_SIZES_SQL, { tuplesOnly: true });
+  return parseDatabaseSizes(stdout);
+}
+
+// app_<slug>_stgtmpl — the redacted copy ensureStagingTemplate keeps warm.
+function isStagingTemplateDb(name) {
+  const value = String(name || '');
+  return value.length > STAGING_TEMPLATE_SUFFIX.length && value.endsWith(STAGING_TEMPLATE_SUFFIX);
+}
+
+// Freeze or thaw one app's database by flipping its OWNER ROLE's default
+// transaction mode. Every connection the app opens authenticates as that
+// role (connectionUrl above), so `default_transaction_read_only = on`
+// makes each of its transactions read-only from the first statement:
+// SELECTs keep working, an INSERT/UPDATE/DELETE fails with "cannot execute
+// ... in a read-only transaction". The setting is a role DEFAULT, which a
+// session only picks up when it connects, hence the terminate that
+// follows: pooled connections the app is holding open would otherwise keep
+// writing until they happened to reconnect. The app's pool reconnects on
+// its own; a request in flight at that instant sees one failed query,
+// which the freeze was going to fail anyway.
+//
+// A default, not a privilege: app code that explicitly runs `SET
+// default_transaction_read_only = off` gets its writes back. That is the
+// deliberate trade. This is a fair-use ceiling that stops a runaway app
+// from filling the shared volume, not a security boundary, and a
+// REVOKE-based freeze would have to walk every table the app creates in
+// both directions. The admin console shows who is frozen, and an app that
+// went out of its way to override the setting would be visible there.
+//
+// The name is validated twice on purpose: SAFE_IDENT, as everywhere else in
+// this module, and lowercase, because the role was created unquoted (see
+// createDatabase) and so was folded to lowercase by the server. Quoting it
+// here keeps the statement exact; quoting a mixed-case name would address a
+// role that does not exist.
+async function setAppDatabaseWritable(dbName, writable, { execute = execInDb } = {}) {
+  if (!SAFE_IDENT.test(dbName) || dbName !== dbName.toLowerCase()) {
+    throw new Error(`setAppDatabaseWritable: unsafe dbName ${JSON.stringify(dbName)}`);
+  }
+  const role = ownerRoleName(dbName);
+  const quoted = `"${role}"`;
+  await execute(writable
+    ? `ALTER ROLE ${quoted} RESET default_transaction_read_only`
+    : `ALTER ROLE ${quoted} SET default_transaction_read_only = on`);
+  await execute(
+    'SELECT pg_terminate_backend(pid) FROM pg_stat_activity '
+    + `WHERE usename = '${role}' AND pid <> pg_backend_pid()`
+  );
+  log.info('db-manager', writable ? 'App database writes restored' : 'App database frozen read-only', {
+    dbName, role,
+  });
+  return { dbName, role, writable: !!writable };
+}
+
 module.exports = {
   appDbName,
   stagingDbName,
+  evidenceDbName,
   ownerRoleName,
   createDatabase,
   dropDatabase,
@@ -1432,6 +1670,7 @@ module.exports = {
   // Per-preview connection ceiling (#1771).
   stagingConnectionLimit,
   isStagingCloneDb,
+  isEvidenceCloneDb,
   applyStagingConnectionLimit,
   DEFAULT_STAGING_DB_CONNECTION_LIMIT,
   adoptExistingDatabase,
@@ -1448,9 +1687,19 @@ module.exports = {
   ensureStagingTemplate,
   refreshStagingTemplate,
   cloneFromTemplate,
+  preparedCloneSourceName,
+  isPreparedCloneSource,
+  prepareStagingCloneSource,
+  cloneFromPreparedSource,
+  releasePreparedCloneSource,
   readTemplateRefreshedAt,
   queueTemplateRefresh,
   STAGING_TEMPLATE_MAX_AGE_MS,
   STAGING_TEMPLATE_HARD_MAX_AGE_MS,
   _templateIdleForTest: templateIdle,
+  // Per-app database storage cap (#2253).
+  parseDatabaseSizes,
+  listAppDatabaseSizes,
+  setAppDatabaseWritable,
+  isStagingTemplateDb,
 };

@@ -87,3 +87,9 @@ test('#1788: the asserted row is still two days old, which is why slots must be 
   assert.match(SRC, /mk\(9100060, 'group-vote', 1, 2, 3\)/,
     'row 9100060 is the one the declared Done-column check selects');
 });
+
+test('the staging preview makes the deployment cue reviewable', () => {
+  assert.match(SRC, /pendingDemo\.deployment_state = 'pending'/);
+  assert.match(SRC, /failedDemo\.deployment_state = 'failed'/);
+  assert.match(SRC, /unknownDemo\.deployment_state = 'unknown'/);
+});

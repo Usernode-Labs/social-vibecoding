@@ -76,6 +76,28 @@ const FULL: Intl.DateTimeFormatOptions = {
   year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
 };
 
+/**
+ * One `Intl.DateTimeFormat` per option set, built once.
+ *
+ * `date.toLocaleTimeString(undefined, opts)` constructs a fresh formatter on
+ * every call, and constructing one (locale negotiation, pattern lookup) is
+ * most of the cost; `format()` on a built one is cheap. A transcript stamps
+ * every row two or three times per render, so on a phone the uncached calls
+ * were a measurable share of opening a long chat. Every option set here names
+ * its own date/time fields, so the `toLocale*String` defaults never apply and
+ * a cached formatter prints exactly what those calls printed. The locale is
+ * still the runtime default, read once — it does not change under a page.
+ */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+function formatDate(date: Date, key: string, options: Intl.DateTimeFormatOptions): string {
+  let formatter = formatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(undefined, options);
+    formatters.set(key, formatter);
+  }
+  return formatter.format(date);
+}
+
 function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear()
     && a.getMonth() === b.getMonth()
@@ -91,9 +113,9 @@ function sameDay(a: Date, b: Date): boolean {
  * screen.
  */
 function datePart(date: Date, now: Date): string {
-  return date.toLocaleDateString(undefined, date.getFullYear() === now.getFullYear()
-    ? { month: 'short', day: 'numeric' }
-    : { year: 'numeric', month: 'short', day: 'numeric' });
+  return date.getFullYear() === now.getFullYear()
+    ? formatDate(date, 'day', { month: 'short', day: 'numeric' })
+    : formatDate(date, 'day-year', { year: 'numeric', month: 'short', day: 'numeric' });
 }
 
 /**
@@ -109,6 +131,10 @@ function parse(value: string | number | Date | null | undefined): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+// "Now" is read through `Date.now()` rather than `new Date()` so a test that
+// pins the process clock (`Date.now = () => FIXED`) pins these stamps too —
+// `new Date()` ignores that override, and a fixture "2d ago" against a pinned
+// clock read as an absolute date once the real clock moved a week past it.
 export function messageStamp(
   value: string | number | Date | null | undefined,
   opts: { now?: Date; hour?: 'numeric' | '2-digit' } = {},
@@ -116,11 +142,27 @@ export function messageStamp(
   const date = parse(value);
   if (!date) return { text: '', title: '' };
 
-  const now = opts.now ?? new Date();
-  const time = date.toLocaleTimeString(undefined, { hour: opts.hour ?? '2-digit', minute: '2-digit' });
-  const title = date.toLocaleString(undefined, FULL);
+  const now = opts.now ?? new Date(Date.now());
+  const hour = opts.hour ?? '2-digit';
+  const time = formatDate(date, `time-${hour}`, { hour, minute: '2-digit' });
+  const title = formatDate(date, 'full', FULL);
   if (sameDay(date, now)) return { text: time, title };
   return { text: `${datePart(date, now)}, ${time}`, title };
+}
+
+/**
+ * The time of day alone — no date, whatever day it was. For the gutter of a
+ * grouped continuation line in a transcript (#2783): the named row above it
+ * already said which day, in `messageStamp`'s form.
+ */
+export function timeOfDay(
+  value: string | number | Date | null | undefined,
+  opts: { hour?: 'numeric' | '2-digit' } = {},
+): string {
+  const date = parse(value);
+  if (!date) return '';
+  const hour = opts.hour ?? 'numeric';
+  return formatDate(date, `time-${hour}`, { hour, minute: '2-digit' });
 }
 
 /** The floor under the relative form, in milliseconds. See the header. */
@@ -143,8 +185,8 @@ export function agoStamp(
   const date = parse(value);
   if (!date) return { text: '', title: '' };
 
-  const now = opts.now ?? new Date();
-  const title = date.toLocaleString(undefined, FULL);
+  const now = opts.now ?? new Date(Date.now());
+  const title = formatDate(date, 'full', FULL);
   const elapsed = now.getTime() - date.getTime();
   if (elapsed >= RELATIVE_FLOOR_MS) return { text: datePart(date, now), title };
 

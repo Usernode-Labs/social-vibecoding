@@ -1,6 +1,8 @@
 /**
- * The home screen's three fixed sections — Discover, Challenges, Create app —
- * as view models.
+ * The home screen's two fixed sections — Discover and Challenges — as view
+ * models. (Create app was a third until it became the launcher grid's trailing
+ * tile; that tile's view model rides the grid store, ./grid-store.ts, because
+ * it is placed by the same paint as the app tiles.)
  *
  * ── The split ─────────────────────────────────────────────────────────
  *
@@ -8,25 +10,26 @@
  * fetch and its TTL, the per-key expand flags, the hidden/removable rules, the
  * ⋮ menu's rows and both destinations. What it used to do on top of that —
  * build ~800 lines of HTML string per paint and re-attach eight families of
- * listener afterwards — is now this: compute three plain objects and push
- * them. `panels/sections.tsx` renders them.
+ * listener afterwards — is now this: compute plain objects and push them.
+ * `panels/sections.tsx` renders them.
  *
  * Every derivation the renderers did inline is resolved HERE, where the data
- * lives: which rows fit, whether the list reserves a meter lane, whether the
- * viewer may create an app. A component reads facts.
+ * lives: which rows fit, whether the list reserves a meter lane. A component
+ * reads facts.
  *
  * ── `painted` ─────────────────────────────────────────────────────────
  *
- * The three hosts ship WITHOUT `hidden` and empty, because that is what the
+ * The hosts ship WITHOUT `hidden` and empty, because that is what the
  * hand-written shell shipped and hydration has to agree. A section with
  * nothing to show is `hidden` — but only once a render has decided so.
  * `painted: false` is the difference between "not yet" and "nothing", and it
- * is why the flag exists rather than being inferred from three nulls.
+ * is why the flag exists rather than being inferred from the nulls.
  */
 
 import { createStore } from '../../lib/plain-store.js';
 
 import type { IconView } from './grid-store';
+import type { SeasonProgressView } from '../leaderboard/season-progress';
 
 /** `data-*` attributes the block stamps on its own article AND on its host. */
 export interface PanelStamps {
@@ -35,8 +38,6 @@ export interface PanelStamps {
   popular?: number;
   /** The Challenges block's composition: how many challenge rows it drew. */
   rows?: number;
-  /** The Create block's quota state. */
-  createEnabled?: boolean;
 }
 
 // ── Discover ──────────────────────────────────────────────────────────
@@ -91,8 +92,19 @@ export interface ChallengeMeterView {
 
 export interface ChallengeRowView {
   id: string;
+  /** The challenge's event, for the card's deep link to its page; null without one. */
+  eventId: number | null;
+  /** The group header the card sits under: 'setup', 'week', 'always' or 'other'. */
+  group: string;
   /** The challenge kind's icon, drawn in the tile; null when the kind has none. */
   icon: string | null;
+  /**
+   * The challenge template's illustration slug (shape-checked). The tile draws
+   * it in place of the icon when lib/challenge-illustrations.ts resolves it.
+   */
+  illustration: string | null;
+  /** An uploaded illustration's tone (shape-checked); null for a built-in. */
+  illustrationTone: string | null;
   goal: string;
   done: boolean;
   reward: string | null;
@@ -105,37 +117,31 @@ export interface ChallengeRowView {
   /**
    * "5d left" on the meta line under the title, beside the reward — the
    * challenge's own end, else its event's, else the season's; null on a
-   * finished or not-open challenge, or with no end in the future.
+   * finished or not-open challenge, or with no end in the future. Also null
+   * under a This week, Always open or Season challenges header, which owns
+   * the clock; only Get started's cards keep their own.
    */
   deadline: string | null;
   /** "Earned N pts" on a finished challenge the viewer scored on. */
   earned: string | null;
 }
 
-/** The ring at the top of the card — how far through the season you are. */
-export interface SeasonView {
-  /** 0-100, the ring's arc. */
-  pct: number;
-  /** "1/6", inside the ring. */
-  fraction: string;
-  /** "3,900 pts left" — what is still on the table, or the count if none. */
-  lead: string;
-  /**
-   * "1 of 6 challenges done", or null when `lead` already says it. When no
-   * card on screen shows a deadline, challengesView adds the season's to it
-   * ("1 of 6 challenges done · 3d left", or "3d left" alone).
-   */
-  sub: string | null;
-  /** The whole fact in one string, for the ring's accessible name. */
-  label: string;
-  /**
-   * "7d left" — how long the SEASON has to run, or null between seasons
-   * and when the payload carries no end date. Each open card says its own
-   * deadline (ChallengeRowView.deadline), so the ring adds this to `sub` only
-   * when no card on screen shows one.
-   */
-  deadline: string | null;
+/**
+ * One group of the block's cards under the board's group header. Every group
+ * is headed, a block of one group included, so `heading` ("Get started", "This
+ * week", "Always open", "Season challenges") is null only on the renderer's
+ * fallback for a view built before groups existed. `meta` is the header's
+ * clock ("3d left", "no deadline") or null; never a count.
+ */
+export interface ChallengeGroupView {
+  key: string;
+  heading: string | null;
+  meta: string | null;
+  rows: ChallengeRowView[];
 }
+
+/** How far through the season you are — see features/leaderboard/season-progress.tsx. */
+export type SeasonView = SeasonProgressView;
 
 export interface ChallengesView {
   key: string;
@@ -146,7 +152,19 @@ export interface ChallengesView {
    * area's own label into an ellipsis on a phone. `season` draws it now.
    */
   summary: string | null;
+  /**
+   * "Finish these to unlock the rest of the season." while setup gates the
+   * season; null once unlocked or with no gate. Drawn only when the locked
+   * placeholder is not, which says the same thing.
+   */
   onboardingNote?: string | null;
+  /**
+   * How many challenges setup still hides (the server's
+   * `onboarding.hidden_count`), 0 once unlocked or when the payload has no
+   * count. Above 0 the block draws the dashed placeholder, whose second line
+   * replaces the unlock note.
+   */
+  lockedCount?: number;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
   /** How many challenges are OPEN — what "See all N challenges" counts. */
@@ -166,29 +184,24 @@ export interface ChallengesView {
   expandable?: boolean;
   expanded: boolean;
   rows: ChallengeRowView[];
-}
-
-// ── Create app ────────────────────────────────────────────────────────
-
-export interface CreateView {
-  key: string;
-  canCreate: boolean;
-  /** The compact ask-an-admin sentence shared by the tooltip and ⋮ note. */
-  hint: string;
+  /**
+   * The same row objects as `rows`, under their group headers: contiguous, in
+   * the Challenges tab's group order. Absent on a view built before groups
+   * existed.
+   */
+  groups?: ChallengeGroupView[];
 }
 
 export interface HomePanelsState {
   painted: boolean;
   discover: DiscoverView | null;
   challenges: ChallengesView | null;
-  create: CreateView | null;
 }
 
 export const INITIAL_PANELS: HomePanelsState = {
   painted: false,
   discover: null,
   challenges: null,
-  create: null,
 };
 
 export const panelsStore = createStore<HomePanelsState>(INITIAL_PANELS);

@@ -105,6 +105,22 @@ test('the served document resolves the platform-origin token', () => {
     'and nobody is ever served the raw token');
 });
 
+test('the served document shows hosted assets as relative paths, never on a hostname', () => {
+  // #2319: apps copy the asset tags out of this document. An absolute URL
+  // here, even on the current origin, ends up hard-coded in apps and breaks
+  // on the next domain move, so every tag and bare listing uses the path the
+  // platform serves on each app's own address.
+  const absolute = CONVENTIONS.match(/https?:\/\/[^\s"'`<>)]+\/usernode-(bridge|native|tailwind)\/v1\//g) || [];
+  assert.deepEqual(absolute, [], 'no absolute hosted-asset URL in the served conventions');
+  for (const tag of [
+    '<script src="/usernode-bridge/v1/bridge.js"></script>',
+    '<link rel="stylesheet" href="/usernode-native/v1/native.css">',
+    '<script src="/usernode-tailwind/v1/tailwind.js"></script>',
+  ]) {
+    assert.ok(CONVENTIONS.includes(tag), `the conventions show ${tag}`);
+  }
+});
+
 test('a section is a verbatim slice of the document, heading included', () => {
   for (const { slug } of prompts.getConventionSections()) {
     const section = prompts.getConventionSection(slug);

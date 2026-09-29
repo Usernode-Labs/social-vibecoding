@@ -43,8 +43,9 @@
 const { nativeWebSessionIsLive } = require('../../services/web-session-auth');
 
 
-const { loadOnboarding, visibleChallenges, challengeCategory } =
-  require('../../services/topochain/challenge-onboarding');
+const {
+  loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
+} = require('../../services/topochain/challenge-onboarding');
 
 const { Router } = require('express');
 const bcrypt = require('bcrypt');
@@ -52,11 +53,14 @@ const { clientIp } = require('../../services/client-ip');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth } = require('../../middleware/topochain-auth');
-const { mobileWalletClaimLimiter } = require('../../middleware/rate-limits');
+const {
+  mobileWalletClaimLimiter, topochainMobileReadLimiter,
+} = require('../../middleware/rate-limits');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
-const { computeStandings, assignSharedRanks } = require('../../services/topochain/standings');
+const { computeOwnStanding, assignSharedRanks } = require('../../services/topochain/standings');
+const { resolveDisplayName } = require('../../services/topochain/event-standings');
 const { nativeSessionRoutes } = require('./native-session');
 const { nativeEpochDelegationRoutes } = require('./epoch-delegation');
 const { mobileIdentityHash } = require('../../services/mobile-identity-hash');
@@ -77,6 +81,43 @@ function toIntId(v) {
   return Number.isInteger(n) && n > 0 && String(n) === String(v).trim() ? n : null;
 }
 
+// `season_id=active` (#2777) on /me/ranking and /me/breakdown: resolve the
+// season server-side instead of making the caller fetch /seasons first. The
+// web Profile screen used to do exactly that — await the whole /seasons
+// payload (every season's events, challenges and onboarding, ~130 KB on a
+// seeded database) only to pick one id from it, and only then start its real
+// requests. The rule is the one it applied to that list, kept verbatim so the
+// numbers it shows do not move: the newest public season flagged is_active,
+// else the LAST entry of /seasons' public list (starts_at DESC, id DESC) —
+// which is the oldest. No public season at all resolves to null, i.e. global
+// scope, as the old client's empty query string did. Any other value keeps
+// its old meaning (a numeric id, or absent/garbage -> not provided), so the
+// mobile app, which never sends `active`, is unaffected.
+async function resolveActiveSeasonId(pool) {
+  const { rows: active } = await pool.query(
+    `SELECT id FROM seasons WHERE internal = FALSE AND is_active = TRUE
+      ORDER BY starts_at DESC, id DESC LIMIT 1`
+  );
+  if (active[0]) return Number(active[0].id);
+  const { rows: fallback } = await pool.query(
+    `SELECT id FROM seasons WHERE internal = FALSE
+      ORDER BY starts_at ASC, id ASC LIMIT 1`
+  );
+  return fallback[0] ? Number(fallback[0].id) : null;
+}
+
+async function seasonIdFromQuery(pool, raw) {
+  if (typeof raw === 'string' && raw.trim().toLowerCase() === 'active') {
+    return resolveActiveSeasonId(pool);
+  }
+  return toIntId(raw);
+}
+
+// `include_progress` (breakdown, #2777) — default TRUE, so every existing
+// caller keeps `challenge_progress`. The web Profile screen reads only each
+// event's name and total_points, and turns it off together with
+// include_activity: that leaves one indexed snapshot read per event instead
+// of four queries.
 async function computeLevel(pool, userId, passwordSet) {
   const { rows } = await pool.query(
     'SELECT 1 FROM onchain_accounts WHERE user_id = $1 LIMIT 1',
@@ -127,38 +168,11 @@ function pctLocal(numerator, denominator) {
   return Math.round((n / d) * 10000) / 100;
 }
 
-function maskGeneric(value) {
-  return `${String(value).slice(0, 3)}***`;
-}
-
-function resolveIdentifier(user) {
-  if (user.email) return { type: 'email', value: user.email };
-  if (user.telegram) return { type: 'telegram', value: user.telegram };
-  if (user.discord) return { type: 'discord', value: user.discord };
-  return { type: null, value: null };
-}
-
-function maskIdentifier({ type, value }) {
-  if (!value) return null;
-  if (type === 'email') {
-    const at = value.indexOf('@');
-    if (at === -1) return maskGeneric(value);
-    const local = value.slice(0, at);
-    const domain = value.slice(at + 1);
-    const dot = domain.lastIndexOf('.');
-    const tld = dot === -1 ? '' : domain.slice(dot);
-    return `${local.slice(0, 3)}***@***${tld}`;
-  }
-  return maskGeneric(value);
-}
-
-// discord -> display_name -> masked identifier (SPEC 1859's fallback
-// chain for breakdown's `display_name`; also used for leaderboard rows).
-function resolveDisplayName(user) {
-  if (user.discord) return user.discord;
-  if (user.display_name) return user.display_name;
-  return maskIdentifier(resolveIdentifier(user));
-}
+// The display-name chain (discord -> display_name -> masked identifier ->
+// platform username; SPEC 1859 for breakdown's `display_name`, also used for
+// leaderboard rows) is the shared one in services/topochain/event-standings.js.
+// This file kept its own copy until #2394, and the copy is how a fix to the
+// public board would have skipped the mobile one.
 
 // ─── Terms gate (SPEC 1791/2957: un-gates /me/ranking's total_tokens) ───
 //
@@ -319,7 +333,9 @@ async function fetchBreakdownActivities(pool, userId, eventId) {
 // zero-filled placeholder. The single, DIRECT event-scope response (this
 // same builder, called once) always keeps its object and zero-fills,
 // mirroring /me/ranking's own "no data still 200, zeroed" rule.
-async function buildEventBreakdown(pool, userId, event, { includeActivity, omitBonusKeys }) {
+async function buildEventBreakdown(pool, userId, event, {
+  includeActivity, omitBonusKeys, includeProgress = true,
+}) {
   const snap = await fetchEventSnapshot(pool, userId, event.id);
 
   const obj = {
@@ -336,7 +352,7 @@ async function buildEventBreakdown(pool, userId, event, { includeActivity, omitB
   obj.produced_blocks = snap ? Number(snap.event_total_produced_blocks) || 0 : 0;
   obj.vrf_won_slots = snap ? Number(snap.vrf_total_won_slots) || 0 : 0;
   obj.success_rate = snap ? (num(snap.event_success_rate) ?? 0) : 0;
-  obj.challenge_progress = await fetchChallengeProgress(pool, userId, event.id);
+  if (includeProgress) obj.challenge_progress = await fetchChallengeProgress(pool, userId, event.id);
   if (includeActivity) obj.activities = await fetchBreakdownActivities(pool, userId, event.id);
 
   return { obj, hasSnapshot: !!snap };
@@ -354,7 +370,7 @@ async function fetchEventScopeLeaderboard(pool, eventId) {
        SELECT DISTINCT ON (ls.user_id) ls.user_id, ls.rank, ls.total_points, ls.extra_points,
               ls.event_total_produced_blocks AS total_produced_blocks, ls.vrf_total_won_slots,
               ls.event_success_rate, u.exclude_podium AS is_non_podium, u.email, u.telegram,
-              u.discord, u.display_name
+              u.discord, u.display_name, u.username
          FROM leaderboard_snapshots ls
          JOIN users u ON u.id = ls.user_id
         WHERE ls.season_event_id = $1
@@ -376,6 +392,7 @@ async function fetchEventScopeLeaderboard(pool, eventId) {
     telegram: r.telegram,
     discord: r.discord,
     display_name: r.display_name,
+    username: r.username,
   }));
 }
 
@@ -414,10 +431,12 @@ const SEASON_LEADERBOARD_SQL = `
          COUNT(DISTINCT l.season_event_id) AS events_participated,
          SUM(l.event_total_produced_blocks) AS total_produced_blocks,
          SUM(l.vrf_total_won_slots) AS vrf_total_won_slots,
-         u.exclude_podium AS is_non_podium, u.email, u.telegram, u.discord, u.display_name
+         u.exclude_podium AS is_non_podium, u.email, u.telegram, u.discord, u.display_name,
+         u.username
     FROM latest l
     JOIN users u ON u.id = l.user_id
-   GROUP BY l.user_id, u.exclude_podium, u.email, u.telegram, u.discord, u.display_name
+   GROUP BY l.user_id, u.exclude_podium, u.email, u.telegram, u.discord, u.display_name,
+            u.username
    ORDER BY SUM(l.total_points) DESC, l.user_id ASC
 `;
 
@@ -435,6 +454,7 @@ async function fetchSeasonScopeLeaderboard(pool, seasonId) {
     telegram: r.telegram,
     discord: r.discord,
     display_name: r.display_name,
+    username: r.username,
   }));
   return assignSharedRanks(cast);
 }
@@ -753,7 +773,7 @@ function topochainMobileRoutes(config) {
   router.use(mobilePushRegistrationRoutes(config));
 
   // ── GET /me (SPEC 1748-1767) ─────────────────────────────────────────
-  router.get('/api/v4/mobile/me', mobileTokenAuth(config), async (req, res) => {
+  router.get('/api/v4/mobile/me', mobileTokenAuth(config), topochainMobileReadLimiter, async (req, res) => {
     try {
       const { rows } = await pool.query(
         `SELECT id, email, display_name, email_confirmed, is_in_waitlist, github, x, password_set,
@@ -862,15 +882,19 @@ function topochainMobileRoutes(config) {
     try {
       // `req.user.id` comes from the credential-bound mobile identity (BIGINT) —
       // node-postgres returns BIGINT columns as STRINGS (no custom type
-      // parser is configured in src/db/pool.js), while computeStandings()
+      // parser is configured in src/db/pool.js), while computeOwnStanding()
       // below Number()-casts its own `user_id` column. Casting once here
-      // keeps every later `===` comparison (`standings.find(...)`)
-      // correct against a real database, not just this file's mock-pool
-      // tests (whose fixtures happen to store ids as JS numbers already).
+      // keeps every later comparison against it correct against a real
+      // database, not just this file's mock-pool tests (whose fixtures
+      // happen to store ids as JS numbers already).
       const userId = Number(req.user.id);
       const seasonEventId = toIntId(req.query.season_event_id);
-      const seasonIdParam = toIntId(req.query.season_id);
-      const termsGate = await getTermsGate(pool, userId);
+      // season_event_id wins (above), so `active` is only resolved when it
+      // can matter; the terms lookup runs alongside it.
+      const [seasonIdParam, termsGate] = await Promise.all([
+        seasonEventId ? null : seasonIdFromQuery(pool, req.query.season_id),
+        getTermsGate(pool, userId),
+      ]);
       const termsFields = {
         terms_accepted: termsGate.termsAccepted,
         terms_version_required: termsGate.termsVersionRequired,
@@ -926,13 +950,13 @@ function topochainMobileRoutes(config) {
         if (season.internal) return fail(res, 404, 'Season not found.');
 
         // Season scope reuses the shared §4.10 aggregate too (not just
-        // global) — computeStandings already accepts a seasonId filter,
-        // so there's no separate query to write; SPEC's "three
-        // consumers" list for this aggregate doesn't name this exact
-        // call site, but it's the identical shape with a season filter.
-        const standings = await computeStandings(pool, { seasonId: season.id });
-        const own = standings.find((s) => s.user_id === userId) || null;
-        const totalTokens = termsGate.termsAccepted ? await sumSeasonTokens(pool, userId, season.id) : 0;
+        // global), with a season filter. computeOwnStanding returns only
+        // this user's row of it and the participant count (#2777) — the
+        // same numbers computeStandings(...).find() produced.
+        const [{ own, totalParticipants }, totalTokens] = await Promise.all([
+          computeOwnStanding(pool, { seasonId: season.id, userId }),
+          termsGate.termsAccepted ? sumSeasonTokens(pool, userId, season.id) : 0,
+        ]);
 
         return ok(res, {
           data: {
@@ -943,16 +967,17 @@ function topochainMobileRoutes(config) {
             total_points: own ? own.total_points : 0,
             total_tokens: totalTokens,
             extra_points: own ? own.extra_points : 0,
-            total_participants: standings.length,
+            total_participants: totalParticipants,
             ...termsFields,
           },
         });
       }
 
       // Global scope (SPEC 1798-1805; §4.10's third listed consumer).
-      const standings = await computeStandings(pool, { seasonId: null });
-      const own = standings.find((s) => s.user_id === userId) || null;
-      const totalTokens = termsGate.termsAccepted ? await sumAllTokens(pool, userId) : 0;
+      const [{ own, totalParticipants }, totalTokens] = await Promise.all([
+        computeOwnStanding(pool, { seasonId: null, userId }),
+        termsGate.termsAccepted ? sumAllTokens(pool, userId) : 0,
+      ]);
 
       return ok(res, {
         data: {
@@ -962,7 +987,7 @@ function topochainMobileRoutes(config) {
           total_tokens: totalTokens,
           events_participated: own ? own.events_participated : 0,
           total_produced_blocks: own ? own.total_produced_blocks : 0,
-          total_participants: standings.length,
+          total_participants: totalParticipants,
           ...termsFields,
         },
       });
@@ -971,17 +996,18 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/me/ranking', mobileTokenAuth(config), meRankingHandler);
+  router.get('/api/v4/mobile/me/ranking', mobileTokenAuth(config), topochainMobileReadLimiter, meRankingHandler);
 
   // ── GET /me/breakdown (SPEC 1821-1865) ───────────────────────────────
   const meBreakdownHandler = async (req, res) => {
     try {
       const seasonEventId = toIntId(req.query.season_event_id);
-      const seasonIdParam = toIntId(req.query.season_id);
+      const seasonIdParam = seasonEventId ? null : await seasonIdFromQuery(pool, req.query.season_id);
       const includeActivity = parseBoolDefaultTrue(req.query.include_activity);
+      const includeProgress = parseBoolDefaultTrue(req.query.include_progress);
 
       const { rows: userRows } = await pool.query(
-        'SELECT discord, display_name, email, telegram FROM users WHERE id = $1',
+        'SELECT discord, display_name, email, telegram, username FROM users WHERE id = $1',
         [req.user.id]
       );
       const displayName = resolveDisplayName(userRows[0] || {});
@@ -1002,7 +1028,7 @@ function topochainMobileRoutes(config) {
         }
 
         const { obj } = await buildEventBreakdown(pool, req.user.id, event, {
-          includeActivity, omitBonusKeys: false,
+          includeActivity, includeProgress, omitBonusKeys: false,
         });
         return ok(res, { data: { display_name: displayName, scope: 'event', ...obj } });
       }
@@ -1021,18 +1047,18 @@ function topochainMobileRoutes(config) {
           'SELECT id, name FROM season_events WHERE season_id = $1 AND internal = FALSE ORDER BY starts_at ASC',
           [season.id]
         );
-        const events = [];
-        for (const eventRow of eventRows) {
-          // eslint-disable-next-line no-await-in-loop -- small per-user
-          // fixture-scale lists; sequential keeps the query count obvious.
-          const { obj, hasSnapshot } = await buildEventBreakdown(pool, req.user.id, eventRow, {
-            includeActivity, omitBonusKeys: false,
-          });
-          // SPEC 1865: events without a snapshot are skipped, not
-          // returned zero-filled (that zero-fill only applies to the
-          // single direct event-scope response above).
-          if (hasSnapshot) events.push(obj);
-        }
+        // One event's queries are independent of the next one's, so they
+        // run side by side (#2777) rather than one event after another; the
+        // response keeps the starts_at order because Promise.all does.
+        const built = await Promise.all(eventRows.map((eventRow) => (
+          buildEventBreakdown(pool, req.user.id, eventRow, {
+            includeActivity, includeProgress, omitBonusKeys: false,
+          })
+        )));
+        // SPEC 1865: events without a snapshot are skipped, not
+        // returned zero-filled (that zero-fill only applies to the
+        // single direct event-scope response above).
+        const events = built.filter((b) => b.hasSnapshot).map((b) => b.obj);
         return ok(res, { data: { display_name: displayName, scope: 'season', events } });
       }
 
@@ -1053,7 +1079,7 @@ function topochainMobileRoutes(config) {
         for (const eventRow of eventRows) {
           // eslint-disable-next-line no-await-in-loop
           const { obj, hasSnapshot } = await buildEventBreakdown(pool, req.user.id, eventRow, {
-            includeActivity, omitBonusKeys: true,
+            includeActivity, includeProgress, omitBonusKeys: true,
           });
           if (hasSnapshot) events.push(obj);
         }
@@ -1065,7 +1091,7 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/me/breakdown', mobileTokenAuth(config), meBreakdownHandler);
+  router.get('/api/v4/mobile/me/breakdown', mobileTokenAuth(config), topochainMobileReadLimiter, meBreakdownHandler);
 
   // ── GET /event/points (SPEC 1867-1893) ───────────────────────────────
   // Rename #1: `event_id` -> `season_event_id`. Rename #2:
@@ -1073,7 +1099,7 @@ function topochainMobileRoutes(config) {
   // at the field below). SPEC 1893: v4 paginates `total_points_per_user`
   // (unpaginated + unfiltered in the source, flagged as a data-exposure
   // note) via the shared page/per_page + `meta` envelope.
-  router.get('/api/v4/mobile/event/points', mobileTokenAuth(config), async (req, res) => {
+  router.get('/api/v4/mobile/event/points', mobileTokenAuth(config), topochainMobileReadLimiter, async (req, res) => {
     try {
       const seasonEventId = toIntId(req.query.season_event_id);
       if (!seasonEventId) {
@@ -1222,7 +1248,7 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/leaderboard', mobileTokenAuth(config), leaderboardHandler);
+  router.get('/api/v4/mobile/leaderboard', mobileTokenAuth(config), topochainMobileReadLimiter, leaderboardHandler);
 
   // ── GET /challenges (SPEC 1934-1974) ─────────────────────────────────
   // Scope resolution: season_event_id > season_id > the current active
@@ -1301,9 +1327,41 @@ function topochainMobileRoutes(config) {
         });
       });
 
+      // The viewer's block count, per season event — this list can span a
+      // whole season, so one event id is not enough. Loaded once, and only
+      // when the list actually holds a block-production card (#2492).
+      const blocksByEvent = items.some((it) => it.metric?.kind === 'blocks_produced')
+        ? await loadEventBlocks(pool, req.user.id, items.map((it) => it.season_event_id))
+        : new Map();
+
       for (const item of items) {
         item.category = challengeCategory(item.id, item.category, onboarding);
-        if (onboarding?.progress.has(item.id)) item.progress = onboarding.progress.get(item.id);
+        if (onboarding?.progress.has(item.id)) {
+          item.progress = onboarding.progress.get(item.id);
+          continue;
+        }
+        // Progress used to ride along on the three onboarding rows only,
+        // because they were the only ones anything credited without an admin
+        // typing it in. The card's `_isDone` reads `progress.done`, so every
+        // other challenge fell through to "is there any activity" and showed
+        // "Started" — for good, even to somebody who had finished it and been
+        // paid. Automatic scoring makes that the NORMAL state of four of the
+        // nine Season 2 challenges, so the same rule now applies to all of
+        // them, from the activity rows this handler has already loaded.
+        //
+        // `blocks_produced` is in this now (#2492). It was left out while its
+        // count had nowhere to come from — block scores are written to
+        // leaderboard snapshots and never to the ledger — so its card drew a
+        // ring with no words beside it while Home, reading the snapshot,
+        // showed the real number. The snapshot count is passed in here, and
+        // the done rule, the clamp and the target stay the shared ones.
+        const metricKind = item.metric ? item.metric.kind : null;
+        item.progress = resolveProgress({
+          metricKind,
+          metricTarget: item.metric ? item.metric.target : null,
+          activityCount: (activitiesByChallenge.get(Number(item.id)) || []).length,
+          blocks: blocksByEvent.get(Number(item.season_event_id)),
+        });
       }
 
       // active_only (SPEC: "keeps enabled and not-completed challenges").
@@ -1328,7 +1386,7 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/challenges', mobileTokenAuth(config), challengesHandler);
+  router.get('/api/v4/mobile/challenges', mobileTokenAuth(config), topochainMobileReadLimiter, challengesHandler);
 
   // ── GET /seasons (SPEC 1976-2029) ────────────────────────────────────
   const seasonsHandler = async (req, res) => {
@@ -1423,7 +1481,7 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   };
-  router.get('/api/v4/mobile/seasons', mobileTokenAuth(config), seasonsHandler);
+  router.get('/api/v4/mobile/seasons', mobileTokenAuth(config), topochainMobileReadLimiter, seasonsHandler);
 
   // ── /challenges-api (SV web shell reads) ─────────────────────────────
   // The SV chrome screens (#challenges and #profile — public/js/
@@ -1442,11 +1500,11 @@ function topochainMobileRoutes(config) {
     if (!req.user) return fail(res, 401, 'Unauthenticated.');
     return next();
   };
-  router.get('/challenges-api/seasons', webSessionAuth, requireSessionUser, seasonsHandler);
-  router.get('/challenges-api/challenges', webSessionAuth, requireSessionUser, challengesHandler);
-  router.get('/challenges-api/leaderboard', webSessionAuth, requireSessionUser, leaderboardHandler);
-  router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, meRankingHandler);
-  router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, meBreakdownHandler);
+  router.get('/challenges-api/seasons', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, seasonsHandler);
+  router.get('/challenges-api/challenges', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, challengesHandler);
+  router.get('/challenges-api/leaderboard', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, leaderboardHandler);
+  router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meRankingHandler);
+  router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, topochainMobileReadLimiter, meBreakdownHandler);
   // Terms review + consent (thin-shell migration): the native terms
   // screen is gone; SV settings renders the current terms and posts the
   // consent with the platform session. The handlers are hoisted function

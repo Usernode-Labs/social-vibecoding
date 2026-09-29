@@ -65,6 +65,21 @@ function isBrowser(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
+/**
+ * Is this the side panel's document (`?panel=1`, framed beside a running app)?
+ * lib/side-panel-mode.ts answers the same question from the same class; it is
+ * read inline here because tests/shell-snapshot.test.js runs this file as a
+ * plain script, where an import would not evaluate.
+ */
+function inSidePanel(): boolean {
+  try {
+    return typeof document !== 'undefined'
+      && document.documentElement.classList.contains('in-side-panel');
+  } catch {
+    return false;
+  }
+}
+
 export function readShellSnapshot(): ShellSnapshot | null {
   if (!isBrowser()) return null;
   try {
@@ -95,7 +110,11 @@ export function readShellSnapshot(): ShellSnapshot | null {
  * would have each clobber the other's field on every navigation.
  */
 export function saveShellSnapshot(patch: Partial<Omit<ShellSnapshot, 'savedAt'>>): void {
-  if (!isBrowser()) return;
+  // NOT FROM THE SIDE PANEL'S DOCUMENT. It runs the same header writers as the
+  // top window, and what it would remember is the panel's page — so the next
+  // cold boot of the platform would paint "Messages" or "Workshop" over
+  // whatever it opens on. The top window owns this record.
+  if (!isBrowser() || inSidePanel()) return;
   try {
     const prev = readShellSnapshot();
     const next: ShellSnapshot = {
@@ -112,7 +131,7 @@ export function saveShellSnapshot(patch: Partial<Omit<ShellSnapshot, 'savedAt'>>
 }
 
 export function clearShellSnapshot(): void {
-  if (!isBrowser()) return;
+  if (!isBrowser() || inSidePanel()) return;
   try {
     window.localStorage.removeItem(KEY);
   } catch {

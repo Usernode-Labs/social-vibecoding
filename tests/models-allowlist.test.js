@@ -1,6 +1,6 @@
 // Tests for the model allowlist (src/services/models.js). Locks in the
 // resolve() fallback contract (a genuinely unknown model id — including
-// the now-removed Haiku 4.5 — coerces to DEFAULT_MODEL, Opus 5), the
+// the now-removed Haiku 4.5 — coerces to DEFAULT_MODEL, Opus 5.5), the
 // exact set list() exposes to GET /api/models after the #800 Haiku
 // removal, and the presence of the selector's `changeSize` guidance on
 // every entry.
@@ -19,8 +19,35 @@ test('an allowed Fable 5.1 selection resolves to itself', () => {
   assert.equal(models.resolve('claude-fable-5-1'), 'claude-fable-5-1');
 });
 
-test('an unknown model id resolves to the default model (Opus 5)', () => {
-  assert.equal(models.resolve('claude-nope'), 'claude-opus-5');
+test('an unknown model id resolves to the default model (Opus 5.5)', () => {
+  assert.equal(models.resolve('claude-nope'), 'claude-opus-5-5');
+});
+
+// #2818: Opus 5.5 replaced Opus 5. A stored pick of the retired id is no
+// longer allowed, and resolves to its successor BY NAME, so the mapping
+// does not depend on which model happens to be the default.
+test('the retired Opus 5 id resolves to Opus 5.5 (#2818)', () => {
+  assert.equal(models.isAllowed('claude-opus-5'), false);
+  assert.equal(models.resolve('claude-opus-5'), 'claude-opus-5-5');
+  assert.equal(models.RETIRED_MODELS['claude-opus-5'], 'claude-opus-5-5');
+  assert.equal(models.DEFAULT_MODEL, 'claude-opus-5-5');
+  for (const successor of Object.values(models.RETIRED_MODELS)) {
+    assert.equal(models.isAllowed(successor), true, `${successor} must be offered`);
+  }
+});
+
+test('the platform LLM default and the Fable fallback moved to Opus 5.5 (#2818)', () => {
+  const llm = require('../src/services/llm');
+  assert.equal(llm.DEFAULT_MODEL, models.DEFAULT_MODEL);
+  assert.equal(llm.FALLBACK_TARGET_MODEL, 'claude-opus-5-5');
+});
+
+test('Opus 5.5 is billed at its own $4/$20 rate, and a recorded Opus 5 turn at $5/$25', () => {
+  const llm = require('../src/services/llm');
+  const usage = { input_tokens: 1_000_000, output_tokens: 1_000_000 };
+  assert.equal(Math.round(llm.estimateCostCents(usage, 'claude-opus-5-5')), 2400);
+  assert.equal(Math.round(llm.estimateCostCents(usage, 'claude-opus-5')), 3000);
+  assert.equal(models.MODELS['claude-opus-5-5'].outputCostPerMTok, 20);
 });
 
 // #800: Haiku 4.5 is no longer user-selectable. The platform still calls
@@ -28,14 +55,14 @@ test('an unknown model id resolves to the default model (Opus 5)', () => {
 // allowlist gate — a stale stored selection has to coerce to the default.
 test('Haiku 4.5 is no longer an allowed model (#800)', () => {
   assert.equal(models.isAllowed('claude-haiku-4-5'), false);
-  assert.equal(models.resolve('claude-haiku-4-5'), 'claude-opus-5');
+  assert.equal(models.resolve('claude-haiku-4-5'), 'claude-opus-5-5');
 });
 
 test('list() exposes exactly the three model ids', () => {
   const ids = models.list().map((m) => m.id).sort();
   assert.deepEqual(ids, [
     'claude-fable-5-1',
-    'claude-opus-5',
+    'claude-opus-5-5',
     'claude-sonnet-5',
   ]);
 });

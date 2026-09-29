@@ -42,6 +42,20 @@ const selectVariants = cva('w-full rounded-lg', {
       // its own evidence to gather.
       plain:
         'bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200',
+      // The waitlist surveys' select — #waitlist-country, #more-group-size,
+      // #more-group-role — and the exact `<select>` counterpart of Input's
+      // `authWhite` box with its `bordered` ring, which is why it carries the
+      // focused border colour `default` and `plain` do not (#1529: iOS Safari
+      // paints no box-shadow on a natively-styled control, and a select is the
+      // control that report actually named).
+      //
+      // Pairing note: these three selects and the thirteen inputs beside them
+      // are ONE field shape, so the two tables have to be read together. Both
+      // are spread from `SURVEY_FIELD` / `SURVEY_SELECT` in
+      // features/auth/waitlist-shared.tsx rather than named at each call site,
+      // so the pair cannot drift apart a screen at a time.
+      authWhite:
+        'bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
     },
   },
   defaultVariants: { variant: 'default' },

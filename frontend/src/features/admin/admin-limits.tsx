@@ -5,12 +5,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 
-// Spend limits (#admin/limits) — the platform's LLM budget dials, plus the
-// Anthropic credit balance the remaining-credit figure is derived from.
+// Limits (#admin/limits) — the server's app limit, the platform's LLM budget
+// dials, and the Anthropic credit balance the remaining-credit figure is
+// derived from.
 //
-// PERMISSIONS: visible to any admin; every field and both Save buttons are
+// PERMISSIONS: visible to any admin; every field and every Save button is
 // gated on AdminConsole.canWrite() (canAdminWrite). The server enforces the
-// same on PUT /api/admin/limits and PUT /api/admin/anthropic-credits.
+// same on PUT /api/admin/app-limit, PUT /api/admin/limits and
+// PUT /api/admin/anthropic-credits.
 //
 // ── Sixth section out of the chassis (#1120 slice 21) ─────────────────
 //
@@ -69,13 +71,141 @@ function StatusLine({ id, status, okClass }: { id: string; status: Status | null
   );
 }
 
+// The server-wide app limit (services/app-limit.js). Its own card, endpoint
+// and Save, not a field of the spend form below: a different unit, a
+// different audience (it is what "This server is at its app limit" asks an
+// admin to raise), and the platform limit alert opens this section for it.
+//
+// The field is blank while the deploy's MAX_APPS is in force, with MAX_APPS
+// as its placeholder, and "Use MAX_APPS" clears a stored value. When the
+// deploy has switched the cap off (MAX_APPS=0) there is nothing to set, and
+// the card says so instead of offering a field the server would refuse.
+function AppLimitCard({ canWrite }: { canWrite: boolean }) {
+  const console_ = () => (window as any).AdminConsole;
+  const [data, setData] = useState<any>(null);
+  const [value, setValue] = useState('');
+  const [status, setStatus] = useState<Status | null>(null);
+  const [saving, setSaving] = useState(false);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const fill = useCallback((next: any) => {
+    setData(next);
+    setValue(next && next.setting ? String(next.setting.value) : '');
+  }, []);
+
+  useEffect(() => {
+    (async () => {
+      const { data: next } = await console_().fetchJson('/api/admin/app-limit');
+      if (alive.current && next && typeof next === 'object') fill(next);
+    })();
+  }, [fill]);
+
+  const put = async (limit: number | null) => {
+    setStatus(null);
+    setSaving(true);
+    try {
+      const res = await fetch('/api/admin/app-limit', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit }),
+      });
+      const next = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(next.error || `Save failed (${res.status})`);
+      if (!alive.current) return;
+      fill(next);
+      setStatus({ text: limit === null ? 'Using MAX_APPS again.' : 'Saved. It applies within ten seconds.', tone: 'ok' });
+    } catch (err: any) {
+      if (alive.current) setStatus({ text: err.message, tone: 'err' });
+    } finally {
+      if (alive.current) setSaving(false);
+    }
+  };
+
+  const save = () => {
+    const raw = value.trim();
+    if (!raw) { put(null); return; }
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n < 1) {
+      setStatus({ text: 'Enter a whole number of apps, 1 or more.', tone: 'err' });
+      return;
+    }
+    put(n);
+  };
+
+  const off = data && data.source === 'disabled';
+  const usage = !data ? 'Loading…'
+    : off ? `${data.used} live apps · no limit`
+      : `${data.used} of ${data.limit} live apps`;
+  let source = '';
+  if (data && off) {
+    source = 'The deploy has switched the limit off (MAX_APPS is 0), so anyone with app slots can create apps.';
+  } else if (data && data.source === 'admin') {
+    const who = data.setting.updatedBy ? ` by @${data.setting.updatedBy}` : '';
+    const when = data.setting.updatedAt ? ` on ${String(data.setting.updatedAt).slice(0, 10)}` : '';
+    source = `Set here${who}${when}. Without it, the deploy's MAX_APPS (${data.defaultLimit}) applies.`;
+  } else if (data) {
+    source = `Using the deploy's MAX_APPS (${data.defaultLimit}). Enter a number to change it here.`;
+  }
+
+  return (
+    <div id="admin-app-limit" className={`${AdminUI.card} p-4`}>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className={AdminUI.cardTitle}>App limit</h2>
+        <span id="admin-app-limit-usage" className="text-xs text-zinc-500 dark:text-zinc-400">{usage}</span>
+      </div>
+      <p className={`${AdminUI.muted} mb-3`}>
+        How many live apps the whole server allows. At the limit, everyone but full admins is
+        told the server is full when they create or fork an app. Apps that failed to build
+        do not count. Full admins are notified at {data ? data.warnPercent : 80}% of the limit
+        and again when it is reached. A change applies to every server within ten seconds,
+        with no deploy.
+      </p>
+      {off ? null : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <label className="block">
+            <span className={LABEL}>Live apps allowed</span>
+            <input id="admin-app-limit-input" type="number" min="1" step="1" inputMode="numeric"
+              disabled={!canWrite || !data}
+              className={`${AdminUI.input} mt-1 font-mono disabled:opacity-60`}
+              placeholder={data ? String(data.defaultLimit) : ''}
+              value={value} onChange={(e) => setValue(e.target.value)} />
+          </label>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p id="admin-app-limit-source" className="text-xs text-zinc-500 dark:text-zinc-400">{source}</p>
+        {canWrite && !off ? (
+          <div className="flex items-center gap-2">
+            {data && data.source === 'admin' ? (
+              <button id="admin-app-limit-reset-btn" type="button" className={AdminUI.btn.outline}
+                disabled={saving} onClick={() => put(null)}>Use MAX_APPS</button>
+            ) : null}
+            <button id="admin-save-app-limit-btn" type="button" className={AdminUI.btn.primary}
+              disabled={saving || !data} onClick={save}>Save</button>
+          </div>
+        ) : null}
+      </div>
+      <StatusLine id="admin-app-limit-status" status={status} okClass="text-green-800 dark:text-green-400" />
+    </div>
+  );
+}
+
 function LimitsSection() {
   const console_ = () => (window as any).AdminConsole;
   const canWrite = !!console_()?.canWrite();
   const dis = !canWrite;
 
-  const [user, setUser] = useState('');
+  // #2571: there is no per-user DAILY field any more — that cap is switched
+  // off platform-wide (src/services/limits.js) and the weekly one is the
+  // account's only limit. The stored `user_daily_limit_cents` setting and
+  // the PUT field that writes it are retained so an operator's historical
+  // value is not destroyed; this page simply no longer offers it.
   const [weekly, setWeekly] = useState('');
+  // #838: the two higher identity tiers. Blank means "same as the unverified
+  // cap" (nothing stored), and saving a blank clears a stored value.
+  const [weeklySocial, setWeeklySocial] = useState('');
+  const [weeklyZk, setWeeklyZk] = useState('');
   const [global, setGlobal] = useState('');
   const [system, setSystem] = useState('');
   const [limitsStatus, setLimitsStatus] = useState<Status | null>(null);
@@ -93,8 +223,11 @@ function LimitsSection() {
   }, []);
 
   const fillLimits = useCallback((data: any) => {
-    setUser(console_().centsToDollars(data.user_daily_limit_cents));
     setWeekly(console_().centsToDollars(data.user_weekly_limit_cents));
+    setWeeklySocial(data.user_weekly_limit_social_cents == null
+      ? '' : console_().centsToDollars(data.user_weekly_limit_social_cents));
+    setWeeklyZk(data.user_weekly_limit_zk_cents == null
+      ? '' : console_().centsToDollars(data.user_weekly_limit_zk_cents));
     setGlobal(console_().centsToDollars(data.global_daily_limit_cents));
     setSystem(console_().centsToDollars(data.system_tokens_daily_limit_cents));
   }, []);
@@ -134,17 +267,20 @@ function LimitsSection() {
 
   const saveLimits = async () => {
     setLimitsStatus(null);
-    const body: Record<string, number> = {};
+    const body: Record<string, number | null> = {};
     try {
-      const u = console_().parseDollarsToCents('Default per-user', user.trim());
-      const w = console_().parseDollarsToCents('Default per-user weekly', weekly.trim());
+      const w = console_().parseDollarsToCents('Weekly cap, unverified', weekly.trim());
       const g = console_().parseDollarsToCents('Global', global.trim());
       const s = console_().parseDollarsToCents('System tokens', system.trim());
-      if (u !== null) body.user = u;
+      // #838: a blank tier field is sent as null, which clears the stored
+      // value so that tier inherits the unverified cap again.
+      const ws = console_().parseDollarsToCents('Weekly cap, GitHub and X', weeklySocial.trim());
+      const wz = console_().parseDollarsToCents('Weekly cap, zkPassport', weeklyZk.trim());
       if (w !== null) body.weekly = w;
+      body.weeklySocial = ws;
+      body.weeklyZk = wz;
       if (g !== null) body.global = g;
       if (s !== null) body.system = s;
-      if (!Object.keys(body).length) throw new Error('Provide at least one value.');
     } catch (err: any) {
       setLimitsStatus({ text: err.message, tone: 'err' });
       return;
@@ -201,28 +337,46 @@ function LimitsSection() {
 
   return (
     <>
-      <div className={`${AdminUI.card} p-4`}>
+      <AppLimitCard canWrite={canWrite} />
+
+      <div className={`${AdminUI.card} p-4 mt-4`}>
         <div className="flex items-center justify-between mb-3">
           <h2 className={AdminUI.cardTitle}>LLM Spend Limits</h2>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · daily resets midnight UTC, weekly Monday 00:00 UTC</span>
+          <span className="text-xs text-zinc-500 dark:text-zinc-400">USD · per-user cap resets Monday 00:00 UTC, platform caps midnight UTC</span>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
-          <MoneyField id="admin-limit-user" label="Default per-user daily cap" placeholder="25.00"
-            value={user} onChange={setUser} disabled={dis} />
-          <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap" placeholder="175.00"
-            title="Enforced on top of the daily cap. Set either to 0 to switch that window off; with both at 0 the account has no allowance."
-            value={weekly} onChange={setWeekly} disabled={dis} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
           <MoneyField id="admin-limit-global" label="Global daily cap" placeholder="200.00"
             value={global} onChange={setGlobal} disabled={dis} />
           <MoneyField id="admin-limit-system" label="System tokens daily cap" placeholder="25.00"
             title="Funds platform-driven merge-conflict / sync-with-main resolution turns"
             value={system} onChange={setSystem} disabled={dis} />
         </div>
+        {/* #838: the weekly cap by identity tier. The first field keeps the
+            #admin-limit-weekly id: it is the same stored value it always was
+            (the base weekly cap), now read as the unverified tier's, and a
+            declared check selects on it. The two others inherit it while
+            blank. */}
+        <div id="admin-limit-tiers" className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+          <MoneyField id="admin-limit-weekly" label="Default per-user weekly cap (no verified identity)" placeholder="50.00"
+            title="The account's only AI limit, for accounts with no verified identity, and the value the other two tiers inherit while blank. It covers every kind of spend the platform funds. Set it to 0 and the account has no allowance at all."
+            value={weekly} onChange={setWeekly} disabled={dis} />
+          <MoneyField id="admin-limit-weekly-social" label="Weekly cap: GitHub and X verified" placeholder="same as unverified"
+            title="For accounts that have verified both a GitHub and an X account. Blank inherits the unverified cap."
+            value={weeklySocial} onChange={setWeeklySocial} disabled={dis} />
+          <MoneyField id="admin-limit-weekly-zk" label="Weekly cap: zkPassport verified" placeholder="same as unverified"
+            title="For accounts that have completed a zkPassport-verified challenge. Blank inherits the unverified cap."
+            value={weeklyZk} onChange={setWeeklyZk} disabled={dis} />
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-xs text-zinc-500 dark:text-zinc-400">
-            Per-user overrides live in the Users section; these are the platform defaults.
-            A cap set to 0 switches that window off. With both the daily and the weekly
-            cap at 0, the account has no AI allowance at all.
+            An account has ONE AI limit and it is weekly: the same pool covers work run on
+            the platform's own Claude key and work run on the account's included OpenRouter
+            key. Per-user overrides live in the Users section; these are the platform
+            defaults. The weekly cap follows the account's identity tier: the default
+            applies to accounts with no verified identity, and the GitHub-and-X and
+            zkPassport tiers use the default while left blank. A cap set to 0 means the
+            account has no AI allowance at all. The two daily caps above are the platform's
+            own safety limits, not a per-user one.
           </p>
           {canWrite ? (
             <button id="admin-save-limits-btn" type="button" className={AdminUI.btn.primary}
@@ -292,4 +446,5 @@ const AdminLimits = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminLimits = AdminLimits;
 
-export { AdminLimits };
+// AppLimitCard is exported for tests/app-limit.test.js, which renders it.
+export { AdminLimits, AppLimitCard };

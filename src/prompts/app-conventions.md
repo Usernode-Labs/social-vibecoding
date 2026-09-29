@@ -37,21 +37,20 @@ Ordered by how badly an agent working offline gets each one wrong.
 <!-- work-order:begin -->
 1. **Three files are centrally hosted — never vendor them.** Every app
    loads the bridge, the native UI kit and (on the runtime path) Tailwind
-   from the platform's own origin. If your container cannot reach that
-   host the app renders unstyled and native-kit assertions fail *locally*
-   — that is the sandbox, not your change. Copying any of them into the
-   repo is forbidden: the copy freezes the day you make it, and the
-   fleet-wide fix and one-redeploy rollback central hosting buys stop
-   reaching the app. No automated check catches that, so this rule is the
-   only thing standing between you and a stale fork of platform
-   infrastructure. A `cdn.tailwindcss.com` tag is a different thing — a
-   legacy state many apps are still in, whose checks pass. Don't add one
-   to new code (new apps compile their own stylesheet at build time; the
-   hosted `usernode-tailwind/v1/tailwind.js` is the escape hatch), don't
-   "fix" one as a drive-by, and when migrating IS the task swap it to
-   that URL, including any copy of the CDN hostname in the app's `sw.js`
-   precache list. The staging preview the platform builds is the
-   authority on styling.
+   by relative path (`/usernode-bridge/v1/…`), never a hostname. A local
+   container doesn't serve them, so the app renders unstyled and
+   native-kit assertions fail *locally* — the sandbox, not your change.
+   Copying any of them into the repo is forbidden: the copy freezes the
+   day you make it, and the fleet-wide fix and one-redeploy rollback
+   central hosting buys stop reaching the app.
+   No automated check catches that; this rule is all that stands between
+   you and a stale fork of platform infrastructure.
+   A `cdn.tailwindcss.com` tag is a different thing — a legacy state many
+   apps are still in, whose checks pass. Don't add one to new code (new apps compile their own stylesheet at build
+   time; `/usernode-tailwind/v1/tailwind.js` is the escape hatch), don't
+   "fix" one as a drive-by, and when migrating IS the task swap it to that
+   path, including any copy of the CDN hostname in the app's `sw.js`
+   precache list. The staging preview is the authority on styling.
    **The bridge tag is not conditional on calling a bridge API.** It is
    also how the app ANSWERS the shell, so an app that omits it is invisible
    to anything that asks the frame a question — offline launch included.
@@ -79,19 +78,19 @@ Ordered by how badly an agent working offline gets each one wrong.
    username. A public table must never carry a foreign key to a private
    one. Schema is applied idempotently on boot: `CREATE TABLE IF NOT
    EXISTS`, `ADD COLUMN IF NOT EXISTS`.
-5. **Add or extend a `dapp.json` test in the same commit as any
-   user-visible screen.** Each entry is `{ name, path, expectSelector? ,
-   expectText? }`; every proposal also gets a free "loads with no
-   console errors" check. Checks GATE MERGE — a proposal whose checks
+5. **For every user-visible screen, add or extend a `dapp.json` test in
+   the same commit.** Use `{ name, path, expectSelector?, expectText? }`;
+   tag one representative flow with
+   `{ id, visual: true, impact: ["path/**"] }`. Every proposal also gets a
+   free "loads with no console errors" check. Checks GATE MERGE — a proposal whose checks
    are not passing cannot merge even with a winning vote. The test route
    renders against an empty staging database, so seed what it needs.
-   If the changed UI is only reachable by interacting, add a deep link
-   (a query param handled at boot) so a URL can reach it — and point the
-   testing route you report (`path:` in your final message, or
-   `testingPaths` when you submit through the connector) at THAT screen,
-   never at the home page. That route is what the before/after
-   screenshots the voters see are shot from, so a defaulted one shows
-   nothing of what you changed.
+   Demo routes are fine for regression tests, but never add a
+   screenshot-only query parameter. After a visible change, call
+   `record_visual_evidence_intent` with the claim, real user flow, focus,
+   persona, viewports, and optional animation. Homeroom performs it against
+   exact base/head revisions and replays it twice. For a non-visual change,
+   record `impact: "none"` with a specific rationale.
 6. **Auth is iframe token injection — do not roll your own login.** The
    shell mints an RS256 JWT per user per app and injects it as
    `?token=`; the app verifies it with `USERNODE_JWT_PUBLIC_KEY`,
@@ -113,15 +112,15 @@ Ordered by how badly an agent working offline gets each one wrong.
    grant. Uploads go through `usernode.uploadFile()` (bridge) or
    `USERNODE_STORAGE_URL` (server); persist the returned URL, never
    image bytes in Postgres. Both are absent in staging — detect and
-   degrade. Handle checks go through the platform's user directory
-   (`usernode.lookupUser()` / `searchUsers()`, or `/users/lookup` on the
-   platform API) — never a guess from users your app has already seen.
+   degrade. App-directory reads use `USERNODE_PLATFORM_API_V1_URL`,
+   never a hardcoded host. Handle checks use `usernode.lookupUser()` /
+   `searchUsers()` — never a guess from users your app has already seen.
 9. **Install a SIGTERM/SIGINT shutdown handler** that stops accepting
    connections, drains for ~3 seconds, closes the pool and exits. For
-   standalone Docker, use exec-form `CMD ["node", "server.js"]`.
-10. **Kubernetes uses kpack/Paketo, not Dockerfiles.** Declare npm `build`
-    and `start` scripts and keep the lockfile current. `ensure:shell`, when
-    present, runs instead of `build`.
+   Dockerfile builds, use exec-form `CMD ["node", "server.js"]`.
+10. **`BUILD_ENGINE=auto`:** BuildKit prefers `Dockerfile.kubernetes`, then
+    `Dockerfile`; otherwise kpack. Use a numeric non-root `USER` and writable
+    app paths. Keep npm scripts/lockfile for kpack.
 
 One thing NOT to apply: the full document contains a section titled
 "Don't `git push` yourself". That is addressed to Homeroom's own build
@@ -137,23 +136,50 @@ exactly what you are being asked to do.
 Each app is a Node.js / Express server with an HTML + JS + Tailwind
 frontend and its own PostgreSQL database. Apps listen on port 3000.
 
-The build contract depends on the platform runtime:
+The build contract depends on the platform runtime and configured build engine:
 
-- **Kubernetes:** kpack builds the exact Git revision with a platform-owned
-  Paketo builder. It does not execute the app's `Dockerfile`. Declare asset
-  compilation in `package.json`'s `build` script and launch in `start`
-  (normally `node server.js`); commit the matching lockfile. A declared
-  `ensure:shell` script takes precedence over `build`, so it must produce
-  all required assets. The platform self-app uses this ordering.
+- **Kubernetes:** `BUILD_ENGINE` selects how the exact Git revision is built.
+  - `auto`: BuildKit uses the first Dockerfile present from
+    `BUILDKIT_DOCKERFILES` (default: `Dockerfile.kubernetes,Dockerfile`).
+    Trees without a matching Dockerfile use kpack/Paketo. If the BuildKit
+    infrastructure is unavailable, `auto` can also fall back to kpack;
+    a Dockerfile build failure does not trigger that fallback.
+  - `buildkit`: requires a matching Dockerfile and a working BuildKit
+    infrastructure; failures are reported without falling back to kpack.
+  - `kpack` (the code default when unset): uses the platform-owned Paketo
+    builder and ignores Dockerfiles.
+
+  For BuildKit, edit the selected Dockerfile's `RUN`, `COPY`, `ENTRYPOINT`
+  and `CMD` instructions to control the build and launch process. For kpack,
+  declare asset compilation in `package.json`'s `build` script and launch
+  in `start` (normally `node server.js`); commit the matching lockfile.
+  A declared `ensure:shell` script takes precedence over `build` on kpack,
+  so it must produce all required assets.
 - **Standalone Docker:** the platform builds the repository's root
   `Dockerfile`. Keep its asset compilation aligned with `npm run build`
   so both runtimes produce the same assets.
 
-Do not attempt to fix Kubernetes builds by editing Dockerfile `RUN`, `COPY`,
-or `CMD` instructions alone. OS packages or build tools missing from the
-platform builder need a platform-level change; report that requirement.
-The legacy Tailwind compatibility buildpack covers known older app layouts,
-not arbitrary Dockerfile instructions. Prefer an explicit npm build script.
+Check the build logs for the engine actually used before choosing a fix.
+On kpack, Dockerfile edits have no effect: missing OS packages or build tools
+in the platform builder need a platform-level change; report that requirement.
+Its legacy Tailwind compatibility buildpack covers known older app layouts,
+not arbitrary Dockerfile instructions. Keep asset compilation in an explicit
+npm build script and invoke it from the Dockerfile too.
+
+**Kubernetes app and preview images must run as non-root.** Their Pods set
+`runAsNonRoot: true` without supplying a `runAsUser`. In the Dockerfile's
+final runtime stage, declare a numeric non-zero user, such as
+`USER 1000:1000` for the scaffold's Node image. Give that user ownership of
+paths the app must write (for example with `COPY --chown=1000:1000` or a
+targeted `chown`). A missing `USER` on a root-default base image produces
+`CreateContainerConfigError`; a symbolic `USER node` can also be rejected
+because Kubernetes cannot verify its UID. Rootless BuildKit describes the
+builder's isolation, not the output image's runtime user.
+
+Existing app repositories and older proposal branches keep their own
+Dockerfiles when the platform template changes. Update the affected source,
+rebuild and redeploy it; restarting the unchanged image cannot fix its user.
+Keep non-root enforcement enabled.
 
 Required env vars at runtime (provided by the harness):
 
@@ -348,11 +374,14 @@ Rules:
 - **Serve `503` from `/health` once `shuttingDown` is true** so anything
   polling readiness sees the container leaving rotation rather than a
   connection reset.
-- **For standalone Docker, use exec-form `CMD`** — `CMD ["node", "server.js"]`,
-  not `CMD node server.js`. Shell form can interpose `/bin/sh` between the
+- **For Dockerfile builds (BuildKit or standalone Docker), use exec-form
+  `CMD`** — `CMD ["node", "server.js"]`, not `CMD node server.js`.
+  Shell form can interpose `/bin/sh` between the
   init process and Node, and a shell that doesn't `exec` swallows the
-  signal. Kubernetes app images use the Paketo launch process and the npm
-  `start` script; changing the Dockerfile does not change that launch path.
+  signal. Kubernetes images built by kpack use the Paketo launch process
+  and the npm `start` script; Dockerfile edits do not affect that path.
+  Kubernetes images built by BuildKit use the selected Dockerfile's launch
+  instructions.
 
 Apps generated before this convention may have no application-level drain.
 Do not rely on an init process or the runtime to close their transactions.
@@ -521,21 +550,19 @@ the closest thing to production the gate can reach.
 
 ### Make the changed screen URL-reachable — screenshot-state deep links
 
-The before/after screenshots and the "Test this change" button can only
-**navigate to a URL** — they never click, play, or fill anything in. A
-screen reached by interacting (starting a game match, opening a modal or
-bottom sheet, stepping through a wizard) is invisible to them unless some
-URL renders it directly; without one the screenshots fall back to the
-home screen and show a screen the change never touched.
+Legacy proposals could only navigate to a URL, so this section historically
+required a query/hash parameter that forced an interaction-only state open.
+Agent-authored visual evidence removes that requirement: the evidence agent
+can perform the real clicks, typing, keyboard input, selection, hover,
+scrolling, and bounded pointer gestures, then ordinary platform code replays
+the accepted plan twice. It never falls back to the home screen.
 
-So when your change affects UI that plain navigation can't reach, you
-MUST make it reachable: add a **screenshot-state deep link** — a query or
-hash param the app handles at boot to programmatically enter that state —
-and point the TESTING block's `path:` at it. Example: a game's settlement
-panel only exists mid-match, so handle `/?shot=settlement-sheet` by
-starting a solo match on a fixed map seed, selecting the player
-settlement and opening its panel; then emit
-`path: /?shot=settlement-sheet`.
+Do **not** add a screenshot-only route for a modal, bottom sheet, wizard, game
+state, or menu. Call `record_visual_evidence_intent` instead and describe how a
+person reaches the state. A deterministic demo/deep route is still useful when
+it is part of the product, seeds a durable `dapp.json` regression check, or
+gives reviewers a stable "Test this change" entry point; in those cases keep
+it as an actual supported testing surface rather than capture-only plumbing.
 
 Rules:
 
@@ -554,11 +581,9 @@ Rules:
 - **Verify it renders.** On a build turn, load the exact `path:` URL in
   the in-loop browser and confirm the changed UI is actually visible
   before you commit.
-- Expect the FIRST proposal that adds a state link to show the home
-  screen on its "before" side — production doesn't know the param yet.
-  That's fine: the "after" side is what matters, and every later proposal
-  to the same screen gets a real before shot. State links accumulate in
-  the repo exactly like `dapp.json` tests.
+- If a new screen genuinely has no base-side equivalent, declare a stable
+  parent container and assertions that prove absence before and presence
+  after. Do not manufacture a base-only fallback route.
 
 Two related notes on `path:` form:
 
@@ -631,7 +656,14 @@ repo. Shape:
 ```json
 {
   "tests": [
-    { "name": "Board renders", "path": "/board?demo=1", "expectSelector": ".board" },
+    {
+      "id": "board.default",
+      "name": "Board renders",
+      "path": "/board?demo=1",
+      "expectSelector": ".board",
+      "visual": true,
+      "impact": ["frontend/src/features/board/**", "public/js/board.js"]
+    },
     { "name": "Settings opens", "path": "/settings", "expectText": "Preferences" }
   ]
 }
@@ -651,6 +683,22 @@ Per-test fields:
 - `allowConsoleErrors` — set `true` only for a route that legitimately
   logs errors; it opts that one test out of the baseline no-console-errors
   rule.
+- `visual` — set `true` on representative flows eligible for before/after
+  capture; the check must have `expectSelector` or `expectText` so Homeroom
+  knows the state is ready.
+- `id` — required with `visual: true`; a stable lowercase scenario name
+  (for example `settings.profile-edit`).
+- `impact` — required with `visual: true`; up to 20 repo-relative globs using
+  `*`, `?`, or `**`. A changed file must match. Keep this mapping in
+  `dapp.json`, not in source functions.
+
+Visual scenario metadata remains useful executable documentation and durable
+regression coverage. Reviewer-facing visual evidence is proposal-specific:
+the authoring agent declares up to three claims and can submit the typed UI
+flow it used during implementation. A purpose-bound evidence agent can also
+explore the exact base/head previews to produce a plan. The platform replays
+either plan twice and verifies the generated media. No matching scenario and no
+submitted legacy route is ever permission to publish `/` as a fallback.
 
 When you add or change a user-visible screen, **add or extend a test for
 it** in the same commit, pointing it at the same route(s) you put in the
@@ -968,6 +1016,88 @@ Rules:
   an image, commits the file). The change takes effect when the PR is
   voted in, merged, and redeployed — not before. Don't mutate the
   icon through any other channel.
+
+#### Icon style: one set on the home screen
+
+When you give an app an icon, draw it in this style unless the group
+has chosen its own artwork. Every app's tile then reads as part of one
+set instead of a mix of emoji, letters and one-off logos.
+
+- **Where the file goes.** Commit it as `brand/icon.png`, declare
+  `{ "icon": { "image": "brand/icon.png" } }`, and add a short
+  `brand/ICON.md` naming the glyph and colour so someone can redraw it.
+  Keep it out of `public/`, `assets/` and other served folders: the
+  platform reads the file at deploy time and the app never serves it,
+  and a file under those folders counts as a browser UI change, so an
+  icon-only proposal there cannot declare `visualEvidence` impact
+  `none`.
+- **Format.** A 512 × 512 PNG: opaque, full bleed, square corners (the
+  tile rounds and crops it), no text or letters. A render in this style
+  is 50–80 KB, well under the 256 KB limit. SVG is not accepted, so
+  render the template below to PNG (for example
+  `rsvg-convert -w 512 -h 512 icon.svg -o brand/icon.png`).
+- **Glyph.** One [Lucide](https://lucide.dev) icon (ISC licence) in
+  white, with Lucide's own 2px round strokes on its 24-unit grid,
+  scaled × 12 into the middle 288 px (112 px of margin on each side)
+  over a soft drop shadow. Pick the object the app is about (a chef hat
+  for recipes, a dumbbell for a gym log), not an abstract mark. When
+  Lucide has nothing that fits, draw one on the same grid with the same
+  strokes; never mix in a filled, multicolour or emoji glyph.
+- **Colour.** A diagonal two-stop gradient, top left to bottom right,
+  from this palette, under a faint white highlight at the top left.
+  Choose by what the app is for:
+
+  | Hue | From | To | For |
+  |---|---|---|---|
+  | orange | `#FFA552` | `#E05A12` | food, making, building |
+  | amber | `#FBB43C` | `#C9570A` | pets, notes, farming, time |
+  | brown | `#C98C5E` | `#6E3F22` | coffee, crafts |
+  | red | `#FF7163` | `#D1321F` | sport, video, voting, places |
+  | magenta | `#FF6AB8` | `#CF1F74` | social, art, people, personal pages |
+  | violet | `#B574FF` | `#7327DB` | games, quests, rankings |
+  | indigo | `#8577FF` | `#4432D1` | lists, work, markets, security |
+  | blue | `#5B9BFF` | `#1F57E6` | tools, lists, language, weather |
+  | teal | `#34D3C3` | `#0B7D84` | kids, drawing, surveys |
+  | green | `#3DD68A` | `#0E8A4C` | money, growth, luck |
+  | slate | `#6A7B93` | `#27313F` | utilities, tests, diagnostics, spooky |
+
+  A fork keeps its parent's glyph on a different hue, so the two tiles
+  can be told apart.
+- **Keep the emoji** beside the image when the app had one
+  (`{ "image": "brand/icon.png", "emoji": "🍳" }`): it is what the tile
+  shows if the image ever fails validation.
+
+The template, with the orange pair filled in and one Lucide glyph's
+`<path>`/`<circle>` elements pasted into the inner group:
+
+```svg
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#FFA552"/><stop offset="1" stop-color="#E05A12"/>
+    </linearGradient>
+    <radialGradient id="gloss" cx="0.25" cy="0.12" r="0.8">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" filterUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)"/>
+  <rect width="512" height="512" fill="url(#gloss)"/>
+  <g filter="url(#shadow)">
+    <g transform="translate(112 112) scale(12)" fill="none" stroke="#fff"
+       stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <!-- the glyph's elements, copied from its Lucide SVG -->
+    </g>
+  </g>
+</svg>
+```
+
+Keep the shadow filter on the outer, unscaled group: on the scaled
+group its offset and blur are multiplied by 12 and leave a visible
+box on the tile.
 
 Per-field rules:
 
@@ -1505,6 +1635,76 @@ await fetch(`${process.env.USERNODE_STORAGE_URL}/files?filename=${encodeURICompo
   (smaller quota, deleted after 7 days) — fine for testing, never for
   durable content.
 
+## App-facing platform API — use the pinned v1 base
+
+Server-side app features that read Homeroom data use the private,
+read-only app-platform API. Never hard-code a public platform hostname:
+domains can move, and a redirect can turn an expected JSON response into
+HTML. The platform injects both of these reserved locators in production
+and staging containers:
+
+- `USERNODE_PLATFORM_API_V1_URL` — the preferred, version-pinned base
+  (`http://usernode:3000/api/app-platform/v1` in-network).
+- `USERNODE_PLATFORM_API_URL` — the original unversioned base, retained
+  as a v1 compatibility alias for existing app source and deployments.
+
+Use one fallback while older deployments age out:
+
+```js
+const PLATFORM_API_BASE = process.env.USERNODE_PLATFORM_API_V1_URL
+  || process.env.USERNODE_PLATFORM_API_URL;
+```
+
+Both names and the whole `USERNODE_PLATFORM_API_*` family are reserved
+manifest keys: do not declare them in `dapp.json`. Production also gets
+`USERNODE_LLM_PROXY_TOKEN`, the opaque app credential used by token-gated
+routes. Staging gets the URL locators but deliberately no app token;
+unreviewed code must use the endpoint's documented user-token fallback or
+an obvious staging fixture.
+
+### Compatibility guarantee
+
+Within v1, existing route paths, response field names, field types, and
+field meanings stay compatible. The platform may add endpoints or response
+fields, tighten a security check, correct a bug, or change a rate limit;
+clients must ignore fields they do not recognise. A planned breaking shape
+requires a new `/v2` path and `USERNODE_PLATFORM_API_V2_URL` — v1 is never
+silently repointed. The unversioned paths and
+`USERNODE_PLATFORM_API_URL` remain aliases of v1 for legacy apps.
+
+## App directory — apps and contributors
+
+`GET /apps` on `PLATFORM_API_BASE` returns the public Homeroom app
+directory for server-side pickers, rankings, and cross-app discovery. It
+uses `x-usernode-app-token`; no user token or LLM consent grant is needed
+because every returned field is already public:
+
+```js
+const DIRECTORY_ENABLED = !!PLATFORM_API_BASE
+  && !!process.env.USERNODE_LLM_PROXY_TOKEN;
+
+const resp = await fetch(`${PLATFORM_API_BASE}/apps?include_wallets=0`, {
+  headers: {
+    'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN,
+  },
+});
+if (!resp.ok) throw new Error(`app directory returned ${resp.status}`);
+const { apps } = await resp.json();
+```
+
+Each app carries `id`, `name`, `slug`, deployment/visibility timestamps,
+`icon_emoji`, `icon_url`, `active_users`, `requires_login`, its canonical
+`url`, and `contributors`. A contributor is
+`{ user_id, username, wallet_address }`; `?include_wallets=0` omits the
+wallet field. Only view-public, non-platform apps with a usable deployment
+appear. Use the returned `url`, never rebuild a hostname from `slug`.
+`icon_url` is relative to `USERNODE_PLATFORM_ORIGIN` when present.
+
+Cache the response for 30–60 seconds; the route allows 60 requests/minute
+per app. In staging, `DIRECTORY_ENABLED` is false because there is no app
+token. Serve a short, obviously fake directory fixture so the screen stays
+reviewable without giving unreviewed code platform-wide access.
+
 ## App governance feed — the app's own proposal/vote/merge activity
 
 The platform tracks every proposal, vote, and merge for every app.
@@ -1513,21 +1713,11 @@ render live governance surfaces — a "what's changing" strip, a
 changelog screen — instead of hand-maintaining a shadow table of the
 same data.
 
-Production containers receive one extra env var (platform-injected;
-`USERNODE_PLATFORM_API_URL` and the whole `USERNODE_PLATFORM_API_*`
-family are reserved manifest keys you must not declare):
-
-- `USERNODE_PLATFORM_API_URL` — base URL of the app-facing platform
-  API (`http://usernode:3000/api/app-platform` in-network).
-
-Auth reuses the app's existing credential,
-`USERNODE_LLM_PROXY_TOKEN` (see "App LLM access"). **Staging
-containers receive neither**, and standalone deploys have no platform
-to call — always detect absence and degrade gracefully, exactly like
-the LLM pattern:
+Auth reuses `USERNODE_LLM_PROXY_TOKEN` (see "App LLM access"). Always
+detect the missing staging/standalone credential and degrade gracefully:
 
 ```js
-const FEED_ENABLED = !!process.env.USERNODE_PLATFORM_API_URL
+const FEED_ENABLED = !!PLATFORM_API_BASE
   && !!process.env.USERNODE_LLM_PROXY_TOKEN;
 // When false: hide the strip, or serve your staging mock feed (below).
 ```
@@ -1545,7 +1735,7 @@ feed.
 
 ```js
 const resp = await fetch(
-  `${process.env.USERNODE_PLATFORM_API_URL}/governance/feed?limit=10`,
+  `${PLATFORM_API_BASE}/governance/feed?limit=10`,
   { headers: { 'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN } }
 );
 const { items, has_more, next_cursor } = await resp.json();
@@ -1633,9 +1823,10 @@ here.
 
 ### From your server (production AND staging previews)
 
-`USERNODE_PLATFORM_API_URL` is injected into **both** production and
-staging containers (unlike every other platform credential pair), so
-one server-side code path covers both environments. The header rule:
+`USERNODE_PLATFORM_API_V1_URL` and its legacy fallback are injected into
+**both** production and staging containers (unlike every platform
+credential), so one server-side code path covers both environments. The
+header rule:
 
 - **Production** — send `x-usernode-app-token`
   (`USERNODE_LLM_PROXY_TOKEN`) **and** `x-usernode-user-token` (the
@@ -1655,7 +1846,7 @@ if (process.env.USERNODE_LLM_PROXY_TOKEN) {
   headers['x-usernode-app-token'] = process.env.USERNODE_LLM_PROXY_TOKEN;
 }
 const resp = await fetch(
-  `${process.env.USERNODE_PLATFORM_API_URL}/users/lookup` +
+  `${PLATFORM_API_BASE}/users/lookup` +
   `?username=${encodeURIComponent(handle)}`,
   { headers }
 );
@@ -1664,8 +1855,8 @@ const { found, user, ambiguous } = await resp.json();
 
 This user-token-only fallback exists **only** on the two `/users/*`
 endpoints. The governance feed still requires the app token, so its
-`FEED_ENABLED` check above (which ANDs `USERNODE_PLATFORM_API_URL`
-**and** `USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
+`FEED_ENABLED` check above (which ANDs `PLATFORM_API_BASE` **and**
+`USERNODE_LLM_PROXY_TOKEN`) remains correct and required — a
 URL-only check would try the feed in previews and get a 401.
 
 Responses:
@@ -1734,23 +1925,54 @@ credentials, and the only outbound calls back to the platform are
 the push/PR proxy endpoints (which only accept the session's
 canonical branch). Commit cleanly and let the harness finish the job.
 
+## Outside dev-chat: check that your checkout is current
+
+For a coding agent working on an app from its own checkout: Claude Code on
+someone's machine or on the web, Codex, and the like. Inside Homeroom's
+dev-chat the platform fixes your base commit; skip this section.
+
+The checkout you were handed may be a fork whose `main` is behind the app's
+canonical repository, and nothing in it says so: `git fetch origin` compares
+the fork with itself. So before you read code to answer a question about how
+the app behaves now, not only before you edit, check against the canonical
+repository. Homeroom names it in `.claude/homeroom-canonical-repo` in the
+repos it creates, imports and forks; otherwise it is the app's `repoUrl` from
+the connector's `list_apps`, and the connector's `get_checkout_status`
+answers the whole question for you.
+
+```sh
+git fetch <canonical repository URL> main
+git merge-base --is-ancestor FETCH_HEAD HEAD && echo current || echo behind
+```
+
+`behind` means the checkout does not contain the canonical `main`. To answer
+a question, read the canonical code instead: `git show FETCH_HEAD:<path>` or
+`git grep <pattern> FETCH_HEAD`. To change code, start from the exact base
+commit your work order (`prepare_work`) gives, and never merge or rebase onto
+the canonical `main` yourself: which commit a change is diffed against
+decides what the group votes on.
+
+Scaffolded repos run this check when a Claude Code session starts
+(`.claude/hooks/homeroom-freshness.sh`) and tell you when you are behind. It
+is silent offline, so its silence is not proof the checkout is current.
+
 ## Bridge — centrally hosted (not vendored)
 
 `usernode-bridge.js` is the one piece of cross-dapp infrastructure
 that is **not vendored**. It is served as a single canonical copy
-from the Homeroom platform itself:
+from the Homeroom platform itself, at this path on every app's own
+address:
 
 ```
-{{PLATFORM_ORIGIN}}/usernode-bridge/v1/bridge.js
+/usernode-bridge/v1/bridge.js
 ```
 
 Canonical source: `social-vibecoding/public/usernode-bridge/v1/bridge.js`.
 
-Every dapp's HTML shell loads this URL directly. Cross-origin
-`<script>` tags are allowed by default; no CORS dance is needed:
+Every dapp's HTML shell loads it by that relative path, with no hostname:
 
 ```html
-<script src="{{PLATFORM_ORIGIN}}/usernode-bridge/v1/bridge.js"></script>
+<script src="/usernode-bridge/v1/bridge.js"></script>
 ```
 
 Rules:
@@ -1774,14 +1996,14 @@ Rules:
   reachable for bridge-touching paths. App-logic iteration still
   works offline; only paths that actually exercise the bridge
   (`getNodeAddress`, `sendTransaction`, etc.) depend on SV being up.
-- **Prefer the RELATIVE path.** These three prefixes are served from the
-  app's own hostname too, so `/usernode-bridge/v1/bridge.js` reaches the
-  same file with no hostname in the app at all. That is what makes a
-  platform domain move survivable: apps scaffolded before the move to the
-  current domain hard-coded the old host, and when it stopped answering
-  they lost the bridge, the kit and their styling all at once. An absolute
-  URL still works and remains correct; a relative one simply cannot go
-  stale. Every runtime serves them: a per-app Ingress rule on Kubernetes,
+- **Always the RELATIVE path — never write a hostname.** These three
+  prefixes are served from the app's own hostname, so
+  `/usernode-bridge/v1/bridge.js` reaches the file with no hostname in
+  the app at all. That is what makes a platform domain move survivable:
+  apps that hard-coded the platform's host (the old one, and later
+  `{{PLATFORM_ORIGIN}}` itself) lost the bridge, the kit and their
+  styling all at once when that host stopped serving them. An absolute
+  URL on the current domain works today; a relative one cannot go stale. Every runtime serves them: a per-app Ingress rule on Kubernetes,
   the wildcard site's matcher on the docker runtime, and the scaffolded
   app's own handler under a plain `node server.js`, where there is no edge
   in front of the app. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
@@ -1921,6 +2143,74 @@ Notes:
   the forwarded properties to work (it is still required for bare `env()`
   to work standalone).
 
+## The platform's light/dark theme inside the app frame
+
+Viewers choose Light, Dark or System in the platform's own settings.
+**`prefers-color-scheme` inside your frame cannot see that choice**: in a
+cross-origin iframe it follows the operating system, not the page around
+it. So an app that only reads the media query shows light to a viewer who
+picked Dark on a light-mode OS, and a staging preview does the same.
+
+The platform forwards the **resolved** theme (`light` or `dark`, never
+`system`). The hosted bridge publishes it; no app-side plumbing beyond the
+bridge `<script>`:
+
+- **`usernode.theme`** is `"light"`, `"dark"`, or `null` when the app is
+  opened standalone (outside the platform). It is set synchronously when the
+  bridge loads, from the frame URL's `?un-theme=` parameter, so a bootstrap
+  script placed *after* the bridge tag can read it before first paint.
+- **`usernode:theme-changed`** is a `CustomEvent` on `window` whose `detail`
+  is `{ theme }`. It fires when the viewer changes the platform theme while
+  your app is open. The app is never reloaded for it.
+
+The bridge only reports the value. Your app decides what dark means (a
+`.dark` class on `<html>` for Tailwind's `dark:` variant and the
+usernode-native kit, your own tokens, and so on). Recommended wiring, with
+the OS preference as the standalone fallback:
+
+```html
+<script src="/usernode-bridge/v1/bridge.js"></script>
+<script>
+  (function () {
+    var media = window.matchMedia('(prefers-color-scheme: dark)');
+    function applyTheme() {
+      var theme = (window.usernode && window.usernode.theme)
+        || (media.matches ? 'dark' : 'light');
+      document.documentElement.classList.toggle('dark', theme === 'dark');
+      document.documentElement.style.colorScheme = theme;
+    }
+    applyTheme();
+    window.addEventListener('usernode:theme-changed', applyTheme);
+    media.addEventListener('change', applyTheme);
+  })();
+</script>
+```
+
+Notes:
+
+- Read `usernode.theme`, not `?un-theme=` directly: the URL keeps the value
+  the frame loaded with, and the bridge keeps `usernode.theme` current.
+- `un-theme` is namespaced so it never collides with a query parameter your
+  app uses itself. Do not strip it or depend on its position in the URL.
+- An app that offers its own light/dark picker may keep it. Treat the
+  platform theme as the default until the viewer picks something in your app.
+
+## Staying loaded in the background
+
+The shell keeps the last few apps a viewer opened **loaded but hidden**, so
+coming back to yours shows it exactly as they left it — no reload. While
+hidden your document keeps running, but it cannot be seen, focused or
+clicked. The bridge handles the common case for you: on hide it pauses any
+playing `<audio>`/`<video>`, and on show it resumes what it paused. For
+anything else that should stop while nobody is looking (Web Audio, timers
+that animate, polling), listen for:
+
+- **`usernode:visibility-changed`** — a `CustomEvent` on `window` whose
+  `detail` is `{ hidden: boolean }`.
+
+An app that is not reopened soon is dropped and loads fresh next time, so
+keep durable state server-side (or in `localStorage`) as you already should.
+
 ## Browser capabilities in the app frame
 
 Apps run in a cross-origin iframe, and the powerful browser capabilities
@@ -1928,21 +2218,103 @@ are gated by **Permissions Policy**, which is delegated **downward** by the
 embedding page. An app cannot grant itself one: the grant is the shell's to
 make, through the `allow` attribute on the frame.
 
-The shell delegates these to every app frame (the App tab, the landing
-page's in-page viewer, and the staging preview alike):
+Two capabilities are delegated to every app frame, with nothing to ask for:
+
+| Capability | Use it through |
+|---|---|
+| `clipboard-write` | `navigator.clipboard.writeText()` |
+| `pointer-lock` | `element.requestPointerLock()` |
+
+**Everything else worth having is GATED** (#2219). Nine capabilities are
+delegated to your app only when the person using it has granted that
+capability **to your app**, after the platform asked them in its own dialog:
 
 | Capability | Use it through |
 |---|---|
 | `geolocation` | `navigator.geolocation.getCurrentPosition()` |
-| `clipboard-write` | `navigator.clipboard.writeText()` |
-| `pointer-lock` | `element.requestPointerLock()` |
+| `microphone` | `navigator.mediaDevices.getUserMedia({ audio: true })` |
+| `camera` | `navigator.mediaDevices.getUserMedia({ video: true })` |
+| `display-capture` | `navigator.mediaDevices.getDisplayMedia()` |
+| `usb` | `navigator.usb.requestDevice()` |
+| `serial` | `navigator.serial.requestPort()` |
+| `hid` | `navigator.hid.requestDevice()` |
+| `bluetooth` | `navigator.bluetooth.requestDevice()` |
+| `midi` | `navigator.requestMIDIAccess()` |
 
-Delegation is not a grant. The browser still prompts the user the first
-time your app asks, per origin, and they can refuse. Always handle the
-error path.
+`geolocation` used to be in the first table, delegated to every app
+unconditionally. It moved because of how browsers attribute a nested
+frame's request: under permission delegation the prompt names the
+**top-level** origin, so it said "my.onhomeroom.com wants to know your
+location" and never named the app, and the answer was then remembered for
+the platform origin, so every other app inherited it silently. The
+platform's own prompt is the one that can name the app that is asking.
 
-**Everything else is not delegated**, `camera`, `microphone`,
-`display-capture`, `midi`, `payment` and `xr-spatial-tracking` among them.
+### Declare, then ask
+
+**Declare in `dapp.json` what your app may ask for.** An undeclared
+capability is refused before any dialog is shown, so the set of things your
+app can ever reach is visible in your own diff, where the group reviewing a
+proposal can see it:
+
+```json
+"permissions": [
+  { "capability": "microphone", "reason": "Records your voice notes" },
+  "geolocation"
+]
+```
+
+The object form and the bare string mean the same thing. `reason` is one
+short line shown in the prompt, the same way `llm.purpose` is.
+
+**Ask when you need it, not at startup.** Call `requestPermission()` on the
+tap that needs the capability, then use the ordinary web API:
+
+```js
+recordBtn.onclick = async () => {
+  const r = await usernode.requestPermission('microphone');
+  if (r.state !== 'granted') return showWhyWeNeedIt(r.reason);
+  if (!r.active) return;  // granted; the app is about to reopen (see below)
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  startRecording(stream);
+};
+```
+
+The answer is `{ capability, state, active, reason }`. `state` is
+`"granted"` or `"denied"`; on a denial `reason` is `"declined"` (the person
+said no), `"not_declared"` (missing from your `dapp.json`) or
+`"unknown_capability"`.
+
+`usernode.getPermission(name)` reads the same answer without ever
+prompting, so you can render an "enable" button from it.
+`usernode.getPermissions()` returns the whole picture for your app:
+`{ declared, granted, active }`.
+
+### `active` is the field to read twice
+
+A frame's Permissions Policy is computed when it **navigates**, so a
+capability granted just now cannot apply to the document that asked for it.
+On that first grant the platform tells the person the app will reopen, and
+reloads the frame. `active: false` therefore means "granted, and you are
+about to be reloaded": stop, do not call the web API, and let the reload
+land. Save anything you need to keep first.
+
+Every later launch delegates it up front and `requestPermission()` resolves
+`active: true` with no dialog and no reload at all.
+
+For the same reason, a revoke in Settings takes effect the next time the
+app opens rather than instantly. A running document's policy cannot be
+narrowed.
+
+### Where it does and does not apply
+
+Gated capabilities are delegated on the **App tab** only. The landing
+page's in-page viewer serves signed-out visitors, who hold no grants, and
+the staging preview shows a build the group has not voted in yet. Both
+still relay the prompt, so your app gets a truthful answer there rather
+than silence, but neither can turn a capability on.
+
+### Telling "blocked" from "never asked"
+
 The failure mode is worth knowing because it is so easy to misread: an
 undelegated capability is not refused with a distinct error and it does not
 prompt. `getCurrentPosition` and friends reject in a couple of
@@ -1950,16 +2322,20 @@ milliseconds with `PERMISSION_DENIED`, the *same* code the browser uses
 when a person taps "block". So an app that treats code 1 as "the user said
 no" will tell people to check a permission they were never asked for.
 
-Ask the frame before offering the control, and tell the two cases apart:
+`usernode.hasCapability(name)` answers synchronously for the CURRENT
+document, and is the one call here that also works standalone:
 
 ```js
-const policy = document.permissionsPolicy || document.featurePolicy;
-const allowed = !policy || policy.allowsFeature('geolocation');
-// `allowed` is true where the browser does not expose the API to ask,
-// so treat it as "try it and see" rather than a guarantee.
+if (!usernode.hasCapability('geolocation')) {
+  // Not delegated to this document. Either ask for it, or hide the control.
+}
 ```
 
-If your app needs a capability that is not on the list, that is a missing
+It reads the document's own Permissions Policy, and returns `true` where
+the browser exposes no way to ask, so treat that as "try it and see" rather
+than a guarantee.
+
+If your app needs a capability that is on neither list, that is a missing
 platform capability, not something to work around in the app: see
 "Platform-level problems & missing capabilities" below.
 
@@ -1979,8 +2355,8 @@ not a requirement.
 Like the bridge, it is centrally hosted — never vendor it:
 
 ```html
-<link rel="stylesheet" href="{{PLATFORM_ORIGIN}}/usernode-native/v1/native.css">
-<script src="{{PLATFORM_ORIGIN}}/usernode-native/v1/native.js"></script>
+<link rel="stylesheet" href="/usernode-native/v1/native.css">
+<script src="/usernode-native/v1/native.js"></script>
 ```
 
 Canonical source: `social-vibecoding/public/usernode-native/v1/`. The
@@ -2139,7 +2515,11 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   especially on desktop/tablet where a bottom sheet reads as a phone
   idiom. Keyboard avoidance is built in (see below): with the
   on-screen keyboard up, the card re-centers in the visible strip
-  above it and shrinks to fit. Returns `{ dismiss(), el }`.
+  above it and shrinks to fit, its top edge holding still while its
+  bottom follows the keys. A tap on a text field in the card focuses
+  it without letting iOS scroll the page under the dialog, and a field
+  below the fold is scrolled into view inside the card instead.
+  Returns `{ dismiss(), el }`.
 - **Side panel / drawer.** `unNative.presentPanel({ side?, content |
   contentEl, width?, onDismiss? })` — a full-height surface that springs
   in from the **right** edge (`side: 'left'` for the other one) over the
@@ -2216,6 +2596,8 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   in px) plus class `un-kb` on `<html>` while it is non-zero. Sheets,
   action sheets, modals and alerts consume it automatically and ride
   above the keyboard — smoothly, without disturbing drag-to-dismiss.
+  The inset clears the moment focus leaves the text field, so those
+  surfaces move with the retracting keyboard rather than after it.
   **Do not hand-roll `.un-sheet { bottom: … }` overrides or per-app
   visualViewport plumbing anymore** — delete them when adopting this;
   the kit owns the inset now. Apps may consume `var(--un-kb-inset,
@@ -2411,8 +2793,9 @@ apps**:
 
 The scaffold ships a `tailwind.config.js`, a `styles/tailwind-input.css`,
 and an **npm build script** that compiles them to `public/tailwind.css`.
-Both the Kubernetes Paketo builder and the standalone Dockerfile invoke
-that script. The HTML just links it:
+The scaffold's Dockerfile invokes that script under BuildKit or standalone
+Docker; the Kubernetes Paketo builder invokes it on the kpack path.
+The HTML just links it:
 
 ```html
 <link rel="stylesheet" href="/tailwind.css">
@@ -2424,7 +2807,8 @@ and the visitor's device does no styling work.
 
 **There is no artifact to keep in sync and no rebuild step to remember.**
 The compile runs during image creation from the requested Git revision,
-through kpack/Paketo on Kubernetes or `docker build` on standalone Docker.
+through BuildKit or kpack/Paketo on Kubernetes, according to `BUILD_ENGINE`,
+or `docker build` on standalone Docker.
 Production and staging may reuse a compatible image of the same revision;
 the stylesheet still comes from the markup in that exact commit.
 Nothing is committed to the repo; `public/tailwind.css` exists only inside
@@ -2447,17 +2831,17 @@ The one rule this path asks of you:
 
 For an app that genuinely must generate class names at runtime, and as the
 one-line migration target for apps still pointing at the third-party CDN,
-the platform serves a pinned copy of the Tailwind browser engine from its
-own origin — exactly like the bridge and the native UI kit:
+the platform serves a pinned copy of the Tailwind browser engine on every
+app's own address — exactly like the bridge and the native UI kit:
 
 ```
-{{PLATFORM_ORIGIN}}/usernode-tailwind/v1/tailwind.js
+/usernode-tailwind/v1/tailwind.js
 ```
 
 Canonical source: `social-vibecoding/public/usernode-tailwind/v1/tailwind.js`.
 
 ```html
-<script src="{{PLATFORM_ORIGIN}}/usernode-tailwind/v1/tailwind.js"></script>
+<script src="/usernode-tailwind/v1/tailwind.js"></script>
 <script>tailwind.config = { darkMode: 'class' }</script>
 ```
 
@@ -2739,9 +3123,10 @@ Behaviour:
   platform shell (the app iframe); standalone pages register
   harmlessly.
 
-## In-loop browser (build turns) — optional, encouraged
+## In-loop browser (build turns)
 
-On a **build** turn (not scout/sync) Claude Code has a headless browser
+On a **build** turn (not scout/sync) both hosted Claude Code and hosted Codex
+have a headless browser
 available through the **Playwright MCP server** — `browser_navigate`,
 `browser_console_messages`, `browser_take_screenshot`, and friends. It
 lets the agent load the app it just edited and *see* the result —
@@ -2749,12 +3134,12 @@ catching a blank page, a JS crash on load, a broken layout, or a failing
 API call that source-reading alone would miss — and fix it before
 committing.
 
-It is **optional and encouraged, never a gate.** Reach for it when a
-change is user-visible and a visual check is genuinely informative; skip
-it for backend-only / refactor / docs work where rendering tells you
-nothing. Turns that don't use it behave exactly as before, and Chromium
-only launches on the first browser tool call, so there's no cost when
-it's unused. Scout and sync turns have no browser at all.
+Use it before declaring a `ui` or `motion` visual evidence story. A story
+must describe a checkpoint you actually reached in the local app, including
+the state the evidence runner will need to reproduce. For backend-only,
+refactor, or docs work, rendering may tell you nothing and the browser is
+optional. Chromium only launches on the first browser tool call. Scout and
+sync turns have no browser at all.
 
 ### Launch contract
 
@@ -2764,33 +3149,37 @@ locally inside the worker the same way a staging container does:
 - **`USERNODE_ENV=staging`** against a **fresh, empty local database** —
   the build turn exposes `INLOOP_ENV`, `INLOOP_PORT`, and
   `INLOOP_DATABASE_URL` for exactly this. Typical launch:
-  `USERNODE_ENV=$INLOOP_ENV PORT=$INLOOP_PORT DATABASE_URL=$INLOOP_DATABASE_URL node server.js &`
+  `usernode-run-inloop node server.js &`
   (or this app's declared `dapp.json` entrypoint).
-- Private secrets resolve from the manifest's `staging_default` /
-  `default` only, same as a real staging build — never the prod store.
-- Navigate to `http://127.0.0.1:$INLOOP_PORT` joined with the SAME
-  route(s) you put in the TESTING block's `path:` lines. Self-app app screens
-  stay under `/app/<slug>/...`; put its other SPA routes after the `#`.
-- **EXPECTED when you added a screenshot-state deep link this turn**
-  (see "Make the changed screen URL-reachable"): load the exact `path:`
-  URL and confirm the changed UI is actually visible before committing —
-  for a mobile-only change, resize the browser to a phone-sized frame
-  (390×844) first (every path is captured in both frames automatically).
-  A state link that renders the home screen means the before/after
-  screenshots will too.
+- The launch command supplies the manifest's committed `staging_default` /
+  `default` values, as staging does. If a required value has no committed
+  fallback, it reports the missing key and stops. Never copy a production
+  secret or invent a credential just to make the local check run.
+- Navigate to `http://127.0.0.1:$INLOOP_PORT` at the real starting route for
+  the flow you will declare. Self-app app screens stay under
+  `/app/<slug>/...`; put its other SPA routes after the `#`.
+- Exercise the real interaction and make the evidence intent concrete. For a
+  mobile-only change, resize to the viewport you will declare (for example
+  390×844). This local check helps you fix the head revision; the later paired
+  evidence run independently explores and replays both revisions.
 - A **blank or empty page usually means missing seed data, not a bug** —
-  the local DB starts empty. Add the `IS_STAGING` seed (or a `?demo=1`
-  route) per "Staging mock data" and re-check, rather than "fixing"
-  code that already works.
+  the local DB starts empty. Check the app's existing staging fixtures or
+  `?demo=1` route first. A sign-in screen means this browser is signed out;
+  use an existing documented fake staging account through the normal UI if
+  possible. Do not change auth code or seed passwords solely for this check.
 - Keep it tight (a couple of launch→check→fix cycles, a minute or two).
   **If the app won't boot** — no local Postgres, a missing required
-  secret, a crash on start — don't fight it: note that you skipped the
-  visual check and commit anyway. The in-loop browser must never block
-  or fail the turn.
+  secret, a crash on start — report the blocker. You can still finish
+  non-visual work, but do not submit an unverified visible story. If the
+  claim needs data or a fault that the local app cannot reproduce, add a
+  representative fixture exercised by the normal test route. Do not add a
+  screenshot-only route or invent a state just to get a capture.
 
-This is an agent-facing quality aid. The before/after screenshots and
-the "Test this change" button (driven by the TESTING block) remain the
-reviewer-facing tools and are unchanged.
+This is an agent-facing quality gate for the claimed head state. Before
+finishing a user-visible build, call `record_visual_evidence_intent` only for
+a flow you actually reached. The exact-revision paired replay still verifies
+both sides independently, and the "Test this change" action remains a
+separate manual aid.
 
 ## Writing user-facing copy: no em dashes
 

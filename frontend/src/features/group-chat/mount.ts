@@ -31,12 +31,18 @@ import { createElement } from 'react';
 import { flushSync } from 'react-dom';
 
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
-import { MentionMenu, RefMenu } from './autocomplete';
+import { EmojiMenu, MentionMenu, RefMenu } from './autocomplete';
 import {
   autocompleteStore,
+  type EmojiOption,
   type MentionOption,
   type RefOption,
 } from './autocomplete-store';
+import {
+  completedShortcodeAt,
+  findShortcodeToken,
+  matchShortcodes,
+} from '../message-actions/emoji-shortcodes';
 import {
   composerStore,
   type ComposerScope,
@@ -57,6 +63,51 @@ import {
   type TranscriptState,
 } from './transcript-store';
 
+/**
+ * Whether two view-model values hold the same data. The rows are plain data
+ * (strings, numbers, booleans, null, arrays and plain objects) that
+ * `GroupChat._messageView` builds afresh on every whole publish.
+ */
+export function sameData(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (!sameData(a[i], b[i])) return false;
+    return true;
+  }
+  const left = a as Record<string, unknown>;
+  const right = b as Record<string, unknown>;
+  const keys = Object.keys(left);
+  if (keys.length !== Object.keys(right).length) return false;
+  return keys.every((k) => Object.prototype.hasOwnProperty.call(right, k) && sameData(left[k], right[k]));
+}
+
+/**
+ * A whole publish, with every row that says nothing new replaced by the row
+ * already on screen (by id), and the list itself kept when no row changed.
+ *
+ * `GroupChat.render()` rebuilds the whole list from its messages — after a
+ * delete, a history page, a membership change — so every row arrived as a
+ * new object, and the memo()'d rows (./transcript.tsx) all rendered again:
+ * every body's markup and every thumbnail rebuilt for one changed row. Kept,
+ * an unchanged row skips its render. The store is still published, so the
+ * rows' surroundings (the lead, which reply thread is open) are read again.
+ */
+export function keepUnchanged(previous: TranscriptMessage[] | undefined, next: TranscriptMessage[]): TranscriptMessage[] {
+  if (!previous || !previous.length) return next;
+  const byId = new Map<number, TranscriptMessage>();
+  for (const m of previous) if (m.id != null) byId.set(m.id, m);
+  let same = previous.length === next.length;
+  const kept = next.map((m, i) => {
+    const held = m.id != null ? byId.get(m.id) : undefined;
+    const row = held && sameData(held, m) ? held : m;
+    if (row !== previous[i]) same = false;
+    return row;
+  });
+  return same ? previous : kept;
+}
+
 /** Mount (or re-establish) the transcript inside the host app-view just built. */
 export function mountTranscript(host: Element | null, key = 'main'): void {
   if (!host) return;
@@ -68,16 +119,31 @@ export function unmountTranscript(host: Element | null): void {
   unmountLegacyPortal(host);
 }
 
-/** The whole transcript, replacing whatever was there. */
+/**
+ * The whole transcript, replacing whatever was there.
+ *
+ * Batched by default. `flush` commits the rows before this returns, for a
+ * caller that measures the scroller on the next line — a history page lands
+ * above the reader, and the offset that keeps them in place is the height the
+ * new rows added. Measured against a batched publish that height was 0: the
+ * first page opened at its OLDEST message instead of the newest, and every
+ * "earlier" page threw the reader to the top of what had just loaded (iOS has
+ * no scroll anchoring to hide it). Only for callers outside React's own
+ * render and effects, where flushSync logs a console error — see
+ * `appendTranscriptMessage` below.
+ */
 export function publishTranscript(
   messages: TranscriptMessage[],
   key = 'main',
   lead: TranscriptLead = { earlier: false, placeholder: null },
+  opts: { flush?: boolean } = {},
 ): void {
-  transcriptStore.set((s: TranscriptState) => ({
+  const set = () => transcriptStore.set((s: TranscriptState) => ({
     ready: true,
-    byKey: { ...s.byKey, [key]: { messages, lead } },
+    byKey: { ...s.byKey, [key]: { messages: keepUnchanged(s.byKey[key]?.messages, messages), lead } },
   }));
+  if (opts.flush) flushSync(set);
+  else set();
 }
 
 /**
@@ -90,12 +156,28 @@ export function publishTranscript(
  * property through the reconciler instead of around it.
  */
 export function appendTranscriptMessage(message: TranscriptMessage, key = 'main'): void {
-  transcriptStore.set((s: TranscriptState) => {
-    const view = s.byKey[key] || EMPTY_VIEW;
-    return {
-      ready: true,
-      byKey: { ...s.byKey, [key]: { ...view, messages: [...view.messages, message] } },
-    };
+  // Flushed, and only here (#2389): both callers — `handleIncoming` and
+  // `_handleThreadIncoming` — scroll to the bottom on the very next line,
+  // measuring `scrollHeight`. Batched, that measured the transcript WITHOUT
+  // the new row, so the message you had just sent landed under the fold. The
+  // store as a whole is deliberately not `setFlush(flushSync)`: its patch path
+  // runs from `refreshVoteControls` inside a React effect, where flushSync
+  // logs a console error. Both append callers are websocket handlers.
+  flushSync(() => {
+    transcriptStore.set((s: TranscriptState) => {
+      const view = s.byKey[key] || EMPTY_VIEW;
+      // `lead` is carried through deliberately: this is a single-row append,
+      // not a re-publish, and rebuilding it here is not how the empty-state
+      // line is cleared. A placeholder published for an empty thread stops
+      // rendering because `TranscriptRows` derives it from the rows
+      // (`view.lead.placeholder && !rows.length`), the same way the quiet
+      // card does — see #2498 and tests/group-chat-thread-placeholder.test.js,
+      // which pins that the append leaves `lead` alone.
+      return {
+        ready: true,
+        byKey: { ...s.byKey, [key]: { ...view, messages: [...view.messages, message] } },
+      };
+    });
   });
 }
 
@@ -177,7 +259,7 @@ reactionBarStore.setFlush(flushSync);
  */
 composerStore.setFlush(flushSync);
 
-// ── The composer's two autocomplete menus ─────────────────────────────
+// ── The composer's autocomplete menus ─────────────────────────────────
 //
 // Same seam, one level smaller: `_ensureMenu` still creates the floating host
 // and appends it to `document.body` — it is `position: fixed`, measured
@@ -214,6 +296,25 @@ export function publishMentionMenu(items: MentionOption[], active: number): void
 export function publishRefMenu(items: RefOption[], active: number): void {
   autocompleteStore.set({ ref: { items, active } });
 }
+
+/** Establish the `:shortcode` menu's contents. */
+export function mountEmojiMenu(host: Element | null): void {
+  if (!host) return;
+  mountLegacyPortal(host, createElement(EmojiMenu));
+}
+
+/** The rows, the highlight and the `:query` the heading repeats. */
+export function publishEmojiMenu(query: string, items: EmojiOption[], active: number): void {
+  autocompleteStore.set({ emoji: { items, active, query } });
+}
+
+// The emoji menu's matching lives in the bundle, not in group-chat.js: the
+// emoji and their shortcodes are features/message-actions/, which the Messages
+// composer reads directly. Handing the classic script the same three pure
+// functions keeps one definition of what `:th` and `:tada:` mean.
+export const emojiShortcodeToken = findShortcodeToken;
+export const matchEmojiShortcodes = matchShortcodes;
+export const completedEmojiShortcode = completedShortcodeAt;
 
 /**
  * The thread panel's shell — scroller, messages host, typing slot, composer.
@@ -336,6 +437,11 @@ if (typeof window !== 'undefined') {
     mountRefMenu,
     publishMentionMenu,
     publishRefMenu,
+    mountEmojiMenu,
+    publishEmojiMenu,
+    emojiShortcodeToken,
+    matchEmojiShortcodes,
+    completedEmojiShortcode,
     mountSpecPanel,
     publishSpecPanel,
     mountThreadShell,

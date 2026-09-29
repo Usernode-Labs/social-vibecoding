@@ -81,20 +81,45 @@ test('the token is defined on :root so screens OUTSIDE #app-view get it', () => 
 
 // ── 2. The utilities ─────────────────────────────────────────────────
 
+// ── What #2718 changed in these two, and what it did not ────────────
+//
+// The tab bar is `position: fixed` at the bottom of the screen, so a surface
+// that used to end at the viewport's edge now ends at the bar's top edge on
+// every route the bar is up. Both utilities therefore clear
+// `max(--platform-tabs-h, --platform-safe-bottom)` rather than the inset
+// alone.
+//
+// `max()` AND NOT A SUM, which is the whole of why this is still one
+// assertion and not two: the bar is fused to the bottom edge and spends the
+// home-indicator inset itself, as its own lower padding, so
+// `--platform-tabs-h` is the bar's FULL outer height. Adding the inset on top
+// would reserve the strip twice — the #4149 bug, which `--ws-bar`'s comment
+// in app.css documents from the other side. Taking the larger of the two
+// reserves each exactly once, in both states.
+//
+// EVERYTHING THESE TESTS ORIGINALLY PINNED STILL HOLDS, and is still
+// asserted: the inset is named through the token and never a second `env()`,
+// `!important` survives (app.css loses the cascade to tailwind.css without
+// it), and the composer keeps its own 0.5rem base gap rather than having it
+// replaced. With no tab bar on screen `--platform-tabs-h` is 0px and both
+// declarations compute to exactly what they were.
+
+const CLEARANCE = /max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\)/;
+
 test('.platform-safe-scroll pads a scroller by the bottom inset', () => {
-  const m = /\.platform-safe-scroll\s*\{([^}]*)\}/.exec(APP_CSS);
+  const m = /\.platform-safe-scroll\s*\{([\s\S]*?)\}/.exec(APP_CSS);
   assert.ok(m, 'app.css must define .platform-safe-scroll');
-  assert.match(m[1], /padding-bottom:\s*var\(--platform-safe-bottom\)\s*!important/,
+  assert.match(m[1], new RegExp(`padding-bottom:\\s*${CLEARANCE.source}\\s*!important`),
     'block-end padding on a scroller is part of its scrollable overflow — '
     + 'that is what makes the last row reachable while the background still '
     + 'paints through the strip');
 });
 
 test('.platform-safe-bar adds the inset to a bar\'s own p-2 gap', () => {
-  const m = /\.platform-safe-bar\s*\{([^}]*)\}/.exec(APP_CSS);
+  const m = /\.platform-safe-bar\s*\{([\s\S]*?)\}/.exec(APP_CSS);
   assert.ok(m, 'app.css must define .platform-safe-bar');
-  assert.match(m[1], /padding-bottom:\s*calc\(0\.5rem \+ var\(--platform-safe-bottom\)\)\s*!important/,
-    'the composer keeps its 8px base gap and the inset is added BELOW it — '
+  assert.match(m[1], new RegExp(`padding-bottom:\\s*calc\\(0\\.5rem \\+ ${CLEARANCE.source}\\)\\s*!important`),
+    'the composer keeps its 8px base gap and the clearance is added BELOW it — '
     + "unlike the kit's .un-safe-bottom, which would replace the gap");
 });
 
@@ -129,6 +154,66 @@ test('keyboard-up suppresses the inset on both utilities', () => {
   assert.ok(bar, 'html.un-kb .platform-safe-bar rule is missing');
   assert.match(bar[1], /padding-bottom:\s*0\.5rem\s*!important/,
     'the bar keeps its base gap with the keyboard up, just not the inset');
+});
+
+test('every composer column reserves the keyboard inset, exactly once', () => {
+  // #1937/#1491. Four screens are built the same way: a flex column with a
+  // flex-1 scroller and the typing slot + composer pinned BELOW it as
+  // shrink-0 siblings, OUTSIDE the scroller. The kit cannot help there —
+  // `attachKeyboardAvoidance` gates on `scrollEl.contains(field)` and
+  // `.un-kb-avoid` pads the inside of a scroller — so the composer sat behind
+  // the keyboard on all four, and on iOS the settled pin also reset Safari's
+  // reveal-pan once per keypress. Reserving on the column is what native does
+  // (iOS and Android Messages both shrink the content area rather than cover
+  // or pan it), and it leaves the pin inert.
+  const col = /html\.un-kb \.platform-kb-column\s*\{([^}]*)\}/.exec(APP_CSS);
+  assert.ok(col, 'html.un-kb .platform-kb-column rule is missing');
+  assert.match(col[1], /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
+    'the column must reserve the kit-published keyboard inset');
+  assert.match(col[1], /transition:\s*none/,
+    'no transition while the keyboard is up — the bar tracks it exactly');
+
+  const COLUMNS = [
+    ['frontend/src/features/group-chat/thread-shell.tsx', /className="dev-thread dev-thread-fill platform-kb-column/],
+    ['frontend/src/features/group-chat/general-chat.tsx', /className="gc-chat-pane platform-kb-column/],
+    ['frontend/src/features/dev-chat/view.tsx', /className="dc-chat-pane platform-kb-column/],
+    ['frontend/src/features/messages/index.tsx', /messages-thread-pane platform-kb-column/],
+  ];
+  for (const [file, re] of COLUMNS) {
+    assert.match(read(file), re, `${file} must reserve the keyboard inset on its column`);
+  }
+
+  // EXACTLY once: a column that reserves the inset must not also hang
+  // `un-kb-avoid` on its scroller, which would pad the inside of it on top.
+  // Scoped to rendered class strings — these files DISCUSS `.un-kb-avoid` in
+  // their comments, which is not the same as wearing it.
+  for (const [file] of COLUMNS) {
+    const worn = read(file).match(/className=(?:"[^"]*"|\{`[^`]*`\})/g) || [];
+    const twice = worn.filter((c) => c.includes('un-kb-avoid'));
+    assert.deepEqual(twice, [],
+      `${file} must not reserve the inset twice (column + un-kb-avoid)`);
+  }
+
+  // …and the source check above is NOT sufficient on its own, which is what
+  // shipped broken. `attachKeyboardAvoidance` ADDS `un-kb-avoid` to whatever
+  // scroller `attachScreenFx` hands it, so on the general chat, the topic
+  // thread and the dev chat the class is present at runtime no matter what the
+  // source says. The inset was counted twice, and a scroll container cannot
+  // shrink below its own padding — #gc-messages floored at 368px and held the
+  // composer 197px below the keyboard line. Only CSS can neutralise a class
+  // added by the kit at runtime, so the rule below is the real guarantee.
+  const inner = /html\.un-kb \.platform-kb-column \.un-kb-avoid\s*\{([^}]*)\}/.exec(APP_CSS);
+  assert.ok(inner, 'html.un-kb .platform-kb-column .un-kb-avoid rule is missing');
+  assert.match(inner[1], /padding-bottom:\s*0/,
+    'a scroller inside a reserving column must not reserve the inset again');
+
+  // The boxed thread layout is not screen-bottom-anchored, so reserving
+  // keyboard space there would be dead space in the middle of a page.
+  const shell = read('frontend/src/features/group-chat/thread-shell.tsx');
+  const boxedRoot = /className="dev-thread border[^"]*"/.exec(shell);
+  assert.ok(boxedRoot, 'the boxed root should still be plain dev-thread');
+  assert.ok(!boxedRoot[0].includes('platform-kb-column'),
+    'only screen-bottom-anchored columns reserve the keyboard inset');
 });
 
 // ── 3. Every screen scroller opts in ─────────────────────────────────
@@ -166,8 +251,13 @@ test('Messages insets both of its independent scrollers and its composer', () =>
   const composer = read('frontend/src/features/messages/composer.tsx');
   assert.match(source, /className="messages-list-scroll platform-safe-scroll"/,
     'the conversation list must clear the home indicator');
-  assert.match(source, /className="messages-thread-scroll platform-safe-scroll un-kb-avoid"/,
+  assert.match(source, /className="messages-thread-scroll platform-safe-scroll"/,
     'the message history must clear the home indicator');
+  // #1491: `un-kb-avoid` was REMOVED here on purpose. The column carries the
+  // keyboard reservation now, and the kit's class would pad the inside of
+  // this scroller on top of it — the inset twice, as dead space.
+  assert.ok(!/messages-thread-scroll[^"]*un-kb-avoid/.test(source),
+    'the Messages scroller must not reserve the inset a second time');
   assert.match(composer, /messages-composer platform-safe-bar/,
     'the pinned Messages composer must carry the inset itself');
 });
@@ -175,10 +265,17 @@ test('Messages insets both of its independent scrollers and its composer', () =>
 test('#home-screen reads the token instead of a second env() of its own', () => {
   // Home already got this right via .home-body-fill; it just had its own
   // bare env(). One source of truth.
-  const m = /\.home-body-fill\s*\{([^}]*)\}/.exec(APP_CSS);
+  const m = /\.home-body-fill\s*\{([\s\S]*?)\}/.exec(APP_CSS);
   assert.ok(m, '.home-body-fill is missing');
-  assert.match(m[1], /padding-bottom:\s*var\(--platform-safe-bottom\)/,
+  assert.match(m[1], CLEARANCE,
     '.home-body-fill must resolve through the token');
+  // #home-screen is the one screen root with no `.platform-safe-scroll`, so
+  // this is also where it clears the tab bar — and it matters more here than
+  // anywhere else, because Home's trailing sections are BOTTOM-ANCHORED to
+  // this box: under-reserving parks Create and Challenges behind the bar
+  // rather than merely cropping a last card.
+  assert.match(m[1], /--platform-tabs-h/,
+    '.home-body-fill must clear #platform-tabs too — nothing else on Home does');
 });
 
 test('no bare env(safe-area-inset-bottom) survives in app.css', () => {

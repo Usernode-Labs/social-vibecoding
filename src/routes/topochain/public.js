@@ -62,9 +62,14 @@ const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
-const { loadOnboarding, visibleChallenges, challengeCategory } =
-  require('../../services/topochain/challenge-onboarding');
+const {
+  loadOnboarding, visibleChallenges, challengeCategory, resolveProgress, loadEventBlocks,
+} = require('../../services/topochain/challenge-onboarding');
+const { loadCadence, intervalMinutes } = require('../../services/topochain/challenge-scorer');
 const events = require('../../services/events');
+const seasonHistory = require('../../services/topochain/season-history');
+
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 // Fire-and-forget tally behind POST /app-version/check, so the admin screen
 // can report whether the release gate is being exercised. `events.record`
@@ -520,6 +525,52 @@ function topochainPublicRoutes(config) {
     }
   });
 
+  // ── Does this viewer get the season history? (issue #2495) ───────────
+  //
+  // The list below feeds the Leaderboard screen's event picker, and the
+  // picker exists to reach standings other than the ones the screen opens
+  // on. Once a season is the one on screen, a member enrolled fresh into it
+  // — with no trace anywhere before — has nothing else to reach, so the
+  // client draws neither the picker nor the event card for them; the same
+  // goes for anyone signed out. A member the platform can place in ANOTHER
+  // season gets the history: enrolled there, credited on its ledger, or on
+  // one of its boards. The first and the last are the participant predicate
+  // the profile routes below already use; the ledger is what the automatic
+  // scorer writes without an enrollment. Cheapest table first: EXISTS stops
+  // at the first branch that yields, and an enrollment is one indexed probe.
+  // An admin gets the history by role, whatever their own trace: they run
+  // the seasons and read every one of them.
+  //
+  // "Another season" is measured against the DEFAULT event's season, not
+  // against the calendar, because the default event is what the picker
+  // would otherwise be replacing: before a season starts the default is the
+  // previous season's aggregate, and someone whose data is all there has
+  // nowhere else to look until the new one begins. Internal events are
+  // never in the list, so a trace in one does not count.
+  const MEMBER_HISTORY_SQL = `
+    SELECT EXISTS (
+      SELECT 1 FROM user_enrollments e
+       WHERE e.user_id = $1 AND e.season_id IS DISTINCT FROM $2::bigint
+      UNION ALL
+      SELECT 1 FROM user_activities a
+        JOIN season_events se ON se.id = a.season_event_id
+       WHERE a.user_id = $1 AND se.internal = FALSE
+         AND se.season_id IS DISTINCT FROM $2::bigint
+      UNION ALL
+      SELECT 1 FROM leaderboard_snapshots s
+        JOIN season_events se ON se.id = s.season_event_id
+       WHERE s.user_id = $1 AND se.internal = FALSE
+         AND se.season_id IS DISTINCT FROM $2::bigint
+    ) AS has_history
+  `;
+  async function viewerHasHistory(user) {
+    if (user.isAdmin) return true;
+    const current = await resolveDefaultPublicEvent(pool);
+    const seasonId = current && current.season_id != null ? Number(current.season_id) : null;
+    const { rows } = await pool.query(MEMBER_HISTORY_SQL, [user.id, seasonId]);
+    return rows[0]?.has_history === true;
+  }
+
   // ── GET /season-events (SPEC 1112-1141, v1 /phases) ────────────────
   router.get('/api/v4/season-events', async (req, res) => {
     try {
@@ -560,9 +611,34 @@ function topochainPublicRoutes(config) {
         season_id: r.season_id != null ? Number(r.season_id) : null,
       }));
 
-      return ok(res, { data });
+      // Additive (issue #2495), see viewerHasHistory above. Null when
+      // nobody is signed in: the shape says "unknown", not "no".
+      const viewer = req.user?.id ? { history: await viewerHasHistory(req.user) } : null;
+
+      return ok(res, { data, viewer });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── GET /season-history (the Leaderboard screen's History segment) ──
+  //
+  // Past seasons newest first, each with its winner, every ended event's
+  // winner and — for a signed-in viewer — where they finished. See
+  // src/services/topochain/season-history.js for the rules and the cache.
+  // Optional auth like the rest of this group: signed out, `you` is null.
+  router.get('/api/v4/season-history', async (req, res) => {
+    try {
+      let seasons = await seasonHistory.seasonHistory(pool, { viewerId: req.user?.id ?? null });
+      let demo = false;
+      if (IS_STAGING && req.query.demo === '1' && !seasons.length) {
+        seasons = seasonHistory.demoSeasonHistory();
+        demo = true;
+      }
+      return ok(res, { data: { seasons }, ...(demo ? { demo: true } : {}) });
+    } catch (err) {
+      log.error('topochain-public', 'GET /season-history failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });
@@ -632,9 +708,17 @@ function topochainPublicRoutes(config) {
                 c.schedule_start, c.schedule_end, c.reward_logic,
                 c.cta_button, c.cta_label, c.cta_link,
                 c.metric_type, c.metric_target, c.metric_label,
-                ${TEMPLATE_JOIN_COLUMNS_SQL}
+                ${TEMPLATE_JOIN_COLUMNS_SQL},
+                ck.icon AS kind_icon
            FROM challenges c
            LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+           -- #1914: the card's picture, from the KIND the challenge resolves
+           -- to (its own override, else its template's) — the same join and
+           -- the same COALESCE Home's panel query uses, so a challenge wears
+           -- one face on both surfaces. Null for a kind that is unset or has
+           -- no icon, which the tile falls back from rather than drawing a
+           -- blank square.
+           LEFT JOIN challenge_kinds ck ON ck.id = COALESCE(c.kind, ct.kind)
           WHERE c.season_event_id = $1 AND c.enabled = TRUE
           ORDER BY c.display_order ASC, c.id ASC`,
         [id]
@@ -656,20 +740,96 @@ function topochainPublicRoutes(config) {
       // (the FK itself should make this unreachable in practice — see the
       // schema.sql comment on `challenges.challenge_template_id`).
       const onboarding = await loadOnboarding(pool, req.user?.id, { eventId: id });
-      const data = visibleChallenges(rows.filter((r) => r.t_id != null), onboarding)
+      const listed = rows.filter((r) => r.t_id != null);
+      const visible = visibleChallenges(listed, onboarding);
+
+      // The viewer's own credit count per challenge.
+      //
+      // This list used to carry progress for the ONBOARDING rows alone,
+      // because they were the only challenges anything credited without an
+      // admin typing it in. The card's `_isDone` reads `progress.done` off
+      // THIS payload, so every other challenge fell through to "is there any
+      // activity" and showed "Started" — permanently, even to somebody who
+      // had finished it and been paid for it. Automatic scoring
+      // (services/topochain/challenge-scorer.js) makes that the normal state
+      // of four of the nine Season 2 challenges, so the same rule now covers
+      // all of them.
+      //
+      // One grouped count for the whole list rather than a query per card,
+      // and only for a signed-in viewer — the anonymous list has no progress
+      // to report and must not pay for a query to say so.
+      const counts = new Map();
+      if (req.user?.id && visible.length) {
+        const { rows: countRows } = await pool.query(
+          `SELECT challenge_id, COUNT(*)::int AS credits
+             FROM user_activities
+            WHERE user_id = $1 AND challenge_id = ANY($2::bigint[])
+            GROUP BY challenge_id`,
+          [req.user.id, visible.map((r) => Number(r.id))]
+        );
+        for (const row of countRows) counts.set(Number(row.challenge_id), Number(row.credits));
+      }
+
+      // And the viewer's block count, for the same reason (#2492). It cannot
+      // come from the ledger — block scores are only ever written to
+      // leaderboard snapshots — so the row used to carry no progress at all
+      // for a `blocks_produced` challenge and its card drew a ring with no
+      // words beside it, while Home, which reads the snapshot, showed the
+      // real count. One query for the whole list, and only when the list
+      // actually holds such a card.
+      const wantsBlocks = visible.some((r) => metricOf(r)?.kind === 'blocks_produced');
+      const blocksByEvent = wantsBlocks && req.user?.id
+        ? await loadEventBlocks(pool, req.user.id, [id])
+        : new Map();
+
+      // How often the background scorer counts each challenge, and when it
+      // last did (#3185). Progress on a scored challenge moves only when a
+      // run writes credits, so a card could sit on "1/3" for an interval
+      // with nothing saying why, and people redid what they had finished.
+      // The admin route had these two times; the card had neither. Not per
+      // viewer — the schedule is the challenge's — so one read for the list.
+      const cadence = await loadCadence(pool, id, visible, { defaultMinutes: intervalMinutes(config) });
+
+      const data = visible
         .map((r) => {
           const item = buildChallengeListItem(r);
           item.metric = metricOf(r);
+          // `{ interval_minutes, last_scored_at }` for a challenge the scorer
+          // counts right now, else null; always present, like `completed`.
+          const counted = cadence.get(Number(item.id));
+          item.scoring = counted
+            ? { interval_minutes: counted.intervalMinutes, last_scored_at: iso(counted.lastScoredAt) }
+            : null;
           const category = challengeCategory(item.id, item.activity_type.category, onboarding);
           item.activity_type.category = category;
           item.card_preview.label = (category || '').toUpperCase();
-          if (onboarding?.progress.has(item.id)) item.progress = onboarding.progress.get(item.id);
+          if (onboarding?.progress.has(item.id)) {
+            item.progress = onboarding.progress.get(item.id);
+          } else if (req.user?.id) {
+            // `blocks_produced` is in this now (#2492). Its count is the
+            // viewer's newest snapshot rather than a ledger row count, which
+            // is the one thing resolveProgress needs told; everything else —
+            // the done rule, the clamp, the target — is the rule every other
+            // metric goes through, so the tab and Home print one number.
+            item.progress = resolveProgress({
+              metricKind: item.metric ? item.metric.kind : null,
+              metricTarget: item.metric ? item.metric.target : null,
+              activityCount: counts.get(Number(item.id)) || 0,
+              blocks: blocksByEvent.get(Number(item.season_event_id)),
+            });
+          }
           return item;
         });
 
-      // This list now carries the signed-in viewer's onboarding state.
+      // This list now carries the signed-in viewer's onboarding state. While
+      // the gate is closed it also says how many of THIS event's challenges
+      // it hides (additive `hidden_count`, the tab's "N challenges locked"
+      // placeholder); unlocked, the summary is exactly what it was.
+      const summary = onboarding && !onboarding.summary.unlocked
+        ? { ...onboarding.summary, hidden_count: listed.length - visible.length }
+        : onboarding?.summary;
       res.set('Cache-Control', 'private, no-store');
-      return ok(res, { data, ...(onboarding ? { onboarding: onboarding.summary } : {}) });
+      return ok(res, { data, ...(summary ? { onboarding: summary } : {}) });
     } catch (err) {
       log.error('topochain-public', 'GET /season-events/:id/challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
@@ -736,7 +896,7 @@ function topochainPublicRoutes(config) {
       // Fetch one extra row to know whether more remain beyond this page.
       const { rows: entryRows } = await pool.query(
         `SELECT ua.user_id, SUM(ua.points) AS points, u.discord, u.display_name,
-                u.email, u.telegram, u.exclude_podium, ls.event_success_rate
+                u.email, u.telegram, u.username, u.exclude_podium, ls.event_success_rate
            FROM user_activities ua
            JOIN users u ON u.id = ua.user_id
            LEFT JOIN LATERAL (
@@ -746,7 +906,7 @@ function topochainPublicRoutes(config) {
            ) ls ON TRUE
           WHERE ua.challenge_id = $1
           GROUP BY ua.user_id, u.discord, u.display_name, u.email, u.telegram,
-                   u.exclude_podium, ls.event_success_rate
+                   u.username, u.exclude_podium, ls.event_success_rate
           ORDER BY SUM(ua.points) DESC
           LIMIT $3 OFFSET $4`,
         [challengeId, eventId, limit + 1, offset]
@@ -794,7 +954,7 @@ function topochainPublicRoutes(config) {
       // migrated pre-enrollment data) preserves that intent; a
       // non-participant id returns this exact same 404 as an unknown id.
       const { rows: userRows } = await pool.query(
-        `SELECT u.id, u.email, u.telegram, u.discord, u.display_name
+        `SELECT u.id, u.email, u.telegram, u.discord, u.display_name, u.username
            FROM users u
           WHERE u.id = $1
             AND (EXISTS (SELECT 1 FROM user_enrollments ue WHERE ue.user_id = u.id)

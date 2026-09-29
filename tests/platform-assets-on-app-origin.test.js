@@ -60,6 +60,64 @@ test('staging previews get the same routing as production', () => {
   assert.deepEqual(preview, production);
 });
 
+test('existing managed child Ingresses are reconciled while self-app routes stay local', async (t) => {
+  const managed = 'social-vibecoding-runtime';
+  const catchAll = (service) => ({
+    path: '/', pathType: 'Prefix', backend: { service: { name: service, port: { number: 3000 } } },
+  });
+  const staleAsset = {
+    path: '/usernode-bridge/', pathType: 'Prefix',
+    backend: { service: { name: k8s.PLATFORM_ASSET_NAME, port: { number: 3000 } } },
+  };
+  const ingresses = [
+    {
+      metadata: { name: 'sv-preview-9-s42', resourceVersion: '1', labels: { 'app.kubernetes.io/managed-by': managed } },
+      spec: { rules: [{ host: 'coffee--s42.apps.example.test', http: { paths: [catchAll('sv-preview-9-s42')] } }] },
+    },
+    {
+      metadata: { name: 'sv-preview-10-s43', resourceVersion: '2', labels: { 'app.kubernetes.io/managed-by': managed } },
+      spec: { rules: [{ host: 'usernode-2d5619--s43.apps.example.test', http: { paths: [staleAsset, catchAll('sv-preview-10-s43')] } }] },
+    },
+    {
+      metadata: { name: 'sv-preview-11-s44', resourceVersion: '3', labels: { 'app.kubernetes.io/managed-by': managed } },
+      spec: { rules: [{ host: 'usernode-2d5619--showcase.apps.example.test', http: { paths: [catchAll('sv-preview-11-s44')] } }] },
+    },
+  ];
+  const replaced = [];
+  k8s._setClientsForTest({ networking: {
+    listNamespacedIngress: async ({ namespace, labelSelector }) => {
+      assert.equal(namespace, 'social-apps');
+      assert.equal(labelSelector, `app.kubernetes.io/managed-by=${managed}`);
+      return { items: ingresses };
+    },
+    replaceNamespacedIngress: async ({ name, namespace, body }) => {
+      replaced.push({ name, namespace, body });
+      return body;
+    },
+  } });
+  t.after(() => k8s._setClientsForTest(null));
+
+  const updated = await k8s._reconcilePlatformAssetIngressesForTest({
+    selfAppSlug: 'usernode-2d5619',
+    kubernetes: { appNamespace: 'social-apps', appDomain: 'apps.example.test' },
+  });
+  assert.equal(updated, 3);
+
+  const childPaths = replaced.find((row) => row.name === 'sv-preview-9-s42')
+    .body.spec.rules[0].http.paths;
+  assert.deepEqual(childPaths.slice(0, 3).map((item) => item.path), k8s.PLATFORM_ASSET_PREFIXES);
+  assert.equal(childPaths[3].backend.service.name, 'sv-preview-9-s42');
+
+  const selfPaths = replaced.find((row) => row.name === 'sv-preview-10-s43')
+    .body.spec.rules[0].http.paths;
+  assert.deepEqual(selfPaths.map((item) => item.path), ['/']);
+  assert.equal(selfPaths[0].backend.service.name, 'sv-preview-10-s43');
+
+  const similarSlugPaths = replaced.find((row) => row.name === 'sv-preview-11-s44')
+    .body.spec.rules[0].http.paths;
+  assert.deepEqual(similarSlugPaths.slice(0, 3).map((item) => item.path), k8s.PLATFORM_ASSET_PREFIXES);
+});
+
 test('an unavailable asset backend leaves the app routed exactly as before', () => {
   // Shared infrastructure failing must not change how THIS app is served.
   const paths = pathsOf(ingressFor('todo-list.onhomeroom.com', null));
@@ -147,9 +205,9 @@ test('the asset backend runs the platform image and is not mistaken for an app',
   const container = deployment.spec.template.spec.containers[0];
   assert.equal(container.image, 'registry.example/social-vibecoding@sha256:abc',
     'the image comes from the running platform Deployment, so the assets track the platform');
-  // Dockerfile.kubernetes uses node:22-alpine with USER node. Kubernetes
-  // needs its numeric UID to enforce runAsNonRoot, and this platform image
-  // launches Node directly (it has no CNB launcher).
+  // Dockerfile.kubernetes uses node:22-alpine at UID 1000. Keep the pod
+  // identity explicit and aligned; this platform image launches Node directly
+  // (it has no CNB launcher).
   assert.deepEqual(deployment.spec.template.spec.securityContext, {
     runAsNonRoot: true,
     runAsUser: 1000,
@@ -241,8 +299,13 @@ test('nothing the platform hands a coding agent names a platform hostname', () =
 
     const conventions = prompts.getAppConventions();
     assert.doesNotMatch(conventions, DEAD_HOST);
-    assert.match(conventions, /my\.example\.com\/usernode-tailwind\/v1\/tailwind\.js/,
-      'the doc names THIS deployment, resolved at load');
+    // #2319: not even THIS deployment's host. Apps copied the absolute form
+    // into their markup, which breaks on the next domain move; the doc shows
+    // the path the platform serves on every app's own address.
+    assert.doesNotMatch(conventions, /my\.example\.com\/usernode-/,
+      'the doc never puts a hostname in front of a hosted asset');
+    assert.match(conventions, /<script src="\/usernode-tailwind\/v1\/tailwind\.js"><\/script>/,
+      'the doc shows the relative tag');
 
     const order = svc.buildWorkOrder({
       appName: 'Recipe Box', appSlug: 'recipe-box',
@@ -261,6 +324,8 @@ test('nothing the platform hands a coding agent names a platform hostname', () =
       platformRules: prompts.getWorkOrderEssentials(),
     });
     assert.doesNotMatch(order, DEAD_HOST);
+    assert.ok(!order.includes('usernode.example/usernode-'),
+      'the work order lists hosted assets without a hostname');
   } finally {
     if (before === undefined) delete process.env.USERNODE_DOMAIN;
     else process.env.USERNODE_DOMAIN = before;
@@ -268,42 +333,44 @@ test('nothing the platform hands a coding agent names a platform hostname', () =
   }
 });
 
-test('the hard-coded hostname fallbacks that remain have not grown', () => {
-  // Six `process.env.USERNODE_DOMAIN || '<literal>'` defaults predate this
-  // change and are NOT fixed by it. They are listed rather than tolerated
-  // silently: a seventh fails this test, and the two that matter most are
-  // named here so the debt is visible instead of folklore.
+test('no platform code names the retired domain, not even as a fallback', () => {
+  // This used to be a ratchet over six `process.env.USERNODE_DOMAIN ||
+  // '<literal>'` defaults, template.js the worst of them: a deployment that
+  // left USERNODE_DOMAIN unset baked the dead host into every app it
+  // created. #2322 removed them all — a fallback is now a placeholder
+  // (`apps.example.invalid`, as src/config.js uses) or the injected origin
+  // alone — so the list is empty and stays empty.
   //
-  //   template.js  — scaffolds NEW apps, so a deployment that leaves
-  //                  USERNODE_DOMAIN unset bakes the dead host into every
-  //                  app it creates. This is the defect repeating itself.
-  //   caddy.js     — the docker runtime's app hostname suffix.
-  //
-  // The other four (a migration's staging fixtures, a claude.md link, a
-  // User-Agent string) are inert by comparison.
-  const KNOWN = [
-    'src/db/migrate.js',
-    'src/routes/sessions.js',
-    'src/services/anthropic-credits.js',
-    'src/services/caddy.js',
-    'src/services/template.js',
-  ];
+  // Allowed, because none of them uses the name as the PLATFORM's address:
+  //   e2e-results-data.js   a record of past test runs, quoting it as history
+  //   *-remote-db.sh        SSH to that machine by its own hostname
+  //                         (DEPLOY_HOST overrides it) — a server name, not a
+  //                         platform origin a domain move invalidates
+  const ALLOWED = new Set([
+    'frontend/src/features/admin/e2e-results-data.js',
+    'scripts/pull-remote-db.sh',
+    'scripts/push-remote-db.sh',
+  ]);
+  const root = path.join(__dirname, '..');
   const found = new Set();
+  const visit = (full) => {
+    const rel = path.relative(root, full).split(path.sep).join('/');
+    if (ALLOWED.has(rel)) return;
+    if (DEAD_HOST.test(fs.readFileSync(full, 'utf-8'))) found.add(rel);
+  };
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === 'node_modules') continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) { walk(full); continue; }
-      if (!/\.(js|md)$/.test(entry.name)) continue;
-      if (DEAD_HOST.test(fs.readFileSync(full, 'utf-8'))) {
-        found.add(path.relative(path.join(__dirname, '..'), full).split(path.sep).join('/'));
-      }
+      if (!/\.(js|mjs|cjs|ts|tsx|md|sh)$/.test(entry.name)) continue;
+      visit(full);
     }
   };
-  walk(path.join(__dirname, '..', 'src'));
-  walk(path.join(__dirname, '..', 'scripts'));
-  assert.deepEqual([...found].sort(), KNOWN,
-    'derive the origin from USERNODE_DOMAIN rather than naming a host a domain move invalidates');
+  for (const dir of ['src', 'scripts', 'public/js', 'frontend/src']) walk(path.join(root, dir));
+  visit(path.join(root, 'server.js'));
+  assert.deepEqual([...found].sort(), [],
+    'derive the origin from USERNODE_DOMAIN (or use a relative path) rather than naming a host a domain move invalidates');
 });
 
 test('the platform\'s own app keeps serving its own asset trees', async (t) => {

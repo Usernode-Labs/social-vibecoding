@@ -327,6 +327,51 @@ test('5 challenge_templates', () => {
   assert.equal(ids.length, 5);
 });
 
+// The artwork slugs. An INSERT guarded by ON CONFLICT (id) DO NOTHING only
+// lands on a database that has none of these ids, so the backfill is what gives
+// an existing staging clone its pictures. It runs on every staging boot, so it
+// is scoped to rows no admin has saved (updated_at = created_at): a template an
+// organiser cleared to (none) is NULL too, and must stay bare. The two lists
+// must name the same slugs, and every slug must be one the client registry
+// draws — a slug it does not know renders the fallback, which would look like
+// a bug.
+test('seeded templates carry registry artwork, and a backfill of untouched rows repeats it for older databases', async () => {
+  const registry = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/lib/challenge-illustrations.ts'), 'utf8');
+  const members = new Set([...registry.matchAll(/^\s*'([a-z0-9-]+)': \{ label:/gm)].map((m) => m[1]));
+  assert.ok(members.size >= 9, 'the registry keys parse out of the source');
+
+  const inserted = new Map();
+  let statements = 0;
+  for (let start = body.indexOf('INSERT INTO challenge_templates'); start >= 0;
+    start = body.indexOf('INSERT INTO challenge_templates', start + 1)) {
+    statements += 1;
+    const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
+    assert.match(block, /metric_label, illustration, created_at, updated_at\)/,
+      'illustration sits just before created_at');
+    for (const m of block.matchAll(/\((9005\d\d),\s[\s\S]*?,\s+(NULL|'[a-z0-9-]+'),\s+NOW\(\),\s+NOW\(\)\)/g)) {
+      inserted.set(Number(m[1]), m[2] === 'NULL' ? null : m[2].slice(1, -1));
+    }
+  }
+  assert.equal(statements, 2);
+  assert.equal(inserted.size, 8, 'every seeded template row carries an illustration value');
+  const drawn = new Map([...inserted].filter(([, slug]) => slug !== null));
+  for (const [id, slug] of drawn) assert.ok(members.has(slug), `template ${id}: ${slug} is a registry slug`);
+  assert.ok([...inserted.values()].includes(null), 'a seeded template keeps the kind-icon fallback in view');
+
+  process.env.USERNODE_ENV = 'staging';
+  const pool = mockPool();
+  await seedStagingTopochain(pool, {});
+  const backfills = pool.calls.filter((c) => /^UPDATE challenge_templates SET illustration\b/.test(c.sql));
+  for (const call of backfills) {
+    assert.equal(call.sql,
+      'UPDATE challenge_templates SET illustration = $2 WHERE id = $1 AND illustration IS NULL AND updated_at = created_at',
+      'never overwrites a picture an organiser chose, nor undoes one they cleared');
+  }
+  assert.deepEqual(new Map(backfills.map((c) => c.params)), drawn,
+    'the backfill names exactly the slugs the INSERTs seed');
+});
+
 test('14 challenges split across four of the five season_events', () => {
   const start = body.indexOf('INSERT INTO challenges');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
@@ -571,6 +616,23 @@ test("the viewer loop credits the finished numeric all the way to its target", (
     .map((m) => Number(m.match(/\d+/)[0]));
   assert.ok(Math.max(...offsets) < 20, 'the viewer id block is 20 wide');
   assert.match(body, /const base = 900520 \+ slot \* 20;/);
+});
+
+test('the viewer loop keeps every viewer inside the running season, so the screenshot identity is a new member', () => {
+  // #2495: the Leaderboard screen draws its event picker for admins and for
+  // members with a trace in a season other than the default event's. Every
+  // screenshot signs as usernode-capture, a member, and it is meant to show
+  // the new-member state — the board with no picker — so the loop must not
+  // give it a past season. The declared check on #tc-ev-select signs in as
+  // the capture admin, who sees the picker by role.
+  const start = body.indexOf('INSERT INTO user_enrollments', body.indexOf('const VIEWER_USERNAMES'));
+  const stmtEnd = body.indexOf(');', start);
+  const stmt = body.slice(start, stmtEnd);
+  assert.match(stmt, /\[viewerId, SEASON_ID, EVENT_REGULAR_ID\]/, 'the running season and its regular event only');
+  assert.doesNotMatch(stmt, /SEASON_CLOSED_ID|EVENT_ARCHIVE_ID/, 'no row in the archive season');
+  const check = DAPP_TESTS.find((t) => typeof t.expectSelector === 'string' && t.expectSelector.includes('#tc-ev-select'));
+  assert.ok(check, 'the declared check is still there');
+  assert.match(check.name, /the checks identity is an admin/, 'and says which viewer it depends on');
 });
 
 test('epoch_stats: 3 epochs x 3 wallets, including one wallet-only (user_id NULL) row per epoch', () => {

@@ -241,6 +241,30 @@ test('buildRecoveryStopHandle seeds a durable stop stamp so a pre-cutover click 
   assert.equal(makeHandle(activeTurn()).stopped, false);
 });
 
+test('the adopted run is relayed to the conversations that dispatched it, all but its end', () => {
+  const agentTurn = require('../src/services/mayor/agent-turn');
+  const relayed = [];
+  const unsubscribe = sessionBus.subscribe(agentTurn.busKey(3), (event) => relayed.push(event));
+  try {
+    const handle = buildRecoveryStopHandle({
+      sessionId: SESSION.id,
+      containerName: `usernode-worker-${SESSION.id}`,
+      activeTurn: activeTurn(),
+      broadcastGlobal: (msg) => broadcasts.push(msg),
+      relayTo: [3],
+    });
+    handle.send('cc_progress', { text: '$ npm test' });
+    handle.send('stopped', { by: 'alice' });
+    handle.send('done', {});
+    assert.deepEqual(relayed.map((e) => [e.type, e.changeId, e.agentSessionId, e.text]),
+      [['cc_progress', SESSION.id, 3, '$ npm test']],
+      'the conversation\'s own end comes from handBackAfterRecovery');
+    assert.equal(emitted('done').length, 1, 'the change still hears every event');
+  } finally {
+    unsubscribe();
+  }
+});
+
 // ── 2. a stop during the tail terminalizes the turn as a stop ───────────
 
 test('a stop landing during the tail persists "Stopped by @user." with stopped pills', async () => {

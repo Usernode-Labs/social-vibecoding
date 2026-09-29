@@ -247,6 +247,7 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     app: { id: 7, slug: 'demo' }, environment: 'production',
     imageRef: 'ghcr.io/example/social-apps/demo@sha256:deadbeef',
     env: { DATABASE_URL: 'postgres://redacted', PORT: '3000' },
+    command: ['node', '/app/evidence-hosted-app-fixture.js'],
     labels: { 'usernode.env.fp': '0123456789abcdef', 'app.kubernetes.io/managed-by': 'cannot-override-owner' },
   });
   // The app's own four resources — everything except the shared backend.
@@ -266,6 +267,8 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
   assert.deepEqual(deployment.spec.selector.matchLabels, { 'social.usernode.io/runtime-name': result.runtimeName });
   assert.equal((await kubernetes.inspectApplication(config(), result.runtimeName)).labels['usernode.env.fp'], '0123456789abcdef');
   assert.equal(deployment.spec.template.spec.containers[0].image, 'ghcr.io/example/social-apps/demo@sha256:deadbeef');
+  assert.deepEqual(deployment.spec.template.spec.containers[0].command,
+    ['node', '/app/evidence-hosted-app-fixture.js']);
   assert.equal(deployment.spec.template.spec.serviceAccountName, 'social-generated-app');
   assert.equal(
     deployment.spec.template.metadata.annotations['social.usernode.io/env-checksum'],
@@ -276,6 +279,45 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
   assert.equal(ingress.metadata.annotations['cert-manager.io/cluster-issuer'], undefined);
   assert.deepEqual(ingress.spec.tls, [{ hosts: ['demo.apps.example.test'], secretName: 'social-apps-wildcard-tls' }]);
   assert.equal(result.url, 'https://demo.apps.example.test');
+});
+
+test('internal-only evidence deploy creates no Ingress or shared public asset route', async () => {
+  kubernetes._resetPlatformAssetBackendForTest();
+  const written = [];
+  let deployment = null;
+  const missing = async () => { throw notFound(); };
+  const record = (kind) => async ({ body }) => {
+    written.push({ kind, body });
+    if (kind === 'Deployment') deployment = body;
+    return body;
+  };
+  kubernetes._setClientsForTest({
+    core: {
+      readNamespacedSecret: missing, createNamespacedSecret: record('Secret'),
+      readNamespacedService: missing, createNamespacedService: record('Service'),
+    },
+    apps: {
+      readNamespacedDeployment: async ({ name }) => {
+        if (!deployment) throw notFound();
+        return { ...deployment, metadata: { ...deployment.metadata, name, generation: 1 },
+          status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+      },
+      createNamespacedDeployment: record('Deployment'),
+    },
+    networking: {
+      async readNamespacedIngress() { throw new Error('internal deploy must not read Ingress'); },
+      async createNamespacedIngress() { throw new Error('internal deploy must not create Ingress'); },
+    },
+  });
+  const result = await kubernetes.deployApplication(config(), {
+    app: { id: 7, slug: 'demo' }, environment: 'staging', sessionId: 42,
+    imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
+    runtimeName: 'sv-evidence-0123456789abcdef-b', internalOnly: true,
+  });
+  assert.deepEqual(written.map((item) => item.kind).sort(), ['Deployment', 'Secret', 'Service']);
+  assert.equal(result.runtimeName, 'sv-evidence-0123456789abcdef-b');
+  assert.equal(result.url, 'http://sv-evidence-0123456789abcdef-b.social-apps.svc:3000');
+  assert.equal(result.hostname, 'sv-evidence-0123456789abcdef-b.social-apps.svc');
 });
 
 for (const [name, environment, database, preferred] of [
@@ -440,13 +482,59 @@ test('worker runtime reconciles a retained PVC, Secret and warm Deployment', asy
   assert.equal(deployment.spec.template.spec.volumes[0].persistentVolumeClaim.claimName, result.pvcName);
 });
 
-test('worker contract version is read from the live Kubernetes Deployment', async () => {
+test('temporary evidence worker uses pod storage without allocating a PVC', async () => {
+  const written = [];
+  const record = (kind) => async ({ body }) => { written.push({ kind, body }); return body; };
+  kubernetes._setClientsForTest({
+    core: {
+      createNamespacedPersistentVolumeClaim: record('PersistentVolumeClaim'),
+      readNamespacedSecret: async () => { throw notFound(); },
+      createNamespacedSecret: record('Secret'),
+      listNamespacedPod: async () => ({ items: [{
+        metadata: { name: 'worker-pod', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({}) } },
+        spec: { containers: [{ name: 'worker', image: config().kubernetes.workerImage }] },
+        status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }],
+          containerStatuses: [{ name: 'worker', ready: true, state: { running: {} } }] },
+      }] }),
+      readNamespacedPodLog: async () => '__USERNODE_PHASE__ warm-ready',
+    },
+    apps: {
+      readNamespacedDeployment: async ({ name }) => {
+        if (written.some((item) => item.kind === 'Deployment')) {
+          return { metadata: { name, generation: 1 }, status: { observedGeneration: 1,
+            replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+        }
+        throw notFound();
+      },
+      createNamespacedDeployment: record('Deployment'),
+    },
+  });
+  const result = await kubernetes.ensureWorker(config(), { sessionId: 43, env: {}, temporary: true });
+  assert.deepEqual(written.map((item) => item.kind), ['Secret', 'Deployment']);
+  assert.equal(result.pvcName, null);
+  const deployment = written.find((item) => item.kind === 'Deployment').body;
+  assert.deepEqual(deployment.spec.template.spec.volumes, [{ name: 'state', emptyDir: {} }]);
+  assert.equal(deployment.metadata.labels['social.usernode.io/storage-mode'], 'temporary');
+});
+
+test('worker contract and immutable image are read from the live Kubernetes Deployment', async () => {
   kubernetes._setClientsForTest({
     apps: {
       async readNamespacedDeployment() {
-        return { metadata: { labels: { 'social.usernode.io/worker-contract': 'v6' } } };
+        return {
+          metadata: { labels: { 'social.usernode.io/worker-contract': 'v6' } },
+          spec: { template: { spec: { volumes: [{ name: 'state', persistentVolumeClaim: { claimName: 'sv-worker-s42-state' } }], containers: [
+            { name: 'sidecar', image: 'example/sidecar@sha256:dead' },
+            { name: 'worker', image: config().kubernetes.workerImage },
+          ] } } },
+        };
       },
     },
+  });
+  assert.deepEqual(await kubernetes.getWorkerRuntimeMetadata(config(), 'sv-worker-s42'), {
+    contractVersion: 'v6',
+    imageRef: config().kubernetes.workerImage,
+    storageMode: 'persistent',
   });
   assert.equal(await kubernetes.getWorkerContractVersion(config(), 'sv-worker-s42'), 'v6');
 });
@@ -480,8 +568,10 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(created.body.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(created.body.spec.template.spec.automountServiceAccountToken, false);
   assert.deepEqual(created.body.spec.template.spec.containers[0].resources, {
-    requests: { cpu: '1', memory: '3Gi', 'ephemeral-storage': '1Gi' },
-    limits: { cpu: '8', memory: '4Gi', 'ephemeral-storage': '4Gi' },
+    requests: { cpu: '4', memory: '3Gi', 'ephemeral-storage': '1Gi' },
+    // 6Gi: the pool is sixteen pages now (services/visuals.js CAPTURE_MEMORY
+    // and tests/checks-budget.test.js carry the sizing).
+    limits: { cpu: '8', memory: '6Gi', 'ephemeral-storage': '4Gi' },
   });
   assert.equal(created.body.spec.template.spec.securityContext.runAsUser, 1000);
   assert.equal(created.body.spec.template.spec.securityContext.runAsGroup, 1000);
@@ -490,9 +580,9 @@ test('capture runtime uses a bounded Job and caps log retrieval', async () => {
   assert.equal(result.stdout, 'result');
 });
 
-for (const kind of ['Capture', 'UnitSuite']) {
+for (const kind of ['Capture', 'UnitSuite', 'Evidence']) {
   for (const [cpus, memory, expectedMemory, expectedRequestMemory] of [
-    ['6', '6g', '6Gi', kind === 'Capture' ? '3Gi' : '1Gi'],
+    ['6', '6g', '6Gi', kind === 'UnitSuite' ? '1Gi' : '3Gi'],
     ['0.5', '512m', '512Mi', '512Mi'],
   ]) {
     test(`${kind} honors resource overrides ${cpus} CPU / ${memory} without exceeding limits`, async () => {
@@ -513,11 +603,59 @@ for (const kind of ['Capture', 'UnitSuite']) {
       const { requests, limits } = created.spec.template.spec.containers[0].resources;
       assert.equal(limits.cpu, cpus);
       assert.equal(limits.memory, expectedMemory);
-      assert.equal(requests.cpu, Number(cpus) < 1 ? cpus : '1');
+      assert.equal(requests.cpu, Number(cpus) < 4 ? cpus : '4');
       assert.equal(requests.memory, expectedRequestMemory);
     });
   }
 }
+
+test('check kinds and sessions share one spread group without including resident workers', async () => {
+  const jobs = [];
+  kubernetes._setClientsForTest({
+    batch: {
+      async createNamespacedJob({ body }) { jobs.push(body); },
+      async readNamespacedJob() { return { status: { succeeded: 1 } }; },
+    },
+    core: {
+      async createNamespacedSecret() {},
+      async deleteNamespacedSecret() {},
+      async listNamespacedPod() { return { items: [{ metadata: { name: 'check-pod' } }] }; },
+      async readNamespacedPodLog() { return 'passed'; },
+    },
+  });
+  for (const [index, kind] of ['Capture', 'UnitSuite', 'Evidence'].entries()) {
+    await kubernetes[`run${kind}Job`](config(), { sessionId: 42 + index, env: {}, previewRunId: `run-${index}` });
+  }
+  const expected = {
+    maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
+    nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
+    labelSelector: { matchLabels: {
+      'app.kubernetes.io/managed-by': 'social-vibecoding-runtime',
+      'app.kubernetes.io/part-of': 'social-vibecoding',
+      'social.usernode.io/workload': 'check',
+    } },
+  };
+  for (const job of jobs) {
+    const pod = job.spec.template;
+    assert.deepEqual(pod.spec.topologySpreadConstraints, [expected]);
+    for (const [key, value] of Object.entries(expected.labelSelector.matchLabels)) {
+      assert.equal(pod.metadata.labels[key], value);
+      assert.equal(job.metadata.labels[key], value);
+    }
+    assert.equal(pod.spec.containers[0].resources.requests.cpu, '4');
+    assert.equal(pod.spec.affinity, undefined, 'checks must not inherit preview database affinity');
+    assert.equal(pod.spec.nodeSelector, undefined);
+  }
+  // Existing coding workers share runtime/part-of and worker environment labels,
+  // but do not carry the dedicated check label required by the spread selector.
+  const workerLabels = {
+    'app.kubernetes.io/managed-by': 'social-vibecoding-runtime',
+    'app.kubernetes.io/part-of': 'social-vibecoding',
+    'social.usernode.io/environment': 'worker',
+  };
+  assert.equal(Object.entries(expected.labelSelector.matchLabels)
+    .every(([key, value]) => workerLabels[key] === value), false);
+});
 
 test('invalid capture resource limits fail before creating credentials or workloads', async () => {
   kubernetes._setClientsForTest({});

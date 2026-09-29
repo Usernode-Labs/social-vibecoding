@@ -288,6 +288,9 @@ const { READ_SCOPE, WRITE_SCOPE } = require('../src/services/mcp-connect-constan
 // to get at the handlers. `platform` answers the loopback calls.
 function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } = {}) {
   const handlers = new Map();
+  // The registered spec too, so a test can validate a response against the
+  // tool's own outputSchema the way the SDK does.
+  const specs = new Map();
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     const method = (init && init.method) || 'GET';
@@ -305,7 +308,7 @@ function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } 
     };
   };
   tools.registerTools({
-    registerTool(name, _spec, handler) { handlers.set(name, handler); },
+    registerTool(name, spec, handler) { handlers.set(name, handler); specs.set(name, spec); },
   }, {
     accessToken: 'svmcp_test',
     scopes,
@@ -314,7 +317,7 @@ function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } 
     origin: ORIGIN, baseUrl: 'http://platform.internal',
     pool, config: {}, tokenId: null, grantId: null,
   });
-  return { handlers, calls, restore: () => { globalThis.fetch = realFetch; } };
+  return { handlers, specs, calls, restore: () => { globalThis.fetch = realFetch; } };
 }
 
 test('update_proposal_issues sends bounded deltas through the platform route', async () => {
@@ -343,7 +346,7 @@ test('update_proposal_issues sends bounded deltas through the platform route', a
     });
     assert.deepEqual(result.linkedIssues, [18, 27]);
     assert.equal(result.prBodyStatus, 'updated');
-    assert.equal(result.webPath, `${ORIGIN}/#app/recipe-box/dev/sessions/412`);
+    assert.equal(result.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/412`);
     assert.match(result.nextStep, /No code or votes changed/);
   } finally { c.restore(); }
 });
@@ -824,6 +827,170 @@ test('a claim on a request that is not open is refused, and says which it is', a
   }
 });
 
+// ── propose_close_request ──────────────────────────────────────────────
+//
+// The request page's "Propose to close", reached from a connector. It files a
+// governance proposal the group votes on; it never closes anything itself.
+
+test('proposing to close files a close_issue vote through the platform route', async () => {
+  const { handlers, specs, calls, restore } = connector((method, pathname) => {
+    if (method === 'POST') {
+      return { issue: { id: 701, kind: 'close_issue', payload: { issueNumber: 12, issueTitle: 'Dark mode', reason: 'x' } } };
+    }
+    return boardWith(null)();
+  }, claimScopes);
+  try {
+    const res = await handlers.get('propose_close_request')({
+      slug: 'recipe-box', number: 12, reason: '  Shipped in PR #901 (proposal 4223).  ',
+    });
+    assert.notEqual(res.isError, true);
+    const out = res.structuredContent;
+    assert.equal(out.closeProposalId, 701);
+    assert.equal(out.number, 12);
+    assert.equal(out.title, '<untrusted-content>Dark mode</untrusted-content>');
+    assert.equal(out.reasonChars, 'Shipped in PR #901 (proposal 4223).'.length);
+    assert.equal(out.inProgress, null);
+    // The proposal's own page, keyed by its id — it has no GitHub issue.
+    assert.equal(out.webPath, `${ORIGIN}/#app/recipe-box/dev/governance/701`);
+    assert.match(out.nextStep, /stays open until that vote passes/);
+    assert.match(out.nextStep, /never that it is closed/);
+    assert.doesNotMatch(out.nextStep, /work in progress/, 'nobody is on it, so there is nobody to warn about');
+
+    // The board is read first, then the SAME route the button posts to, with
+    // the kind pinned and the number in the payload — never in any field the
+    // route reads as the proposal's own GitHub twin.
+    assert.deepEqual(calls.map((c) => `${c.method} ${c.pathname}`), [
+      'GET /api/apps/recipe-box/github-issues',
+      'POST /api/apps/recipe-box/issues',
+    ]);
+    assert.deepEqual(calls[1].body, {
+      kind: 'close_issue',
+      payload: { issueNumber: 12, reason: 'Shipped in PR #901 (proposal 4223).' },
+    });
+
+    // The answer satisfies the tool's own outputSchema, as the SDK checks it.
+    const { z } = require('zod');
+    assert.equal(z.object(specs.get('propose_close_request').outputSchema).safeParse(out).success, true);
+  } finally {
+    restore();
+  }
+});
+
+test('a close proposal names whoever is already working on the request', async () => {
+  const { handlers, restore } = connector((method) => (method === 'POST'
+    ? { issue: { id: 702, payload: { issueNumber: 12, issueTitle: 'Dark mode' } } }
+    : boardWith({ count: 1, mine: false, claims: [{ username: 'maya', mine: false }] })()), claimScopes);
+  try {
+    const out = (await handlers.get('propose_close_request')({
+      slug: 'recipe-box', number: 12, reason: 'Duplicate of #9.',
+    })).structuredContent;
+    assert.deepEqual(out.inProgress.claimedBy, ['<untrusted-content>maya</untrusted-content>']);
+    assert.match(out.nextStep, /work in progress/);
+    assert.match(out.nextStep, /may object/);
+  } finally {
+    restore();
+  }
+});
+
+test('a close proposal needs a reason, and an over-long one is refused before anything is read', async () => {
+  for (const reason of ['', '   ', undefined]) {
+    const { handlers, calls, restore } = connector(boardWith(null), claimScopes);
+    try {
+      const res = await handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason });
+      assert.equal(res.isError, true);
+      assert.equal(res.structuredContent.code, 'invalid_request');
+      assert.match(res.structuredContent.message, /reason is required/);
+      assert.equal(calls.length, 0);
+    } finally {
+      restore();
+    }
+  }
+
+  const { handlers, calls, restore } = connector(boardWith(null), claimScopes);
+  try {
+    const res = await handlers.get('propose_close_request')({
+      slug: 'recipe-box', number: 12, reason: 'x'.repeat(tools.MAX_CLOSE_REASON_CHARS + 1),
+    });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'reason_too_long');
+    assert.equal(res.structuredContent.limitChars, tools.MAX_CLOSE_REASON_CHARS);
+    assert.equal(res.structuredContent.actualChars, tools.MAX_CLOSE_REASON_CHARS + 1);
+    assert.equal(calls.length, 0, 'nothing was filed, so nothing needs undoing');
+  } finally {
+    restore();
+  }
+});
+
+test('the close reason limit is the route\'s own', () => {
+  // Two copies of one number: the tool refuses with the numbers, so a limit
+  // looser than the route's would come back as the route's bare 400 instead.
+  const issuesSrc = fs.readFileSync(path.join(__dirname, '../src/routes/issues.js'), 'utf8');
+  const routeMax = Number(issuesSrc.match(/const MAX_CLOSE_REASON_LENGTH = (\d+);/)[1]);
+  assert.equal(tools.MAX_CLOSE_REASON_CHARS, routeMax);
+});
+
+test('proposing to close a request that is not open is refused, and says which it is', async () => {
+  const open = connector(boardWith(null), claimScopes);
+  try {
+    const res = await open.handlers.get('propose_close_request')({ slug: 'recipe-box', number: 99, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.match(res.structuredContent.message, /not open on this app/);
+    assert.equal(open.calls.length, 1, 'the board read, and nothing filed');
+  } finally {
+    open.restore();
+  }
+
+  const degraded = connector(() => ({ issues: [], note: 'rate limited' }), claimScopes);
+  try {
+    const res = await degraded.handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.match(res.structuredContent.message, /may exist/);
+    assert.equal(degraded.calls.length, 1);
+  } finally {
+    degraded.restore();
+  }
+
+  // The route re-checks GitHub itself; its 404 says which request and why,
+  // not the generic "app or proposal" line.
+  const raced = connector((method) => (method === 'POST'
+    ? { __http: { ok: false, status: 404, body: { error: "Issue #12 isn't an open issue on this repo." } } }
+    : boardWith(null)()), claimScopes);
+  try {
+    const res = await raced.handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'no_access');
+    assert.match(res.structuredContent.message, /Issue #12 isn't an open issue/);
+  } finally {
+    raced.restore();
+  }
+});
+
+test('one close proposal per request: a second comes back as already_proposed', async () => {
+  const { handlers, restore } = connector((method) => (method === 'POST'
+    ? { __http: { ok: false, status: 409, body: { error: 'A close proposal for issue #12 is already open' } } }
+    : boardWith(null)()), claimScopes);
+  try {
+    const res = await handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'already_proposed');
+    assert.match(res.structuredContent.message, /already open/);
+  } finally {
+    restore();
+  }
+});
+
+test('proposing to close needs the write scope, and refuses before any platform call', async () => {
+  const { handlers, calls, restore } = connector(boardWith(null), { scopes: [READ_SCOPE] });
+  try {
+    const res = await handlers.get('propose_close_request')({ slug: 'recipe-box', number: 12, reason: 'Done.' });
+    assert.equal(res.isError, true);
+    assert.equal(res.structuredContent.code, 'insufficient_scope');
+    assert.equal(calls.length, 0);
+  } finally {
+    restore();
+  }
+});
+
 test('prepare_work marks the request it names, and survives a claim that fails', async () => {
   const gh = require('../src/services/github');
   const githubLink = require('../src/services/github-link');
@@ -1064,8 +1231,8 @@ test('a push that started no build says so, rather than promising a preview', as
     const res = await handlers.get('submit_work')({ proposalId: 4158, branch: 'my-fix' });
     assert.equal(res.structuredContent.previewRebuilding, false);
     assert.equal(res.structuredContent.resumeRequired, true);
-    assert.match(res.structuredContent.nextStep, /paused/,
-      'a paused session takes the commit and deliberately does not build');
+    assert.match(res.structuredContent.nextStep, /idle, so the commit landed and no preview was built/,
+      'a paused session takes the commit and deliberately does not build (said without "paused")');
     assert.doesNotMatch(res.structuredContent.nextStep, /rebuilding now/);
   } finally {
     restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
@@ -1085,11 +1252,69 @@ test('a proposal update keeps its own wording', async () => {
   }), { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
   try {
     const res = await handlers.get('submit_work')({ proposalId: 3140, branch: 'my-fix' });
-    assert.match(res.structuredContent.nextStep, /The proposal now points at your new commit/);
+    // Named by its pull request first (#2136), with the id the next call takes beside it.
+    assert.match(res.structuredContent.nextStep, /^PR #52 \(proposal 3140\) now points at your new commit/);
     assert.match(res.structuredContent.nextStep, /2 votes it had collected were cleared/);
     assert.match(res.structuredContent.nextStep, /reviewers have been asked to look again/);
   } finally {
     restore(); gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});
+
+// #2138. The connector half of the fix for a connector-opened proposal that
+// could never take its own title or description back. The rule lives in
+// services/proposal-update.js (a pull request the platform opened for the
+// caller is the caller's own) and is tested there; this is what the answer
+// reads once the platform stops refusing. Until then every such revision
+// read "opened by another GitHub account ... belongs to that author" — about
+// a pull request the platform's own bot had opened for the very caller.
+
+test('a revision whose title and description landed is told so, not that another account owns them', async () => {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const answer = (over) => ({
+    updated: true, proposalId: 4208, appSlug: 'recipe-box', prNumber: 91, votesCleared: 0,
+    submittedVia: 'update_branch', targetKind: 'proposal', previewRebuilding: true, ...over,
+  });
+  const revise = async (platformAnswer) => {
+    const { handlers, restore } = connector(() => platformAnswer, { scopes: [READ_SCOPE, WRITE_SCOPE], pool });
+    try {
+      return await handlers.get('submit_work')({
+        proposalId: 4208, branch: 'my-fix',
+        title: 'Snap cards to the grid, and remember the toggle',
+        description: 'The toggle now survives a reload.',
+      });
+    } finally {
+      restore();
+    }
+  };
+  try {
+    const own = await revise(answer({ titleUpdated: true, descriptionUpdated: true }));
+    assert.equal(own.structuredContent.titleUpdated, true);
+    assert.equal(own.structuredContent.titleRejected, null);
+    assert.equal(own.structuredContent.descriptionUpdated, true);
+    assert.equal(own.structuredContent.descriptionRejected, null);
+    const step = own.structuredContent.nextStep;
+    assert.match(step, /PR #91 \(proposal 4208\) now carries your title/);
+    assert.match(step, /description now reads as you submitted it/);
+    assert.doesNotMatch(step, /another GitHub account|belongs to that author|NOT applied/,
+      'the sentence every connector-opened revision used to read back');
+
+    // The refusal is not gone — it is reserved for a pull request a DIFFERENT
+    // person authored, and it still says so in the same words.
+    const theirs = await revise(answer({
+      titleUpdated: false, titleRejected: 'imported_pr',
+      descriptionUpdated: false, descriptionRejected: 'imported_pr',
+    }));
+    assert.equal(theirs.structuredContent.titleRejected, 'imported_pr');
+    assert.equal(theirs.structuredContent.descriptionRejected, 'imported_pr');
+    assert.match(theirs.structuredContent.nextStep, /Your title was NOT applied: .*another GitHub account/);
+    assert.match(theirs.structuredContent.nextStep, /Your description was NOT applied: .*another GitHub account/);
+  } finally {
+    gh.isEnabled = realGh; githubLink.isEnabled = realLink;
   }
 });
 
@@ -1358,6 +1583,39 @@ test('submit_work carries the request its work order named into the import', () 
   assert.match(block, /: \{\}\),\s*\}\s*\);/);
 });
 
+test('submit_work documents direct v1 evidence input when the helper tool is absent', () => {
+  const block = registration('submit_work');
+  assert.match(block, /construct that documented v1 shape directly when the helper is not exposed/);
+  assert.match(block, /validates both paths identically/);
+});
+
+test('submit_work validates and forwards a local plan with the first import', () => {
+  const block = registration('submit_work');
+  assert.match(block, /parseAuthorPlanSubmission\(/);
+  assert.match(block, /visualEvidencePlan: acceptedVisualEvidencePlan/);
+  assert.match(block, /extra\.visualEvidencePlan \? \{ visualEvidencePlan: extra\.visualEvidencePlan \}/);
+  assert.match(block, /atomic author-plan handoff currently applies to a new PR import/);
+});
+
+test('submit_visual_evidence_plan forwards the exact typed flow to the owner-scoped platform route', async () => {
+  const c = connector((method, pathname) => {
+    assert.equal(method, 'POST');
+    assert.equal(pathname, '/api/apps/demo/proposals/42/evidence/plan');
+    return { runId: '1'.repeat(32), headSha: 'b'.repeat(40), visualEvidenceState: 'planned' };
+  }, { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    const replayPlan = require('./fixtures/visual-evidence').plan();
+    const result = await c.handlers.get('submit_visual_evidence_plan')({
+      proposalId: 42, slug: 'demo', headSha: 'b'.repeat(40), plan: replayPlan,
+    });
+    assert.equal(result.isError, undefined);
+    assert.equal(result.structuredContent.runId, '1'.repeat(32));
+    assert.equal(c.calls.length, 1);
+    assert.deepEqual(c.calls[0].body.plan, replayPlan,
+      'the connector does not crop, transcode, or substitute the author flow');
+  } finally { c.restore(); }
+});
+
 test('list_requests says when the board itself could not be read in full', () => {
   // Distinct from `truncated`, which is only about this page. A degraded
   // fetch means "no duplicate found" is not evidence of anything, and the
@@ -1422,7 +1680,7 @@ test('proposal shaping returns the platform hash route', () => {
     ORIGIN
   );
   assert.equal(proposal.proposalId, 58);
-  assert.equal(proposal.webPath, `${ORIGIN}/#app/recipe-box/dev/sessions/58`);
+  assert.equal(proposal.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/58`);
   assert.equal(proposal.yesVotes, 3);
   assert.equal(proposal.votesRequired, 4);
   assert.equal(proposal.externalAgent, 'claude_code_web');
@@ -1449,10 +1707,23 @@ test('tools reach the platform over loopback with the caller’s own token', () 
   assert.doesNotMatch(SRC, /api\.github\.com/);
 });
 
+test('a membership refusal keeps its code and the app, not a scope error', () => {
+  const err = tools.platformError({
+    ok: false, status: 403,
+    body: { code: 'join_required', error: 'Join Tiny to take part.', app: { slug: 'tiny', name: 'Tiny', extra: 'x' } },
+  });
+  assert.equal(err.structuredContent.code, 'join_required');
+  assert.equal(err.structuredContent.message, 'Join Tiny to take part.');
+  assert.deepEqual(err.structuredContent.app, { slug: 'tiny', name: 'Tiny' });
+  // Any other 403 is still the scope error it always was.
+  assert.equal(tools.platformError({ ok: false, status: 403, body: { error: 'nope' } }).structuredContent.code, 'insufficient_scope');
+});
+
 test('platform failures pass the platform’s own wording through', () => {
   const cases = [
     [{ ok: false, status: 401, body: {} }, 'not_connected'],
     [{ ok: false, status: 403, body: { error: 'insufficient_scope' } }, 'insufficient_scope'],
+    [{ ok: false, status: 403, body: { code: 'join_required', error: 'Join Tiny to take part.', app: { slug: 'tiny', name: 'Tiny' } } }, 'join_required'],
     [{ ok: false, status: 404, body: {} }, 'no_access'],
     [{ ok: false, status: 429, body: { code: 'budget_exceeded', error: 'Daily limit reached ($20.00).' } }, 'budget_exceeded'],
     [{ ok: false, status: 429, body: { error: 'You already have 5 PRs up for vote.' } }, 'at_capacity'],
@@ -1477,11 +1748,16 @@ test('platform failures pass the platform’s own wording through', () => {
 test('the registered tool surface is exactly this, and nothing more', () => {
   const registered = [...SRC.matchAll(/server\.registerTool\('([a-z_]+)'/g)].map((m) => m[1]);
   assert.deepEqual(registered.sort(), [
-    'answer_questions', 'claim_request', 'create_request', 'get_app',
+    'answer_questions', 'claim_request', 'create_request',
+    // Demo mode: the four acting tools of a creator's synthetic partner, and
+    // its read — see ACTING_TOOLS and routes/demo-mode.js.
+    'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote', 'get_app',
+    // #2779. A native change, read the way the change page reads it.
+    'get_change',
     // #1433. Read-only, and named `get_` so the shipped allow rules already
     // cover it — a drift check that prompts every call is one nobody runs.
     'get_checkout_status',
-    'get_connector_guidance',
+    'get_connector_guidance', 'get_demo_status',
     'get_platform_build', 'get_platform_conventions', 'get_proposal',
     'get_request', 'list_apps',
     'list_my_proposals', 'list_requests',
@@ -1489,13 +1765,30 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     // feed — see the allow-rule reasoning in services/mcp-connect-constants.js
     // for why that is a different category from the acting tools below.
     'notify_awaiting_input', 'notify_input_received',
-    'prepare_work', 'release_request',
-    'start_platform_build', 'submit_platform_build', 'submit_work',
+    'prepare_work',
+    // #2779. The native change lifecycle. recheck_change is on every surface;
+    // the other four are registered only for an agent session's Mayor — see
+    // the per-kind test below and services/mcp-audiences.js.
+    'promote_change',
+    // A group vote on closing a request, like the request page's "Propose to
+    // close". It files the proposal; the vote decides, and the platform
+    // closes the issue only when it passes.
+    'propose_close_request',
+    'recheck_change',
+    'release_request',
+    'start_change',
+    'start_platform_build', 'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work',
+    'sync_change',
     'update_proposal_issues', 'whoami',
+    'withdraw_change',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
   // user's own coding agent and puts the result to a vote; it does not vote,
   // merge, withdraw, or touch settings, secrets or membership.
+  //
+  // The one exception is demo mode: demo_vote is a vote and demo_reset moves
+  // main — cast by a synthetic partner, on an app its creator switched into
+  // demo mode, and refused everywhere else (routes/demo-mode.js).
   for (const never of ['vote', 'merge_proposal', 'set_secret', 'add_member', 'delete_app']) {
     assert.ok(!registered.includes(never), `${never} must never be a connector tool`);
   }
@@ -1651,8 +1944,11 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
   // mean a read is being withheld from both for no reason, and a write left
   // out of it would leak into the read-only globs.
   assert.deepEqual([...tools.ACTING_TOOLS].sort(), [
-    'create_request', 'prepare_work', 'start_platform_build',
-    'submit_platform_build', 'submit_work', 'update_proposal_issues',
+    'create_request', 'demo_mode', 'demo_promote', 'demo_propose', 'demo_reset', 'demo_vote',
+    'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change', 'start_change',
+    'start_platform_build',
+    'submit_platform_build', 'submit_visual_evidence_plan', 'submit_work', 'sync_change',
+    'update_proposal_issues', 'withdraw_change',
   ]);
   for (const name of tools.ACTING_TOOLS) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
@@ -1784,8 +2080,9 @@ test('whoami hands the model the canonical name and the exact shipped rules', ()
 
 test('every write tool checks its scope before it does anything', () => {
   const writeTools = [
-    'create_request', 'prepare_work', 'submit_work',
+    'create_request', 'prepare_work', 'submit_work', 'submit_visual_evidence_plan',
     'start_platform_build', 'answer_questions', 'submit_platform_build',
+    'demo_mode', 'demo_propose', 'demo_promote', 'demo_vote', 'demo_reset',
   ];
   for (const name of writeTools) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);
@@ -1814,11 +2111,15 @@ test('a request’s text stays wrapped all the way into the work order', () => {
   const idx = SRC.indexOf("server.registerTool('prepare_work'");
   const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
   assert.match(body, /parts\.push\(untrusted\(match\.title, MAX_TITLE_CHARS\)\)/);
-  assert.match(body, /parts\.push\(untrusted\(match\.body, MAX_BODY_CHARS\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(match\.body, budget\.body\)\)/);
+  assert.match(body, /parts\.push\(untrusted\(discussion, budget\.discussion\)\)/);
   assert.match(body, /parts\.push\(untrusted\(brief, MAX_BODY_CHARS\)\)/);
-  // The request must actually be open on this app — a number is not a
-  // capability, so it is looked up rather than trusted.
-  assert.match(body, /list\.find\(\(i\) => i\.number === issueNumber\)/);
+  // One request keeps the budgets it always had.
+  assert.deepEqual(tools.requestTextBudget(1, 'x', 6000), { body: tools.MAX_BODY_CHARS, discussion: 2500 });
+  // Every request must actually be open on this app — a number is not a
+  // capability, so each is looked up rather than trusted.
+  assert.match(body, /const missing = requested\.filter\(\(n\) => !list\.some\(\(i\) => i\.number === n\)\)/);
+  assert.match(body, /list\.find\(\(i\) => i\.number === number\)/);
   // And both deliveries of the operating contract warn the receiving model
   // about exactly this — the truncation-proof brief and the full charter.
   assert.match(tools.SERVER_INSTRUCTIONS, /WHAT TO BUILD section/);
@@ -1954,6 +2255,22 @@ test('the checks a proposal reports name the tests that are failing', () => {
   assert.ok(shaped.failing.every((n) => n.startsWith('<untrusted-content>')));
   assert.ok(shaped.failing[0].includes('Board shows the snap toggle'));
   assert.ok(shaped.failing[1].includes('Settings saves'));
+});
+
+test('the unit suite row leads the failure reasons and keeps its whole file list', () => {
+  // It is appended after the browser checks, and its reason is the one
+  // place the agent learns which test files failed (change 4868).
+  const reason = `tests/a.test.js (8): t1; t2… | tests/b.test.js (1): t9 | # fail 9 ${'.'.repeat(1200)}`;
+  const shaped = tools.shapeChecks({
+    check_state: 'failing',
+    test_results: [
+      ...Array.from({ length: 12 }, (_, i) => ({ name: `browser ${i}`, status: 'fail', failureReason: 'x'.repeat(900) })),
+      { index: -3, name: 'Repo unit suite (npm test) passes', path: 'package.json', status: 'fail', failureReason: reason },
+    ],
+  });
+  assert.equal(shaped.failures.length, 10);
+  assert.equal(shaped.failures[0].reason, `<untrusted-content>${reason}</untrusted-content>`);
+  assert.ok(shaped.failures[1].reason.includes('… [truncated]'), 'other rows keep their clip');
 });
 
 test('checks degrade to a knowable nothing rather than a guess', () => {
@@ -2133,7 +2450,7 @@ test('a proposal reports its checks and whether its capture route was lost', () 
   const shaped = tools.shapeProposal({
     id: 7, app_slug: 'recipe-box', check_state: 'failing',
     test_results: [{ name: 'Board shows the snap toggle', status: 'fail' }],
-    capture_detail: { pathDefaulted: true },
+    capture_detail: { media: true, pathDefaulted: true, paths: ['/'] },
   }, ORIGIN);
   assert.equal(shaped.checks.state, 'failing');
   assert.equal(shaped.checks.total, 1);
@@ -2151,6 +2468,28 @@ test('a proposal reports its checks and whether its capture route was lost', () 
     tools.shapeProposal({ id: 9, capture_detail: 'x' }, ORIGIN).captureDefaultedToRoot,
     false
   );
+});
+
+test('a proposal reports named visual provenance or a labelled root default', () => {
+  const scenario = tools.shapeProposal({
+    id: 9,
+    capture_state: 'captured',
+    capture_detail: {
+      routeSource: 'scenario',
+      paths: ['/board?demo=1'],
+      scenarios: [{ id: 'board.main', fingerprint: 'a'.repeat(64) }],
+    },
+  }, ORIGIN);
+  assert.equal(scenario.captureRouteSource, 'scenario');
+  assert.deepEqual(scenario.visualScenarios, ['board.main']);
+
+  const fallback = tools.shapeProposal({
+    id: 10, capture_state: 'captured',
+    capture_detail: { media: true, pathDefaulted: true, routeSource: 'default', paths: ['/'] },
+  }, ORIGIN);
+  assert.equal(fallback.captureDefaultedToRoot, true);
+  assert.equal(fallback.captureRouteSource, 'default');
+  assert.deepEqual(fallback.capturePaths, ['/']);
 });
 
 test('a proposal names the routes its screenshots were actually shot on (#1214)', () => {
@@ -2296,22 +2635,23 @@ test('every route the connector could not use is named back to the caller', () =
 
 test('a submission whose every route is rejected is told so in its own answer', () => {
   // This is the case that used to be invisible: nothing is sent to the import,
-  // the capture falls back to '/', and the only signal was
-  // `captureDefaultedToRoot` on a different endpoint minutes later.
+  // there was no useful signal until the capture ran minutes later.
   const shaped = tools.shapeTestingNotes({ testingPaths: ['nope', '//evil.example'] });
   assert.equal('testingPaths' in shaped, false, 'nothing usable is sent on');
   assert.equal(shaped.rejectedPaths.length, 2);
   const note = tools.testingRouteNote(shaped, false);
   assert.match(note, /could not use any of the testingPaths/);
-  assert.match(note, /fall back to the app's home page/);
-  assert.match(note, /clears no votes/, 'and the cheap repair is named');
+  assert.match(note, /does not substitute|use visualEvidence/i,
+    'the answer points to semantic evidence without promising a root fallback');
+  assert.doesNotMatch(note, /default.*home page/i);
 });
 
 test('a partly usable list says what will actually be shot', () => {
   const shaped = tools.shapeTestingNotes({ testingPaths: ['/board @mobile', 'nope'] });
   const note = tools.testingRouteNote(shaped, false);
   assert.match(note, /could not use 1 of the testingPaths/);
-  assert.match(note, /shot on \/board @mobile only/, 'in the spelling the caller used');
+  assert.match(note, /manual test link uses \/board @mobile only/,
+    'the surviving manual route is named without calling it visual evidence');
 });
 
 test('a first submission with no routes at all is warned, an update is not', () => {
@@ -2560,7 +2900,10 @@ test('list_my_proposals asks for imported proposals, which is what it opens', ()
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
   const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("'/api/me/active-sessions'"));
-  assert.match(route.slice(0, 3000), /cs\.source IS DISTINCT FROM 'imported'/);
+  // The window is "the route's own query", not a fixed distance: the filter
+  // sat 15 characters inside 3000 until #1959 put a second LATERAL and two
+  // columns ahead of the WHERE clause.
+  assert.match(route.slice(0, 4000), /cs\.source IS DISTINCT FROM 'imported'/);
   assert.match(SRC.slice(SRC.indexOf("server.registerTool('submit_work'")), /pr-import/);
 
   // And the connector allowlist matches on the PATH, so the query string
@@ -2982,4 +3325,710 @@ test('#1442 — get_app still answers when the promoted route is unavailable', a
     assert.equal(out.openProposalCount, 0, 'degraded to 0 rather than failing the lookup');
     assert.equal(out.slug, 'recipe-box');
   } finally { restore(); }
+});
+
+// ── #2137: a deferred verdict on the connector surface ───────────────────
+//
+// check_phase 'deferred' (services/check-admission.js) is the platform
+// declining to run the verdict on a promoted head that conflicts with main:
+// the preview is built, nothing is running, and nothing will until the head
+// merges cleanly. The row has carried that value since the direct-merge lanes
+// landed; the connector's output schema still named only the two halves of a
+// run, so the SDK's structured-output validation threw "Invalid enum value.
+// Expected 'building' | 'testing', received 'deferred'" and the WHOLE
+// response was lost — `mergeability: 'conflict'`, the file list and nextStep
+// with it — on exactly the proposal an agent most needed to read (proposals
+// 4208 and 4212).
+
+const { z } = require('zod');
+const visuals = require('../src/services/visuals');
+
+// Validated the way the server validates it: the SDK builds
+// z.object(outputSchema) from the registered raw shape and safeParses
+// structuredContent against it (validateToolOutput in
+// @modelcontextprotocol/sdk server/mcp.js).
+function validateOutput(spec, result) {
+  return z.object(spec.outputSchema).safeParse(result.structuredContent);
+}
+
+// A bot-owned head (a connector submission mirrored into the app repository)
+// whose verdict was deferred, as the session route returns it.
+const DEFERRED_ROW = {
+  id: 4208, app_slug: 'recipe-box', status: 'promoted', source: 'cli_handoff',
+  branch_name: 'usernode/from-fork-4208',
+  reviewed_head_sha: 'a'.repeat(40), checks_commit_sha: 'a'.repeat(40),
+  check_state: 'pending', check_phase: 'deferred', check_trigger: 'proposal-open',
+  checks_checked_at: '2026-09-14T09:00:00.000Z',
+  test_results: [],
+  mergeability: 'conflict',
+  mergeability_files: ['src/services/mcp-tools.js', 'tests/mcp-tools.test.js'],
+  mergeability_files_complete: true,
+  freshness_behind_by: 3, freshness_ahead_by: 1,
+  freshness_checked_at: '2026-09-14T09:05:00.000Z',
+};
+
+test('#2137 — get_proposal admits a deferred verdict through its own output schema', async () => {
+  const c = connector((method, pathname) => {
+    assert.equal(method, 'GET');
+    assert.equal(pathname, '/api/sessions/4208');
+    return { session: DEFERRED_ROW };
+  });
+  try {
+    const result = await c.handlers.get('get_proposal')({ proposalId: 4208 });
+    assert.ok(!result.isError, 'the tool answered');
+    const parsed = validateOutput(c.specs.get('get_proposal'), result);
+    assert.ok(parsed.success,
+      `the SDK would reject this response: ${parsed.success ? '' : parsed.error.message}`);
+    const out = result.structuredContent;
+    assert.equal(out.checks.state, 'pending');
+    assert.equal(out.checks.phase, 'deferred', 'the phase arrives as itself, not as null');
+    // The fields the validation error used to take down with it.
+    assert.equal(out.mergeability, 'conflict');
+    assert.deepEqual(out.freshness.mergeabilityFiles,
+      ['src/services/mcp-tools.js', 'tests/mcp-tools.test.js']);
+    assert.match(out.nextStep, /DEFERRED/);
+  } finally { c.restore(); }
+});
+
+test('#2137 — the phases the connector admits are the phases the platform stores', () => {
+  const c = connector(() => { throw new Error('must not call platform'); });
+  try {
+    const phase = z.object(c.specs.get('get_proposal').outputSchema).shape.checks.shape.phase;
+    // `.nullable()` wraps the enum; the closed list itself is underneath.
+    assert.deepEqual(new Set(phase.unwrap().options), visuals.CHECK_PHASES,
+      'a phase the row can carry that the schema does not name fails the whole response');
+    assert.ok(visuals.CHECK_PHASES.has('deferred'), 'the value proposals 4208 and 4212 carried');
+    // The charter's prose mirror of the same vocabulary names the third
+    // phase too, so the connector's own guidance does not tell an agent to
+    // wait on it.
+    const revising = require('../src/services/mcp-charter').CHARTER_SECTIONS
+      .find((s) => s.id === 'revising-a-proposal');
+    assert.match(revising.text, /`checks\.phase` of `deferred`/);
+  } finally { c.restore(); }
+});
+
+test('#2137 — nextStep says the verdict is waiting on a sync with main, and where to look', () => {
+  const step = tools.shapeProposal(DEFERRED_ROW, ORIGIN).nextStep;
+  assert.match(step, /DEFERRED, not running/, 'a decision, not a run in flight');
+  assert.match(step, /conflicts with main/);
+  assert.match(step, /until the head merges cleanly/);
+  // The files both sides changed, in the same envelope as every other
+  // borrowed string — and labelled as the place to look, not as the conflict.
+  assert.match(step,
+    /<untrusted-content>src\/services\/mcp-tools\.js, tests\/mcp-tools\.test\.js<\/untrusted-content>/);
+  assert.match(step, /upper bound on the conflict/);
+  assert.match(step, /The verdict was deferred at 2026-09-14T09:00:00\.000Z/);
+  assert.match(step, /merge main into .* \(or rebase onto it\)/);
+  assert.match(step, /submit_work with proposalId 4208/);
+  assert.match(step, /Do not open a second proposal/);
+  // The in-flight advice would be wrong here: a synced head is the way out.
+  assert.ok(!/rather than pushing again/.test(step));
+  assert.ok(!/Checks have not reported a verdict yet/.test(step));
+
+  // A long list is pointed at, not pasted: the first ten inline, the rest by
+  // field name, and a capped compare says so.
+  const many = Array.from({ length: 300 }, (_, i) => `src/file-${i}.js`);
+  const long = tools.shapeProposal({
+    ...DEFERRED_ROW, mergeability_files: many, mergeability_files_complete: false,
+  }, ORIGIN).nextStep;
+  assert.match(long, /src\/file-9\.js<\/untrusted-content> and 40 more in freshness\.mergeabilityFiles/);
+  assert.ok(!long.includes('src/file-10.js'));
+  assert.match(long, /only a sample/);
+
+  // No list yet: say so, and say how old the freshness block is, rather than
+  // inventing a place to look.
+  const unlisted = tools.shapeProposal({ ...DEFERRED_ROW, mergeability_files: [] }, ORIGIN).nextStep;
+  assert.match(unlisted, /No conflicting paths are recorded in freshness\.mergeabilityFiles yet/);
+  assert.ok(!unlisted.includes('<untrusted-content>'));
+
+  // The deferral stamp clears no results, so a lingering failing list is the
+  // previous commit's — and is labelled so, as the in-flight step already does.
+  const lingering = tools.shapeProposal({
+    ...DEFERRED_ROW, test_results: [{ name: 'home loads', status: 'fail' }],
+  }, ORIGIN).nextStep;
+  assert.match(lingering, /from a PREVIOUS run and may not reflect this commit/);
+  assert.ok(!/PREVIOUS run/.test(step), 'no lingering list, no caveat');
+});
+
+test('#2137 — who makes the sync follows the branch home', () => {
+  // A bot-owned head: the conflict lane can push a resolution itself, and the
+  // author's route goes through their own fork and submit_work.
+  const botOwned = tools.shapeProposal(DEFERRED_ROW, ORIGIN);
+  assert.equal(botOwned.branch.home, 'app_repo');
+  assert.match(botOwned.nextStep, /merge queue resolves a conflict like this itself/);
+  assert.match(botOwned.nextStep, /branch in your OWN fork/);
+  assert.match(botOwned.nextStep, /only Homeroom can write/);
+
+  // A fork-hosted head the platform cannot write: the sync is the author's,
+  // on the branch they already own.
+  const forkHosted = tools.shapeProposal({
+    ...DEFERRED_ROW, id: 4212, source: 'imported', branch_name: 'feature/snap-toggle',
+    imported_pr_head_sha: 'a'.repeat(40),
+  }, ORIGIN);
+  assert.equal(forkHosted.branch.home, 'user_fork');
+  assert.equal(forkHosted.branch.youCanPush, true);
+  assert.match(forkHosted.nextStep, /Homeroom cannot push to this head/);
+  assert.match(forkHosted.nextStep, /merge main into feature\/snap-toggle in your own fork/);
+  assert.match(forkHosted.nextStep, /submit_work with proposalId 4212/);
+  assert.ok(!/merge queue resolves/.test(forkHosted.nextStep));
+
+  // The two halves of a run keep their own advice: only 'deferred' is routed
+  // to the sync wording.
+  const building = tools.shapeProposal({ ...DEFERRED_ROW, check_phase: 'building' }, ORIGIN).nextStep;
+  assert.match(building, /Checks have not reported a verdict yet/);
+  assert.ok(!/DEFERRED/.test(building));
+});
+
+// ── #2136: a proposal is named by its pull request number ────────────────
+//
+// A proposal has two numbers. The connector led with the platform's session
+// id — "call submit_work with proposalId 4223", "This proposal is merged" —
+// and a person hearing "proposal 4223" went looking for it on GitHub, where
+// the same change is PR #2151. The pull request number is the one a person
+// can find; the session id is the argument the write tools take. Every answer
+// now carries both, its prose leads with the PR number, and get_proposal
+// accepts either key.
+
+test('#2136 — a proposal is named PR-first, and a card with no PR is named by what it has', () => {
+  assert.equal(tools.proposalRef(4223, 2151), 'PR #2151 (proposal 4223)');
+  assert.equal(tools.proposalRef(4223, null), 'proposal 4223');
+  assert.equal(tools.proposalRef(null, 2151), 'PR #2151');
+  assert.equal(tools.proposalRef(null, null), '', 'nothing known, nothing printed — never "proposal null"');
+  assert.equal(tools.proposalRef('4223', '2151'), 'PR #2151 (proposal 4223)', 'a row\'s strings count too');
+});
+
+test('#2136 — every nextStep for a proposal with a pull request names it as PR #n', () => {
+  const row = (over) => ({
+    id: 58, app_slug: 'recipe-box', status: 'promoted', pr_number: 41, test_results: [], ...over,
+  });
+  const cases = {
+    failing: row({ check_state: 'failing', test_results: [{ name: 'Board loads', status: 'fail' }] }),
+    failingForkHosted: row({
+      check_state: 'failing', test_results: [{ name: 'Board loads', status: 'fail' }],
+      source: 'imported', branch_name: 'feature/snap', imported_pr_head_sha: 'a'.repeat(40),
+    }),
+    passing: row({ check_state: 'passing' }),
+    errored: row({ check_state: 'error', check_error_detail: 'build broke' }),
+    pending: row({ check_state: 'pending', check_phase: 'building' }),
+    deferred: { ...DEFERRED_ROW, id: 58, pr_number: 41 },
+    merged: row({ status: 'merged' }),
+  };
+  for (const [name, session] of Object.entries(cases)) {
+    const step = tools.shapeProposal(session, ORIGIN).nextStep;
+    assert.match(step, /PR #41 \(proposal 58\)/, `${name}: ${step}`);
+  }
+  // The argument the next call needs is still spelled as the argument: the
+  // PR number is what the person reads, proposalId is what submit_work takes.
+  assert.match(tools.shapeProposal(cases.failing, ORIGIN).nextStep, /submit_work with proposalId 58 and that branch/);
+  assert.match(tools.shapeProposal(cases.deferred, ORIGIN).nextStep, /submit_work with proposalId 58 and that branch/);
+  // And the sentences the older tests pin are intact around the name.
+  assert.match(tools.shapeProposal(cases.pending, ORIGIN).nextStep, /Checks have not reported a verdict yet/);
+  assert.match(tools.shapeProposal(cases.deferred, ORIGIN).nextStep, /DEFERRED, not running/);
+  assert.match(tools.shapeProposal(cases.passing, ORIGIN).nextStep, /not reporting a failure/);
+  assert.match(tools.shapeProposal(cases.merged, ORIGIN).nextStep, /^PR #41 \(proposal 58\) is merged, so its code is frozen/);
+});
+
+test('#2136 — a card with no pull request yet reads by its session id, never as "PR #null"', () => {
+  for (const status of ['promoted', 'active', 'paused']) {
+    const shaped = tools.shapeProposal({
+      id: 9, app_slug: 'recipe-box', status, check_state: 'failing',
+      test_results: [{ name: 'Board loads', status: 'fail' }],
+    }, ORIGIN);
+    assert.equal(shaped.prNumber, null);
+    assert.doesNotMatch(shaped.nextStep, /PR #|null|undefined/, shaped.nextStep);
+    assert.match(shaped.nextStep, /proposal 9/i);
+  }
+});
+
+// A session-route answer, and the same row as the cross-app list reports it.
+const PR_ROW = {
+  id: 4223, app_slug: 'recipe-box', status: 'promoted', pr_number: 2151,
+  pr_url: 'https://github.com/o/r/pull/2151', pr_title: 'Snap cards to the grid',
+  source: 'imported', branch_name: 'feature/snap', imported_pr_head_sha: 'a'.repeat(40),
+  check_state: 'passing', test_results: [{ name: 'Home loads', status: 'pass' }],
+};
+
+// The two reads a PR-number lookup makes: the caller's own session list, then
+// the session route — exactly what list_my_proposals and get_proposal by id
+// already read, and nothing else.
+function platformWithProposals(rows) {
+  return (method, pathname) => {
+    assert.equal(method, 'GET');
+    if (pathname === '/api/me/active-sessions?include_imported=1') return { sessions: rows };
+    const m = /^\/api\/sessions\/(\d+)$/.exec(pathname);
+    if (m) {
+      const found = rows.find((r) => r.id === Number(m[1]));
+      return found
+        ? { session: found }
+        : { __http: { ok: false, status: 404, body: { error: 'Session not found' } } };
+    }
+    throw new Error(`unexpected platform call: ${pathname}`);
+  };
+}
+
+test('#2136 — get_proposal by prNumber answers exactly as by proposalId', async () => {
+  const c = connector(platformWithProposals([
+    PR_ROW, { ...PR_ROW, id: 4300, app_slug: 'other-app', pr_number: 9 },
+  ]));
+  try {
+    const byId = await c.handlers.get('get_proposal')({ proposalId: 4223 });
+    const byPr = await c.handlers.get('get_proposal')({ prNumber: 2151 });
+    assert.ok(!byId.isError && !byPr.isError, 'both keys answer');
+    // Identical, but for the timestamp of the read itself.
+    const strip = (r) => {
+      const out = JSON.parse(JSON.stringify(r.structuredContent));
+      delete out.asOf.readAt;
+      return out;
+    };
+    assert.deepEqual(strip(byPr), strip(byId));
+    assert.equal(byPr.structuredContent.proposalId, 4223);
+    assert.equal(byPr.structuredContent.prNumber, 2151);
+    assert.equal(byPr.structuredContent.webPath, `${ORIGIN}/#app/recipe-box/dev/proposals/4223`,
+      'the human-facing route is the lifecycle-aware change page');
+    assert.ok(validateOutput(c.specs.get('get_proposal'), byPr).success);
+    // Resolved through the same list list_my_proposals reads — the user's own
+    // sessions, under their own token — then read through the session route
+    // exactly as an id is. No new route, no new access rule.
+    assert.deepEqual(c.calls.map((x) => x.pathname), [
+      '/api/sessions/4223',
+      '/api/me/active-sessions?include_imported=1', '/api/sessions/4223',
+    ]);
+    // With the slug too, when the caller has it.
+    const scoped = await c.handlers.get('get_proposal')({ prNumber: 2151, slug: 'recipe-box' });
+    assert.equal(scoped.structuredContent.proposalId, 4223);
+  } finally { c.restore(); }
+});
+
+test('#2136 — a pull request that is not one of the user\'s proposals is refused, and says where to look', async () => {
+  const c = connector(platformWithProposals([PR_ROW]));
+  try {
+    const unknown = await c.handlers.get('get_proposal')({ prNumber: 999 });
+    assert.equal(unknown.isError, true);
+    assert.equal(unknown.structuredContent.code, 'no_access');
+    assert.match(unknown.structuredContent.message, /PR #999 is not one of the user's open proposals\./);
+    assert.match(unknown.structuredContent.message, /list_my_proposals/);
+    assert.match(unknown.structuredContent.message, /proposalId/,
+      'a closed proposal of their own is still reachable by its id');
+    // Never reaches the session route on a guess.
+    assert.ok(!c.calls.some((x) => x.pathname.startsWith('/api/sessions/')));
+
+    // The right number on the wrong app is the same refusal, naming the app.
+    const wrongApp = await c.handlers.get('get_proposal')({ prNumber: 2151, slug: 'other-app' });
+    assert.equal(wrongApp.isError, true);
+    assert.match(wrongApp.structuredContent.message, /PR #2151 is not one of the user's open proposals on other-app\./);
+
+    // Neither key is refused before any platform call, naming both keys.
+    const before = c.calls.length;
+    const neither = await c.handlers.get('get_proposal')({});
+    assert.equal(neither.isError, true);
+    assert.equal(neither.structuredContent.code, 'invalid_request');
+    assert.match(neither.structuredContent.message, /proposalId/);
+    assert.match(neither.structuredContent.message, /prNumber/);
+    const badSlug = await c.handlers.get('get_proposal')({ prNumber: 2151, slug: 'Not A Slug' });
+    assert.equal(badSlug.isError, true);
+    assert.equal(badSlug.structuredContent.code, 'invalid_request');
+    assert.equal(c.calls.length, before, 'refused before the platform was asked anything');
+  } finally { c.restore(); }
+});
+
+test('#2136 — the same PR number on two apps asks for the slug; two keys that disagree are refused', async () => {
+  const c = connector(platformWithProposals([PR_ROW, { ...PR_ROW, id: 4300, app_slug: 'other-app' }]));
+  try {
+    const ambiguous = await c.handlers.get('get_proposal')({ prNumber: 2151 });
+    assert.equal(ambiguous.isError, true);
+    assert.equal(ambiguous.structuredContent.code, 'invalid_request');
+    assert.match(ambiguous.structuredContent.message, /recipe-box: proposal 4223/);
+    assert.match(ambiguous.structuredContent.message, /other-app: proposal 4300/);
+    assert.match(ambiguous.structuredContent.message, /Pass slug/);
+    const scoped = await c.handlers.get('get_proposal')({ prNumber: 2151, slug: 'other-app' });
+    assert.equal(scoped.structuredContent.proposalId, 4300);
+
+    // proposalId wins when both are given — and a pair that names two
+    // different proposals is a question with no right answer.
+    const agree = await c.handlers.get('get_proposal')({ proposalId: 4223, prNumber: 2151 });
+    assert.equal(agree.structuredContent.proposalId, 4223);
+    const disagree = await c.handlers.get('get_proposal')({ proposalId: 4223, prNumber: 77 });
+    assert.equal(disagree.isError, true);
+    assert.match(disagree.structuredContent.message, /Proposal 4223 is PR #2151, not PR #77/);
+  } finally { c.restore(); }
+});
+
+test('#2136 — list_my_proposals rows carry both numbers, and the tool says which to quote', async () => {
+  const c = connector(platformWithProposals([
+    PR_ROW, { ...PR_ROW, id: 4300, app_slug: 'other-app', pr_number: null, status: 'active' },
+  ]));
+  try {
+    const res = await c.handlers.get('list_my_proposals')({});
+    assert.deepEqual(res.structuredContent.proposals.map((r) => [r.proposalId, r.prNumber]), [[4223, 2151]]);
+    const spec = c.specs.get('list_my_proposals');
+    assert.match(spec.description, /`prNumber`/);
+    assert.match(spec.description, /PR #2151 \(proposal 4223\)/);
+    // The field's own docs say what it is for.
+    const shape = z.object(spec.outputSchema).shape.proposals.element.shape;
+    assert.match(shape.prNumber.description, /GitHub/);
+    assert.match(shape.proposalId.description, /webPath/);
+  } finally { c.restore(); }
+});
+
+test('#2136 — get_proposal documents both keys, and the charter carries the naming rule', () => {
+  const c = connector(() => { throw new Error('must not call platform'); });
+  try {
+    const spec = c.specs.get('get_proposal');
+    assert.match(spec.description, /`prNumber`/);
+    assert.match(spec.description, /GitHub/);
+    assert.match(spec.description, /PR #2151 \(proposal 4223\)/);
+    assert.ok(spec.inputSchema.proposalId.isOptional(), 'proposalId is no longer the only way in');
+    assert.match(spec.inputSchema.prNumber.description, /list_my_proposals/);
+    assert.match(spec.inputSchema.slug.description, /prNumber/);
+    assert.match(spec.inputSchema.proposalId.description, /webPath/);
+    assert.match(spec.outputSchema.prNumber.description, /PR #2151 \(proposal 4223\)/);
+    // The other proposal-shaped answers document the field the same way.
+    assert.match(c.specs.get('submit_work').outputSchema.prNumber.description, /GitHub/);
+    assert.match(c.specs.get('prepare_work').outputSchema.prNumber.description, /revises/);
+    const open = z.object(c.specs.get('prepare_work').outputSchema).shape.openProposals.element.shape;
+    assert.match(open.prNumber.description, /GitHub/);
+  } finally { c.restore(); }
+
+  const charter = require('../src/services/mcp-charter');
+  const section = charter.CHARTER_SECTIONS.find((s) => s.id === 'naming-proposals');
+  assert.ok(section, 'the rule is cross-cutting, so it lives in the charter');
+  assert.ok(!section.brief, 'charter-only: it spends no instruction budget');
+  assert.match(section.text, /PR #2151 \(proposal 4223\)/);
+  assert.match(section.text, /get_proposal takes either key/);
+  assert.match(section.text, /GitHub/);
+  assert.match(section.text, /never quote the proposal id alone/);
+  assert.match(section.text, /`prNumber` is null/, 'and says what a card with no pull request reads as');
+  assert.ok(charter.CHARTER_FULL.includes(section.text));
+});
+
+test('#2136 — a work order that revises a proposal names its pull request, and reports the number', async () => {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const svc = require('../src/services/external-agent-tasks');
+  const saved = { gh: gh.isEnabled, link: githubLink.isEnabled, prepare: svc.prepareWork };
+  gh.isEnabled = () => true;
+  githubLink.isEnabled = () => true;
+  let extra = {};
+  // prepareWork takes (deps, params); the update target rides in the params.
+  svc.prepareWork = async (_deps, { targetProposal }) => ({
+    ok: true, taskId: 88, forkUrl: 'https://github.com/ada/recipe-box',
+    forkPageUrl: 'https://github.com/ada/recipe-box', forkStatus: 'ready',
+    branch: 'usernode/recipe-box-update-4223', baseSha: 'a'.repeat(40), guidance: ['step one'],
+    workOrder: 'WORK ORDER', reused: false,
+    proposalId: targetProposal ? Number(targetProposal.id) : null,
+    branchHome: targetProposal ? 'app_repo' : null,
+    openProposals: [],
+    ...extra,
+  });
+  const run = async (args, rows) => {
+    const c = connector((method, pathname) => {
+      if (pathname === '/api/apps/recipe-box') return { app: { id: 3, slug: 'recipe-box', name: 'Recipe Box' } };
+      const m = /^\/api\/sessions\/(\d+)$/.exec(pathname);
+      if (m) return { session: rows.find((r) => r.id === Number(m[1])) };
+      throw new Error(`unexpected platform call: ${pathname}`);
+    }, { scopes: [READ_SCOPE, WRITE_SCOPE] });
+    try {
+      const res = await c.handlers.get('prepare_work')({ slug: 'recipe-box', ...args });
+      assert.ok(!res.isError, JSON.stringify(res.structuredContent));
+      const parsed = validateOutput(c.specs.get('prepare_work'), res);
+      assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+      return res.structuredContent;
+    } finally { c.restore(); }
+  };
+  try {
+    const revise = await run({ proposalId: 4223, brief: 'fix the failing test' }, [PR_ROW]);
+    assert.equal(revise.proposalId, 4223);
+    assert.equal(revise.prNumber, 2151, 'the number the person will recognise, beside the id');
+    assert.match(revise.nextStep, /REVISES PR #2151 \(proposal 4223\), and it starts at that proposal's own current/);
+    assert.match(revise.nextStep, /submit_work with proposalId 4223 and the branch you pushed/,
+      'the argument is still spelled as the argument');
+
+    // A continued session has no pull request yet: null, and no "PR #null".
+    const session = await run(
+      { proposalId: 4300, brief: 'more' },
+      [{ ...PR_ROW, id: 4300, pr_number: null, status: 'active' }]
+    );
+    assert.equal(session.proposalId, 4300);
+    assert.equal(session.prNumber, null);
+    assert.match(session.nextStep, /REVISES proposal 4300, and it starts/);
+    assert.doesNotMatch(session.nextStep, /PR #/);
+
+    // A fresh work order revises nothing, and says so in both fields.
+    const fresh = await run({ brief: 'Add dark mode' }, []);
+    assert.equal(fresh.proposalId, null);
+    assert.equal(fresh.prNumber, null);
+    assert.doesNotMatch(fresh.nextStep, /REVISES/);
+
+    // The duplicate warning names each proposal already up for a vote the
+    // same way — PR first, with the id prepare_work takes beside it — and a
+    // card without a pull request by the number it has.
+    extra = {
+      openProposals: [
+        { proposalId: 4223, title: 'Snap cards', status: 'promoted', prNumber: 2151, mine: true, author: 'ada', webPath: null },
+        { proposalId: 4300, title: 'Rival take', status: 'promoted', prNumber: null, mine: false, author: 'dana', webPath: null },
+      ],
+    };
+    const dup = await run({ brief: 'Add dark mode' }, []);
+    assert.match(dup.nextStep,
+      /THIS REQUEST IS ALREADY UP FOR A VOTE — PR #2151 \(proposal 4223, the user's own\), proposal 4300\. /);
+    assert.match(dup.nextStep, /prepare_work again with proposalId 4223/);
+    assert.doesNotMatch(dup.nextStep, /PR #null|#undefined/);
+    assert.deepEqual(dup.openProposals.map((p) => [p.proposalId, p.prNumber]), [[4223, 2151], [4300, null]]);
+  } finally {
+    gh.isEnabled = saved.gh;
+    githubLink.isEnabled = saved.link;
+    svc.prepareWork = saved.prepare;
+  }
+});
+
+test('#2136 — submit_work answers name the proposal by its pull request first', async () => {
+  const svc = require('../src/services/external-agent-tasks');
+  const realSubmit = svc.submitWork;
+  const answers = [];
+  svc.submitWork = async () => answers.shift();
+  const call = async (args) => {
+    const c = connector(() => ({}), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+    try {
+      const res = await c.handlers.get('submit_work')(args);
+      assert.ok(!res.isError, JSON.stringify(res.structuredContent));
+      const parsed = validateOutput(c.specs.get('submit_work'), res);
+      assert.ok(parsed.success, parsed.success ? '' : parsed.error.message);
+      return res.structuredContent;
+    } finally { c.restore(); }
+  };
+  try {
+    // (1) A first submission: up for a vote, as the number the person can find.
+    answers.push({
+      ok: true, proposalId: 4223, prNumber: 2151, prUrl: 'https://github.com/o/r/pull/2151',
+      appSlug: 'recipe-box', externalAgent: 'claude_code_web',
+    });
+    const first = await call({ taskId: 88, branch: 'my-branch' });
+    assert.equal(first.prNumber, 2151);
+    assert.match(first.nextStep, /^It is now up for a vote as PR #2151 \(proposal 4223\)\. Checks and the staging preview/);
+
+    // (4) An update: the proposal that moved, and whose title changed, both PR-first.
+    answers.push({
+      ok: true, updated: true, proposalId: 4223, prNumber: 2151,
+      prUrl: 'https://github.com/o/r/pull/2151', appSlug: 'recipe-box',
+      votesCleared: 2, submittedVia: 'update_branch', targetKind: 'proposal',
+      previewRebuilding: true, titleUpdated: true, externalAgent: 'claude_code_web',
+    });
+    const update = await call({ proposalId: 4223, branch: 'my-fix', title: 'Snap cards to the grid' });
+    assert.match(update.nextStep, /^PR #2151 \(proposal 4223\) now points at your new commit\. The 2 votes/);
+    assert.match(update.nextStep, /PR #2151 \(proposal 4223\) now carries your title\./);
+
+    // A resubmit of the same commit is named the same way.
+    answers.push({
+      ok: true, updated: true, unchanged: true, proposalId: 4223, prNumber: 2151,
+      prUrl: 'https://github.com/o/r/pull/2151', appSlug: 'recipe-box',
+      votesCleared: 0, submittedVia: 'update_branch', targetKind: 'proposal', testingUpdated: false,
+      externalAgent: 'claude_code_web',
+    });
+    const same = await call({ proposalId: 4223, branch: 'my-fix' });
+    assert.match(same.nextStep, /^PR #2151 \(proposal 4223\) was already at that commit/);
+
+    // Already submitted: the task row knows the session but not the pull
+    // request, so the id is all there is to say — and it is said cleanly.
+    answers.push({
+      ok: true, alreadySubmitted: true, proposalId: 4223, prNumber: null, prUrl: null,
+      appSlug: 'recipe-box', externalAgent: 'claude_code_web',
+    });
+    const again = await call({ taskId: 88, branch: 'my-branch' });
+    assert.match(again.nextStep, /It is up for the group's vote as proposal 4223; use get_proposal/);
+    assert.doesNotMatch(again.nextStep, /PR #/);
+
+    // A shared card has no pull request until it is proposed: no PR number
+    // is invented, and the number the next call takes is still there.
+    answers.push({
+      ok: true, shared: true, proposalId: 4158, sessionId: 4158, prNumber: null, prUrl: null,
+      appSlug: 'recipe-box', externalAgent: 'claude_code_web',
+    });
+    const shared = await call({ taskId: 88, branch: 'my-branch', share: true });
+    assert.equal(shared.prNumber, null);
+    assert.doesNotMatch(shared.nextStep, /PR #|null/);
+    assert.match(shared.nextStep, /submit_work with proposalId 4158, the branch, and propose: true/);
+  } finally {
+    svc.submitWork = realSubmit;
+  }
+});
+
+// ── Demo mode ──────────────────────────────────────────────────────────
+//
+// Six tools, one property: they replay the caller's token at
+// /api/apps/:slug/demo* and add nothing of their own. Every refusal that
+// matters — not in demo mode, not the creator, not this user's app — is the
+// platform's, so what a connector can do here is exactly what its user can.
+const demoScopes = { scopes: [READ_SCOPE, WRITE_SCOPE] };
+
+test('get_demo_status hands back the platform\'s own readiness list, shaped and wrapped', async () => {
+  const c = connector((method, pathname) => {
+    assert.equal(method, 'GET');
+    assert.equal(pathname, '/api/apps/demo-app/demo');
+    return {
+      demoMode: true, partner: { id: 50, username: 'sam' }, approvalsRequired: 2,
+      baseSha: 'b'.repeat(40), mainSha: 'm'.repeat(40),
+      activeCount: 2, required: 2, creatorActive: true, partnerActive: true,
+      notifyOnNewProposals: false,
+      openProposal: {
+        sessionId: 9, status: 'active', held: true, prNumber: 42, prUrl: 'https://github.com/x/y/pull/42',
+        title: 'Smooth <b>animations</b>', stagingUrl: 'https://p.example', checkState: 'passing',
+        previewReady: true, votes: { yes: 1, no: 0 },
+      },
+      ready: false,
+      reasons: ['"New proposals to vote on" is off for you on this app'],
+    };
+  }, demoScopes);
+  try {
+    const res = await c.handlers.get('get_demo_status')({ slug: 'demo-app' });
+    assert.notEqual(res.isError, true);
+    const out = res.structuredContent;
+    assert.equal(out.ready, false);
+    assert.match(out.reasons[0], /New proposals to vote on/);
+    assert.equal(out.openProposal.votes.yes, 1);
+    // A held proposal, built: the operator's cue to call demo_promote.
+    assert.equal(out.openProposal.held, true);
+    assert.equal(out.openProposal.checkState, 'passing');
+    assert.equal(out.openProposal.previewReady, true);
+    assert.match(out.openProposal.title, /^<untrusted-content>/, 'a title is text somebody typed');
+    assert.equal(out.partner.username, 'sam');
+    assert.equal(out.required, 2);
+    assert.equal(out.approvalsRequired, 2, 'the rule the card counts against');
+  } finally {
+    c.restore();
+  }
+});
+
+test('the demo write tools post to the demo routes and pass the platform\'s refusal through', async () => {
+  const demoCalls = [];
+  const c = connector((method, pathname) => {
+    if (pathname === '/api/apps/demo-app/demo-mode') {
+      const sent = demoCalls.at(-1)?.body || {};
+      return {
+        demoMode: true, partner: { id: 50, username: 'sam' }, baseSha: 'b'.repeat(40),
+        approvalsRequired: 'approvals' in sent ? sent.approvals : 2,
+      };
+    }
+    if (pathname === '/api/apps/demo-app/demo/propose') {
+      // Held, the platform announces nobody; the answer says so.
+      const held = !!(demoCalls.at(-1) && demoCalls.at(-1).body && demoCalls.at(-1).body.hold);
+      return { sessionId: 9, prNumber: 42, prUrl: 'https://github.com/x/y/pull/42', headSha: 'c'.repeat(40), held, notified: held ? 0 : 1 };
+    }
+    if (pathname === '/api/apps/demo-app/demo/promote') {
+      return { ok: true, sessionId: 9, prNumber: 42, voted: 'yes', notified: 1 };
+    }
+    if (pathname === '/api/apps/demo-app/demo/vote') return { ok: true, sessionId: 9, vote: 'yes' };
+    if (pathname === '/api/apps/demo-app/demo/reset') {
+      return { ok: true, sessionsRemoved: 1, main: { from: 'z'.repeat(40), to: 'b'.repeat(40), moved: true }, redeploy: 'started' };
+    }
+    // Any other app: what the platform tells somebody who is not the creator.
+    return { __http: { ok: false, status: 403, body: { error: "Only the app's creator can use demo mode." } } };
+  }, { ...demoScopes, calls: demoCalls });
+  try {
+    const on = await c.handlers.get('demo_mode')({ slug: 'demo-app', enabled: true, partnerName: 'sam' });
+    assert.notEqual(on.isError, true);
+    assert.equal(on.structuredContent.partner.username, 'sam');
+    assert.deepEqual(c.calls.at(-1).body, { enabled: true, partnerName: 'sam' },
+      'no approvals key unless the caller said one, so the platform default is the only default');
+    assert.equal(on.structuredContent.approvalsRequired, 2);
+    assert.match(on.structuredContent.nextStep, /get_demo_status/);
+
+    // An explicit null is a choice, not an absence: it has to reach the platform.
+    const timed = await c.handlers.get('demo_mode')({ slug: 'demo-app', enabled: true, partnerName: 'sam', approvals: null });
+    assert.deepEqual(c.calls.at(-1).body, { enabled: true, partnerName: 'sam', approvals: null });
+    assert.equal(timed.structuredContent.approvalsRequired, null);
+    const three = await c.handlers.get('demo_mode')({ slug: 'demo-app', enabled: true, partnerName: 'sam', approvals: 3 });
+    assert.equal(c.calls.at(-1).body.approvals, 3);
+    assert.equal(three.structuredContent.approvalsRequired, 3);
+
+    const proposed = await c.handlers.get('demo_propose')({
+      slug: 'demo-app', branch: 'demo/animations', title: 'Smooth category animations',
+      summary: 'Categories glide open.', description: 'CSS transitions.',
+    });
+    assert.notEqual(proposed.isError, true);
+    assert.equal(proposed.structuredContent.prNumber, 42);
+    assert.equal(proposed.structuredContent.notified, 1);
+    assert.equal(c.calls.at(-1).method, 'POST');
+    assert.equal(c.calls.at(-1).body.branch, 'demo/animations');
+    assert.equal(c.calls.at(-1).body.summary, 'Categories glide open.');
+    assert.equal(c.calls.at(-1).body.hold, undefined, 'straight to the vote unless told to hold');
+    assert.equal(proposed.structuredContent.held, false);
+    assert.match(proposed.structuredContent.nextStep, /demo_vote/);
+
+    // The two-cue take: hold, then promote on cue with the partner's yes.
+    const held = await c.handlers.get('demo_propose')({
+      slug: 'demo-app', branch: 'demo/animations', title: 'Smooth category animations', hold: true,
+    });
+    assert.notEqual(held.isError, true);
+    assert.equal(c.calls.at(-1).body.hold, true);
+    assert.equal(held.structuredContent.held, true);
+    assert.equal(held.structuredContent.notified, 0);
+    assert.match(held.structuredContent.nextStep, /get_demo_status.*demo_promote/);
+    const promoted = await c.handlers.get('demo_promote')({ slug: 'demo-app', vote: 'yes' });
+    assert.notEqual(promoted.isError, true);
+    assert.equal(c.calls.at(-1).method, 'POST');
+    assert.equal(c.calls.at(-1).pathname, '/api/apps/demo-app/demo/promote');
+    assert.deepEqual(c.calls.at(-1).body, { vote: 'yes' });
+    assert.equal(promoted.structuredContent.voted, 'yes');
+    assert.equal(promoted.structuredContent.notified, 1);
+    assert.match(promoted.structuredContent.nextStep, /demo_reset/);
+    const promotedQuiet = await c.handlers.get('demo_promote')({ slug: 'demo-app' });
+    assert.deepEqual(c.calls.at(-1).body, {}, 'no vote unless asked');
+    assert.notEqual(promotedQuiet.isError, true);
+
+    // The usual way in: a patch, forwarded whole, with no branch beside it.
+    const patch = 'diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n@@ -1 +1 @@\n-old\n+new\n';
+    const patched = await c.handlers.get('demo_propose')({ slug: 'demo-app', patch, title: 'From a patch' });
+    assert.notEqual(patched.isError, true);
+    assert.equal(c.calls.at(-1).body.patch, patch);
+    assert.equal(c.calls.at(-1).body.branch, undefined);
+    // One or the other, checked before the platform is asked.
+    const callsBefore = c.calls.length;
+    const both = await c.handlers.get('demo_propose')({ slug: 'demo-app', branch: 'x', patch, title: 'y' });
+    assert.equal(both.isError, true);
+    const neither = await c.handlers.get('demo_propose')({ slug: 'demo-app', title: 'y' });
+    assert.equal(neither.isError, true);
+    const huge = await c.handlers.get('demo_propose')({ slug: 'demo-app', patch: 'x'.repeat(256 * 1024 + 1), title: 'y' });
+    assert.equal(huge.isError, true);
+    assert.equal(huge.structuredContent.code, 'patch_too_large');
+    assert.equal(c.calls.length, callsBefore, 'none of the three reached the platform');
+
+    const voted = await c.handlers.get('demo_vote')({ slug: 'demo-app' });
+    assert.equal(voted.structuredContent.vote, 'yes');
+    assert.deepEqual(c.calls.at(-1).body, { vote: 'yes' });
+
+    const reset = await c.handlers.get('demo_reset')({ slug: 'demo-app' });
+    assert.equal(reset.structuredContent.sessionsRemoved, 1);
+    assert.equal(reset.structuredContent.main.moved, true);
+    assert.equal(reset.structuredContent.redeploy, 'started');
+
+    // Not the creator's app: the platform's 403 is the tool's answer.
+    const refused = await c.handlers.get('demo_propose')({ slug: 'someone-elses', branch: 'x', title: 'y' });
+    assert.equal(refused.isError, true);
+    assert.match(JSON.stringify(refused.structuredContent), /creator|403|forbidden/i);
+  } finally {
+    c.restore();
+  }
+});
+
+test('the demo tools sit behind the right scopes, write nothing shortened, and the charter frames them', () => {
+  for (const name of ['demo_mode', 'demo_propose', 'demo_vote', 'demo_reset']) {
+    const body = registration(name);
+    assert.match(body, /scopeGuard\(WRITE_SCOPE\)/, `${name} needs the write scope`);
+    assert.match(body, /annotations: writeAnnotations/, `${name} is a write`);
+  }
+  assert.match(registration('get_demo_status'), /scopeGuard\(READ_SCOPE\)/);
+  assert.match(registration('get_demo_status'), /annotations: readAnnotations/);
+  // The title and description are writes: checked against a limit, never clipped.
+  const propose = registration('demo_propose');
+  assert.match(propose, /max: MAX_REQUEST_TITLE_CHARS/);
+  assert.match(propose, /max: MAX_REQUEST_BODY_CHARS/);
+  assert.match(propose, /title: titleCheck\.value/);
+  // Every tool description says the partner is synthetic, or points at the
+  // one that does — a model should never learn that from the charter alone.
+  assert.match(registration('demo_mode'), /synthetic/);
+  const charterSrc = fs.readFileSync(path.join(__dirname, '../src/services/mcp-charter.js'), 'utf8');
+  assert.match(charterSrc, /id: 'demo-mode'/);
+  const charter = require('../src/services/mcp-charter');
+  assert.ok(Object.values(charter).some((v) => typeof v === 'string' && v.includes('never present the partner as a person')),
+    'the charter section is rendered into the full charter text');
 });

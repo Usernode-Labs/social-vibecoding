@@ -343,14 +343,16 @@ test('parseShots reads the index attribute, defaulting to 0 when absent', () => 
 // no-op for BEGIN/DELETE/COMMIT and captures INSERT params.
 function fakePool() {
   const inserted = [];
+  const deleted = [];
   const client = {
     query: async (sql, params) => {
       if (/^INSERT INTO session_visuals/.test(sql)) inserted.push(params);
+      if (/^DELETE FROM session_visuals/.test(sql)) deleted.push(params);
       return { rows: [] };
     },
     release: () => {},
   };
-  return { inserted, connect: async () => client };
+  return { inserted, deleted, connect: async () => client };
 }
 
 test('storeArtifacts groups rows by capture_index and labels each group', async () => {
@@ -395,6 +397,8 @@ test('storeArtifacts returns null when no after artifact at all', async () => {
   const buf = Buffer.from('x');
   const shots = [{ kind: 'before', media: 'png', status: 200, index: 0, buf }];
   assert.equal(await visuals.storeArtifacts(pool, 7, null, [{ index: 0, path: '/' }], shots), null);
+  assert.deepEqual(pool.deleted, [[7]], 'the failed re-shot removes the previous artifact set');
+  assert.equal(pool.inserted.length, 0, 'a before-only set is not useful evidence');
 });
 
 // ── captured_viewport round-trip (#768) ────────────────────────────────

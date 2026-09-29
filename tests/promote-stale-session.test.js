@@ -168,6 +168,9 @@ function deferredFetch(sandbox) {
 }
 
 const SESSION_ID = 42;
+// The sessions below have a pushed commit whose checks are pending — the
+// state every push starts in. A session with nothing on its branch cannot be
+// submitted at all (#2379), so it never reaches the request these tests race.
 
 // #1078: `promotePR` takes no button. Its in-flight state is a field of the
 // transcript's row model (`DevChat._proposing`, keyed by session), because
@@ -178,8 +181,8 @@ const proposing = (DevChat) => DevChat._testActions.has(SESSION_ID) ? SESSION_ID
 test('navigate-away success: no alert, nothing throws', async () => {
   const { DevChat, sandbox, alerts } = makeHarness();
   const net = deferredFetch(sandbox);
-  DevChat.currentSession = { id: SESSION_ID, status: 'active' };
-  DevChat.sessions = [{ id: SESSION_ID, status: 'active' }];
+  DevChat.currentSession = { id: SESSION_ID, status: 'active', check_state: 'pending' };
+  DevChat.sessions = [{ id: SESSION_ID, status: 'active', check_state: 'pending' }];
 
   const done = DevChat.promotePR();
   // Simulate AppView.close() → DevChat.reset() mid-flight.
@@ -194,7 +197,7 @@ test('navigate-away success: no alert, nothing throws', async () => {
 test('stay-on-page success: status + PR fields folded in, rendered, no alert', async () => {
   const { DevChat, sandbox, alerts, renderCount } = makeHarness();
   const net = deferredFetch(sandbox);
-  const session = { id: SESSION_ID, status: 'active' };
+  const session = { id: SESSION_ID, status: 'active', check_state: 'pending' };
   DevChat.currentSession = session;
   DevChat.sessions = [session];
 
@@ -214,8 +217,8 @@ test('stay-on-page success: status + PR fields folded in, rendered, no alert', a
 test('switched-session mid-flight: current session untouched, list row updated', async () => {
   const { DevChat, sandbox, alerts } = makeHarness();
   const net = deferredFetch(sandbox);
-  const original = { id: SESSION_ID, status: 'active' };
-  const other = { id: 77, status: 'active' };
+  const original = { id: SESSION_ID, status: 'active', check_state: 'pending' };
+  const other = { id: 77, status: 'active', check_state: 'pending' };
   DevChat.currentSession = original;
   DevChat.sessions = [original, other];
 
@@ -240,7 +243,7 @@ test('stale failure: no alert after navigation (server rejection AND fetch rejec
   {
     const { DevChat, sandbox, alerts, warns } = makeHarness();
     const net = deferredFetch(sandbox);
-    DevChat.currentSession = { id: SESSION_ID, status: 'active' };
+    DevChat.currentSession = { id: SESSION_ID, status: 'active', check_state: 'pending' };
     DevChat.sessions = [];
     const done = DevChat.promotePR();
     DevChat.currentSession = null;
@@ -253,7 +256,7 @@ test('stale failure: no alert after navigation (server rejection AND fetch rejec
   {
     const { DevChat, sandbox, alerts } = makeHarness();
     const net = deferredFetch(sandbox);
-    DevChat.currentSession = { id: SESSION_ID, status: 'active' };
+    DevChat.currentSession = { id: SESSION_ID, status: 'active', check_state: 'pending' };
     DevChat.sessions = [];
     const done = DevChat.promotePR();
     DevChat.currentSession = null;
@@ -266,7 +269,7 @@ test('stale failure: no alert after navigation (server rejection AND fetch rejec
 test('genuine network failure while current: alert fires and the button is restored', async () => {
   const { DevChat, sandbox, alerts } = makeHarness();
   const net = deferredFetch(sandbox);
-  DevChat.currentSession = { id: SESSION_ID, status: 'active' };
+  DevChat.currentSession = { id: SESSION_ID, status: 'active', check_state: 'pending' };
   DevChat.sessions = [];
 
   const done = DevChat.promotePR();
@@ -281,7 +284,7 @@ test('genuine network failure while current: alert fires and the button is resto
 test('non-JSON error body while current shows the generic message, not "Network error"', async () => {
   const { DevChat, sandbox, alerts } = makeHarness();
   const net = deferredFetch(sandbox);
-  DevChat.currentSession = { id: SESSION_ID, status: 'active' };
+  DevChat.currentSession = { id: SESSION_ID, status: 'active', check_state: 'pending' };
   DevChat.sessions = [];
 
   const done = DevChat.promotePR();

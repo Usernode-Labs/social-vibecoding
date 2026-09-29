@@ -238,6 +238,21 @@ test('#816 verifyStagingEdge never throws, and no-ops on a local-dev http url', 
   } finally { restore(); }
 });
 
+test('#2328 verifyStagingEdge rejects a completed HTTP 5xx response', async () => {
+  const { staging, logs, restore } = loadStaging({
+    probeEdge: async () => ({ ok: true, code: 502, error: null, timings: { ttfbMs: 4 }, cert: null }),
+  });
+  try {
+    const result = await staging.verifyStagingEdge(
+      { id: 42 }, 'my-app--s42.example.test', 'https://my-app--s42.example.test'
+    );
+    assert.equal(result.ok, false, 'a responding default/broken upstream is not a ready preview');
+    assert.equal(result.code, 502);
+    assert.match(result.error.message, /HTTP 502/);
+    assert.ok(logs.some((entry) => entry.level === 'warn' && entry.data.code === 502));
+  } finally { restore(); }
+});
+
 test('#816 warmStagingCert stays as an alias so no call site breaks', () => {
   const { staging, restore } = loadStaging({ probeEdge: async () => ({ ok: true }) });
   try {

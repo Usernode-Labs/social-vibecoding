@@ -42,9 +42,9 @@ test('scaffold server.js redirects unauthenticated document navigations to the c
     'gates the redirect on Sec-Fetch-Dest: document'
   );
   // Via PLATFORM_ORIGIN rather than an inlined literal: the origin is read
-  // from the injected USERNODE_PLATFORM_ORIGIN at runtime (falling back to
-  // the value baked in at scaffold time), so the link follows the platform
-  // when its domain moves instead of pointing at where it used to be.
+  // from the injected USERNODE_PLATFORM_ORIGIN at runtime (no hostname is
+  // baked in at scaffold time), so the link follows the platform when its
+  // domain moves instead of pointing at where it used to be.
   assert.match(
     server,
     /res\.redirect\(302, PLATFORM_ORIGIN \+ '\/app\/demo-app-abc123\/full' \+ deepPath\)/,
@@ -198,8 +198,9 @@ test('app-view.js builds the iframe src via the URL API with origin check and to
   // live element's src rather than re-rendering it) instead of a
   // getElementById + assignment, but it must still compose through the
   // builder — and the builder must be the only source of that url.
-  assert.ok(src.includes('frame.setSrc(AppView.buildAppIframeSrc());'),
-    'token refresh reuses the shared builder');
+  assert.ok(
+    src.includes('frame.setSrc(AppView.buildAppIframeSrc(), { granted: AppView._grantedNow() });'),
+    'token refresh reuses the shared builder (#2219 added the grant set beside it)');
   assert.ok(!/\.src\s*=\s*(?!AppView\.buildAppIframeSrc)[^;\n]*token/.test(src),
     'no other code path assigns a token-bearing src to the app iframe');
   assert.ok(!src.includes('?token=${AppView.iframeToken}'),

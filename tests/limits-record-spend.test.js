@@ -8,6 +8,9 @@
 //      query at all (the "fallback template fired" path).
 //   3. Error swallowing: a DB failure is logged, never thrown — billing
 //      bookkeeping must not fail the request that incurred the spend.
+//   4. #2598: a successful write announces the new weekly figure to the
+//      spender's own sockets, so the live credit meter ticks during a turn
+//      rather than only once it ends. A failed write announces nothing.
 //
 // Run with: node --test tests/limits-record-spend.test.js
 
@@ -15,6 +18,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const limits = require('../src/services/limits');
+const budgetLive = require('../src/services/budget-live');
+
+// #2598: recordSpend now fires a coalesced budget push, and that push reads a
+// snapshot through the SAME pool. So a bare `pool.calls.length` no longer
+// counts what these tests are about — filter to the spend upsert itself.
+const upserts = (pool) => pool.calls.filter((c) => /INSERT INTO llm_usage/.test(c.sql)
+  && /(total|byok)_cost_cents/.test(c.sql));
+
+// …and the push coalesces per user for a window, so a leading edge in one
+// test would be swallowed by the previous test's window. Start each one quiet.
+test.beforeEach(() => budgetLive._reset());
 
 // ── Mock pool ───────────────────────────────────────────────────────────
 function makePool({ fail } = {}) {
@@ -32,8 +46,8 @@ function makePool({ fail } = {}) {
 test('platform spend upserts into total_cost_cents only', async () => {
   const pool = makePool();
   await limits.recordSpend(pool, 7, 12.5);
-  assert.equal(pool.calls.length, 1);
-  const { sql, params } = pool.calls[0];
+  assert.equal(upserts(pool).length, 1);
+  const { sql, params } = upserts(pool)[0];
   assert.match(sql, /INSERT INTO llm_usage/);
   assert.match(sql, /total_cost_cents/);
   assert.doesNotMatch(sql, /byok_cost_cents/);
@@ -44,8 +58,8 @@ test('platform spend upserts into total_cost_cents only', async () => {
 test('BYOK spend upserts into byok_cost_cents only', async () => {
   const pool = makePool();
   await limits.recordSpend(pool, 7, 3, { byok: true });
-  assert.equal(pool.calls.length, 1);
-  const { sql, params } = pool.calls[0];
+  assert.equal(upserts(pool).length, 1);
+  const { sql, params } = upserts(pool)[0];
   assert.match(sql, /INSERT INTO llm_usage/);
   assert.match(sql, /byok_cost_cents/);
   assert.doesNotMatch(sql, /total_cost_cents/);
@@ -56,8 +70,8 @@ test('BYOK spend upserts into byok_cost_cents only', async () => {
 test('explicit byok:false routes to the capped column', async () => {
   const pool = makePool();
   await limits.recordSpend(pool, 9, 1, { byok: false });
-  assert.equal(pool.calls.length, 1);
-  assert.match(pool.calls[0].sql, /total_cost_cents/);
+  assert.equal(upserts(pool).length, 1);
+  assert.match(upserts(pool)[0].sql, /total_cost_cents/);
 });
 
 test('no-ops on zero, negative, NaN, and missing cost', async () => {
@@ -80,6 +94,41 @@ test('swallows DB errors instead of throwing', async () => {
   const pool = makePool({ fail: true });
   await assert.doesNotReject(() => limits.recordSpend(pool, 7, 5, { byok: true }));
   assert.equal(pool.calls.length, 1);
+});
+
+// ── #2598: the live credit meter's recording point ─────────────────────
+//
+// This is where the included OpenRouter key's spend lands too
+// (routes/sessions.js sharedPoolCodexSpend debits through recordSpend), so
+// it is the hook that makes "$x left this week" move for that venue at all.
+// The push's own behaviour — coalescing, the mid-turn overlay, tolerance —
+// lives in tests/budget-live-push.test.js.
+
+function captureNotify() {
+  const calls = [];
+  const original = budgetLive.notifySpend;
+  budgetLive.notifySpend = (pool, userId) => { calls.push(userId); return null; };
+  return { calls, restore: () => { budgetLive.notifySpend = original; } };
+}
+
+test('a recorded debit announces the new weekly figure to that user', async () => {
+  const cap = captureNotify();
+  try {
+    await limits.recordSpend(makePool(), 7, 12.5);
+    await limits.recordSpend(makePool(), 8, 3, { byok: true });
+    assert.deepEqual(cap.calls, [7, 8],
+      'both buckets move a meter — the BYOK figure is rendered beside the capped one');
+  } finally { cap.restore(); }
+});
+
+test('a debit that did not land announces nothing', async () => {
+  const cap = captureNotify();
+  try {
+    await limits.recordSpend(makePool({ fail: true }), 7, 12.5);
+    await limits.recordSpend(makePool(), 7, 0);
+    await limits.recordSpend(makePool(), null, 5);
+    assert.deepEqual(cap.calls, []);
+  } finally { cap.restore(); }
 });
 
 // ── #1088: claimByokSwitchNotice ───────────────────────────────────────
@@ -248,9 +297,15 @@ test('recordSystemSpend swallows DB errors', async () => {
 test('a recorded spend needs no weekly counterpart — the day row is the unit', async () => {
   const pool = makePool();
   await limits.recordSpend(pool, 7, 12.5);
-  assert.equal(pool.calls.length, 1, 'one statement, exactly as before');
-  assert.doesNotMatch(pool.calls[0].sql, /week/i,
+  assert.equal(upserts(pool).length, 1, 'one WRITE, exactly as before');
+  assert.doesNotMatch(upserts(pool)[0].sql, /week/i,
     'nothing weekly is written; the week is derived at read time');
+  // #2598 added a READ after it — the snapshot the live meter is pushed —
+  // and that one does ask for the week. Everything it issues is a SELECT.
+  for (const call of pool.calls) {
+    if (upserts(pool).includes(call)) continue;
+    assert.match(call.sql.trim(), /^SELECT/i, 'the push reads; it must never write');
+  }
 });
 
 test('the weekly read sums the capped column of the day rows, from the Monday', async () => {
@@ -268,9 +323,14 @@ test('the weekly read sums the capped column of the day rows, from the Monday', 
   assert.equal(calls.length, 1);
   const { sql, params } = calls[0];
   assert.match(sql, /FROM llm_usage/);
-  assert.match(sql, /SUM\(total_cost_cents\)/,
+  assert.match(sql, /SUM\(total_cost_cents\), 0\) AS total/,
     'the capped column — BYOK spend is display-only and must not consume a cap');
-  assert.doesNotMatch(sql, /byok_cost_cents/);
+  // #2571: the same statement also sums the BYOK column, under its own
+  // alias, because the drawer's own-key figure moved to this window too.
+  // getWeeklySpentCents returns only the capped half, which is what this
+  // test just asserted.
+  assert.match(sql, /SUM\(byok_cost_cents\), 0\)\s+AS byok/,
+    'the display figure rides along rather than costing a second round trip');
   assert.match(sql, /user_id = \$1/, 'one user, not the platform pool');
   assert.deepEqual(params, [7, '2026-09-07'], 'the Monday of that Thursday, inclusive');
 });

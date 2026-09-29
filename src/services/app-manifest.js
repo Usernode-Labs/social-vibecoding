@@ -58,13 +58,17 @@ const fs = require('fs');
 const path = require('path');
 const log = require('./logger');
 const usernames = require('./usernames');
+const appPermissions = require('./app-permissions');
 const { validatePath } = require('./testing-notes');
 
 const MANIFEST_FILENAME = 'dapp.json';
 
 // #47: per-app automated tests (the "CI for proposals" framework). Each
 // test navigates one staging route and asserts load + no-console-errors
-// (+ optional selector/text).
+// (+ optional selector/text). A representative flow can also declare
+// `{ id, visual: true, impact: [...] }`; services/visuals.js then uses that
+// executable check as an automatic screenshot scenario when its file globs
+// overlap the proposal diff.
 //
 // THE READER NO LONGER CAPS AT 12. It used to keep only the first
 // MAX_TESTS entries, which meant this repo's own 240-odd declared checks
@@ -166,7 +170,118 @@ const MANIFEST_FILENAME = 'dapp.json';
 // of ideal work, so TESTS_DEADLINE_MS goes 620s → 650s to keep the 2x margin
 // (clears it by ~6s), and RUN_TIMEOUT_MS 740s → 770s to stay the required 120s
 // above it. The step buys 29 slots over the 611 declared here.
-const MAX_DECLARED_TESTS = 660;
+//
+// Raised 660 → 690 by #2201, whose three confirmed-re-join checks put the
+// manifest at 641 against the 640 floor. The first bump after the capture
+// pool doubled 8 → 16 (services/visuals.js), and the free one that note
+// promised: 690 checks at ~3.9s over 16 pages is ~168s of ideal work, still
+// under a quarter of the 650s TESTS_DEADLINE_MS, so neither the deadline nor
+// RUN_TIMEOUT_MS moves. The step buys 29 slots over the 641 declared here.
+//
+// Raised 690 → 710 by #2219, whose four checks put the manifest at 646
+// against the 690 floor, landing on main's own growth from #2201 above —
+// this branch was cut before that merged, so its own count (643 against a
+// 640 floor) is superseded by the merged total.
+//
+// STILL NOT A COUPLED MOVE, same reason as before: the pool is 16, so 710
+// checks at ~3.9s over 16 is ~173s, and the UNCHANGED 650s deadline clears
+// the 2x margin by ~304s. So the deadline and the run timeout stay exactly
+// where #1960 left them. The next few bumps are free on the same arithmetic
+// — tests/checks-budget.test.js says so from the other side, and it is the
+// assertion that will stop being satisfied first if that ever changes.
+//
+// Raised 710 → 730 by #2563, whose three checks for the first-run
+// "Choose your username" step put the manifest at 693 against the 690
+// floor. Eighth crossing, and the floor was ALREADY met before those three
+// landed: main stood at 690 exactly, so any proposal declaring a single
+// check was red before it started — the same state #1824 and #2201 found,
+// and the same reason, which is that clearing a floor by zero is
+// indistinguishable from crossing it.
+//
+// STILL NOT A COUPLED MOVE, same arithmetic as the two bumps above: the
+// pool is 16, so 730 checks at ~3.9s over 16 is ~178s, and the UNCHANGED
+// 650s TESTS_DEADLINE_MS clears the 2x margin by ~294s. The deadline and
+// RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 17
+// slots over the 693 declared here.
+//
+// Raised 730 → 750 by #2679/#2680 (PR #2683), whose one check on the
+// hand-off walkthrough's "Link GitHub" step put the manifest at 711 against
+// the 710 floor. Ninth crossing, and once more the floor was ALREADY met
+// before that check landed: main stood at 710 exactly after the #2684
+// Homeroom-bot pair and the native-Android-header check arrived beside
+// each other, so any proposal declaring a single check was red before it
+// started. tests/improve-session-spinner.test.js and
+// tests/proposal-tests-manifest.test.js both state the floor, and both say
+// to move the ceiling rather than delete a check.
+//
+// STILL NOT A COUPLED MOVE, same arithmetic as the three bumps above: the
+// pool is 16, so 750 checks at ~3.9s over 16 is ~183s, and the UNCHANGED
+// 650s TESTS_DEADLINE_MS clears the 2x margin by ~284s. The deadline and
+// RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 19
+// slots over the 711 declared here.
+//
+// Raised 750 → 770 by #2760 and #2748 (PR #2750), landing beside each
+// other: #2760's one check on the fifth tab carrying the signed-in user's
+// name and #2748's one check on the waitlist analytics dashboard put the
+// manifest at 732 against the 730 floor. Tenth crossing, and the floor was
+// ALREADY met before either check landed: the #2718 follow-ups landing
+// beside each other (#2773, #2774, #2780, #2781) left main at 730 exactly,
+// so any proposal declaring a single check was red before it started.
+//
+// STILL NOT A COUPLED MOVE, same arithmetic as the four bumps above: the
+// pool is 16, so 770 checks at ~3.9s over 16 is ~188s, and the UNCHANGED
+// 650s TESTS_DEADLINE_MS clears the 2x margin by ~274s. The deadline and
+// RUN_TIMEOUT_MS stay exactly where #1960 left them. The step buys 18
+// slots over the 732 declared here.
+//
+// 770 → 790 (#2802, #2798): the sidebar recents proposal's two checks put
+// the merged manifest at 751 against the 750 floor. Eleventh crossing, same
+// arithmetic: 790 checks at ~3.9s over the pool of 16 is ~193s, and the
+// unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin by ~264s, so
+// neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 39 slots over
+// the 751 declared here.
+//
+// 790 → 810 (Homeroom task 598, the navigation prototype's remaining gaps):
+// its fifteen checks put the merged manifest at 775 against the 770 floor,
+// landing on main's own growth to 760. Twelfth crossing, same arithmetic:
+// 810 checks at ~3.9s over the pool of 16 is ~197s, and the unchanged 650s
+// TESTS_DEADLINE_MS still clears the 2x margin by ~255s, so neither the
+// deadline nor RUN_TIMEOUT_MS moves. The step buys 35 slots over the 775
+// declared here.
+//
+// 810 → 830 (#2386, mutual friends): main stood at 790 exactly, the 20-slot
+// floor, after #2779 folded its four checks into two to fit, so any proposal
+// declaring a single check was red before it started. The friends change
+// declares two (a person's friend button, the own profile's Friends section),
+// already folded from five with :has(). Thirteenth crossing, same
+// arithmetic: 830 checks at ~3.9s over the pool of 16 is ~202s, and the
+// unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin by ~245s, so
+// neither the deadline nor RUN_TIMEOUT_MS moves. The step buys 38 slots over
+// the 792 declared here; #2387's six, merged beside it, leave 32 over 798.
+//
+// 830 → 840 (#4868): main stood at 810 exactly, the 20-slot floor, after the
+// QA sweep's six; the "Open app" proposal declares one — its two assertions
+// (the button offered on an ordinary app's chat, absent on the platform's
+// own) already folded into a single :has()/:not(:has()) selector over the two
+// staging conversations 990803 and 990801, the way #2779 folded its four.
+// A proposal red before it started is the case #2386 raised the ceiling for,
+// and the same arithmetic holds: 840 checks at ~3.9s over the pool of 16 is
+// ~206s of ideal work, and the unchanged 650s TESTS_DEADLINE_MS still clears
+// the 2x margin by ~238s, so neither the deadline nor RUN_TIMEOUT_MS moves.
+// The step buys 29 slots over the 811 declared here.
+//
+// THE RULE AT THE FLOOR, stated once because three guards enforce it and on
+// #4868 they gave opposite advice. Fold first: a check that can share a
+// route with an existing one joins that check's expectSelector with :has()
+// instead of taking a slot. If the merged manifest still crosses the 20-slot
+// floor, the proposal that crosses it raises this ceiling in the same change
+// and adds its paragraph above, with the arithmetic;
+// tests/checks-budget.test.js decides whether TESTS_DEADLINE_MS and
+// RUN_TIMEOUT_MS move with it. Every raise above was made that way, and a
+// feature is not held behind a second vote because main already sat at the
+// floor. Never delete a check to make room. tests/lib/check-cap.js puts
+// the same words in the failing guards' messages.
+const MAX_DECLARED_TESTS = 840;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -182,17 +297,62 @@ const MAX_TESTS = LEGACY_GATING_HEAD;
 const MAX_TEST_NAME_LEN = 120;
 const MAX_TEST_SELECTOR_LEN = 256;
 const MAX_TEST_TEXT_LEN = 256;
+const MAX_VISUAL_SCENARIO_ID_LEN = 96;
+const MAX_VISUAL_IMPACT_PATTERNS = 20;
+const MAX_VISUAL_IMPACT_PATTERN_LEN = 256;
+const VISUAL_SCENARIO_ID_RE = /^[a-z0-9](?:[a-z0-9._-]{0,94}[a-z0-9])?$/;
+
+// A visual scenario is a declared check with enough repository-level
+// provenance to answer both questions the screenshot runner needs:
+//
+//   * which deterministic UI state should be photographed? (`id` + the
+//     check's existing path/assertions)
+//   * which code changes make that state relevant? (`impact` file globs)
+//
+// Keep this metadata on dapp.json checks, not beside individual source
+// functions. The check remains executable documentation of the flow, while
+// source files stay free of capture-pipeline annotations. Malformed visual
+// metadata never drops the underlying check; it only prevents that check
+// from being auto-selected as a screenshot scenario. At least one presence
+// assertion is required: a route alone says where to navigate, not whether
+// the feature state is ready to photograph.
+function normalizeVisualScenario(test) {
+  if (!test || test.visual !== true) return null;
+  const id = typeof test.id === 'string' ? test.id.trim() : '';
+  if (!id || id.length > MAX_VISUAL_SCENARIO_ID_LEN || !VISUAL_SCENARIO_ID_RE.test(id)) {
+    return null;
+  }
+  const hasReadinessAssertion = (typeof test.expectSelector === 'string' && test.expectSelector.trim())
+    || (typeof test.expectText === 'string' && test.expectText.trim());
+  if (!hasReadinessAssertion) return null;
+  if (!Array.isArray(test.impact)) return null;
+  const impact = [];
+  const seen = new Set();
+  for (const raw of test.impact) {
+    if (typeof raw !== 'string') continue;
+    const pattern = raw.trim().replace(/\\/g, '/');
+    if (!pattern || pattern.length > MAX_VISUAL_IMPACT_PATTERN_LEN
+      || pattern.startsWith('/') || pattern.startsWith('!')
+      || pattern.split('/').includes('..') || seen.has(pattern)) continue;
+    seen.add(pattern);
+    impact.push(pattern);
+    if (impact.length >= MAX_VISUAL_IMPACT_PATTERNS) break;
+  }
+  return impact.length ? { id, visual: true, impact } : null;
+}
 
 // Normalize the optional top-level `tests` array. Each entry must carry a
 // valid `path` (same rules as a testing-block path: relative, single
 // leading slash, no scheme/whitespace/markup). `name` falls back to the
 // path. `expectSelector` / `expectText` are optional presence assertions;
 // `allowConsoleErrors` opts a test out of the baseline no-console-errors
-// rule (for a route that legitimately logs errors). Invalid entries are
-// dropped, duplicate (name+path) pairs collapse, the list is bounded by
-// MAX_DECLARED_TESTS. A non-array / absent block resolves to [] — exactly
-// the legacy behaviour (no declared tests → the orchestrator synthesizes
-// the baseline). Never throws.
+// rule (for a route that legitimately logs errors). `visual: true` requires
+// a stable `id`, a presence assertion, and at least one repository-relative
+// `impact` glob; malformed visual metadata is ignored without dropping the
+// underlying check. Invalid entries are dropped, duplicate (name+path) pairs
+// collapse, and the list is bounded by MAX_DECLARED_TESTS. A non-array /
+// absent block resolves to [] — exactly the legacy behaviour (no declared
+// tests → the orchestrator synthesizes the baseline). Never throws.
 //
 // readTestsWithMeta is the same pass with its bookkeeping exposed, because
 // the over-ceiling guard has to compare LIKE WITH LIKE: the ceiling applies
@@ -206,6 +366,8 @@ function readTestsWithMeta(parsed) {
   const seen = new Set();
   let invalidDropped = 0;
   let ceilingDropped = 0;
+  let invalidVisualDropped = 0;
+  const visualIds = new Set();
   for (const t of raw) {
     if (!t || typeof t !== 'object') { invalidDropped++; continue; }
     const p = validatePath(t.path);
@@ -217,6 +379,13 @@ function readTestsWithMeta(parsed) {
     if (seen.has(dedupeKey)) continue;
     if (out.length >= MAX_DECLARED_TESTS) { ceilingDropped++; continue; }
     seen.add(dedupeKey);
+    let visual = normalizeVisualScenario(t);
+    if (t.visual === true && !visual) invalidVisualDropped++;
+    if (visual && visualIds.has(visual.id)) {
+      invalidVisualDropped++;
+      visual = null;
+    }
+    if (visual) visualIds.add(visual.id);
     out.push({
       name,
       path: p,
@@ -225,15 +394,17 @@ function readTestsWithMeta(parsed) {
       expectText: typeof t.expectText === 'string' && t.expectText.trim()
         ? t.expectText.trim().slice(0, MAX_TEST_TEXT_LEN) : null,
       allowConsoleErrors: !!t.allowConsoleErrors,
+      ...(visual || {}),
     });
   }
   const dropped = invalidDropped + ceilingDropped;
-  if (dropped > 0) {
+  if (dropped > 0 || invalidVisualDropped > 0) {
     log.warn('app-manifest', 'Dropped invalid/over-ceiling test entries', {
-      dropped, invalidDropped, ceilingDropped, kept: out.length, ceiling: MAX_DECLARED_TESTS,
+      dropped, invalidDropped, ceilingDropped, invalidVisualDropped,
+      kept: out.length, ceiling: MAX_DECLARED_TESTS,
     });
   }
-  return { tests: out, rawCount: raw.length, ceilingDropped };
+  return { tests: out, rawCount: raw.length, ceilingDropped, invalidVisualDropped };
 }
 
 function readTests(parsed) {
@@ -285,6 +456,7 @@ const RESERVED_KEYS = new Set([
   'USERNODE_STORAGE_URL',
   'USERNODE_STORAGE_TOKEN',
   'USERNODE_PLATFORM_API_URL',
+  'USERNODE_PLATFORM_API_V1_URL',
   // The platform's public origin (services/app-identity-env.js). Reserved
   // for the same reason as the rest: a manifest that shadowed it could
   // point an app's "Open in Homeroom" links at a host of its choosing.
@@ -490,6 +662,23 @@ function readName(parsed) {
   return raw;
 }
 
+// The top-level `description`: one line about what the app IS, which the
+// join screen, Discover, the project page and the PWA manifest read off the
+// stored manifest snapshot. Whitespace collapses to single spaces and the
+// line is capped at MAX_DESCRIPTION_LENGTH (the longest any surface shows);
+// anything else resolves to null. Never throws.
+//
+// read() used to leave it out, and every deploy snapshots read()'s output
+// over `apps.manifest_snapshot`, so a description written into dapp.json
+// never reached any of those surfaces: the first deploy dropped it.
+const MAX_DESCRIPTION_LENGTH = 280;
+function readDescription(parsed) {
+  if (typeof parsed?.description !== 'string') return null;
+  const text = parsed.description.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  return text.length > MAX_DESCRIPTION_LENGTH ? text.slice(0, MAX_DESCRIPTION_LENGTH).trimEnd() : text;
+}
+
 // Allowed values for the optional top-level `visibility` block (issue
 // #124). `build` maps to apps.collab_visibility, `view` to
 // apps.view_visibility — same value set as the DB columns.
@@ -690,6 +879,64 @@ function readLlm(parsed) {
   return out;
 }
 
+// Bound on a permission's reason line, same budget as the LLM consent
+// dialog's purpose above: one short sentence, not a paragraph.
+const MAX_PERMISSION_REASON_LENGTH = 140;
+
+// Normalize the optional top-level `permissions` block (#2219) — the
+// browser capabilities this app may ASK the platform for:
+//   "permissions": [
+//     "geolocation",
+//     { "capability": "microphone", "reason": "Records your voice notes" }
+//   ]
+// A bare string and the object form mean the same thing; `reason` is the
+// app's own one-line explanation, shown in the platform's permission
+// prompt exactly as `llm.purpose` is shown in the AI one.
+//
+// DECLARING IS NOT BEING GRANTED. This list only bounds what the app is
+// allowed to ask for: services/app-permissions.js gates the capability
+// itself on a per-user grant, and an undeclared capability is refused
+// before any prompt is shown. That is deliberate — it is what puts the
+// set of capabilities an app can ever reach into its own diff, where the
+// group reviewing a proposal can see it.
+//
+// Lenient like every other reader here: unknown capability names (a typo,
+// or a Permissions Policy feature the platform does not gate) are dropped
+// rather than thrown, a non-array block resolves to [] and duplicates
+// collapse. normalizeCapabilities settles the ordering, so the stored
+// snapshot is stable regardless of how the manifest listed them.
+function readPermissions(parsed) {
+  const raw = parsed?.permissions;
+  if (!Array.isArray(raw)) {
+    if (raw != null) log.warn('app-manifest', 'Ignoring non-array permissions block');
+    return [];
+  }
+  const reasons = new Map();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const name = entry.capability;
+    if (typeof name !== 'string') continue;
+    const reason = typeof entry.reason === 'string' && entry.reason.trim()
+      ? entry.reason.trim().slice(0, MAX_PERMISSION_REASON_LENGTH)
+      : null;
+    if (reason != null) reasons.set(name, reason);
+  }
+  const names = appPermissions.normalizeCapabilities(raw);
+  // Count what the catalogue actually REFUSED, not what collapsing
+  // duplicates removed — a manifest listing one capability twice is
+  // untidy, not a misconfiguration worth a warning.
+  const dropped = raw.filter((entry) => !appPermissions.isGatedCapability(
+    typeof entry === 'string' ? entry : (entry && typeof entry === 'object' ? entry.capability : null)
+  )).length;
+  if (dropped > 0) {
+    log.warn('app-manifest', 'Dropped unrecognized permission entries', { dropped });
+  }
+  return names.map((capability) => ({
+    capability,
+    reason: reasons.get(capability) || null,
+  }));
+}
+
 // Allowed device-scale values for the optional top-level `screenshot`
 // block (issue #360). The platform's before/after preview screenshots
 // default to 2× (HiDPI/retina); an app declares `1` to opt its previews
@@ -803,9 +1050,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    if (err.code === 'ENOENT') return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   let parsed;
@@ -813,7 +1060,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
+    return { name: null, description: null, secrets: [], llm: null, permissions: [], visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   const platformEnv = readPlatformEnv(parsed);
@@ -864,8 +1111,10 @@ function read(cloneDir) {
 
   return {
     name: readName(parsed),
+    description: readDescription(parsed),
     secrets,
     llm: readLlm(parsed),
+    permissions: readPermissions(parsed),
     visibility: readVisibility(parsed),
     governance: readGovernance(parsed),
     screenshot: readScreenshot(parsed),
@@ -968,11 +1217,7 @@ async function applyVisibilityChange(pool, app, { collab, view }, { actorLabel =
   }
 
   try {
-    const { sendSystemMessage, pushAppUpdate } = require('./ws');
-    await sendSystemMessage(pool, app.id,
-      `This app's visibility changed to ${describeVisibility(collab, view)} (set by ${actorLabel})`,
-      'system'
-    ).catch((err) => log.warn('app-manifest', 'Visibility chat msg failed', { err: err.message }));
+    const { pushAppUpdate } = require('./ws');
     pushAppUpdate({
       action: 'visibility_changed',
       appSlug: app.slug,
@@ -1135,11 +1380,7 @@ async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequi
   }
 
   try {
-    const { sendSystemMessage, pushAppUpdate } = require('./ws');
-    await sendSystemMessage(pool, app.id,
-      `This app's proposal-approval settings changed to ${describeGovernance(approverPolicy, approvalsRequired)} (set by ${actorLabel})`,
-      'system'
-    ).catch((err) => log.warn('app-manifest', 'Governance chat msg failed', { err: err.message }));
+    const { pushAppUpdate } = require('./ws');
     pushAppUpdate({
       action: 'governance_changed',
       appSlug: app.slug,
@@ -1282,11 +1523,7 @@ async function applyAdminsChange(pool, app, { usernames, userIds }, { actorLabel
   }
 
   try {
-    const { sendSystemMessage, pushAppUpdate } = require('./ws');
-    await sendSystemMessage(pool, app.id,
-      `This app's admins changed to ${describeAdmins(declared)} (set by ${actorLabel})`,
-      'system'
-    ).catch((err) => log.warn('app-manifest', 'Admins chat msg failed', { err: err.message }));
+    const { pushAppUpdate } = require('./ws');
     pushAppUpdate({
       action: 'admins_changed',
       appSlug: app.slug,
@@ -1630,6 +1867,8 @@ async function reconcilePlatformEnv(pool, appId, entries) {
 module.exports = {
   read,
   readName,
+  readDescription,
+  MAX_DESCRIPTION_LENGTH,
   readLlm,
   readVisibility,
   readGovernance,

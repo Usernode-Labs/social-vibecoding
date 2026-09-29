@@ -35,6 +35,14 @@ const VOTES_SRC = fs.readFileSync(
 test('the allowlist permits exactly the routes the tools need', () => {
   const allowed = [
     ['GET', '/api/apps'],
+    // Demo mode (routes/demo-mode.js): creator-only and demo-mode-only; the
+    // gate test at the end of this file is what earns these their entries.
+    ['POST', '/api/apps/recipe-box/demo-mode'],
+    ['GET', '/api/apps/recipe-box/demo'],
+    ['POST', '/api/apps/recipe-box/demo/propose'],
+    ['POST', '/api/apps/recipe-box/demo/promote'],
+    ['POST', '/api/apps/recipe-box/demo/vote'],
+    ['POST', '/api/apps/recipe-box/demo/reset'],
     ['GET', '/api/apps/recipe-box'],
     ['GET', '/api/apps/recipe-box/github-issues'],
     // A request's GitHub comments — the half of its discussion that does not
@@ -69,9 +77,15 @@ test('the allowlist permits exactly the routes the tools need', () => {
     // merge; the route refuses anything that is not the caller's own open
     // proposal.
     ['POST', '/api/apps/recipe-box/proposals/412/update-from-fork'],
+    ['POST', '/api/apps/recipe-box/proposals/412/evidence/plan'],
+    ['GET', '/api/apps/recipe-box/proposals/412/evidence/diagnostics'],
     ['POST', '/api/apps/recipe-box/issues/12/headless-session'],
     ['POST', '/api/sessions/412/clone-headless'],
     ['POST', '/api/sessions/412/promote'],
+    // #2779 — recheck_change: the "Re-run checks" button, on the commit the
+    // proposal already has. The handler refuses anyone but the owner or a
+    // write-admin; no code or vote moves.
+    ['POST', '/api/sessions/412/recheck'],
   ];
   for (const [method, target] of allowed) {
     assert.equal(
@@ -144,6 +158,12 @@ test('fail-closed: anything not listed is refused', () => {
     ['POST', '/api/apps/recipe-box/proposals'],
     ['POST', '/api/apps/recipe-box/proposals//update-from-fork'],
     ['POST', '/api/apps/recipe-box/proposals/412/update-from-fork/extra'],
+    ['GET', '/api/apps/recipe-box/proposals/412/evidence/plan'],
+    ['GET', '/api/apps/recipe-box/proposals/412/evidence'],
+    ['GET', '/api/apps/recipe-box/proposals/412/evidence/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+    ['POST', '/api/apps/recipe-box/proposals/412/evidence/plan/extra'],
+    ['POST', '/api/apps/recipe-box/proposals/412/evidence/diagnostics'],
+    ['GET', '/api/apps/recipe-box/proposals/412/evidence/diagnostics/extra'],
   ];
   for (const [method, target] of refused) {
     assert.equal(
@@ -237,24 +257,60 @@ test('create_request can only ever file an ordinary request', () => {
     'kind is never taken from tool input');
 });
 
+test('propose_close_request can only ever file a close-issue vote', () => {
+  // The same multiplexed route, and the same rule: the tool pins its one
+  // kind. A close proposal decides nothing — the group votes on it — which
+  // is what puts it on the connector beside create_request.
+  const start = TOOLS_SRC.indexOf("server.registerTool('propose_close_request'");
+  assert.ok(start > 0, 'propose_close_request is registered');
+  const end = TOOLS_SRC.indexOf('server.registerTool(', start + 10);
+  const body = TOOLS_SRC.slice(start, end > 0 ? end : undefined);
+  assert.match(body, /kind: 'close_issue'/);
+  assert.equal([...body.matchAll(/kind:/g)].length, 1, 'one kind, and only that one');
+  // No connector tool files any of the other governance kinds.
+  for (const other of ['secret_change', 'maintenance_campaign', 'featured_illustration', 'rename']) {
+    assert.doesNotMatch(TOOLS_SRC, new RegExp(`kind: '${other}'`), `no tool files ${other}`);
+  }
+});
+
 test('every route the tools call is on the allowlist', () => {
   // The two lists are maintained separately, so drift between them would
   // show up as a tool that 403s in production. Extract the literal paths
   // the tool module calls and check each one.
   const calls = [...TOOLS_SRC.matchAll(/callPlatform\(\s*baseUrl,\s*accessToken,\s*'([A-Z]+)',\s*[`']([^`']*)[`']/g)];
   assert.ok(calls.length >= 6, 'found the tool call sites');
-  for (const [, method, rawPath] of calls) {
+  // #2779: the four change-lifecycle tools are registered only for an agent
+  // session's Mayor, so their calls are held to the Mayor's own list instead.
+  const { DELEGATED_ONLY_TOOLS } = require('../src/services/mcp-audiences');
+  const delegatedBlocks = DELEGATED_ONLY_TOOLS.map((name) => {
+    const start = TOOLS_SRC.indexOf(`server.registerTool('${name}'`);
+    assert.ok(start > 0, `${name} is registered`);
+    const end = TOOLS_SRC.indexOf('server.registerTool(', start + 10);
+    return [start, end > 0 ? end : TOOLS_SRC.length];
+  });
+  let delegatedCalls = 0;
+  for (const match of calls) {
+    const [, method, rawPath] = match;
     // Template literals interpolate the slug / proposal id; substitute a
     // concrete segment so the pattern matcher sees a real path. The query
     // string is dropped for the same reason the middleware never sees one:
     // routes/cli-auth.js matches on `req.path`, which express has already
     // stripped it from (#1196 added `?include_imported=1` to one call).
     const target = rawPath.replace(/\$\{[^}]*\}/g, 'x').split('?')[0];
+    if (delegatedBlocks.some(([start, end]) => match.index > start && match.index < end)) {
+      delegatedCalls += 1;
+      assert.equal(
+        policy.isDelegatedApiRequest('agent_mayor', method, target), true,
+        `${method} ${target} (called by a Mayor-only tool) is on the Mayor's allowlist`
+      );
+      continue;
+    }
     assert.equal(
       policy.isConnectorApiRequest(method, target), true,
       `${method} ${target} (called by a tool) is on the allowlist`
     );
   }
+  assert.ok(delegatedCalls >= 4, 'found the Mayor-only call sites');
 });
 
 // ── #967 pass 2: the write half ────────────────────────────────────────
@@ -281,8 +337,12 @@ test('resume is on the list only because the route is owner-scoped', () => {
   const SESSIONS_SRC = fs.readFileSync(
     path.join(__dirname, '../src/routes/sessions.js'), 'utf8'
   );
+  // The route's body is resumePausedSession now (a message to a paused
+  // session resumes it too), and the route hands it the caller.
+  const route = SESSIONS_SRC.slice(SESSIONS_SRC.indexOf("router.post('/api/sessions/:id/resume'"));
+  assert.match(route.slice(0, 600), /resumePausedSession\(\{ pool, config, user: req\.user, sessionId \}\)/);
   const handler = SESSIONS_SRC.slice(
-    SESSIONS_SRC.indexOf("router.post('/api/sessions/:id/resume'")
+    SESSIONS_SRC.indexOf('async function resumePausedSession(')
   );
   assert.ok(handler.length > 0, 'the resume handler exists');
   assert.match(
@@ -428,4 +488,41 @@ test('the tip’s throttle state is readable by the browser, never by the connec
   // throttle. A "show it again" control is a control for making the
   // connector nag, so there is deliberately none to route to.
   assert.doesNotMatch(REMOTE_SRC, /resetHint|clearHint|hint\/reset/);
+});
+
+// ── Demo mode: on the list only because every route is gated on demo mode and the creator ──
+
+test('the demo routes are on the list only because every one of them is gated on demo mode, the creator, and full platform admin', () => {
+  const DEMO_SRC = fs.readFileSync(path.join(__dirname, '../src/routes/demo-mode.js'), 'utf8');
+  // The gate, in one place: the platform app, anyone but the creator, and an
+  // app not in demo mode are each refused before a handler does anything.
+  // If any of these loosens — an admin override, say — these entries have to
+  // come back off the list.
+  assert.match(DEMO_SRC, /if \(app\.self_hosted\) \{\s*res\.status\(403\)/, 'the platform app is refused');
+  assert.match(DEMO_SRC,
+    /if \(req\.user\?\.id == null \|\| app\.created_by !== req\.user\.id\) \{\s*res\.status\(403\)/,
+    'anyone but the creator is refused');
+  assert.match(DEMO_SRC, /if \(requireDemoMode && !app\.demo_mode\) \{\s*res\.status\(403\)/,
+    'an app not in demo mode is refused');
+  // …and the admin half is required on top of the creator half, never
+  // instead of it: the creator check comes first, this comes after it.
+  const creatorAt = DEMO_SRC.indexOf('app.created_by !== req.user.id');
+  const adminAt = DEMO_SRC.indexOf('if (!req.user.canAdminWrite) {');
+  assert.ok(creatorAt > 0 && adminAt > creatorAt, 'a creator who is not a full platform admin is refused, after the creator check');
+  assert.match(DEMO_SRC, /if \(!req\.user\.canAdminWrite\) \{\s*res\.status\(403\)/);
+  // …and every route goes through it.
+  const routes = [...DEMO_SRC.matchAll(/router\.(?:get|post)\('(\/api\/apps\/:slug\/demo[^']*)'/g)].map((m) => m[1]);
+  assert.deepEqual(routes.sort(), [
+    '/api/apps/:slug/demo', '/api/apps/:slug/demo-mode', '/api/apps/:slug/demo/promote',
+    '/api/apps/:slug/demo/propose', '/api/apps/:slug/demo/reset', '/api/apps/:slug/demo/vote',
+  ]);
+  assert.equal((DEMO_SRC.match(/await loadDemoApp\(req, res/g) || []).length, routes.length,
+    'every handler loads the app through the gate');
+  // Only the switch and the status may answer for an app NOT in demo mode.
+  assert.equal((DEMO_SRC.match(/requireDemoMode: false/g) || []).length, 2);
+  // The general vote stays off the list; only the partner's demo vote is on it.
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/sessions/9/vote'), false);
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/vote'), true);
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/promote'), true);
+  assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/reset'), true);
 });

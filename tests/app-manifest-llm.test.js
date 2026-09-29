@@ -86,3 +86,16 @@ test('USERNODE_LLM_PROXY_* secret keys are rejected as reserved', () => {
     assert.deepEqual(m.secrets.map((s) => s.key), ['LEGIT_KEY']);
   });
 });
+
+test('versioned and future USERNODE_PLATFORM_API_* keys are platform-owned', () => {
+  withManifest({
+    secrets: [
+      { key: 'USERNODE_PLATFORM_API_URL', description: 'legacy spoof' },
+      { key: 'USERNODE_PLATFORM_API_V1_URL', description: 'v1 spoof' },
+      { key: 'USERNODE_PLATFORM_API_V2_URL', description: 'future spoof' },
+      { key: 'LEGIT_KEY', description: 'fine' },
+    ],
+  }, (manifest) => {
+    assert.deepEqual(manifest.secrets.map((secret) => secret.key), ['LEGIT_KEY']);
+  });
+});

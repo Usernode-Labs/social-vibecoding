@@ -8,9 +8,14 @@ const CATEGORY_DEFINITIONS = Object.freeze([
   Object.freeze({
     key: 'direct_interactions',
     label: 'Direct interactions',
-    description: 'Mentions and replies to your messages.',
+    description: 'Mentions, replies to your messages, and friend requests.',
     defaultEnabled: true,
-    kinds: Object.freeze(['mention', 'reply']),
+    // #2387: a reply in an app-chat reply thread you started or joined is a
+    // reply to your message in all but name. #2386: a friend request and its
+    // acceptance are one person reaching you directly — this category's
+    // promise — so they join it rather than getting a switch of their own.
+    // Kept in lockstep with the seed in db/schema.sql.
+    kinds: Object.freeze(['mention', 'reply', 'thread_reply', 'friend_request', 'friend_accept']),
   }),
   Object.freeze({
     key: 'invitations',
@@ -41,16 +46,52 @@ const CATEGORY_DEFINITIONS = Object.freeze([
     // exactly what this category's own description already promises. A
     // connector user who wants session pushes wants these; one who turned them
     // off does not, and should not have to find a second switch.
+    // #3181: session_stalled is the other half of session_done (the turn
+    // stopped before finishing), so it rides the same switch, beside it.
+    // Kept in lockstep with the seed in db/schema.sql.
     kinds: Object.freeze([
-      'session_done', 'auto_solve_done', 'connector_submitted', 'agent_awaiting_input', 'test_alert',
+      'session_done', 'session_stalled', 'auto_solve_done', 'connector_submitted',
+      'agent_awaiting_input', 'test_alert',
     ]),
   }),
   Object.freeze({
     key: 'proposal_alerts',
     label: 'Proposal alerts',
-    description: 'Proposals needing attention, failed previews, and new proposals ready for voting.',
+    description: 'Proposals needing attention, failed previews, new proposals ready for voting, and votes or merges on your own.',
     defaultEnabled: true,
-    kinds: Object.freeze(['stale_pr', 'check_failed', 'pr_proposed']),
+    // #1374 adds three: a vote on your proposal, your proposal merging, and
+    // the daily "what needs your vote" summary. All three are proposal
+    // lifecycle, which is exactly what this category's description already
+    // promises, so they join it rather than getting one of their own —
+    // somebody who turned proposal pushes off does not want these either.
+    // #1688 adds two more of the same kind: the re-confirm ask after a
+    // proposal you backed gets a new version, and the weekly "this week"
+    // card. Kept in lockstep with the seed in db/schema.sql.
+    kinds: Object.freeze([
+      'stale_pr', 'check_failed', 'pr_proposed', 'proposal_vote', 'pr_merged', 'vote_digest',
+      'revision_recheck', 'weekly_digest',
+    ]),
+  }),
+  Object.freeze({
+    key: 'app_alerts',
+    label: 'App alerts',
+    description: 'New issues filed on your apps, and apps that stop working.',
+    defaultEnabled: true,
+    // #1374's two that are NOT proposal lifecycle. They share a category
+    // because they share an audience and a moment: both are "something
+    // happened to an app you look after". Splitting them would be two
+    // switches where nobody has a reason to set them differently.
+    //
+    // NOTE the second gate. `issue_opened` defaults OFF in
+    // services/notification-preferences.js, so this being on by default
+    // does not make it noisy: no notification is created in the first
+    // place unless somebody opted the app in.
+    //
+    // 'platform_limit' is the same moment one level up, for full admins
+    // only: the SERVER is nearing a cap that stops apps being created or
+    // sessions starting (services/platform-limit-alerts.js). Only full
+    // admins ever receive one, so nobody else's switch is affected.
+    kinds: Object.freeze(['issue_opened', 'app_health', 'platform_limit']),
   }),
   Object.freeze({
     key: 'lightweight_activity',
@@ -70,6 +111,9 @@ const CATEGORY_DEFINITIONS = Object.freeze([
       'conversation_mention',
       'conversation_reply',
       'conversation_reaction',
+      // #2387: a reply in a thread you started or replied in. "Replies" in
+      // the description already covers it, so the copy does not change.
+      'conversation_thread_reply',
     ]),
   }),
 ]);

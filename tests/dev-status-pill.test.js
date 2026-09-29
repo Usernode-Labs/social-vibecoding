@@ -117,6 +117,48 @@ test('tier 0 — a merged row is settled and reads ✓ Merged', () => {
   assert.equal(s.tone, 'ok');
 });
 
+test('tier 0 — derived deployment state distinguishes live, pending, and stalled merges', () => {
+  const AppView = makeAppView();
+  const deployed = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deployed' }));
+  assert.equal(deployed.label, '✓ Deployed');
+  assert.equal(deployed.tone, 'ok');
+
+  const deploying = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'deploying' }));
+  assert.equal(deploying.label, 'Merged · deploying…');
+  assert.equal(deploying.tone, 'progress');
+  assert.equal(deploying.spinner, true);
+
+  const stalled = AppView.statusPillState(PR({ status: 'merged', deployment_state: 'stalled' }));
+  assert.equal(stalled.label, 'Merged · deployment stalled');
+  assert.equal(stalled.tone, 'blocked');
+});
+
+test('merged child proposals say whether delivery is pending, failed, unknown or confirmed', () => {
+  const AppView = makeAppView();
+  const state = deployment_state => AppView.statusPillState(PR({
+    status: 'merged', deployment_kind: 'child', deployment_state,
+  }));
+  assert.equal(state('deployed').label, '✓ Deployed');
+  assert.equal(state('pending').label, 'Merged · awaiting deployment');
+  assert.equal(state('failed').label, 'Merged · deploy failed');
+  assert.equal(state('failed').tone, 'blocked');
+  assert.equal(state('unknown').label, 'Merged · delivery unknown');
+  assert.equal(state('unknown').tone, 'neutral');
+});
+
+test('the Done summary reports a child app’s latest delivery outcome', () => {
+  const AppView = makeAppView();
+  const status = state => {
+    AppView._mergedCtx = { deployment: { kind: 'child', state,
+      runningSha: 'abcdef0123456789abcdef0123456789abcdef01' } };
+    return AppView._doneDeploymentStatus();
+  };
+  assert.match(status('pending').text, /awaiting deployment/);
+  assert.match(status('failed').text, /deploy failed/);
+  assert.match(status('unknown').text, /could not be confirmed/);
+  assert.match(status('deployed').text, /abcdef0/);
+});
+
 test('tier 1 — merging stays in the bar; resolving became a tag', () => {
   const AppView = makeAppView();
   // Merging, even with failing checks and a conflict recorded: the merge is
@@ -173,8 +215,12 @@ test('every hard blocking state is a red tag, in severity order', () => {
   const AppView = makeAppView();
   const cases = [
     [{ merge_conflict_state: 'failed' }, 'Needs manual resolution'],
-    [{ merge_conflict_state: 'conflict' }, 'GitHub refused the merge'],
-    [{ check_state: 'error' }, 'Preview won’t boot'],
+    // #2221: the label names the next action now. The TONE is what this
+    // test is about and it is unchanged — a refused merge is still red,
+    // because a person really does have to act on it.
+    [{ merge_conflict_state: 'conflict' }, 'Needs author to sync with main'],
+    [{ check_state: 'error' }, 'Checks couldn’t run'],
+    [{ check_state: 'error', preview_state: 'failed', staging_error: 'app exited' }, 'Preview won’t boot'],
     [{ check_state: 'failing', test_results: [] }, 'Checks failing'],
   ];
   for (const [row, label] of cases) {
@@ -228,6 +274,93 @@ test('checks in flight are a neutral, spinning tag — they outrank nothing now'
   assert.ok(starting);
   assert.equal(starting.label, 'Checks starting…');
   assert.ok(starting.spinner);
+});
+
+test('a deferred run is not "running": the tag says deferred and does not spin (#2247)', () => {
+  // check_state 'pending' with check_phase 'deferred' is a run that stopped
+  // on purpose after the build: the head conflicts with main and the tests
+  // wait for one that merges. merge-status.js and the checks panel said so;
+  // the card's tag kept a spinner and "Checks running…" beside a body that
+  // read "Checks deferred until this merges cleanly".
+  const AppView = makeAppView();
+  const deferred = PR({ check_state: 'pending', check_phase: 'deferred' });
+  const tags = AppView.statusTagSpecs(deferred, {});
+  assert.equal(tags.find((t) => t.key === 'tag-checks-running'), undefined, 'no spinner over nothing');
+  const tag = tags.find((t) => t.key === 'tag-checks-deferred');
+  assert.ok(tag, 'the tag exists');
+  assert.equal(tag.label, 'Checks deferred', 'the same words as the panel (CHECKS_PHASE_COPY)');
+  assert.ok(!tag.spinner);
+  assert.match(tag.cls, /amber/, 'worth knowing, nobody has to act: soft');
+  assert.match(tag.title, /conflicts with main/);
+  assert.equal(tag.data['data-status-tag'], 'checks-deferred');
+  // And the pill agrees.
+  const ms = AppView.__sandbox.MergeStatus.lifecycle(deferred);
+  assert.equal(ms.key, 'checks_deferred');
+});
+
+// services/main-watch.js pauses an app's merges when main's unit suite is
+// red; the per-row main_healthy gate in mergeRequirements says so.
+const PAUSED_GATE = (over) => ({
+  key: 'main_healthy', label: 'Main is healthy', actor: 'admin', state: 'blocked',
+  detail: {
+    paused: true, confirming: false,
+    note: "main's unit suite is failing since fffffff (shared-sessions returns linked_issues per row); merges are paused until a fix lands or an admin resumes them",
+    ...over,
+  },
+});
+const PASSED = { status: 'promoted', check_state: 'passing', yes_count: 3, votes_required: 3 };
+
+test('votes passed, checks green, main paused: the card says so instead of "merging shortly"', () => {
+  // The afternoon a flaky test paused the platform's merges, every card read
+  // "Passed, merging shortly" while nothing merged. The pause is the app's
+  // state, and it is the one thing that decides whether "shortly" is true.
+  // Two surfaces read it: the board card's TAG (blockReasons → statusTagSpecs)
+  // and the one-slot pill of the dev-chat header and home strip
+  // (MergeStatus.lifecycle).
+  const AppView = makeAppView();
+  const MergeStatus = AppView.__sandbox.MergeStatus;
+  const paused = PR({ ...PASSED, mergeRequirements: { gates: [PAUSED_GATE()] } });
+
+  const s = MergeStatus.lifecycle(paused);
+  assert.equal(s.key, 'main_paused');
+  assert.equal(s.label, 'Passed, merges paused', 'the same shape as "Passed, merging shortly", which it replaces');
+  assert.equal(s.tone, 'amber', 'a condition somebody may need to act on');
+  assert.match(s.title, /shared-sessions returns linked_issues per row/, 'the tooltip names the test');
+  assert.match(s.title, /Nothing about this proposal is wrong/);
+
+  // The board card: the bar is the vote, the tag is the pause, and the pill
+  // carries the reason for the detail view.
+  const tag = AppView.statusTagSpecs(paused, {}).find((t) => t.key === 'tag-main_paused');
+  assert.ok(tag, 'the tag exists');
+  assert.equal(tag.label, 'Merges paused');
+  assert.match(tag.title, /^Main's unit suite is failing since fffffff/);
+  assert.match(tag.title, /Nothing about this proposal is wrong/);
+  assert.ok(!tag.spinner);
+  assert.match(tag.cls, /red/, 'it stops the merge, so blocking tone');
+  assert.ok(AppView.statusPillState(paused).reasons.some((r) => r.key === 'main_paused'));
+
+  // A provisional pause says the re-run is on.
+  const confirming = PR({ ...PASSED, mergeRequirements: { gates: [PAUSED_GATE({ confirming: true })] } });
+  assert.equal(AppView.statusTagSpecs(confirming, {}).find((t) => t.key === 'tag-main_paused').label,
+    'Merges paused · re-checking main');
+  assert.equal(MergeStatus.lifecycle(confirming).key, 'main_paused');
+
+  // Not paused: the pill it always was.
+  const fine = PR({ ...PASSED, mergeRequirements: { gates: [{ ...PAUSED_GATE(), state: 'done', detail: null }] } });
+  assert.equal(MergeStatus.lifecycle(fine).key, 'ready');
+  assert.equal(AppView.statusTagSpecs(fine, {}).find((t) => t.key === 'tag-main_paused'), undefined);
+  // A level-and-green head under the pause is going to merge: its step is
+  // 'done' with the pass-through named, and it keeps the green pill.
+  const through = PR({
+    ...PASSED,
+    mergeRequirements: { gates: [{ ...PAUSED_GATE(), state: 'done', detail: { passThrough: 'level_and_green', note: 'x' } }] },
+  });
+  assert.equal(MergeStatus.lifecycle(through).key, 'ready');
+  assert.equal(AppView.statusTagSpecs(through, {}).find((t) => t.key === 'tag-main_paused'), undefined);
+  // No requirements block at all (an older row): nothing invented.
+  assert.equal(MergeStatus.lifecycle(PR(PASSED)).key, 'ready');
+  // Merged rows are settled; the pause is about what has not merged yet.
+  assert.equal(MergeStatus.lifecycle(PR({ ...paused, status: 'merged' })).key, 'merged');
 });
 
 test('tier 3 — contested turns the timed path off and says so', () => {
@@ -390,6 +523,93 @@ test('the proportional fill markup is preserved on the tally tiers', () => {
     check_state: 'passing', yes_count: 0, no_count: 4, votes_required: 4, my_vote: 'no',
   }));
   assert.match(wonNo, /gc-vote-fill-full gc-vote-fill-full-no/);
+});
+
+test('the two bars face each other at full height, and meet rather than overlap', () => {
+  // The geometry lives in CSS, so that is where it is pinned: Yes anchored
+  // left, No anchored right, both the pill's whole height. Before this they
+  // were half-height lanes stacked one above the other, which meant a tally
+  // with votes on one side only — nearly all of them — drew a bar covering
+  // half the pill and read as a rendering fault.
+  const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
+  const base = css.slice(css.indexOf('.gc-vote-fill {'), css.indexOf('.gc-vote-fill-full-yes'));
+  assert.match(base, /\.gc-vote-fill \{[^}]*height: 100%/, 'both bars are the pill\'s full height');
+  assert.doesNotMatch(base, /height: 50%/, 'no half-height lanes left');
+  assert.match(base, /\.gc-vote-fill-yes \{ left: 0;/, 'Yes grows from the left');
+  assert.match(base, /\.gc-vote-fill-no \{ right: 0;/, 'and No from the right');
+  // The solid fill has no side of its own, so it needs an anchor to sit on.
+  assert.match(css, /\.gc-vote-fill-full \{ left: 0; top: 0; width: 100%; height: 100%; \}/);
+});
+
+test('facing bars can meet but never overlap, and keep their ratio when they would', () => {
+  const AppView = makeAppView();
+  // Spread into THIS realm: AppView is evaluated in a vm context, so the
+  // object it hands back is structurally right and reference-wrong for a
+  // strict deep compare.
+  const widths = (yes, no, maj) => ({ ...AppView.voteFillWidths(yes, no, maj) });
+
+  // The ordinary case: each side is simply its share of the threshold.
+  assert.deepEqual(widths(1, 0, 2), { yes: 50, no: 0 });
+  assert.deepEqual(widths(1, 1, 4), { yes: 25, no: 25 });
+  assert.deepEqual(widths(0, 0, 4), { yes: 0, no: 0 });
+  // Exactly meeting is allowed — that is the bar full, split between them.
+  assert.deepEqual(widths(1, 1, 2), { yes: 50, no: 50 });
+
+  // Past that they would overlap, and the later bar would paint over the
+  // earlier one. Scaled by a common factor instead, so which side is ahead
+  // stays readable. A contested tally is exactly this case: 5 active, 3
+  // needed, 2 yes and 2 no is 133% between them.
+  const contested = widths(2, 2, 3);
+  assert.equal(Math.round(contested.yes + contested.no), 100, 'they fill the bar, no more');
+  assert.equal(contested.yes, contested.no, 'and a tie still looks like a tie');
+  const uneven = widths(3, 1, 3);
+  assert.equal(Math.round(uneven.yes + uneven.no), 100);
+  assert.ok(uneven.yes > uneven.no * 2.9 && uneven.yes < uneven.no * 3.1,
+    'three to one still reads as three to one');
+
+  // Nothing ever exceeds the pill, whatever it is handed.
+  for (const [y, n, m] of [[9, 9, 1], [5, 0, 2], [0, 5, 2], [1, 0, 0], [-1, -1, 2]]) {
+    const w = widths(y, n, m);
+    assert.ok(w.yes >= 0 && w.no >= 0 && w.yes + w.no <= 100.001, `${y}/${n} of ${m}`);
+  }
+});
+
+test('the React pill and the legacy pill compute the same bar, to the pixel', () => {
+  // Two renderers draw this bar — StatusPill and voteCountPill — and the
+  // rule is transcribed rather than imported, because a bundled component
+  // cannot import a classic script. So the transcription is pinned.
+  const AppView = makeAppView();
+  const { voteFillWidths } = api();
+  for (const [y, n, m] of [[0, 0, 2], [1, 0, 2], [1, 1, 4], [2, 2, 3], [3, 1, 4], [1, 0, 0], [7, 2, 5]]) {
+    assert.deepEqual({ ...voteFillWidths(y, n, m) }, { ...AppView.voteFillWidths(y, n, m) }, `${y}/${n} of ${m}`);
+  }
+});
+
+test('the approvals pill draws its bar by the same rule', () => {
+  // "1 of 2 approvals" renders a Yes bar alone, and it must be the same
+  // half-width bar the tally would draw rather than a second convention.
+  const AppView = makeAppView();
+  assert.match(
+    AppView.voteCountPill(PR({ approvals_required: 2, yes_count: 1, check_state: 'passing' })),
+    /gc-vote-fill gc-vote-fill-yes" style="width:50%/
+  );
+});
+
+test('a rendered tally that would overlap is drawn scaled, in both pills', () => {
+  // The tallies above all leave a gap, so they cannot tell the shared rule
+  // from the formula it replaced. This one can: 2 yes and 2 no of 3 needed
+  // is 133% between them, and what must reach the DOM is 50/50.
+  const AppView = makeAppView();
+  const over = { yes_count: 2, no_count: 2, votes_required: 3, check_state: 'passing' };
+  const legacy = AppView.voteCountPill(PR(over));
+  assert.match(legacy, /gc-vote-fill-yes" style="width:50%/);
+  assert.match(legacy, /gc-vote-fill-no" style="width:50%/);
+  assert.doesNotMatch(legacy, /width:66/, 'never the unscaled share, which would overlap');
+
+  const composite = pillHtml(AppView, PR({ ...over, my_vote: 'yes' }));
+  assert.match(composite, /gc-vote-fill-yes" style="width:50%/);
+  assert.match(composite, /gc-vote-fill-no" style="width:50%/);
+  assert.doesNotMatch(composite, /width:66/);
 });
 
 test('a countdown carries the ticker contract the 30s timer reads', () => {
@@ -637,7 +857,7 @@ test('the declared checks match what the real staging fixtures render', () => {
   const refused = row(9000083);
   assert.equal(AppView.statusTagSpecs(refused, {}).map((t) => t.data['data-status-tag']).join(),
     'merge_conflict');
-  assert.equal(AppView.statusTagSpecs(refused, {})[0].label, 'GitHub refused the merge');
+  assert.equal(AppView.statusTagSpecs(refused, {})[0].label, 'Needs author to sync with main');
 
   // 9000003 — automatic resolution in flight. Toned `running`, because
   // nobody has to act; the wording says so rather than reporting our state.

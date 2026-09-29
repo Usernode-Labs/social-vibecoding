@@ -53,7 +53,18 @@ const NON_SECRET_APP_COLUMNS = [
   'icon_image_id', 'featured_illustration', 'forked_from', 'admin_usernames',
   'directory_review_status', 'directory_reviewed_at', 'directory_reviewed_sha',
   'main_check_state', 'main_check_sha', 'main_check_at', 'main_check_detail',
-  'main_check_resumed_sha',
+  'main_check_resumed_sha', 'main_check_paused_sha', 'release_stall',
+  // #2253: the per-app database storage cap's state. Operational, not
+  // secret: the admin console shows all of it.
+  'db_size_bytes', 'db_size_measured_at', 'db_storage_cap_bytes',
+  'db_storage_frozen_at', 'db_storage_warned_at', 'db_storage_grace_until',
+  // Demo mode (routes/demo-mode.js): the switch, its synthetic partner and
+  // the commit a reset puts main back to. The settings dialog reads the
+  // first; nothing about any of them is secret.
+  'demo_mode', 'demo_partner_id', 'demo_base_sha', 'demo_prev_approvals',
+  // The community the app belongs to (services/communities.js). An id, and
+  // the community's members are the app's own collaborators and joiners.
+  'community_id',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list
@@ -143,6 +154,31 @@ function guardLevelFor(req) {
   return req.method === 'GET' || req.method === 'HEAD' ? 'view' : 'collab';
 }
 
+// The Homeroom bot puts what it built up for a vote on the apps in its live
+// list whether or not it is a collaborator or a member there: an admin
+// putting an app in that list is the permission. Its promote runs
+// in-process as a synthetic request (homeroom-bot-live.promoteAsBot), and
+// that request alone carries this marker. It is a Symbol, so nothing a
+// client sends can set it: req.user is built by the auth middleware, and no
+// header, body or token becomes a Symbol-keyed property.
+const HOMEROOM_BOT_PROPOSAL = Symbol('homeroom-bot-proposal');
+
+// Only for the bot's OWN session. The marker lets the bot past the access
+// walls to propose what it built, never to act on anybody else's change.
+function isBotOwnProposal(user, sessionUserId) {
+  return !!user && user[HOMEROOM_BOT_PROPOSAL] === true
+    && sessionUserId != null && Number(sessionUserId) === Number(user.id);
+}
+
+// The same, read from the session row. The owner is looked up only for a
+// request that carries the marker, so every other request's guard query is
+// exactly what it was: these guards run on every session route.
+async function isBotOwnSession(pool, user, sessionId) {
+  if (!user || user[HOMEROOM_BOT_PROPOSAL] !== true) return false;
+  const { rows } = await pool.query('SELECT user_id FROM chat_sessions WHERE id = $1', [sessionId]);
+  return isBotOwnProposal(user, rows[0]?.user_id);
+}
+
 // Express middleware factory for routers that address an app through a
 // chat-session id (/api/sessions/:id/...). Resolves session → app and
 // enforces view access on reads / collab access on writes; 404 on deny
@@ -161,6 +197,7 @@ function sessionCollabGuard(pool) {
         [id]
       );
       if (!rows.length) return next();
+      if (await isBotOwnSession(pool, req.user, id)) return next();
       if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
         return res.status(404).json({ error: 'Session not found' });
       }
@@ -209,6 +246,10 @@ const VIS_CACHE_TTL_MS = 10_000;
 const visCacheById = new Map();   // appId -> { at, viewPrivate, memberIds:Set }
 const slugToId = new Map();       // slug -> { at, appId }
 const hostVisBySlug = new Map();  // slug -> { at, appId, viewPrivate } (edge gate)
+
+function invalidateAllVisibility() {
+  visCacheById.clear(); slugToId.clear(); hostVisBySlug.clear();
+}
 
 function invalidateVisibility(appId, slug) {
   if (appId != null) visCacheById.delete(Number(appId));
@@ -346,10 +387,14 @@ module.exports = {
   checkAppAccess,
   getAppForUser,
   guardLevelFor,
+  HOMEROOM_BOT_PROPOSAL,
+  isBotOwnProposal,
+  isBotOwnSession,
   sessionCollabGuard,
   issueCollabGuard,
   getWsVisibility,
   invalidateVisibility,
+  invalidateAllVisibility,
   parseAppHost,
   getHostVisibility,
   isViewMember,

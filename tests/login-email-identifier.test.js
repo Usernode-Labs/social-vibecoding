@@ -29,6 +29,7 @@ bcrypt.compare = (...args) => { compareCalls++; return realCompare(...args); };
 // ── Pool stub: a tiny in-memory users table ────────────────────────
 const poolMod = require('../src/db/pool');
 let users = []; // { id, username, password (bcrypt hash), email, is_admin, admin_readonly }
+let history = []; // username_history rows: { user_id, username } (#1861)
 let liveSessions = new Set();
 let capturedQueries = [];
 const USER_COLS = (u) => ({
@@ -45,8 +46,25 @@ poolMod.getPool = () => ({
       const needle = String(params[0]).toLowerCase();
       return { rows: users.filter((u) => u.email && u.email.toLowerCase() === needle).map(USER_COLS) };
     }
-    if (sql.includes('FROM users WHERE username = $1')) {
-      return { rows: users.filter((u) => u.username === params[0]).map(USER_COLS) };
+    // QA 2026-09-24 Q11: both handle lookups are case-insensitive, and each
+    // puts the exact spelling first.
+    const exactFirst = (a, b, key) => (b[key] === params[0]) - (a[key] === params[0]);
+    if (sql.includes('FROM username_history h') && sql.includes('WHERE LOWER(h.username) = LOWER($1)')) {
+      const needle = String(params[0]).toLowerCase();
+      const h = history
+        .filter((r) => r.username.toLowerCase() === needle)
+        .sort((a, b) => exactFirst(a, b, 'username'))[0];
+      const u = h && users.find((x) => x.id === h.user_id);
+      return { rows: u ? [USER_COLS(u)] : [] };
+    }
+    if (sql.includes('FROM users WHERE LOWER(username) = LOWER($1)')) {
+      const needle = String(params[0]).toLowerCase();
+      return {
+        rows: users
+          .filter((u) => u.username.toLowerCase() === needle)
+          .sort((a, b) => exactFirst(a, b, 'username') || a.id - b.id)
+          .map(USER_COLS),
+      };
     }
     // INSERT INTO sessions / everything else
     return { rows: [] };
@@ -94,6 +112,7 @@ function login(
 
 function reset() {
   users = [];
+  history = [];
   liveSessions = new Set();
   capturedQueries = [];
   logCalls = [];
@@ -244,7 +263,7 @@ test('no candidates -> 401 Invalid credentials via the unknown-user branch, with
   } finally { server.close(); }
 });
 
-test('non-@ identifier: exact username match only, and no email query is issued', async () => {
+test('non-@ identifier: username match only, and no email query is issued', async () => {
   reset();
   const hash = await bcrypt.hash('plain-pw', COST);
   users.push({ id: 40, username: 'plainuser', password: hash, email: 'plainuser@example.com' });
@@ -256,8 +275,105 @@ test('non-@ identifier: exact username match only, and no email query is issued'
     assert.ok(!capturedQueries.some((q) => q.sql.includes('lower(email)')),
       'no email lookup for a non-@ identifier');
 
-    // Usernames stay case-SENSITIVE (unchanged semantics).
+    // QA 2026-09-24 Q11: usernames match case-INSENSITIVELY, as registration
+    // and every handle resolver already did, and as a phone that capitalises
+    // the field's first letter needs. The session is the account under its
+    // real spelling.
     r = await login(server, 'PlainUser', 'plain-pw');
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.user.id, 40);
+    assert.strictEqual(r.body.user.username, 'plainuser');
+    // (The password still decides: see the case-variant pair below. One
+    // more refused sign-in here would trip the per-IP burst limiter the
+    // later tests in this file share.)
+  } finally { server.close(); }
+});
+
+test('QA 2026-09-24 Q11: a legacy case-variant pair is told apart by the password', async () => {
+  // Production holds pairs from before #2296's trigger (Drea/drea). A
+  // case-insensitive lookup returns both, and the password decides.
+  reset();
+  users.push({ id: 71, username: 'Drea', password: await bcrypt.hash('upper-pw', COST), email: null });
+  users.push({ id: 72, username: 'drea', password: await bcrypt.hash('lower-pw', COST), email: null });
+  const server = await startApp();
+  try {
+    let r = await login(server, 'DREA', 'lower-pw');
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.user.id, 72, 'the account whose password it is');
+    r = await login(server, 'drea', 'upper-pw');
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.user.id, 71);
+    compareCalls = 0;
+    r = await login(server, 'Drea', 'neither-pw');
     assert.strictEqual(r.res.status, 401);
+    assert.strictEqual(compareCalls, 2, 'two candidates, two compares, no more');
+  } finally { server.close(); }
+});
+
+test('QA 2026-09-24 Q11: on a both-verify tie the exact spelling wins', async () => {
+  reset();
+  const shared = await bcrypt.hash('same-pw', COST);
+  users.push({ id: 81, username: 'Kai', password: shared, email: null });
+  users.push({ id: 82, username: 'kai', password: shared, email: null });
+  const server = await startApp();
+  try {
+    let r = await login(server, 'kai', 'same-pw');
+    assert.strictEqual(r.body.user.id, 82);
+    r = await login(server, 'Kai', 'same-pw');
+    assert.strictEqual(r.body.user.id, 81);
+  } finally { server.close(); }
+});
+
+test('QA 2026-09-24 Q11: a retired handle signs in whatever its case', async () => {
+  reset();
+  users.push({ id: 91, username: 'now_named', password: await bcrypt.hash('ret-pw', COST), email: null });
+  history.push({ user_id: 91, username: 'oldname' });
+  const server = await startApp();
+  try {
+    const r = await login(server, 'OldName', 'ret-pw');
+    assert.strictEqual(r.res.status, 200);
+    assert.strictEqual(r.body.user.id, 91);
+  } finally { server.close(); }
+});
+
+// ─── #1861: a rename does not lock anyone out ─────────────────────────────
+
+test('#1861: the handle you renamed away from still signs you in, with your password', async () => {
+  reset();
+  const hash = await bcrypt.hash('renamed-pw', COST);
+  users.push({ id: 50, username: 'scraido_test', password: hash, email: null });
+  history.push({ user_id: 50, username: 'scraido' });
+  const server = await startApp();
+  try {
+    let r = await login(server, 'scraido', 'renamed-pw');
+    assert.strictEqual(r.res.status, 200, 'the retired handle signs its owner in');
+    assert.strictEqual(r.body.user.id, 50);
+    assert.strictEqual(r.body.user.username, 'scraido_test', 'and the session is the account under its CURRENT name');
+
+    r = await login(server, 'scraido_test', 'renamed-pw');
+    assert.strictEqual(r.res.status, 200, 'the new handle works too');
+
+    compareCalls = 0;
+    r = await login(server, 'scraido', 'wrong-pw');
+    assert.strictEqual(r.res.status, 401, 'the password still decides');
+    assert.strictEqual(compareCalls, 1, 'one candidate, one compare');
+  } finally { server.close(); }
+});
+
+test('#1861: a live account wearing the name wins, and the retired ledger is not consulted', async () => {
+  reset();
+  const liveHash = await bcrypt.hash('live-pw', COST);
+  const oldHash = await bcrypt.hash('old-owner-pw', COST);
+  // Cannot happen through the product (retired handles are never re-issued),
+  // but the lookup order must not depend on that.
+  users.push({ id: 60, username: 'taken', password: liveHash, email: null });
+  users.push({ id: 61, username: 'moved_on', password: oldHash, email: null });
+  history.push({ user_id: 61, username: 'taken' });
+  const server = await startApp();
+  try {
+    const r = await login(server, 'taken', 'old-owner-pw');
+    assert.strictEqual(r.res.status, 401);
+    assert.ok(!capturedQueries.some((q) => q.sql.includes('FROM username_history')),
+      'an exact live match never falls through to retired handles');
   } finally { server.close(); }
 });

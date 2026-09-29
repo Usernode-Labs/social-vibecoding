@@ -91,7 +91,7 @@ function OverviewSection() {
         </div>
       </div>
       <div id="admin-overview-details" className="space-y-3 text-sm">
-        {!data ? <p className={MUTED_SM}>Loading…</p> : null}
+        {!data ? <p className={AdminUI.loading}>Loading…</p> : null}
         {stuck.length ? (
           <div>
             <div className={GROUP_LABEL}>Stuck apps</div>

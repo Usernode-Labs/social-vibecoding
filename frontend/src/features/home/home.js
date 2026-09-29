@@ -4,9 +4,12 @@
 //
 // THE UI OVERHAUL narrowed what this canvas holds. Discover, Challenges and
 // Create app used to be draggable WIDGETS placed on it alongside the app
-// tiles; they are fixed sections below the grid now (see
+// tiles; Discover and Challenges are fixed sections below the grid now (see
 // features/home/index.tsx), so every item here is a 1x1 app tile, there is one
 // column count instead of two, and the drag applies to app tiles alone.
+// Create came back INTO the grid as its trailing tile (the prototype's
+// scrHome), but not as an item: its cell is derived per paint, never stored
+// or dragged — see the note at the end of render().
 //
 // Moved verbatim from public/js/home.js into the bundle by #1083 chunk F step 4
 // (see features/home/index.tsx). Two things changed and nothing else:
@@ -23,6 +26,7 @@
 import { AppCard } from '../apps/app-card.js';
 import { gridStore } from './grid-store';
 import { chromeStore } from './chrome-store';
+import { detectInstallHost } from '../mobile-install/environment';
 
 // Which discovery cards and add badges already carry their listeners.
 // `_wireDiscoveryCards` runs again whenever a lane's tiles change identity,
@@ -42,9 +46,9 @@ const Home = {
   // keep their ordinary quota because they cannot use the create route's
   // full-admin bypass.
   //
-  // It gates the create WIDGET's appearance only, never whether the widget
-  // exists: the widget is on every home screen, in the layout, for every
-  // account (see HomePanels.renderCreatePanel for why).
+  // It gates the Create TILE's treatment only, never whether the tile
+  // exists: the tile ends the launcher grid on every home screen, for every
+  // account (see the note at the end of render() and ./create-tile.tsx).
   //
   // ?shot=create-enabled and ?shot=create-disabled pin the two treatments.
   // Proposal checks run as a zero-quota, view-only admin, so neither state
@@ -151,7 +155,7 @@ const Home = {
         } else {
           gridStore.set({
             ready: true, view: 'grid', rowTemplate: '', items: [],
-            resultsHeading: null, emptyQuery: null,
+            resultsHeading: null, emptyQuery: null, create: null,
             notice: {
               text: "You're offline. Apps you've opened before will appear here once this "
                 + 'device has loaded them.',
@@ -164,7 +168,9 @@ const Home = {
       }
       gridStore.set({
         ready: true, view: 'grid', rowTemplate: '', items: [],
-        resultsHeading: null, emptyQuery: null,
+        // No Create tile beside a load notice: the notice is the grid's whole
+        // answer (offline, or the error card and its Retry) until apps load.
+        resultsHeading: null, emptyQuery: null, create: null,
         // #1899: the grid draws this as the shared error card
         // (features/apps/load-error.tsx) with a Retry that re-runs load().
         notice: { text: "Couldn't load your apps", tone: 'error' },
@@ -215,6 +221,15 @@ const Home = {
   // rows, so both flags can't disagree).
   isYours(app) {
     return !!(app && ((app.is_collaborator && !app.your_apps_hidden) || app.is_favorited));
+  },
+
+  // In the community this app belongs to (the server's is_member; see
+  // services/communities.js). NOT the same set as isYours, and the
+  // difference is the point: "Your apps" is where the shortcuts sit on Home,
+  // and taking a tile off Home is not leaving. Joining is what lets you
+  // propose and vote, and it is what the Workshop lists.
+  isJoined(app) {
+    return !!(app && app.is_member);
   },
 
   // Split the full list into { yours, rest }. Personal ordering
@@ -284,11 +299,21 @@ const Home = {
   // How many admin-featured tiles the "Featured apps" row shows.
   FEATURED_LIMIT: 6,
 
-  // The API derives this from an explicit review of the current deployment,
-  // not from active-user counts or the staging-only `demo` fixture flag.
+  // Can this app be offered on the Discover rail at all: it runs, it is not
+  // the platform itself, and it has an icon to draw. No editorial state here.
+  isDiscoverable(app) {
+    return !!app && app.status === 'running' && !app.self_hosted
+      && !!(app.icon_url || app.icon_emoji);
+  },
+
+  // Discoverable AND reviewed. The API derives `directory.tier` from an
+  // explicit admin review of the current deployment, not from active-user
+  // counts or the staging-only `demo` fixture flag. That review is pinned to
+  // the deployment it was made on and expires on every merge
+  // (src/services/discovery-curation.js), which is why the popular lane and
+  // the Browse grouping read it and the featured lane does not.
   isDiscoveryReady(app) {
-    return !!app && app.directory?.tier === 'ready' && app.status === 'running'
-      && !app.self_hosted && !!(app.icon_url || app.icon_emoji);
+    return Home.isDiscoverable(app) && app.directory?.tier === 'ready';
   },
 
   // The featured row's contents for this viewer: admin-curated apps
@@ -297,6 +322,14 @@ const Home = {
   // them would be noise. Ordered by the admin's featured_order
   // (ascending, NULLs last) and capped at FEATURED_LIMIT.
   // Pure — unit-tested in tests/home-find-more.test.js.
+  //
+  // Featuring IS the editorial decision, so the review state does not gate
+  // this lane (#2565). It used to: a "Reviewed working" review expires on
+  // every merge, so a featured app dropped out of Discover each time it
+  // shipped a change, and a fresh platform showed nothing at all. ADDING an
+  // app to Featured still requires a current review (PUT
+  // /api/admin/featured-apps); staying there does not. An admin who later
+  // marks a featured app broken unfeatures it as well.
   //
   // ?shot=discover-empty forces the empty answer regardless (#949), for the
   // same reason ?shot=create-disabled exists above: "nothing left to
@@ -319,7 +352,7 @@ const Home = {
   featuredApps(apps) {
     if (Home._shotDiscoverEmpty()) return [];
     return (apps || [])
-      .filter((a) => a && a.featured && Home.isDiscoveryReady(a)
+      .filter((a) => a && a.featured && Home.isDiscoverable(a)
         && (!Home.isYours(a) || Home._discoverKeep.has(a.slug)))
       .sort((x, y) => {
         const xo = x.featured_order == null ? Infinity : x.featured_order;
@@ -401,9 +434,9 @@ const Home = {
   // ── How much of the screen the launcher may take ───────────────────
   //
   // The collapsed grid used to be two rows at every viewport, full stop. Two
-  // is the right FLOOR — a phone has three fixed sections under this grid and
-  // an eight-row canvas would push Discover, Challenges and Create app off the
-  // bottom, which is the failure the four-area design exists to prevent — but
+  // is the right FLOOR — a phone has two fixed sections under this grid and
+  // an eight-row canvas would push Discover and Challenges off the bottom,
+  // which is the failure the fixed-area design exists to prevent — but
   // it was also the ceiling, so a tall desktop window drew two rows of tiles,
   // a "Show all" button, and then a lot of nothing before the next section.
   //
@@ -531,8 +564,9 @@ const Home = {
   // reconciles a stored layout against.
   //
   // It used to include the widgets they had not hidden. THE UI OVERHAUL made
-  // those three fixed sections below the grid, so they are not items — and
-  // repair() drops any that a pre-overhaul stored layout still carries.
+  // those fixed sections below the grid (and Create, later, the grid's
+  // derived trailing tile), so they are not items — and repair() drops any
+  // that a pre-overhaul stored layout still carries.
   presentIds() {
     const { yours } = Home.partitionApps(Home._apps || []);
     const ids = yours.map((a) => `app:${a.slug}`);
@@ -699,13 +733,17 @@ const Home = {
     // Non-zero only when the collapsed grid is holding tiles back; the count
     // is every app the viewer has, which is what the button offers to show.
     let moreCount = 0;
+    // The trailing "Create an app" tile — null in the search view, which is a
+    // transient list of matches rather than the launcher.
+    let create = null;
 
     if (query) {
       // Active search over YOUR apps: one flat grid of matches. Section
       // header, widget strip and drag affordance all step aside until
       // the query clears — reorder is only meaningful against the
-      // canonical ordering. The three fixed sections below the grid are
-      // untouched by a search: they are outside #app-list.
+      // canonical ordering. The two fixed sections below the grid are
+      // untouched by a search: they are outside #app-list. The Create tile
+      // steps aside with the rest: it ends the launcher, not a result list.
       //
       view = 'search';
       const matches = Home.filterApps(yours, query);
@@ -728,10 +766,10 @@ const Home = {
       // is still eight rows, a drag can still place a tile on any of them, and
       // "Show all" below reveals the rest for the rest of the visit.
       //
-      // A cap exists at all because the home screen has three fixed sections
-      // under this grid. An eight-row canvas would push Discover, Challenges
-      // and Create app off the bottom of a phone for anyone with a lot of apps
-      // — which is the failure the whole four-area design is meant to prevent.
+      // A cap exists at all because the home screen has two fixed sections
+      // under this grid. An eight-row canvas would push Discover and
+      // Challenges off the bottom of a phone for anyone with a lot of apps —
+      // which is the failure the whole fixed-area design is meant to prevent.
       // Reserving the bottom THIRD is what protects them; two flat rows both
       // over-protected a tall window (two rows of tiles and then a gulf) and
       // said nothing about a short one. See Home.visibleRowBudget.
@@ -742,6 +780,9 @@ const Home = {
       // — see HomeLayout.defaultRowBound. On a packed canvas the two are the
       // same number; on one with a hole on row 1 the old form collapsed the
       // two-row default down to a single visible row of tiles.
+      //
+      // The trailing Create tile never widens this window: when it would
+      // start a row past it, it goes behind "Show all N apps" (#3047, below).
       const rowBound = HomeLayout.defaultRowBound(layout, cols, rowBudget);
       // AN ADD THAT LANDS BELOW THE FOLD OPENS THE GRID (#1567). The whole
       // point of repainting on add is that the viewer SEES the app arrive;
@@ -758,7 +799,16 @@ const Home = {
       const shown = hiddenRows
         ? canvas.filter((it) => it.row <= rowBound)
         : canvas;
-      const overflow = hiddenRows ? [] : HomeLayout.overflowItems(layout);
+      // THE CREATE TILE GOES BEHIND "SHOW ALL" TOO (#3047). When the last row
+      // the collapsed grid shows is full, the tile would start a row of its
+      // own — a third row under two rows of eight apps. It is held back with
+      // the hidden rows instead, and the expander appears for it even when
+      // every app already fits: a launcher of exactly eight apps shows two
+      // rows and "Show all 8 apps", and the tile ends the expanded grid.
+      const createHidden = !Home._appsExpanded
+        && HomeLayout.createTileCollapsed(shown, cols, rowBound);
+      const collapsed = hiddenRows || createHidden;
+      const overflow = collapsed ? [] : HomeLayout.overflowItems(layout);
       const parts = shown.map((it) => Home.gridItemView(it, cols, false));
       // Items past the 8-row canvas render after it in plain flow, packed
       // densely. The row cap bounds free PLACEMENT, never how many apps a
@@ -770,10 +820,37 @@ const Home = {
       // declare tracks for the rows it is holding back — an explicit track
       // exists whether or not anything is in it, and naming row 2 while
       // rendering rows 0-1 would pad the grid out with an empty tile row.
-      rowTemplate = Home.rowTemplate(hiddenRows ? shown : layout, cols);
-      moreCount = hiddenRows ? (canvas.length + HomeLayout.overflowItems(layout).length) : 0;
+      rowTemplate = Home.rowTemplate(collapsed ? shown : layout, cols);
+      moreCount = collapsed ? (canvas.length + HomeLayout.overflowItems(layout).length) : 0;
       // One-shot: it described this paint.
       Home._revealSlug = null;
+      // THE GRID ENDS WITH "CREATE AN APP" (the prototype's scrHome, whose
+      // Your apps grid closes on a dashed Create tile). It replaced the
+      // separate trailing "Create app" section: a launcher's own last cell is
+      // where "make something" lives, one tap away without scrolling past
+      // Discover and Challenges.
+      //
+      // Its cell is DERIVED from what this paint draws — the one straight
+      // after the last tile (HomeLayout.trailingCell) — so it ends the
+      // collapsed grid and, after "Show all N apps", the expanded one. It is
+      // not in the layout, so it is never dragged, stored or displaced; a drop
+      // onto its cell lands in an empty cell and the next paint moves it on.
+      // It FLOWS instead (no placement) when there is no cell to follow: an
+      // empty launcher, where it comes after the "No apps added yet" note, and
+      // overflow tiles, which have no cell of their own either.
+      //
+      // Present for EVERY account: `canCreate` decides its treatment, never
+      // its presence — the locked tile opens the dialog that prints the quota.
+      // The one place it is not drawn is a collapsed grid it would add a row
+      // to (createHidden above): there it is behind "Show all N apps", one
+      // tap away, like the apps past the fold.
+      const placed = items.filter((it) => it.placement).map((it) => it.placement);
+      const flows = !placed.length || items.some((it) => !it.placement);
+      create = createHidden ? null : {
+        enabled: canCreate,
+        hint: Home.CREATE_DISABLED_HINT,
+        placement: flows ? null : { ...HomeLayout.trailingCell(placed, cols), w: 1, h: 1 },
+      };
     }
 
     // The search view is a flat, transient list — it must not inherit the
@@ -785,7 +862,7 @@ const Home = {
     // desktop and the search view get — app.css's grid-auto-rows is then the
     // only row sizing, exactly as before. Written BEFORE the innerHTML so the
     // first layout of the new children already has its tracks.
-    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null });
+    gridStore.set({ ready: true, view, rowTemplate, items, resultsHeading, emptyQuery, notice: null, create });
     // ...and, in the same push, the two hosts outside it: "Show all N apps"
     // and the iOS widget-editing strip. The strip renders ABOVE the grid, in
     // its own section, because a full-width flow item cannot coexist with the
@@ -793,7 +870,7 @@ const Home = {
     // attached by ./widget-strip.tsx's effect, which calls _wireWidgetStrip —
     // that function attaches listeners, it writes no markup.
     Home._renderAppsMore(moreCount);
-    // Discover / Challenges / Create app, painted from the widgets cache
+    // Discover / Challenges, painted from the widgets cache
     // (#911) — no network. Their hosts are fixed sections OUTSIDE #app-list,
     // so the grid's wholesale innerHTML re-render above cannot disturb them;
     // this call is here so a first paint fills them at the same moment.
@@ -824,8 +901,11 @@ const Home = {
   // here — the "before" side of a capture is shot against production, so an
   // env-gated link would starve it forever. It writes only what the tap it
   // imitates writes, and it ends by undoing that write, so a preview it ran
-  // in is left as it was found.
+  // in is left as it was found — except for one row, as it would be for a
+  // finger: a pin joins the app's community (the app_favorites trigger in
+  // schema.sql), and taking the pin off Home is not leaving it.
   _discoverAddShotRan: false,
+  _quietLeaveOffer: false,
   async _maybeDiscoverAddShot() {
     if (Home._discoverAddShotRan) return;
     try {
@@ -869,6 +949,11 @@ const Home = {
       `#home-discover-section .card-add-btn[data-slug="${slug}"][data-added="true"]`,
     ), 8000);
     if (!ticked) return;
+    // The unpin below is the fixture's, not a person's: no "Leave too?" for
+    // it (see _offerLeaveAfterUnpin). Left set for the rest of this page
+    // load, which is the shot's: the offer runs after the unpin's request
+    // lands, which can be after `gone` below has already been seen.
+    Home._quietLeaveOffer = true;
     ticked.click();
 
     const gone = await until(
@@ -919,6 +1004,10 @@ const Home = {
       failureReason: isError && app.last_failure_reason ? String(app.last_failure_reason) : null,
       showRetry,
       forkName,
+      // The tile's audience mark (communities, stage 4): GET /api/apps
+      // derives it per row, and anything it does not say reads as a
+      // community, which draws no mark.
+      audience: app.audience === 'invited' || app.audience === 'solo' ? app.audience : 'open',
     };
   },
 
@@ -931,9 +1020,9 @@ const Home = {
     const [w, h] = HomeLayout.sizeOf(item, cols);
     const placement = overflow ? null : { col: item.col, row: item.row, w, h };
     // The `item.type === 'widget'` branch that planted a `[data-panel-slot]`
-    // host is gone with the UI overhaul: Discover, Challenges and Create app
-    // are fixed sections below the grid now, so every item on this canvas is
-    // an app tile.
+    // host is gone with the UI overhaul: Discover and Challenges are fixed
+    // sections below the grid now, and Create is a derived trailing tile
+    // (render()), so every ITEM on this canvas is an app tile.
     const app = (Home._apps || []).find((a) => a.slug === item.slug);
     if (!app) return null;
     return { kind: 'card', placement, app: Home.appView(app) };
@@ -962,13 +1051,20 @@ const Home = {
           Home._showGridOverlay(listEl, cols, Home._contextLift.item);
           Home._contextLift = null;
         }
+        // #2894: the open widget strip is a drop target too. It is checked
+        // BEFORE the grid's own geometry because the strip sits above the
+        // canvas and a finger over it resolves to no cell there anyway.
+        Home._pointerOverWidget = Home._widgetStripAt(x, y);
+        if (Home._pointerOverWidget) return Home.WIDGET_DROP_CELL;
         return Home._targetCellFor(x, y, info, cols);
       },
       // canPlace runs first on every cell change and onHover right after, and
       // both need the SAME displacement plan — so compute it once and memo it
       // for the paint. Recomputing would risk the highlight describing a
       // different outcome than the one that commits.
-      canPlace: (item, cell) => !!Home._planFor(item, cell, cols),
+      canPlace: (item, cell) => (Home._isWidgetDropCell(cell)
+        ? Home._canDropOnWidget(item)
+        : !!Home._planFor(item, cell, cols)),
       onLift: (item) => {
         Home._dragActive = true;
         if (Home._cardPointerType === 'touch') {
@@ -979,15 +1075,51 @@ const Home = {
           Home._showGridOverlay(listEl, cols, item);
         }
       },
-      onHover: (item, cell, ok) => { Home._previewDrop(item, cell, ok, cols); },
+      onHover: (item, cell, ok) => {
+        const overWidget = Home._isWidgetDropCell(cell);
+        Home._markWidgetDrop(overWidget ? item : null, ok);
+        Home._previewDrop(item, overWidget ? null : cell, ok, cols);
+      },
       // The release spring's destination. Same memoised plan again: the tile
       // settles on the cell the tint promised, not the one it left.
-      rectForCell: (item, cell) => Home._rectForCell(item, cell, cols),
-      onPlace: (item, cell) => { Home._onGridPlace(item, cell, cols); },
+      rectForCell: (item, cell) => (Home._isWidgetDropCell(cell)
+        ? Home._widgetDropRect()
+        : Home._rectForCell(item, cell, cols)),
+      onPlace: (item, cell) => {
+        // A widget drop writes NOTHING to the layout: the tile stays where it
+        // is on the canvas and the app is pinned as well. The pin itself waits
+        // for onSettle, when the gesture is over and the strip may repaint.
+        if (Home._isWidgetDropCell(cell)) {
+          Home._pendingWidgetAdd = (item && item.dataset && item.dataset.slug) || null;
+          return;
+        }
+        Home._onGridPlace(item, cell, cols);
+      },
       onSettle: () => {
         Home._contextLift = null;
         Home._dragActive = false;
         Home._hideGridOverlay();
+        // Read BEFORE the reset: the kit clears the hover (onHover null) ahead
+        // of onSettle on a refused drop, so only the pointer's own last
+        // position still says the release happened over the strip.
+        const releasedOverWidget = Home._pointerOverWidget;
+        Home._pointerOverWidget = false;
+        Home._markWidgetDrop(null, false);
+        const widgetAdd = Home._pendingWidgetAdd;
+        Home._pendingWidgetAdd = null;
+        if (widgetAdd) {
+          // The drop's own add is the terminal repaint (it renders the new
+          // tile optimistically), so a deferred reload is flushed through it
+          // rather than racing it.
+          Home._rerenderPending = false;
+          Home._dropOnWidget(widgetAdd);
+          if (Home._reloadPending) {
+            Home._reloadPending = false;
+            Home.load();
+          }
+          return;
+        }
+        if (releasedOverWidget && Home._widgetFull()) Home._shakeWidgetStrip();
         if (Home._reloadPending) {
           Home._reloadPending = false;
           Home._rerenderPending = false;
@@ -1230,59 +1362,147 @@ const Home = {
         && App._isScreenVisible('app-view')
         && App._revealedScreen === 'app-view') return;
     const self = (Home._apps || []).find((a) => a && a.self_hosted);
-    // ── THE GAP ON A COLD BOOT ─────────────────────────────────────
-    //
-    // Everything below reads the self-hosted row out of GET /api/apps, and
-    // that request is the whole boot's slowest. Until it lands `_apps` is
-    // empty, this returns, and the header's standing action is simply MISSING
-    // — for as long as the fetch takes, on home and on every other platform
-    // screen (they all route through here via _enterScreenChrome). It then
-    // pops in, which is the "the Improve button shows up a few seconds late"
-    // report: not a stale button, an absent one.
-    //
-    // So publish the LAST ONE first. The row is the same object visit after
-    // visit — it is the platform's own app — so a remembered copy is right
-    // far more often than "nothing" is, and the real payload overwrites it a
-    // moment later either way (improveStore.set is a no-op when nothing
-    // changed, so the common case is invisible). Only while the payload is
-    // genuinely not here yet: once `_appsLoaded` is true the list is the
-    // truth, including the truth that this viewer is not served the row.
-    //
-    // It cannot leak the row's existence to someone who may not see it: the
-    // cache is written only from a successful publish below, i.e. only in a
-    // browser profile that was already served the row.
     if (!self || !self.slug) {
-      if (Home._appsLoaded) return;
-      const cached = Home._cachedImproveTarget();
-      if (cached) window.Improve.setTarget(cached);
+      Home._publishPlatformFallback();
       return;
     }
-    const target = {
-      kind: 'platform',
-      slug: self.slug,
-      name: self.name || self.slug,
-      selfHosted: true,
-      repoUrl: self.repo_url || null,
-      iconUrl: self.icon_url || null,
-      iconEmoji: self.icon_emoji || null,
-      // The list payload's own version block, already shortened server-side.
-      version: self.version?.shortSha || null,
-      deploying: self.status === 'deploying',
-      // `can_collaborate` is the read affordance accessFlags() computes for
-      // this viewer on this row — the same bit that decides whether starting
-      // a session is offered anywhere else.
-      readOnly: !self.can_collaborate,
-      // Nothing to share: the platform row has no per-slug app URL, which is
-      // also why opening it lands on Dev rather than the App tab.
-      canShare: false,
-    };
+    const target = Home._platformTargetFrom(self);
     window.Improve.setTarget(target);
     Home._rememberImproveTarget(target);
   },
 
+  /**
+   * The Improve target a self-hosted row describes — the ONE builder, whichever
+   * payload the row came from.
+   *
+   * Two shapes reach it: GET /api/apps's list row (Home._apps), and GET
+   * /api/apps/:slug's detail row, which ../app-context/platform-target.js
+   * fetches when this tab has no list yet. They differ in two fields, and both
+   * are read either way: the list carries a `version` block the server already
+   * shortened and a server-built `icon_url`; the detail carries the raw
+   * `main_sha` and `icon_image_id`.
+   */
+  _platformTargetFrom(row) {
+    const iconUrl = row.icon_url
+      || (row.icon_image_id ? `/app-icons/${row.icon_image_id}` : null);
+    return {
+      kind: 'platform',
+      slug: row.slug,
+      name: row.name || row.slug,
+      selfHosted: true,
+      repoUrl: row.repo_url || null,
+      iconUrl,
+      iconEmoji: row.icon_emoji || null,
+      version: row.version?.shortSha || (row.main_sha ? String(row.main_sha).slice(0, 7) : null),
+      deploying: row.status === 'deploying',
+      // `can_collaborate` is the read affordance accessFlags() computes for
+      // this viewer on this row — the same bit that decides whether starting
+      // a session is offered anywhere else.
+      readOnly: !row.can_collaborate,
+      // Nothing to share through the APP share dialog: the platform row has no
+      // per-slug app URL, which is also why opening it lands on Dev rather
+      // than the App tab. About Homeroom shares the platform's own address
+      // (../app-context/about-pane.tsx).
+      canShare: false,
+    };
+  },
+
+  /**
+   * Homeroom, for a viewer who is NOT served its row.
+   *
+   * GET /api/apps hides the self-hosted row from a non-admin while
+   * SELF_APP_PUBLIC_VOTING is off, and answers 404 for its slug. That used to
+   * mean NO target on every platform screen, permanently: the mark's menu said
+   * "THIS APP" over a Go to workshop that went to `#` and an About with nothing
+   * in it. But the viewer is still standing in the platform, and two of its
+   * rows are theirs as much as anyone's — feedback on it, and About it. So the
+   * target is Homeroom, marked `restricted`, and the menu hides the two rows
+   * that lead to its workshop and discussion rather than into a 404.
+   *
+   * Nothing here discloses the row: the slug is what GET /api/version publishes
+   * to anyone, and every other fact is either Homeroom's name or false.
+   * `readOnly` hides New change — there is no workshop to start one in.
+   */
+  _restrictedPlatformTarget(slug) {
+    return {
+      kind: 'platform',
+      slug,
+      name: 'Homeroom',
+      selfHosted: true,
+      restricted: true,
+      repoUrl: null,
+      iconUrl: null,
+      iconEmoji: null,
+      version: null,
+      deploying: false,
+      readOnly: true,
+      canShare: false,
+    };
+  },
+
+  // ── THE GAP ON A COLD BOOT ─────────────────────────────────────────
+  //
+  // Everything above reads the self-hosted row out of GET /api/apps, and that
+  // request is the whole boot's slowest. Until it lands `_apps` is empty and
+  // the header's standing action was simply MISSING — for as long as the fetch
+  // took, on home and on every other platform screen (they all route through
+  // here via _enterScreenChrome). It then popped in, which was the "the
+  // Improve button shows up a few seconds late" report: not a stale button, an
+  // absent one.
+  //
+  // So publish the LAST ONE first. The row is the same object visit after
+  // visit — it is the platform's own app — so a remembered copy is right far
+  // more often than "nothing" is, and the real payload overwrites it a moment
+  // later either way (improveStore.set is a no-op when nothing changed, so the
+  // common case is invisible). Only while the payload is genuinely not here
+  // yet: once `_appsLoaded` is true the list is the truth, including the truth
+  // that this viewer is not served the row.
+  //
+  // It cannot leak the row's existence to someone who may not see it: the
+  // cache is written only from a publish of a row this profile was served.
+  //
+  // ── AND HOME IS NOT THE ONLY DOOR ──────────────────────────────────
+  //
+  // Only Home loads that list. A first visit that lands on #messages,
+  // #workshop, #profile or #settings — a shared link, a notification, a
+  // bookmark — never loads it and has no remembered copy, so the menu stayed
+  // untargeted for the whole visit: "THIS APP", Go to workshop to `#`, About
+  // empty. It fixed itself once Home had been visited, and for a viewer not
+  // served the row it never did. So when neither the list nor the cache can
+  // answer, ../app-context/platform-target.js finds the row on its own — the
+  // slug from GET /api/version, then GET /api/apps/<slug> — and calls this
+  // publisher again with the answer, so the two gates above still decide.
+  //
+  // Reached through `window.PlatformTarget` rather than an import: a dozen
+  // tests run this file as a classic script in a vm, where an import line is
+  // stripped and its binding would be a ReferenceError at call time.
+  _publishPlatformFallback() {
+    const resolver = window.PlatformTarget;
+    if (Home._appsLoaded) {
+      // The list is here and the row is not in it: not served. Homeroom's
+      // restricted menu rather than none, once the slug is known.
+      const slug = resolver?.slug?.();
+      if (slug) window.Improve.setTarget(Home._restrictedPlatformTarget(slug));
+      else resolver?.resolve?.({ served: false });
+      return;
+    }
+    const cached = Home._cachedImproveTarget();
+    if (cached) {
+      window.Improve.setTarget(cached);
+      return;
+    }
+    const known = resolver?.known?.();
+    if (known) {
+      window.Improve.setTarget(known);
+      if (!known.restricted) Home._rememberImproveTarget(known);
+      return;
+    }
+    resolver?.resolve?.();
+  },
+
   // Per-visit only, like the widgets' own expand flag: a viewer who opened
   // the full grid once should not have every later visit start scrolled past
-  // three sections, and a preference this cheap is not worth a write.
+  // two sections, and a preference this cheap is not worth a write.
   // Whether "Show all N apps" has been pressed this visit. Per-visit state,
   // deliberately not persisted: the collapsed grid is the contract, and an
   // expansion the viewer forgot about would quietly eat the fold forever —
@@ -1292,9 +1512,14 @@ const Home = {
   // budget is unreachable to a still frame and to a declared check otherwise,
   // because the only way in is a tap; ungated and read-only, like every other
   // shot link here, so the production "before" side works the moment it ships.
+  //
+  // `?shot=create-enabled` / `?shot=create-disabled` pin it ON as well: they
+  // exist to show the Create tile's two treatments, and a collapsed grid whose
+  // last row is full holds that tile behind "Show all N apps" (#3047).
   _appsExpanded: (() => {
     try {
-      return new URLSearchParams(location.search).get('shot') === 'home-apps';
+      const shot = new URLSearchParams(location.search).get('shot');
+      return shot === 'home-apps' || shot === 'create-enabled' || shot === 'create-disabled';
     } catch (err) { return false; }
   })(),
 
@@ -1320,7 +1545,7 @@ const Home = {
   // Every row is one app-grid cell EXCEPT one kind: a row with NOTHING in it
   // is half a cell. It is still exactly where the viewer left it and still a
   // cell they can drop into — it just stops reserving a whole tile to be
-  // empty, which is what keeps the three fixed sections below the grid from
+  // empty, which is what keeps the two fixed sections below the grid from
   // being pushed down by a viewer's deliberate gaps.
   //
   // A second kind used to qualify: a row a FIT widget owned outright sized to
@@ -1406,6 +1631,20 @@ const Home = {
     },
 
     pin() { Home._searchReveal._pinned = true; },
+
+    // Bring a parked or half-parked bar all the way out (QA 2026-09-24
+    // Q30c). A parked bar is transparent under the translucent header now
+    // (app.css), so focusing it must also SHOW it. Only from near the top:
+    // a page scrolled well past the bar is left to the browser's own
+    // focus scrolling.
+    reveal() {
+      const screen = Home._searchReveal.screenEl();
+      const bar = Home._searchReveal.barEl();
+      if (!screen || !bar) return;
+      const h = bar.offsetHeight || 0;
+      if (h && screen.scrollTop > 0 && screen.scrollTop <= h) screen.scrollTop = 0;
+      Home._searchReveal.mark();
+    },
     unpin() {
       Home._searchReveal._pinned = false;
       Home._searchReveal.sync({ park: true });
@@ -1435,9 +1674,24 @@ const Home = {
       const initial = Home._searchReveal._initializedBar !== bar;
       if (h) Home._searchReveal._initializedBar = bar;
       if ((initial || park) && !Home._searchReveal.isPinned() && h && screen.scrollTop < h) {
-        screen.scrollTop = h;
+        if (initial) screen.scrollTop = h;
+        else Home._searchReveal.glide(screen, h);
       }
       Home._searchReveal.mark();
+    },
+
+    // Tuck a bar the viewer can SEE. The first park happens before anything
+    // is drawn, so it is instant; a later one (blur on an empty field) moved
+    // the whole screen up by the bar's height in a single frame while the
+    // keyboard was still going down. Scrolled smoothly, it slides away.
+    glide(screen, top) {
+      let still = false;
+      try { still = matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (err) { /* unknown: animate */ }
+      if (still || typeof screen.scrollTo !== 'function') {
+        screen.scrollTop = top;
+        return;
+      }
+      screen.scrollTo({ top, behavior: 'smooth' });
     },
 
     _wireScroll(screen) {
@@ -1654,7 +1908,10 @@ const Home = {
       clearTimeout(Home._searchDebounce);
       Home._searchDebounce = setTimeout(apply, 100);
     });
-    input.addEventListener('focus', () => Home._searchReveal.pin());
+    input.addEventListener('focus', () => {
+      Home._searchReveal.pin();
+      Home._searchReveal.reveal();
+    });
     // Leaving an empty field releases the pin, so the next render (or a
     // scroll down) can tuck the bar away again. A field with text in it
     // stays pinned by isPinned()'s query check.
@@ -1782,10 +2039,25 @@ const Home = {
   // frame. `onChange` still runs, because the browse screen's own list is
   // outside Home's paint.
   async toggleAdded(slug, desired, onChange) {
-    const app = (Home._apps || []).find((a) => a.slug === slug);
-    // Staging ?demo=1 tiles have no DB row — a POST would 404.
-    if (!app || app.demo) return;
-    const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden };
+    // BOTH READERS OF /api/apps, not just this one. `Browse._apps` is the
+    // same payload — Browse._load() assigns to both — but the two DRIFT:
+    // Browse._fetchDetail adds a cold deep link's app to its own list alone,
+    // so a row this list has never heard of can be on screen with an Add
+    // button under it. Looking only in Home._apps made that button a silent
+    // no-op: no flip, no request, no toast, nothing to tell the reader their
+    // press was received. That is "add to your apps does nothing for some
+    // apps", and which apps depended on what had been opened beforehand.
+    const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
+    const app = known(Home._apps)
+      || known(typeof window !== 'undefined' ? window.Browse?._apps : null);
+    // Staging ?demo=1 tiles have no DB row — a POST would 404. An app NEITHER
+    // list holds is not that case: it is a list this tab has not loaded yet,
+    // and the server is the authority on whether the slug exists. Ask it, and
+    // let Home.load() bring back the truth either way, so the press is
+    // answered by a toast rather than by silence.
+    if (app && app.demo) return;
+    if (!app) return Home._favoriteUnknown(slug, desired, onChange);
+    const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden, is_member: app.is_member };
     // Asked BEFORE the flip, while the answer still describes where the card
     // is: an app currently in a rail stays in it for the rest of the visit.
     if (!Home.isYours(app)) {
@@ -1795,6 +2067,9 @@ const Home = {
     }
     app.is_favorited = desired;
     if (app.is_collaborator) app.your_apps_hidden = !desired;
+    // A pin JOINS (the app_favorites trigger in schema.sql), so the cached
+    // flag follows it, and Discover's pill and the Workshop agree at once.
+    if (desired) app.is_member = true;
     // Only an ADD needs the reveal: a removal takes a tile away, and a grid
     // that expanded itself to show an absence would be nonsense.
     if (desired) Home._revealSlug = slug;
@@ -1811,9 +2086,11 @@ const Home = {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
       PlatformUI.toast(desired ? 'Added to Your apps' : 'Removed from Your apps');
+      if (!desired) await Home._offerLeaveAfterUnpin(app);
     } catch (err) {
       app.is_favorited = prev.is_favorited;
       app.your_apps_hidden = prev.your_apps_hidden;
+      app.is_member = prev.is_member;
       // The add never happened, so nothing should be revealed for it. load()
       // renders, and a stale slug would expand the grid for an app that is
       // not there.
@@ -1824,6 +2101,136 @@ const Home = {
     }
   },
 
+  // Taking an app off Home is not leaving it (a pin is a shortcut), but it is
+  // the moment someone might MEAN to, so it is asked, once, after the unpin
+  // has landed: "Leave <app> too?". A yes goes through setMembership with its
+  // own confirm skipped — this question already was the confirm. Asked only
+  // of a member who could leave: never of the creator (the server refuses),
+  // never of someone who is not in it, and not during the ?shot=discover-add
+  // round trip, whose unpin is a fixture's, not a person's.
+  async _offerLeaveAfterUnpin(app) {
+    if (!app || !app.is_member || app.demo || Home._quietLeaveOffer) return false;
+    const me = typeof App !== 'undefined' && App.user ? App.user.id : null;
+    if (me != null && app.created_by === me) return false;
+    const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
+    const name = app.name || app.slug;
+    const ok = await confirmModal?.show?.({
+      title: `Leave ${name} too?`,
+      message: app.view_visibility === 'private'
+        ? 'It’s off your Home screen. Leaving also ends your access until someone invites you back.'
+        : 'It’s off your Home screen. You can stay a member, or leave and stop proposing and voting on its changes.',
+      confirmLabel: 'Leave',
+      cancelLabel: 'Stay a member',
+      danger: true,
+    });
+    if (!ok) return false;
+    return Home.setMembership(app.slug, false, undefined, { confirmed: true });
+  },
+
+  // Join or leave the community `slug` belongs to — Discover's Join pill,
+  // its detail page and the join-required prompt all come through here.
+  // POST /api/apps/:slug/membership (src/routes/apps.js).
+  //
+  // JOINING ALSO PINS, because the button it replaced was "Add to Your
+  // apps" and the server does both (communities.join): the cached flags flip
+  // together so Home's grid and Discover's pill agree in the same paint.
+  //
+  // LEAVING ASKS FIRST. It is the one membership change with a cost you
+  // might not expect — on a private app it is your access, and everywhere it
+  // is your vote — and a pill that left on one tap would be a pill people
+  // are afraid to touch. The creator is never offered it: the server refuses
+  // (409) and the confirm would be a dead end.
+  //
+  // Resolves true when the membership is now `desired`, false otherwise.
+  async setMembership(slug, desired, onChange, opts = {}) {
+    const known = (list) => (Array.isArray(list) ? list : []).find((a) => a && a.slug === slug);
+    const app = known(Home._apps)
+      || known(typeof window !== 'undefined' ? window.Browse?._apps : null)
+      || null;
+    if (app && app.demo) return false;
+    const name = (app && app.name) || opts.name || slug;
+    if (!desired && !opts.confirmed) {
+      const privateApp = !!app && app.view_visibility === 'private';
+      // No confirm dialog in this document means no leaving from it: a
+      // silent leave is the one outcome this step exists to prevent.
+      const confirmModal = typeof window !== 'undefined' ? window.ConfirmModal : null;
+      const ok = await confirmModal?.show?.({
+        title: `Leave ${name}?`,
+        message: privateApp
+          ? 'You will lose access to it until someone invites you back.'
+          : 'You won’t be able to propose or vote on its changes until you join again.',
+        confirmLabel: 'Leave',
+        danger: true,
+      });
+      if (!ok) return false;
+    }
+    const prev = app ? {
+      is_member: app.is_member,
+      is_favorited: app.is_favorited,
+      your_apps_hidden: app.your_apps_hidden,
+      is_collaborator: app.is_collaborator,
+      member_count: app.member_count,
+    } : null;
+    if (app) {
+      app.is_member = desired;
+      app.is_favorited = desired;
+      if (desired) app.your_apps_hidden = false;
+      else app.is_collaborator = false;
+      app.member_count = Math.max(0, (Number(app.member_count) || 0) + (desired ? 1 : -1));
+      if (desired) Home._revealSlug = slug;
+      Home.render();
+      if (typeof onChange === 'function') onChange();
+    }
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/membership`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ joined: desired }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (app && Number.isFinite(Number(data.member_count))) app.member_count = Number(data.member_count);
+      PlatformUI.toast(desired ? `Joined ${name}` : `Left ${name}`);
+      if (!app) {
+        await Home.load();
+        if (typeof onChange === 'function') onChange();
+      }
+      return true;
+    } catch (err) {
+      if (app && prev) Object.assign(app, prev);
+      Home._revealSlug = null;
+      PlatformUI.toast(`Couldn’t ${desired ? 'join' : 'leave'}: ${err.message}`);
+      await Home.load();
+      if (typeof onChange === 'function') onChange();
+      return false;
+    }
+  },
+
+  // The slow path for a slug neither app list carries — see toggleAdded.
+  // There is no cached object to flip, so there is nothing to do optimistically
+  // and nothing to revert: post, say what happened, and reload the list, which
+  // is what puts the row in both places for next time.
+  async _favoriteUnknown(slug, desired, onChange) {
+    try {
+      const res = await fetch(`/api/apps/${slug}/favorite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorited: desired }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      if (desired) Home._revealSlug = slug;
+      PlatformUI.toast(desired ? 'Added to Your apps' : 'Removed from Your apps');
+    } catch (err) {
+      Home._revealSlug = null;
+      PlatformUI.toast(`Update failed: ${err.message}`);
+    }
+    await Home.load();
+    if (typeof onChange === 'function') onChange();
+  },
+
   // ===== Per-render card wiring =====
 
   // #931: start warming the app the finger is already on — the token mint
@@ -1832,10 +2239,25 @@ const Home = {
   // lever on touch (it fires ~100ms before click, and long-press-to-drag
   // still ends up here harmlessly); `mouseenter` buys much more on desktop.
   // Passive: this never calls preventDefault and must not delay scrolling.
+  //
+  // #1882: the STATUS is not consulted here, on purpose. app-grid.tsx's
+  // `wireRef` is guarded by a module-level WeakSet, so this runs exactly once
+  // per card DOM node — and React keeps that node across re-renders. Reading
+  // `card.dataset.status` here therefore froze a snapshot taken the first
+  // time the tile was ever attached: an app that was still coming up when
+  // the homepage painted got no listeners, and got none later however many
+  // times it reached 'running'. That is the slow case the issue is about, on
+  // a cold load, where rows move into 'running' while the viewer watches.
+  //
+  // `App.prewarmApp` already re-reads the live launcher record and returns
+  // unless `rec.status === 'running'` (also `demo`, `self_hosted`, `url`,
+  // offline), so the check belongs there — at event time, against the truth —
+  // and this only has to attach. That is the shape browse.js's two call sites
+  // always had, which is why the homepage was the one surface with this bug.
+  // `demo` stays here: it is a fixed property of the tile, not a status.
   _wirePrewarm(card) {
     const slug = card.dataset.slug;
     if (!slug || card.dataset.demo === 'true') return;
-    if (card.dataset.status !== 'running') return;
     const warm = () => { try { App.prewarmApp(slug); } catch (err) { /* ignore */ } };
     card.addEventListener('pointerdown', warm, { passive: true });
     card.addEventListener('mouseenter', warm);
@@ -1962,7 +2384,14 @@ const Home = {
     // Awaiting-secrets cards stay clickable so the user can open the
     // app view + Secrets modal to fill values; other non-running
     // statuses show no app surface.
-    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer' : 'cursor-not-allowed grayscale-[0.75]';
+    // Launcher actions open from the tile context menu. Retry remains an
+    // inline recovery action for creators/full admins on errored apps.
+    const showRetry = !discovery && isError
+      && (App.user?.canAdminWrite || App.user?.id === app.created_by);
+    // A tile with Retry greys only its icon (QA 2026-09-24 Q9): a greyed
+    // card made the one working control on it look disabled.
+    const cursorClass = (isRunning || isAwaiting) ? 'cursor-pointer'
+      : showRetry ? 'cursor-not-allowed' : 'cursor-not-allowed grayscale-[0.75]';
 
     // Per-tile sections, computed up front so the template stays
     // readable. Anything that may be empty is collapsed to '' so the
@@ -1986,10 +2415,6 @@ const Home = {
       ? `<p class="app-card-status ${isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}"${failureTip}>${statusLabel}</p>`
       : '';
 
-    // Launcher actions open from the tile context menu. Retry remains an
-    // inline recovery action for creators/full admins on errored apps.
-    const showRetry = !discovery && isError
-      && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
     // Discovery grids swap the hamburger for the add/remove badge: a ✓
     // when the app is already in "Your apps", a + when it isn't. The
@@ -2025,8 +2450,11 @@ const Home = {
     const menuBadgeHtml = discovery
       ? `${addBadgeHtml}${wantsMenu ? hamburgerHtml('-left-1.5') : ''}`
       : '';
+    // QA 2026-09-24 Q9: Retry is a pill in the caption lane beside "Error",
+    // not a corner button the icon covered on phones. Same classes as
+    // app-grid.tsx's RETRY_BTN; a Retry tile greys only its icon.
     const retryHtml = showRetry
-      ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
+      ? `<button type="button" class="retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1" data-slug="${app.slug}" aria-label="Retry ${escapeHtml(String(app.name || '')).replace(/"/g, '&quot;')}">Retry</button>`
       : '';
 
     // Fork lineage tag: a small amber ⑂ badge on the icon's bottom-left
@@ -2071,8 +2499,7 @@ const Home = {
     const demoAttr = app.demo ? ' data-demo="true"' : '';
     return `
       <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
-        ${retryHtml}
-        <div class="relative w-14 h-14 shrink-0">
+        <div class="relative w-14 h-14 shrink-0${showRetry ? ' grayscale-[0.75]' : ''}">
           <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}">
             ${icon.html}
           </div>
@@ -2081,19 +2508,21 @@ const Home = {
         </div>
         <div class="w-full min-w-0">
           <div class="app-card-title" title="${nameAttr}">${escapeHtml(app.name)}</div>
-          ${warningHtml}
+          ${showRetry ? `<div class="app-card-retry flex items-center justify-center gap-1">${warningHtml}${retryHtml}</div>` : warningHtml}
         </div>
       </div>
     `;
   },
 
-  // NOTE: renderCreateTile() is gone. "Create an app" is a fixed SECTION now
-  // (features/home/panels/create.tsx), present on every home screen for every
-  // account — dimmed and self-explaining where the viewer has no app quota,
-  // rather than swapped for a hint paragraph in a trailing section. Its button
-  // carries its own handler; CREATE_DISABLED_HINT below is still the one
-  // wording of the locked case, shared by the tooltip and the ⋮ menu's inert
-  // note. A tap opens the create dialog, where the exact quota is shown.
+  // NOTE: renderCreateTile() is gone. "Create an app" is the launcher grid's
+  // trailing TILE now (./create-tile.tsx, placed by render() — the prototype's
+  // scrHome), present on every home screen for every account — in quieter
+  // ink, and self-explaining, where the viewer has no app quota. It was a fixed section
+  // below Challenges for a while; the tile is the same button at the end of
+  // the grid it belongs to. It carries its own handler; CREATE_DISABLED_HINT
+  // below is still the one wording of the locked case, which render() hands
+  // the tile for its label. A tap opens the create dialog, where the exact
+  // quota is shown.
 
   // ── Homeroom widget section (iOS in-app only) ──────────────────────
   //
@@ -3364,6 +3793,7 @@ const Home = {
   // when the app reports the widget mechanism, the registry fetch
   // succeeded, AND the user has revealed the section this session.
   _widgetUiActive() {
+    if (Home._shotWidgetDrop) return true; // ?shot=widget-drop, see below
     return Home._widgetSectionVisible
       && Home._shortcutSupport?.mechanism === 'widget'
       && Array.isArray(Home._widgetItems);
@@ -3527,6 +3957,23 @@ const Home = {
         run: () => Home._menuToggleFavorite(app, !app.is_favorited),
       });
     }
+    // #1374: per-app notification settings, UNGATED on purpose and placed
+    // right after the "Your apps" entry.
+    //
+    // Not in App settings below, which is where a per-app dialog would
+    // normally go: that entry is offered only to an admin, the creator, or
+    // somebody whose app has other contributors. Who hears about an app is
+    // every user's business, and most users are none of those things — so
+    // putting it there would have hidden the switches from nearly everyone
+    // who wants them. "Add to Your apps" above is the closest thing the
+    // platform already had to a per-app subscription, which is why this sits
+    // beside it.
+    items.push({
+      key: 'notifications',
+      label: 'Notifications',
+      title: 'Choose what this app can notify you about, here and on your phone.',
+      run: () => window.UsernodeReact?.dialogs?.appNotifications?.open({ slug: app.slug }),
+    });
     // Native homescreen shortcut — only when the page runs inside a
     // Homeroom app build whose bridge reports the feature (see
     // _probeShortcutSupport; Home._shortcutSupport stays null in plain
@@ -3534,8 +3981,9 @@ const Home = {
     const shortcutSupport = Home._shortcutSupport;
     // "Your apps" only: the homescreen widget is for the apps you keep,
     // not something to offer on every card in the directory.
-    if (isRunning && Home.isYours(app)
-        && shortcutSupport && shortcutSupport.mechanism !== 'unsupported') {
+    const offersPin = !!(isRunning && Home.isYours(app)
+      && shortcutSupport && shortcutSupport.mechanism !== 'unsupported');
+    if (offersPin) {
       // iOS shortcuts land in the shared widget grid, so the item names
       // that destination; Android pins straight to the launcher.
       const isWidget = shortcutSupport.mechanism === 'widget';
@@ -3567,6 +4015,47 @@ const Home = {
           run: () => Home._menuAddShortcut(app),
         });
       }
+    }
+    // #2320: "Add to Home Screen", the per-app install page (#1508). It was a
+    // row in the app chip's sheet, which only knows the app you are already
+    // IN; here it is on the app itself, from its tile and its details page.
+    //
+    // A phone thing (see detectInstallHost in ../mobile-install/environment):
+    // a laptop has no home screen. Skipped for the inert ?demo=1 tiles, which
+    // have no install page, and wherever the native pin above is offered, so
+    // the menu never carries two look-alike ways onto the home screen.
+    //
+    // How the page opens follows the host, read at open time: the native
+    // webview cannot leave for the system browser on its own, so the bridge's
+    // openExternal (window.open as the fallback for a build without it); an
+    // installed platform PWA has no share sheet, so a browser window of its
+    // own; anywhere else, an ordinary same-tab navigation.
+    const installHost = !app.demo && app.slug && !offersPin ? detectInstallHost() : 'none';
+    if (installHost !== 'none') {
+      items.push({
+        key: 'install',
+        label: 'Add to Home Screen',
+        title: 'Put this app on your phone’s home screen with its own icon',
+        run: () => {
+          const href = `/app/${encodeURIComponent(app.slug)}/install`;
+          if (installHost === 'standalone') {
+            window.open(href, '_blank', 'noopener');
+            return;
+          }
+          if (installHost !== 'native') {
+            location.assign(href);
+            return;
+          }
+          const url = new URL(href, window.location.origin).href;
+          const bridge = window.usernode;
+          const viaBridge = typeof bridge?.openExternal === 'function'
+            ? Promise.resolve().then(() => bridge.openExternal(url))
+            : Promise.reject(new Error('openExternal is unavailable'));
+          viaBridge.catch(() => {
+            window.open(url, '_blank', 'noopener');
+          });
+        },
+      });
     }
     if (isError && (user.canAdminWrite || user.id === app.created_by)) {
       items.push({ key: 'retry', label: 'Retry', run: () => Home._menuRetry(app) });
@@ -3622,11 +4111,14 @@ const Home = {
         run: () => Home._menuToggleLock(app),
       });
     }
-    // The server computes this from the shared contributor definition and
-    // rechecks it on DELETE. Keep the full-admin fallback for older payloads
-    // already in memory while a deployment rolls over.
-    if (user.canAdminWrite || app.can_delete) {
-      items.push({ key: 'delete', label: 'Delete app', danger: true, run: () => Home._menuDelete(app) });
+    // App settings is the canonical access editor, so every creator/app admin
+    // with can_manage gets the entry even when deletion is unavailable. Keep
+    // the full-admin fallback for older payloads already in memory while a
+    // deployment rolls over. #2161: the creator of a shared app
+    // (delete_block 'shared' is only ever handed to them) keeps the entry,
+    // because the dialog is also where the deletion refusal is explained.
+    if (user.canAdminWrite || app.can_manage || app.can_delete || app.delete_block === 'shared') {
+      items.push({ key: 'app-settings', label: 'App settings', run: () => window.UsernodeReact?.dialogs?.appSettings?.open({ slug: app.slug }) });
     }
     return items;
   },
@@ -3763,6 +4255,9 @@ const Home = {
       // management section to show.
       return Home._addShortcutForApp(app);
     }
+    // #2892: the tile the menu was opened from is done being "held" the
+    // moment an action is chosen — see _releaseTile.
+    Home._releaseTile(app.slug);
     Home._revealWidgetSection();
     if (Home._widgetSlugs().has(app.slug)) return; // already in — just reveal
     if (Home._widgetItems.length >= Home.WIDGET_CAPACITY) {
@@ -3797,6 +4292,135 @@ const Home = {
       ],
       { duration: 450, easing: 'ease-in-out' }
     );
+  },
+
+  // ── Dragging a tile INTO the widget strip (#2894) ──────────────────
+  //
+  // No second recognizer: a "Your apps" tile is already carried by the kit's
+  // attachGridPlacement (_attachGridPlacement above), and its cells are
+  // host-defined tokens. The open strip is simply one more cell — a sentinel
+  // cellFromPoint returns while the finger is over #widget-strip — and every
+  // callback branches on it: canPlace says whether the app can go in,
+  // onHover tints the strip instead of the grid, rectForCell flies the ghost
+  // to the slot the new tile will take, and onPlace defers the pin to
+  // onSettle, when the gesture is over and the strip may repaint. Mouse and
+  // touch are therefore the same code path the grid reorder already is.
+  //
+  // `col`/`row` are what the kit's sameCell compares, so they must be stable
+  // and must never collide with a real cell.
+  WIDGET_DROP_CELL: Object.freeze({ col: 'widget', row: 'widget', widget: true }),
+
+  // Slug a committed widget drop still owes a pin (onPlace → onSettle).
+  _pendingWidgetAdd: null,
+
+  // Whether the finger was over the strip at the last hit-test, so onSettle
+  // can tell a refused drop ON the strip (full → shake) from one elsewhere.
+  _pointerOverWidget: false,
+
+  _isWidgetDropCell(cell) {
+    return !!(cell && cell.widget === true);
+  },
+
+  // A rect test, not elementFromPoint: the strip is a plain box and the kit's
+  // ghost is pointer-events:none anyway, so this is exact and cheap on the
+  // per-move path. Only while the section is actually showing.
+  _widgetStripAt(x, y) {
+    if (!Home._widgetUiActive() || typeof document === 'undefined') return false;
+    const strip = document.getElementById('widget-strip');
+    if (!strip || typeof strip.getBoundingClientRect !== 'function') return false;
+    const r = strip.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    return x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+  },
+
+  _widgetFull() {
+    return Array.isArray(Home._widgetItems)
+      && Home._widgetItems.length >= Home.WIDGET_CAPACITY;
+  },
+
+  // The same gate as the menu's "Add to Homeroom widget": a running app, not
+  // already pinned, and room left on the widget.
+  _canDropOnWidget(el) {
+    const slug = el && el.dataset ? el.dataset.slug : null;
+    if (!slug || !Home._widgetUiActive()) return false;
+    if (Home._widgetSlugs().has(slug) || Home._widgetFull()) return false;
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    return !!(app && app.status === 'running');
+  },
+
+  // The strip's drop tint. A data attribute rather than a class because
+  // #widget-strip's className is React's (widget-strip.tsx renders it), and a
+  // class written from here would be a second writer to it; React renders no
+  // `data-drop`, so it never touches this one. app.css draws both states.
+  _markWidgetDrop(el, ok) {
+    if (typeof document === 'undefined') return;
+    const strip = document.getElementById('widget-strip');
+    if (!strip) return;
+    if (el) strip.setAttribute('data-drop', ok ? 'ok' : 'refused');
+    else strip.removeAttribute('data-drop');
+  },
+
+  // Where the dropped tile lands: the slot right after the last pinned tile
+  // (wrapping to the next line when the row is full), or the strip's first
+  // slot when it is empty. Same gap and padding as the strip's gap-3 / p-3.
+  _widgetDropRect() {
+    if (typeof document === 'undefined') return null;
+    const strip = document.getElementById('widget-strip');
+    if (!strip) return null;
+    const sr = strip.getBoundingClientRect();
+    const tiles = strip.querySelectorAll('.widget-tile');
+    const last = tiles.length ? tiles[tiles.length - 1] : null;
+    if (!last) return { left: sr.left + 12, top: sr.top + 12 };
+    const lr = last.getBoundingClientRect();
+    const left = lr.right + 12;
+    if (left + lr.width <= sr.right - 12) return { left, top: lr.top };
+    return { left: sr.left + 12, top: lr.bottom + 12 };
+  },
+
+  // The drop's pin. Optimistic, the same shape as _removeWidgetItem: the new
+  // tile is in the strip when the ghost lands, and a refusal or failure
+  // re-fetches the registry so the strip snaps back to device truth.
+  async _dropOnWidget(slug) {
+    Home._releaseTile(slug);
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    if (!app || !Home._widgetUiActive() || Home._widgetSlugs().has(slug)) {
+      Home.render();
+      return false;
+    }
+    Home._widgetItems = [...Home._widgetItems, {
+      id: `pending:${slug}`,
+      name: app.name || slug,
+      url: `${location.origin}/app/${encodeURIComponent(slug)}`,
+    }];
+    Home.render();
+    const ok = await Home._addShortcutForApp(app);
+    if (!ok) {
+      await Home._refreshWidgetItems();
+      Home.render();
+    }
+    return ok;
+  },
+
+  // #2892: "apps can get stuck in the selected state when adding to the
+  // widget". Adding is one of the few card actions that leaves you on the
+  // home screen — the others open the app, open a page or remove the tile —
+  // so whatever held state the long-press left behind is still on screen
+  // afterwards, and the strip appearing above the grid moves the tile out
+  // from under the finger whose next tap would otherwise have cleared it.
+  // Both add paths (the menu and a drop) release it here: the menu and the
+  // context lift, any displacement preview, and the focus the popover hands
+  // back to the tile it was anchored on. It writes nothing INTO the card —
+  // #app-list is React's (tests/home-grid-ownership.test.js); the kit's own
+  // drop slot comes off in its finish(), and the tile's hover fill is gated
+  // to real hover pointers in app.css.
+  _releaseTile(slug) {
+    Home.closeCardMenu();
+    Home._contextLift = null;
+    Home._clearPreview();
+    if (typeof document === 'undefined') return;
+    const active = document.activeElement;
+    const held = active && typeof active.closest === 'function' ? active.closest('.app-card[data-slug]') : null;
+    if (held && (!slug || slug === held.dataset.slug) && typeof held.blur === 'function') held.blur();
   },
 
   // Draws `text` onto a scratch canvas, finds its ink (alpha) bounding
@@ -4154,16 +4778,6 @@ const Home = {
     } catch (err) {
       PlatformUI.toast(`Lock toggle failed: ${err.message}`);
     }
-  },
-
-  async _menuDelete(app) {
-    if (!await PlatformUI.confirm({ title: 'Delete this app?', message: 'This removes the app for everyone.', confirmLabel: 'Delete', danger: true })) return;
-    const res = await fetch(`/api/apps/${app.slug}`, { method: 'DELETE' });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      PlatformUI.toast(data.error || `Delete failed (HTTP ${res.status})`);
-    }
-    await Home.load();
   },
 
   // ===== "Your apps" drag-and-drop (issue #128) =====
@@ -4759,6 +5373,43 @@ const Home = {
     Home._incoming = null;
   },
 
+  // Screenshot-state deep link (?shot=widget-drop, #2894): the third sibling,
+  // for the drag that ends in the Homeroom widget strip. The strip exists
+  // only inside the iOS app (the bridge has to report the widget mechanism),
+  // so without this no browser — not a capture, not a declared check — could
+  // ever see the section, let alone the drop state.
+  //
+  // It shows the strip with ONE pinned tile (the second tile on the grid),
+  // lifts the first tile into the kit's dashed drop slot and tints the strip
+  // the way onHover does over it. The registry is a local stand-in:
+  // _shortcutSupport is left alone, so the heal pass, the menu item and every
+  // bridge call stay gated off — nothing is written anywhere. Idempotent and
+  // repeatable like ?shot=home-grid, because every commit is a chance for a
+  // repaint to have dropped it.
+  _shotWidgetDrop: false,
+  _maybeShowShotWidgetDrop(listEl) {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'widget-drop') return;
+    if (Home._dragActive || !listEl || listEl.offsetParent === null) return;
+    const cards = listEl.querySelectorAll('.app-card[data-yours][data-slug]');
+    if (!cards.length) return;
+    if (!Home._shotWidgetDrop) {
+      Home._shotWidgetDrop = true;
+      const pinned = cards[1] || cards[0];
+      const app = (Home._apps || []).find((a) => a.slug === pinned.dataset.slug);
+      Home._widgetItems = [{
+        id: 'shot-widget-drop',
+        name: (app && app.name) || pinned.dataset.slug,
+        url: `${location.origin}/app/${encodeURIComponent(pinned.dataset.slug)}`,
+      }];
+      Home.render(); // paints the strip; the next commit comes back here
+      return;
+    }
+    cards[0].classList.add('un-reorder-slot');
+    Home._markWidgetDrop(cards[0], true);
+  },
+
   // Press-and-hold actions for search/demo tiles, pen input, and the MOUSE.
   // Placed touch tiles use the kit's own lift callback above, so only one
   // recognizer claims a touch. Return teardown for React remounts and view
@@ -4850,10 +5501,10 @@ const Home = {
   // without. Toggle the CTA button on/off in place rather than
   // rebuilding the static DOM, so the surrounding "No apps yet"
   // copy stays put.
-  // The one wording of "you can't create apps right now". The create WIDGET
+  // The one wording of "you can't create apps right now". The Create tile
   // is on every home screen regardless of quota, so this string is what the
-  // disabled tile shows in its tooltip and the inert note in its ⋮ menu. The
-  // dialog it opens carries the exact used-of-limit numbers.
+  // locked tile announces in its tooltip and label. The dialog it opens
+  // carries the exact used-of-limit numbers.
   CREATE_DISABLED_HINT: 'View your app allowance or request more slots.',
 
   // `wireCreateButtons()` lived here: `document.querySelectorAll('.home-create-btn')`,
@@ -4861,7 +5512,7 @@ const Home = {
   // not leave two listeners on it, then a click handler bound to the clone.
   //
   // Its one caller was `HomePanels._wire`, and its one matching element is now
-  // rendered by features/home/panels/create.tsx. Both halves of what it did
+  // rendered by features/home/create-tile.tsx. Both halves of what it did
   // stop applying there: React keeps the element across paints, so there are
   // no stale listeners to clear, and the clone-and-replace is a structural DOM
   // write inside a subtree React owns — the exact failure the ownership rule

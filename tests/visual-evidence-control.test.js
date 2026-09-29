@@ -1,0 +1,381 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const contract = require('../src/services/visual-evidence-plan');
+const { RunControl } = require('../src/services/visual-evidence-control');
+const fixtures = require('./fixtures/visual-evidence');
+
+test('exploration resets and deterministic replay cannot race each other', async () => {
+  let release;
+  const waiting = new Promise((resolve) => { release = resolve; });
+  const plan = fixtures.plan();
+  const planHash = contract.planHash(plan);
+  const control = new RunControl({
+    runId: 'a'.repeat(32),
+    sessionId: 42,
+    intent: fixtures.intent(),
+    context: {},
+    expiresAt: Date.now() + 10_000,
+    resetPair: async () => ({ origins: { base: 'http://base.test', head: 'http://head.test' } }),
+    runPlan: async () => {
+      await waiting;
+      return { hardVerdict: { passed: true }, planHash };
+    },
+  });
+
+  const replay = control.runPlan(plan);
+  await assert.rejects(control.resetSide('base'), { code: 'evidence_control_busy' });
+  assert.throws(() => control.finish({ status: 'failed', reason: 'too early' }), {
+    code: 'evidence_control_busy',
+  });
+  release();
+  await replay;
+  const finished = control.finish({
+    status: 'verified', reason: 'The pair proves the claim.', planHash,
+  });
+  assert.equal(finished.status, 'verified');
+  assert.equal(finished.planHash, planHash);
+});
+
+test('paired exploration reset returns one coherent base and head generation', async () => {
+  let generation = 0;
+  const control = new RunControl({
+    runId: '0'.repeat(32),
+    sessionId: 42,
+    intent: fixtures.intent(),
+    context: {},
+    expiresAt: Date.now() + 10_000,
+    resetPair: async () => {
+      generation += 1;
+      return {
+        origins: {
+          base: `http://base-${generation}.test`,
+          head: `http://head-${generation}.test`,
+        },
+      };
+    },
+    runPlan: async () => ({ hardVerdict: { passed: true } }),
+  });
+
+  assert.deepEqual(await control.resetPair(), {
+    origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+  });
+  assert.equal(generation, 1);
+});
+
+test('legacy base and head reset calls share one atomic pair during a rolling deploy', async () => {
+  let generation = 0;
+  const control = new RunControl({
+    runId: '1'.repeat(32),
+    sessionId: 42,
+    intent: fixtures.intent(),
+    context: {},
+    expiresAt: Date.now() + 10_000,
+    resetPair: async () => {
+      generation += 1;
+      return {
+        origins: {
+          base: `http://base-${generation}.test`,
+          head: `http://head-${generation}.test`,
+        },
+      };
+    },
+    runPlan: async () => ({ hardVerdict: { passed: true } }),
+  });
+
+  assert.deepEqual(await control.resetSide('base'), {
+    side: 'base',
+    origin: 'http://base-1.test',
+    origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+    bothSidesReset: true,
+  });
+  assert.deepEqual(await control.resetSide('head'), {
+    side: 'head',
+    origin: 'http://head-1.test',
+    origins: { base: 'http://base-1.test', head: 'http://head-1.test' },
+    bothSidesReset: true,
+  });
+  assert.equal(generation, 1, 'the companion side does not invalidate the first origin');
+
+  assert.equal((await control.resetSide('base')).origin, 'http://base-2.test');
+  assert.equal(generation, 2, 'a new reset cycle still creates a new pair');
+});
+
+test('the evidence turn stays live after waiting for bounded platform replay', async () => {
+  const replayPlan = fixtures.plan();
+  const planHash = contract.planHash(replayPlan);
+  const control = new RunControl({
+    runId: 'b'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 20,
+    runPlan: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 70));
+      return { hardVerdict: { passed: true }, planHash };
+    },
+  });
+  await control.runPlan(replayPlan);
+  assert.equal(control.finish({ status: 'verified', reason: 'The replayed pair proves the claim.', planHash }).status,
+    'verified');
+});
+
+test('hosted replay submission attaches accepted intent before spending a replay attempt', async () => {
+  const accepted = fixtures.intent();
+  accepted.stories[0].claim = 'Keep this exact accepted wording.';
+  const replay = fixtures.plan().stories[0].replay;
+  let submitted;
+  const control = new RunControl({
+    runId: 'd'.repeat(32), sessionId: 42, intent: accepted, context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (candidate) => {
+      submitted = candidate;
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(candidate) };
+    },
+  });
+  await assert.rejects(control.runReplays([{ id: 'different-story', replay }]),
+    { code: 'invalid_visual_evidence' });
+  assert.equal(control.planCalls, 0);
+  await control.runReplays([{ id: 'invite-suggestions', replay }]);
+  assert.equal(control.planCalls, 1);
+  assert.deepEqual(contract.semanticIntentFromPlan(submitted), contract.parseIntent(accepted));
+});
+
+test('hosted plan submission acknowledges while replay is pending and retries are idempotent', async () => {
+  let releaseReplay;
+  const pendingReplay = new Promise((resolve) => { releaseReplay = resolve; });
+  let calls = 0;
+  const replays = [{ id: 'invite-suggestions', replay: fixtures.plan().stories[0].replay }];
+  const fullPlan = contract.replayPlanFromIntent(fixtures.intent(), replays);
+  const planHash = contract.planHash(fullPlan);
+  const control = new RunControl({
+    runId: 'f'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 10_000,
+    resetPair: async () => ({ origins: { base: 'http://base.test', head: 'http://head.test' } }),
+    runPlan: async () => {
+      calls += 1;
+      await pendingReplay;
+      return { hardVerdict: { passed: true }, planHash };
+    },
+  });
+
+  assert.deepEqual(control.submitReplays(replays), {
+    accepted: true, attempt: 1, planHash, duplicate: false,
+  });
+  assert.equal(control.busy, 'replaying the submitted plan');
+  assert.deepEqual(control.submitReplays(replays), {
+    accepted: true, attempt: 1, planHash, duplicate: true,
+  });
+  assert.equal(control.planCalls, 1);
+  await assert.rejects(control.resetSide('base'), { code: 'evidence_control_busy' });
+  releaseReplay();
+  assert.equal((await control.waitForPlan()).hardVerdict.passed, true);
+  assert.equal(calls, 1);
+  assert.equal(control.latestHard.planHash, planHash);
+  assert.equal(control.busy, null);
+});
+
+test('a background replay error survives duplicate submission and is available for repair', async () => {
+  const mismatch = Object.assign(new Error('Browse matched no visible controls.'), {
+    code: 'ambiguous_locator',
+  });
+  const control = new RunControl({
+    runId: '9'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async () => { throw mismatch; },
+  });
+  const plan = fixtures.plan();
+  assert.equal(control.submitPlan(plan).accepted, true);
+  await assert.rejects(control.waitForPlan(), { code: 'ambiguous_locator' });
+  assert.equal(control.submitPlan(plan).duplicate, true);
+  assert.equal(control.lastReplayFailure.error, mismatch);
+  control.allowRepair('Inspect the actual button.', { code: 'ambiguous_locator' });
+  assert.equal(control.getContext().attempt, 2);
+});
+
+test('a rejected locator exposes the failed plan and permits one changed replay only', async () => {
+  const rejected = fixtures.plan();
+  const corrected = fixtures.plan();
+  corrected.stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  const mismatch = Object.assign(new Error('open-members matched 0 elements; exactly one is required.'), {
+    code: 'ambiguous_locator',
+  });
+  let replays = 0;
+  const control = new RunControl({
+    runId: 'c'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (plan) => {
+      replays += 1;
+      if (replays === 1) throw mismatch;
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(plan) };
+    },
+  });
+  await assert.rejects(control.runPlan(rejected), { code: 'ambiguous_locator' });
+  control.allowRepair('Inspect the actual control in both revisions.', {
+    code: 'ambiguous_locator', detail: { side: 'base', actionId: 'open-members' },
+  });
+  const context = control.getContext();
+  assert.equal(context.attempt, 2);
+  assert.equal(context.repair.failure.detail.actionId, 'open-members');
+  assert.deepEqual(context.repair.rejectedPlan, contract.parseReplayPlan(rejected));
+  await assert.rejects(control.runPlan(rejected), { code: 'evidence_repair_unchanged' });
+  assert.equal(replays, 1, 'an unchanged plan never spends a replay');
+  await control.runPlan(corrected);
+  assert.equal(replays, 2);
+  await assert.rejects(control.runPlan(corrected), { code: 'evidence_plan_attempt_exhausted' });
+});
+
+test('two bounded repairs each require a changed complete plan', async () => {
+  const plans = [fixtures.plan(), fixtures.plan(), fixtures.plan()];
+  plans[1].stories[0].replay.before.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: true,
+  };
+  plans[2].stories[0].replay.after.actions[0].target = {
+    by: 'role', role: 'button', name: 'Browse all apps', exact: false,
+  };
+  let calls = 0;
+  const control = new RunControl({
+    runId: 'e'.repeat(32), sessionId: 42, intent: fixtures.intent(), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (plan) => {
+      calls += 1;
+      if (calls < 3) throw Object.assign(new Error('Missing locator'), { code: 'locator_not_found' });
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(plan) };
+    },
+  });
+  await assert.rejects(control.runPlan(plans[0]), { code: 'locator_not_found' });
+  control.allowRepair('Check the first locator.', { code: 'locator_not_found' });
+  await assert.rejects(control.runPlan(plans[1]), { code: 'locator_not_found' });
+  control.allowRepair('Check the next locator.', { code: 'locator_not_found' });
+  assert.equal(control.getContext().attempt, 3);
+  assert.deepEqual(control.getContext().repair.rejectedPlan, contract.parseReplayPlan(plans[1]));
+  await assert.rejects(control.runPlan(plans[1]), { code: 'evidence_repair_unchanged' });
+  await control.runPlan(plans[2]);
+  assert.equal(calls, 3);
+  assert.throws(() => control.allowRepair('No more attempts.', { code: 'locator_not_found' }),
+    { code: 'evidence_repair_unavailable' });
+});
+
+test('motion timing repair can add a wait but cannot weaken assertions or change interactions', async () => {
+  const rejected = fixtures.plan();
+  rejected.impact = 'motion';
+  rejected.stories[0].intent.animation = 'motion';
+  rejected.stories[0].replay.checkpoint.animation = 'motion';
+  rejected.stories[0].replay.checkpoint.assertions.after = [{
+    type: 'hidden', target: { by: 'css', value: '.is-animating' },
+  }];
+  const corrected = structuredClone(rejected);
+  corrected.stories[0].replay.after.actions.push({
+    id: 'wait-settled', stage: 'settled', type: 'waitFor',
+    target: { by: 'css', value: '.is-animating' }, state: 'hidden', timeoutMs: 3000,
+  });
+  const failure = Object.assign(new Error('hidden assertion failed'), { code: 'assertion_failed' });
+  let replays = 0;
+  const control = new RunControl({
+    runId: 'f'.repeat(32), sessionId: 42,
+    intent: contract.semanticIntentFromPlan(rejected), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (candidate) => {
+      replays += 1;
+      if (replays === 1) throw failure;
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(candidate) };
+    },
+  });
+  await assert.rejects(control.runPlan(rejected), { code: 'assertion_failed' });
+  control.allowRepair('The motion marker was still visible.', {
+    kind: 'motion_timing', code: 'assertion_failed',
+    detail: { storyId: 'invite-suggestions', side: 'head', assertionIndex: 0 },
+  });
+
+  const unrelatedWait = structuredClone(corrected);
+  unrelatedWait.stories[0].replay.after.actions.at(-1).target = { by: 'css', value: '.unrelated' };
+  await assert.rejects(control.runPlan(unrelatedWait), { code: 'evidence_timing_repair_changed_flow' });
+
+  const weakened = structuredClone(corrected);
+  weakened.stories[0].replay.checkpoint.assertions.after[0] = {
+    type: 'visible', target: { by: 'css', value: '.is-animating' },
+  };
+  await assert.rejects(control.runPlan(weakened), { code: 'evidence_timing_repair_changed_flow' });
+
+  const changedInteraction = structuredClone(corrected);
+  changedInteraction.stories[0].replay.after.actions[0].target = {
+    by: 'role', role: 'button', name: 'Another control', exact: true,
+  };
+  await assert.rejects(control.runPlan(changedInteraction), { code: 'evidence_timing_repair_changed_flow' });
+  assert.equal(replays, 1, 'invalid corrections never spend a replay');
+
+  await control.runPlan(corrected);
+  assert.equal(replays, 2);
+  assert.equal(control.latestHard.passed, true);
+});
+
+test('an assertion locator repair can change only the failed target', async () => {
+  const rejected = fixtures.plan();
+  const failedAssertion = {
+    type: 'count',
+    target: {
+      by: 'role', role: 'status', name: 'Paused live view · Checks passing', exact: true,
+    },
+    count: 1,
+  };
+  rejected.stories[0].replay.checkpoint.assertions.after.push(failedAssertion);
+  const corrected = structuredClone(rejected);
+  corrected.stories[0].replay.checkpoint.assertions.after[1].target = {
+    by: 'css', value: '#admin-merges-paused-live',
+  };
+  const failure = Object.assign(new Error('count assertion failed.'), {
+    code: 'assertion_failed',
+    detail: {
+      storyId: 'invite-suggestions', side: 'head', phase: 'assertion',
+      assertionIndex: 1, count: 0, actual: 0, assertion: failedAssertion,
+    },
+  });
+  let replays = 0;
+  const control = new RunControl({
+    runId: '7'.repeat(32), sessionId: 42,
+    intent: contract.semanticIntentFromPlan(rejected), context: {},
+    expiresAt: Date.now() + 10_000,
+    runPlan: async (candidate) => {
+      replays += 1;
+      if (replays === 1) throw failure;
+      return { hardVerdict: { passed: true }, planHash: contract.planHash(candidate) };
+    },
+  });
+  await assert.rejects(control.runPlan(rejected), { code: 'assertion_failed' });
+  control.allowRepair('Correct only the failed assertion target.', {
+    kind: 'assertion_locator', code: 'assertion_failed', detail: failure.detail,
+  });
+
+  const weakenedCount = structuredClone(corrected);
+  weakenedCount.stories[0].replay.checkpoint.assertions.after[1].count = 0;
+  await assert.rejects(control.runPlan(weakenedCount), {
+    code: 'evidence_assertion_locator_repair_changed_plan',
+  });
+
+  const removedAssertion = structuredClone(rejected);
+  removedAssertion.stories[0].replay.checkpoint.assertions.after.pop();
+  await assert.rejects(control.runPlan(removedAssertion), {
+    code: 'evidence_assertion_locator_repair_changed_plan',
+  });
+
+  const changedAction = structuredClone(corrected);
+  changedAction.stories[0].replay.after.actions[0].target = {
+    by: 'role', role: 'button', name: 'Another control', exact: true,
+  };
+  await assert.rejects(control.runPlan(changedAction), {
+    code: 'evidence_assertion_locator_repair_changed_plan',
+  });
+
+  const changedSibling = structuredClone(corrected);
+  changedSibling.stories[0].replay.checkpoint.assertions.after[0].target = {
+    by: 'css', value: '.anything-visible',
+  };
+  await assert.rejects(control.runPlan(changedSibling), {
+    code: 'evidence_assertion_locator_repair_changed_plan',
+  });
+  assert.equal(replays, 1, 'invalid corrections never spend a replay');
+
+  await control.runPlan(corrected);
+  assert.equal(replays, 2);
+  assert.equal(control.latestHard.passed, true);
+});

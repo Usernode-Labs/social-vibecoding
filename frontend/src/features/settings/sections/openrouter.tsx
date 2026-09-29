@@ -6,10 +6,17 @@ import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 
 /**
- * OpenRouter/Codex as the preferred coding agent. Each account may claim a
- * limited company key once by default; deployments may require a verified
- * GitHub or X identity. Everyone may still use a personal OpenRouter key.
- * #settings-openrouter-model's `<option>` list is BUILT by
+ * OpenRouter as the preferred coding agent. The heading, description and
+ * model label are ALSO written at runtime by settings.js
+ * `_normalizeOpenRouterCopy()`, so the text here must be that text word for
+ * word: #3296's first cut edited only this copy, and the page never showed
+ * it. tests/openrouter-harness.test.js holds the two equal. The description
+ * names Claude Code, the one CLI a model can run in besides the unnamed
+ * default, because the model list tags those models. #2568: every account is
+ * created with its included company key, so there is nothing to claim and no
+ * identity to prove first — #settings-openrouter-included is a STATUS line,
+ * not a card with a button. Everyone may still use a personal OpenRouter key
+ * instead. #settings-openrouter-model's `<option>` list is BUILT by
  * settings.js from the catalogue response, which is the clearest reason the
  * Select primitive is a native `<select>` rather than a Radix combobox — see
  * the header of @/components/ui/select.
@@ -17,18 +24,12 @@ import { Select } from '@/components/ui/select';
 export function OpenRouterSection() {
   return (
     <div data-settings-section="openrouter" className="hidden">
-      <SectionHeading title={<>OpenRouter &amp; Codex</>}>
-        OpenRouter is the default coding-agent option after you add or claim a key. GLM 5.3 Flash is preferred when your OpenRouter catalog exposes it, and you can select any other available model. Keys are encrypted at rest and injected only for a turn.
+      <SectionHeading title={<>OpenRouter</>}>
+        Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Models marked Claude Code in the model list run in Claude Code. Keys are encrypted at rest and injected only for each turn.
       </SectionHeading>
-      <div id="settings-openrouter-beta-gated" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs text-zinc-600 dark:text-zinc-400 mb-3">
-        Codex/OpenRouter is being rolled out gradually and isn't available for your account yet.
-      </div>
-      <div id="settings-openrouter-managed-card" className="hidden rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 px-3 py-3 mb-3">
+      <div id="settings-openrouter-included" className="hidden rounded-lg border border-violet-200 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/30 px-3 py-3 mb-3">
         <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Included OpenRouter key</div>
-        <div id="settings-openrouter-managed-message" className="mt-1 text-xs text-zinc-600 dark:text-zinc-400"></div>
-        <Button id="settings-openrouter-claim" className="hidden mt-3" size="narrow">
-          Create my included key
-        </Button>
+        <div id="settings-openrouter-included-status" className="mt-1 text-xs text-zinc-600 dark:text-zinc-400"></div>
       </div>
       <div id="settings-openrouter-key-display" className="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
         sk-or-&hellip;<span id="settings-openrouter-key-last4"></span>
@@ -55,7 +56,7 @@ export function OpenRouterSection() {
       </div>
       <div id="settings-openrouter-models-wrap" className="hidden mt-4">
         <Label className="mb-1" htmlFor="settings-openrouter-model">
-          Codex model
+          OpenRouter model
         </Label>
         <div className="flex flex-wrap gap-2 mb-2">
           <Input

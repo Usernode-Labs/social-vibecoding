@@ -21,6 +21,17 @@ const mobilePushDiagnostics = require('../services/mobile-push-diagnostics');
 const applicationRuntime = require('../services/application-runtime');
 const managedOpenRouter = require('../services/openrouter-managed-keys');
 const discoveryCuration = require('../services/discovery-curation');
+const appStorageCap = require('../services/app-storage-cap');
+const appLimit = require('../services/app-limit');
+const platformLimits = require('../services/platform-limit-alerts');
+const modelCosts = require('../services/model-costs');
+const homeroomBot = require('../services/homeroom-bot');
+const onboarding = require('../services/onboarding');
+const usernames = require('../services/usernames');
+// The CSV writer the topochain admin's two exports share: quoting plus the
+// spreadsheet formula-injection guard, documented where it is defined.
+const { csvField } = require('./topochain/helpers');
+const { computeStandings } = require('../services/topochain/standings');
 const {
   accountRecovery,
   withTransaction,
@@ -303,13 +314,30 @@ function adminRoutes(config) {
 
   router.get('/api/admin/users', async (req, res) => {
     try {
-      const { rows } = await pool.query(
+      // The all-time programme standings, the same shared aggregate the
+      // global leaderboard ranks on, so the Points column here matches it.
+      // One query for every user, read off by id below.
+      const [standings, { rows }] = await Promise.all([computeStandings(pool, { seasonId: null }), pool.query(
         `SELECT u.id, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.app_quota_requested_at, u.created_at,
                 u.daily_limit_cents, u.weekly_limit_cents, u.usernode_pubkey,
                 EXISTS (
                   SELECT 1 FROM user_social_identities identity
                    WHERE identity.user_id = u.id
                 ) AS social_verified,
+                -- #838: the three proofs the identity tier is read from,
+                -- the same three limits.getIdentityTier reads per turn.
+                EXISTS (
+                  SELECT 1 FROM user_social_identities gh
+                   WHERE gh.user_id = u.id AND gh.provider = 'github'
+                ) AS has_github,
+                EXISTS (
+                  SELECT 1 FROM user_social_identities xi
+                   WHERE xi.user_id = u.id AND xi.provider = 'x'
+                ) AS has_x,
+                EXISTS (
+                  SELECT 1 FROM user_activities zk
+                   WHERE zk.user_id = u.id AND zk.source = 'zkpassport'
+                ) AS has_zkpassport,
                 managed.id AS openrouter_key_id,
                 managed.status AS openrouter_key_status,
                 managed.remote_key_hash AS openrouter_key_hash,
@@ -342,8 +370,17 @@ function adminRoutes(config) {
          ) ac2 ON ac2.created_by = u.id
          ORDER BY u.created_at ASC`,
         [req.user.id]
+      )]);
+      // #838: name the tier on each row so the console shows it and the
+      // two readers of the flags can never disagree.
+      const pointsByUser = new Map(
+        standings.map((s) => [s.user_id, s.total_points])
       );
-      res.json(rows);
+      res.json(rows.map((row) => ({
+        ...row,
+        identity_tier: limits.identityTierFromFlags(row).tier,
+        total_points: pointsByUser.get(Number(row.id)) || 0,
+      })));
     } catch (err) {
       log.error('admin', 'List users failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -595,64 +632,89 @@ function adminRoutes(config) {
     }
   });
 
-  router.delete('/api/admin/users/:id', requireAdminWrite, async (req, res) => {
-    const userId = parseInt(req.params.id);
-
-    if (userId === req.user.id) {
-      return res.status(400).json({ error: 'Cannot delete yourself' });
+  // Admin-issued rename (issue tracked in the header of routes/profile.js,
+  // which used to say this was unimplemented). Moving someone else's handle
+  // is a moderation action, so it skips the self-service route's password
+  // check and its 30-day cooldown: those two protections exist to stop a
+  // hijacked SESSION from walking the namespace, a threat model that does
+  // not apply to a full admin acting through their own gate. Format,
+  // reserved-prefix and service-identity protection, and the
+  // live-plus-retired-history uniqueness check all still run unchanged,
+  // through the same src/services/usernames.js the self-service route uses,
+  // so the two paths can never disagree about what a valid rename is.
+  router.put('/api/admin/users/:id/username', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId) || userId <= 0 || userId > 2147483647) {
+      return res.status(400).json({ error: 'Invalid user id' });
     }
 
-    // Deleting drops the admin count just like a revoke, so it takes the
-    // same advisory lock / transaction and enforces the last-admin
-    // invariant server-side — even though the UI hides Delete for admins,
-    // a direct API call must not be able to zero out the admins.
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
+    const check = usernames.validateUsername(req.body?.username);
+    if (!check.ok) return res.status(400).json({ error: check.error });
+    const next = check.value;
 
-      const { rows: existing } = await client.query(
-        'SELECT id, is_admin, admin_readonly FROM users WHERE id = $1',
-        [userId]
-      );
-      if (!existing.length) {
-        await client.query('ROLLBACK');
-        return res.status(404).json({ error: 'User not found' });
+    try {
+      const { rows } = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      const current = rows[0].username;
+
+      // Seeded service accounts (usernode-capture and friends) are found BY
+      // NAME at runtime; renaming one breaks a subsystem rather than moving
+      // an identity. See usernames.isServiceIdentity's own comment.
+      if (usernames.isServiceIdentity(current)) {
+        return res.status(403).json({ error: 'This account cannot be renamed.' });
       }
-      const { rows: managedKeys } = await client.query(
-        `SELECT id FROM credentials.managed_openrouter_keys
-          WHERE user_id = $1 AND status <> 'deleted'`,
-        [userId],
-      );
-      if (managedKeys.length) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({
-          error: 'Delete this user\'s company OpenRouter key before deleting the account.',
-        });
+
+      // An exact no-op is a success, not an error. A case-only change falls
+      // through: renameUser treats it as a re-case, which retires nothing.
+      if (current === next) {
+        return res.json({ ok: true, username: current, retired: null, unchanged: true });
       }
-      // Only a FULL admin counts toward the "at least one admin" invariant
-      // (issue #311) — deleting a view-only admin never threatens it.
-      if (existing[0].is_admin && !existing[0].admin_readonly) {
-        const { rows: countRows } = await client.query(
-          'SELECT COUNT(*)::int AS n FROM users WHERE is_admin = TRUE AND admin_readonly = FALSE'
-        );
-        if (countRows[0].n <= 1) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: "Can't delete the last full admin." });
+      const recase = current.toLowerCase() === next.toLowerCase();
+
+      const free = await usernames.checkAvailability(pool, next, userId);
+      if (!free.available) {
+        return res.status(409).json({ error: free.error });
+      }
+
+      const result = await usernames.renameUser(pool, userId, next);
+      if (!result) return res.status(404).json({ error: 'User not found' });
+
+      log.info('admin', 'Username changed', {
+        id: userId, from: current, to: result.username, recase, by: req.user.username,
+      });
+      if (!recase) {
+        try {
+          events.record(pool, {
+            type: events.EVENT_TYPES.USERNAME_CHANGED,
+            userId,
+            metadata: { from: current, to: result.username, admin: true, by: req.user.username },
+          });
+        } catch (err) {
+          log.warn('admin', 'Username event record failed', { err: err.message });
         }
       }
 
-      await client.query('DELETE FROM users WHERE id = $1', [userId]);
-      await client.query('COMMIT');
-      log.info('admin', 'User deleted', { id: userId, by: req.user.username });
-      res.json({ ok: true });
+      return res.json({ ok: true, username: result.username, retired: result.retired });
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      log.error('admin', 'Delete user failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    } finally {
-      client.release();
+      // The unique indexes on users.username and username_history are the
+      // backstop behind the availability check above; a race with someone
+      // else claiming the same handle lands here.
+      if (err.code === '23505') {
+        return res.status(409).json({ error: 'That username is taken.' });
+      }
+      log.error('admin', 'Username change failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
+  });
+
+  router.delete('/api/admin/users/:id', requireAdminWrite, async (req, res) => {
+    try {
+      const result = await require('../services/account-deletion').deleteAccount(pool, {
+        userId: Number(req.params.id), actorId: req.user.id, mode: 'admin', confirmation: req.body?.confirmation,
+      });
+      res.json(result);
+      void require('../services/account-deletion-cleanup').sweep(pool, config).catch(() => {});
+    } catch (err) { require('./account-deletion').sendError(res, err); }
   });
 
   // Admin-issued temporary password (issue #282). The universal recovery
@@ -695,6 +757,28 @@ function adminRoutes(config) {
       res.json({ ok: true, username: recovery.user.username, tempPassword });
     } catch (err) {
       log.error('admin', 'Password reset failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // "Reset first run" (communities, stage 5): the account's next load shows
+  // the join screen, the tour and the Getting started card again, as for a
+  // new account. For trying onboarding on a test account, or on yourself.
+  // Nothing the account owns is touched (services/onboarding.js
+  // resetFirstRun), so any full admin may do it, to anyone, like a password
+  // reset.
+  router.post('/api/admin/users/:id/reset-first-run', requireAdminWrite, async (req, res) => {
+    const userId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ error: 'Invalid user id' });
+    }
+    try {
+      const user = await onboarding.resetFirstRun(pool, userId);
+      if (!user) return res.status(404).json({ error: 'User not found' });
+      log.info('admin', 'First run reset', { id: user.id, username: user.username, by: req.user.username });
+      res.json({ ok: true, username: user.username });
+    } catch (err) {
+      log.error('admin', 'First run reset failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -750,28 +834,42 @@ function adminRoutes(config) {
   // ── LLM Spend Limits ───────────────────────────────────────
   //
   // Admin-tunable caps on LLM spend. Backed by the `platform_settings`
-  // table (default per-user daily + per-user weekly + global) plus the
-  // `users.daily_limit_cents` / `users.weekly_limit_cents` per-user
-  // overrides. Reads are cached for 10s in src/services/limits.js; PUTs
-  // invalidate that cache so the new value takes effect on the next
-  // request from any worker.
+  // table (default per-user weekly + global + system) plus the
+  // `users.weekly_limit_cents` per-user override. Reads are cached for 10s
+  // in src/services/limits.js; PUTs invalidate that cache so the new value
+  // takes effect on the next request from any worker.
   //
-  // #1788: the weekly cap layers on top of the daily one — a turn stops at
-  // whichever is exhausted first, and either set to 0 means that cap does
-  // not apply. limits.resolveCaps owns the full interaction.
+  // #2571: the per-user DAILY cap is switched off. `user_daily_limit_cents`
+  // and `users.daily_limit_cents` are still readable and still writable
+  // here — an operator's stored figures are not destroyed and the API shape
+  // does not break — but no gate consults them, the Limits page no longer
+  // offers the field, and the weekly cap is the account's only limit.
+  // limits.resolveCaps owns the interaction.
+
+  // #838: the weekly cap comes in three identity tiers. `user_weekly_limit_cents`
+  // is the unverified tier (the base); the social and zkPassport keys are
+  // null when unset, meaning "same as the base", and a PUT of null clears
+  // one back to that.
+  async function readLimitsPayload() {
+    const userCents = await limits.getDefaultUserLimitCents(pool);
+    const globalCents = await limits.getGlobalLimitCents(pool);
+    const systemCents = await limits.getSystemTokensLimitCents(pool);
+    const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
+    const weeklySocial = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_SOCIAL);
+    const weeklyZk = await limits.getTierWeeklyLimitCents(pool, limits.IDENTITY_TIER_ZK);
+    return {
+      user_daily_limit_cents: userCents,
+      user_weekly_limit_cents: weeklyCents,
+      user_weekly_limit_social_cents: weeklySocial,
+      user_weekly_limit_zk_cents: weeklyZk,
+      global_daily_limit_cents: globalCents,
+      system_tokens_daily_limit_cents: systemCents,
+    };
+  }
 
   router.get('/api/admin/limits', async (_req, res) => {
     try {
-      const userCents = await limits.getDefaultUserLimitCents(pool);
-      const globalCents = await limits.getGlobalLimitCents(pool);
-      const systemCents = await limits.getSystemTokensLimitCents(pool);
-      const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
-      res.json({
-        user_daily_limit_cents: userCents,
-        user_weekly_limit_cents: weeklyCents,
-        global_daily_limit_cents: globalCents,
-        system_tokens_daily_limit_cents: systemCents,
-      });
+      res.json(await readLimitsPayload());
     } catch (err) {
       log.error('admin', 'Read limits failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -779,8 +877,9 @@ function adminRoutes(config) {
   });
 
   router.put('/api/admin/limits', requireAdminWrite, async (req, res) => {
-    const { user, weekly, global, system } = req.body || {};
+    const { user, weekly, global, system, weeklySocial, weeklyZk } = req.body || {};
     const updates = [];
+    const clears = [];
     const validate = (label, v) => {
       if (v === undefined) return null;
       const n = Number(v);
@@ -788,6 +887,12 @@ function adminRoutes(config) {
         return `${label} must be a non-negative integer (cents)`;
       }
       return n;
+    };
+    // #838: the two tier caps also accept null, which clears the stored
+    // value so the tier inherits the base weekly cap again.
+    const validateOptional = (label, v) => {
+      if (v === null) return 'clear';
+      return validate(label, v);
     };
     const userN = validate('user', user);
     if (typeof userN === 'string') return res.status(400).json({ error: userN });
@@ -797,11 +902,22 @@ function adminRoutes(config) {
     if (typeof systemN === 'string') return res.status(400).json({ error: systemN });
     const weeklyN = validate('weekly', weekly);
     if (typeof weeklyN === 'string') return res.status(400).json({ error: weeklyN });
-    if (userN === null && globalN === null && systemN === null && weeklyN === null) {
-      return res.status(400).json({ error: 'Provide at least one of: user, weekly, global, system' });
+    const socialN = validateOptional('weeklySocial', weeklySocial);
+    if (typeof socialN === 'string' && socialN !== 'clear') return res.status(400).json({ error: socialN });
+    const zkN = validateOptional('weeklyZk', weeklyZk);
+    if (typeof zkN === 'string' && zkN !== 'clear') return res.status(400).json({ error: zkN });
+    if (userN === null && globalN === null && systemN === null && weeklyN === null
+        && socialN === null && zkN === null) {
+      return res.status(400).json({
+        error: 'Provide at least one of: user, weekly, weeklySocial, weeklyZk, global, system',
+      });
     }
     if (userN !== null) updates.push([limits.KEY_USER, String(userN)]);
     if (weeklyN !== null) updates.push([limits.KEY_WEEKLY, String(weeklyN)]);
+    if (socialN === 'clear') clears.push(limits.KEY_WEEKLY_SOCIAL);
+    else if (socialN !== null) updates.push([limits.KEY_WEEKLY_SOCIAL, String(socialN)]);
+    if (zkN === 'clear') clears.push(limits.KEY_WEEKLY_ZK);
+    else if (zkN !== null) updates.push([limits.KEY_WEEKLY_ZK, String(zkN)]);
     if (globalN !== null) updates.push([limits.KEY_GLOBAL, String(globalN)]);
     if (systemN !== null) updates.push([limits.KEY_SYSTEM, String(systemN)]);
 
@@ -815,25 +931,328 @@ function adminRoutes(config) {
           [key, value, req.user.id]
         );
       }
+      for (const key of clears) {
+        await pool.query('DELETE FROM platform_settings WHERE key = $1', [key]);
+      }
       // Hot-flip the cache so new limits apply on the very next request
       // instead of waiting up to 10s for the TTL to expire.
-      limits.invalidate(...updates.map(([k]) => k));
+      limits.invalidate(...updates.map(([k]) => k), ...clears);
       log.info('admin', 'Platform limits updated', {
         by: req.user.username,
         user: userN, weekly: weeklyN, global: globalN, system: systemN,
+        weeklySocial: socialN, weeklyZk: zkN,
       });
-      const userCents = await limits.getDefaultUserLimitCents(pool);
-      const globalCents = await limits.getGlobalLimitCents(pool);
-      const systemCents = await limits.getSystemTokensLimitCents(pool);
-      const weeklyCents = await limits.getDefaultUserWeeklyLimitCents(pool);
-      res.json({
-        user_daily_limit_cents: userCents,
-        user_weekly_limit_cents: weeklyCents,
-        global_daily_limit_cents: globalCents,
-        system_tokens_daily_limit_cents: systemCents,
-      });
+      res.json(await readLimitsPayload());
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── App limit ───────────────────────────────────────────────
+  //
+  // The server-wide cap on live apps (services/app-limit.js): MAX_APPS is
+  // the deploy's default, and a full admin can override it here without a
+  // deploy, which is the only lever the Kubernetes deploy has (its chart
+  // does not pass MAX_APPS through). Read open to view-only admins, like
+  // /limits; the write is requireAdminWrite.
+  //
+  // `limit` is a whole number, or null to clear the setting and fall back
+  // to MAX_APPS. A deploy that set MAX_APPS to 0 has switched the cap off,
+  // and the setting cannot switch it back on (409): see the precedence in
+  // services/app-limit.js.
+  router.get('/api/admin/app-limit', async (_req, res) => {
+    try {
+      res.json(await appLimit.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Read app limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/app-limit', requireAdminWrite, async (req, res) => {
+    const body = req.body || {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'limit')) {
+      return res.status(400).json({ error: 'Provide limit: a whole number, or null to use MAX_APPS.' });
+    }
+    const invalid = appLimit.validate(body.limit);
+    if (invalid) return res.status(400).json({ error: invalid });
+    if (appLimit.deployDefault(config) <= 0) {
+      return res.status(409).json({
+        error: 'The deploy has switched the app limit off (MAX_APPS is 0), so there is nothing to set.',
+      });
+    }
+    try {
+      await appLimit.set(pool, { value: body.limit, actorId: req.user.id });
+      log.info('admin', 'App limit updated', { by: req.user.username, limit: body.limit });
+      // Re-measure now: a raise clears a standing warning, and a cut below
+      // the live count tells the other admins at once rather than at the
+      // next sweep.
+      platformLimits.nudge(pool, config, 'apps');
+      res.json(await appLimit.adminPayload(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update app limit failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Model costs (#2570) ────────────────────────────────────
+  //
+  // One row per model: the note the picker shows, the estimate it shows
+  // beside it, what changes on that model ACTUALLY cost over the last 30
+  // days, and an override an admin types when the two have drifted apart.
+  //
+  // The observed figure never rewrites the estimate by itself — see the
+  // header of services/model-costs.js for why a median over a handful of
+  // changes is not a number to put in front of everybody automatically.
+  //
+  // PERMISSIONS: the read is open to view-only admins, like /limits and
+  // /storage — the figures are the point of the screen. The write is
+  // requireAdminWrite, like every other mutation here.
+  router.get('/api/admin/model-costs', async (_req, res) => {
+    try {
+      res.json(await modelCosts.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Read model costs failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/model-costs', requireAdminWrite, async (req, res) => {
+    const { modelId, cents } = req.body || {};
+    const id = modelCosts.normalizeModelId(modelId);
+    if (!id) return res.status(400).json({ error: 'modelId is required' });
+    // null clears the override and puts the derived estimate back, which is
+    // the only way back once one is set.
+    if (cents !== null) {
+      const n = Number(cents);
+      if (!Number.isFinite(n) || n < 0) {
+        return res.status(400).json({ error: 'cents must be a non-negative number, or null to clear the override' });
+      }
+    }
+    try {
+      await modelCosts.writeOverride(pool, {
+        modelId: id,
+        cents: cents === null ? null : Number(cents),
+        actorId: req.user.id,
+      });
+      log.info('admin', 'Model cost estimate updated', {
+        modelId: id, cents: cents === null ? null : Number(cents), by: req.user.username,
+      });
+      res.json(await modelCosts.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Update model cost failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Homeroom bot (#2684) ───────────────────────────────────
+  //
+  // The bot's shadow-mode dashboard: its settings, the queue it will look
+  // at next, the ledger of what it would have asked or built, and the two
+  // one-tap ratings per row that calibrate it. services/homeroom-bot.js
+  // owns every query; this layer only validates and gates.
+  //
+  // PERMISSIONS: the read is open to view-only admins, like /model-costs —
+  // the verdicts are the point of the screen. The three writes (settings,
+  // a rating, a "run now") are requireAdminWrite, like every mutation here,
+  // and so is the CSV export — see its own note below.
+  // `verdict=budget` is not a verdict: it selects the runs the bot stopped
+  // on their own budget, which are recorded as failures carrying the limit
+  // that tripped (#2742). It rides the same parameter because it is the same
+  // control on the screen — one "what am I looking at" picker.
+  const botRunFilters = (q) => ({
+    app: typeof q.app === 'string' && /^[a-z0-9-]{1,120}$/.test(q.app) ? q.app : null,
+    verdict: ['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'].includes(q.verdict) ? q.verdict : null,
+    budgetOnly: q.verdict === 'budget',
+  });
+
+  router.get('/api/admin/homeroom-bot', async (req, res) => {
+    try {
+      const q = req.query || {};
+      const before = /^\d+$/.test(String(q.before || '')) ? Number(q.before) : null;
+      res.json(await homeroomBot.adminPayload(pool, config, { ...botRunFilters(q), before }));
+    } catch (err) {
+      log.error('admin', 'Read homeroom bot failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The whole verdict ledger as one CSV, for the analysis the paged table
+  // cannot do: how often a `ready` was rated wrong, what a verdict costs by
+  // app, which questions keep coming back.
+  //
+  // PERMISSIONS: requireAdminWrite, unlike the read beside it. Not because
+  // the rows are more sensitive — a view-only admin reads the same fields
+  // on screen — but because a bulk downloadable artifact is the exposure
+  // class the other two CSV exports (topochain users, waitlist) and the
+  // database export already put behind the write gate. Consistent with
+  // those rather than with the screen it sits on.
+  //
+  // Streamed, not buffered: `question` and `build_note` are 4,000 characters
+  // each, so the file is written chunk by chunk as the keyset pages arrive
+  // and neither this process nor the browser ever holds the whole ledger.
+  // Every value goes through `csvField`, which quotes and carries the
+  // spreadsheet formula-injection guard — this file is model-written text
+  // and admin-typed notes, which is the case that guard exists for.
+  router.get('/api/admin/homeroom-bot/export.csv', requireAdminWrite, async (req, res) => {
+    const filters = botRunFilters(req.query || {});
+    try {
+      const scope = [
+        filters.app || 'all-apps',
+        filters.budgetOnly ? 'budget-stops' : (filters.verdict || 'all-verdicts'),
+      ].join('-');
+      const day = new Date().toISOString().slice(0, 10);
+      res.status(200);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="homeroom-bot-verdicts-${scope}-${day}.csv"`);
+      res.write(`${homeroomBot.EXPORT_COLUMNS.join(',')}\n`);
+      let rows = 0;
+      for await (const chunk of homeroomBot.iterateRunsForExport(pool, filters)) {
+        for (const row of chunk) {
+          res.write(`${homeroomBot.exportRow(row).map(csvField).join(',')}\n`);
+        }
+        rows += chunk.length;
+      }
+      log.info('admin', 'Homeroom bot verdicts exported', { by: req.user.username, rows, ...filters });
+      return res.end();
+    } catch (err) {
+      log.error('admin', 'Homeroom bot CSV export failed', { message: err.message });
+      // Past the first chunk the status line and half the file are already
+      // on the wire, so there is no JSON error to send: end the response and
+      // let the truncated download fail loudly rather than look complete.
+      if (!res.headersSent) return res.status(500).json({ error: 'Internal server error' });
+      return res.end();
+    }
+  });
+
+  router.put('/api/admin/homeroom-bot/settings', requireAdminWrite, async (req, res) => {
+    try {
+      const result = await homeroomBot.writeSettings(pool, req.body || {}, req.user.id, config);
+      if (!result.ok) return res.status(400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot settings updated', {
+        by: req.user.username, patch: Object.keys(req.body || {}),
+      });
+      res.json(await homeroomBot.adminPayload(pool, config, {}));
+    } catch (err) {
+      log.error('admin', 'Update homeroom bot settings failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/homeroom-bot/runs/:id/rating', requireAdminWrite, async (req, res) => {
+    try {
+      const { rating = null, note = null } = req.body || {};
+      const result = await homeroomBot.rateRun(pool, {
+        id: req.params.id, rating, note, actorId: req.user.id,
+      });
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      res.json({ run: result.run });
+    } catch (err) {
+      log.error('admin', 'Rate homeroom bot run failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/homeroom-bot/run', requireAdminWrite, drainGuard, async (req, res) => {
+    try {
+      const { slug, issueNumber } = req.body || {};
+      const result = await homeroomBot.enqueueNow(pool, {
+        slug, issueNumber, actorId: req.user.id,
+      });
+      if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
+      log.info('admin', 'Homeroom bot run requested', {
+        by: req.user.username, slug, issueNumber: Number(issueNumber),
+      });
+      res.status(202).json({ item: result.item });
+    } catch (err) {
+      log.error('admin', 'Homeroom bot run request failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── App storage (#2253) ────────────────────────────────────
+  //
+  // The per-app database cap: what each app's database measures against
+  // its cap, the two levers that undo a freeze, and a manual run of the
+  // leader's sweep. The read is open to view-only admins (same stance as
+  // /limits: the figures are the point of the screen); both mutations and
+  // the sweep chain requireAdminWrite, because they change what a real
+  // Postgres role may do.
+  //
+  // Slugs are checked against the shape apps.slug takes before they reach
+  // the service. The service parameterises them, so this is a 400 for
+  // garbage instead of a 404, not a safety measure.
+  const STORAGE_SLUG_RE = /^[a-z0-9][a-z0-9_-]{0,127}$/;
+
+  router.get('/api/admin/storage', async (req, res) => {
+    // Staging mock data: a preview's cloned apps table may carry no
+    // figures, and nothing is ever frozen from a preview, so ?demo=1
+    // answers with fixed rows that show every state. Read-path only,
+    // obviously fake, strict no-op in production.
+    if (IS_STAGING && req.query.demo === '1') {
+      return res.json(appStorageCap.demoAdminPayload());
+    }
+    try {
+      res.json(await appStorageCap.adminPayload(pool));
+    } catch (err) {
+      log.error('admin', 'Read app storage failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.put('/api/admin/storage/:slug', requireAdminWrite, async (req, res) => {
+    const slug = String(req.params.slug || '');
+    if (!STORAGE_SLUG_RE.test(slug)) return res.status(400).json({ error: 'Invalid app slug' });
+    const { capBytes, graceMinutes } = req.body || {};
+    if (capBytes === undefined && graceMinutes === undefined) {
+      return res.status(400).json({
+        error: 'Provide capBytes (a number of bytes, or null for the default) and/or graceMinutes',
+      });
+    }
+    if (capBytes !== undefined && capBytes !== null
+        && !(Number.isInteger(capBytes) && capBytes >= 0)) {
+      return res.status(400).json({
+        error: 'capBytes must be a non-negative integer number of bytes, or null for the default',
+      });
+    }
+    if (graceMinutes !== undefined
+        && !(Number.isInteger(graceMinutes) && graceMinutes >= 1
+          && graceMinutes <= appStorageCap.MAX_GRACE_MINUTES)) {
+      return res.status(400).json({
+        error: `graceMinutes must be an integer between 1 and ${appStorageCap.MAX_GRACE_MINUTES}`,
+      });
+    }
+    try {
+      let row = null;
+      if (capBytes !== undefined) {
+        row = await appStorageCap.setCapOverride(pool, slug, capBytes);
+        if (!row) return res.status(404).json({ error: 'App not found' });
+      }
+      if (graceMinutes !== undefined) {
+        row = await appStorageCap.grantGrace(pool, slug, graceMinutes);
+        if (!row) return res.status(404).json({ error: 'App not found' });
+      }
+      log.info('admin', 'App storage settings updated', {
+        by: req.user.username, slug, capBytes, graceMinutes,
+      });
+      res.json(row);
+    } catch (err) {
+      log.error('admin', 'Update app storage failed', { slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/admin/storage/sweep', requireAdminWrite, async (req, res) => {
+    try {
+      const sweep = await appStorageCap.sweep(pool);
+      log.info('admin', 'App storage sweep run from the console', {
+        by: req.user.username, measured: sweep.measured, frozen: sweep.frozen,
+        unfrozen: sweep.unfrozen, warned: sweep.warned, errors: sweep.errors.length,
+      });
+      res.json({ sweep });
+    } catch (err) {
+      log.error('admin', 'App storage sweep failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

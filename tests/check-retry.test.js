@@ -161,5 +161,6 @@ test('the row keeps its reason when it only passed because of a retry', () => {
   assert.equal(v.passes[0].keepReason, true, 'a green row that hid a failure would be a lie of omission');
   assert.match(v.passes[0].reason, /then passed when re-run/);
   const tsx = read('frontend/src/features/dev-board/topic/topic-head.tsx');
-  assert.match(tsx, /\{!r\.pass \|\| r\.keepReason \? \(/, 'and the renderer draws it');
+  assert.match(tsx, /if \(r\.pass && !r\.keepReason\) \{/, 'and the renderer draws it');
+  assert.match(tsx, /'Passed on retry' : 'Why it failed'/, 'behind the same door a failure gets, saying so');
 });

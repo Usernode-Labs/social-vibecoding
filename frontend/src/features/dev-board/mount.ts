@@ -42,7 +42,8 @@ import { DevChatSubView } from './chat-frame';
 import { IssueComments } from './issue-comments';
 import { issueCommentsStore, type IssueCommentsState } from './issue-comments-store';
 import { KanbanFilters } from './kanban-filters';
-import { lockedNoticeStore } from './locked-notice-store';
+import { mainPauseStore, type MainPauseState } from './main-pause-store';
+import { releaseStallStore, type ReleaseStallState } from './release-stall-store';
 import { discussionStore, type DiscussionState } from './discussion-store';
 import { kanbanFiltersStore, type KanbanFiltersState } from './kanban-filters-store';
 import { DevSessionShell } from './session-frame';
@@ -66,15 +67,18 @@ import { AutoSessionModal } from './modals/auto-session-modal';
 import { SessionChecks, type SessionChecksProps } from './modals/session-checks';
 import { CreditOptionsModal } from './modals/credit-options-modal';
 import { LlmConsentModal } from './modals/llm-consent-modal';
+import { PermissionConsentModal } from './modals/permission-consent-modal';
 import {
   autoSessionModalStore,
   creditOptionsModalStore,
   llmConsentModalStore,
+  permissionConsentModalStore,
 } from './modals/modals-store';
 import type {
   AutoSessionModalView,
   CreditOptionsModalView,
   LlmConsentModalView,
+  PermissionConsentModalView,
 } from './modals/model';
 
 /** What app-view.js passes for the card list. */
@@ -94,7 +98,8 @@ export interface DevBoardBridge {
   publishAttrPopover(patch: Partial<AttrPopoverState>): void;
   mountCardMenu(host: Element | null): void;
   publishCardMenu(rows: CardMenuRowView[]): void;
-  publishLockedNotice(locked: boolean, inviteOnly?: boolean): void;
+  publishMainPause(state: MainPauseState): void;
+  publishReleaseStall(state: ReleaseStallState): void;
   publishDiscussion(state: DiscussionState): void;
   mountIssueComments(host: Element | null): void;
   publishIssueComments(state: IssueCommentsState): void;
@@ -113,6 +118,7 @@ export interface DevBoardBridge {
   mountSessionChecks(host: Element | null, props: SessionChecksProps): void;
   mountCreditOptionsModal(host: Element | null, view: CreditOptionsModalView): void;
   mountLlmConsentModal(host: Element | null, view: LlmConsentModalView): void;
+  mountPermissionConsentModal(host: Element | null, view: PermissionConsentModalView): void;
   publishCardNow(now: number): void;
   publishAiEnabled(enabled: boolean): void;
   publishViewMode(mode: string): void;
@@ -177,6 +183,7 @@ topicHeadStore.setFlush(flushSync);
 autoSessionModalStore.setFlush(flushSync);
 creditOptionsModalStore.setFlush(flushSync);
 llmConsentModalStore.setFlush(flushSync);
+permissionConsentModalStore.setFlush(flushSync);
 
 export const devBoardBridge: DevBoardBridge = {
   mountBoard(host, options) {
@@ -207,9 +214,9 @@ export const devBoardBridge: DevBoardBridge = {
     mountLegacyPortal(host, createElement(DevChatSubView));
   },
 
-  // Like the chat sub-view above, and now for the same reason: the topic
-  // page's own back bar retired in favour of the platform header's chevron,
-  // so this takes no back-bar props either.
+  // Like the chat sub-view above: the frame takes no back-bar props. The
+  // topic page's back control is the "‹ Workshop" chip at the top of its
+  // head (#2916, topic/topic-back.tsx), rendered by TopicHead, not this frame.
   mountTopicSubView(host) {
     mountLegacyPortal(host, createElement(DevTopicSubView));
   },
@@ -238,8 +245,18 @@ export const devBoardBridge: DevBoardBridge = {
     cardMenuStore.set({ rows });
   },
 
-  publishLockedNotice(locked, inviteOnly = false) {
-    lockedNoticeStore.set({ locked, inviteOnly: !!inviteOnly });
+  // Whether a red main is pausing the app's merges, and for whom the banner
+  // carries the resume verb — see ./main-pause-store.ts. Published with the
+  // promoted list.
+  publishMainPause(state) {
+    mainPauseStore.set(state);
+  },
+
+  // A merged commit of the platform's own app that has not become the
+  // running release — see ./release-stall-store.ts. Published with the
+  // promoted list, beside the two notices above.
+  publishReleaseStall(state) {
+    releaseStallStore.set(state);
   },
 
   // Where the app's general chat is, and the last thing said in it — see
@@ -339,6 +356,11 @@ export const devBoardBridge: DevBoardBridge = {
   mountLlmConsentModal(host, view) {
     llmConsentModalStore.set({ view });
     mountLegacyPortal(host, createElement(LlmConsentModal));
+  },
+
+  mountPermissionConsentModal(host, view) {
+    permissionConsentModalStore.set({ view });
+    mountLegacyPortal(host, createElement(PermissionConsentModal));
   },
 
   // The 30s countdown tick (see card/dev-card.tsx's header).

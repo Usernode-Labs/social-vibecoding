@@ -29,6 +29,13 @@
 // bought. Keystrokes go to Browse.setQuery, which still coalesces them on the
 // 100ms debounce the input listener used to own.
 //
+// The prototype's FILTER CHIPS (scrDiscover: All / Featured / Joined / New)
+// ride the same bar, between the search and Sort. `filter` is the second
+// CONTROLLED store field beside `sort` — the pressed chip is drawn off it, so
+// it can never disagree with the rows — rendered from a copy of Browse.FILTERS
+// for the reason SORT_OPTIONS is a copy of Browse.SORTS. 'all' is its prerender
+// value; ?filter= and the session's choice apply on screen entry.
+//
 // INITIAL RENDER is the shipped shell exactly: #browse-list and #browse-empty
 // empty, #browse-empty and #browse-detail hidden, the search bar and
 // #browse-list-level visible, the clear button hidden. Every one of those
@@ -45,6 +52,7 @@
 
 import { useRef } from 'react';
 
+import { Chip, ChipRail } from '@/components/ui/chip';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { SearchIcon } from '@/components/ui/icons';
@@ -80,6 +88,17 @@ const SORT_OPTIONS: Array<{ key: string; label: string }> = [
   { key: 'new', label: 'Newest' },
 ];
 
+// The four filter chips — Browse.FILTERS, labelled. A COPY for the same reason
+// SORT_OPTIONS is one: the controller is not on `window` in the SSG pass, and
+// a chip row that prerendered empty and hydrated full would be a mismatch.
+// tests/browse-screen.test.js pins the two lists together.
+const FILTER_CHIPS: Array<{ key: string; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'featured', label: 'Featured' },
+  { key: 'yours', label: 'Joined' },
+  { key: 'new', label: 'New' },
+];
+
 export function BrowseScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -93,6 +112,7 @@ export function BrowseScreen() {
     detail: any;
     showClear?: boolean;
     sort: string;
+    filter: string;
     curated: boolean;
     grouped: boolean;
     moreExpanded: boolean;
@@ -120,16 +140,27 @@ export function BrowseScreen() {
           affordance, and on a detail page the field would filter a list
           nobody can see.
 
-          Its fill is the wallpaper's base (--home-ground, set by the body
-          rule that paints the wallpaper on this route — see "The home
-          ground" in app.css), not white: a sticky bar needs an opaque fill
-          for the rows to scroll under, and a white one read as a slab
+          At md and up its fill is the wallpaper's base (--home-ground, set
+          by the body rule that paints the wallpaper on this route — see "The
+          home ground" in app.css), not white: a sticky bar needs an opaque
+          fill for the rows to scroll under, and a white one read as a slab
           across a cream page. Dark mode reads the same variable, which the
           body's dark rule points at the inverted ground.
+
+          ON A PHONE it sits ON THE GROUND, above the list's card, not as
+          the card's head. #1919 drew the search, the sort and the list as
+          one frosted pane; the communities prototype keeps the controls
+          outside the card they narrow, the way Home and the Communities
+          screen put a control row over a card, so the card holds only
+          what it lists. The head still pins at the top, on the ground's own
+          colour, and the rows slide under it. The parts keep their names —
+          `browse-pane-head` / `browse-pane-body` / `browse-pane-note` in
+          app.css, next to the .browse-row rules — so the phone padding and
+          fill live there and only the md+ utilities stay here.
       */}
       <div
         id="browse-search-bar"
-        className={`${onDetail ? 'hidden ' : ''}sticky top-0 z-20 px-3 pt-3 pb-2 bg-[color:var(--home-ground)]`}
+        className={`${onDetail ? 'hidden ' : ''}browse-pane-head sticky top-0 z-20 md:px-3 md:pt-3 md:pb-2 md:bg-[color:var(--home-ground)]`}
       >
         <div className="relative max-w-xl">
           <SearchIcon
@@ -162,6 +193,36 @@ export function BrowseScreen() {
             &times;
           </button>
         </div>
+        {/*
+            THE FILTER CHIPS (the prototype's scrDiscover): a chip picks WHICH
+            apps the list holds, Sort below orders them, and the search above
+            narrows them — see Browse.filterApps for what each chip admits.
+            The language's own filter chip (@/components/ui/chip): a toggle
+            with `aria-pressed`, selection drawn as the solid inversion, not
+            the accent. `bar` is its size for a control row; `px-4` (over the
+            primitive's `px-6`, through cn's twMerge) keeps all four on one
+            line at 390px, and the rail scrolls rather than wrapping if a
+            larger text size does not fit them.
+        */}
+        <ChipRail
+          id="browse-filter-chips"
+          role="group"
+          aria-label="Filter apps"
+          className="mt-2 max-w-xl gap-2 px-0 py-0"
+        >
+          {FILTER_CHIPS.map((f) => (
+            <Chip
+              key={f.key}
+              size="bar"
+              className="browse-filter-chip px-4"
+              selected={state.filter === f.key}
+              data-filter={f.key}
+              onClick={() => browse()?.setFilter(f.key)}
+            >
+              {f.label}
+            </Chip>
+          ))}
+        </ChipRail>
         {/*
             Sort (#1383). Rides the search bar rather than sitting in its own
             strip: both narrow the same list, and one sticky row costs the
@@ -207,13 +268,21 @@ export function BrowseScreen() {
           // order the rows below were actually built with, which a screenshot
           // of a <select> cannot be asserted on.
           data-sort={state.sort}
-          // Phone: ONE white card holding hairline-separated rows — the
-          // language's grouped list, and the shape Settings and the home
-          // panels already draw. The rows used to run full-bleed on the grey
-          // page ground with no surface under them at all. At md+ nothing
-          // changes: every row is its own box in the grid (app.css), so the
-          // card classes are scoped to below that breakpoint.
-          className="max-md:mx-3 max-md:my-3 max-md:overflow-hidden max-md:rounded-2xl max-md:bg-white max-md:dark:bg-zinc-900 md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"
+          // The chip the rows were filtered with, beside the order: the
+          // declared check for the chips reads it for the same reason.
+          data-filter={state.filter}
+          // Phone: the BODY of the pane whose head is the search bar above
+          // (#1919) — one frosted sheet holding the hairline-separated rows,
+          // continuing the head's ring and closing its radius. It used to be
+          // a plain white rounded-2xl card under a wallpaper-coloured bar;
+          // the pane treatment is `browse-pane-body` in app.css, scoped to
+          // below md. At md+ nothing changes: every row is its own box in the
+          // grid (app.css), so only the grid utilities live here.
+          //
+          // Three columns only from xl (1280px), not lg (QA 2026-09-24 Q10):
+          // at 1024 the sidebar leaves ~770px, and a third column squeezed
+          // the name out of every box entirely.
+          className="browse-pane-body md:grid md:grid-cols-2 xl:grid-cols-3 md:gap-3 md:p-3"
         >
           {state.error
             ? (
@@ -227,11 +296,17 @@ export function BrowseScreen() {
             )
             : <BrowseRows rows={state.rows} curated={state.curated} grouped={state.grouped} moreExpanded={state.moreExpanded} />}
         </div>
+        {/*
+            The nothing-to-show line. On a phone it stands in for the list as
+            the pane's body (`browse-pane-note`, app.css): the list above it
+            is empty and collapsed then, and without this the head would end
+            on two square corners over a bare page.
+        */}
         <div
           id="browse-empty"
           className={state.empty
-            ? 'px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'
-            : 'hidden px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'}
+            ? 'browse-pane-note px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'
+            : 'hidden browse-pane-note px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400'}
         >{state.empty}</div>
       </div>
       {/*

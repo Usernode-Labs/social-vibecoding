@@ -76,11 +76,17 @@ import { WaitlistScreen } from './features/auth/waitlist';
 import { MoreScreen } from './features/auth/more';
 import { DevConsolePanel } from './features/dev-console';
 import { HomeScreen } from './features/home';
+import { OnboardingTour } from './features/home/tour';
 import { ImproveIsland } from './features/improve';
 import { AppContextIsland } from './features/app-context';
 import { LeaderboardScreen } from './features/leaderboard';
 import { PlatformHeader } from './features/header/platform-header';
 import { MessagesScreen } from './features/messages';
+import { ParkedStrip, PlatformTabs, SkipToNavigation } from './features/nav';
+import { SidePanel } from './features/side-panel';
+import { GlobalChatScreen } from './features/global-chat';
+import { AgentSessionScreen } from './features/agent-session';
+import { WorkshopScreen } from './features/workshop';
 import { NotificationsIsland } from './features/notifications';
 import { MobileInstallBanner } from './features/mobile-install';
 import { SettingsScreen } from './features/settings';
@@ -94,6 +100,13 @@ import { assetUrl } from './lib/asset-url';
 export function Shell() {
   return (
     <>
+      {/*
+          "Skip to navigation" (QA 2026-09-24 Q18): first in the document so
+          it is the first Tab stop, invisible until focused. The rail comes
+          after every screen below, so without it the sections were the LAST
+          thing a keyboard reached. No id; features/nav/skip-link.tsx.
+      */}
+      <Island name="SkipToNavigation"><SkipToNavigation /></Island>
       {/*
           Top bar — a React island since #1079 chunk B. The markup and every
           layout note that came with it now live in
@@ -162,15 +175,32 @@ export function Shell() {
       */}
       <Island name="BrowseScreen"><BrowseScreen /></Island>
       {/*
+          Workshop screen (#workshop): the viewer's apps with, on each row, how
+          many items that app's own Workshop page holds for them — what they
+          are working on, and the votes waiting on them. Tapping a row goes to
+          that app's Workshop (/app/<slug>/workshop) and the header's back
+          control comes back here; see App.navigateToWorkshop and
+          App._appBackHref in public/js/app.js.
+
+          A fully React-owned sibling screen like #messages-screen: no
+          `public/js/**` module writes inside this root. It ships hidden and
+          EMPTY — the rows arrive from GET /api/apps + GET /api/workshop/counts
+          in the controller's open(), never in the first render — so the
+          prerender and the hydration agree. Mounted by App.navigateToWorkshop,
+          which shows it through the visibility store (#workshop-screen is in
+          App.REACT_SCREEN_IDS).
+      */}
+      <Island name="WorkshopScreen"><WorkshopScreen /></Island>
+      {/*
           Leaderboard screen (hidden by default): the one place the group's
           shared progress lives — the Topochain standings, the Kudos
           leaderboard and the season's challenges, as a three-tab strip.
-          Hash routes #leaderboard (the STANDINGS — the primary tab, labelled
-          simply "Leaderboard"), #leaderboard/[prs|users|history|users/<name>]
-          (Kudos) and #leaderboard/challenges.
-          The legacy #topochain/leaderboard and #leaderboard/topochain hashes
-          alias onto the standings tab and self-heal to the bare
-          #leaderboard; #challenges and #topochain/seasons alias onto the
+          Hash routes #leaderboard/challenges (the default tab, which the
+          bare #leaderboard opens and self-heals to — #2374),
+          #leaderboard/[prs|users|history|users/<name>] (Kudos) and
+          #leaderboard/topochain (the STANDINGS, labelled simply
+          "Leaderboard"). The legacy #topochain/leaderboard hash aliases onto
+          the standings tab; #challenges and #topochain/seasons alias onto the
           challenges tab. Mounted by App.navigateToLeaderboard.
 
           A React island as of #1083 chunk F, and the chunk's biggest step:
@@ -250,13 +280,29 @@ export function Shell() {
       */}
       <Island name="MessagesScreen"><MessagesScreen /></Island>
       {/*
+          Global Chat (#2377, #2543) is a React-owned sibling screen. It ships
+          hidden for hydration parity, then the hash router reveals it at the
+          stable #chat/<uuid> address of a session selected from Improve.
+          App.REACT_SCREEN_IDS keeps visibility single-owned by React.
+      */}
+      <Island name="GlobalChatScreen"><GlobalChatScreen /></Island>
+      {/*
+          Agent sessions (#2779): one conversation with the Mayor that works
+          on any app. A React-owned sibling screen like Global Chat above,
+          shipped hidden and empty, revealed by the hash router at #agent/<id>
+          (a phone's surface; a desktop draws the same panel in the Messages
+          pane). Listed in App.REACT_SCREEN_IDS, so React alone writes its
+          `hidden`.
+      */}
+      <Island name="AgentSessionScreen"><AgentSessionScreen /></Island>
+      {/*
           The Topochain leaderboard used to be its own <main> screen here
           (#topochain-leaderboard-screen, Task 14). The header slim-down
           merged it into the Leaderboard screen above, where it is now the
-          PRIMARY (default) tab: #topochain-leaderboard-root lives inside
+          standings tab: #topochain-leaderboard-root lives inside
           #leaderboard-screen and TopochainLeaderboard renders into it
           unchanged. The legacy #topochain/leaderboard hash still works —
-          the router replaceStates it to the bare #leaderboard.
+          the router replaceStates it to #leaderboard/topochain.
       */}
       {/*
           The Topochain seasons/events screen used to be its own <main> here
@@ -361,6 +407,54 @@ export function Shell() {
       */}
       <Island name="AppViewIsland"><AppViewIsland /></Island>
       {/*
+          #platform-side-panel — the panel BESIDE a running app, on a
+          desktop-width window (features/side-panel/). While an app runs on
+          its App tab, its Workshop, its discussion, a proposal, an issue, a
+          change and a conversation open here instead of replacing it, and the
+          app keeps running beside them.
+
+          Directly after #app-view because that is the one screen it belongs
+          to, and OUTSIDE it because #app-view is a column whose frame must
+          never be re-parented: the panel is `position: fixed` down the right
+          edge, and the app's box narrows by a margin keyed off
+          `<html data-side-panel>` (public/css/app.css) — a size change, never
+          a reload. Ships hidden and empty; the frame inside it exists only
+          while a panel is open.
+      */}
+      <Island name="SidePanel"><SidePanel /></Island>
+      {/*
+          #platform-tabs — the shell's five sections, as a permanent bar at
+          the foot of the screen. New in this change; features/nav/tab-bar.tsx
+          carries the whole of why, and public/css/app.css the arithmetic that
+          reserves its band on the screens above it.
+
+          HERE, after the last screen root and before every panel and overlay,
+          for a reason that is only half about z-index (it has one, and the
+          panels' is higher): this is a NAVIGATION control for the screens
+          above it, and a reader of this file should meet it where the screens
+          end rather than among the sheets. It is `position: fixed`, so its
+          place in the flow decides nothing about where it paints.
+
+          It is NOT inside any of the roots above. A bar that belonged to a
+          screen would be re-created on every swap, and the one thing a tab
+          bar must never do is flicker when you use it.
+      */}
+      {/*
+          #platform-parked — the app you left, offered above the bar until it
+          is resumed or dismissed. The bar makes the platform's five places
+          one tap each and in doing so makes the app you were IN the one thing
+          that is not: no tab, no header strip once you leave, and Home's grid
+          is every app rather than the one you were halfway through. Every
+          host that runs other people's programs keeps a handle to the thing
+          you stepped out of; this is that handle.
+
+          BEFORE the bar in this file and ABOVE it on screen: it is a
+          temporary offer sitting on top of permanent furniture, which is what
+          both orders say.
+      */}
+      <Island name="ParkedStrip"><ParkedStrip /></Island>
+      <Island name="PlatformTabs"><PlatformTabs /></Island>
+      {/*
           #notifications-panel (the bell dropdown) and #work-drawer-panel (the
           header-cog "your work" drawer) both used to be islands here — same
           chrome, same top-right position, one icon apart. THE UI OVERHAUL
@@ -440,6 +534,22 @@ export function Shell() {
       */}
       <Island name="Dialogs"><Dialogs /></Island>
       {/*
+          #2255 — the welcome tour (four steps, and opened only when asked,
+          since #3240), replacing the one-line #home-welcome banner (#1561). A fixed overlay rather than a dialog:
+          it dims the page and cuts a hole around the thing each step is
+          about, so it has to sit OVER the header (which is `relative z-10`
+          in normal flow) and over the screens, and it must not be lifted
+          into the kit's modal shell the way frontend/src/lib/static-modal.ts
+          lifts the nine dialogs' cards.
+
+          Here, after the dialogs, for the same reason the two staging
+          overlays are here: everything it points at has to exist in the
+          document above it. It ships `hidden` and empty of state, and it
+          opens only once the viewer is known, the first-run terms gate has
+          settled and Home is on screen. See features/home/tour/index.tsx.
+      */}
+      <Island name="OnboardingTour"><OnboardingTour /></Island>
+      {/*
           #1085 chunk H, step 3: the Dev board's runtime-injected regions.
           Renders NO DOM of its own — it is the anchor that lets
           features/dev-board portal React subtrees into hosts the legacy
@@ -449,31 +559,6 @@ export function Shell() {
           lib/legacy-portals.tsx.
       */}
       <Island name="LegacyPortals"><LegacyPortals /></Island>
-      {/*
-          #dev-ws-rail-host — an EMPTY anchor, and its emptiness is the point.
-
-          The Workshop's phone tab bar has to pin to the real viewport. It
-          cannot do that from where it is rendered: `position: fixed` resolves
-          against the nearest ancestor that establishes a containing block,
-          and the Dev board's frame wears `.dc-lift-strip`, whose
-          `backdrop-filter: blur(24px) saturate(1.6)` is exactly that. So
-          `bottom: 0` inside the Workshop means the bottom of a frosted panel,
-          not the bottom of the screen — which is how the bar first came to be
-          sticky rather than fixed.
-
-          Walking the real ancestor chain, that wrapper is the ONLY blocker:
-          #dev-workshop, #dev-body, #dev-forum-scroll, #app-view and the page
-          ground are all clean. Stripping the blur would fix it too, but
-          `.dc-lift` is shared with the chat frame, the topic frame, the
-          notifications rail, the improve panel and the app-context sheet —
-          far too much blast radius for one screen's bar. So the bar comes out
-          to a host that was never inside the frost instead, through a React
-          portal, and stays part of the Workshop's component tree.
-
-          It renders nothing on its own, so the prerendered document and the
-          first client render agree whether or not the Dev screen is up.
-      */}
-      <div id="dev-ws-rail-host" />
       {/*
           PlatformUI — the platform's single wrapper over the native kit
           (toasts, alerts, confirms, sheets). Loaded FIRST in the bundle:
@@ -658,9 +743,9 @@ export function Shell() {
 
           They moved TOGETHER with leaderboard.js because they are one screen:
           the Leaderboard module mounts them lazily when their tab is first
-          shown — #leaderboard -> TopochainLeaderboard.open() (the default tab,
-          so that one mounts on the screen's first open),
-          #leaderboard/challenges -> TopochainChallenges.open() — and both read
+          shown — #leaderboard/challenges -> TopochainChallenges.open() (the
+          default tab, so that one mounts on the screen's first open),
+          #leaderboard/topochain -> TopochainLeaderboard.open() — and both read
           the event selection from TopochainEventContext, which owns the shared
           picker + hero. Inside the bundle that is an ordinary import in
           features/leaderboard/index.tsx rather than an order implied by these

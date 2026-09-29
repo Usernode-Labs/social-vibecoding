@@ -173,11 +173,19 @@ test('awaiting_secrets completes the steps that ran and stops, it does not fail 
 test('a polled payload is folded into the store under the store\'s own names', async () => {
   const m = fresh();
   m.watchCreation('my-app');
-  await m.fetchCreationProgress('my-app', async () => ({
-    ok: true,
-    json: async () => ({ app: { status: 'creating', creationPhase: 'deploy' } }),
-  }));
+  const calls = [];
+  await m.fetchCreationProgress('my-app', async (...args) => {
+    calls.push(args);
+    return {
+      ok: true,
+      json: async () => ({ app: { status: 'creating', creationPhase: 'deploy' } }),
+    };
+  });
   assert.equal(m.creationProgressStore.get().phase, 'deploy');
+  assert.deepEqual(calls, [[
+    '/api/apps/my-app?status_recheck=1',
+    { cache: 'no-store' },
+  ]], 'status polling explicitly bypasses the first-paint app-detail cache');
 });
 
 test('a polled failure carries the reason out of lastFailure', async () => {

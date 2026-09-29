@@ -46,9 +46,15 @@ const nativeJs = fs.readFileSync(
 // because the header's chat bubble was on every route, so a full-screen
 // Messages had no honest answer to "back to where?". The bubble is gone —
 // Messages is a row of the chip's menu — and a menu row goes to a page.
+// #workshop-screen joins them as a first-class root: the Workshop across all
+// your apps is a page in the chip's menu, so it replaces the screen you were
+// on rather than presenting over it, and it takes the navigate/exit pair every
+// other root has.
+// #agent-session-screen (#2779) is a root with the same navigate/exit pair
+// as Global Chat's: one conversation with the Mayor at #agent/<id>.
 const SCREEN_ROOTS = ['app-view', 'home-screen', 'browse-screen',
-  'leaderboard-screen', 'profile-screen', 'admin-screen', 'settings-screen',
-  'messages-screen'];
+  'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
+  'settings-screen', 'messages-screen', 'global-chat-screen', 'agent-session-screen'];
 
 const NAVIGATIONS = [
   { fn: 'navigateToLeaderboard', reveal: 'leaderboard-screen' },
@@ -57,10 +63,13 @@ const NAVIGATIONS = [
   { fn: 'navigateToAdminConsole', reveal: 'admin-screen' },
   { fn: 'navigateToSettings', reveal: 'settings-screen' },
   { fn: 'navigateToMessages', reveal: 'messages-screen' },
+  { fn: 'navigateToGlobalChat', reveal: 'global-chat-screen' },
+  { fn: 'navigateToAgentSession', reveal: 'agent-session-screen' },
+  { fn: 'navigateToWorkshop', reveal: 'workshop-screen' },
 ];
 
 const EXITS = ['_exitLeaderboard', '_exitProfile', '_exitBrowse',
-  '_exitAdminConsole', '_exitSettings', '_exitMessages'];
+  '_exitAdminConsole', '_exitSettings', '_exitMessages', '_exitGlobalChat', '_exitAgentSession', '_exitWorkshop'];
 
 // The body of a top-level App method, from its two-space-indented
 // definition to the closing `},` at the same indent.
@@ -93,8 +102,8 @@ test('_showOnlyScreen hides every other root, reveals one, resets the chevron', 
   // React store for a React-owned root and falls back to the class otherwise.
   assert.match(body, /App\._setScreenVisible\(id, false\)/, 'the rest are hidden');
   assert.match(body, /App\._setScreenVisible\(revealId, true\)/, 'the target is revealed');
-  assert.match(body, /App\.setBackIcon\(revealId === 'home-screen' \|\| revealId === 'browse-screen' \? 'none' : 'home'\)/,
-    'Home/Browse share their root header; secondary screens keep a Home button');
+  assert.match(body, /App\.setBackIcon\(\.\.\.App\._backSlotFor\(revealId\)\);/,
+    'the back slot is published from the table, inside the same callback');
   // The comment is load-bearing: the ordering rule is invisible from the
   // call sites, so it must be stated where the primitive lives.
   const doc = appJs.slice(appJs.indexOf('  SCREEN_IDS:') - 1400,
@@ -208,6 +217,7 @@ test('every screen entry is guarded against a duplicate dispatch', () => {
     navigateToBrowse: /if \(App\._inBrowse && window\.Browse\?\.isOpen\?\.\(\)\)/,
     navigateToAdminConsole: /if \(App\._inAdmin && window\.AdminConsole\?\.isOpen\?\.\(\)\)/,
     navigateToSettings: /if \(App\._inSettings && window\.Settings\?\.isOpen\?\.\(\)\)/,
+    navigateToGlobalChat: /if \(App\._inGlobalChat && globalChat\?\.isOpen\?\.\(\)\)/,
     // navigateToMessages was here. It is a sheet resolver now, and a sheet
     // needs no duplicate-dispatch guard: presenting one that is already
     // presented is a no-op in the controller, and there is no View Transition

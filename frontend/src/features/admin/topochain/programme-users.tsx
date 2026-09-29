@@ -34,7 +34,7 @@ import type { Column, PageMeta } from './ui.tsx';
 //
 // Two things worth keeping in view:
 //
-//   - THE TYPED DELETE. This DELETE has no server-side confirmation body
+//   - THE TYPED DELETE. The API also requires an explicit confirmation body
 //     param at all (only a self-delete guard and a last-full-admin guard) and
 //     it targets the SHARED platform users table — it can remove a real
 //     login, including another admin, not just a programme row. The admin
@@ -112,10 +112,9 @@ function DeleteConfirm({ user, onCancel, onConfirm }: {
   return (
     <div className="rounded-xl border border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-950/30 p-4">
       <p className="text-xs text-red-700 dark:text-red-300 mb-3">
-        {'This permanently deletes '}
+        {'This permanently anonymises '}
         <strong>{expected}</strong>
-        {' from the platform users table. This can be ANY platform user, including real logins '}
-        {'and other admins, not just a user of this programme. Type '}
+        {' from their platform account and signs them out everywhere. This affects ANY platform user, not just programme membership. Their name, email and private data are erased; messages, votes and contributions remain under an anonymous “deleted-user” name. External cleanup may remain pending. Type '}
         <code>{expected}</code>
         {' exactly to confirm.'}
       </p>
@@ -432,7 +431,10 @@ type OpenPanel =
   | { kind: 'import' }
   | { kind: 'export' };
 
-function ProgrammeUsers() {
+// `onOpenDetails` opens the Users section's details view for this account
+// (same `users` table, same id). The row's editing moved there, so the list
+// keeps only More and a small overflow menu.
+function ProgrammeUsers({ onOpenDetails }: { onOpenDetails?: (id: number) => void } = {}) {
   const write = canWrite();
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
@@ -441,6 +443,8 @@ function ProgrammeUsers() {
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
   const [open, setOpen] = useState<OpenPanel>({ kind: 'none' });
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  // One open overflow menu at a time, closed by an outside click or Escape.
+  const [menu, setMenu] = useState<number | null>(null);
   const [events, setEvents] = useState<SeasonEvent[]>([]);
   const [eventsLoaded, setEventsLoaded] = useState(false);
   const alive = useRef(true);
@@ -473,6 +477,20 @@ function ProgrammeUsers() {
 
   useEffect(() => { load(); }, [load]);
 
+  useEffect(() => {
+    if (menu == null) return undefined;
+    const onDoc = (e: MouseEvent) => {
+      if (!(e.target as Element)?.closest?.('[data-programme-menu]')) setMenu(null);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenu(null); };
+    document.addEventListener('click', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('click', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menu]);
+
   const commitSearch = useCallback((raw: string) => {
     const next = raw.trim();
     setSearch((current) => (current === next ? current : next));
@@ -489,17 +507,32 @@ function ProgrammeUsers() {
 
   const remove = useCallback(async (id: number) => {
     if (!canWrite()) return;
-    const res = await send('DELETE', `/api/v4/admin/users/${encodeURIComponent(id)}`);
+    const res = await send('DELETE', `/api/v4/admin/users/${encodeURIComponent(id)}`, { confirmation: 'DELETE' });
     setDeleteConfirm(null);
     if (res.ok && res.data?.success) { load(); return; }
     topo()._alert((res.data && res.data.error) || 'Delete failed.');
   }, [load]);
 
   const columns: Column<User>[] = [
-    { label: 'User', primary: true, cell: (u) => u.display_name || ident(u) },
-    { label: 'Email', cell: (u) => u.email || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    {
+      label: 'User',
+      primary: true,
+      cell: (u) => {
+        const handle = ident(u);
+        const name = u.display_name || handle;
+        return (
+          <>
+            <span>{name}</span>
+            {name !== handle && handle
+              ? <span className="block text-xs font-normal text-zinc-500 dark:text-zinc-400">{handle}</span>
+              : null}
+          </>
+        );
+      },
+    },
     { label: 'Telegram', cell: (u) => u.telegram || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
     { label: 'Discord', cell: (u) => u.discord || '—', tdClass: 'text-xs text-zinc-500 dark:text-zinc-400' },
+    { label: 'Events', cell: (u) => String(u.events?.length ?? 0) },
     {
       // #1558: "Podium" named the database flag; the header and both values
       // say what the reader is looking at now. The amber stays: the excluded
@@ -510,7 +543,7 @@ function ProgrammeUsers() {
         ? <span className="text-amber-800 dark:text-amber-400">Excluded</span>
         : 'Ranked'),
     },
-    { label: 'Accept logs', cell: (u) => (u.accept_logs ? 'yes' : 'no') },
+    { label: 'Logs', cell: (u) => (u.accept_logs ? 'yes' : 'no') },
   ];
 
   const close = useCallback(() => setOpen({ kind: 'none' }), []);
@@ -624,36 +657,57 @@ function ProgrammeUsers() {
               items={items}
               rowKey={(u) => u.id}
               columns={columns}
-              actions={write ? (u) => (
+              actions={(u) => (
                 <>
-                  <button
-                    data-toggle-podium={u.id}
-                    type="button"
-                    className={BTN.row}
-                    title={u.exclude_podium ? RANKING_TITLE.include : RANKING_TITLE.exclude}
-                    onClick={() => togglePodium(u.id)}
-                  >
-                    {u.exclude_podium ? 'Include in ranking' : 'Exclude from ranking'}
-                  </button>
-                  <button
-                    data-edit-u={u.id}
-                    type="button"
-                    className={BTN.row}
-                    onClick={() => setOpen({ kind: 'form', id: u.id })}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    data-delete-u={u.id}
-                    data-identifier={ident(u)}
-                    type="button"
-                    className={BTN.rowDanger}
-                    onClick={() => setDeleteConfirm(u.id)}
-                  >
-                    Delete
-                  </button>
+                  {onOpenDetails ? (
+                    <button
+                      data-more-u={u.id}
+                      type="button"
+                      className={BTN.row}
+                      onClick={() => onOpenDetails(u.id)}
+                    >
+                      More
+                    </button>
+                  ) : null}
+                  {write ? (
+                    // Opens in place rather than as a floating menu: the
+                    // table scrolls horizontally, which would clip a popup.
+                    <span className="inline-flex flex-wrap items-center justify-end gap-1" data-programme-menu={u.id}>
+                      <button
+                        type="button"
+                        className={BTN.row}
+                        aria-label="Programme user actions"
+                        aria-expanded={menu === u.id}
+                        onClick={(e) => { e.stopPropagation(); setMenu(menu === u.id ? null : u.id); }}
+                      >
+                        ⋯
+                      </button>
+                      {menu === u.id ? (
+                        <>
+                          <button
+                            data-toggle-podium={u.id}
+                            type="button"
+                            className={BTN.row}
+                            title={u.exclude_podium ? RANKING_TITLE.include : RANKING_TITLE.exclude}
+                            onClick={() => { setMenu(null); togglePodium(u.id); }}
+                          >
+                            {u.exclude_podium ? 'Include in ranking' : 'Exclude from ranking'}
+                          </button>
+                          <button
+                            data-delete-u={u.id}
+                            data-identifier={ident(u)}
+                            type="button"
+                            className={BTN.rowDanger}
+                            onClick={() => { setMenu(null); setDeleteConfirm(u.id); }}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      ) : null}
+                    </span>
+                  ) : null}
                 </>
-              ) : undefined}
+              )}
               // The typed-identifier confirm rides along as the row's extra
               // block, so it lands directly under the row in the table AND
               // inside the card on a phone.

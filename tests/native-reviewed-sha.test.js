@@ -190,16 +190,22 @@ test('a clean merge over a run still in flight rebuilds instead of carrying', as
   }
 });
 
-test('a settled failure carries too: a merge of main does not change what the author must fix', async () => {
+test('a settled failure does NOT carry: main may be what fixes it, so the merged tree is re-checked (#2693)', async () => {
+  // This used to assert the opposite — "a merge of main does not change what
+  // the author must fix". It does when the failure was main's: proposal 4654
+  // went red on a red base, main was repaired, the sync merged the repair in
+  // and carried the old failure onto the merged commit with nothing building.
   const r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
   const { votes, rebuilds, restore } = load(r);
   const pool = makePool({ epoch: 0 });
   try {
-    await votes.reconcileNativeReviewedHead({
+    const out = await votes.reconcileNativeReviewedHead({
       config: {}, pool, session: session(r, { check_state: 'failing' }), notify: false,
     });
-    assert.equal(pool.kickedChecks(), true);
-    assert.deepEqual(rebuilds, []);
+    assert.equal(out.kind, 'mechanical');
+    assert.equal(out.votesKept, true, 'the votes still stand — only the checks policy differs');
+    assert.equal(pool.kickedChecks(), false, 'the failing verdict is not stamped onto the merged commit');
+    assert.deepEqual(rebuilds, [r.featureHead()], 'the checks re-run against the merged commit');
   } finally { restore(); r.cleanup(); }
 });
 
@@ -208,12 +214,18 @@ test('an author push clears the approvals and re-runs the checks', async () => {
   const { votes, restore } = load(r);
   const pool = makePool({ epoch: 0 });
   try {
+    const revised = session(r, { pr_summary_md: 'The earlier explanation.' });
     const out = await votes.reconcileNativeReviewedHead({
-      config: {}, pool, session: session(r), notify: false,
+      config: {}, pool, session: revised, notify: false,
     });
     assert.equal(out.kind, 'authored');
     assert.equal(out.votesKept, false);
     assert.equal(out.epoch, 1, 'the epoch moves, which is what stops the old votes counting');
+    assert.equal(revised.pr_summary_md, 'The earlier explanation.',
+      'the previous explanation remains readable while its freshness is reviewed');
+    assert.equal(revised.pr_summary_stale, true);
+    assert.ok(pool.writes.some((w) => /pr_summary_previous_md = COALESCE/.test(w.sql)),
+      'the prior explanation is retained when the reviewed head moves');
   } finally { restore(); r.cleanup(); }
 });
 
@@ -356,5 +368,37 @@ test('imported proposals are not reconciled here at all', async () => {
     });
     assert.equal(out.enforced, false, 'the import sweeper owns that head');
     assert.equal(pool.writes.length, 0);
+  } finally { restore(); r.cleanup(); }
+});
+
+test('a caller that has just pushed asks the mirror for a fetch of its own (#2619)', async () => {
+  // `fresh` was accepted here and then never read: seven call sites asked to
+  // re-read the branch and silently got whatever fetch happened to be in
+  // flight for the repository. For the four that call this immediately AFTER
+  // pushing, that fetch can predate their own push — so the reconcile saw the
+  // old tip, concluded the head had not moved, and returned `unchanged`.
+  // Upstream that became `votesCleared: 0, checksRerun: false,
+  // previewRebuilding: false`, leaving the verdict and the tally on the
+  // previous commit until a sweep caught up minutes later.
+  const r = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+  const { votes, restore } = load(r);
+  const mirror = require('../src/services/repo-mirror');
+  const asked = [];
+  mirror.ensureMirror = async (owner, name, options) => { asked.push(options); return r.dir; };
+  const pool = makePool({ epoch: 0 });
+  try {
+    await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r), notify: false, fresh: true,
+    });
+    assert.equal(asked.length, 1);
+    assert.equal(asked[0].fresh, true,
+      'the push and this read are in one request, so it must not join an older fetch');
+
+    // And the sweeps, which have no write of their own to see, still coalesce.
+    asked.length = 0;
+    await votes.reconcileNativeReviewedHead({
+      config: {}, pool, session: session(r), notify: false,
+    });
+    assert.equal(asked[0].fresh, false);
   } finally { restore(); r.cleanup(); }
 });

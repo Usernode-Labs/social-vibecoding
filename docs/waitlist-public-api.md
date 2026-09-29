@@ -9,8 +9,8 @@ This document is written for an integrator implementing against the API
 with no access to the source: an agency running its own signup form, a
 partner landing page, a status dashboard. Everything below reflects the
 behaviour of `src/routes/public-api.js`, `src/routes/waitlist-connect.js`,
-`src/middleware/rate-limits.js` and `src/services/waitlist-integrator.js`
-as shipped.
+`src/middleware/public-cors.js`, `src/middleware/rate-limits.js` and
+`src/services/waitlist-integrator.js` as shipped.
 
 - [Base URL and transport](#base-url-and-transport)
 - [Concepts](#concepts)
@@ -23,6 +23,7 @@ as shipped.
   - [POST /api/public/waitlist/more/:token](#post-apipublicwaitlistmoretoken)
   - [GET /waitlist/connect/:provider](#get-waitlistconnectprovider)
   - [GET /waitlist/connect/:provider/callback](#get-waitlistconnectprovidercallback)
+  - [POST /waitlist/connect/:provider/complete](#post-waitlistconnectprovidercomplete)
 - [Rate limits](#rate-limits)
 - [Trusted integrator headers](#trusted-integrator-headers)
 - [Errors](#errors)
@@ -42,10 +43,21 @@ A self-hosted deployment serves the same paths on its own
 
 Three transport facts an integrator has to plan around:
 
-1. **There is no CORS.** The API sends no `Access-Control-Allow-Origin`
-   header, so a browser on your own origin cannot call it. The
-   integration is server to server. Post from your backend, and keep any
-   integrator secret there too.
+1. **`/api/public/*` answers cross-origin.** Every response under that
+   prefix carries `Access-Control-Allow-Origin: *`, and the `OPTIONS`
+   preflight a JSON `POST` triggers is answered with a `204` carrying
+   the allowed methods (`GET, POST, OPTIONS`) and request headers
+   (`Content-Type, Accept`). A browser on your own origin — a marketing
+   page, a status widget — can therefore call these endpoints directly.
+   The wildcard is never an echoed `Origin`, and
+   `Access-Control-Allow-Credentials` is never sent, so no cookie can
+   ride the call. Two things to plan around: `x-waitlist-client-key` is
+   deliberately **not** in the allowed request headers, so the
+   integrator secret stays on your backend and a browser signup is
+   always on the ordinary per-IP budget; and that prefix is the whole
+   scope, so the three `/waitlist/connect/*` endpoints below carry no
+   CORS headers — they are browser navigations plus one call the
+   platform's own callback page makes to its own origin.
 2. **Request bodies are JSON.** Send `Content-Type: application/json` on
    every POST. Responses are JSON except for the two redirect endpoints,
    which answer `302` with a `Location` header.
@@ -165,7 +177,9 @@ No headers, no body, no rate limit.
     "UY": "Uruguay",
     "ZM": "Zambia",
     "ZW": "Zimbabwe"
-  }
+  },
+  "waitlist_url": "https://onhomeroom.com/waitlist",
+  "marketing_url": "https://onhomeroom.com"
 }
 ```
 
@@ -193,6 +207,17 @@ can be reworded without notice; keys are what gets stored.
 > endpoint's flat map. Nothing you send needs to change for the ISO
 > codes you were already sending.
 
+`marketing_url` is this deployment's public marketing site, and
+`waitlist_url` is its waitlist page,
+absolute and without a query string. It is built from the
+`MARKETING_BASE_URL` platform variable (default
+`https://onhomeroom.com`), which is why it is served rather than
+documented as a constant: a self-hosted deployment has its own
+marketing site, and a client that hardcoded the hosted one would send
+its readers to a page about somebody else's product. It is always
+present. Append `?ref=<code>` to it and you have the same shareable
+invite link `GET /api/public/waitlist/more/:token` returns.
+
 ### POST /api/public/waitlist
 
 Join the waitlist. This is the only write in the API that does not
@@ -213,7 +238,7 @@ X-Waitlist-Client-IP: <end user address, optional>
 | `email` | string | **yes** | Trimmed and lowercased. Must match `^[^\s@]+@[^\s@]+\.[^\s@]+$` and be at most 255 characters. |
 | `discovery_source` | string | no | One key from `discovery_sources`. An unknown key is a `422`. |
 | `country` | string | no | One key from `countries`, case-insensitive, stored uppercased. An unknown code is a `422`. |
-| `invite_code` | string | no | A 10-character `[a-z0-9]` referral code from another signup's invite link (`/#waitlist?ref=<code>`). An unresolvable code is ignored rather than refused, so a stale link never blocks a join. |
+| `invite_code` | string | no | A 10-character `[a-z0-9]` referral code from another signup's invite link (`<marketing origin>/waitlist?ref=<code>`, and `/#waitlist?ref=<code>` for links minted before the marketing page owned it). An unresolvable code is ignored rather than refused, so a stale link never blocks a join. |
 
 A bare `{"email": "…"}` is a complete, valid signup.
 
@@ -441,7 +466,7 @@ Host: social-vibecoding.usernodelabs.org
     "instagram": null
   },
   "invite": {
-    "url": "https://social-vibecoding.usernodelabs.org/#waitlist?ref=a1b2c3d4e5",
+    "url": "https://onhomeroom.com/waitlist?ref=a1b2c3d4e5",
     "count": 2,
     "emails": ["gr***@example.com", "jo***@example.net"]
   }
@@ -489,6 +514,13 @@ Field by field:
   masked to the first two characters of the local part plus the full
   domain, enough to recognise a friend and never a harvestable list.
   `url` is `null` only when the signup could not be resolved to a code.
+
+  The link points at the public marketing site's `/waitlist` page, whose
+  origin is the `MARKETING_BASE_URL` platform variable (default
+  `https://onhomeroom.com`). It is deliberately not the app's own
+  `#waitlist` route: an invite is shared with people who have never seen
+  the product. The `ref` code is unchanged either way, so a link minted
+  before the move still attributes its joins correctly.
 
 Note that the invite code is minted lazily, on the first full read of
 this route. A signup that never opens the stage-2 form never gets one.
@@ -650,7 +682,7 @@ The save does not echo the merged answers. Re-read
 ### GET /waitlist/connect/:provider
 
 Start an OAuth round trip that proves the signup's owner controls a
-GitHub, X or LinkedIn account. Note the path: these two routes are **not**
+GitHub, X or LinkedIn account. Note the path: these three routes are **not**
 under `/api/public/`.
 
 This proves **account ownership and nothing more**. It does not and
@@ -696,36 +728,69 @@ The provider's redirect target. You do not call this; the provider does.
 It is documented because its outcomes land back on a URL your
 integration may need to read.
 
-It exchanges the authorization code, stores the resolved handle under
-`answers.verified.<provider>`, and redirects back to the stage-2 form.
+It answers **`200` with a standalone HTML status page** straight away
+("Connecting your GitHub account…") and does no other work: loading it
+consumes no state and exchanges no code, so a link scanner or prefetch
+cannot spend the round trip. The page's script finishes it by posting
+its own URL's `state` and `code` to
+[`POST …/complete`](#post-waitlistconnectprovidercomplete), then shows
+the outcome:
 
-**Response `302`**
+| Outcome | What the page does |
+|---|---|
+| `ok` | Shows "Verified as @handle", then replaces itself with `/#more/<token>?connect=ok` after about 1.5 seconds. |
+| `denied`, `failed`, `unavailable` | Explains what happened and offers a **Back to your form** link to `/#more/<token>?connect=<outcome>`. |
+| `expired` | Says the link has expired and to press Connect again from the form. No link: nothing identifies the signup. |
+
+The page is served with `Cache-Control: no-store`,
+`Referrer-Policy: no-referrer`, `X-Frame-Options: DENY` and a
+`Content-Security-Policy` that allows only its own nonce-tagged inline
+script and style and `connect-src 'self'`. It loads no other resource,
+so the code in its URL cannot leak to another origin.
+
+The `connect` value on the form URL rides in a query segment **inside**
+the fragment, after the `#`, so it never reaches any server log, the
+platform's or a proxy's.
+
+### POST /waitlist/connect/:provider/complete
+
+Called by the callback page. It exchanges the authorization code,
+stores the resolved handle under `answers.verified.<provider>`, and
+reports the outcome.
+
+**Request**
 
 ```http
-HTTP/1.1 302 Found
-Location: /#more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d?connect=ok
+POST /waitlist/connect/github/complete HTTP/1.1
+Content-Type: application/json
+
+{ "state": "a5968df01edc4c8f05b1…", "code": "7214cc38dafa5bd93c27" }
 ```
 
-| `connect` value | Meaning |
-|---|---|
-| `ok` | The handle was verified and stored. |
-| `denied` | The person declined on the provider's page (no code came back). |
-| `unavailable` | The provider is not configured on this deployment. |
-| `failed` | The token exchange or profile read failed. |
+**Response `200`** (every outcome; none is an HTTP error)
 
-The status rides in a query segment **inside** the fragment, after the
-`#`, so it never reaches any server log, the platform's or a proxy's.
+```json
+{
+  "status": "ok",
+  "provider": "github",
+  "handle": "octocat",
+  "redirect": "/#more/3f6c1a08b2d94e7f5a0c8e1d2b4f6a9c0e3d5b7f1a2c4e6d?connect=ok"
+}
+```
 
-Two redirects carry no `connect` value and land on `/#landing` instead:
-an unknown or expired `state` (nothing identifies which signup to
-return to), and a successful exchange whose token no longer resolves to
-a signup.
+| `status` | Meaning | `redirect` |
+|---|---|---|
+| `ok` | The handle was verified and stored. `handle` is the GitHub login, X username or LinkedIn display name. | the form |
+| `denied` | The person declined on the provider's page (no code came back). | the form |
+| `unavailable` | The provider is not configured on this deployment. | the form |
+| `failed` | The token exchange or profile read failed. | the form |
+| `expired` | Unknown or expired `state` (it lives 10 minutes, in memory, so a server restart also expires it), or a successful exchange whose token no longer resolves to a signup. | `null` |
 
-Re-requesting a callback URL is safe. A finished round trip remembers
-where it landed for 10 minutes, so a reload, a back button or a link
-scanner replays the same redirect rather than falling through to the
-landing page. The replay is a redirect and nothing else; the
-authorization code is never re-exchanged and is never stored.
+Completing the same round trip again is safe. A finished round trip
+remembers its outcome for 10 minutes, so a reload of the page reports
+the same `status`, `handle` and `redirect` rather than `expired`. The
+replay reports and nothing else; the authorization code is never
+re-exchanged and is never stored.
 
 ## Rate limits
 

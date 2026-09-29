@@ -44,6 +44,16 @@ const TopochainEventContext = {
   // themselves: from then on the selection is theirs, not a fallback.
   _endedFallback: false,
 
+  // True when the server gave the signed-in viewer the season history
+  // (`viewer.history` on the events list, issue #2495): an admin, or a
+  // member with a trace in a season other than the default event's. Only
+  // such a viewer gets the picker and the hero: the picker reaches standings
+  // other than the ones on screen, and a member enrolled fresh into the
+  // season on screen — or anyone signed out — has none to reach. Remembered
+  // across close()/open() with the rest of the resolved state, so a re-open
+  // paints the bar at once instead of after the list lands again.
+  _history: false,
+
   // Detail for the hero (GET /season-events/:id).
   _detail: null,
   _detailLoading: false,
@@ -157,7 +167,9 @@ const TopochainEventContext = {
   //
   // The picker starts on its `Loading…` placeholder and the hero starts EMPTY,
   // which is exactly what the string version's markup said — loadEvents() and
-  // _loadDetail() fill each in turn.
+  // _loadDetail() fill each in turn. On a FIRST open nothing shows until the
+  // list lands, because whether this viewer gets a bar at all arrives with
+  // the list; a re-open remembers the answer and paints at once.
   _renderShell() {
     eventBarStore.set({
       mounted: true,
@@ -165,6 +177,7 @@ const TopochainEventContext = {
       placeholder: 'Loading…',
       selectedId: null,
       hero: null,
+      history: TopochainEventContext._history,
     });
   },
 
@@ -177,6 +190,10 @@ const TopochainEventContext = {
     if (!TopochainEventContext._mounted) return;
     if (ok && data?.success && Array.isArray(data.data)) {
       TopochainEventContext._events = data.data;
+      // The viewer's standing travels with the list (null when signed out),
+      // so the bar never paints a picker it then has to take back.
+      TopochainEventContext._history = data.viewer?.history === true;
+      eventBarStore.set({ history: TopochainEventContext._history });
       if (TopochainEventContext.eventId == null && window.TopochainEvents) {
         const pick = TopochainEvents.pickDefault(data.data);
         if (pick) {
@@ -252,20 +269,37 @@ const TopochainEventContext = {
 
   // The picker's entries. `selected` and the `sel.value = …` that followed it
   // are one field now — a controlled `<select>` cannot disagree with itself.
+  //
+  // Each entry carries its `seasonId`, and the store carries the CURRENT
+  // season's (issue #3049): the Challenges tab offers only the current
+  // season's events and leaves the past seasons to the History tab, so the
+  // bar has to know which is which. "Current" is the season of the event
+  // pickDefault opens on — the same rule the server's default and the
+  // #2495 history verdict measure against — not the calendar.
   _renderOptions() {
     const events = TopochainEventContext._events;
     if (!events.length) {
-      eventBarStore.set({ options: [], placeholder: 'No events', selectedId: null });
+      eventBarStore.set({ options: [], placeholder: 'No events', selectedId: null, currentSeasonId: null });
       return;
     }
     eventBarStore.set({
       options: events.map((ev) => ({
         id: ev.id,
         label: `${ev.name}${TopochainEventContext._tagFor(ev)}`,
+        seasonId: Number.isInteger(ev.season_id) ? ev.season_id : null,
       })),
       placeholder: null,
       selectedId: TopochainEventContext.eventId,
+      currentSeasonId: TopochainEventContext._currentSeasonId(events),
     });
+  },
+
+  // The season the screen opens on: pickDefault's event's season, or null
+  // when that is unknown (no default, or an older server without
+  // `season_id`) — in which case the Challenges tab filters nothing.
+  _currentSeasonId(events) {
+    const pick = window.TopochainEvents ? TopochainEvents.pickDefault(events) : null;
+    return pick && Number.isInteger(pick.season_id) ? pick.season_id : null;
   },
 
   // A season-type event is labelled by WHAT IT IS, not by its window: its

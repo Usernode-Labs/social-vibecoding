@@ -114,8 +114,68 @@ function present(
     gate: 'kit',
     hugDesignWidth: true,
     stillOwns,
+    // THE ROOT GOES HIDDEN BEFORE THE CARD COMES HOME (#2223).
+    //
+    // On a KIT-initiated dismissal — a backdrop tap, Escape, the kit's own
+    // control — React does not know the dialog is closing. Its close branch,
+    // which is what writes `hidden` here, has not run: `open` is still true.
+    // The kit finishes its exit, calls onDismiss, and adoptKitSurface's
+    // `undo()` re-homes the card into a root that is still VISIBLE. The card
+    // lands back in place at full opacity and paints, until React catches up
+    // a frame or two later and hides it.
+    //
+    // Measured in Chromium against the real kit, tracking the card's painted
+    // visibility through a backdrop-tap close of the feedback dialog:
+    //
+    //   t=  5ms  visible   in the kit shell, root not hidden
+    //   t=154ms  gone      the kit's fade has finished
+    //   t=195ms  VISIBLE   undo() re-homed it into the un-hidden root
+    //   t=212ms  gone      React's state finally caught up
+    //
+    // Seventeen milliseconds of the whole dialog, at full opacity, AFTER the
+    // animation has played — which is the reported flash. Closing through
+    // `controller.close()` never shows it, because that path hides the root
+    // on the way in; only the kit's own dismissal does, and that is the one
+    // a person actually uses.
+    //
+    // adoptKitSurface calls this immediately before `undo()`, so hiding here
+    // means the restore lands in an already-hidden root and paints nothing.
+    // On the React-initiated path the root is hidden already and this is a
+    // no-op. The class write is also what `onExternalToggle` watches, so it
+    // pulls React's own state to closed a beat sooner rather than fighting
+    // it — the two converge on the same end state.
+    onDismissStart: () => {
+      if (!root.classList.contains('hidden')) root.classList.add('hidden');
+    },
     onDismiss,
   });
+}
+
+/**
+ * Give the kit's modal shell an accessible name (QA 2026-09-24 Q20).
+ *
+ * The shell is what carries `role="dialog"` and `aria-modal` — the kit makes
+ * it, not the dialog — so the dialog's own heading was never its name, and a
+ * screen reader announced an unnamed dialog. The name is the card's first
+ * heading: by reference when it has an id, so a title that changes while the
+ * dialog is up (Create's "Create a new app" / "Import existing app") is read
+ * as it is now; by its text otherwise. The shell is a node the kit created and
+ * owns, never one React rendered, so this write has nothing to reconcile with.
+ */
+function nameKitShell(adoption: KitAdoption | null): void {
+  const shell = adoption?.handle?.el as HTMLElement | null | undefined;
+  const card = adoption?.contentEl;
+  if (!shell || !card || typeof shell.setAttribute !== 'function') return;
+  if (shell.hasAttribute?.('aria-labelledby') || shell.hasAttribute?.('aria-label')) return;
+  const heading = typeof card.querySelector === 'function'
+    ? card.querySelector('h1, h2, h3') as HTMLElement | null
+    : null;
+  if (!heading) return;
+  if (heading.id) shell.setAttribute('aria-labelledby', heading.id);
+  else {
+    const text = (heading.textContent || '').replace(/\s+/g, ' ').trim();
+    if (text) shell.setAttribute('aria-label', text);
+  }
 }
 
 export interface StaticModalOptions {
@@ -229,6 +289,7 @@ export function useStaticModal(
         const generation = (generationRef.current += 1);
         const stillOwns = () => generationRef.current === generation;
         adoptionRef.current = present(root, dismissFromKit, stillOwns);
+        nameKitShell(adoptionRef.current);
       }
     } else {
       const adoption = adoptionRef.current;

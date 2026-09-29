@@ -94,7 +94,7 @@ test('_devDataReady starts false and is set only by a COMPLETED load', () => {
   // wrapper in front of it (it joins a run already in flight, so the preload
   // an app open starts and the board's own call share one round of requests),
   // and the wrapper touches no caches at all.
-  const load = code.slice(code.indexOf('async _fetchDevData(slug)'), code.indexOf('async _loadDevFeed()'));
+  const load = code.slice(code.indexOf('async _fetchDevData(slug'), code.indexOf('async _loadDevFeed('));
   const set = load.indexOf('AppView._devDataReady = true;');
   assert.notEqual(set, -1, '_loadDevData sets the flag');
   assert.ok(set < load.indexOf('return true;'), 'on the success path, before it returns true');
@@ -287,8 +287,8 @@ test('_loadDevData distinguishes not-ready from failed, and the feed respects it
     'no app record yet → null, not false');
 
   const code = APP_VIEW_SRC.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
-  const fn = code.slice(code.indexOf('async _loadDevFeed()'),
-    code.indexOf('_repaintDevBody() {', code.indexOf('async _loadDevFeed()')));
+  const fn = code.slice(code.indexOf('async _loadDevFeed('),
+    code.indexOf('_repaintDevBody() {', code.indexOf('async _loadDevFeed(')));
   const nullGuard = fn.indexOf('if (ok === null) return;');
   const failure = fn.indexOf('load the feed right now');
   assert.notEqual(nullGuard, -1, '_loadDevFeed returns early on null');
@@ -362,5 +362,6 @@ test('one skeleton module renders both the components and the HTML strings', () 
   assert.equal(widths.length, 2, 'both width tables found');
   for (const w of widths) assert.ok(!w.includes('${'), 'no computed class names');
   const FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
-  assert.match(FRAME, /skeletonListHtml\(3\)/, '#dev-body\'s initial content uses it too');
+  // Four rows, the Workshop's own loading count, so the hand-off is unseen (#2880).
+  assert.match(FRAME, /skeletonListHtml\(4\)/, '#dev-body\'s initial content uses it too');
 });

@@ -217,11 +217,27 @@ test('every scaffolded app repo ships .claude/settings.json', () => {
   const parsed = JSON.parse(settings);
   assert.deepEqual(parsed, {
     permissions: { allow: [...constants.READ_ONLY_ALLOW_RULES] },
+    hooks: {
+      SessionStart: [{
+        hooks: [{
+          type: 'command',
+          command: 'sh "$CLAUDE_PROJECT_DIR/.claude/hooks/homeroom-freshness.sh"',
+          timeout: 10,
+        }],
+      }],
+    },
   });
-  // Only permissions.allow — a scaffolded repo grants capability and
-  // nothing more; it does not set a permission mode or add hooks.
-  assert.deepEqual(Object.keys(parsed), ['permissions']);
+  // Read-only connector grants, plus exactly ONE hook: the checkout
+  // freshness check. That hook is a deliberate exception, agreed with the
+  // platform owner, to the older "grants capability and nothing more" rule:
+  // it only reads git state and prints (tests/app-scaffold-freshness.test.js
+  // holds the script to that), and the trust dialog lists it for review like
+  // the rules. Still no permission mode, and no other hook or event.
+  assert.deepEqual(Object.keys(parsed), ['permissions', 'hooks']);
   assert.deepEqual(Object.keys(parsed.permissions), ['allow']);
+  assert.deepEqual(Object.keys(parsed.hooks), ['SessionStart']);
+  assert.equal(parsed.hooks.SessionStart.length, 1);
+  assert.equal(parsed.hooks.SessionStart[0].hooks.length, 1);
   assert.ok(settings.endsWith('\n'), 'settings.json ends with a newline');
 });
 
@@ -288,6 +304,7 @@ test('the connector scaffold has ONE source, which the full template spreads', (
   const scaffoldFiles = template.getConnectorScaffoldFiles();
   assert.deepEqual(scaffoldFiles.map((f) => f.path), [
     '.claude/settings.json',
+    '.claude/hooks/homeroom-freshness.sh',
     '.claude/README.md',
   ]);
 
@@ -366,7 +383,9 @@ test('a fork adds the scaffold without clobbering what the source carried', () =
   // Written into the working tree BEFORE the single squashed commit, so it
   // needs no second push.
   const writeAt = FORKER_SRC.indexOf('writeConnectorScaffold(tempDir)');
-  const commitAt = FORKER_SRC.indexOf('git init -q -b main');
+  // The init step is one git process of its own now, not a line of a bash
+  // script; the scaffold still has to be on disk before it runs.
+  const commitAt = FORKER_SRC.indexOf("['init', '-q', '-b', 'main']");
   assert.ok(writeAt > 0 && commitAt > writeAt,
     'the scaffold lands before the commit that captures the tree');
 });
@@ -419,8 +438,13 @@ test('the copied block is byte-for-byte the shipped allowlist, in BOTH places', 
   const match = CONNECTORS_TSX.match(/const PERSONAL_ALLOW_RULES = `([\s\S]*?)`;/);
   assert.ok(match, 'the panel defines the block as one literal');
   assert.equal(match[1], expected);
-  // Same content as the scaffolded file, modulo its trailing newline.
-  assert.equal(`${match[1]}\n`, scaffold().get('.claude/settings.json'));
+  // The same grants as the scaffolded file. Only the grants: the scaffold
+  // also carries its freshness hook, which runs a script from the repo's own
+  // .claude/hooks/ and so has no meaning in a personal settings file.
+  assert.deepEqual(
+    JSON.parse(match[1]).permissions,
+    JSON.parse(scaffold().get('.claude/settings.json')).permissions
+  );
 
   // The two files take identical content and differ only in reach, so the
   // second block interpolates the SAME constant. A copy-pasted second literal
@@ -526,7 +550,7 @@ test('each allow-rules block names the file it is for, above the block', () => {
   // And the copy buttons step down off the violet fill, which #connector-url-copy
   // (the section's real primary action) keeps.
   for (const id of ['connector-allow-rules-copy', 'connector-repo-allow-rules-copy']) {
-    const btn = CONNECTORS_TSX.match(new RegExp(`id="${id}"[\\s\\S]{0,400}?</Button>`));
+    const btn = CONNECTORS_TSX.match(new RegExp(`id="${id}"[\\s\\S]{0,700}?</Button>`));
     assert.ok(btn, `#${id} is a Button`);
     assert.match(btn[0], /variant="outline"/, `#${id} is the neutral bordered control`);
     assert.match(btn[0], /min-h-\[44px\] sm:min-h-\[36px\]/,
@@ -534,12 +558,17 @@ test('each allow-rules block names the file it is for, above the block', () => {
   }
 });
 
-test('the three copy buttons are distinguishable to a screen reader', () => {
+test('every copy button is distinguishable to a screen reader', () => {
   // All three said only "Copy", on a screen where two of them act on
-  // byte-identical JSON (#1290).
+  // byte-identical JSON (#1290). #1892 added two more for the Codex CLI
+  // blocks, so the count is read off the markup rather than assumed: one
+  // `<id>-copy` button, one distinct label, each.
+  const buttons = (CONNECTORS_TSX.match(/id="[a-z-]+-copy"/g) || []);
   const labels = (CONNECTORS_TSX.match(/aria-label="Copy[^"]*"/g) || []);
-  assert.equal(new Set(labels).size, 3,
-    'the connector URL and both allow-rule blocks each have their own name');
+  assert.ok(buttons.length >= 3, 'the connector URL and both allow-rule blocks are still here');
+  assert.equal(labels.length, buttons.length, 'every copy button carries an aria-label');
+  assert.equal(new Set(labels).size, buttons.length,
+    'the connector URL, both allow-rule blocks and both Codex blocks each have their own name');
 });
 
 test('copying reports the destination, and reports failure honestly', () => {
@@ -548,7 +577,9 @@ test('copying reports the destination, and reports failure honestly', () => {
   // the thumb is over it — so the toast names the destination.
   assert.match(settingsJs, /Copied\. Paste it into ~\/\.claude\/settings\.json/);
   assert.match(settingsJs, /Copied\. Commit it as \.claude\/settings\.json in your app repo/);
-  assert.match(settingsJs, /Connector URL copied/);
+  // #2370: the field is labelled "MCP server URL" — the words Claude, ChatGPT
+  // and Codex use for the box it gets pasted into — and the toast agrees.
+  assert.match(settingsJs, /MCP server URL copied/);
   // The URL button used to write 'Copied' even when writeText had rejected.
   assert.match(settingsJs, /'Copy failed'/);
   assert.match(settingsJs, /\{ error: true \}/);

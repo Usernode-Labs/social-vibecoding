@@ -47,7 +47,10 @@
 // group has read.
 
 const log = require('./logger');
+const summaryFreshness = require('./summary-freshness');
 const externalAgentHead = require('./external-agent-head');
+const visualEvidencePlan = require('./visual-evidence-plan');
+const visualEvidenceState = require('./visual-evidence-state');
 const { PROPOSAL_UPDATE_LOCK } = require('./advisory-locks');
 
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -140,16 +143,41 @@ function authorCanPush(session, viewerLogin) {
   return externalAgentHead.sameLogin(owner, login);
 }
 
+// Did the platform open this imported row's pull request ITSELF, on the
+// author's behalf (#2138)? That is how every connector submission is
+// recorded: submit_work's mirror rung copies the author's verified fork
+// branch into a `usernode/from-…` branch of the APP repository, its patch
+// rung applies their patch onto a `usernode/patch-…` one
+// (services/external-agent-patch.js), and both open a same-repo pull request
+// from it with the platform's credential and import it under the submitting
+// user's name. The row's `user_id` is that user and its `imported_pr_author`
+// is the bot — whose login nothing records — so the head sitting in the app
+// repository under one of the platform's own prefixes, which nothing else
+// writes, is the honest signal, and it needs no login. A same-repo pull
+// request a person pushed by hand — a collaborator's `feature/…` branch
+// imported from the board — is not in that namespace and keeps answering
+// from its head repository's owner, in callerOwnsPr below.
+function platformOpenedPr(session) {
+  return branchHomeOf(session) === 'app_repo' && platformOwnedBranch(session && session.branch_name);
+}
+
 // Is the pull request under this row the CALLER's OWN (#1319)? Only an
 // imported row can carry somebody else's — a native proposal's PR is one the
-// platform opened for this author — and for an imported one the honest test
-// is the head repository's owner against the caller's freshly-read GitHub
-// login, the same comparison authorCanPush makes. An unknown owner or an
-// unknown login leaves nothing to disprove, and ownershipGate has already
-// established that the caller owns the row, so it answers true rather than
-// refusing an author their own name.
+// platform opened for this author — and a mirrored row's is that same pull
+// request under `source='imported'` (#2138): the platform opened it for the
+// row's author, whom ownershipGate has already established the caller to be.
+// The login comparison alone could not see that: a mirrored head's repository
+// is the APP's, so its owner is whoever owns the app and its GitHub author is
+// the bot, and every connector-opened proposal was refused its own title and
+// description as if a stranger had written it (proposals 4185 and 4208). For
+// a head in a fork the honest test is still the head repository's owner
+// against the caller's freshly-read GitHub login, the same comparison
+// authorCanPush makes. An unknown owner or an unknown login leaves nothing to
+// disprove, and ownershipGate has already established that the caller owns
+// the row, so it answers true rather than refusing an author their own name.
 function callerOwnsPr(session, viewerLogin) {
   if (String(session && session.source) !== 'imported') return true;
+  if (platformOpenedPr(session)) return true;
   const owner = headRepoOwnerOf(session);
   const login = String(viewerLogin == null ? '' : viewerLogin).trim();
   if (!owner || !login) return true;
@@ -311,6 +339,14 @@ async function updateProposalFromForkBranch(deps, params) {
   if (expectedHeadSha && !SHA_RE.test(expectedHeadSha)) {
     return fail('invalid_request', 'expectedHeadSha must be a 40-character commit id.');
   }
+  let visualEvidence;
+  if (params.visualEvidence !== undefined) {
+    try {
+      visualEvidence = visualEvidencePlan.parseIntent(params.visualEvidence);
+    } catch (err) {
+      return fail('invalid_visual_evidence', err.message);
+    }
+  }
 
   const gate = ownershipGate(params.session, user);
   if (gate) return gate;
@@ -374,9 +410,11 @@ async function updateProposalFromForkBranch(deps, params) {
     try {
       const ctx = {
         pool, config, gh, head, votes, prImportSync, githubPublic,
+        prMetadata: deps.prMetadata || require('./pr-metadata'), username: user.username,
         session, owner, repo, forkOwner: link.login, forkRepo, branch,
         expectedLogin: link.login, expectedHeadSha, sessionId,
         testing: normalizeTesting(params.testing),
+        visualEvidence,
         title: normalizeProposedTitle(params.title),
         description: normalizeProposedDescription(params.description),
         // #1323. A re-run of the checks against the commit already there.
@@ -485,6 +523,112 @@ function normalizeTesting(testing) {
   ];
   if (!parsed.provided) return dropped.length ? { ...parsed, dropped } : null;
   return { ...parsed, dropped };
+}
+
+function storedVisualEvidenceIntent(session) {
+  const candidate = session?.visual_evidence_detail?.intent;
+  if (!candidate) return null;
+  try {
+    return visualEvidencePlan.parseIntent(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function visualEvidenceNextStep(state, { required = false, accepted = false, rejected = false } = {}) {
+  if (rejected) return 'retry_visual_evidence_intent';
+  if (state === 'verified') return 'review_verified_evidence';
+  if (state === 'failed') return 'rerun_or_correct_visual_evidence';
+  if (state === 'overridden') return 'human_override_recorded';
+  if (state === 'not_required') return 'no_visual_evidence_run_required';
+  if (['planned', 'provisioning', 'exploring', 'replaying', 'reviewing'].includes(state)) {
+    return 'await_visual_evidence';
+  }
+  if (required) return 'provide_visual_evidence_intent';
+  if (accepted) return 'visual_evidence_intent_recorded';
+  return 'none';
+}
+
+function visualEvidenceSubmissionFields(result = {}) {
+  const accepted = result.accepted === true;
+  const rejected = result.rejected === true;
+  const required = result.required === true;
+  const state = result.state || null;
+  return {
+    visualEvidenceState: state,
+    visualEvidenceAccepted: accepted,
+    visualEvidenceRejected: rejected,
+    visualEvidenceRequired: required,
+    visualEvidenceNextStep: result.nextStep
+      || visualEvidenceNextStep(state, { required, accepted, rejected }),
+  };
+}
+
+// Revision-scoped visual evidence metadata follows the commit through every
+// update surface. Omission preserves the prior declaration. A head move first
+// hides old media, then re-plans the preserved (or newly supplied) intent for
+// the new SHA. This is best-effort after a Git push: metadata storage must not
+// falsely report that code which already landed did not land.
+async function applyVisualEvidenceRevision({
+  pool, config, session, headSha, visualEvidence, headChanged = false,
+}) {
+  const submitted = visualEvidence !== undefined;
+  if (!config?.visualEvidence?.collect) {
+    return {
+      accepted: false,
+      rejected: submitted,
+      required: session.visual_evidence_detail?.required === true,
+      changed: false,
+      state: session.visual_evidence_state || null,
+      nextStep: submitted ? 'visual_evidence_collection_disabled' : 'none',
+    };
+  }
+  const intent = submitted ? visualEvidence : storedVisualEvidenceIntent(session);
+  try {
+    if (headChanged && visualEvidenceState.validSha(headSha)) {
+      await visualEvidenceState.markStaleForHead(pool, Number(session.id), headSha);
+    }
+    if (!intent) {
+      const required = session.visual_evidence_detail?.required === true;
+      return {
+        accepted: false, rejected: false, required, changed: false,
+        state: session.visual_evidence_state || null,
+        nextStep: required ? 'provide_visual_evidence_intent' : 'none',
+      };
+    }
+    const result = await visualEvidenceState.recordIntent(
+      pool,
+      Number(session.id),
+      intent,
+      visualEvidenceState.validSha(headSha) ? { headSha } : {}
+    );
+    session.visual_evidence_state = result.state;
+    session.visual_evidence_detail = result.detail;
+    session.visual_evidence_run_id = result.runId;
+    return {
+      accepted: submitted,
+      rejected: false,
+      required: result.required === true,
+      changed: result.unchanged !== true,
+      state: result.state,
+      nextStep: visualEvidenceNextStep(result.state, {
+        required: result.required === true,
+        accepted: submitted,
+      }),
+    };
+  } catch (err) {
+    log.error('proposal-update', 'could not store visual evidence intent', {
+      sessionId: Number(session.id), headSha, err: err.message,
+    });
+    return {
+      accepted: false,
+      rejected: submitted,
+      required: session.visual_evidence_detail?.required === true,
+      changed: false,
+      state: session.visual_evidence_state || null,
+      nextStep: submitted ? 'retry_visual_evidence_intent' : 'none',
+    };
+  }
 }
 
 // The stored list and the submitted one, compared in the normalized
@@ -660,6 +804,18 @@ async function applyProposedDescription({ pool, gh, session, owner, repo, descri
   if (visuals) body = prMetadata.upsertVisualsBlock(body, visuals);
   if (body === existing) return nothing;
 
+  // GitHub is the body source of truth. Invalidate before touching it: a DB
+  // failure must not leave an older summary displayed beside newer prose.
+  try {
+    await summaryFreshness.invalidate(pool, Number(session.id));
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  } catch (err) {
+    log.warn('proposal-update', 'could not invalidate the summary before a description edit', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return { changed: false, rejected: 'summary_invalidation_failed' };
+  }
+
   try {
     await gh.updatePR(owner, repo, session.pr_number, { body });
   } catch (err) {
@@ -815,10 +971,16 @@ async function updateLinkedIssues({
   // miss the merge. Only numbers the body does not already declare are
   // appended, via the same parser the migrate-time backfill trusts, so a
   // hand-written "Fixes #N" is never doubled. Imported PRs are skipped:
-  // that body belongs to its external author on GitHub. Best-effort like
-  // the GitHub rename above — the row is the source of truth either way.
+  // that body belongs to its external author on GitHub — unless the platform
+  // opened the pull request itself, for this author (#2138): a
+  // connector-opened proposal is `source='imported'` too, and skipping it
+  // left every such proposal's `Closes #N` unwritten while the tool said the
+  // body belonged to somebody else. Only that login-free half of callerOwnsPr
+  // is asked here, because the linked-issues route shares this seam and reads
+  // no GitHub login to hold a fork's owner against. Best-effort like the
+  // GitHub rename above — the row is the source of truth either way.
   if (!session.pr_number) return result;
-  if (String(session.source) === 'imported') {
+  if (String(session.source) === 'imported' && !platformOpenedPr(session)) {
     result.prBodyStatus = 'imported_pr';
     return result;
   }
@@ -943,6 +1105,9 @@ async function resubmitUnchanged(ctx, headSha, via) {
   const { pool, config, gh, session, sessionId, owner, repo } = ctx;
   const base = unchanged(session, headSha, via);
   const applied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  const evidenceApplied = await applyVisualEvidenceRevision({
+    pool, config, session, headSha, visualEvidence: ctx.visualEvidence,
+  });
   // Same-commit resubmits are also how a title correction arrives — the
   // update that should have carried it may already have landed (#1199's
   // reasoning, applied to the name instead of the screenshots). On a row
@@ -966,6 +1131,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
     testingPaths: displayPaths(applied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
     captureRerun: false,
+    ...visualEvidenceSubmissionFields(evidenceApplied),
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     descriptionUpdated: descApplied.changed,
@@ -977,7 +1143,7 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // a side effect of changing a capture route, so correcting a stale verdict
   // meant editing a route that was already right. An explicit ask reaches it
   // now, and nothing else about the path changes.
-  if (!applied.changed && !ctx.recheck) return reported;
+  if (!applied.changed && !evidenceApplied.changed && !ctx.recheck) return reported;
 
   // A paused session has no container and no preview to shoot against, and
   // starting a build for one is the thing settlePausedSession exists to avoid.
@@ -999,7 +1165,10 @@ async function resubmitUnchanged(ctx, headSha, via) {
   // so no reviewer is waiting on a new preview of it.
   const recovery = ctx.recovery || require('./staging-recovery');
   try {
-    const run = recovery.recheckSessionChecks({ config, pool, session, reason: 'testing-update' });
+    const run = recovery.recheckSessionChecks({
+      config, pool, session,
+      reason: evidenceApplied.changed ? 'visual-evidence-update' : 'testing-update',
+    });
     if (run && typeof run.catch === 'function') {
       run.catch((err) => log.warn('proposal-update', 'testing-metadata recheck failed (non-fatal)', {
         sessionId, err: err.message,
@@ -1093,7 +1262,7 @@ function defaultBusyCheck(session) {
 // under a lease.
 async function advanceAppRepoBranch(ctx) {
   const {
-    pool, config, gh, head, votes, prImportSync, githubPublic, session,
+    pool, config, gh, head, votes, prImportSync, githubPublic, prMetadata, username, session,
     owner, repo, forkOwner, forkRepo, branch, expectedLogin, expectedHeadSha, sessionId,
   } = ctx;
   // The session tails talk to three modules that do real work — a staging
@@ -1220,9 +1389,20 @@ async function advanceAppRepoBranch(ctx) {
     });
   if (!pushed.ok) return renameHeadFailure(pushed, branch);
 
+  if (session.source !== 'imported') {
+    // The push has moved this proposal's code. Keep the previous summary out
+    // of every reader even if the later PR metadata or preview work fails.
+    await summaryFreshness.invalidate(pool, sessionId);
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  }
+
   // BEFORE the tails, every one of which ends in a capture that reads the
   // routes off this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  const evidenceApplied = await applyVisualEvidenceRevision({
+    pool, config, session, headSha: verified.headSha,
+    visualEvidence: ctx.visualEvidence, headChanged: liveHead !== verified.headSha,
+  });
   // And the submitted title: stored for the promote-time lazy PR creation
   // when the row has no PR yet, or a rename of the existing PR when it does.
   const titleApplied = await applyProposedTitle({
@@ -1238,6 +1418,26 @@ async function advanceAppRepoBranch(ctx) {
   const linkedApplied = await applyLinkedIssues({
     pool, gh, session, owner, repo, linkedIssues: ctx.linkedIssues,
   });
+
+  // A shared session has just gained its first pushed diff (or another
+  // revision). Give the group a stable draft PR link before its card is
+  // published. A transient GitHub failure does not discard the pushed code;
+  // the next update or promotion can adopt/create the same PR.
+  if (kind === 'session' && session.source !== 'imported' && !session.pr_number) {
+    try {
+      await prMetadata.applyPrMetadata({
+        pool, session, repoOwner: owner, repoName: repo,
+        userMessage: '', ccSummary: '', username,
+        userId: session.user_id, allowModelGeneration: false,
+        sourceHeadSha: verified.headSha,
+        preferredTitle: session.proposed_pr_title || session.session_title || null,
+      });
+    } catch (err) {
+      log.warn('proposal-update', 'Draft PR creation deferred after branch push', {
+        sessionId, code: err.code || null, err: err.message,
+      });
+    }
+  }
 
   // Everything the three tails agree on. They differ only in what they do to
   // the session afterwards and in the three booleans that describe it.
@@ -1264,6 +1464,7 @@ async function advanceAppRepoBranch(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
+    ...visualEvidenceSubmissionFields(evidenceApplied),
     titleUpdated: titleApplied.changed,
     ...(titleApplied.rejected ? { titleRejected: titleApplied.rejected } : {}),
     descriptionUpdated: descApplied.changed,
@@ -1685,6 +1886,10 @@ async function advanceForkHead(ctx) {
   // Before applyHeadChange, whose own tail re-runs the SHA-pinned checks off
   // this session object (#1199).
   const testingApplied = await applyTestingMetadata({ pool, session, testing: ctx.testing });
+  const evidenceApplied = await applyVisualEvidenceRevision({
+    pool, config, session, headSha: liveHead,
+    visualEvidence: ctx.visualEvidence, headChanged: oldHead !== liveHead,
+  });
   // The request linkage (#1310). On an imported row this stores the DB half
   // only — the close watcher and the Dev board read it — and applyLinkedIssues
   // itself leaves the PR body alone: that body belongs to the pull request's
@@ -1750,6 +1955,7 @@ async function advanceForkHead(ctx) {
     testingUpdated: testingApplied.changed,
     testingPaths: displayPaths(testingApplied.paths),
     testingPathsRejected: rejectedPaths(ctx.testing),
+    ...visualEvidenceSubmissionFields(evidenceApplied),
     linkedIssuesUpdated: linkedApplied,
   };
 }
@@ -1839,6 +2045,9 @@ module.exports = {
   isContinuableStatus,
   withProposalLock,
   updateProposalFromForkBranch,
+  applyVisualEvidenceRevision,
+  visualEvidenceSubmissionFields,
+  visualEvidenceNextStep,
   reconcileManagedCommitUpload,
   // The request-linking half of an update (#1310), unit-tested directly.
   applyLinkedIssues,

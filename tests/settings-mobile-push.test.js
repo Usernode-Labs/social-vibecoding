@@ -20,6 +20,7 @@ const CATEGORIES = [
   ['shared_work', 'Shared work', true],
   ['developer_sessions', 'Developer sessions', true],
   ['proposal_alerts', 'Proposal alerts', true],
+  ['app_alerts', 'App alerts', true],
   ['lightweight_activity', 'Lightweight activity', false],
 ];
 

@@ -199,6 +199,17 @@ async function serve(router) {
 }
 
 const get = (base, p) => fetch(`${base}${p}`, { redirect: 'manual' });
+// The callback page finishes the round trip by POSTing its own URL's state
+// and code here (see the status-page tests below).
+const complete = async (base, provider, body) => {
+  const res = await fetch(`${base}/waitlist/connect/${provider}/complete`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  assert.equal(res.status, 200, 'every outcome is a 200 the page renders');
+  return res.json();
+};
 
 let unset;
 let configured;
@@ -233,9 +244,9 @@ test('the callback refuses the same way when the provider is unconfigured', asyn
   const state = new URL(start.headers.get('location')).searchParams.get('state');
   assert.ok(state, 'the configured start route parked a state nonce');
 
-  const res = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
-  assert.equal(res.status, 302);
-  assert.equal(res.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+  const out = await complete(unset.base, 'x', { state, code: 'abc123' });
+  assert.equal(out.status, 'unavailable');
+  assert.equal(out.redirect, `/#more/${TOKEN}?connect=unavailable`);
 });
 
 test('the callback URLs are exactly the ones the runbooks tell operators to register', async () => {
@@ -384,7 +395,7 @@ test('WAITLIST_OAUTH_ORIGIN overrides both', async () => {
 
 // ── the callback is reachable more than once ───────────────────────────
 //
-// `takeState` DELETES the nonce, and the miss path redirects to `/#landing`
+// `takeState` DELETES the nonce, and the miss path used to redirect to `/#landing`
 // — the public landing page. So the second request to a callback URL used to
 // dump the person on the home screen with no message and no log line, after a
 // provider round trip that had already succeeded and stored their handle.
@@ -398,61 +409,71 @@ test('WAITLIST_OAUTH_ORIGIN overrides both', async () => {
 //
 // So a completed state replays its OUTCOME instead of being forgotten.
 
-test('a second hit on the same callback URL replays the outcome, not /#landing', async () => {
+test('a second completion of the same round trip replays the outcome, not an expiry', async () => {
   const start = await get(configured.base, `/waitlist/connect/x?token=${TOKEN}`);
   const state = new URL(start.headers.get('location')).searchParams.get('state');
 
-  // First hit against the unset router: credentials are missing, so it takes
+  // First pass against the unset router: credentials are missing, so it takes
   // the `unavailable` exit — a terminal outcome that consumes the state
   // without needing a provider round trip.
-  const first = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
-  assert.equal(first.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+  const first = await complete(unset.base, 'x', { state, code: 'abc123' });
+  assert.equal(first.redirect, `/#more/${TOKEN}?connect=unavailable`);
 
-  const second = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
-  assert.equal(
-    second.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`,
-    'a reload of the callback must land back on the stage-2 form, not on the landing page',
-  );
+  // A reload of the status page POSTs the same state again.
+  const second = await complete(unset.base, 'x', { state, code: 'abc123' });
+  assert.deepEqual(second, first,
+    'a reload of the callback must report the same outcome and form, not "expired"');
 
   // And it stays replayable — people reload more than once.
-  const third = await get(unset.base, `/waitlist/connect/x/callback?state=${state}&code=abc123`);
-  assert.equal(third.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+  const third = await complete(unset.base, 'x', { state, code: 'abc123' });
+  assert.deepEqual(third, first);
 });
 
-test('a replayed callback never re-runs the provider exchange', async () => {
-  // The replay must be a redirect and nothing else: the authorization code
-  // is single-use at the provider, so a second exchange would fail there and
+test('a replayed completion never re-runs the provider exchange', async () => {
+  // The replay must report and nothing else: the authorization code is
+  // single-use at the provider, so a second exchange would fail there and
   // could only turn a success into an error. Proven by pointing the replay at
   // a router whose fetch would throw if it were reached.
   const start = await get(configured.base, `/waitlist/connect/github?token=${TOKEN}`);
   const state = new URL(start.headers.get('location')).searchParams.get('state');
-  const first = await get(unset.base, `/waitlist/connect/github/callback?state=${state}&code=abc123`);
-  assert.equal(first.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`);
+  const first = await complete(unset.base, 'github', { state, code: 'abc123' });
+  assert.equal(first.status, 'unavailable');
 
-  const replay = await get(configured.base, `/waitlist/connect/github/callback?state=${state}&code=abc123`);
-  assert.equal(
-    replay.headers.get('location'), `/#more/${TOKEN}?connect=unavailable`,
-    'the replay repeats the recorded outcome; it does not attempt a fresh token exchange',
-  );
+  const replay = await complete(configured.base, 'github', { state, code: 'abc123' });
+  assert.equal(replay.status, 'unavailable',
+    'the replay repeats the recorded outcome; it does not attempt a fresh token exchange');
+  assert.equal(replay.redirect, `/#more/${TOKEN}?connect=unavailable`);
 });
 
-test('a genuinely unknown state still lands on the landing page', async () => {
+test('a replay for a different provider does not leak the outcome', async () => {
+  const start = await get(configured.base, `/waitlist/connect/github?token=${TOKEN}`);
+  const state = new URL(start.headers.get('location')).searchParams.get('state');
+  await complete(unset.base, 'github', { state, code: 'abc123' });
+  const other = await complete(unset.base, 'x', { state, code: 'abc123' });
+  assert.deepEqual(other, { status: 'expired', provider: 'x', handle: null, redirect: null });
+});
+
+test('a genuinely unknown state reports an expired link with no form to return to', async () => {
   // Nothing to recover: no state record means no token, so there is no form
-  // to return to. This one keeps its old behaviour on purpose.
-  const res = await get(unset.base, '/waitlist/connect/x/callback?state=neverminted&code=abc');
-  assert.equal(res.status, 302);
-  assert.equal(res.headers.get('location'), '/#landing');
+  // to return to. It used to redirect silently to the landing page; the
+  // status page now says the link has expired instead.
+  const out = await complete(unset.base, 'x', { state: 'neverminted', code: 'abc' });
+  assert.deepEqual(out, { status: 'expired', provider: 'x', handle: null, redirect: null });
+
+  const empty = await complete(unset.base, 'x', {});
+  assert.equal(empty.status, 'expired', 'a missing body is an unknown state, not a crash');
 });
 
 test('a denied authorization is replayable too', async () => {
-  // The user pressed "Cancel" at the provider. Reloading that callback must
-  // return them to the form, not to the landing page.
+  // The user pressed "Cancel" at the provider, which comes back with a state
+  // and no code. Reloading that page must report the same thing.
   const start = await get(configured.base, `/waitlist/connect/linkedin?token=${TOKEN}`);
   const state = new URL(start.headers.get('location')).searchParams.get('state');
-  const first = await get(configured.base, `/waitlist/connect/linkedin/callback?state=${state}`);
-  assert.equal(first.headers.get('location'), `/#more/${TOKEN}?connect=denied`);
-  const second = await get(configured.base, `/waitlist/connect/linkedin/callback?state=${state}`);
-  assert.equal(second.headers.get('location'), `/#more/${TOKEN}?connect=denied`);
+  const first = await complete(configured.base, 'linkedin', { state, code: '' });
+  assert.equal(first.status, 'denied');
+  assert.equal(first.redirect, `/#more/${TOKEN}?connect=denied`);
+  const second = await complete(configured.base, 'linkedin', { state });
+  assert.deepEqual(second, first);
 });
 
 test('an id without a secret counts as unconfigured', async () => {

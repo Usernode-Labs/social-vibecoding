@@ -94,6 +94,16 @@ try {
     await page.waitForTimeout(900);
     await page.screenshot({ path: path.join(output, `dev-chat-${phase}-${width}.png`) });
     if (phase === 'after' && width === 360) {
+      const newCopy = await page.locator('#dc-new-change-banner > span').boundingBox();
+      const newAction = await page.locator('#dc-new-change-btn').boundingBox();
+      const returnCopy = await page.locator('#dc-return-hint > div').boundingBox();
+      const returnAction = await page.locator('#dc-return-hint-dismiss').boundingBox();
+      assert.ok(newCopy.y + newCopy.height <= newAction.y,
+        'phone new-change action is below the explanation');
+      assert.ok(returnCopy.y + returnCopy.height <= returnAction.y,
+        'phone return-hint action is below the explanation');
+      assert.ok(newCopy.width >= 280 && returnCopy.width >= 280,
+        '360px guidance copy keeps a readable line length');
       // #1940: no Details sheet — the provider and the PR link are inline at
       // every width again, and the strip must still fit a 360px phone.
       assert.ok(await page.locator('#dc-venue-select').isVisible(), 'Built with is shown directly');
@@ -115,7 +125,21 @@ try {
       });
       assert.ok((await page.locator('.dc-session-title').boundingBox()).height <= 41, 'long title is capped at two header lines');
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), '320px Dev chat has no horizontal overflow');
+      const newCopy320 = await page.locator('#dc-new-change-banner > span').boundingBox();
+      const newAction320 = await page.locator('#dc-new-change-btn').boundingBox();
+      const returnCopy320 = await page.locator('#dc-return-hint > div').boundingBox();
+      const returnAction320 = await page.locator('#dc-return-hint-dismiss').boundingBox();
+      assert.ok(newCopy320.y + newCopy320.height <= newAction320.y,
+        '320px new-change action remains below the explanation');
+      assert.ok(returnCopy320.y + returnCopy320.height <= returnAction320.y,
+        '320px return-hint action remains below the explanation');
+      assert.ok(newCopy320.width >= 240 && returnCopy320.width >= 240,
+        '320px guidance copy keeps a readable line length');
       await page.screenshot({ path: path.join(output, 'dev-chat-dark-320.png') });
+      await page.locator('#dc-return-hint-dismiss').click();
+      await page.locator('#dc-return-hint').waitFor({ state: 'hidden' });
+      await page.locator('#dc-new-change-btn').click();
+      await page.waitForFunction(() => location.pathname.endsWith('/dev/sessions/new'));
       await page.evaluate(() => { location.hash = '#apps'; });
       await page.locator('#browse-list .browse-row').first().waitFor();
       await page.waitForTimeout(900);
@@ -126,6 +150,14 @@ try {
       assert.ok(await page.locator('#dc-venue-select').isVisible());
       assert.ok(await page.locator('#dc-pr-header-link').isVisible());
       assert.equal(await page.locator('.dc-session-details-trigger').count(), 0);
+      const newCopy = await page.locator('#dc-new-change-banner > span').boundingBox();
+      const newAction = await page.locator('#dc-new-change-btn').boundingBox();
+      const returnCopy = await page.locator('#dc-return-hint > div').boundingBox();
+      const returnAction = await page.locator('#dc-return-hint-dismiss').boundingBox();
+      assert.ok(newAction.y < newCopy.y + newCopy.height && newCopy.y < newAction.y + newAction.height,
+        'desktop new-change action stays inline with the explanation');
+      assert.ok(returnAction.y < returnCopy.y + returnCopy.height && returnCopy.y < returnAction.y + returnAction.height,
+        'desktop return-hint action stays inline with the explanation');
     }
     // Run mutation checks AFTER both comparison captures, so the before and
     // after screenshots use the exact same navigation and untouched data.

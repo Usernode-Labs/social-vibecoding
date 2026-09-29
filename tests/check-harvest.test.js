@@ -161,6 +161,7 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   quietBroadcast(t);
   const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
   const collected = [];
+  const evidence = [];
   let settledWith = null;
   stub(t, kubernetes, {
     findCheckJobs: async (_cfg, { sessionId, previewRunId }) => {
@@ -171,7 +172,7 @@ test('an orphan whose Jobs finished is settled from their output through settleC
       collected.push(kind);
       if (kind === 'capture') {
         onStdoutLine('__USERNODE_TEST__ index=0 status=pass');
-        return { state: 'succeeded', stdout: 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n', stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
+        return { state: 'succeeded', stdout: 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n', stderr: 'capture warning', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
       }
       assert.equal(name, 'sv-unit-suite-s42-x');
       return { state: 'succeeded', stdout: 'TAP version 13\n# tests 5\n# pass 5\n# fail 0\n', stderr: '', exitCode: 0, timedOut: false, partial: false, partialReason: '' };
@@ -179,6 +180,7 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   });
   stub(t, visuals, {
     settleCaptureRun: async (_cfg, _pool, run) => { settledWith = run; return { traceStatus: 'passing', result: { state: 'passing' } }; },
+    scheduleVisualEvidence: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
   });
 
   const summary = await harvest.sweep(config, { reason: 'boot', pool });
@@ -200,12 +202,15 @@ test('an orphan whose Jobs finished is settled from their output through settleC
   assert.equal(settledWith.testsCount, 3);
   assert.deepEqual(settledWith.capturePaths, ['/']);
   assert.equal(settledWith.stdout, 'SHOT {"path":"/"}\n__USERNODE_TEST__ index=0 status=pass\n');
+  assert.equal(settledWith.stderr, 'capture warning');
   assert.equal(settledWith.runPartial, false);
   assert.equal(settledWith.unitOutcome.row.status, 'pass', 'the unit-suite row comes from the Job\'s own verdict');
   assert.equal(settledWith.unitOutcome.row.summary.tests, 5);
   assert.equal(settledWith.send, null);
   assert.equal(settledWith.operation, null, 'lifecycle off: settled with the plain pool');
   assert.deepEqual(pool.deleted, ['run-1'], 'the manifest is cleared once the verdict is stored');
+  assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }],
+    'recovering checks must also hand the visual claim to the evidence runner');
   assert.equal(visuals.hasInFlightCapture(42), false, 'the seat is handed back');
   assert.equal(harvest.isHarvesting(42), false);
 });
@@ -420,6 +425,7 @@ test('a capture Job that failed with nothing to salvage records an error verdict
   quietBroadcast(t);
   const pool = makePool({ orphans: [orphanRow()], session: sessionRow() });
   const stores = [];
+  const evidence = [];
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: { name: 'sv-capture-s42-x', state: 'failed' }, unitSuite: null }),
     collectCheckJob: async () => ({ state: 'failed', stdout: '   \n', stderr: 'BackoffLimitExceeded', exitCode: 1, timedOut: false, partial: true, partialReason: 'job BackoffLimitExceeded' }),
@@ -428,6 +434,7 @@ test('a capture Job that failed with nothing to salvage records an error verdict
     settleCaptureRun: async () => assert.fail('nothing to settle from'),
     storeChecks: async (_pool, sessionId, commitSha, result, detail) => { stores.push({ sessionId, commitSha, result, detail }); return true; },
     storeCaptureOutcome: async () => true,
+    scheduleVisualEvidence: (_cfg, _pool, id, head, trigger) => evidence.push({ id, head, trigger }),
   });
   const summary = await harvest.sweep(config, { reason: 'tick', pool });
   const [result] = await summary.done;
@@ -438,6 +445,7 @@ test('a capture Job that failed with nothing to salvage records an error verdict
   assert.equal(stores[0].commitSha, 'abc123');
   assert.equal(stores[0].result.state, 'error');
   assert.match(stores[0].detail, /BackoffLimitExceeded/);
+  assert.deepEqual(evidence, [{ id: 42, head: 'abc123', trigger: 'checks-harvested' }]);
   assert.deepEqual(pool.deleted, ['run-1']);
 });
 
@@ -549,6 +557,101 @@ test('collectCheckJob waits on a running Job, re-reading the log for progress, a
   assert.equal(out.partialReason, 'run timed out');
   assert.equal(out.stdout, 'TEST 1\nTEST 2\n', 'the salvaged frames are the verdict\'s input');
   assert.deepEqual(lines, ['TEST 1', 'TEST 2'], 'each line exactly once across the re-reads');
+});
+
+test('collectCheckJob retains polled output when the successful terminal read is empty', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let polls = 0;
+  let logReads = 0;
+  kubernetes._setClientsForTest({ batch: {
+    readNamespacedJob: async () => (++polls < 2
+      ? { metadata: { name: 'j' }, status: { active: 1 } }
+      : { metadata: { name: 'j' }, status: { succeeded: 1 } }),
+  }, core: {
+    listNamespacedPod: async () => ({ items: [{ metadata: { name: 'pod-1' }, status: {
+      containerStatuses: [{ name: 'capture', state: { terminated: { exitCode: 0, reason: 'Completed' } } }],
+    } }] }),
+    readNamespacedPodLog: async () => logReads++ === 0 ? 'TEST 1\nTEST 2\n' : '',
+  } });
+  t.after(() => kubernetes._setClientsForTest(null));
+  const pending = kubernetes.collectCheckJob(config, { name: 'j', kind: 'capture' });
+  await flush();
+  t.mock.timers.tick(2000); await flush();
+  const out = await pending;
+  assert.equal(out.state, 'succeeded');
+  assert.equal(out.stdout, 'TEST 1\nTEST 2\n');
+  assert.equal(out.partial, false);
+});
+
+for (const scenario of [
+  {
+    name: 'shorter terminal snapshot',
+    progress: 'TEST 1\nTEST 2\n',
+    terminal: 'TEST 1\n',
+    expected: 'TEST 1\nTEST 2\n',
+    lines: ['TEST 1', 'TEST 2'],
+  },
+  {
+    name: 'terminal snapshot with an unseen suffix',
+    progress: 'TEST 1\n',
+    terminal: 'TEST 1\nTEST 2\npartial',
+    expected: 'TEST 1\nTEST 2\npartial',
+    lines: ['TEST 1', 'TEST 2'],
+  },
+]) {
+  test(`collectCheckJob reconciles a ${scenario.name} without duplicate progress`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let polls = 0;
+    let logReads = 0;
+    kubernetes._setClientsForTest({ batch: {
+      readNamespacedJob: async () => (++polls < 2
+        ? { metadata: { name: 'j' }, status: { active: 1 } }
+        : { metadata: { name: 'j' }, status: { succeeded: 1 } }),
+    }, core: {
+      listNamespacedPod: async () => ({ items: [{ metadata: { name: 'pod-1' }, status: {
+        containerStatuses: [{ name: 'capture', state: { terminated: { exitCode: 0 } } }],
+      } }] }),
+      readNamespacedPodLog: async () => logReads++ === 0 ? scenario.progress : scenario.terminal,
+    } });
+    t.after(() => kubernetes._setClientsForTest(null));
+    const lines = [];
+    const pending = kubernetes.collectCheckJob(config, {
+      name: 'j', kind: 'capture', onStdoutLine: line => lines.push(line),
+    });
+    await flush();
+    t.mock.timers.tick(2000); await flush();
+    const out = await pending;
+    assert.equal(out.stdout, scenario.expected);
+    assert.deepEqual(lines, scenario.lines);
+  });
+}
+
+test('collectCheckJob keeps a complete UTF-8 line when retained output reaches maxBuffer', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  let polls = 0;
+  let logReads = 0;
+  const first = 'TEST 🚀\n';
+  kubernetes._setClientsForTest({ batch: {
+    readNamespacedJob: async () => (++polls < 2
+      ? { metadata: { name: 'j' }, status: { active: 1 } }
+      : { metadata: { name: 'j' }, status: { succeeded: 1 } }),
+  }, core: {
+    listNamespacedPod: async () => ({ items: [{ metadata: { name: 'pod-1' }, status: {
+      containerStatuses: [{ name: 'capture', state: { terminated: { exitCode: 0 } } }],
+    } }] }),
+    readNamespacedPodLog: async () => logReads++ === 0 ? `${first}SECOND\n` : '',
+  } });
+  t.after(() => kubernetes._setClientsForTest(null));
+  const pending = kubernetes.collectCheckJob(config, {
+    name: 'j', kind: 'capture', maxBuffer: Buffer.byteLength(first),
+  });
+  await flush();
+  t.mock.timers.tick(2000); await flush();
+  const out = await pending;
+  assert.equal(out.stdout, first);
+  assert.equal(out.partial, true);
+  assert.equal(out.partialReason, 'output over maxBuffer');
+  assert.equal(out.stdout.includes('\uFFFD'), false);
 });
 
 test('collectCheckJob reports a Job that disappeared as gone and a superseded adopter as aborted', async (t) => {

@@ -170,8 +170,10 @@ test('status + attached progressLog renders COLLAPSED (ccrun)', () => {
 
   assertCollapsed(attachedTag(html));
   assert.match(html, /data-persist-id="101:ccrun"/, 'persist id keyed off the status row');
-  // The summary stays informative while collapsed.
-  assert.match(html, /Claude Code is running/, 'status text still in the summary');
+  // The summary stays informative while collapsed — #2597's heading, and
+  // the venue under it, since a collapsed card shows nothing else.
+  assert.match(html, /Coding agent is running/, 'status text still in the summary');
+  assert.match(html, /class="dc-status-venue">Homeroom · Claude</, 'venue caption under the heading');
   // Chips now, so the `· ` separators are gone: the gap between chips is
   // the gap. Both facts are still in the SUMMARY — a collapsed <details>
   // renders nothing else, so anything a closed card shows has to be there.

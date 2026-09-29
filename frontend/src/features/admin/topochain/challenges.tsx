@@ -9,7 +9,7 @@ import {
 import { BTN, PANEL_CLS } from './tokens.ts';
 import {
   BackButton, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, FormSection, Input,
-  List, Options, Panel, ScreenHeader, Select, Skeleton, Textarea, fmt,
+  List, Options, Panel, ScreenHeader, Select, Skeleton, Textarea, fmt, isoToLocalInput,
 } from './ui.tsx';
 import type { Column } from './ui.tsx';
 
@@ -55,7 +55,7 @@ type Challenge = {
   completed?: boolean;
   display_order?: number;
   card_preview?: { goal?: string; label?: string } | null;
-  activity_type?: { kind?: string } | null;
+  activity_type?: { kind?: string; schedule_start?: string | null; schedule_end?: string | null } | null;
   overrides?: Record<string, string | null> | null;
 };
 
@@ -231,6 +231,8 @@ function ChallengeForm({ eventId, existing, initialTemplateId, onClose, onSaved 
       goal: ov.goal || '',
       reward: ov.reward || '',
       kind: existing.activity_type?.kind || '',
+      schedule_start: isoToLocalInput(ov.schedule_start),
+      schedule_end: isoToLocalInput(ov.schedule_end),
       task: ov.task || '',
       description: ov.description || '',
       display_order: String(existing.display_order ?? 0),
@@ -310,6 +312,23 @@ function ChallengeForm({ eventId, existing, initialTemplateId, onClose, onSaved 
       />
     </Field>
   );
+  const dateField = (key: string, label: string, help?: string) => (
+    <Field key={key} label={label} htmlFor={fieldId(key)} help={help}>
+      <Input
+        id={fieldId(key)}
+        type="datetime-local"
+        value={values[key] || ''}
+        onChange={(e) => set(key, e.target.value)}
+      />
+    </Field>
+  );
+  // What a blank date override falls back to: the template's date, or the
+  // event's own when the template has none either.
+  const inheritedHelp = (key: 'schedule_start' | 'schedule_end') => {
+    const fromTemplate = existing?.activity_type?.[key];
+    if (fromTemplate) return `Blank follows the template: ${fmt(fromTemplate)}.`;
+    return key === 'schedule_start' ? 'Blank follows the event start.' : 'Blank follows the event end.';
+  };
   const areaField = (key: string, label: string) => (
     <Field key={key} label={label} htmlFor={fieldId(key)}>
       <Textarea
@@ -348,6 +367,8 @@ function ChallengeForm({ eventId, existing, initialTemplateId, onClose, onSaved 
                 onChange={(e) => set('display_order', e.target.value)}
               />
             </Field>
+            {dateField('schedule_start', 'Schedule start override', inheritedHelp('schedule_start'))}
+            {dateField('schedule_end', 'Schedule end override', inheritedHelp('schedule_end'))}
           </FormGrid>
           <div className="grid grid-cols-1 gap-4 mt-4">
             {areaField('task', 'Task override')}
@@ -396,22 +417,8 @@ function ChallengeForm({ eventId, existing, initialTemplateId, onClose, onSaved 
                 onChange={(e) => set('display_order', e.target.value)}
               />
             </Field>
-            <Field label="Schedule start" htmlFor={fieldId('schedule_start')}>
-              <Input
-                id={fieldId('schedule_start')}
-                type="datetime-local"
-                value={values.schedule_start || ''}
-                onChange={(e) => set('schedule_start', e.target.value)}
-              />
-            </Field>
-            <Field label="Schedule end" htmlFor={fieldId('schedule_end')}>
-              <Input
-                id={fieldId('schedule_end')}
-                type="datetime-local"
-                value={values.schedule_end || ''}
-                onChange={(e) => set('schedule_end', e.target.value)}
-              />
-            </Field>
+            {dateField('schedule_start', 'Schedule start')}
+            {dateField('schedule_end', 'Schedule end')}
           </FormGrid>
           <FormSection label="Call to action" />
           <FormGrid>

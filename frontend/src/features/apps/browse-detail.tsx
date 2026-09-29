@@ -21,17 +21,24 @@
  *    flip its label in place exactly as it does inside the home card's
  *    popover.
  *
+ * SHARE leads that card (the prototype's About sheet lists "More": Share,
+ * Add to home screen, Fork this app). It is not one of Home.menuItemsFor's
+ * items, so it is its own row: a flag on the descriptor (`canShare`, the same
+ * gate the mark menu's "Share app" uses) and Browse.shareDetailApp behind it.
+ *
  * INITIAL RENDER: `detail === null` until the detail level is entered, and
  * that renders nothing — the empty, hidden #browse-detail the hand-written
  * shell shipped and the SSG prerender has to reproduce.
  */
 
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ArrowRightShortIcon, ChevronRightIcon } from '@/components/ui/icons';
+import { GroupedList, ListRow } from '@/components/ui/grouped-list';
+import { ArrowRightShortIcon } from '@/components/ui/icons';
 
 import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
+import { ReportForm, submitReport } from '../reports/report-form';
 
 type ContributorRowView = {
   who: string;
@@ -47,6 +54,8 @@ type ContributorsView = {
   count: number | null;
   rows: ContributorRowView[];
   toggle: string | null;
+  /** The fold is open (Browse._contribExpanded); drives aria-expanded. */
+  expanded?: boolean;
   note: string | null;
 };
 
@@ -73,6 +82,8 @@ export type DetailView =
     openLabel: string;
     isAdded: boolean;
     favLabel: string;
+    /** The app has a public link to share (Browse.shareUrlFor). */
+    canShare?: boolean;
     actions: ActionView[];
     contributors: ContributorsView;
   };
@@ -81,52 +92,62 @@ function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Browse : null) || null;
 }
 
-const NOTE_CLASS = 'px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400';
-const CARD_CLASS = 'mt-5 rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';
+const NOTE_CLASS = 'px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400';
 
-// The inset row hairline, as @/components/ui/grouped-list.tsx draws it: a
-// pseudo-element on every row but the last, starting at the text column rather
-// than the card's edge. `divide-y` on the parent is what these lists used, and
-// it cannot inset — so its rules ran into the card's corner radius the moment
-// the card stopped being a bordered rectangle. `text` depth (px-3) here: these
-// rows lead with a rank number, not a tile.
-const ROW_RULE = "[&:not(:last-child)]:after:absolute [&:not(:last-child)]:after:bottom-0 "
-  + "[&:not(:last-child)]:after:left-3 [&:not(:last-child)]:after:right-0 "
-  + "[&:not(:last-child)]:after:h-px [&:not(:last-child)]:after:bg-zinc-200 "
-  + "dark:[&:not(:last-child)]:after:bg-zinc-800 [&:not(:last-child)]:after:content-['']";
+// #2446: both of this page's cards ARE grouped lists — GroupedList carries the
+// card (white, rounded-2xl, overflow-hidden) and ListRow the row, hairline
+// included, so the hand-copied `[&:not(:last-child)]:after:*` rule that used to
+// live here is gone. `mx-0` drops the primitive's page gutter: #browse-detail
+// already has one, and `mt-5` is the gap from whatever the card follows.
+const CARD_SPACING = 'mx-0 mt-5';
+
+// The row hairline runs at the card's text inset (left-4) now rather than the
+// hand-copy's left-3, so the heading's rule has to move with it or the two
+// disagree by 4px down the same card edge.
+const HEAD_RULE = "after:absolute after:bottom-0 after:left-4 after:right-0 after:h-px "
+  + "after:bg-zinc-200 dark:after:bg-zinc-800 after:content-['']";
 
 function ContributorRow({ row }: { row: ContributorRowView }): ReactNode {
   return (
-    <button
-      type="button"
-      className={`browse-contrib-row relative w-full text-left flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-zinc-500/5 ${ROW_RULE}`}
+    <ListRow
+      as="button"
+      // `text`, not `tile`: the row leads with a rank number and a small
+      // initial disc, not the 2.75rem app tile that depth is measured from.
+      inset="text"
+      chevron={false}
+      className="browse-contrib-row transition-colors hover:bg-zinc-500/5"
       data-username={row.who}
-      title={`View @${row.who}’s proposals`}
+      tooltip={`View @${row.who}’s proposals`}
       onClick={() => controller()?.openContributor(row.who)}
-    >
-      <div className="w-5 shrink-0 text-center text-xs font-mono text-zinc-500 dark:text-zinc-500">{row.rank}</div>
-      <div className="w-8 h-8 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-xs">{row.initial}</div>
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">{`@${row.who}`}</div>
-        {row.meta ? (
-          <div className="text-xs text-zinc-500 dark:text-zinc-400 truncate">{row.meta}</div>
-        ) : null}
-      </div>
-      <div
-        className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${row.pillTint}`}
-        title="Proposals merged into this app"
-      >{`${row.merged} merged`}</div>
-    </button>
+      // Rank and disc travel together as ONE leading element, so the 12px
+      // between them survives the row's own 16px gap.
+      leading={(
+        <div className="flex shrink-0 items-center gap-3">
+          <div className="w-5 text-center text-xs font-mono text-zinc-500 dark:text-zinc-500">{row.rank}</div>
+          <div className="w-8 h-8 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-xs">{row.initial}</div>
+        </div>
+      )}
+      title={`@${row.who}`}
+      // A handle is not a headline: medium, as the connectors list sets it.
+      titleClassName="font-medium"
+      subtitle={row.meta}
+      trailing={(
+        <div
+          className={`shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${row.pillTint}`}
+          title="Proposals merged into this app"
+        >{`${row.merged} merged`}</div>
+      )}
+    />
   );
 }
 
 function Contributors({ view }: { view: ContributorsView }): ReactNode {
   return (
-    <div id="browse-detail-contributors" className={CARD_CLASS}>
+    <GroupedList id="browse-detail-contributors" className={CARD_SPACING}>
       {/* The heading paints in every state (including loading) so the page
           doesn't jump when the fetch lands. */}
       <h3
-        className="relative px-3 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 after:absolute after:bottom-0 after:left-3 after:right-0 after:h-px after:bg-zinc-200 dark:after:bg-zinc-800 after:content-['']"
+        className={`relative px-4 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 ${HEAD_RULE}`}
         title="The app&rsquo;s creator, its members, and everyone whose proposal has been merged into it"
       >
         Contributors
@@ -136,7 +157,11 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
       </h3>
       {view.note ? <p className={NOTE_CLASS}>{view.note}</p> : null}
       {view.rows.length ? (
-<div>
+        // The rows keep their own wrapper: ListRow's hairline is
+        // `:not(:last-child)`, so the LAST contributor must be the last child
+        // of something that the toggle below is not inside — otherwise the
+        // fold button would take the row rule and the list would end on one.
+        <div id="browse-contrib-list">
           {view.rows.map((row) => <ContributorRow key={row.who} row={row} />)}
         </div>
       ) : null}
@@ -144,11 +169,15 @@ function Contributors({ view }: { view: ContributorsView }): ReactNode {
         <button
           type="button"
           id="browse-contrib-toggle"
-          className="w-full px-3 py-2.5 text-sm font-medium text-violet-700 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800"
+          // The fold's state for assistive tech, as Discover's list's own
+          // "Show more" says it (./browse-list.tsx), #2991.
+          aria-expanded={!!view.expanded}
+          aria-controls="browse-contrib-list"
+          className="w-full px-4 py-3.5 text-sm font-medium text-violet-700 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800"
           onClick={() => controller()?.toggleContributors()}
         >{view.toggle}</button>
       ) : null}
-    </div>
+    </GroupedList>
   );
 }
 
@@ -174,6 +203,9 @@ function Missing(): ReactNode {
 
 function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): ReactNode {
   const warm = () => controller()?.warmDetailApp(view.slug);
+  const [reporting, setReporting] = useState(false);
+  const ownApp = typeof window !== 'undefined'
+    && Number(view.app.created_by) === Number((window as any).App?.user?.id);
   return (
     <>
       <div className="flex items-start gap-4">
@@ -261,27 +293,52 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
           data-added={String(view.isAdded)}
           onClick={() => controller()?.toggleDetailAdded(view.app)}
         >{view.favLabel}</button>
+        {!ownApp && !view.app.demo ? <button type="button" className="rounded-full px-3 py-2 text-sm text-zinc-500 hover:text-red-700 dark:text-zinc-400 dark:hover:text-red-400"
+          onClick={() => setReporting((open) => !open)} aria-label={`Report ${view.name}`}>
+          Report app
+        </button> : null}
       </div>
 
-      {view.actions.length ? (
-        <div className="mt-5 rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
+      {reporting ? <ReportForm kind="app" onCancel={() => setReporting(false)}
+        onSubmit={(reason, detail) => submitReport(`/api/apps/${encodeURIComponent(view.slug)}/report`, reason, detail)} /> : null}
+
+      {view.actions.length || view.canShare ? (
+        <GroupedList className={CARD_SPACING}>
+          {view.canShare ? (
+            <ListRow
+              as="button"
+              id="browse-detail-share"
+              inset="text"
+              className="browse-detail-share transition-colors hover:bg-zinc-500/5"
+              // The action rows' own weight and ink (see them just below):
+              // Share is one more entry in the same list, not a headline.
+              titleClassName="font-normal text-zinc-700 dark:text-zinc-200"
+              tooltip="Share a link to this app"
+              title="Share"
+              onClick={() => controller()?.shareDetailApp(view.app)}
+            />
+          ) : null}
           {view.actions.map((a) => (
-            <button
+            <ListRow
               key={a.index}
-              type="button"
-              className={`browse-detail-action relative w-full flex items-center justify-between gap-2 px-3 py-3 text-sm text-left transition-colors hover:bg-zinc-500/5 ${ROW_RULE} ${
-                a.danger ? 'text-red-700 dark:text-red-400' : 'text-zinc-700 dark:text-zinc-200'
-              }`}
+              as="button"
+              inset="text"
+              className="browse-detail-action transition-colors hover:bg-zinc-500/5"
+              // A menu entry, not a headline — the same weight the settings
+              // nav's grouped rows take. The colour has to ride HERE rather
+              // than on the row, because ListRow's title carries its own
+              // zinc-900 and would win over an inherited one.
+              titleClassName={a.danger
+                ? 'font-normal text-red-700 dark:text-red-400'
+                : 'font-normal text-zinc-700 dark:text-zinc-200'}
               data-action-index={a.index}
-              title={a.title || undefined}
+              tooltip={a.title || undefined}
               disabled={a.disabled}
+              title={a.label}
               onClick={(e) => controller()?._runDetailAction(a.index, e.currentTarget)}
-            >
-              <span>{a.label}</span>
-              <ChevronRightIcon className="w-4 h-4 shrink-0 opacity-40" aria-hidden="true" />
-            </button>
+            />
           ))}
-        </div>
+        </GroupedList>
       ) : null}
 
       <Contributors view={view.contributors} />
@@ -295,5 +352,5 @@ export function BrowseDetail({ detail }: { detail: DetailView | null }): ReactNo
     return <p className="text-sm text-zinc-500 dark:text-zinc-400">Loading&hellip;</p>;
   }
   if (detail.state === 'missing') return <Missing />;
-  return <Ready view={detail} />;
+  return <Ready key={detail.slug} view={detail} />;
 }

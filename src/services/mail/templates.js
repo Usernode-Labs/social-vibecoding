@@ -13,6 +13,8 @@
 // always-200 endpoint fail) and logs it.
 'use strict';
 
+const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
+
 // Minimal HTML escaping — these bodies interpolate an email address, a
 // six-digit code and platform-built URLs, never free user text, but
 // escaping is cheap and keeps that true if a payload field ever grows.
@@ -25,23 +27,26 @@ function esc(s) {
 }
 
 /**
- * The ONE branded frame every send goes through (#1555).
+ * The ONE branded frame every send goes through (#1555, restyled for #2673).
  *
  * The report was that the mails do not look like one another. They did not:
  * the shell was a bare `<body>` with a font stack, three templates wrapped
  * themselves in it, one was wrapped by `buildMessage`, and the result had no
  * sender identity anywhere except inside the sentences.
  *
- * ── Why a wordmark and not a logo image ────────────────────────────────
+ * ── Why a logo image now, reversing the #1555 call ─────────────────────
  *
- * A remote `<img>` in an email is a tracking pixel as far as every mail
- * client is concerned: Gmail and Outlook block it until the reader asks,
- * Apple Mail proxies it, and the mail's identity would be the one thing that
- * arrives broken. An inline data: URI is worse — several clients strip them,
- * and the ones that do not count the bytes against the clipping threshold.
- * Type always renders. The wordmark is the product's own name in the
- * platform's accent, which is what the header, the landing page and the
- * manifest already put there.
+ * #1555 argued for a text wordmark instead of an `<img>`: Gmail/Outlook block
+ * remote images until the reader asks, Apple Mail proxies them, and a data:
+ * URI is stripped by some clients and counted against others' clipping
+ * threshold. All of that is still true. #2673 asks for the logo anyway, so
+ * the tradeoff is accepted deliberately rather than papered over: the `alt`
+ * text below IS the wordmark fallback for a client that blocks the image, so
+ * the identity still renders as type when the picture does not. The asset is
+ * hosted on the platform's OWN origin (public/brand/, the same public,
+ * unauthenticated tier /icons/ and /illustrations/ already use — see
+ * src/middleware/auth.js), not a third party, so there is nothing here for a
+ * mail client's remote-content warning to be right to warn about.
  *
  * ── Table-free, and deliberately ───────────────────────────────────────
  *
@@ -49,6 +54,13 @@ function esc(s) {
  * together, so the usual `<table>` scaffolding buys nothing here and costs
  * every future editor a nested-markup puzzle. Inline styles only: `<style>`
  * blocks and classes are stripped by Gmail's clipper and by Outlook.
+ *
+ * ── Colors are the platform's own tokens, not generic defaults ─────────
+ *
+ * Every hex below is read off tailwind.config.js's `violet`/`zinc` scales and
+ * public/css/app.css's `--accent*` custom properties — the same accent and
+ * neutral ramp the app UI itself renders with, not a default blue or a
+ * mail-template grey invented for this file.
  *
  * ── The footer says what this IS and why it arrived ────────────────────
  *
@@ -59,35 +71,53 @@ function esc(s) {
  * I getting this".
  */
 const BRAND_NAME = 'Homeroom';
-const BRAND_ACCENT = '#1f86ff';
+// tailwind.config.js `violet` ramp / public/css/app.css `--accent*`.
+const BRAND_ACCENT = '#0a6ee0'; // violet-600, --accent — the CTA fill and link color.
+// tailwind.config.js `zinc` ramp — the app's neutral ink and surfaces.
+const NEUTRAL_PAGE_BG = '#f5f5f7'; // zinc-50
+const NEUTRAL_HAIRLINE = '#e3e3e6'; // zinc-200
+const NEUTRAL_INK = '#1c1c1e'; // zinc-900
+const NEUTRAL_SECONDARY_INK = '#68686c'; // zinc-500
+// #2908: the product's own script logotype (frontend/@/components/ui/
+// wordmark.tsx), rasterized, replacing #2673's pixel-font "HOMEROOM". A NEW
+// file name rather than new bytes under the old one: mail clients and image
+// proxies cache by URL, and the old file stays in place for mail already sent.
+const LOGO_URL = `${PRODUCTION_ORIGIN}/brand/homeroom-logotype-black.png`;
+const LOGO_ALT = 'Homeroom';
 const BODY_STYLE =
-  'margin:0;padding:24px 12px;background:#f4f4f5;font-family:-apple-system,'
+  `margin:0;padding:24px 12px;background:${NEUTRAL_PAGE_BG};font-family:-apple-system,`
   + 'Segoe UI,Roboto,Helvetica,Arial,sans-serif;font-size:15px;'
-  + 'line-height:1.55;color:#111';
+  + `line-height:1.55;color:${NEUTRAL_INK}`;
 const CARD_STYLE =
   'max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;'
   + 'padding:28px 24px';
-const WORDMARK_STYLE =
-  `margin:0 0 20px;font-size:18px;font-weight:700;letter-spacing:-0.2px;color:${BRAND_ACCENT}`;
+const LOGO_STYLE = 'display:block;margin:0 0 20px;border:0;outline:none;text-decoration:none';
 const FOOTER_STYLE =
-  'margin:24px 0 0;padding-top:16px;border-top:1px solid #e4e4e7;'
-  + 'font-size:12px;line-height:1.5;color:#71717a';
+  `margin:24px 0 0;padding-top:16px;border-top:1px solid ${NEUTRAL_HAIRLINE};`
+  + `font-size:12px;line-height:1.5;color:${NEUTRAL_SECONDARY_INK}`;
 
-const HTML_SHELL = (body) =>
+// Why a mail arrived, for every kind but one: the recipient's own account
+// or waitlist place. A project invite goes to an address somebody ELSE
+// typed, so it says that instead (its template returns `why`); claiming the
+// recipient asked for it would be the one untrue sentence in the frame.
+const WHY_DEFAULT = 'You are receiving this because of activity on your account or your '
+  + 'place on the waitlist. We only send mail you asked for.';
+
+const HTML_SHELL = (body, why = WHY_DEFAULT) =>
   '<!doctype html><html><body style="' + BODY_STYLE + '">'
   + '<div style="' + CARD_STYLE + '">'
-  + '<div style="' + WORDMARK_STYLE + '">' + BRAND_NAME + '</div>'
+  + `<img src="${LOGO_URL}" width="140" height="37" alt="${esc(LOGO_ALT)}" `
+  + `style="${LOGO_STYLE}">`
   + body
   + '<div style="' + FOOTER_STYLE + '">'
   + BRAND_NAME
-  + '<br>You are receiving this because of activity on your account or your '
-  + 'place on the waitlist. We only send mail you asked for.'
+  + '<br>' + esc(why)
   + '</div>'
   + '</div>'
   + '</body></html>';
 
 const p = (s) => `<p>${s}</p>`;
-const link = (url) => `<a href="${esc(url)}">${esc(url)}</a>`;
+const link = (url) => `<a href="${esc(url)}" style="color:${BRAND_ACCENT}">${esc(url)}</a>`;
 
 /**
  * The mail's ONE action, as a button (#1540).
@@ -108,7 +138,7 @@ const link = (url) => `<a href="${esc(url)}">${esc(url)}</a>`;
  * see HTML needs it.
  */
 const BUTTON_STYLE =
-  'display:inline-block;padding:11px 20px;border-radius:8px;background:#1f86ff;'
+  `display:inline-block;padding:11px 20px;border-radius:8px;background:${BRAND_ACCENT};`
   + 'color:#ffffff;font-size:15px;font-weight:600;text-decoration:none';
 const button = (url, label) =>
   `<p><a href="${esc(url)}" style="${BUTTON_STYLE}">${esc(label)}</a></p>`;
@@ -133,16 +163,16 @@ function otp(payload) {
   };
 }
 
-// Waitlist join confirmation. Two optional links, independent of each
-// other:
+// Waitlist join confirmation. One optional link:
 //   - payload.confirmUrl — the one-click "confirm this address" link.
 //     Following it stamps waitlist_signups.confirmed_at and lands on the
 //     stage-2 survey, so confirming and answering are one motion.
-//   - payload.url — the durable stage-2 survey link (#more/<token>). The
-//     join response shows it once; the email is its lasting home.
-// Either may be absent (an idempotent re-join carries neither), and the
-// copy must not grow an empty paragraph or the string "undefined" when
-// that happens.
+// It may be absent (an idempotent re-join carries none), and the copy must
+// not grow an empty paragraph or the string "undefined" when that happens.
+//
+// #2908 removed the closing "Want to increase your chances of getting into
+// an earlier group?" paragraph and its #more/<token> survey link. Callers
+// still pass payload.url; this template no longer prints it.
 //
 // The shape follows Andrea's copy (doc comment, 27 Aug 2026): thank, set
 // the expectation, confirm, and only then offer the optional questions.
@@ -156,7 +186,6 @@ function otp(payload) {
 // with the rest.
 function waitlistJoined(payload) {
   const confirmUrl = payload.confirmUrl || null;
-  const surveyUrl = payload.url || null;
 
   let text = '';
   let html = '';
@@ -193,14 +222,6 @@ function waitlistJoined(payload) {
   if (confirmUrl) {
     text += '\n\nOr confirm in one tap:\n' + confirmUrl;
     html += button(confirmUrl, 'Confirm my email');
-  }
-  if (surveyUrl) {
-    text += '\n\nWant to increase your chances of getting into an earlier group? '
-      + 'Answer a few optional questions, invite someone you would build with, '
-      + `and follow along: ${surveyUrl}`;
-    html += p('Want to increase your chances of getting into an earlier group? '
-      + 'Answer a few optional questions, invite someone you would build with, '
-      + `and follow along: ${link(surveyUrl)}`);
   }
 
   return { subject: "You're on the Homeroom waitlist 🎉", text, html };
@@ -371,6 +392,31 @@ function adminTest(payload) {
   };
 }
 
+// A project invite, to an address that is not on Homeroom yet (the create
+// dialog's "Will invite" rows; services/email-invites.js). One link: the
+// waitlist, joined with this address. Nothing here grants access; the invite
+// waits on the account and turns into an ordinary one once the address is
+// confirmed on it. Every field is optional so the kind still renders empty.
+function projectInvite(payload) {
+  const inviter = payload.inviter ? `@${payload.inviter}` : 'Someone';
+  const project = payload.project || 'a project';
+  const url = payload.url || '';
+  const lead = `${inviter} invited you to ${project}, a group on Homeroom, where communities build the apps they use together.`;
+  const how = 'Join the waitlist with this email address. Once you are in, the invite will be waiting for you.';
+  return {
+    why: 'You are receiving this because someone on Homeroom invited this address to a project. '
+      + 'You will not hear from us again unless you join, or somebody invites you again.',
+    subject: `${inviter} invited you to ${project} on Homeroom`,
+    text: `${lead}\n\n${how}${url ? `\n\n${url}` : ''}\n\nIf you were not expecting this, you can ignore this email.`,
+    html: (
+      p(lead)
+      + p(how)
+      + (url ? button(url, 'Join the waitlist') : '')
+      + p('If you were not expecting this, you can ignore this email.')
+    ),
+  };
+}
+
 /**
  * Every template returns a FRAGMENT; the frame is applied here, once (#1555).
  *
@@ -394,6 +440,7 @@ const TEMPLATES = {
   waitlist_released: waitlistReleased,
   password_reset: passwordReset,
   admin_test: adminTest,
+  project_invite: projectInvite,
 };
 
 function buildMessage(kind, payload = {}) {
@@ -401,8 +448,8 @@ function buildMessage(kind, payload = {}) {
     ? TEMPLATES[kind]
     : null;
   if (!template) throw new Error(`unknown mail kind: ${kind}`);
-  const message = template(payload);
-  return { ...message, html: HTML_SHELL(message.html) };
+  const { why, ...message } = template(payload);
+  return { ...message, html: HTML_SHELL(message.html, why) };
 }
 
 // Every kind this module can render, for the admin console and for tests

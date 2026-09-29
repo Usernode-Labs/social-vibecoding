@@ -32,7 +32,11 @@ function avatarRoutes(config) {
         [id]
       );
       if (!rows.length || !rows[0].data) return res.status(404).end();
+      // #2515: the type here is a STORED value, so a file whose recorded
+      // content_type says image/* while its bytes are markup must not be
+      // sniffed into HTML on the platform's own origin.
       res.set('Content-Type', rows[0].content_type || 'application/octet-stream');
+      res.set('X-Content-Type-Options', 'nosniff');
       res.set('Cache-Control', 'public, max-age=31536000, immutable');
       res.send(rows[0].data);
     } catch (err) {

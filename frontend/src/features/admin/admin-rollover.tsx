@@ -118,7 +118,9 @@ function Tile({ id, label, value }: { id: string; label: string; value: string }
 // them. Only the last carries the staging-demo prefix — the other three were
 // `textContent` writes, so they never did.
 function Summary({ loaded, job, demo }: { loaded: boolean; job: RolloverJob | null; demo: boolean }) {
-  if (!loaded) return <>Loading…</>;
+  // A <span>, not a <p>: this renders INSIDE #admin-rollover-summary, which
+  // is already a paragraph.
+  if (!loaded) return <span className={AdminUI.loading}>Loading…</span>;
   if (!job) return <>No rollover has run since this platform process started.</>;
   if (!job.total) {
     return <>{job.finishedAt ? 'Finished. No eligible app containers were found.' : 'Starting…'}</>;

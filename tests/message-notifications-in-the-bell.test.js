@@ -79,9 +79,18 @@ test('nothing in notifications.js counts or paints a messages badge', () => {
 
 // ── 2. …and off the row behind the app chip ─────────────────────────────
 
-test('the Messages row in the chip menu is a plain destination', () => {
-  assert.match(HTML, /id="switcher-row-messages" href="#messages"/,
-    'the row itself stays: Messages has its own page');
+test('Messages is a TAB, and the tab is where its count lives', () => {
+  // #2718 moved the destination out of the chip's menu onto the bar, and
+  // moved the argument with it. #1443 retired a per-conversation badge from
+  // the menu ROW on the reading that a menu is where you say where you are
+  // going rather than where you learn something happened — true of a row you
+  // have to open a sheet to see, and not of a tab that is on screen already.
+  // So the tab carries a count and the retired row's badge stays retired.
+  assert.match(HTML, /id="platform-tab-messages"[^>]*href="#messages"/,
+    'the destination is a tab');
+  assert.match(HTML, /id="platform-tabs-badge"/, 'which can say there is something there');
+  assert.doesNotMatch(HTML, /id="switcher-row-messages"/,
+    'and the menu row it replaces is gone, not merely unlabelled');
   assert.doesNotMatch(HTML, /drawer-messages-badge/,
     'the unread tag is gone from the shell, not shipped hidden');
   assert.doesNotMatch(SHEET_SRC, /id="drawer-messages-badge"/);
@@ -166,6 +175,32 @@ test('markConversationRead is inert when there is nothing to clear', () => {
   }
   assert.equal(guarded.unread, 1);
   assert.equal(guarded.calls.badge, 0);
+});
+
+// #2387: a message inside a reply thread is read by reading THAT thread. The
+// server's main-stream read leaves those alerts unread, so clearing them here
+// only bounced the badge back on the next refresh.
+test('a conversation read leaves its reply threads\' alerts; a thread read clears only that thread', () => {
+  const markConversationRead = buildMarkConversationRead();
+  const markThreadRead = new Function('Notifications', 'conversationId', 'rootId',
+    methodBody('markConversationThreadRead'));
+  const items = [
+    { id: 1, kind: 'conversation_message', conversationId: 5, readAt: null },
+    { id: 2, kind: 'conversation_thread_reply', conversationId: 5, conversationThreadRootId: 40, readAt: null },
+    { id: 3, kind: 'conversation_mention', conversationId: 5, conversationThreadRootId: 41, readAt: null },
+    { id: 4, kind: 'conversation_thread_reply', conversationId: 6, conversationThreadRootId: 40, readAt: null },
+  ];
+  const N = stubNotifications(items, 4);
+  markConversationRead(N, 5);
+  assert.deepEqual(items.map((n) => !!n.readAt), [true, false, false, false]);
+  assert.equal(N.unread, 3);
+
+  markThreadRead(N, 5, 40);
+  assert.deepEqual(items.map((n) => !!n.readAt), [true, true, false, false],
+    'that thread only — not another thread, not the same root id in another conversation');
+  assert.equal(N.unread, 2);
+  markThreadRead(N, 5, 'x');
+  assert.equal(N.unread, 2, 'a junk root clears nothing');
 });
 
 // ── 4. the Messages store is what calls it ──────────────────────────────

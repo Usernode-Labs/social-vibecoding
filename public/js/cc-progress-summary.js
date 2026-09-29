@@ -112,7 +112,7 @@ function ccPhaseLabel(phase) {
   // Backend-neutral phase markers for codex_openrouter sessions (plan.md
   // PR5). Kept generic so the progress card renders a friendly label for
   // the second coding-agent backend without a Claude-specific branch.
-  if (/^codex\b/.test(p)) return 'Codex is working';
+  if (/^codex\b/.test(p)) return 'Coding agent is working';
   if (/^agent\b/.test(p)) return 'Coding agent is working';
   if (/^sync/.test(p)) return 'Syncing with main';
   if (p === 'refresh') return 'Syncing branch';

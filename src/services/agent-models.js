@@ -37,6 +37,60 @@ function hasToolSupport(m) {
   return params.includes('tools') || params.includes('tool_choice');
 }
 
+function hasStructuredOutputSupport(m) {
+  const params = supportedParameterList(m);
+  return params.includes('structured_outputs')
+    || params.includes('response_format')
+    || params.includes('json_schema');
+}
+
+function hasReasoningEffortSupport(m) {
+  const params = supportedParameterList(m);
+  // OpenRouter currently describes the request control as either the broad
+  // `reasoning` parameter or the more specific `reasoning_effort` parameter,
+  // depending on the upstream model metadata revision.
+  return params.includes('reasoning_effort') || params.includes('reasoning');
+}
+
+function hasParallelToolCallSupport(m) {
+  return supportedParameterList(m).includes('parallel_tool_calls');
+}
+
+function hasTemperatureSupport(m) {
+  return supportedParameterList(m).includes('temperature');
+}
+
+function reasoningEffortList(m) {
+  const params = m?.supported_parameters || m?.parameters || [];
+  const parameterReasoning = !Array.isArray(params) && params.reasoning;
+  const values = m?.reasoning?.supported_efforts
+    ?? m?.reasoning?.efforts
+    ?? parameterReasoning?.supported_efforts
+    ?? parameterReasoning?.efforts
+    ?? null;
+  return Array.isArray(values)
+    ? [...new Set(values.filter((value) => typeof value === 'string' && value))]
+    : null;
+}
+
+// Global Chat has a stricter contract than the coding-agent catalog: its
+// model must choose tools, return the server-owned response schema, and
+// accept the separately configured reasoning effort. This legacy catalog
+// field is retained unchanged for existing development-model consumers;
+// Global Chat applies its current tool-only output contract in its own profile
+// service instead.
+function meetsGlobalChatMinimums(m) {
+  if (!m) return false;
+  if (typeof m.supportsTools === 'boolean') {
+    return m.supportsTools
+      && m.supportsStructuredOutputs === true
+      && m.supportsReasoningEffort === true;
+  }
+  return hasToolSupport(m)
+    && hasStructuredOutputSupport(m)
+    && hasReasoningEffortSupport(m);
+}
+
 // Static minimums a model must meet to even be "experimental" for Codex.
 function meetsStaticMinimums(m) {
   if (!m) return false;
@@ -84,9 +138,15 @@ function sanitizeModel(m, compatibility, { recommended = false } = {}) {
   const supportsReasoning = Array.isArray(params)
     ? params.includes('reasoning')
     : !!reasoningMetadata;
+  // Keep the existing development-agent fields byte-for-byte compatible.
+  // Global Chat needs OpenRouter's newer top-level supported_efforts shape,
+  // but exposing it as `reasoningEfforts` would change the choices passed to
+  // existing Codex/developer sessions. Give the navigation profile its own
+  // metadata field instead.
   const reasoningEfforts = reasoningMetadata && typeof reasoningMetadata === 'object'
     ? (reasoningMetadata.efforts ?? null)
     : null;
+  const globalChatReasoningEfforts = reasoningEffortList(m);
   const promptPrice = pricePerMillion(pricing.prompt);
   const completionPrice = pricePerMillion(pricing.completion);
   const averagePricePerMillion = averageTokenPrice(promptPrice, completionPrice);
@@ -94,7 +154,7 @@ function sanitizeModel(m, compatibility, { recommended = false } = {}) {
   const createdDate = Number.isFinite(createdSeconds) && createdSeconds > 0
     ? new Date(createdSeconds * 1000)
     : null;
-  return {
+  const sanitized = {
     id: m.id,
     name: m.name || m.id,
     provider: String(m.id || '').split('/')[0] || null,
@@ -109,13 +169,28 @@ function sanitizeModel(m, compatibility, { recommended = false } = {}) {
     averagePricePerMillion,
     costTier: costTier(averagePricePerMillion),
     supportsTools: hasToolSupport(m),
+    supportsStructuredOutputs: hasStructuredOutputSupport(m),
+    supportsReasoningEffort: hasReasoningEffortSupport(m),
+    supportsParallelToolCalls: hasParallelToolCallSupport(m),
+    supportsTemperature: hasTemperatureSupport(m),
     meetsCodexMinimums: meetsStaticMinimums(m),
+    meetsGlobalChatMinimums: meetsGlobalChatMinimums(m),
     supportsReasoning,
     reasoningEfforts,
     isRecommended: recommended === true,
     compatibility: compatibility.status,
     compatibilityNote: compatibility.note || null,
   };
+  // Server-only metadata for the independent Global Chat profile. Keeping it
+  // non-enumerable means existing development-chat catalog JSON and runtime
+  // model metadata remain exactly as before this feature.
+  Object.defineProperty(sanitized, 'globalChatReasoningEfforts', {
+    value: globalChatReasoningEfforts,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return sanitized;
 }
 
 // Load the compatibility overlay from the DB (agent_model_compatibility).
@@ -230,7 +305,12 @@ function invalidateAll() { cache.clear(); }
 
 module.exports = {
   meetsStaticMinimums,
+  meetsGlobalChatMinimums,
   hasToolSupport,
+  hasStructuredOutputSupport,
+  hasReasoningEffortSupport,
+  hasParallelToolCallSupport,
+  hasTemperatureSupport,
   pricePerMillion,
   averageTokenPrice,
   costTier,

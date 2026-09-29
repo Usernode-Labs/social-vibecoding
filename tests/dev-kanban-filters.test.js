@@ -84,7 +84,7 @@ function makeAppView() {
 }
 
 // Default (empty) filters — the fast-path that must match everything.
-const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null };
+const none = { q: '', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false };
 
 const issue = (over) => ({
   number: 42, title: 'Dark mode toggle resets', created_by_username: 'evan',
@@ -311,7 +311,7 @@ test('the bar renders search, the Filters chip, and dismissable active chips', (
       ],
     },
   );
-  assert.match(html, /id="dev-kanban-search"[^>]*placeholder="Search title, author, or #"/);
+  assert.match(html, /id="dev-kanban-search"[^>]*placeholder="Search cards, comments, or #"/);
   assert.match(html, /id="dev-kanban-filters-btn"[^>]*aria-haspopup="dialog"/);
   assert.match(html, />Filters \(2\)</, 'the chip counts the dialog-owned filters');
   // The chip reads as SET while any dialog filter is on — the filled tonal state.
@@ -473,7 +473,7 @@ test('_saveKanbanFilters round-trips through _loadKanbanFilters under the slug',
   AppView._kanbanFilters = { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true };
   AppView._saveKanbanFilters('my-app');
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null });
+    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true, theme: null, assignedToMe: false, createdByMe: false });
 });
 
 test('_saveKanbanFilters clears the key when filters are at defaults', () => {
@@ -506,7 +506,7 @@ test('_loadKanbanFilters merges over defaults for a partial stored object', () =
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, JSON.stringify({ q: 'hi' }));
   // Missing fields fall back to their defaults rather than becoming undefined.
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null });
+    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false, theme: null, assignedToMe: false, createdByMe: false });
 });
 
 test('_loadKanbanFilters yields defaults on corrupt stored JSON', () => {
@@ -818,4 +818,342 @@ test('a repaint republishes the whole strip: count and chips track the filters',
       { key: 'needsVote', label: 'Waiting on you' },
     ],
   );
+});
+
+// #2089: the search reads past the title — the bodies the board payload
+// already carries, and the discussion under a card, which the server
+// answers per query and the paint folds in as `commentHits`.
+test('text search reads an issue body and a proposal summary or PR body (#2089)', () => {
+  const AppView = makeAppView();
+  const body = 'On a 360px-wide viewport the action buttons push past the card edge.';
+  assert.equal(AppView._devCardMatches('issue', issue({ body }), { ...none, q: 'VIEWPORT' }), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ body }), { ...none, q: 'leaderboard' }), false);
+  assert.equal(AppView._devCardMatches('issue', issue({ body: null }), { ...none, q: 'viewport' }), false);
+  assert.equal(
+    AppView._devCardMatches('proposal', prop({ pr_summary_md: 'Cards now wrap on phones.' }), { ...none, q: 'phones' }),
+    true
+  );
+  assert.equal(
+    AppView._devCardMatches('proposal', prop({ pr_body: '## Testing\nOpen the board at 360px.' }), { ...none, q: '360px' }),
+    true
+  );
+  assert.equal(
+    AppView._devCardMatches('merged', merged({ pr_body: 'Restores the scroll offset.' }), { ...none, q: 'offset' }),
+    true
+  );
+  assert.equal(AppView._devCardMatches('gov', gov({ body: 'Rename because the old name confused people.' }), { ...none, q: 'confused' }), true);
+  // Sessions ship no spec, so a body-only query does not match one.
+  assert.equal(
+    AppView._devCardMatches('session', { id: 5, session_title: 'Fix header', username: 'sam', spec_md: 'viewport' }, { ...none, q: 'viewport' }),
+    false
+  );
+});
+
+test('comment hits match cards by their thread key (#2089)', () => {
+  const AppView = makeAppView();
+  const hits = { issues: [42], sessions: [9000001], gov: [7] };
+  const f = { ...none, q: 'flaky', commentHits: hits };
+  assert.equal(AppView._devCardMatches('issue', issue({}), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ number: 43 }), f), false);
+  assert.equal(AppView._devCardMatches('proposal', prop({}), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ id: 9000002 }), f), false);
+  assert.equal(AppView._devCardMatches('merged', merged({ id: 9000001 }), f), true);
+  assert.equal(AppView._devCardMatches('session', { id: 9000001, session_title: 'Work', username: 'sam' }, f), true);
+  assert.equal(AppView._devCardMatches('gov', gov({}), f), true);
+  assert.equal(AppView._devCardMatches('gov', gov({ id: 8 }), f), false);
+  // Hits are per query: with none supplied, the same cards do not match.
+  assert.equal(AppView._devCardMatches('issue', issue({}), { ...none, q: 'flaky' }), false);
+  // Hits widen the match; they never narrow a title hit.
+  assert.equal(AppView._devCardMatches('issue', issue({ number: 43 }), { ...f, q: 'dark mode' }), true);
+});
+
+test('_kanbanMatchFilters asks the server once per query and folds the answer in (#2089)', async () => {
+  const calls = [];
+  let answer = { issues: [42], sessions: [], gov: [] };
+  const sandbox = makeCtx({
+    fetch: async (url) => { calls.push(url); return { ok: true, json: async () => answer }; },
+  });
+  const AppView = sandbox.__AppView;
+  sandbox.URLSearchParams = URLSearchParams;
+  sandbox.App.currentApp = 'demo-app';
+  sandbox.location = { search: '?demo=1' };
+  let repaints = 0;
+  AppView._repaintBoardSurface = () => { repaints += 1; };
+
+  // Below the floor nothing is asked.
+  AppView._kanbanFilters = { ...none, q: 'f' };
+  assert.equal(AppView._kanbanMatchFilters().commentHits, null);
+  assert.deepEqual(calls, []);
+
+  AppView._kanbanFilters = { ...none, q: 'Flaky ' };
+  assert.equal(AppView._kanbanMatchFilters().commentHits, null, 'unknown until the answer lands');
+  assert.equal(calls.length, 1);
+  AppView._kanbanMatchFilters();
+  assert.equal(calls.length, 1, 'a second paint while the answer is in flight does not ask again');
+  assert.match(calls[0], /^\/api\/apps\/demo-app\/board-search\?q=flaky&demo=1$/);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(repaints, 1, 'an answer naming a card repaints');
+  const f = AppView._kanbanMatchFilters();
+  assert.deepEqual(Array.from(f.commentHits.issues), [42]);
+  assert.equal(calls.length, 1, 'the same query is not asked twice');
+
+  // A different query asks again; an empty answer folds in without a repaint.
+  answer = { issues: [], sessions: [], gov: [] };
+  AppView._kanbanFilters = { ...none, q: 'quiet' };
+  AppView._kanbanMatchFilters();
+  assert.equal(calls.length, 2);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(repaints, 1);
+  assert.deepEqual(Array.from(AppView._kanbanMatchFilters().commentHits.issues), []);
+
+  // Clearing the box drops the hits.
+  AppView._kanbanFilters = { ...none, q: '' };
+  assert.equal(AppView._kanbanMatchFilters().commentHits, null);
+  assert.equal(AppView._kanbanCommentHits, null);
+});
+
+
+// ─── #1935: "Assigned to you" / "Created by you" quick toggles ─────────────
+
+test('Created by you keeps what the viewer authored, on every kind (#1935)', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  const f = { ...none, createdByMe: true };
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'evan' }), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'sam' }), f), false);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'evan' }), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'sam' }), f), false);
+  assert.equal(AppView._devCardMatches('gov', gov({ created_by_username: 'evan' }), f), true);
+  assert.equal(AppView._devCardMatches('merged', merged({ username: 'kim' }), f), false);
+  assert.equal(AppView._devCardMatches('session', { username: 'evan' }, f), true);
+  assert.equal(AppView._devCardMatches('session', { username: 'sam' }, f), false);
+});
+
+test('Assigned to you reads the voted assignee on issues, authorship where nothing is assignable (#1935)', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  const f = { ...none, assignedToMe: true };
+  // Issues: the community-voted assignee, not who filed it.
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'sam', assignee: { top: 'evan' } }), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'evan', assignee: { top: 'sam' } }), f), false);
+  assert.equal(AppView._devCardMatches('issue', issue({ created_by_username: 'evan' }), f), false,
+    'filing an issue does not assign it to you');
+  // A proposal or session has no assignee: whoever opened it is doing it.
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'evan' }), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ username: 'sam' }), f), false);
+  assert.equal(AppView._devCardMatches('session', { username: 'evan' }, f), true);
+  // Governance rows are never assigned.
+  assert.equal(AppView._devCardMatches('gov', gov({ created_by_username: 'evan' }), f), false);
+});
+
+test('signed out, a persisted quick toggle matches nothing and the strip hides both (#1935)', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = null;
+  assert.equal(AppView._devCardMatches('issue', issue({ assignee: { top: 'evan' } }), { ...none, assignedToMe: true }), false);
+  assert.equal(AppView._devCardMatches('issue', issue({}), { ...none, createdByMe: true }), false);
+  assert.equal(AppView._kanbanFilterView().quick, null);
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  assert.deepEqual(plain(AppView._kanbanFilterView().quick), { assignedToMe: false, createdByMe: false });
+});
+
+test('a quick toggle flips, counts as an active filter, and persists like the rest (#1935)', () => {
+  const store = makeMemoryStore();
+  const sandbox = makeCtx({ sessionStorage: store });
+  const AppView = sandbox.__AppView;
+  sandbox.App.user = { id: 1, username: 'evan' };
+  sandbox.App.currentApp = 'my-app';
+  AppView._kanbanFilters = AppView._defaultKanbanFilters();
+  let repaints = 0;
+  AppView._repaintBoardSurface = () => { repaints += 1; AppView._saveKanbanFilters('my-app'); };
+  AppView._toggleKanbanQuickFilter('createdByMe');
+  assert.equal(AppView._kanbanFilters.createdByMe, true);
+  assert.equal(AppView._kanbanFiltersActive(), true);
+  assert.equal(repaints, 1);
+  assert.equal(AppView._loadKanbanFilters('my-app').createdByMe, true, 'it survives a reload of the surface');
+  AppView._toggleKanbanQuickFilter('createdByMe');
+  assert.equal(AppView._kanbanFiltersActive(), false);
+  AppView._toggleKanbanQuickFilter('priority');
+  assert.equal(AppView._kanbanFilters.priority, null, 'only the two quick keys toggle');
+});
+
+test('the strip draws the two quick toggles as pressed chips, only with a viewer (#1935)', () => {
+  const base = { mounted: true, q: '', seq: 0, count: 0, chips: [] };
+  const on = renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
+    { ...base, quick: { assignedToMe: true, createdByMe: false } });
+  assert.match(on, /data-quick-filter="assignedToMe"[^>]*aria-pressed="true"[^>]*bg-zinc-900 text-white/);
+  assert.match(on, />Assigned to you</);
+  assert.match(on, /data-quick-filter="createdByMe"[^>]*aria-pressed="false"/);
+  assert.match(on, />Created by you</);
+  const anon = renderComponent('frontend/src/features/dev-board/kanban-filters.tsx', 'KanbanFiltersView',
+    { ...base, quick: null });
+  assert.doesNotMatch(anon, /data-quick-filter/);
+});
+
+// ── When the two quick filters will not fit on one line ────────────────
+//
+// They move into the Filters dialog. The STRIP is the only thing that can
+// tell — whether they fit is a question about the row's contents at a width,
+// not about the width, so three active filter chips at 1000px overflow where
+// none does at 700 — and it measures its own row and reports through
+// `_setQuickFiltersInDialog`. Everything downstream of that decision is in
+// app-view.js, which is what these exercise; the measurement itself needs a
+// browser and was driven in one (a 300-width sweep, ten passes each, no
+// oscillation) rather than asserted here.
+
+test('the dialog owns the two quick filters only when the strip hands them over', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), assignedToMe: true, createdByMe: true };
+
+  // Strip's, by default: the bar draws the toggles and the dialog offers none.
+  assert.equal(AppView._quickFiltersInDialog, false);
+  assert.deepEqual(plain(AppView._kanbanFilterView().quick),
+    { assignedToMe: true, createdByMe: true });
+  assert.equal(AppView._kanbanFilterCount(), 0,
+    'the count does not report a filter whose own toggle is on screen');
+  assert.equal(AppView._kanbanActiveChips().map((c) => c.key).join(','), '',
+    'and nor does the chip row');
+
+  // Handed over: the bar stops drawing them, and the count and the chip row
+  // pick them up — which is how every other dialog-owned filter surfaces.
+  let published = 0;
+  AppView._reactDevBoard = () => ({ publishKanbanFilters: () => { published += 1; } });
+  AppView._setQuickFiltersInDialog(true);
+  assert.equal(published, 1, 'reporting republishes the bar');
+  assert.equal(AppView._kanbanFilterView().quick, null);
+  assert.equal(AppView._kanbanFilterCount(), 2);
+  assert.equal(AppView._kanbanActiveChips().map((c) => c.key).join(','),
+    'assignedToMe,createdByMe');
+  // Idempotent: a re-measure that reaches the same answer publishes nothing,
+  // which is what keeps the report out of a loop with the render that made it.
+  AppView._setQuickFiltersInDialog(true);
+  assert.equal(published, 1);
+});
+
+test('a dismissable chip for a quick filter clears it, rather than nulling it', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), assignedToMe: true };
+  AppView._quickFiltersInDialog = true;
+  let repaints = 0;
+  AppView._repaintBoardSurface = () => { repaints += 1; };
+  AppView._dismissKanbanFilter('assignedToMe');
+  assert.equal(AppView._kanbanFilters.assignedToMe, false,
+    'false, not null — every reader of these two treats them as booleans');
+  assert.equal(repaints, 1);
+});
+
+test('the dialog payload offers the switches only when it owns them, and Done respects that', () => {
+  const AppView = makeAppView();
+  AppView.__sandbox.App.user = { id: 1, username: 'evan' };
+  AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), assignedToMe: true };
+  let opened = null;
+  AppView.__sandbox.window.UsernodeReact = {
+    dialogs: { boardFilters: { open: (p) => { opened = p; } } },
+  };
+  AppView._repaintBoardSurface = () => {};
+
+  AppView._openKanbanFiltersDialog();
+  assert.equal(opened.quick, false, 'the strip has them, so the dialog does not offer them');
+  assert.equal(opened.filters.assignedToMe, true, 'but the snapshot still carries their state');
+
+  // WHILE THE STRIP OWNS THEM, Done must not write its snapshot back: it was
+  // taken at open, and the reader may have flipped a toggle since.
+  AppView.applyKanbanFilters({ priority: 'high', assignedToMe: false, createdByMe: true });
+  assert.equal(AppView._kanbanFilters.priority, 'high');
+  assert.equal(AppView._kanbanFilters.assignedToMe, true, 'untouched');
+  assert.equal(AppView._kanbanFilters.createdByMe, false, 'untouched');
+
+  // Once it owns them, the same call is authoritative.
+  AppView._quickFiltersInDialog = true;
+  AppView._openKanbanFiltersDialog();
+  assert.equal(opened.quick, true);
+  AppView.applyKanbanFilters({ priority: null, assignedToMe: false, createdByMe: true });
+  assert.equal(AppView._kanbanFilters.assignedToMe, false);
+  assert.equal(AppView._kanbanFilters.createdByMe, true);
+
+  // Signed out there is no "you", so neither surface offers them however the
+  // measurement came out.
+  AppView.__sandbox.App.user = null;
+  AppView._openKanbanFiltersDialog();
+  assert.equal(opened.quick, false);
+});
+
+test('the strip measures its own row, and cannot be read as a breakpoint', () => {
+  const SRC = read('frontend/src/features/dev-board/kanban-filters.tsx');
+  // The search field counts as its MINIMUM, not the width it happens to have:
+  // it is `flex-1`, so its current width says nothing about whether the row
+  // fits. Both numbers are the literals in the class strings.
+  assert.match(SRC, /const ROW_GAP_PX = 8;/);
+  assert.match(SRC, /const SEARCH_MIN_PX = 160;/);
+  assert.match(SRC, /const SEARCH_CLS = [\s\S]*?min-w-\[10rem\]/,
+    'and the field still declares that minimum');
+  assert.match(SRC, /className="flex flex-wrap items-center gap-2"/, 'and the row that gap');
+  // The full one-line requirement is computed every time, INCLUDING the two
+  // chips when they are not rendered — which is what stops the decision
+  // feeding back into itself. `pairRef` is that cache.
+  assert.match(SRC, /if \(!quickShownNow\) needed \+= pairRef\.current \?\? 0;/);
+  // `#dev-kanban-active-chips` is `display: contents`, so its chips are the
+  // row's own flex items and the span itself has no box to measure.
+  assert.match(SRC, /child\.id === 'dev-kanban-active-chips'/);
+  assert.match(SRC, /className="contents"/);
+  // A LAYOUT effect, so the correction lands before the browser paints rather
+  // than as a visible flicker on a narrow window.
+  assert.ok(!/useEffect\(/.test(SRC), 'no passive effect decides what is drawn');
+  assert.match(SRC, /useLayoutEffect\(\(\) => \{\s*if \(!mounted\) return;/);
+  // And no media query anywhere near it.
+  assert.ok(!/matchMedia|min-width/.test(SRC), 'the decision is measured, never a breakpoint');
+});
+
+test('the Filters dialog draws the two switches only when the payload says so', () => {
+  const SRC = read('frontend/src/features/dialogs/board-filters.tsx');
+  assert.match(SRC, /\{quick \? \(/, 'gated on the payload');
+  for (const id of ['board-filters-assignedtome', 'board-filters-createdbyme']) {
+    assert.ok(SRC.includes(id), `${id} is the switch's id`);
+  }
+  // Switches, like the dialog's other boolean — not a copy of the strip's
+  // chips. One kind of control reads as one list of conditions, which is what
+  // the subtitle at the top of the card promises.
+  assert.match(SRC, /<Switch\s+id="board-filters-assignedtome"/);
+  assert.match(SRC, /<Switch\s+id="board-filters-createdbyme"/);
+  // They are absent from the prerender (`quick` starts false), so they are
+  // deliberately NOT in the shell's id inventory — see
+  // tests/shell-id-inventory.test.js, which requires every ADDED_IDS entry to
+  // be present in the shipped document.
+  const SHELL = read('public/index.html');
+  assert.ok(!SHELL.includes('board-filters-assignedtome'));
+});
+
+test('a declared check reading the filter bar asks for the All-items sub-view (ws=all)', () => {
+  // The bug this pins cost a check round. `#app/<slug>/workshop` opens the
+  // Workshop LANDER; the board's search-and-filter bar lives in the head of
+  // the All-items pane, which mounts only under `ws=all`. Three checks named
+  // the bare workshop route and read `#dev-filter-row`, so the element they
+  // wanted had never been rendered — a selector that resolves perfectly
+  // against a page the runner was never on.
+  //
+  // tests/dapp-selectors-resolve.test.js cannot catch this: it resolves
+  // selectors against the STATIC shell, and every one of these nodes is
+  // rendered at runtime by React. The invariant is about the ROUTE, so it is
+  // checked here instead — any declared check whose selector names a node the
+  // All-items sub-view owns must carry `ws=all` when it loads the workshop
+  // route.
+  const DAPP = JSON.parse(read('dapp.json'));
+  // Ids and attributes that exist only inside the All-items pane. Deliberately
+  // not `#dev-workshop` itself, which the lander renders too.
+  const ALL_ITEMS_ONLY = [
+    '#dev-filter-row', '#dev-kanban-filterbar', '#dev-kanban-search',
+    '#dev-kanban-filters-btn', 'data-quick-filter', 'data-ws-pane',
+    'data-ws-ear', 'dev-ws-group',
+  ];
+  const offenders = [];
+  for (const t of DAPP.tests) {
+    const p = t.path || '';
+    if (!/#app\/[^/]+\/workshop\b/.test(p)) continue;
+    const sel = t.expectSelector || t.expectNoSelector || '';
+    if (!ALL_ITEMS_ONLY.some((n) => sel.includes(n))) continue;
+    if (!/[?&]ws=all(&|$|#)/.test(p)) offenders.push(`${t.name} → ${p}`);
+  }
+  assert.deepEqual(offenders.join('\n'), '',
+    'these workshop-route checks read All-items nodes without ws=all');
 });

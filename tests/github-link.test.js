@@ -181,7 +181,8 @@ test('legacy GitHub attribution remains readable but no credential API exists', 
 test('social identity routes own GitHub independently of MCP and preserve reviewable copy', () => {
   assert.match(ROUTE_SRC, /router\.get\('\/api\/me\/github\/callback'/);
   assert.match(ROUTE_SRC, /consumeOauthState\(pool/);
-  assert.match(ROUTE_SRC, /saveIdentity\(pool, req\.user\.id, identity\)/);
+  assert.match(ROUTE_SRC, /finishIdentityVerification\([\s\S]*pool, req\.user\.id, identity, pending\.intent/);
+  assert.match(ROUTE_SRC, /router\.post\('\/api\/me\/social-identities\/:provider\/replacement'/);
   assert.match(ROUTE_SRC, /router\.delete\('\/api\/me\/social-identities\/:provider'/);
   // The two lines that make the claim reviewable. #1191 split them: the
   // "holds no token" sentence is decided by the module (it depends on the

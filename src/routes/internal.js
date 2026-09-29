@@ -23,6 +23,8 @@ const appAccess = require('../services/app-access');
 // needs now lives inside that service.
 const issueDraft = require('../services/issue-draft');
 const platformJwt = require('../services/platform-jwt');
+const visualEvidenceControl = require('../services/visual-evidence-control');
+const visualEvidenceState = require('../services/visual-evidence-state');
 
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's
@@ -151,6 +153,115 @@ function safeNext(raw) {
 function internalRoutes(_config) {
   const router = Router();
   const pool = getPool(_config);
+
+  // Run-scoped visual-evidence control plane. The evidence worker receives a
+  // purpose-bound token naming both its session and run; it has no access to
+  // push, issues, production diagnostics, or the generic worker API. The
+  // callbacks live only while the orchestrator owns the paired environments.
+  const evidenceAuth = internalAuthPurpose([platformJwt.PUR_EVIDENCE]);
+  const evidenceLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 120,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `evidence:${req.workerSession?.evidenceRunId || 'anon'}`,
+  });
+  function evidenceControlForRequest(req) {
+    const runId = String(req.params.runId || '');
+    if (req.workerSession.evidenceRunId !== runId) {
+      throw new visualEvidenceControl.EvidenceControlError(
+        'evidence_scope_mismatch', 'Evidence token does not own this run.', 403
+      );
+    }
+    return visualEvidenceControl.forRequest({ runId, sessionId: req.workerSession.sessionId });
+  }
+  function evidenceError(res, err) {
+    const status = Number(err?.status)
+      || (err?.code === 'invalid_visual_evidence' ? 400 : 500);
+    if (status >= 500) log.warn('visual-evidence', 'Evidence control request failed', { code: err?.code, error: err?.message });
+    return res.status(status).json({ ok: false, code: err?.code || 'evidence_control_failed', message: err?.message || 'Evidence control failed.' });
+  }
+
+  router.get('/api/internal/evidence/:runId/context', evidenceAuth, evidenceLimiter, (req, res) => {
+    try { return res.json({ ok: true, context: evidenceControlForRequest(req).getContext() }); }
+    catch (err) { return evidenceError(res, err); }
+  });
+
+  router.post('/api/internal/evidence/:runId/reset-pair', evidenceAuth, evidenceLimiter, async (req, res) => {
+    try {
+      const result = await evidenceControlForRequest(req).resetPair();
+      return res.json({ ok: true, result });
+    } catch (err) { return evidenceError(res, err); }
+  });
+
+  // Kept for an older worker during a rolling deployment. RunControl serves
+  // the base/head companion calls from one atomic reset so the second request
+  // cannot invalidate the first request's origin.
+  router.post('/api/internal/evidence/:runId/reset-side', evidenceAuth, evidenceLimiter, async (req, res) => {
+    try {
+      const result = await evidenceControlForRequest(req).resetSide(req.body?.side);
+      return res.json({ ok: true, result });
+    } catch (err) { return evidenceError(res, err); }
+  });
+
+  router.post('/api/internal/evidence/:runId/run-plan', evidenceAuth, evidenceLimiter, (req, res) => {
+    try {
+      const control = evidenceControlForRequest(req);
+      const result = Object.hasOwn(req.body || {}, 'replays')
+        ? control.submitReplays(req.body.replays)
+        : control.submitPlan(req.body?.plan);
+      return res.json({ ok: true, result });
+    } catch (err) { return evidenceError(res, err); }
+  });
+
+  router.post('/api/internal/evidence/:runId/finish', evidenceAuth, evidenceLimiter, (req, res) => {
+    try {
+      const result = evidenceControlForRequest(req).finish(req.body || {});
+      return res.json({ ok: true, result });
+    } catch (err) { return evidenceError(res, err); }
+  });
+
+  // Build-agent declaration boundary. Claude build workers carry the legacy
+  // worker:session capability; Codex build workers carry only worker:push.
+  // Both may record intent for their own session, but neither can execute a
+  // replay, read artifacts, or address another proposal.
+  const visualIntentAuth = internalAuthPurpose([
+    platformJwt.PUR_WORKER_PUSH,
+    platformJwt.PUR_WORKER,
+  ]);
+  const visualIntentLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 6,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => `visual-intent:${req.workerSession?.sessionId || 'anon'}`,
+  });
+  router.post(
+    '/api/internal/sessions/:sessionId/visual-evidence-intent',
+    visualIntentAuth,
+    visualIntentLimiter,
+    async (req, res) => {
+      const sessionId = Number(req.params.sessionId);
+      if (!Number.isInteger(sessionId) || sessionId <= 0) {
+        return res.status(400).json({ ok: false, code: 'bad_session_id', message: 'Invalid proposal session id.' });
+      }
+      if (Number(req.workerSession.sessionId) !== sessionId) {
+        return res.status(403).json({ ok: false, code: 'session_mismatch', message: 'The worker token does not own this proposal.' });
+      }
+      if (!_config.visualEvidence?.collect) {
+        return res.json({
+          ok: true,
+          visualEvidence: { accepted: false, state: 'disabled', reason: 'Visual evidence intent collection is disabled.' },
+        });
+      }
+      try {
+        const result = await visualEvidenceState.recordIntent(pool, sessionId, req.body?.intent);
+        return res.json({ ok: true, visualEvidence: result });
+      } catch (err) {
+        return evidenceError(res, err);
+      }
+    }
+  );
 
   router.get('/__caddy/access', async (req, res) => {
     const rawHost = req.headers['x-forwarded-host'] || req.headers.host;
@@ -557,10 +668,15 @@ function internalRoutes(_config) {
         return res.status(403).json({ ok: false, code: 'session_mismatch' });
       }
       try {
+        // A change an agent session is building also reads the files sent
+        // in that conversation (#2779 follow-up): those rows name the
+        // conversation, not the change (schema.sql, agent_session_id).
         const { rows } = await pool.query(
           `SELECT id, kind, filename, content_type, size_bytes, meta, created_at
              FROM chat_session_attachments
-            WHERE session_id = $1 AND message_id IS NOT NULL
+            WHERE message_id IS NOT NULL
+              AND (session_id = $1
+                   OR agent_session_id = (SELECT agent_session_id FROM chat_sessions WHERE id = $1))
             ORDER BY created_at ASC, id ASC`,
           [sessionId]
         );
@@ -607,7 +723,9 @@ function internalRoutes(_config) {
       try {
         const { rows } = await pool.query(
           `SELECT content_type, data FROM chat_session_attachments
-            WHERE id = $1 AND session_id = $2`,
+            WHERE id = $1
+              AND (session_id = $2
+                   OR agent_session_id = (SELECT agent_session_id FROM chat_sessions WHERE id = $2))`,
           [attId, sessionId]
         );
         if (!rows.length) return res.status(404).json({ ok: false, code: 'not_found' });

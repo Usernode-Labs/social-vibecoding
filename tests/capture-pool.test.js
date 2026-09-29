@@ -40,6 +40,7 @@ const assert = require('node:assert/strict');
 const {
   runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf,
   hashGroupCap, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, assertMaxMs,
+  makeConsoleErrorSink,
 } = require('../capture/capture');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -499,6 +500,7 @@ function makeEventPage({ onGoto, onHash } = {}) {
       if (!handlers.has(ev)) handlers.set(ev, []);
       handlers.get(ev).push(fn);
     },
+    consoleHandlers() { return handlers.get('console') || []; },
     emitError(text) {
       for (const fn of handlers.get('console') || []) {
         fn({ type: () => 'error', text: () => text, location: () => ({ url: 'app.js', lineNumber: 1 }) });
@@ -591,6 +593,102 @@ test('a hash cohort owns its own console errors, and load errors are shared', as
     'but the error raised after the hash switch belongs to that cohort alone');
   assert.match(a.failureReason, /1 console error/);
   assert.match(b.failureReason, /2 console errors/);
+});
+
+// An Error argument reaches the listener as the text "JSHandle@error"; the
+// handle's `evaluate` is how the runner reads the real error in the page.
+function errorHandleMessage(error, delayMs = 0) {
+  return {
+    type: () => 'error',
+    text: () => 'JSHandle@error',
+    location: () => ({ url: 'http://s/shell/assets/shell.js', lineNumber: 48 }),
+    args: () => [{
+      evaluate: async (fn) => {
+        if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
+        return fn(error);
+      },
+    }],
+  };
+}
+
+test('an Error logged by console.error is recorded by its message and island, not as JSHandle@error', async () => {
+  const pushed = [];
+  const sink = makeConsoleErrorSink((kind, message, source) => pushed.push({ kind, message, source }));
+  const prevWindow = globalThis.window;
+  globalThis.window = { UsernodeReact: { islandErrors: [{ island: 'portal:gc-thread-messages', message: 'x is undefined' }] } };
+  try {
+    sink.onConsole(errorHandleMessage(new TypeError('x is undefined')));
+    sink.onConsole(errorHandleMessage(new Error('other failure')));
+    sink.onConsole({ type: () => 'error', text: () => 'plain text', location: () => null });
+    await sink.settle();
+  } finally {
+    globalThis.window = prevWindow;
+  }
+  assert.equal(pushed.length, 3, 'two different Errors are two entries, not one deduped placeholder');
+  const typeError = pushed.find((p) => p.message.startsWith('TypeError'));
+  const other = pushed.find((p) => p.message.startsWith('Error: other'));
+  assert.match(typeError.message, /^TypeError: x is undefined \[island portal:gc-thread-messages\]/);
+  assert.match(typeError.message, /\n\s+at /, 'the stack frames follow the head');
+  assert.match(other.message, /^Error: other failure(\n|$)/, 'no island tag when no boundary recorded it');
+  assert.ok(pushed.some((p) => p.message === 'plain text'), 'text messages are recorded unchanged');
+  assert.equal(typeError.source, 'http://s/shell/assets/shell.js:48');
+});
+
+test('an Error is resolved even when the console text already reads as its message', async () => {
+  const pushed = [];
+  const sink = makeConsoleErrorSink((kind, message) => pushed.push(message));
+  const error = new RangeError('bad index');
+  sink.onConsole({
+    type: () => 'error',
+    text: () => 'RangeError: bad index',
+    location: () => null,
+    args: () => [{ remoteObject: () => ({ type: 'object', subtype: 'error' }), evaluate: async (fn) => fn(error) }],
+  });
+  await sink.settle();
+  assert.equal(pushed.length, 1);
+  assert.match(pushed[0], /^RangeError: bad index\n\s+at /, 'the stack is kept, not just the message');
+});
+
+test('an Error that fails to resolve in the page is still recorded', async () => {
+  const pushed = [];
+  const sink = makeConsoleErrorSink((kind, message) => pushed.push(message));
+  sink.onConsole({
+    type: () => 'error',
+    text: () => 'JSHandle@error',
+    location: () => null,
+    args: () => [{ evaluate: async () => { throw new Error('Execution context was destroyed'); } }],
+  });
+  await sink.settle();
+  assert.deepEqual(pushed, ['JSHandle@error']);
+});
+
+test('an Error still resolving at a hash switch counts against the cohort it fired in', async () => {
+  const read = collect();
+  const timers = [];
+  const page = makeEventPage({
+    onHash: (p, h) => {
+      if (h === '#/a') {
+        timers.push(setTimeout(() => {
+          for (const fn of p.consoleHandlers()) fn(errorHandleMessage(new Error('a broke'), 150));
+        }, 20));
+      }
+    },
+  });
+  const group = [
+    { index: 0, name: 'bare', path: '/dev', url: 'http://s/dev' },
+    { index: 1, name: 'a', path: '/dev', url: 'http://s/dev#/a' },
+    { index: 2, name: 'b', path: '/dev', url: 'http://s/dev#/b' },
+  ];
+  try {
+    await runTestGroup({ newPage: async () => page }, group,
+      { settleQuietMs: 60, settleMaxMs: 400 });
+  } finally {
+    for (const t of timers) clearTimeout(t);
+  }
+  const byIndex = new Map(read().frames.map((f) => [f.index, f]));
+  assert.equal(byIndex.get(0).status, 'pass');
+  assert.deepEqual(byIndex.get(1).consoleErrors.map((e) => e.message.split('\n')[0]), ['Error: a broke']);
+  assert.equal(byIndex.get(2).status, 'pass', 'the slow resolution did not land in the next cohort');
 });
 
 test('a cohort that breaks does not fail the cohorts it shares a document with', async () => {
@@ -886,9 +984,12 @@ test('a check still waiting on the wire gets another window, floored and capped'
   const page = makeEventPage();
   page.$ = async () => (ready ? {} : null);
   // Requests keep arriving past the fixed window; the element lands well
-  // after it, and only the ROLLING window can still see it.
-  for (const at of [100, 250, 400, 550]) timers.push(setTimeout(() => page.emitRequest(), at));
-  timers.push(setTimeout(() => { ready = true; page.emitRequest(); }, 620));
+  // after it, and only the ROLLING window can still see it. It lands inside
+  // the roll's own cap (three fixed windows, see ASSERT_ROLL_MAX_FACTOR),
+  // which is the promise: data that is on the wire is caught, a poller that
+  // never stops is not waited for.
+  for (const at of [100, 220, 340, 460]) timers.push(setTimeout(() => page.emitRequest(), at));
+  timers.push(setTimeout(() => { ready = true; page.emitRequest(); }, 500));
   const started = Date.now();
   try {
     await runTestGroup({ newPage: async () => page },
@@ -943,7 +1044,10 @@ test('the rolling window never outlives the group budget, and never undercuts th
     await runTestGroup({ newPage: async () => page },
       [{ index: 0, name: 'a', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
       { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 100, assertPollMs: 20,
-        // 2400ms budget minus the 2000ms reserve → a ~400ms ceiling.
+        // 2400ms budget minus the 2000ms reserve → a ~400ms ceiling. The
+        // roll cap is pushed out of the way so the GROUP ceiling is what
+        // this half exercises; the cap has its own case below.
+        assertRollMaxFactor: 100,
         groupDeadlineAt: Date.now() + 2400 });
   } finally {
     clearInterval(spam);
@@ -972,6 +1076,35 @@ test('the rolling window never outlives the group budget, and never undercuts th
   assert.ok(floored < 1500, `and did not roll past it, took ${floored}ms`);
 });
 
+test('a page that never stops fetching is cut off at a few fixed windows, not at the group ceiling', async () => {
+  // A screen that polls — a live feed, a status ticker — makes a request
+  // inside every window, so an element that had not rendered on it used to
+  // roll all the way to the group ceiling: 111s of one lane in a logged run,
+  // ending in "did not finish" because the roll ate the budget the cold-load
+  // fallback needed. The roll is now capped at ASSERT_ROLL_MAX_FACTOR fixed
+  // windows; with a 100ms window and a 20s group budget that is ~300ms
+  // here, not ~18s.
+  const read = collect();
+  const page = makeEventPage();
+  page.$ = async () => null;
+  const spam = setInterval(() => page.emitRequest(), 20);
+  const started = Date.now();
+  try {
+    await runTestGroup({ newPage: async () => page },
+      [{ index: 0, name: 'ticker', path: '/p', url: 'http://s/p', expectSelector: '#never' }],
+      { settleQuietMs: 20, settleMaxMs: 40, assertMaxMs: 100, assertPollMs: 20,
+        groupDeadlineAt: Date.now() + 20000 });
+  } finally {
+    clearInterval(spam);
+  }
+  const elapsed = Date.now() - started;
+  const { frames } = read();
+  assert.equal(frames[0].status, 'fail');
+  assert.match(frames[0].failureReason, /Expected element "#never" was not found/);
+  assert.ok(elapsed >= 290, `it still rolled past the fixed window (${elapsed}ms)`);
+  assert.ok(elapsed < 1500, `but was cut off at the roll cap, not the 18s ceiling (${elapsed}ms)`);
+});
+
 test('runTests hands each group its own ceiling', () => {
   const fs = require('node:fs');
   const path = require('node:path');
@@ -981,6 +1114,33 @@ test('runTests hands each group its own ceiling', () => {
   assert.match(src, /const ASSERT_REPORT_RESERVE_MS = 2000;/);
   // Only request traffic rolls it.
   assert.match(src, /on\(ev, \(\) => \{ activity\.bump\(\); netActivity\.bump\(\); \}\);/);
+  // And it rolls into at most three fixed windows, whatever the group's own
+  // ceiling allows — the floor stays outermost.
+  assert.match(src, /const ASSERT_ROLL_MAX_FACTOR = 3;/);
+  assert.match(src, /Math\.min\(Date\.now\(\) \+ assertMax, groupCeilingAt, rollCeilingAt\)/);
+});
+
+test('the media pass and the suite share the browser side by side', () => {
+  // main() is Chromium-bound, so its shape is pinned at the source: the
+  // screenshot loop is started, NOT awaited, before the suite is dispatched,
+  // and both are settled before the browser closes. Awaiting the loop first
+  // would put the media pass's 6-14s back in front of every check; closing
+  // on the first rejection would tear the suite down mid-flight and read
+  // as a crashed container.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'capture/capture.js'), 'utf8');
+  const main = src.slice(src.indexOf('async function main()'));
+  const shotsAt = main.indexOf('const shots = (async () => {');
+  const suiteAt = main.indexOf('const suite = tests.length');
+  const settleAt = main.indexOf('await Promise.allSettled([shots, suite])');
+  const closeAt = main.indexOf('await browser.close()');
+  assert.ok(shotsAt > 0 && suiteAt > shotsAt && settleAt > suiteAt && closeAt > settleAt,
+    'shots started, suite started, both settled, then the browser closes');
+  assert.ok(!/await shots\b/.test(main.slice(shotsAt, suiteAt)),
+    'the shots are not awaited before the suite starts');
+  assert.match(main, /if \(failed\) throw failed\.reason;/,
+    'a media-pass failure is still surfaced, after both have settled');
 });
 
 test('the assertion deadline is shared by a cohort, not paid per failing check', async () => {
@@ -1031,13 +1191,16 @@ test('the assertion ceiling comes from env with a sane default', () => {
 });
 
 test('pool bounds come from env with sane defaults and a hard ceiling', () => {
-  assert.equal(poolSize({}), 8, 'the default pool');
+  // 8 → 16 when compositing moved off the SwiftShader GPU process and the
+  // pool stopped being bound by its own container's CPU (see poolSize).
+  assert.equal(poolSize({}), 16, 'the default pool');
   assert.equal(poolSize({ TEST_CONCURRENCY: '3' }), 3);
-  assert.equal(poolSize({ TEST_CONCURRENCY: '0' }), 8, 'zero is not a pool');
-  assert.equal(poolSize({ TEST_CONCURRENCY: 'lots' }), 8, 'garbage falls back');
-  assert.equal(poolSize({ TEST_CONCURRENCY: '500' }), 16,
-    'a ceiling, because each page is ~50-80 MiB of renderer and an OOM-kill '
-    + 'loses the whole run rather than one check');
+  assert.equal(poolSize({ TEST_CONCURRENCY: '0' }), 16, 'zero is not a pool');
+  assert.equal(poolSize({ TEST_CONCURRENCY: 'lots' }), 16, 'garbage falls back');
+  assert.equal(poolSize({ TEST_CONCURRENCY: '500' }), 24,
+    'a ceiling, because each page is ~80-150 MiB of renderer and an OOM-kill '
+    + 'loses the whole run rather than one check — tests/checks-budget.test.js '
+    + 'pins that the container is sized for it');
   assert.equal(testTimeoutMs({}), 25000);
   assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '900' }), 900);
   assert.equal(testTimeoutMs({ TEST_TIMEOUT_MS: '-1' }), 25000);

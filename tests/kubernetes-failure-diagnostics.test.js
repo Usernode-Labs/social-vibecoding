@@ -7,7 +7,10 @@ const { collectPodDiagnostics } = require('../src/services/kubernetes-diagnostic
 const flush = () => new Promise(setImmediate);
 test.afterEach(() => kubernetes._setClientsForTest(null));
 
-function preview(t, { logs = 'Error: sorry, too many clients already', conditions = [], readLogs } = {}) {
+function preview(t, {
+  logs = 'Error: sorry, too many clients already', conditions = [], readLogs,
+  waitingReason = 'CrashLoopBackOff', waitingMessage = null,
+} = {}) {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
   let deployment;
   const calls = [];
@@ -18,7 +21,7 @@ function preview(t, { logs = 'Error: sorry, too many clients already', condition
       spec: { containers: [{ name: 'app', image: 'app@sha256:new' }] } },
     { metadata: { name: 'new', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({}) } },
       spec: { containers: [{ name: 'app', image: 'app@sha256:new' }] },
-      status: { containerStatuses: [{ name: 'app', state: { waiting: { reason: 'CrashLoopBackOff' } },
+      status: { containerStatuses: [{ name: 'app', state: { waiting: { reason: waitingReason, message: waitingMessage } },
         lastState: { terminated: { reason: 'Error', exitCode: 1 } } }] } },
   ];
   kubernetes._setClientsForTest({
@@ -50,6 +53,19 @@ function preview(t, { logs = 'Error: sorry, too many clients already', condition
   });
   return { pending, calls };
 }
+
+test('a terminal container configuration error fails before the rollout timeout', { timeout: 1000 }, async t => {
+  const message = 'container has runAsNonRoot and image will run as root';
+  const { pending } = preview(t, {
+    logs: '', waitingReason: 'CreateContainerConfigError', waitingMessage: message,
+  });
+  await assert.rejects(pending, err => {
+    assert.match(err.message, /CreateContainerConfigError/);
+    assert.match(err.containerLogs, /runAsNonRoot/);
+    assert.match(failure.classify(err).reason, /runAsNonRoot/);
+    return true;
+  });
+});
 
 test('preview database exhaustion preserves previous/current logs and infrastructure classification before cleanup', async t => {
   const { pending, calls } = preview(t);

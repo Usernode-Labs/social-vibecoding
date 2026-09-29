@@ -27,6 +27,13 @@ test('non-GET requests are never intercepted', () => {
   assert.equal(classify('PUT', '/js/app.js'), 'bypass');
 });
 
+test('staking configuration bypasses generic caching and receiver reads remain direct', () => {
+  assert.equal(classify('GET', '/api/me/staking/context'), 'bypass');
+  assert.equal(classify('GET', '/api/me/staking/epochs?epoch=current'), 'bypass');
+  assert.equal(classifyRequest('GET', 'https://receiver.example/v1/observability/vrf/slots?epoch=1',
+    'application/json', 'cors', ORIGIN), 'bypass');
+});
+
 test('SSE streams are bypassed by accept header and by path', () => {
   assert.equal(classify('GET', '/api/sessions/42/events', 'text/event-stream'), 'bypass');
   // Known SSE path even without the header (e.g. EventSource polyfills).
@@ -59,6 +66,12 @@ test('OAuth Connect and callback navigations never use the cached SPA fallback (
     '/api/cli/device/approval?user_code=ABCD-EFGH',
     '/api/me/cli-tokens',
     '/api/auth/login',
+    // Waitlist social connect: the start redirect and the callback's status
+    // page, for signers who have no platform account.
+    '/waitlist/connect/github?token=' + 'a'.repeat(48),
+    '/waitlist/connect/x?token=' + 'a'.repeat(48),
+    '/waitlist/connect/linkedin/callback?code=example&state=example',
+    '/waitlist/connect/x/callback?error=access_denied&state=example',
   ]) {
     for (const mode of ['navigate', 'cors', 'no-cors']) {
       assert.equal(classify('GET', path, 'text/html', mode), 'bypass', `${path} (${mode})`);
@@ -87,6 +100,8 @@ test('the installed worker leaves OAuth navigation responses entirely to the bro
     for (const path of [
       `/api/me/social-identities/${provider}/connect?account=7`,
       `/api/me/${provider}/callback?code=example&state=example`,
+      `/waitlist/connect/${provider}?token=${'a'.repeat(48)}`,
+      `/waitlist/connect/${provider}/callback?code=example&state=example`,
     ]) {
       handlers.fetch({
         request: { method: 'GET', url: ORIGIN + path, headers: new Headers({ accept: 'text/html' }), mode: 'navigate' },
@@ -122,6 +137,14 @@ test('native notification invalidations bypass stale API-cache fallbacks', () =>
   assert.equal(classify('GET', '/api/notifications?limit=100'), 'api');
 });
 
+test('explicit app-status rechecks bypass stale app-detail snapshots', () => {
+  assert.equal(classify('GET', '/api/apps/fresh-app?status_recheck=1'), 'bypass');
+  assert.equal(classify('GET', '/api/apps/fresh-app'), 'api',
+    'ordinary first-paint detail reads keep the boot-cache lane');
+  assert.equal(classify('GET', '/api/apps/fresh-app/issues?status_recheck=1'), 'api',
+    'the freshness tag is scoped to the detail route only');
+});
+
 test('the key-filtered OpenRouter catalog always reaches the network', () => {
   assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter'), 'bypass');
   assert.equal(classify('GET', '/api/me/coding-agent/models?backend=codex_openrouter&refresh=1'), 'bypass');
@@ -150,11 +173,32 @@ test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/usernode-bridge/v1/bridge.js'), 'shell');
   assert.equal(classify('GET', '/manifest.webmanifest'), 'shell');
   assert.equal(classify('GET', '/icons/icon-192.png'), 'shell');
+  // The signed-out landing's illustration. It goes the OTHER way from the
+  // challenge artwork below, and the difference is the fallback: a challenge
+  // card draws its kind icon when the picture fails, so caching buys nothing,
+  // while the landing has nothing to put in its place and is the first screen
+  // a visitor who has never signed in reaches — on a precached document.
+  assert.equal(classify('GET', '/brand/people.png'), 'shell');
 });
 
 test('content-addressed images are cache-first', () => {
   assert.equal(classify('GET', `/app-icons/${'a'.repeat(32)}`), 'immutable');
   assert.equal(classify('GET', `/visuals/${'b'.repeat(32)}`), 'immutable');
+});
+
+// Challenge artwork is deliberately left to the network. It is decoration: an
+// offline card whose picture fails to load draws its kind icon instead, so
+// caching nine SVGs would buy nothing a reader can tell apart. Pinned so a
+// later broadening of the `shell` rules does not start caching them silently.
+test('challenge illustrations bypass the worker, with no offline copy', () => {
+  assert.equal(classify('GET', '/illustrations/challenges/block-production.svg'), 'bypass');
+  assert.equal(classify('GET', '/illustrations/challenges/block-production.svg', 'image/svg+xml', 'no-cors'),
+    'bypass');
+  // Uploaded artwork too. Its id is immutable, which would suit cache-first, but
+  // it is the same decoration with the same fallback, so it stays on the
+  // network rather than joining the `immutable` app-icon rule.
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`), 'bypass');
+  assert.equal(classify('GET', `/challenge-illustrations/${'c'.repeat(32)}`, 'image/png', 'no-cors'), 'bypass');
 });
 
 // ALL cross-origin traffic is bypassed now: the shell compiles Tailwind into
@@ -258,4 +302,46 @@ test('app allowance reads always reach the server after an admin change', () => 
   assert.equal(classify('GET', '/api/me/app-allowance'), 'bypass');
   assert.equal(classify('GET', '/api/me/app-allowance?refresh=1'), 'bypass');
   assert.equal(classify('POST', '/api/me/app-allowance/request'), 'bypass');
+});
+
+
+// ── An announced refresh shuts the fast lane ───────────────────────────
+//
+// `/api/home-panels` and the other boot reads answer from cache on a zero
+// deadline, which is right for a first paint and wrong for a pull. Reproduced
+// on production before this existed: a planted stale copy was served to a
+// refresh while the network held the newer answer.
+
+test('a boot read takes the fast lane when nothing announced a refresh', () => {
+  const { bootLaneApplies, BOOT_READ_PATHS } = require('../public/sw.js');
+  const origin = 'https://example.test';
+  for (const p of BOOT_READ_PATHS) {
+    assert.equal(bootLaneApplies(`${origin}${p}`, origin, 1_000, 0), true,
+      `${p} is a boot read and should take the lane on an ordinary load`);
+  }
+});
+
+test('an announced refresh shuts the lane for every boot read, then it reopens', () => {
+  const { bootLaneApplies, REFRESH_INTENT_WINDOW_MS } = require('../public/sw.js');
+  const origin = 'https://example.test';
+  const url = `${origin}/api/home-panels`;
+  const announcedAt = 1_000;
+  const until = announcedAt + REFRESH_INTENT_WINDOW_MS;
+
+  assert.equal(bootLaneApplies(url, origin, announcedAt, until), false,
+    'the pull itself must reach the network, not last visit\'s numbers');
+  assert.equal(bootLaneApplies(url, origin, until - 1, until), false,
+    'and so must the rest of that screen\'s reads, which leave over the next few seconds');
+  assert.equal(bootLaneApplies(url, origin, until, until), true,
+    'the window is bounded: a stuck flag would turn every later boot into a cold one');
+});
+
+test('shutting the lane never promotes a request that was never in it', () => {
+  const { bootLaneApplies } = require('../public/sw.js');
+  const origin = 'https://example.test';
+  // Paginated reads keep the ordinary deadline either way — a refresh window
+  // must not change which tier a URL belongs to, only whether the lane is open.
+  const url = `${origin}/api/apps/demo/messages?page=2`;
+  assert.equal(bootLaneApplies(url, origin, 1_000, 0), false);
+  assert.equal(bootLaneApplies(url, origin, 1_000, 99_000), false);
 });

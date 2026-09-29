@@ -17,8 +17,10 @@ import type {
   AutoSessionModalView,
   CreditOptionsModalView,
   LlmConsentModalView,
+  PermissionConsentModalView,
 } from './model';
 
 export const autoSessionModalStore = createStore<{ view: AutoSessionModalView | null }>({ view: null });
 export const creditOptionsModalStore = createStore<{ view: CreditOptionsModalView | null }>({ view: null });
 export const llmConsentModalStore = createStore<{ view: LlmConsentModalView | null }>({ view: null });
+export const permissionConsentModalStore = createStore<{ view: PermissionConsentModalView | null }>({ view: null });

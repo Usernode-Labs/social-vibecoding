@@ -72,7 +72,13 @@ const inputVariants = cva('', {
     lead: { composer: 'gc-composer-input', devComposer: 'dc-textarea', none: '' },
     // Leads the string on the two fields inside #agent-files-form, which sit
     // under their own label text rather than beside it.
-    spacing: { mt1: 'mt-1', none: '' },
+    //
+    // `mt2` / `mt3` lead the same way on the three waitlist-survey fields that
+    // follow a sibling rather than a label: #more-made-note under
+    // #more-made-url, #more-group-need under the tools chip row, and the
+    // bottom margin's mirror on #waitlist-confirm-email (which writes its
+    // `mb-2` AFTER `w-full`, so that one rides in through className).
+    spacing: { mt1: 'mt-1', mt2: 'mt-2', mt3: 'mt-3', none: '' },
     width: {
       full: 'w-full',
       flex: 'flex-1 min-w-0',
@@ -85,6 +91,10 @@ const inputVariants = cva('', {
       // wide enough for "1000.00" and no wider, so it reads as an amount
       // rather than as a text field.
       w32: 'w-32',
+      // The App AI permissions row's per-app cap (features/settings/
+      // grants-list.tsx). The same "an amount, not a text field" decision at
+      // the narrower size the row affords.
+      w20: 'w-20',
       none: '',
     },
     box: {
@@ -104,11 +114,44 @@ const inputVariants = cva('', {
       // `default`: they are two different rendered strings today.
       auth:
         'rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100',
+      // The two WAITLIST SURVEY screens' field — `#waitlist-*` and `#more-*`
+      // (features/auth/waitlist.tsx, features/auth/more.tsx, both through
+      // `SURVEY_FIELD` in features/auth/waitlist-shared.tsx). The same box as
+      // `auth` on a WHITE resting fill, at `text-sm`, and with no text colour
+      // of its own — these fields inherit the screen's ink.
+      //
+      // ── Why the survey screens do not take `card` ──────────────────────
+      //
+      // Sign-in and register spell their fields `box: 'card'`: box-less, 17px,
+      // a ROW of the white `AUTH_CARD` that is the real box. That works
+      // because those forms are two or three credential fields stacked inside
+      // one card, where the card's hairlines do the separating. These screens
+      // are not that shape. They are long scrollable questionnaires — sixteen
+      // fields interleaved with help lines, chip rows, a two-column select
+      // grid and a conditional block — and there is no card row to be a row
+      // of. Sixteen box-less fields down a page have nothing drawing their
+      // edges, so the reader cannot see where an answer may be typed; and
+      // wrapping each question in a card to get the edge back would be a
+      // re-layout of both screens, not a consistency fix.
+      //
+      // So the surfaces differ, deliberately, by what they are drawn on — and
+      // the win the audit asked for is still taken: this is ONE spelling owned
+      // by the primitive instead of sixteen hand-written copies of it.
+      authWhite:
+        'rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm',
       // The compact field inside #agent-files-form's inline card — a lighter
       // fill on the card's darker one, and a smaller box to match its text-xs
       // container.
       inset:
         'rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1',
+      // `inset` at the App AI permissions row's size: the same card-on-card
+      // fill and radius, with the tighter padding that keeps a number field
+      // on one line of a `text-xs` row (features/settings/grants-list.tsx).
+      // It draws NO focus rule of its own — pair it with `ring={false}`, which
+      // leaves the browser's own outline as the cue, exactly as the
+      // hand-written string did.
+      insetTight:
+        'rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-1.5 py-0.5',
       // A field inside a native-kit inset-grouped row (#1285): the ROW is the
       // box. `.un-group` draws the card fill and radius, `.un-group-row` the
       // hairline and the `px-4` that lines it up, so the field itself
@@ -190,6 +233,16 @@ const inputVariants = cva('', {
     mono: { true: 'font-mono', false: '' },
     ring: {
       true: 'focus:outline-none focus:ring-2 focus:ring-violet-500',
+      // The ring PLUS a focused border colour — the waitlist surveys' focus
+      // treatment, and the one thing about those fields that is not merely
+      // cosmetic (#1529). iOS Safari does not paint a box-shadow on a
+      // natively-styled control, so the ring alone leaves a phone with no
+      // focus cue at all; colouring the resting border is what guarantees a
+      // visible outline on every engine. It is a variant rather than a
+      // className so the pair cannot be separated one call site at a time —
+      // tests/waitlist-focus-outline.test.js is the rule, this is the spelling.
+      bordered:
+        'focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-violet-500',
       // NO RULE AT ALL — which means the browser's own focus ring still
       // draws. That is deliberate for `groupRow`, whose `.un-group` clips an
       // outward ring and whose row carries a `focus-within:` tint instead:

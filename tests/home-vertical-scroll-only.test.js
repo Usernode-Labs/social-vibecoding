@@ -143,6 +143,29 @@ test('the Discover rail keeps its own axis without taking the feed’s', () => {
     'and the rail still gets the axis it actually scrolls on');
 });
 
+test('the rail bleeds on a phone and fades at the desktop gutter', () => {
+  // ON A PHONE the bleed IS the affordance: negative inline margin with the
+  // padding added back lets a card scroll flush to the screen edge, so the
+  // row visibly continues past the frame.
+  const RAIL = rule('.home-discover-rail');
+  assert.match(RAIL, /margin-inline: -0\.75rem;/, 'the phone rail bleeds to the edge');
+
+  // ON A DESKTOP the frame is not the screen (#2718 review). The page has a
+  // rail on its left and that figure mirrored on its right, and a lane that
+  // bleeds 12px past the gutter puts its cards closer to the window edge than
+  // everything else on the page — which reads as the lane being misaligned
+  // rather than as it continuing. The bleed is cancelled and a MASK says the
+  // same thing: the last 2rem fades out, so a row with more in it trails off
+  // rather than being cut.
+  const at = CSS.indexOf('THE RAIL STOPS AT THE CONTENT\'S EDGE, AND FADES THERE');
+  assert.ok(at > 0, 'the desktop rule states its reason');
+  const block = CSS.slice(at, CSS.indexOf('\n}\n', CSS.indexOf('.home-discover-rail {', at)));
+  assert.match(block, /@media \(min-width: 768px\)/);
+  assert.match(block, /margin-inline: 0;/, 'the bleed is cancelled, not doubled');
+  assert.match(block, /mask-image: linear-gradient\(to right, #000 calc\(100% - 2rem\), transparent\);/);
+  assert.match(block, /-webkit-mask-image: linear-gradient/, 'and in Safari');
+});
+
 test('no rule on a home-feed element denies the vertical pan', () => {
   // The same trap, generalised, so it cannot come back on the next rail.
   // Scoped to `.home-` selectors: the sheets a thousand lines up narrow

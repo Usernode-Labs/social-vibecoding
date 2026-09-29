@@ -14,9 +14,15 @@ const platformJwt = require('./platform-jwt');
 const credentialStore = require('./credential-store');
 const registry = require('../agents/registry');
 const agentModels = require('./agent-models');
+const managedOpenRouter = require('./openrouter-managed-keys');
 const log = require('./logger');
 const turnLifecycle = require('./turn-lifecycle');
 const llmTelemetry = require('./llm-telemetry');
+
+// The platform's reasoning-effort scale, weakest first. Order matters: it is
+// what picks the strongest level a model advertises when the platform default
+// is not one of them.
+const REASONING_EFFORT_ORDER = Object.freeze(['minimal', 'low', 'medium', 'high', 'xhigh']);
 
 // Resolve the backend for a turn from the session row (pinned at session
 // creation). Falls back to claude_code for legacy sessions.
@@ -64,7 +70,7 @@ function runtimeModelMetadataForModel(model, requestedModelId) {
   const efforts = Array.isArray(model?.reasoningEfforts)
     ? [...new Set(model.reasoningEfforts
       .map((effort) => String(effort || '').trim())
-      .filter((effort) => ['minimal', 'low', 'medium', 'high', 'xhigh'].includes(effort)))]
+      .filter((effort) => REASONING_EFFORT_ORDER.includes(effort)))]
     : null;
   return {
     name: String(model?.name || requestedModelId || '').trim().slice(0, 300)
@@ -77,6 +83,56 @@ function runtimeModelMetadataForModel(model, requestedModelId) {
   };
 }
 
+// #2600: the effort a coding turn runs at when nobody has chosen one. The
+// platform default is 'xhigh' (config.openrouterDefaultCodexReasoning), which
+// is what GLM 5.3 Flash and DeepSeek v4.1 Flash now think at by default.
+//
+// The one adjustment: when OpenRouter publishes an explicit effort list for
+// the model and the platform default is not on it, fall back to the highest
+// level the model does advertise rather than sending a level it never
+// offered. Most models publish no list at all (the capability is a boolean),
+// in which case the default goes through untouched and the Codex runner
+// installs it as a supported level. This clamp applies ONLY to the platform
+// default: a user who chose an effort in Settings gets exactly that.
+function defaultReasoningEffortForModel(catalogModel, config = {}) {
+  const configured = config.openrouterDefaultCodexReasoning || null;
+  if (!configured) return null;
+  const advertised = Array.isArray(catalogModel?.reasoningEfforts)
+    ? catalogModel.reasoningEfforts.filter((effort) => REASONING_EFFORT_ORDER.includes(effort))
+    : null;
+  if (!advertised || !advertised.length || advertised.includes(configured)) return configured;
+  return advertised.reduce((best, effort) => (
+    REASONING_EFFORT_ORDER.indexOf(effort) > REASONING_EFFORT_ORDER.indexOf(best) ? effort : best
+  ), advertised[0]);
+}
+
+// Which CLI wrote an OpenRouter thread, read back from the attempt ledger
+// that recorded it (#3296). An attempt recorded before harnesses existed ran
+// Codex, and so did a thread with no ledger row at all, since Codex was then
+// the only runner. A failed read answers "unknown" (null), which the caller
+// treats as a mismatch: a fresh start costs one turn of context, a wrong
+// resume costs a failed dispatch.
+async function threadHarnessFor(pool, sessionId, threadId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT metadata->>'harness' AS harness
+         FROM agent_turns
+        WHERE session_id = $1
+          AND agent_thread_id = $2
+          AND backend = 'codex_openrouter'
+        ORDER BY started_at DESC
+        LIMIT 1`,
+      [sessionId, threadId],
+    );
+    return registry.resolveOpenRouterHarness(rows[0]?.harness);
+  } catch (err) {
+    log.warn('agent-turn', 'thread harness lookup failed; starting a fresh thread', {
+      sessionId, err: err.message,
+    });
+    return null;
+  }
+}
+
 // ── Phase 1: resolve runtime context (no DB writes) ───────────────────
 // Called once per logical coding-tool invocation. Checks the feature flag
 // + allowlist, loads credential metadata, decrypts the key, resolves the
@@ -84,14 +140,19 @@ function runtimeModelMetadataForModel(model, requestedModelId) {
 // ledger row (plan 6.1) — that is startCodexAttempt's job, immediately
 // before the dispatch, so a later failure to start the attempt does not
 // consume a paid provider request.
-async function resolveCodexRuntimeContext({ pool, session, userId, model, reasoningEffort, resumeThreadId, config = {} }) {
+//
+// `harness` picks the CLI (#3296). The default, 'codex', is what every caller
+// that predates harnesses gets, so the Homeroom bot and visual evidence keep
+// running exactly as before. 'auto' asks the platform's per-model map
+// (config.openrouterModelHarnesses); the dev chat's scout and build use it.
+async function resolveCodexRuntimeContext({
+  pool, session, userId, model, reasoningEffort, resumeThreadId, config = {},
+  harness = registry.DEFAULT_OPENROUTER_HARNESS,
+}) {
   if (registry.resolveBackend(session?.agent_backend) !== 'codex_openrouter') return null;
 
+  // #2568 retired the gradual-rollout allowlist; the emergency switch stays.
   if (!config.codexOpenrouterEnabled) return { error: 'backend_disabled' };
-  if (config.openrouterBetaUserIds?.length
-      && !config.openrouterBetaUserIds.includes(String(userId))) {
-    return { error: 'backend_not_available' };
-  }
 
   const meta = await credentialStore.readMetadata({
     pool, userId, provider: 'openrouter', purpose: 'coding_agent',
@@ -100,10 +161,30 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
     return { error: 'credential_required' };
   }
 
+  // A continuing session need not visit Settings. Apply changed included
+  // allowances here too, so a stale child-key limit is not left in force
+  // simply because the user kept the same chat open. Personal keys are
+  // outside this management path. Sync failures remain best-effort and are
+  // retried after the managed-key service's short backoff.
+  if (meta.metadata?.source === managedOpenRouter.MANAGED_SOURCE
+      && config.openrouterManagementApiKey) {
+    try {
+      await managedOpenRouter.syncAllowance({
+        pool, userId, config,
+        state: await managedOpenRouter.stateForUser(pool, userId),
+      });
+    } catch (err) {
+      log.warn('agent-turn', 'included OpenRouter allowance sync unavailable', { sessionId: session.id, err: err.message });
+    }
+  }
+
   const resolvedModel = session.agent_model || config.openrouterDefaultCodexModel || null;
   if (!resolvedModel) {
     return { error: 'model_required' };
   }
+  const agentHarness = harness === 'auto'
+    ? registry.openRouterHarnessForModel(resolvedModel, config)
+    : registry.resolveOpenRouterHarness(harness);
 
   const configuredBase = String(config.openrouterApiBase || 'https://openrouter.ai/api/v1')
     .replace(/\/+$/, '');
@@ -147,20 +228,40 @@ async function resolveCodexRuntimeContext({ pool, session, userId, model, reason
     pricingSnapshot = { available: false };
   }
 
-  const requestedReasoningEffort = reasoningEffort || session.agent_reasoning_effort || null;
+  // A user's explicit choice — this turn's, or the one stored on the session
+  // when it was created — always wins. The platform default only fills a
+  // blank, so raising it never overrides anybody's setting (#2600).
+  const requestedReasoningEffort = reasoningEffort
+    || session.agent_reasoning_effort
+    || defaultReasoningEffortForModel(catalogModel, config);
+
+  // A saved thread belongs to the CLI that wrote it: a Codex thread id means
+  // nothing to `claude --resume`, and the reverse. When the harness for this
+  // model has changed since (an operator moved it), start fresh on purpose
+  // instead of paying for a resume the runner is certain to reject.
+  const candidateThreadId = resumeThreadId || session.agent_thread_id || null;
+  const threadHarness = candidateThreadId
+    ? await threadHarnessFor(pool, session.id, candidateThreadId)
+    : null;
+  const resumeThreadDropped = !!candidateThreadId && threadHarness !== agentHarness;
   return {
     agentBackend: 'codex_openrouter',
+    agentHarness,
     agentModel: resolvedModel,
     // Do not send a reasoning parameter to a model OpenRouter explicitly says
     // does not support one. If the catalog was temporarily unavailable, keep
     // the user's existing preference instead of guessing about capability.
+    // A Claude-harness turn carries it too: the worker-local adapter sends it
+    // as the Messages API's output_config.effort, which OpenRouter maps onto
+    // the model's own reasoning effort (#3296).
     agentReasoningEffort: catalogModel?.supportsReasoning === false
       ? null
       : requestedReasoningEffort,
     agentModelMetadata: runtimeModelMetadataForModel(catalogModel, resolvedModel),
     openrouterApiKey,
     openrouterApiBase,
-    resumeThreadId: resumeThreadId || session.agent_thread_id || null,
+    resumeThreadId: resumeThreadDropped ? null : candidateThreadId,
+    resumeThreadDropped,
     credentialId: meta.id,
     credentialRevision: meta.revision,
     agentConfigVersion: session.agent_config_version || 1,
@@ -258,7 +359,10 @@ async function startCodexAttempt({
        resumeThreadId || null,
        expectedConfigVersion,
        durableTurnId, attemptNumber || 1,
-       JSON.stringify({ pricing: ctx.pricingSnapshot || null })],
+       JSON.stringify({
+         pricing: ctx.pricingSnapshot || null,
+         harness: registry.resolveOpenRouterHarness(ctx.agentHarness),
+       })],
     );
 
     const activeRecord = turnLifecycle.withLifecycle({
@@ -267,6 +371,9 @@ async function startCodexAttempt({
       mode,
       journal,
       backend: 'codex_openrouter',
+      // Which CLI is writing this attempt's journal: restart recovery must
+      // replay it with the matching parser (#3296).
+      harness: registry.resolveOpenRouterHarness(ctx.agentHarness),
       turnUuid: turnId,
       logicalTurnId: durableTurnId,
       attemptNumber: attemptNumber || 1,
@@ -353,10 +460,16 @@ async function lockAttempt(client, turnUuid) {
 // changing its status or double-counting.
 // One physical invocation = one attempt; a retry writes a NEW attempt row
 // and never overwrites the prior attempt's usage (plan 6.1, 6.5).
+//
+// `usageScope` says what the reported totals cover. Codex reports totals for
+// the whole THREAD, so each attempt's share is the delta from the thread's
+// previous attempt. Claude Code reports totals for the one RUN, which are
+// already this attempt's share; subtracting a previous run from them would
+// undercount every resumed turn (#3296).
 async function completeCodexAttempt({
   pool, turnUuid, status = 'completed', threadId = null, usageTotal = null,
   errorCode = null, errorDetail = null, telemetryComponent = null,
-  telemetryMetrics = null,
+  telemetryMetrics = null, usageScope = 'thread',
 }) {
   if (!turnUuid) return { updated: false, alreadyTerminal: true };
   const client = await pool.connect();
@@ -398,7 +511,7 @@ async function completeCodexAttempt({
       return { updated: false, alreadyTerminal: true };
     }
 
-    const previous = current && threadId
+    const previous = current && threadId && usageScope !== 'run'
       ? await findPreviousProviderTotal(client, row.session_id, threadId, turnUuid)
       : null;
     const { delta, resetDetected } = computeProviderUsageDelta(current, previous);
@@ -441,12 +554,17 @@ async function completeCodexAttempt({
       };
     }
 
+    // requested_model records the exact OpenRouter slug dispatched by the
+    // runner. Codex's JSONL does not expose the model returned by OpenRouter,
+    // so routed_model must remain unknown until that value is actually
+    // observed rather than being copied from the request.
+
     await client.query(
       `UPDATE agent_turns SET
-         status = CASE WHEN $21::boolean THEN status ELSE $2 END,
+         status = CASE WHEN $20::boolean THEN status ELSE $2 END,
          completed_at = COALESCE(completed_at, NOW()),
-         error_code = CASE WHEN $21::boolean THEN error_code ELSE COALESCE($3, error_code) END,
-         error_detail = CASE WHEN $21::boolean THEN error_detail ELSE COALESCE($4, error_detail) END,
+         error_code = CASE WHEN $20::boolean THEN error_code ELSE COALESCE($3, error_code) END,
+         error_detail = CASE WHEN $20::boolean THEN error_detail ELSE COALESCE($4, error_detail) END,
          agent_thread_id = COALESCE($5, agent_thread_id),
          input_tokens = input_tokens + $6,
          cached_input_tokens = cached_input_tokens + $7,
@@ -461,13 +579,12 @@ async function completeCodexAttempt({
          estimated_cost_usd = $16,
          cost_source = $17,
          usage_reset_detected = $18,
-         routed_model = COALESCE($19, routed_model),
          billed_by = 'user_openrouter',
-         metadata = $20::jsonb
+         metadata = $19::jsonb
        WHERE id = $1
          AND (
            status = 'running'
-           OR ($21::boolean
+           OR ($20::boolean
                AND status IN ('completed', 'failed', 'cancelled')
                AND provider_input_tokens_total IS NULL
                AND provider_cached_input_tokens_total IS NULL
@@ -493,7 +610,6 @@ async function completeCodexAttempt({
        cost != null ? cost.estimatedCostUsd : null,
        cost != null ? cost.costSource : 'unavailable',
        resetDetected,
-       row.requested_model || null,
        JSON.stringify(metadata),
        reconcileTerminalUsage],
     );
@@ -725,13 +841,8 @@ async function settleRecoveredAgentAttempt({
       turnUuid: activeTurn.turnUuid,
       status: failed ? 'failed' : 'completed',
       threadId: result?.agentThreadId || activeTurn.threadId || null,
-      usageTotal: {
-        inputTokens: result?.inputTokens != null ? result.inputTokens : null,
-        cachedInputTokens: result?.cachedInputTokens != null ? result.cachedInputTokens : null,
-        cacheWriteInputTokens: result?.cacheWriteInputTokens != null ? result.cacheWriteInputTokens : null,
-        outputTokens: result?.outputTokens != null ? result.outputTokens : null,
-        reasoningOutputTokens: result?.reasoningOutputTokens != null ? result.reasoningOutputTokens : null,
-      },
+      usageTotal: usageTotalFromResult({ ...(result || {}), agentHarness: activeTurn.harness }),
+      usageScope: usageScopeForHarness(activeTurn.harness),
       telemetryComponent: result?.providerDispatched === true
         ? activeTurn.telemetryComponent || null
         : null,
@@ -784,10 +895,24 @@ async function getCodexAttemptRecoveryState({ pool, turnUuid }) {
 
 // Extract a cumulative-provider-usage object from a terminal worker result
 // (plan 7.3): the thread's CURRENT totals. If none observed, returns null.
+//
+// The ledger counts input the way OpenRouter bills it: every prompt token,
+// with the cached ones a subset of that total. Codex already reports it that
+// way. Claude Code reports Anthropic's split instead, where input_tokens
+// EXCLUDES cache reads and cache writes, so a Claude-harness turn's total is
+// the sum of the three (#3296). Without this nearly all of a resumed turn's
+// prompt, which Claude Code caches, would go unpriced.
 function usageTotalFromResult(result) {
   const r = result || {};
-  const input = r.inputTokens;
+  const finite = (value) => value != null && Number.isFinite(value);
+  let input = r.inputTokens;
   const output = r.outputTokens;
+  if (registry.resolveOpenRouterHarness(r.agentHarness) === 'claude'
+      && (finite(input) || finite(r.cachedInputTokens) || finite(r.cacheWriteInputTokens))) {
+    input = (finite(input) ? input : 0)
+      + (finite(r.cachedInputTokens) ? r.cachedInputTokens : 0)
+      + (finite(r.cacheWriteInputTokens) ? r.cacheWriteInputTokens : 0);
+  }
   if ((input == null || !Number.isFinite(input)) && (output == null || !Number.isFinite(output))) return null;
   return {
     inputTokens: input != null && Number.isFinite(input) ? input : null,
@@ -796,6 +921,11 @@ function usageTotalFromResult(result) {
     outputTokens: output != null && Number.isFinite(output) ? output : null,
     reasoningOutputTokens: r.reasoningOutputTokens != null && Number.isFinite(r.reasoningOutputTokens) ? r.reasoningOutputTokens : null,
   };
+}
+
+// What a harness's reported usage totals cover; see completeCodexAttempt.
+function usageScopeForHarness(harness) {
+  return registry.resolveOpenRouterHarness(harness) === 'claude' ? 'run' : 'thread';
 }
 
 // Classify a thrown dispatch error into a terminal status + code (plan 7.2).
@@ -823,6 +953,8 @@ function sanitizeError(err) {
 module.exports = {
   backendForSession,
   resolveCodexRuntimeContext,
+  threadHarnessFor,
+  usageScopeForHarness,
   startCodexAttempt,
   completeCodexAttempt,
   completeCodexTurn,

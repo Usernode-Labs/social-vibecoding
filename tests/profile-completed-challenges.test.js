@@ -420,16 +420,20 @@ test('the profile screen no longer filters on the organiser flag', () => {
   assert.match(client, /\/api\/me\/challenges\/completed/);
 });
 
-test('completed rows render as real anchors to the challenge', () => {
-  // #1191 slice 6 made #profile-root React-owned: the row's href and its
-  // meta line are shaped in profile-store.js (plain JS, so this suite can
-  // still read them) and turned into elements in profile-view.tsx.
-  const shaping = read('frontend/src/features/profile/profile-store.js');
-  const markup = read('frontend/src/features/profile/profile-view.tsx');
-  assert.match(shaping, /#leaderboard\/challenges\//);
-  assert.match(markup, /data-completed-challenge/);
-  // An <a> element, so middle-click / long-press / back all work — not a
-  // click handler on a div.
-  assert.match(markup, /<a\s+key=\{row\.id\}/);
-  assert.match(markup, /href=\{row\.href\}/);
+test('Me counts the SAME completions, through the one totals query', () => {
+  // The prototype's Me shows a "challenges" stat card rather than a list:
+  // GET /api/me/summary returns the count, and it must be this route's own
+  // done-count — the one readChallengeTotals query, not a second copy of the
+  // rule — so the card, Home and the Challenges tab agree.
+  const route = read('src/routes/profile.js');
+  const summary = route.slice(route.indexOf("router.get('/api/me/summary'"));
+  assert.match(summary, /readChallengeTotals\(pool, req\.user\.id, season\.id\)/);
+  const completed = route.slice(route.indexOf("router.get('/api/me/challenges/completed'"),
+    route.indexOf("router.get('/api/me/summary'"));
+  assert.match(completed, /readChallengeTotals\(pool, req\.user\.id, season\.id\)/,
+    'and the completed list\'s "N of M done" reads the same helper');
+  assert.equal((route.match(/COUNT\(\*\) FILTER \(WHERE \$\{DONE_EXPR\}\)/g) || []).length, 1,
+    'one copy of the totals SQL');
+  const client = read('frontend/src/features/profile/profile.js');
+  assert.match(client, /\/api\/me\/summary/);
 });

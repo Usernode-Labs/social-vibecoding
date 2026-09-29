@@ -42,6 +42,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import type { ConnectorSetupInlineView } from './connector-setup-inline';
 import type { OwnToolsGuideView } from './own-tools-guide';
 
 /** One resizable side pane: the spec viewer and the staging preview. */
@@ -67,6 +68,14 @@ export type DevViewState =
     launchpadHtml: string;
     /** #1891: the own-tools setup card is an ordinary React child. */
     ownToolsGuide?: OwnToolsGuideView | null;
+    /**
+     * #2706: the connector walkthrough, inline under the hand-off card
+     * rather than a trip to Settings. React-owned in full — see
+     * connector-setup-inline.tsx — so it rides beside `launchpadHtml`
+     * instead of inside it. Null when there is nothing to teach: another
+     * venue, or the step is satisfied and the reader has not asked.
+     */
+    connectorSetup?: ConnectorSetupInlineView | null;
     /**
      * #1348: in a launchpad the composer is hidden and the venue note is
      * usually absent, so the bar's border and padding are dropped — an

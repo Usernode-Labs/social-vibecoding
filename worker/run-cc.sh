@@ -37,6 +37,14 @@
 #   MODEL                      default: claude-sonnet-5
 #   COMMIT_MSG                 default: "Changes via Homeroom"
 #   CLAUDE_RESUME_SESSION_ID   if set, passes `--resume <id>` to claude
+#   AGENT_PROVIDER             anthropic (default) | openrouter (#3296). With
+#                              openrouter, Claude Code runs a scout or build
+#                              against OpenRouter through the worker-local
+#                              claude-openrouter-request.js adapter, and needs
+#                              OPENROUTER_API_KEY + AGENT_MODEL (MODEL is the
+#                              same slug); OPENROUTER_API_BASE,
+#                              AGENT_MODEL_MAX_OUTPUT_TOKENS and
+#                              AGENT_REASONING_EFFORT are optional.
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -73,10 +81,10 @@ fi
 
 : "${PROMPT_FILE:?PROMPT_FILE required}"
 [ -s "$PROMPT_FILE" ] || die "prompt file missing or empty: $PROMPT_FILE"
-: "${BRANCH:?BRANCH required}"
 : "${SESSION_ID:?SESSION_ID required}"
 : "${PLATFORM_URL:?PLATFORM_URL required}"
 : "${MODE:=build}"
+: "${BRANCH:=}"
 : "${WORKER_JWT:=}"
 : "${MODEL:=claude-sonnet-5}"
 : "${COMMIT_MSG:=Changes via Homeroom}"
@@ -85,25 +93,66 @@ fi
 : "${SYSTEM_PROMPT_FILE:=}"
 : "${RESUME_FALLBACK_PROMPT_FILE:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
+: "${EVIDENCE_JWT:=}"
+: "${EVIDENCE_RUN_ID:=}"
+: "${EVIDENCE_BASE_ORIGIN:=}"
+: "${EVIDENCE_HEAD_ORIGIN:=}"
+: "${EVIDENCE_MEMBER_TOKEN:=}"
+: "${EVIDENCE_ADMIN_TOKEN:=}"
+: "${EVIDENCE_FULL_ADMIN_TOKEN:=}"
+: "${AGENT_PROVIDER:=anthropic}"
 
 SYSTEM_PROMPT_FLAGS=""
 
+# #3296: an OpenRouter turn run by Claude Code. Only the request adapter may
+# hold the user's key, so take it out of this script's exported environment
+# before anything else runs: git, the in-loop database, the commit and the
+# push (and any hook the agent left behind) never see it. run_claude below
+# hands it to the adapter alone.
+OPENROUTER_TURN_KEY=""
+if [ "$AGENT_PROVIDER" = "openrouter" ]; then
+  if [ "$MODE" != "build" ] && [ "$MODE" != "scout" ]; then
+    die "Claude over OpenRouter supports build and scout turns, not $MODE"
+  fi
+  [ -n "${OPENROUTER_API_KEY:-}" ] || die "OPENROUTER_API_KEY required for an OpenRouter turn"
+  [ -n "${AGENT_MODEL:-}" ] || die "AGENT_MODEL required for an OpenRouter turn"
+  OPENROUTER_TURN_KEY="$OPENROUTER_API_KEY"
+  unset OPENROUTER_API_KEY
+elif [ "$AGENT_PROVIDER" != "anthropic" ]; then
+  die "unknown AGENT_PROVIDER: $AGENT_PROVIDER"
+fi
+
+run_claude() {
+  if [ "$AGENT_PROVIDER" = "openrouter" ]; then
+    OPENROUTER_API_KEY="$OPENROUTER_TURN_KEY" node "$(dirname "$0")/claude-openrouter-request.js" "$@"
+  else
+    claude "$@"
+  fi
+}
+
 # Scout is deliberately read-only and receives no general worker token.
 # Build/sync still require the token for their platform push callbacks.
-if [ "$MODE" != "scout" ] && [ -z "$WORKER_JWT" ]; then
+if { [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; } && [ -z "$WORKER_JWT" ]; then
   die "WORKER_JWT required for $MODE mode"
 fi
-if [ "$MODE" = "scout" ]; then
+if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
   WORKER_JWT=""
 fi
 export WORKER_JWT
+if [ "$MODE" = "evidence" ]; then
+  [ -n "$EVIDENCE_JWT" ] || die "EVIDENCE_JWT required for evidence mode"
+  [ -n "$EVIDENCE_RUN_ID" ] || die "EVIDENCE_RUN_ID required for evidence mode"
+fi
 
-# Every hosted build has a shortened task prompt and therefore requires the
-# separate authoritative system context. Fail before invoking Claude if the
-# host omitted it or failed to materialize it; there is no reduced-context
-# fallback that could silently drop platform rules.
-if [ "$MODE" = "build" ] && [ -z "$SYSTEM_PROMPT_FILE" ]; then
-  die "SYSTEM_PROMPT_FILE required for build mode"
+# Every hosted Anthropic build has a shortened task prompt and therefore
+# requires the separate authoritative system context. Fail before invoking
+# Claude if the host omitted it or failed to materialize it; there is no
+# reduced-context fallback that could silently drop platform rules. An
+# OpenRouter build carries the full conventions block in its prompt instead,
+# exactly as a Codex build does, so the system file is optional there.
+if { [ "$MODE" = "build" ] || [ "$MODE" = "evidence" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ] \
+    && [ "$AGENT_PROVIDER" != "openrouter" ]; then
+  die "SYSTEM_PROMPT_FILE required for $MODE mode"
 fi
 if [ -n "$SYSTEM_PROMPT_FILE" ]; then
   [ -s "$SYSTEM_PROMPT_FILE" ] \
@@ -119,7 +168,12 @@ if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
     || die "resume fallback prompt file missing or empty: $RESUME_FALLBACK_PROMPT_FILE"
 fi
 
-WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
+if [ "$MODE" = "evidence" ]; then
+  WORKSPACE_DIR=$(mktemp -d "/tmp/usernode-evidence-agent-${EVIDENCE_RUN_ID}.XXXXXX") \
+    || die "could not create evidence workspace"
+else
+  WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
+fi
 cd "$WORKSPACE_DIR" || die "no workspace: $WORKSPACE_DIR"
 
 # Re-assert the credential helper. The warm wrapper sets it up at
@@ -134,16 +188,18 @@ fi
 # discards any uncommitted state from a prior turn that didn't get
 # committed (rare, but worth defending against).
 echo "__USERNODE_PHASE__ refresh"
-if ! git fetch origin --quiet 2>&1; then
-  echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
-fi
-if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-  git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
-    echo "__USERNODE_WARN__ git reset failed"
-elif [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; then
-  # Branch missing upstream after PR merge → unrecoverable for build/sync.
-  # Scout mode can still run against the local checkout, so we don't bail.
-  die "branch missing upstream: origin/$BRANCH"
+if [ "$MODE" != "evidence" ]; then
+  if ! git fetch origin --quiet 2>&1; then
+    echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
+  fi
+  if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
+    git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
+      echo "__USERNODE_WARN__ git reset failed"
+  elif [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; then
+    # Branch missing upstream after PR merge → unrecoverable for build/sync.
+    # Scout mode can still run against the local checkout, so we don't bail.
+    die "branch missing upstream: origin/$BRANCH"
+  fi
 fi
 
 # ── MODE=sync ─────────────────────────────────────────────────────────
@@ -272,6 +328,11 @@ fi
 # worker container even if CC misbehaves.
 if [ "$MODE" = "scout" ]; then
   PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Edit Write NotebookEdit"
+elif [ "$MODE" = "evidence" ]; then
+  # Evidence turns operate only through platform-seeded MCP servers. Removing
+  # every filesystem, shell, web and delegation tool prevents the model from
+  # reading browser storage state or inherited process credentials.
+  PERMISSION_FLAGS="--dangerously-skip-permissions --disallowed-tools Bash Edit Write NotebookEdit Read Glob Grep WebFetch WebSearch Task Agent Skill TodoWrite mcp__browser_member__browser_evaluate mcp__browser_member__browser_run_code mcp__browser_member__browser_file_upload mcp__browser_member__browser_install mcp__browser_admin__browser_evaluate mcp__browser_admin__browser_run_code mcp__browser_admin__browser_file_upload mcp__browser_admin__browser_install mcp__browser_full_admin__browser_evaluate mcp__browser_full_admin__browser_run_code mcp__browser_full_admin__browser_file_upload mcp__browser_full_admin__browser_install"
 else
   PERMISSION_FLAGS="--dangerously-skip-permissions"
 fi
@@ -292,41 +353,73 @@ if [ "$MODE" = "build" ] && [ -f "$BROWSER_MCP_CONFIG" ]; then
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
 fi
 
-# ── In-loop local Postgres (build turns only, #659) ──────────────────
-# INLOOP_DATABASE_URL points the agent's local app launch at
-# postgres://postgres:postgres@127.0.0.1:5432/inloop. Make that URL
-# resolvable: start the image's node-owned Postgres (data dir initialized
-# at image-build time, see worker/Dockerfile) if it isn't already running,
-# then recreate the `inloop` database so every build turn gets the
-# documented FRESH, EMPTY local DB — even though the warm container (and
-# any app process a prior turn left running) persists across turns.
-#
-# Guarded on the binaries + data dir existing so containers still on an
-# older image degrade exactly as before (agent skips the check). Every
-# failure is a __USERNODE_WARN__, never a die: the in-loop environment
-# must never block or fail the turn.
-INLOOP_PGDATA=/home/node/pgdata
-if [ "$MODE" = "build" ] && command -v pg_ctl >/dev/null 2>&1 \
-  && [ -d "$INLOOP_PGDATA" ]; then
-  INLOOP_PG_OK=1
-  if ! pg_ctl -D "$INLOOP_PGDATA" status >/dev/null 2>&1; then
-    pg_ctl -D "$INLOOP_PGDATA" -w -l /tmp/inloop-postgres.log start \
-      >/dev/null 2>&1 \
-      || { echo "__USERNODE_WARN__ in-loop postgres failed to start"; INLOOP_PG_OK=0; }
+# #2779: the coding agent's read-only Homeroom tools, for a build or scout
+# turn the platform issued a grant to (HOMEROOM_MCP_TOKEN). The config names
+# only the stdio bridge; the grant reaches it through this process's
+# environment and is never written to a file. A build loads it beside the
+# browser config; a scout loads it alone, so it stays browser-free. Still
+# --strict-mcp-config either way.
+HOMEROOM_MCP_CONFIG="${HOMEROOM_MCP_CONFIG:-/usr/local/share/usernode/homeroom-mcp.json}"
+if [ -n "${HOMEROOM_MCP_TOKEN:-}" ] && [ -f "$HOMEROOM_MCP_CONFIG" ]; then
+  if [ "$MODE" = "build" ] && [ -n "$BROWSER_MCP_FLAGS" ]; then
+    BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG $HOMEROOM_MCP_CONFIG --strict-mcp-config"
+  elif [ "$MODE" = "build" ] || [ "$MODE" = "scout" ]; then
+    BROWSER_MCP_FLAGS="--mcp-config $HOMEROOM_MCP_CONFIG --strict-mcp-config"
   fi
-  if [ "$INLOOP_PG_OK" = "1" ]; then
-    # Kick stray connections from a prior turn's leftover app process so
-    # the dropdb below can't hang on an in-use database.
-    psql -h 127.0.0.1 -U postgres -d postgres -c \
-      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'inloop' AND pid <> pg_backend_pid()" \
-      >/dev/null 2>&1 || true
-    if dropdb --if-exists -h 127.0.0.1 -U postgres inloop >/dev/null 2>&1 \
-      && createdb -h 127.0.0.1 -U postgres inloop >/dev/null 2>&1; then
-      echo "__USERNODE_PHASE__ inloop-db"
-    else
-      echo "__USERNODE_WARN__ in-loop postgres inloop-db recreate failed"
-    fi
+fi
+
+EVIDENCE_PROXY_PID=""
+EVIDENCE_DIAGNOSTIC_TAIL_PID=""
+EVIDENCE_TMP=""
+cleanup_evidence() {
+  if [ -n "$EVIDENCE_PROXY_PID" ]; then kill "$EVIDENCE_PROXY_PID" 2>/dev/null || true; fi
+  if [ -n "$EVIDENCE_DIAGNOSTIC_TAIL_PID" ]; then
+    sleep 0.3
+    kill "$EVIDENCE_DIAGNOSTIC_TAIL_PID" 2>/dev/null || true
   fi
+  if [ -n "$EVIDENCE_TMP" ]; then rm -rf "$EVIDENCE_TMP" 2>/dev/null || true; fi
+}
+if [ "$MODE" = "evidence" ]; then
+  command -v mcp-server-playwright >/dev/null 2>&1 \
+    || die "the evidence browser MCP executable is missing"
+  echo "__USERNODE_PHASE__ evidence_proxy"
+  EVIDENCE_TMP=$(mktemp -d "/tmp/usernode-evidence-browser-${EVIDENCE_RUN_ID}.XXXXXX") \
+    || die "could not create evidence browser state"
+  chmod 700 "$EVIDENCE_TMP"
+  export EVIDENCE_BROWSER_STATE_DIR="$EVIDENCE_TMP/state"
+  export EVIDENCE_HOSTED_ORIGINS_FILE="$EVIDENCE_BROWSER_STATE_DIR/hosted-origins.json"
+  export EVIDENCE_BROWSER_DIAGNOSTIC_FILE="$EVIDENCE_TMP/browser-diagnostics.log"
+  : > "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE"
+  tail -n +1 -s 0.2 -f "$EVIDENCE_BROWSER_DIAGNOSTIC_FILE" &
+  EVIDENCE_DIAGNOSTIC_TAIL_PID=$!
+  export EVIDENCE_PROXY_PORT=17891
+  export EVIDENCE_PROXY_SERVER="http://127.0.0.1:$EVIDENCE_PROXY_PORT"
+  export EVIDENCE_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
+  export EVIDENCE_PROXY_READY="$EVIDENCE_TMP/proxy.ready"
+  export EVIDENCE_ALLOWED_ORIGINS="[\"$EVIDENCE_BASE_ORIGIN\",\"$EVIDENCE_HEAD_ORIGIN\"]"
+  node /usr/local/bin/evidence-origin-proxy.js &
+  EVIDENCE_PROXY_PID=$!
+  trap cleanup_evidence EXIT INT TERM
+  i=0
+  while [ ! -f "$EVIDENCE_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
+  [ -f "$EVIDENCE_PROXY_READY" ] || die "evidence origin proxy failed to start"
+  echo "__USERNODE_PHASE__ evidence_browser_bootstrap"
+  node /usr/local/bin/evidence-browser-bootstrap.js \
+    || die "evidence browser authentication failed"
+  unset EVIDENCE_MEMBER_TOKEN EVIDENCE_ADMIN_TOKEN EVIDENCE_FULL_ADMIN_TOKEN
+  BROWSER_MCP_CONFIG="$EVIDENCE_TMP/mcp.json"
+  node /usr/local/bin/write-evidence-mcp-config.js "$BROWSER_MCP_CONFIG" \
+    || die "could not create evidence MCP config"
+  echo "__USERNODE_PHASE__ evidence_mcp_ready"
+  BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
+fi
+
+# ── In-loop local Postgres (build turns only) ────────────────────────
+# Keep this identical to Codex/OpenRouter build turns. The helper emits
+# warnings and lets the turn continue if the optional local DB is unavailable.
+if [ "$MODE" = "build" ]; then
+  sh "$(dirname "$0")/start-inloop-db.sh" \
+    || echo "__USERNODE_WARN__ in-loop postgres setup failed"
 fi
 
 # stream-json emits one JSON object per line. The host parses this via
@@ -338,7 +431,7 @@ fi
 # move the host-side E2BIG failure here.
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
-  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
     --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
@@ -348,18 +441,18 @@ if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
     if [ -n "$RESUME_FALLBACK_PROMPT_FILE" ]; then
       RETRY_PROMPT_FILE="$RESUME_FALLBACK_PROMPT_FILE"
     fi
-    claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+    run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
       --model "$MODEL" --include-partial-messages --output-format stream-json < "$RETRY_PROMPT_FILE"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
-  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
+  run_claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS $SYSTEM_PROMPT_FLAGS --verbose \
     --model "$MODEL" --include-partial-messages --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
 fi
 
-if [ "$MODE" = "scout" ]; then
+if [ "$MODE" = "scout" ] || [ "$MODE" = "evidence" ]; then
   # Read-only run: no commit, no push. The host pulls scout output out
   # of stream-json's `result` event and writes it into spec_md.
   # behind=0 because scout never modifies the tree; the real number
@@ -367,7 +460,7 @@ if [ "$MODE" = "scout" ]; then
   # Terminal phase marker so the progress card ends on "Finished"
   # instead of freezing on the last action line.
   echo "__USERNODE_PHASE__ done"
-  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=scout"
+  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=$MODE"
   exit "$CC_EXIT"
 fi
 

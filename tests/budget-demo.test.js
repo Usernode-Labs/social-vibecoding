@@ -34,24 +34,27 @@ const HANDLER = SESSIONS_SRC.slice(
   SESSIONS_SRC.indexOf("router.post('/api/sessions/:id/deploy-staging'")
 );
 const DEMO_BRANCH = HANDLER.slice(0, HANDLER.indexOf('try {'));
-// #1788 added a second sibling fixture for the WEEKLY cap, so the region
-// above now holds two branches. The assertions about the original one are
-// scoped to its own half rather than to the first match in the region.
-const WEEKLY_AT = DEMO_BRANCH.indexOf("req.query.demo === 'weekly-out'");
-const DEMO_DAILY = WEEKLY_AT > 0 ? DEMO_BRANCH.slice(0, WEEKLY_AT) : DEMO_BRANCH;
-const DEMO_WEEKLY = WEEKLY_AT > 0 ? DEMO_BRANCH.slice(WEEKLY_AT) : '';
+// #1788 added a second sibling fixture for the WEEKLY cap; #2571 collapsed
+// the two back into ONE branch, because there is only one window left to
+// demonstrate. Both spellings (?demo=1 and ?demo=weekly-out) reach it, so
+// review links written against either keep working.
+const DEMO_WEEKLY = DEMO_BRANCH;
 
 test('the demo branch is gated on staging AND the explicit flag', () => {
   assert.match(
-    DEMO_DAILY,
-    /process\.env\.USERNODE_ENV === 'staging' && req\.query\.demo === '1'/,
-    'both conditions, so a stray ?demo=1 in production does nothing'
+    DEMO_BRANCH,
+    /process\.env\.USERNODE_ENV === 'staging'\s*\n?\s*&& \(req\.query\.demo === '1' \|\| req\.query\.demo === 'weekly-out'\)/,
+    'staging AND an explicit value, so a stray ?demo=1 in production does nothing'
   );
   // It returns before any real work, so production never even evaluates it
   // beyond the one comparison.
   assert.ok(
-    DEMO_DAILY.indexOf('return res.json') > 0,
+    DEMO_BRANCH.indexOf('return res.json') > 0,
     'the branch returns its fixture directly'
+  );
+  assert.equal(
+    (DEMO_BRANCH.match(/return res\.json/g) || []).length, 1,
+    'one fixture, not one per spelling'
   );
 });
 
@@ -64,28 +67,28 @@ test('the fixture never touches the database', () => {
 test('the fixture reports the user’s own allowance as exhausted', () => {
   // The client's _creditsExhausted() keys on spentCents >= limitCents, so
   // these two must be equal for the banner and card to appear at all.
-  const spent = /spentCents: (\d+)/.exec(DEMO_DAILY);
-  const limit = /limitCents: (\d+)/.exec(DEMO_DAILY);
+  const spent = /spentCents: (\d+)/.exec(DEMO_BRANCH);
+  const limit = /limitCents: (\d+)/.exec(DEMO_BRANCH);
   assert.ok(spent && limit);
   assert.equal(spent[1], limit[1], 'the personal allowance reads as spent');
 
   // …while the SHARED budget still has headroom, so the reviewed copy is
   // the ordinary "you're out" wording rather than the platform-wide one.
-  const globalSpent = Number(/globalSpentCents: (\d+)/.exec(DEMO_DAILY)[1]);
-  const globalLimit = Number(/globalLimitCents: (\d+)/.exec(DEMO_DAILY)[1]);
+  const globalSpent = Number(/globalSpentCents: (\d+)/.exec(DEMO_BRANCH)[1]);
+  const globalLimit = Number(/globalLimitCents: (\d+)/.exec(DEMO_BRANCH)[1]);
   assert.ok(globalSpent < globalLimit, 'the shared budget is not exhausted');
 
   // No BYOK spillover, so the card shows the "add a key" variant.
-  assert.match(DEMO_DAILY, /byokSpentCents: 0/);
-  assert.match(DEMO_DAILY, /aiEnabled: true/);
+  assert.match(DEMO_BRANCH, /byokSpentCents: 0/);
+  assert.match(DEMO_BRANCH, /aiEnabled: true/);
   // Flagged, which is what the client keys its one-off card injection off.
-  assert.match(DEMO_DAILY, /demo: true/);
+  assert.match(DEMO_BRANCH, /demo: true/);
 
-  // #1788: and it says WHICH window those three figures describe. The
-  // daily cap is the one that binds here, which is what this fixture has
-  // always meant — stated now that it is no longer the only answer.
-  assert.match(DEMO_DAILY, /capWindow: 'daily'/);
-  assert.match(DEMO_DAILY, /resetLabel: 'midnight UTC'/);
+  // #2571: and it says WHICH window those three figures describe. There is
+  // only one — the week — and the daily figures ride along switched off.
+  assert.match(DEMO_BRANCH, /capWindow: 'weekly'/);
+  assert.match(DEMO_BRANCH, /resetLabel: 'Monday 00:00 UTC'/);
+  assert.match(DEMO_BRANCH, /dailyApplies: false/);
 });
 
 // The two halves of the #1055 fixture used to cancel each other out: the
@@ -155,34 +158,26 @@ test('the client passes the flag through and injects one card', () => {
 // 00:00 UTC"). So it gets its own fixture at ?demo=weekly-out rather than a
 // flag on the one above, and the same no-op-in-production properties apply.
 
-test('the weekly fixture is its own branch under the same gate', () => {
-  assert.ok(DEMO_WEEKLY, 'the ?demo=weekly-out branch exists');
+test('the ?demo=weekly-out spelling still reaches the fixture', () => {
   assert.match(
     DEMO_BRANCH,
-    /process\.env\.USERNODE_ENV === 'staging' && req\.query\.demo === 'weekly-out'/,
-    'staging AND the explicit value, exactly like the daily one'
+    /req\.query\.demo === 'weekly-out'/,
+    'the #1788 spelling is kept so existing review links and declared '
+    + 'checks keep working, now answered by the one fixture'
   );
-  assert.ok(
-    DEMO_WEEKLY.indexOf('return res.json') > 0,
-    'and returns its fixture directly'
-  );
-  // Belt and braces: the region-wide no-DB assertions above already cover
-  // this branch, since DEMO_BRANCH spans both.
-  assert.doesNotMatch(DEMO_WEEKLY, /pool\.query/);
-  assert.doesNotMatch(DEMO_WEEKLY, /await /);
+  assert.doesNotMatch(DEMO_BRANCH, /pool\.query/);
+  assert.doesNotMatch(DEMO_BRANCH, /await /);
 });
 
-test('the weekly fixture makes the WEEKLY cap the binding one', () => {
+test('the fixture makes the WEEKLY cap the binding one', () => {
   // Same equality the client's _creditsExhausted() keys on.
   const spent = Number(/spentCents: (\d+)/.exec(DEMO_WEEKLY)[1]);
   const limit = Number(/limitCents: (\d+)/.exec(DEMO_WEEKLY)[1]);
   assert.equal(spent, limit, 'the reported allowance reads as spent');
 
-  // The DAILY cap still has headroom, so there is no ambiguity about which
-  // window the copy under review is describing.
-  const dailyLimit = Number(/dailyLimitCents: (\d+)/.exec(DEMO_WEEKLY)[1]);
-  const dailySpent = Number(/dailySpentCents: (\d+)/.exec(DEMO_WEEKLY)[1]);
-  assert.ok(dailySpent < dailyLimit, 'the daily cap is not the one that ran out');
+  // The daily figures are reported but switched off, so there is no
+  // ambiguity about which window the copy under review is describing.
+  assert.match(DEMO_WEEKLY, /dailyApplies: false/);
 
   assert.match(DEMO_WEEKLY, /weeklyApplies: true/);
   const weeklyLimit = Number(/weeklyLimitCents: (\d+)/.exec(DEMO_WEEKLY)[1]);
@@ -210,6 +205,7 @@ test('the client forwards either demo spelling, and only those two', () => {
     DEV_CHAT_SRC.indexOf('_maybeInjectDemoCreditsCard()'),
     DEV_CHAT_SRC.indexOf('_globalBudgetOut()')
   );
-  assert.match(inject, /Weekly limit reached \(\$175\.00\)\. Resets Monday 00:00 UTC\./);
-  assert.match(inject, /Daily limit reached \(\$20\.00\)\. Resets at midnight UTC\./);
+  assert.match(inject, /Weekly limit reached \(\$50\.00\)\. Resets Monday 00:00 UTC\./);
+  assert.doesNotMatch(inject, /Daily limit reached/,
+    '#2571: there is no daily refusal left to demonstrate');
 });

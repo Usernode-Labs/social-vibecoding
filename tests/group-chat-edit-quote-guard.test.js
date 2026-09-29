@@ -206,3 +206,56 @@ test('replying to a different (non-editing) message still works while one row is
   assert.equal(calls.length, 1, 'tapping a different row still stages a quote');
   assert.equal(GroupChat.replyDraft.refMsgId, 200);
 });
+
+// #2390: in the general Discussion a proposal event ("Proposed PR #12 for a
+// vote", "PR #12 went live") is a platform message, and it can be replied to
+// again. The row is `gc-event`; its box is an anchor to the proposal.
+function makeEventRow(container, id) {
+  const row = makeEl('div', ['gc-event']);
+  row.dataset.msgId = String(id);
+  const header = makeEl('div', ['flex']);
+  const sender = makeEl('span');
+  sender.dataset.eventSender = '';
+  sender.textContent = 'evan';
+  header.appendChild(sender);
+  row.appendChild(header);
+  const box = makeEl('a', ['gc-event-box']);
+  const text = makeEl('span', ['gc-event-text']);
+  text.textContent = 'Proposed PR #12 for a vote:\n  Custom tier colors';
+  box.appendChild(text);
+  row.appendChild(box);
+  container.appendChild(row);
+  return { row, header, box, text };
+}
+
+test('a tap on a proposal event row stages a reply to it', () => {
+  const { container, calls, click } = setup(GroupChat);
+  const { header } = makeEventRow(container, 77);
+  click(header);
+  assert.equal(calls.length, 1, 'setQuote called once');
+  assert.equal(GroupChat.replyDraft.source, 'event');
+  assert.equal(GroupChat.replyDraft.refMsgId, 77);
+  assert.equal(GroupChat.replyDraft.author, null, 'a platform message has no person to attribute');
+  assert.equal(GroupChat.replyDraft.snippet, 'Proposed PR #12 for a vote: Custom tier colors');
+});
+
+test('a tap on the event box still follows its link instead of quoting', () => {
+  const { container, calls, click } = setup(GroupChat);
+  const { text } = makeEventRow(container, 78);
+  click(text);
+  assert.equal(calls.length, 0, 'the anchor wins');
+});
+
+test('an event row still opens no reaction bar on long-press', () => {
+  const GC = loadGroupChat();
+  const container = makeEl('div', ['gc-messages']);
+  let opened = 0;
+  GC._openReactionBar = () => { opened += 1; };
+  GC._setMsgSelect = () => {};
+  GC._attachQuoteHandlers(container);
+  const { header } = makeEventRow(container, 79);
+  // pointerdown on an event row must not arm the long-press timer at all.
+  container._listeners.pointerdown[0]({ target: header, clientX: 0, clientY: 0 });
+  assert.equal(GC._pressActive, false, 'no press armed on an event row');
+  assert.equal(opened, 0);
+});

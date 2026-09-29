@@ -30,7 +30,7 @@ let api = null;
 const mod = () => (api || (api = loadTsx('tests/fixtures/dev-composer-api.ts')));
 
 const EMPTY = {
-  venueNoteHtml: '', hidden: false, models: null, openRouter: null,
+  venueNoteHtml: '', hidden: false, models: null,
   drafts: { rows: [], busy: false }, attachError: null, placeholder: '',
   saveDraft: { hidden: true, disabled: true, title: '' },
   send: { kind: 'send' }, shortcutHintHtml: '',

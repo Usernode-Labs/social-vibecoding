@@ -2,8 +2,8 @@
 'use strict';
 
 // Run this app's declared dapp.json checks IN-LOOP, before commit — the
-// same checks the platform's capture container will run against staging
-// after the turn ends (and whose graduated rows block the merge).
+// same declared assertions the platform's capture container will run against
+// staging after the turn ends (and whose graduated rows block the merge).
 //
 // Why this exists: the coding agent's only automated signal used to be
 // `npm test`. The proposal checks ran AFTER the turn, in a container the
@@ -12,7 +12,7 @@
 // proposal 3284). This script closes that gap: boot the app locally
 // (see the in-loop browser instructions in the build prompt), run
 // `usernode-run-checks`, and the declared suite is exercised with the
-// SAME semantics the capture container uses:
+// same navigation/assertion semantics the capture container uses:
 //
 //   * navigate the route, settle, collect console errors
 //   * console errors fail the check unless `allowConsoleErrors`
@@ -22,6 +22,11 @@
 //     fixed settle instead of the activity clock, which is close enough
 //     for a loopback app with no CDN or SW in the way)
 //   * checks sharing a URL share one navigation
+// Staging provides a signed-in capture identity. Apps with protected local
+// checks can declare inLoopCheckAuth in dapp.json; this runner signs in once
+// against LOOPBACK using an existing disposable test account, then gives
+// each route its own isolated copy of that browser session. Without that
+// declaration protected checks run signed out; they are not auth parity.
 //
 // Usage (from the app repo root, app already listening on $INLOOP_PORT):
 //   usernode-run-checks                      run every declared check
@@ -96,6 +101,67 @@ function readTests(manifest) {
     });
   }
   return out;
+}
+
+// This is local-only test setup, not a staging capture credential. A manifest
+// may name a documented fake account seeded by the app in staging mode. Keep
+// this deliberately small: JSON POST plus browser cookies/localStorage.
+function readInLoopCheckAuth(manifest) {
+  const auth = manifest && manifest.inLoopCheckAuth;
+  if (auth == null) return null;
+  if (!auth || typeof auth !== 'object' || Array.isArray(auth)) {
+    throw new Error('inLoopCheckAuth must be an object');
+  }
+  const loginPath = validatePath(auth.path);
+  if (!loginPath || loginPath.includes('?') || loginPath.includes('#')) {
+    throw new Error('inLoopCheckAuth.path must be a root-relative login endpoint');
+  }
+  const body = auth.body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)
+    || !Object.keys(body).length || Object.keys(body).length > 12
+    || Object.values(body).some((value) => typeof value !== 'string' || value.length > 512)) {
+    throw new Error('inLoopCheckAuth.body must contain short string fields');
+  }
+  return { path: loginPath, body };
+}
+
+function localAuthUrl(baseUrl, loginPath) {
+  let parsed;
+  try { parsed = new URL(baseUrl); } catch { throw new Error('local check base URL is invalid'); }
+  if (parsed.protocol !== 'http:'
+    || !['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)
+    || parsed.username || parsed.password || parsed.search || parsed.hash
+    || parsed.pathname !== '/') {
+    throw new Error('inLoopCheckAuth can only send credentials to a loopback HTTP origin');
+  }
+  const target = new URL(loginPath, parsed);
+  if (target.origin !== parsed.origin) {
+    throw new Error('inLoopCheckAuth.path must stay on the local app origin');
+  }
+  return target.toString();
+}
+
+async function authenticateLocalChecks(browser, baseUrl, auth) {
+  const url = localAuthUrl(baseUrl, auth.path);
+  const context = await browser.newContext();
+  try {
+    let response;
+    try {
+      response = await context.request.post(url, { data: auth.body, timeout: NAV_TIMEOUT_MS });
+    } catch {
+      throw new Error('local check sign-in request could not be completed');
+    }
+    if (!response.ok()) {
+      throw new Error(`local check sign-in returned HTTP ${response.status()}`);
+    }
+    const state = await context.storageState();
+    if (!state.cookies?.length && !state.origins?.some((origin) => origin.localStorage?.length)) {
+      throw new Error('local check sign-in created no browser session');
+    }
+    return state;
+  } finally {
+    await context.close().catch(() => {});
+  }
 }
 
 // Identity of a check INCLUDING its assertions, so `--changed` re-runs a
@@ -253,6 +319,14 @@ async function main() {
   }
 
   const baseUrl = (args.baseUrl || `http://127.0.0.1:${process.env.INLOOP_PORT || 3100}`).replace(/\/+$/, '');
+  let inLoopCheckAuth;
+  try {
+    inLoopCheckAuth = readInLoopCheckAuth(manifest);
+    if (inLoopCheckAuth) localAuthUrl(baseUrl, inLoopCheckAuth.path);
+  } catch (err) {
+    process.stderr.write(`usernode-run-checks: ${err.message}\n`);
+    return 2;
+  }
 
   const playwright = loadPlaywright();
   if (!playwright) {
@@ -285,6 +359,16 @@ async function main() {
 
   const all = [];
   try {
+    let authState;
+    if (inLoopCheckAuth) {
+      try {
+        authState = await authenticateLocalChecks(browser, baseUrl, inLoopCheckAuth);
+        process.stdout.write('Local check sign-in succeeded; reusing its session in isolated route contexts.\n');
+      } catch (err) {
+        process.stderr.write(`usernode-run-checks: ${err.message}. Checks were not run.\n`);
+        return 2;
+      }
+    }
     const entries = Array.from(groups.entries());
     let cursor = 0;
     const worker = async () => {
@@ -292,9 +376,12 @@ async function main() {
         if (cursor >= entries.length) return;
         const [url, groupTests] = entries[cursor];
         cursor += 1;
-        // Fresh context per group: own window, own cookie jar — mirrors the
-        // capture container's isolation (and self-app token exchanges).
-        const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+        // Fresh context per group, seeded from the same disposable sign-in
+        // when configured. The contexts never share later cookie changes.
+        const context = await browser.newContext({
+          viewport: { width: 1280, height: 800 },
+          ...(authState ? { storageState: authState } : {}),
+        });
         try {
           const results = await runGroup(context, url, groupTests);
           for (const r of results) {
@@ -332,4 +419,7 @@ if (require.main === module) {
 
 // Exported for the platform's unit tests (tests/run-checks-cli.test.js);
 // the worker container only ever executes this file directly.
-module.exports = { readTests, checkFingerprint, validatePath, parseArgs, runGroup };
+module.exports = {
+  readTests, readInLoopCheckAuth, localAuthUrl, authenticateLocalChecks,
+  checkFingerprint, validatePath, parseArgs, runGroup,
+};

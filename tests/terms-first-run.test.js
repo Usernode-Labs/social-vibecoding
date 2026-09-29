@@ -77,13 +77,31 @@ test('prompts only when the current version was never answered', () => {
   assert.match(triggerJs,
     /payload\.consent\.status !== null\) \{\s*\n\s*TermsFirstRun\._answered = true;/);
   // 404 = nothing published = nothing to ask about — but NOT an answer,
-  // so a native re-check notices a later publish without a restart.
-  assert.match(triggerJs, /if \(res\.status === 404\) return;/);
+  // so a native re-check notices a later publish without a restart. It
+  // still SETTLES the gate (#2255): the welcome tour waits on settled()
+  // before it presents, and an account with no published terms to answer
+  // must not leave it waiting forever.
+  assert.match(triggerJs,
+    /if \(res\.status === 404\) \{\s*\n\s*TermsFirstRun\._resolve\(\);\s*\n\s*return;/);
+});
+
+test('settled() resolves on every way out of the gate (#2255)', () => {
+  // Same shape as ../auth/username-first-run.js's, which this module
+  // already awaits, so one await covers both first-run gates. The reader
+  // is features/home/tour: the tour must not present over the terms sheet.
+  assert.match(triggerJs, /settled\(\) \{\s*\n\s*if \(!TermsFirstRun\._settled\)/);
+  assert.match(triggerJs, /_resolve\(\) \{\s*\n\s*TermsFirstRun\.settled\(\);/);
+  // Every exit: the deterministic routes, the snapshot boot, a thrown
+  // check, a 404, an unusable body, a network failure, an answer already
+  // on record, a missing sheet, and the presentation's two callbacks.
+  assert.ok((triggerJs.match(/TermsFirstRun\._resolve\(\);/g) || []).length >= 10,
+    'no path out of the gate leaves settled() pending');
 });
 
 test('screenshot/demo routes and snapshot boots are skipped', () => {
   assert.match(triggerJs, /params\.get\('shot'\) \|\| params\.get\('demo'\)/);
-  assert.match(triggerJs, /_sessionFromSnapshot\) return;/);
+  assert.match(triggerJs,
+    /_sessionFromSnapshot\) \{\s*\n\s*TermsFirstRun\._resolve\(\);\s*\n\s*return;/);
 });
 
 test('boot pattern: init now if authed, else the once-per-document sv:authed', () => {
@@ -124,8 +142,10 @@ test('the trigger presents first-run mode, blocking on native only (#1328)', () 
   // latch: an answer memoizes, a teardown allows a later re-offer.
   assert.match(triggerJs, /window\.usernode\.isNative === true/);
   assert.match(triggerJs, /firstRun: true,\s*\n\s*blocking: native,\s*\n\s*payload,/);
-  assert.match(triggerJs, /onAnswered: \(\) => \{ TermsFirstRun\._answered = true; \}/);
-  assert.match(triggerJs, /onClosed: \(\) => \{ TermsFirstRun\._presented = false; \}/);
+  assert.match(triggerJs,
+    /onAnswered: \(\) => \{\s*\n\s*TermsFirstRun\._answered = true;\s*\n\s*TermsFirstRun\._resolve\(\);/);
+  assert.match(triggerJs,
+    /onClosed: \(\) => \{\s*\n\s*TermsFirstRun\._presented = false;\s*\n\s*TermsFirstRun\._resolve\(\);/);
 });
 
 test('warm-entry re-check: native-gated, throttled, on foreground and online (#1328)', () => {

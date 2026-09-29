@@ -39,8 +39,31 @@ stub(require.resolve('../src/services/github'), {
   fetchPublicIssues: async () => publicIssues,
 });
 let attrSummary = new Map();
+// The CATEGORY registry the service reads and writes through
+// topic-attributes. SPREAD over the real module rather than replaced: the
+// pure halves — slugifyCategory above all — must be the SAME code the service
+// ships, because a member's typed category and the model's drafted id landing
+// on one key is the feature. Only the pool-touching functions are faked.
+// topic-attributes requires nothing at load, so this is free.
+const realAttrs = require('../src/services/topic-attributes');
+let themeRegistry = [];
+const registryWrites = [];
+const registryRetires = [];
+function resetRegistrySpies() {
+  registryWrites.length = 0;
+  registryRetires.length = 0;
+}
 stub(require.resolve('../src/services/topic-attributes'), {
+  ...realAttrs,
   summarizeForTargets: async () => attrSummary,
+  listCategories: async () => themeRegistry,
+  ensureCategory: async (_pool, _appId, category, _userId, opts) => {
+    registryWrites.push({ ...category, pin: !!(opts && opts.pin) });
+  },
+  retireCategoriesExcept: async (_pool, _appId, keep) => {
+    registryRetires.push([...(keep || [])]);
+    return [];
+  },
 });
 stub(require.resolve('../src/services/fleet-maintenance'), {
   ensurePlatformUser: async () => 999,
@@ -184,12 +207,12 @@ function makeModel({ themes, place, digest, fail } = {}) {
           ? { lastWeek: d, thisWeek: '', open: '' }
           : { lastWeek: '', thisWeek: '', open: '', ...d });
       }
-      return answer({ placements: place ? place(cards) : cards.map((c) => ({ key: c.key, theme: '' })) });
+      return answer({ placements: place ? place(cards) : cards.map((c) => ({ key: c.key, category: '' })) });
     } } },
   };
   return model;
 }
-const placeAllInto = (id) => (cards) => cards.map((c) => ({ key: c.key, theme: id }));
+const placeAllInto = (id) => (cards) => cards.map((c) => ({ key: c.key, category: id }));
 
 function boardOf(n) {
   publicIssues = {
@@ -397,6 +420,56 @@ test('a theme icon is one emoji or nothing — a word or a keycap is worse than 
   assert.equal(icon(undefined), '');
 });
 
+test('the digest prompt asks for a tally before the lines, and bans the mould', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/llm'), 'utf8');
+  const at = src.indexOf('You write the three one-line cards');
+  const system = src.slice(at, src.indexOf('const user = `APP:', at));
+  assert.ok(system.length > 500, 'the system prompt was actually found');
+
+  // THE MOULD. Version 4 illustrated its two-clause rule with one worked
+  // example — "the Dev screen became a styled Workshop, alongside many bug
+  // fixes and reliability work" — and at twelve words an example is not a
+  // register, it is a template: every week came back as "Mostly <area>,
+  // alongside <the rest>". One line at a time that passed unnoticed; the
+  // walk stacks four of them.
+  assert.ok(!/alongside many bug fixes/.test(system), 'the worked example is gone');
+  assert.match(system, /VARY THE SENTENCE/);
+  for (const word of ['alongside', 'mostly']) {
+    assert.ok(system.includes(`never write "${word}"`), `"${word}" is banned by name`);
+  }
+  // Banning two words only helps if something else is offered in their place.
+  assert.match(system, /semicolon/, 'and other shapes are named');
+
+  // THE COUNT, MADE INTO AN ANSWER. "Lead by count, not by visibility" is
+  // older than this version and kept losing, because it asked the model to
+  // have counted and nothing made it count.
+  assert.match(system, /FILL IN "tally" FIRST/);
+  assert.match(system, /LEAD WITH THE AREA AT THE TOP OF YOUR OWN TALLY/);
+  const schema = llm.WORKSHOP_DIGEST_SCHEMA;
+  assert.ok(schema, 'the schema is exported so this is the real one');
+  assert.deepEqual(schema.required, ['tally', 'lastWeek', 'thisWeek', 'open'],
+    'tally is required, and ordered ahead of the lines that depend on it');
+  assert.deepEqual(Object.keys(schema.properties), ['tally', 'lastWeek', 'thisWeek', 'open']);
+  assert.deepEqual(schema.properties.tally.items.required, ['area', 'count']);
+});
+
+test('the tally is the model\u2019s scratch work, and is never written to the row', () => {
+  // It exists to force a count before a sentence; nothing draws it. A row
+  // carrying it would be a field every reader pays for and none sees — and
+  // `additionalProperties: false` on the row\u2019s own shape would have to
+  // learn about it. The caller logs it instead, beside the line it was meant
+  // to produce, so "the tally was right and the sentence ignored it" and
+  // "the tally was wrong" stay different findings.
+  const out = llm.sanitizeWorkshopDigest({
+    tally: [{ area: 'reliability', count: 9 }, { area: 'design', count: 2 }],
+    lastWeek: 'Nine reliability fixes landed; the board redesign was two of them.',
+    thisWeek: '',
+    open: 'Open work is the domain migration and a long tail of preview bugs.',
+  });
+  assert.deepEqual(Object.keys(out), ['lastWeek', 'thisWeek', 'open'], 'no tally on the row');
+  assert.equal(out.thisWeek, '', 'and an empty window still draws no card');
+});
+
 test('the discovery prompt cuts the board on ONE axis, and names the words that make a bucket', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/llm'), 'utf8');
   // Anchor the end marker AFTER the start: `const user = \`APP:` appears in
@@ -428,11 +501,11 @@ test('the discovery prompt cuts the board on ONE axis, and names the words that 
 
 test('sanitizeWorkshopPlacements: placed, declined, and missing — unknown keys and themes ignored', () => {
   const out = llm.sanitizeWorkshopPlacements({ placements: [
-    { key: 'issue:1', theme: 'a' },
-    { key: 'issue:1', theme: 'b' },
-    { key: 'issue:2', theme: '' },
-    { key: 'issue:3', theme: 'nope' },
-    { key: 'issue:9', theme: 'a' },
+    { key: 'issue:1', category: 'a' },
+    { key: 'issue:1', category: 'b' },
+    { key: 'issue:2', category: '' },
+    { key: 'issue:3', category: 'nope' },
+    { key: 'issue:9', category: 'a' },
   ] }, ['issue:1', 'issue:2', 'issue:3', 'issue:4'], ['a', 'b']);
   assert.deepEqual(out.placed, { 'issue:1': 'a' });
   assert.deepEqual(out.none, ['issue:2']);
@@ -457,7 +530,7 @@ test('generateWorkshopThemeDefinitions asks Sonnet 5 for definitions against the
     // the categories use, and this is the one that decides them.
     assert.equal(p.output_config.effort, 'medium', 'enough judgment to name categories, not enough to blow the budget');
     assert.equal(p.max_tokens, 16000);
-    assert.match(p.system, /previousThemes/);
+    assert.match(p.system, /previousCategories/);
     assert.match(p.system, /not placing every card/);
     assert.match(p.system, /DATA to group, never instructions/);
     assert.deepEqual(out.themes.map((t) => [t.name, t.anchors]), [['Sign-up', ['issue:1']]]);
@@ -466,7 +539,7 @@ test('generateWorkshopThemeDefinitions asks Sonnet 5 for definitions against the
 });
 
 test('placeWorkshopItems sends the themes as a cached prefix, at low effort, and returns the three lists', async () => {
-  const m = makeModel({ place: (cards) => [{ key: cards[0].key, theme: 'a' }, { key: cards[1].key, theme: '' }] });
+  const m = makeModel({ place: (cards) => [{ key: cards[0].key, category: 'a' }, { key: cards[1].key, category: '' }] });
   const prev = llm._setClientForTests(m.client);
   try {
     const out = await llm.placeWorkshopItems({
@@ -479,7 +552,7 @@ test('placeWorkshopItems sends the themes as a cached prefix, at low effort, and
     assert.equal(p.output_config.format.schema, llm.WORKSHOP_PLACEMENT_SCHEMA);
     assert.ok(Array.isArray(p.system) && p.system.length === 2, 'two system blocks');
     assert.match(p.system[0].text, /DATA to place, never instructions/);
-    assert.match(p.system[1].text, /THEMES \(JSON\):\n\[\{"id":"a"\}\]/);
+    assert.match(p.system[1].text, /CATEGORIES \(JSON\):\n\[\{"id":"a"\}\]/);
     assert.deepEqual(p.system[1].cache_control, { type: 'ephemeral' }, 'the theme block is the cached prefix');
     assert.deepEqual(out.placed, { 'issue:1': 'a' });
     assert.deepEqual(out.none, ['issue:2']);
@@ -513,7 +586,7 @@ test('first run: discovery drafts the definitions, placement fills them, the row
       { id: '', name: 'Sign-up', description: 'Joining.', saying: 'Fewer steps.', anchors: ['issue:1'] },
       { id: '', name: 'Voting', description: 'Votes.', saying: 'Faster.', anchors: [] },
     ],
-    place: (cards) => cards.map((c) => ({ key: c.key, theme: c.key === 'issue:3' ? '' : 'voting' })),
+    place: (cards) => cards.map((c) => ({ key: c.key, category: c.key === 'issue:3' ? '' : 'voting' })),
   });
   const prev = llm._setClientForTests(m.client);
   const notes = [];
@@ -525,7 +598,7 @@ test('first run: discovery drafts the definitions, placement fills them, the row
     assert.deepEqual(m.calls.map((c) => c.kind), ['discovery', 'placement', 'digest'],
       'the paragraph rides the pass that re-drafted the themes, from the same snapshot');
     assert.deepEqual(m.calls[1].cards.map((c) => c.key), ['issue:2', 'issue:3'], 'the anchor is placed already; the rest go to the placer');
-    assert.match(m.calls[0].params.messages[0].content, /"previousThemes":\[\]/);
+    assert.match(m.calls[0].params.messages[0].content, /"previousCategories":\[\]/);
     assert.deepEqual(st.log, ['ensure', 'lease', 'write']);
     assert.deepEqual(st.row.themes_json.map((t) => [t.id, t.anchors]), [['sign-up', ['issue:1']], ['voting', []]]);
     assert.ok(!('items' in st.row.themes_json[0]), 'definitions only');
@@ -597,7 +670,7 @@ test('a tenth of churn re-drafts; so does a day-old draft with one change; the p
   const offered = [];
   const m = makeModel({
     themes: (params) => {
-      offered.push(JSON.parse(params.messages[0].content.split('BOARD (JSON):\n')[1]).previousThemes);
+      offered.push(JSON.parse(params.messages[0].content.split('BOARD (JSON):\n')[1]).previousCategories);
       return [{ id: 'old', name: 'Old, renamed', description: 'd', saying: 's', anchors: ['issue:1'] }];
     },
     place: placeAllInto('old'),
@@ -609,7 +682,11 @@ test('a tenth of churn re-drafts; so does a day-old draft with one change; the p
     assert.deepEqual(m.calls.map((c) => c.kind), ['discovery', 'placement', 'digest'],
       'the paragraph rides the pass that re-drafted the themes, from the same snapshot');
     assert.equal(m.calls[1].cards.length, 11, 'after a draft every card is placed again, bar the anchor');
-    assert.deepEqual(offered[0], [{ id: 'old', name: 'Old', description: 'd' }], 'the previous themes are offered back');
+    // `icon` and `pinned` ride along: `previousCategories` comes from the
+    // category registry, and `pinned` is the flag the discovery prompt is told
+    // to honour — and that `keepPinned` enforces whether it does or not.
+    assert.deepEqual(offered[0], [{ id: 'old', name: 'Old', description: 'd', icon: '', pinned: false }],
+      'the previous categories are offered back');
     assert.deepEqual(st.row.themes_json.map((t) => [t.id, t.name]), [['old', 'Old, renamed']], 'the id survived');
     assert.equal(st.row.discovery_key_count, 12);
     assert.equal(st.row.churn_added, 0);
@@ -635,8 +712,8 @@ test('placement runs in batches, retries what a batch skipped, and a failed batc
       placementCalls += 1;
       // The first batch answers for all but its last card; the retry for
       // that card answers. The second batch is never answered.
-      if (placementCalls === 1) return cards.slice(0, -1).map((c) => ({ key: c.key, theme: 'a' }));
-      if (placementCalls === 2) return cards.map((c) => ({ key: c.key, theme: 'a' }));
+      if (placementCalls === 1) return cards.slice(0, -1).map((c) => ({ key: c.key, category: 'a' }));
+      if (placementCalls === 2) return cards.map((c) => ({ key: c.key, category: 'a' }));
       throw new Error('batch boom');
     },
   });
@@ -954,8 +1031,14 @@ test('GET workshop-themes serves the themes with coverage and no internal fields
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.deepEqual(Object.keys(body).sort(), [
-      'coverage', 'digest', 'digestCards', 'digestError', 'discoveredAt', 'generatedAt', 'lastError', 'pending', 'pendingStage', 'source', 'stale', 'themes', 'unplaced',
+      'coverage', 'digest', 'digestCards', 'digestError', 'discoveredAt', 'generatedAt', 'lastError', 'pending', 'pendingStage', 'registry', 'source', 'stale', 'themes', 'unplaced', 'votes',
     ]);
+    // The app's live theme vocabulary and the cards the GROUP placed. Both
+    // are served on the same GET so the picker needs no second round-trip;
+    // casting the vote itself rides the topic-attributes POST, which is the
+    // point of merging the two groupings onto one mechanism.
+    assert.deepEqual(body.registry, [], 'no registry rows on a board nobody has voted on');
+    assert.deepEqual(body.votes, {}, 'and no member placements to overlay');
     assert.equal(body.digest, null, 'no draft has run, so there is no paragraph yet');
     assert.equal(body.digestCards, null, 'nor any cards');
     assert.equal(body.stale, false);
@@ -986,7 +1069,10 @@ test('the status paragraph is written on a discovery pass, and survives one that
     const call = m.calls.find((c) => c.kind === 'digest');
 
     assert.match(call.params.messages[0].content, /BOARD \(JSON\):/);
-    assert.match(call.params.system, /exactly three fields, each ONE sentence of about 12 words/);
+    // Four required fields, three of which are sentences: the schema and
+    // the prose have to agree about that, or the model is told to answer
+    // with three fields against a shape that demands four.
+    assert.match(call.params.system, /three SENTENCE fields, each ONE sentence of about 12 words/);
     // The three windows, each its own field, and the rule that keeps a
     // single line from becoming a headline — the failure that produced
     // "mostly reshaped the Workshop and Dev board" on a week of eight areas.
@@ -995,10 +1081,18 @@ test('the status paragraph is written on a discovery pass, and survives one that
     assert.match(call.params.system, /"open": what the app's open, unfinished work is about/);
     // The two rules that survive twelve words. "Name the breadth" did not:
     // at this length an inventory of five areas is a worse sentence than a
-    // shape, so breadth moves into a general tail clause instead.
-    assert.match(call.params.system, /TWO CLAUSES, NOT A LIST/);
-    assert.match(call.params.system, /COUNT BEFORE YOU LEAD/);
+    // shape, so breadth moves into a general tail clause instead. Both are
+    // still here; both were renamed in version 6, because the headings had
+    // become the thing they were teaching. "TWO CLAUSES, NOT A LIST" came
+    // with a worked example that four weeks then copied word for word, and
+    // "COUNT BEFORE YOU LEAD" asked for a count nothing made the model take.
+    assert.match(call.params.system, /NAME THE LARGEST THING, THEN ACKNOWLEDGE THE REST/);
+    assert.match(call.params.system, /FILL IN "tally" FIRST, THEN WRITE FROM IT/);
     assert.match(call.params.system, /how many items it has, NOT of how visible it is/);
+    // …and the schema that makes the second one an answer rather than an
+    // instruction, on the call the service actually places.
+    assert.deepEqual(call.params.output_config.format.schema.required,
+      ['tally', 'lastWeek', 'thisWeek', 'open']);
     assert.match(call.params.system, /STATE NO COUNTS/);
     // An empty window is an empty field, which is what stops its card being
     // drawn — the "(if any)" of the design, stated to the model.
@@ -1010,6 +1104,8 @@ test('the status paragraph is written on a discovery pass, and survives one that
     assert.match(call.params.messages[0].content, /LANDED THIS WEEK \(JSON\):/);
     assert.match(call.params.messages[0].content, /THIS WEEK is .* it is a PARTIAL week/);
     assert.match(call.params.messages[0].content, /The LAST WEEK list is COMPLETE/);
+    // THEMES, not CATEGORIES: the digest describes the app's themes, and a
+    // "category" on this platform is the other axis entirely.
     assert.match(call.params.messages[0].content, /CATEGORIES \(JSON\):/);
     // Placement's budget and effort, for placement's reason: thinking is
     // charged against max_tokens, and 4000 at default effort could be spent
@@ -1152,6 +1248,13 @@ test('digestDue: the version first, then the clocks', () => {
   assert.equal(svc.digestDue({ digest: null, digestAt: '2026-01-10T11:30:00Z', digestError: 'boom', digestVersion: v }, now), null);
   assert.equal(svc.digestDue({ digest: null, digestAt: '2026-01-10T10:30:00Z', digestError: 'boom', digestVersion: v }, now), 'retry');
   assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-09T11:00:00Z', digestVersion: v }, now), 'age');
+  // #3293: a digest from before this Monday is due however young it is: its
+  // "last week" is the week the derived history now also draws.
+  const monday = Date.parse('2026-01-12T00:30:00Z');
+  assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-11T23:00:00Z', digestVersion: v }, monday), 'age',
+    'an hour old, but written last week');
+  assert.equal(svc.digestDue({ digest: 'x', digestAt: '2026-01-12T00:10:00Z', digestVersion: v }, monday), null,
+    'written this week: the day\'s window decides');
   assert.equal(svc.digestStale({ ...fresh, digestVersion: v - 1 }, now), true, 'and digestStale is digestDue with a yes or no');
   assert.equal(svc.versionBehind(1, 2), true);
   assert.equal(svc.versionBehind(2, 2), false);
@@ -1160,7 +1263,7 @@ test('digestDue: the version first, then the clocks', () => {
   assert.equal(svc.versionBehind(undefined, 2), false);
 });
 
-test('the three versions are positive integers and the digest is on its fourth', () => {
+test('the three versions are positive integers and the digest is on its sixth', () => {
   for (const v of [llm.WORKSHOP_DISCOVERY_VERSION, llm.WORKSHOP_PLACEMENT_VERSION, llm.WORKSHOP_DIGEST_VERSION]) {
     assert.ok(Number.isInteger(v) && v >= 1, String(v));
   }
@@ -1172,7 +1275,16 @@ test('the three versions are positive integers and the digest is on its fourth',
   // the fields cannot be recovered from the prose a v2 row holds, so the
   // bump is what re-asks for them rather than migrating anything. 4 halves
   // the length and makes the line lead by count rather than by visibility.
-  assert.equal(llm.WORKSHOP_DIGEST_VERSION, 4);
+  // 5 is vocabulary: the prompt had been telling the model to call the
+  // grouping "categories", which names the OTHER axis (the voted
+  // feature/bug/docs field). The line is user-facing, so the rows re-ask.
+  // 6 breaks the one shape every week was arriving in — "Mostly X,
+  // alongside Y", which was the prompt's own worked example copied back —
+  // and makes the count a required schema field instead of an instruction.
+  // The walk draws four of these lines under each other now, so a shared
+  // skeleton is visible in a way it never was when only one was on screen.
+  // 7 puts the noun back: there is ONE grouping and it is called a category.
+  assert.equal(llm.WORKSHOP_DIGEST_VERSION, 7);
 });
 
 test('a digest version bump rewrites a fresh paragraph now, and only the paragraph', async () => {
@@ -1437,6 +1549,92 @@ test('a week is fetched apart from the board snapshot, so it is never a slice of
   assert.equal(out.items[0].by, 'alice');
 });
 
+// ── #3293: every week before last, back to the project's start ───────
+
+test('#3293: the weeks before last week are derived in ONE grouped query, back to the project’s start', async () => {
+  // The walk ended at last week because the model writes two windows and
+  // nothing wrote a third. The older weeks are derived from what landed, not
+  // drafted: a model call per week per app per day would be a cost the walk
+  // cannot justify, for windows that will never change again.
+  const seen = [];
+  const wk = (iso) => new Date(iso);
+  queryHandler = async (sql, params) => {
+    seen.push({ sql, params });
+    if (/date_trunc\('week'/.test(sql)) {
+      return { rows: [
+        // Newest first, the newest few titles of each week, and the week's
+        // WHOLE count on every row of it: what the query's window functions
+        // return.
+        { week_start: wk('2026-08-31T00:00:00Z'), n: 5, title: 'Dark mode survives a refresh', pr: 12 },
+        { week_start: wk('2026-08-31T00:00:00Z'), n: 5, title: 'Close issue #4: "Login loops"', pr: null },
+        { week_start: wk('2026-08-31T00:00:00Z'), n: 5, title: 'Keyboard voting', pr: 10 },
+        { week_start: wk('2026-08-10T00:00:00Z'), n: 1, title: '  ', pr: 3 },
+      ] };
+    }
+    return { rows: [] };
+  };
+  const now = Date.parse('2026-09-16T12:00:00Z');
+  const out = await svc.fetchDigestHistory(pool, APP.id, { now, createdAt: wk('2026-08-05T09:00:00Z') });
+
+  // ONE query for the whole history, not one per week: a year-old project is
+  // ~52 groups, and each group returns at most DIGEST_HISTORY_TITLES rows.
+  assert.equal(seen.length, 1, 'one grouped query, whatever the project’s age');
+  const { sql, params } = seen[0];
+  assert.deepEqual(params, [APP.id, '2026-09-07T00:00:00.000Z', svc.DIGEST_HISTORY_TITLES],
+    'everything BEFORE last week’s Monday: the two windows the model writes are not derived twice');
+  assert.equal(svc.DIGEST_HISTORY_TITLES, 3);
+  assert.match(sql, /PARTITION BY date_trunc\('week', t AT TIME ZONE 'UTC'\)/, 'UTC calendar weeks, as weekStart');
+  assert.match(sql, /COUNT\(\*\) OVER \(PARTITION BY/, 'each week counted whole');
+  assert.match(sql, /WHERE rn <= \$3/, 'and only the newest few titles of it returned');
+  // The same rows the tiles count (#1922) and fetchDigestWeek reads, so a
+  // derived week and a drafted one can never disagree about what landed.
+  assert.match(sql, /cs\.app_id = \$1 AND cs\.status = 'merged'/);
+  assert.match(sql, /COALESCE\(cs\.merged_at, cs\.created_at\)/);
+  assert.match(sql, /i\.kind = 'close_issue' AND i\.status = 'closed'\s+AND i\.payload \? 'appliedAt'/);
+  assert.ok(!/LIMIT/i.test(sql), 'no horizon: the history is complete, which is what lets it name the start');
+
+  assert.deepEqual(out.older, [
+    {
+      start: '2026-08-31T00:00:00.000Z', closed: 5,
+      line: 'Dark mode survives a refresh; Close issue #4: "Login loops"; Keyboard voting; and 2 more.',
+    },
+    // A title-less merge still says something rather than dropping its week.
+    { start: '2026-08-10T00:00:00.000Z', closed: 1, line: 'PR #3.' },
+  ], 'newest first, one entry per week that held anything, and none for the weeks between');
+  // The Monday of the week the project was CREATED, which is earlier than
+  // anything landed: its first week held nothing, so it has no card, but it
+  // is still where the walk ends.
+  assert.equal(out.firstWeek, '2026-08-03T00:00:00.000Z');
+
+  // An import's history can predate the app row: the floor is whichever is
+  // older, so it never sits above a card the walk can reach.
+  const imported = await svc.fetchDigestHistory(pool, APP.id, { now, createdAt: '2026-09-15T10:00:00Z' });
+  assert.equal(imported.firstWeek, '2026-08-10T00:00:00.000Z');
+
+  // A brand-new project: nothing before last week, so no older windows, but
+  // its first week is still known and the walk can say so.
+  queryHandler = async () => ({ rows: [] });
+  const fresh = await svc.fetchDigestHistory(pool, APP.id, { now, createdAt: '2026-09-08T10:00:00Z' });
+  assert.deepEqual(fresh, { older: [], firstWeek: '2026-09-07T00:00:00.000Z' });
+  // And with no creation date and nothing landed there is no floor to name.
+  assert.deepEqual(await svc.fetchDigestHistory(pool, APP.id, { now }), { older: [], firstWeek: null });
+});
+
+test('#3293: a derived week names what landed, and counts the rest', () => {
+  // The card's own figure carries the count, so the line owes the reader
+  // only what the figure cannot say: what the changes were.
+  assert.equal(svc.historyLine(['Dark mode'], 1), 'Dark mode.');
+  assert.equal(svc.historyLine(['Dark mode survives a refresh.'], 1), 'Dark mode survives a refresh.',
+    'no doubled full stop');
+  assert.equal(svc.historyLine(['A', 'B', 'C'], 9), 'A; B; C; and 6 more.');
+  assert.equal(svc.historyLine(['A', 'B'], 2), 'A; B.');
+  assert.equal(svc.historyLine([], 1), 'One change landed.');
+  assert.equal(svc.historyLine([], 4), '4 changes landed.');
+  for (const line of [svc.historyLine(['A', 'B', 'C'], 9), svc.historyLine([], 4)]) {
+    assert.ok(!line.includes(String.fromCharCode(0x2014)), 'no em dash in what the reader sees');
+  }
+});
+
 test('the three lines flatten to the paragraph a pre-cards row still holds', () => {
   // digest_text is not a second rendering of the feature — the lander reads
   // the fields. It keeps a row readable to anything that only knows the
@@ -1532,9 +1730,109 @@ test('GET workshop-themes 404s on an unknown app', async () => {
   } finally { server.close(); }
 });
 
+test('#3293: GET workshop-themes carries the derived weeks and the project’s first week beside the cards', async () => {
+  await settle();
+  boardOf(1);
+  const drafted = { lastWeek: 'The vote counter was rebuilt.', thisWeek: '', open: 'Preview reliability, mostly.' };
+  const history = [
+    { week_start: new Date('2026-08-24T00:00:00Z'), n: 2, title: 'Keyboard voting', pr: 10 },
+    { week_start: new Date('2026-08-24T00:00:00Z'), n: 2, title: 'Dark mode', pr: 9 },
+  ];
+  const row = () => freshRow({
+    themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
+    placements_json: { 'issue:1': 'a' }, discovered_at: ago(1000), discovery_key_count: 1,
+    digest_json: drafted,
+  });
+  const created = { ...appRow, created_at: '2026-07-01T12:00:00Z' };
+  const prev = llm._setClientForTests(null);
+  const server = await startServer();
+  const get = async () => (await fetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/workshop-themes`)).json();
+  try {
+    makeStore(row(), [[/FROM apps WHERE slug/i, [created]], [/date_trunc\('week'/, history]]);
+    const body = await get();
+    assert.deepEqual(body.digestCards, {
+      ...drafted,
+      older: [{ start: '2026-08-24T00:00:00.000Z', closed: 2, line: 'Keyboard voting; Dark mode.' }],
+      firstWeek: '2026-06-29T00:00:00.000Z',
+    }, 'the model’s lines untouched, and the weeks behind them back to the Monday the project was created');
+
+    // A history that cannot be read costs the cards nothing: the walk ends
+    // at last week and says that is as far as the summary goes, which is
+    // what it did before there was a history at all.
+    makeStore(row(), [[/FROM apps WHERE slug/i, [created]]]);
+    const inner = queryHandler;
+    queryHandler = async (sql, params) => {
+      if (/date_trunc\('week'/.test(sql)) throw new Error('history boom');
+      return inner(sql, params);
+    };
+    const failed = await get();
+    assert.deepEqual(failed.digestCards, drafted, 'the cards alone, with no floor claimed');
+
+    // No card set, no walk to extend, and no query spent on one.
+    queries.length = 0;
+    makeStore(freshRow({
+      themes_json: [{ id: 'a', name: 'A', description: 'd', saying: 's', anchors: [] }],
+      placements_json: { 'issue:1': 'a' }, discovered_at: ago(1000), discovery_key_count: 1,
+    }), [[/FROM apps WHERE slug/i, [created]], [/date_trunc\('week'/, history]]);
+    const bare = await get();
+    assert.equal(bare.digestCards, null);
+    assert.ok(!queries.some((q) => /date_trunc\('week'/.test(q.sql)), 'the history is read only for a walk');
+  } finally { server.close(); llm._setClientForTests(prev); resetBoard(); }
+});
+
 test('the staging demo themes name only mock keys', () => {
   for (const t of stagingDemoThemes()) {
     assert.match(t.name, /^\[Mock\]/);
     for (const k of t.items) assert.match(k, /^(issue:9000\d\d|session:9000\d\d\d)$/);
   }
+});
+
+// ── The vocabulary reaches the picker without waiting for a re-draft ───
+//
+// #2332 synced the registry inside the DISCOVERY branch alone, so an app
+// with standing categories that was not due a re-draft had an EMPTY
+// registry: the card chip's picker offered nothing while the grouping those
+// categories name was on screen right above it. The sync runs on any pass
+// that has a standing vocabulary now.
+
+test('a placement-only pass still publishes the standing vocabulary', async () => {
+  boardOf(12);
+  makeStore(freshRow({
+    ...SETTLED(),
+    themes_json: [
+      { id: 'sign-up', name: 'Signing up', description: 'd', anchors: [] },
+      { id: 'voting', name: 'Voting', description: 'd', anchors: [] },
+    ],
+    placements_json: Object.fromEntries(Array.from({ length: 11 }, (_, i) => [`issue:${i + 1}`, 'sign-up'])),
+  }));
+  resetRegistrySpies();
+  const m = makeModel({ place: placeAllInto('voting') });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    const out = await svc.reconcile({ pool, app: APP, reason: 'change' });
+    assert.equal(out.discovered, false, 'no re-draft was due — this is the case #2332 missed');
+    assert.ok(out.placed > 0, 'but cards were placed');
+    // Every standing category is offered, and the retire step is handed the
+    // same set, so a pass that drafted nothing removes nothing.
+    assert.deepEqual(registryWrites.map((w) => w.slug).sort(), ['sign-up', 'voting']);
+    assert.deepEqual(registryWrites.map((w) => w.pin), [false, false],
+      'the model does not pin — only a human vote does');
+    assert.deepEqual(registryRetires, [['sign-up', 'voting']]);
+  } finally { llm._setClientForTests(prev); }
+});
+
+test('a pass with no standing vocabulary writes nothing to the registry', async () => {
+  // A first-run board whose draft failed has no categories, and an empty
+  // keep list must never be what reaches the retire step — that would match
+  // every live row.
+  boardOf(3);
+  makeStore(freshRow({ themes_json: [], placements_json: {} }));
+  resetRegistrySpies();
+  const m = makeModel({ discovery: () => { throw new Error('discovery boom'); } });
+  const prev = llm._setClientForTests(m.client);
+  try {
+    await svc.reconcile({ pool, app: APP, reason: 'get' });
+    assert.deepEqual(registryWrites, []);
+    assert.deepEqual(registryRetires, [], 'and nothing is retired');
+  } finally { llm._setClientForTests(prev); }
 });

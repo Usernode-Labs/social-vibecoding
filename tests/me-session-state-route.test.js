@@ -274,9 +274,12 @@ test('the payload is ids-plus-flags only — no titles or PR metadata', async ()
   const server = await startServer();
   try {
     const { body } = await get(server, '/api/me/session-state');
+    // `userId` is the owner's id, which the pushed session_state event
+    // already carries and a shared card already shows by name. The Homeroom
+    // mark's working indicator counts the viewer's own sessions by it.
     assert.deepStrictEqual(
       Object.keys(body.sessions[0]).sort(),
-      ['appSlug', 'busy', 'headless', 'id', 'phase', 'status', 'stopping']
+      ['appSlug', 'busy', 'headless', 'id', 'phase', 'status', 'stopping', 'userId']
     );
   } finally {
     activeWorkers.delete(26);

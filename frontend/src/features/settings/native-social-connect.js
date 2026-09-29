@@ -1,7 +1,11 @@
 // A system-browser trip must retain the app account as an expectation, never
 // move its session cookie or OAuth state into the browser's independent realm.
-export async function openNativeSocialConnect({ bridge, provider, accountId, origin }) {
-  if (!['github', 'x'].includes(provider) || !Number.isSafeInteger(accountId) || accountId <= 0) {
+export async function openNativeSocialConnect({
+  bridge, provider, accountId, origin, intent = 'connect',
+}) {
+  if (!['github', 'x'].includes(provider)
+      || !['connect', 'refresh', 'replace'].includes(intent)
+      || !Number.isSafeInteger(accountId) || accountId <= 0) {
     throw new Error('Your account could not be identified. Reopen Settings and try again.');
   }
   if (typeof bridge?.openExternal !== 'function') {
@@ -9,6 +13,7 @@ export async function openNativeSocialConnect({ bridge, provider, accountId, ori
   }
   const url = new URL(`/api/me/social-identities/${provider}/connect`, origin);
   url.searchParams.set('account', String(accountId));
+  url.searchParams.set('intent', intent);
   try {
     const opened = await bridge.openExternal(url.href);
     if (opened !== true) throw new Error('browser_not_opened');

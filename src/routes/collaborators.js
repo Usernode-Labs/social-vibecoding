@@ -16,33 +16,12 @@ const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const notifications = require('../services/notifications');
 const userDirectory = require('../services/user-directory');
-const events = require('../services/events');
 const { drainGuard } = require('../services/lifecycle');
+const { userDirectoryLimiter } = require('../middleware/rate-limits');
 
-// Hydrate one freshly-inserted notification row into the serialize()
-// wire shape (same column set listForUser produces) and push it live.
-async function hydrateAndPush(pool, notifRows) {
-  if (!notifRows.length) return;
-  const { rows: hydrated } = await pool.query(
-    `SELECT n.id, n.kind, n.read_at, n.created_at,
-            n.app_id, a.slug AS app_slug, a.name AS app_name,
-            n.chat_message_id, NULL AS message_content,
-            n.session_id, NULL AS pr_title, NULL AS pr_number,
-            su.username AS source_username, n.user_id, n.detail
-       FROM notifications n
-       LEFT JOIN apps a ON a.id = n.app_id
-       LEFT JOIN users su ON su.id = n.source_user_id
-      WHERE n.id = ANY($1::int[])`,
-    [notifRows.map((r) => r.id)]
-  );
-  const { pushNotificationToUser } = require('../services/ws');
-  for (const row of hydrated) {
-    pushNotificationToUser(row.user_id, {
-      type: 'notification_new',
-      notification: notifications.serialize(row),
-    });
-  }
-}
+// Shared with POST /api/apps, which sends a Group's invites at creation
+// (services/collab-invites.js).
+const { acceptInvite, sendInvite } = require('../services/collab-invites');
 
 function collaboratorRoutes(config) {
   const router = Router();
@@ -58,7 +37,27 @@ function collaboratorRoutes(config) {
   // resolves handles lands on every surface at once. The wire shape here
   // is unchanged: { users: [...] }, no has_more. Messages uses the same
   // matching helpers but adds its access-specific self/block exclusions.
-  router.get('/api/users/search', async (req, res) => {
+  //
+  // `excludeApp` IS AN ACCESS-GATED FILTER (#2521). It answers a
+  // membership question — "is this handle already on that app?" — so it
+  // must be resolved through appAccess.getAppForUser at the same 'collab'
+  // level every other route in this file uses, not with a bare slug
+  // lookup. snait's handler-level reproduction on the issue showed why:
+  // with the bare lookup, a caller who is not a member of a private app
+  // could diff the same search with and without `excludeApp=<private
+  // slug>` and read off exactly which returned handles collaborate on
+  // that app. A slug the caller cannot reach is SILENTLY IGNORED — the
+  // search runs unfiltered rather than 403ing or 404ing, because either
+  // refusal would itself answer "that app exists and you are not on it",
+  // and because the only real caller (the Members dialog typeahead in
+  // features/dialogs/members-controller.js) always passes an app it
+  // already holds collab access to, so an honest request never notices.
+  //
+  // The limiter is the same `userDirectoryLimiter` (120/min/user) the
+  // sibling app-directory search carries, for the same reason: this is a
+  // per-keystroke typeahead over the whole user table, and it was the
+  // one directory search surface with no bucket at all.
+  router.get('/api/users/search', userDirectoryLimiter, async (req, res) => {
     const messageScope = req.query.scope === 'messages';
     const q = typeof req.query.q === 'string'
       ? req.query.q.trim().slice(0, messageScope ? 255 : 32)
@@ -67,10 +66,11 @@ function collaboratorRoutes(config) {
     try {
       let excludeAppId = null;
       if (req.query.excludeApp) {
-        const { rows } = await pool.query(
-          'SELECT id FROM apps WHERE slug = $1', [String(req.query.excludeApp)]
+        const app = await appAccess.getAppForUser(
+          pool, String(req.query.excludeApp), req.user, 'collab', appAccess.ACCESS_COLUMNS
         );
-        excludeAppId = rows[0]?.id || null;
+        // No access (or no such slug) → no exclusion, no signal.
+        excludeAppId = app?.id || null;
       }
       if (!messageScope) {
         const { users } = await userDirectory.searchPrefix(pool, q, 10, { excludeAppId });
@@ -81,9 +81,18 @@ function collaboratorRoutes(config) {
       // block before applying the result limit. Keep escaping and projection
       // on the shared directory helpers so their public-user contract cannot
       // drift from the other username search surfaces.
+      //
+      // #2386: the viewer's friends lead, and say so with `friend: true` —
+      // the one key added to the projection, and only ever for the viewer's
+      // own relationship.
       const escaped = userDirectory.escapeLike(q);
       const { rows } = await pool.query(
-        `SELECT id, username FROM users
+        `SELECT id, username,
+                EXISTS (SELECT 1 FROM friendships f
+                         WHERE f.status = 'accepted'
+                           AND f.user_low_id = LEAST(users.id, $4::int)
+                           AND f.user_high_id = GREATEST(users.id, $4::int)) AS friend
+           FROM users
           WHERE LOWER(username) LIKE LOWER($1) || '%' ESCAPE '\\'
             AND ($2::int IS NULL OR id NOT IN (
               SELECT user_id FROM app_collaborators WHERE app_id = $2
@@ -94,11 +103,15 @@ function collaboratorRoutes(config) {
                WHERE (b.blocker_id = $4 AND b.blocked_user_id = users.id)
                   OR (b.blocker_id = users.id AND b.blocked_user_id = $4)
             ))
-          ORDER BY LOWER(username), id
+          ORDER BY friend DESC, LOWER(username), id
           LIMIT 10`,
         [escaped, excludeAppId, messageScope, req.user.id]
       );
-      res.json({ users: rows.map(userDirectory.projectUser) });
+      res.json({
+        users: rows.map((row) => (row.friend
+          ? { ...userDirectory.projectUser(row), friend: true }
+          : userDirectory.projectUser(row))),
+      });
     } catch (err) {
       log.error('collab', 'user search failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -170,44 +183,14 @@ function collaboratorRoutes(config) {
         return res.status(400).json({ error: 'You are already a collaborator' });
       }
 
-      const { rows: inserted } = await pool.query(
-        `INSERT INTO app_collaborators (app_id, user_id, status, invited_by)
-         VALUES ($1, $2, 'invited', $3)
-         ON CONFLICT (app_id, user_id) DO NOTHING
-         RETURNING user_id`,
-        [app.id, target.id, req.user.id]
-      );
-      if (!inserted.length) {
-        const { rows: existing } = await pool.query(
-          'SELECT status FROM app_collaborators WHERE app_id = $1 AND user_id = $2',
-          [app.id, target.id]
-        );
-        const status = existing[0]?.status;
+      const sent = await sendInvite(pool, { app, target, inviterId: req.user.id });
+      if (!sent.ok) {
         return res.status(409).json({
-          error: status === 'member'
+          error: sent.status === 'member'
             ? `@${target.username} is already a collaborator`
             : `@${target.username} already has a pending invite`,
         });
       }
-
-      // Badge bump + drawer history row, pushed live.
-      try {
-        const notifRows = await notifications.createCollabInviteNotification(pool, {
-          appId: app.id,
-          recipientId: target.id,
-          inviterId: req.user.id,
-        });
-        await hydrateAndPush(pool, notifRows);
-      } catch (err) {
-        log.warn('collab', 'invite notify failed', { err: err.message });
-      }
-
-      events.record(pool, {
-        type: events.EVENT_TYPES.COLLAB_INVITED,
-        userId: req.user.id,
-        appId: app.id,
-        metadata: { invitedUserId: target.id },
-      });
 
       log.info('collab', 'Invite sent', {
         slug: app.slug, invitee: target.username, by: req.user.username,
@@ -225,62 +208,17 @@ function collaboratorRoutes(config) {
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isFinite(appId)) return res.status(400).json({ error: 'Invalid app id' });
     try {
-      const { rows: updated } = await pool.query(
-        `UPDATE app_collaborators
-            SET status = 'member', accepted_at = NOW()
-          WHERE app_id = $1 AND user_id = $2 AND status = 'invited'
-          RETURNING invited_by`,
-        [appId, req.user.id]
-      );
-
-      const { rows: appRows } = await pool.query(
-        'SELECT id, slug, name FROM apps WHERE id = $1', [appId]
-      );
-      if (!appRows.length) return res.status(404).json({ error: 'App not found' });
-      const app = appRows[0];
-
-      if (!updated.length) {
-        // No pending invite: already a member (idempotent ok) or never
-        // invited (404 — don't disclose anything else).
-        const isMember = await appAccess.isCollaborator(pool, appId, req.user.id);
-        if (isMember) return res.json({ ok: true, appSlug: app.slug, alreadyMember: true });
-        return res.status(404).json({ error: 'Invite not found' });
-      }
-
-      await notifications.markInviteNotificationsRead(pool, req.user.id, appId).catch(() => {});
-      appAccess.invalidateVisibility(appId, app.slug);
-
-      const wsSvc = require('../services/ws');
-      try { wsSvc.pushNotificationToUser(req.user.id, { type: 'notifications_changed' }); } catch {}
-
-      // Tell the inviter their invite landed.
-      const inviterId = updated[0].invited_by;
-      if (inviterId && inviterId !== req.user.id) {
-        try {
-          const notifRows = await notifications.createCollabInviteAcceptedNotification(pool, {
-            appId,
-            recipientId: inviterId,
-            accepterId: req.user.id,
-          });
-          await hydrateAndPush(pool, notifRows);
-        } catch (err) {
-          log.warn('collab', 'accept notify failed', { err: err.message });
-        }
-      }
-
-      await wsSvc.sendSystemMessage(pool, appId,
-        `${req.user.username} joined as a collaborator`, 'system'
-      ).catch((err) => log.warn('collab', 'join chat msg failed', { err: err.message }));
-
-      events.record(pool, {
-        type: events.EVENT_TYPES.COLLAB_JOINED,
-        userId: req.user.id,
-        appId,
-        metadata: { invitedBy: inviterId || null },
+      // The whole acceptance lives in services/collab-invites.js, which the
+      // first-run join screen calls too (communities, stage 5): an invite
+      // accepted there is this same accept, with the same notification to
+      // the inviter and the same "joined" line in the app's chat.
+      const result = await acceptInvite(pool, { appId, user: req.user });
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
+      res.json({
+        ok: true,
+        appSlug: result.appSlug,
+        ...(result.alreadyMember ? { alreadyMember: true } : null),
       });
-
-      log.info('collab', 'Invite accepted', { appId, userId: req.user.id });
-      res.json({ ok: true, appSlug: app.slug });
     } catch (err) {
       log.error('collab', 'accept failed', { appId, message: err.message });
       res.status(500).json({ error: 'Internal server error' });

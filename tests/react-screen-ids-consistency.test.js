@@ -1,3 +1,4 @@
+// test:changed: always (every island, for screen roots missing from REACT_SCREEN_IDS; scripts/test-changed.js)
 'use strict';
 
 // One owner per screen root's `hidden` class.

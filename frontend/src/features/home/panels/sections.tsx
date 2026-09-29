@@ -1,5 +1,9 @@
 /**
- * The three fixed section hosts, and the state that decides what is in them.
+ * The two fixed section hosts, and the state that decides what is in them.
+ *
+ * There were three. Create app was the third, below Challenges; it is the
+ * launcher grid's trailing tile now (../create-tile.tsx, the prototype's
+ * scrHome), so its host, its view model and its block went together.
  *
  * ── Why the hosts are the components ──────────────────────────────────
  *
@@ -32,7 +36,6 @@ import type { ReactNode } from 'react';
 import { useStoreState } from '../../../lib/use-store-state';
 import { panelsStore, type HomePanelsState, type PanelStamps } from '../panels-store';
 import { ChallengesPanel } from './challenges';
-import { CreatePanel } from './create';
 import { DiscoverPanel } from './discover';
 import { BrowseLink, LeaderboardLink, SectionHeading, stampProps } from './ui';
 
@@ -47,7 +50,7 @@ import { BrowseLink, LeaderboardLink, SectionHeading, stampProps } from './ui';
  * would differ between the built document and the first client render, which
  * is a hydration mismatch and a console error on `#home`. A `trailing` slot
  * used to sit beside it, carrying the challenges counter on the one condition
- * that its null state matched the prerender's; the counter is the season ring
+ * that its null state matched the prerender's; the counter is the season progress
  * inside the card now (see ./challenges.tsx), and with no second caller the
  * slot went with it. Every heading is constants again.
  *
@@ -81,8 +84,8 @@ function Section({
 }
 
 /**
- * The three sections as pure functions of the whole state, and the three
- * store-connected components that are all `<Shell/>` mounts.
+ * The sections as pure functions of the whole state, and the store-connected
+ * components that are all `<Shell/>` mounts.
  *
  * The split exists for the same reason `WidgetStripBody` is split from
  * `WidgetStrip`: tests/home-panels-render.test.js runs `HomePanels.render()`
@@ -125,7 +128,7 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
       // name, a counter, a leaderboard link and the ⋮, four things deep, with
       // the counter the only one of them that was about the DATA.
       //
-      // It is the season ring at the top of the card now (see
+      // It is the season progress at the top of the card now (see
       // ./challenges.tsx). That is a better home for it on both counts: the
       // heading goes back to naming its area, and the fact the block exists to
       // state becomes the first thing inside the block rather than a footnote
@@ -139,28 +142,10 @@ export function ChallengesSectionView({ painted, challenges }: HomePanelsState) 
   );
 }
 
-export function CreateSectionView({ painted, create }: HomePanelsState) {
-  return (
-    <Section
-      id="home-create-section"
-      slot="create"
-      label="Create app"
-      painted={painted}
-      stamps={create ? { createEnabled: create.canCreate } : undefined}
-    >
-      {create ? <CreatePanel view={create} /> : null}
-    </Section>
-  );
-}
-
 export function DiscoverSection() {
   return <DiscoverSectionView {...useStoreState(panelsStore)} />;
 }
 
 export function ChallengesSection() {
   return <ChallengesSectionView {...useStoreState(panelsStore)} />;
-}
-
-export function CreateSection() {
-  return <CreateSectionView {...useStoreState(panelsStore)} />;
 }

@@ -86,5 +86,20 @@ COPY --from=css /build/public/css/tailwind.css ./public/css/tailwind.css
 COPY --from=shell /build/public/index.html /opt/usernode-shell-assets/index.html
 COPY --from=shell /build/public/shell/assets/ /opt/usernode-shell-assets/shell/assets/
 COPY --from=css /build/public/css/tailwind.css /opt/usernode-shell-assets/css/tailwind.css
+# #2508: this image ran with NODE_ENV UNSET, and a great deal keys off it.
+# Two consequences were live in production:
+#
+#   - express's default error handler writes `err.stack` into the response
+#     body unless NODE_ENV is exactly 'production'. With no error-handling
+#     middleware anywhere (now added, src/middleware/error-handler.js), a
+#     stack trace was one unhandled throw away from any client.
+#   - `SECURE_COOKIE` in src/middleware/auth.js is
+#     `process.env.NODE_ENV === 'production'`, so session cookies were issued
+#     WITHOUT the Secure attribute on a platform served only over HTTPS.
+#
+# Set on the runtime stage only. The build stages above must keep their dev
+# dependencies — `npm ci` treats NODE_ENV=production as `--omit=dev`, which
+# would break the shell and Tailwind builds.
+ENV NODE_ENV=production
 EXPOSE 3000
 CMD ["node", "server.js"]

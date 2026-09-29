@@ -276,15 +276,15 @@ test('_routeSearch keeps return_to, which is what makes that strip safe', () => 
   assert.doesNotMatch(m[0], /return_to/, 'and singles out nothing else');
 });
 
-test('the snapshot outliving the cookie is why that path is ordinary', () => {
-  // Pinned so the hazard stays visible: while the snapshot lives longer than
-  // the session, there is a window in which a returning visitor boots authed
-  // against a cookie the server has already forgotten.
+test('the renewable session outlives the display-only snapshot', () => {
+  // A cached identity must not routinely outlive the credential it describes.
+  // Browser sessions now start with a mobile-like 90-day idle lease, while the
+  // snapshot remains display-only and expires after 30 days.
   const snap = APP_SRC.match(/SESSION_SNAPSHOT_MAX_AGE_MS: (\d+) \* 24 \* 60 \* 60 \* 1000/);
   const days = AUTH_ROUTES_SRC.match(/const SESSION_DAYS = (\d+);/);
   assert.ok(snap && days, 'both lifetimes are still declared where expected');
-  assert.ok(Number(snap[1]) > Number(days[1]),
-    'snapshot outlives the session, so the authed-from-snapshot boot is reachable');
+  assert.ok(Number(days[1]) > Number(snap[1]),
+    'the real credential must outlive the display-only snapshot');
 });
 
 // ── One returned shape, for both pages ────────────────────────────────

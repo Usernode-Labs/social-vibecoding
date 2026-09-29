@@ -194,9 +194,14 @@ test('exactly one well-formed Bearer credential is accepted', () => {
   const token = mcpOauth.makeAccessToken();
   const read = (headers) => mcpOauth.readBearerFromRawHeaders(headers);
 
-  assert.deepEqual(read(['Authorization', `Bearer ${token}`]), { token });
-  assert.deepEqual(read(['authorization', `Bearer ${token}`]), { token },
+  assert.deepEqual(read(['Authorization', `Bearer ${token}`]), { token, delegated: false });
+  assert.deepEqual(read(['authorization', `Bearer ${token}`]), { token, delegated: false },
     'the header name is case-insensitive');
+  // #2779: a delegated grant's token is the other connector shape, and says so.
+  const delegatedToken = mcpOauth.makeDelegatedAccessToken();
+  assert.deepEqual(read(['Authorization', `Bearer ${delegatedToken}`]), { token: delegatedToken, delegated: true });
+  assert.deepEqual(read(['Authorization', `Bearer svmcd_${'a'.repeat(42)}`]), { error: 'invalid_token' },
+    'a delegated token is held to the same canonical shape');
 
   assert.deepEqual(read([]), { error: 'missing_token' });
   assert.deepEqual(read(['Content-Type', 'application/json']), { error: 'missing_token' });

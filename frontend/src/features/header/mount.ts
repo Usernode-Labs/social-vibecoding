@@ -52,10 +52,11 @@ if (typeof window !== 'undefined') {
   bridge.shellSnapshot = { clear: clearShellSnapshot };
   bridge.backButton = {
     /**
-     * @param mode 'arrow' (a level up), 'home' (the house) or 'none' (hidden).
+     * @param mode 'arrow' (a level up), 'close' (out of an app), 'home' (the
+     *   house) or 'none' (hidden).
      * @param href The resolved destination — setBackIcon defaults it to home.
      *
-     * THREE modes, and the narrowing here has to know that. This read
+     * FOUR modes, and the narrowing here has to know that. This read
      * `mode === 'arrow' ? 'arrow' : 'home'`, which was right while 'home'
      * meant hidden and is a bug the moment it means "draw a house": a
      * setBackIcon('none') from Home arrived as 'home' and put a house on the
@@ -68,7 +69,9 @@ if (typeof window !== 'undefined') {
      */
     set(mode: string, href: string | null) {
       backButtonStore.set({
-        mode: mode === 'arrow' ? 'arrow' : (mode === 'none' ? 'none' : 'home'),
+        mode: mode === 'arrow' ? 'arrow'
+          : mode === 'close' ? 'close'
+            : (mode === 'none' ? 'none' : 'home'),
         href: href || null,
       });
     },

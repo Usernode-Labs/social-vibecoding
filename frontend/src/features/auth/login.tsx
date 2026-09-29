@@ -50,32 +50,74 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { alertVariants } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { ChevronLeftIcon, KeyIcon } from '@/components/ui/icons';
+import { KeyIcon, WarningTriangleIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
+import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { AuthBackButton, backToLanding } from './back-button';
+import { NativeLoginDetailsLink } from './native-login-details';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
   fetchSessionMint,
   finishLogin,
+  HANDLE_FIELD,
   hiddenFirst,
   hiddenLast,
   isNative,
   legacy,
   NativeLoginPreparationError,
+  type NativeLoginFailureDetails,
   sessionMintFailureMessage,
   useAuthScreensPatch,
+  USERNAME_RULE,
 } from './shared';
 
 /** Which of the four views on this screen is showing. */
 type LoginView = 'base' | 'otp' | 'recovery' | 'reset';
 
+/** The forgot-password view's own address (QA 2026-09-24 Q16). */
+const RECOVERY_ROUTE = 'login/forgot';
+/** Marks the history entry the card pushed for it. */
+const RECOVERY_ENTRY = 'loginRecovery';
+
 /** Step within `#otp-view`. */
 type OtpStep = 'email' | 'code' | 'password';
+
+/**
+ * What /api/auth/otp/verify said about the account behind a verified code,
+ * for the set-password step (QA 2026-09-24 Q12). Null until a code verifies,
+ * and for a server that predates the fields, which then reads exactly as it
+ * always did.
+ */
+interface OtpSignup {
+  /** The code just CREATED the account: no account used this address. */
+  created: boolean;
+  /** The account has never chosen its handle, so this step asks for it. */
+  needsUsername: boolean;
+  /** The prefill for that field; null when none could be derived. */
+  suggestedUsername: string | null;
+  /** It will land in the waiting room; null when the server could not tell. */
+  waitlisted: boolean | null;
+}
+
+// The set-password step's opening line, one per case. A brand-new account is
+// told that is what is happening: it used to read "Now choose a password for
+// your account" as if the account had been there all along.
+const OTP_PASSWORD_INTRO = 'Code verified. Now choose a password for your account.';
+const OTP_PASSWORD_INTRO_NEW =
+  "Code verified. No account uses this email yet, so we'll create one. Choose a username and a password.";
+const OTP_PASSWORD_INTRO_HANDLE = 'Code verified. Choose a username and a password for your account.';
+// Said BEFORE the waiting room rather than by it: the person is about to be
+// signed in to a queue, not to the platform.
+const OTP_WAITLIST_NOTE =
+  "New accounts join a short waitlist. After this step you'll wait in the queue, and you'll get in automatically when it's your turn.";
+const OTP_USERNAME_HINT = `Your @handle, the name other members see. ${USERNAME_RULE}`;
 
 /** Which reset path the recovery view offers. */
 type RecoveryPath = 'wallet' | 'email';
@@ -85,12 +127,38 @@ type RecoveryPath = 'wallet' | 'email';
 // runtime build that used the same constants), so the compiled Tailwind
 // already covers every one of them.
 const P = 'text-sm text-zinc-500 dark:text-zinc-400';
+// The email and code steps' body copy at the boards' reading size, 16/22,
+// rather than the 14px `text-sm` the pre-reskin sub-views were written in.
+// `mb-5` is boards 3 and 4's `margin-top: 20px` on the card, stated once from
+// the paragraph's side: both steps are a copy block, then the card, and the
+// step columns below carry no gap of their own precisely so each seam in that
+// run can take the board's own figure.
+const STEP_P = 'mb-5 text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400';
 const LABEL = 'block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1';
 const QUIET_BUTTON = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 // The secondary routes under the primary button — forgot password, the
-// email code, register — as the language's neutral pills rather than text
-// links: on the wallpaper a link is a line of grey in a screen of pills.
+// email code — as the language's neutral pills rather than text links: on
+// the wallpaper a link is a line of grey in a screen of pills.
 const PILL_LINK = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
+// The screen's one <h1>. `#recovery-view` and `#reset-password-view` bring
+// their own <h2> and are out of this change's scope, so on those two views
+// the <h1> is hidden rather than saying "Sign in" above a different title.
+// Both arms are complete literals — Tailwind's extractor is a regex over
+// source text, and a test on this screen bans a computed className outright.
+//
+// LEFT, under a CENTRED mark, which is the hierarchy boards 2, 3 and 4 draw:
+// their <h1> carries no `text-align` at all, while the wordmark above it sits
+// in a space-between row with a spacer opposite the back disc. The heading was
+// centred here, so the two competed for the same axis and the column below —
+// card rows, labels, body copy, every one of them left — started at a
+// different edge from the thing announcing it.
+//
+// `mb-2.5` is the 10px the boards put between the heading and the line under
+// it (their copy block's `gap`). Where the next thing is the card instead of a
+// sentence — board 2's password step — the form adds the other 10 of that
+// board's `margin-top: 20px`.
+const SCREEN_H1 = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-left mb-2.5 text-zinc-900 dark:text-zinc-100';
+const SCREEN_H1_HIDDEN = 'text-[28px] font-extrabold leading-[32px] tracking-tight text-left mb-2.5 text-zinc-900 dark:text-zinc-100 hidden';
 
 /**
  * What the retired `BUTTON` class constant is now: the same string, spelled as
@@ -124,8 +192,61 @@ const AUTHFIELD = { box: 'card', hint: 'dim', ring: 'bare' } as const;
 const AUTH_CARD = 'rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden';
 const AUTH_ROW = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800';
 const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
+/**
+ * Board 4's code field — the one row on the three sign-in screens whose value
+ * is not prose. Monospace at 26px with 8px between the characters, so six
+ * digits read as six separate things and a transcription slip is visible
+ * without counting. The 28px line box on top of the `card` box's own `py-1`
+ * is the board's 36px field.
+ *
+ * A whole literal, like every class string in this file, and it rides in
+ * through `className` rather than a variant: `cn` is tailwind-merge, so
+ * `text-[26px]` displaces the `card` box's own `text-[17px]` instead of
+ * racing it for stylesheet order.
+ */
+const CODE_FIELD = 'font-mono text-[26px] leading-[28px] tracking-[8px]';
 const ERROR = 'text-red-400 text-sm';
+// The line under the set-password step's username field: its rule, or the
+// server's sentence about the name (QA 2026-09-24 Q12). Two whole literals.
+const FIELD_HINT = 'mt-1 text-sm text-zinc-500 dark:text-zinc-400';
+const FIELD_HINT_ERROR = 'mt-1 text-sm text-red-600 dark:text-red-400';
+const WAITLIST_NOTE = 'rounded-2xl bg-white dark:bg-zinc-900 px-4 py-3 text-[15px] leading-snug text-zinc-700 dark:text-zinc-300';
 const STATUS = 'text-sm text-zinc-500 dark:text-zinc-400';
+// The code and email steps' status line at the same 16/22 reading size as
+// their body copy — `#otp-status` is where CODE_SENT_MSG lands, so the
+// expiry sentence must not be a size smaller than the echo above it. Its own
+// literal rather than a reuse of STEP_P: this is a status, not a paragraph,
+// and the set-password step keeps STATUS because that step is out of scope.
+const STEP_STATUS = 'text-[16px] leading-[22px] text-zinc-500 dark:text-zinc-400';
+
+/**
+ * The offline explanation's box (#2443). The SPELLING is the Alert primitive's
+ * `notice` variant — one caution box for the whole shell — but it is spread
+ * here rather than rendered as `<Alert>` for two reasons, both about the
+ * rendered class attribute:
+ *
+ *   * `.offline-only` has to stay at the FRONT of it. `dapp.json` selects
+ *     `body.is-offline #auth-login-screen:not(.hidden) .offline-only`, and the
+ *     prerendered markup is probed for the literal `class="offline-only` by
+ *     tests/offline-session-boot.test.js and tests/pwa-shell-wiring.test.js.
+ *     `<Alert>` appends `className` AFTER its variants.
+ *   * a module constant, not an inline template, because
+ *     tests/signup-invite-link.test.js bans a computed `className={`…`}` in
+ *     this file. Nothing here is computed in the sense that rule is about:
+ *     every class in `alertVariants` is a complete literal in alert.tsx, which
+ *     Tailwind scans, and `offline-only` is an app.css rule rather than a
+ *     utility.
+ */
+const OFFLINE_NOTICE = `offline-only mb-8 ${alertVariants({ variant: 'notice', density: 'roomy' })}`;
+
+/**
+ * The terminal email-reset result. It lives on the login form, not beside the
+ * now-spent reset controls: success has moved the person to their next action.
+ * SENT_BOX is already the auth screen's durable positive-feedback treatment.
+ */
+const RESET_COMPLETE_TITLE = 'Password changed';
+const RESET_COMPLETE_MSG =
+  'For security, you’ve been signed out everywhere. Sign in with your new password.';
 
 /**
  * ── Arriving from a waitlist-release email (#1548) ─────────────────────
@@ -283,8 +404,26 @@ const PASSWORD_ACCOUNT_MSG =
 /** The pre-email copy the frozen markup shipped, and its replacement. */
 const ADMIN_LEAD_SHIPPED =
   "Accounts here have no email on file, so a password can't be reset automatically from the web.";
+/**
+ * The confirmed-email fallback copy (#2969): explains why the reset email
+ * never arrives, then how to recover. Two sentences, both inside the same
+ * warning card — see ADMIN_LEAD_NOTICE_BOX below.
+ */
 const ADMIN_LEAD_WITH_EMAIL =
-  'No confirmed email on your account? The link above can only go to a confirmed address, but an admin can still get you back in.';
+  'If you did not confirm your email account, you will not receive the reset email.';
+const ADMIN_LEAD_SUPPORT_INSTRUCTIONS =
+  'If this happens to you, ask Homeroom support team to issue you a temporary password (support@usernodelabs.org).';
+
+/**
+ * The warning-card treatment for ADMIN_LEAD_WITH_EMAIL (#2958): a caution box
+ * instead of ambient body text, so the confirmed-email gap reads as a helpful
+ * notice rather than blending into the surrounding copy. Same `notice`
+ * spelling as OFFLINE_NOTICE above — one caution box for the whole shell.
+ * #2969 moved the support-team follow-up sentence inside the same box, so
+ * the whole message reads as one warning rather than a card plus a stray
+ * paragraph below it.
+ */
+const ADMIN_LEAD_NOTICE_BOX = `flex items-start gap-2 ${alertVariants({ variant: 'notice', density: 'compact' })}`;
 
 export function LoginScreen() {
   const rootRef = useRef<HTMLElement>(null);
@@ -306,9 +445,14 @@ export function LoginScreen() {
   const [walletControls, setWalletControls] = useState(false);
 
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [loginDetails, setLoginDetails] = useState<NativeLoginFailureDetails | null>(null);
+  const [passwordResetComplete, setPasswordResetComplete] = useState(false);
   const [otpError, setOtpError] = useState<string | null>(null);
+  const [otpDetails, setOtpDetails] = useState<NativeLoginFailureDetails | null>(null);
   const [otpStatus, setOtpStatus] = useState<string | null>(null);
   const [otpEmailEcho, setOtpEmailEcho] = useState('');
+  const [otpSignup, setOtpSignup] = useState<OtpSignup | null>(null);
+  const [otpUsernameError, setOtpUsernameError] = useState<string | null>(null);
   // The address a waitlist-release link carried, and the moment the resend
   // buttons come back. Both start empty, so the first render is still exactly
   // the markup the hand-written shell shipped.
@@ -322,7 +466,6 @@ export function LoginScreen() {
   const [emailResetError, setEmailResetError] = useState<string | null>(null);
   const [emailResetStatus, setEmailResetStatus] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
-  const [resetStatus, setResetStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   // Non-render state, mirroring the legacy module's fields one for one.
@@ -355,6 +498,7 @@ export function LoginScreen() {
   const otpEmailInput = useRef<HTMLInputElement>(null);
   const otpCode = useRef<HTMLInputElement>(null);
   const otpNewPassword = useRef<HTMLInputElement>(null);
+  const otpUsername = useRef<HTMLInputElement>(null);
   const otpConfirmPassword = useRef<HTMLInputElement>(null);
   const recoveryNewPassword = useRef<HTMLInputElement>(null);
   const recoveryConfirmPassword = useRef<HTMLInputElement>(null);
@@ -365,11 +509,19 @@ export function LoginScreen() {
   // ── View switching (the router's per-route hooks) ─────────────────────
 
   const showLoginBaseView = useCallback(() => {
+    setPasswordResetComplete(false);
+    setLoginDetails(null);
+    setOtpDetails(null);
     setView('base');
   }, []);
 
   const otpShowStep = useCallback((step: OtpStep) => {
     setOtpError(null);
+    setOtpDetails(null);
+    setOtpUsernameError(null);
+    // What a verified code said belongs to the password step only; any
+    // other step is a new attempt, possibly for a different address.
+    if (step !== 'password') setOtpSignup(null);
     setOtpStep(step);
   }, []);
 
@@ -399,6 +551,35 @@ export function LoginScreen() {
   }, [ensureResetUi, st]);
 
   /**
+   * "Forgot password?" is a PLACE, `#login/forgot` (QA 2026-09-24 Q16). It
+   * used to swap the card's view on the same `#login` entry, so the browser's
+   * Back had no Sign in to return to and skipped straight past it to the
+   * landing page. Pushed rather than routed: the card is already on screen,
+   * and the router only has to answer the address when it is loaded or
+   * traversed to (loginOnShow's `seg`). The state marks the entry as the one
+   * this card pushed, which is what lets "Back to login" undo it.
+   */
+  const openRecovery = useCallback(() => {
+    try {
+      history.pushState({ [RECOVERY_ENTRY]: true }, '', `#${RECOVERY_ROUTE}`);
+    } catch { /* an address that will not move still gets the view */ }
+    showRecovery();
+  }, [showRecovery]);
+
+  /** "Back to login": the entry openRecovery pushed, or the bare route. */
+  const leaveRecovery = useCallback(() => {
+    const state = history.state as Record<string, unknown> | null;
+    if (state && state[RECOVERY_ENTRY] && typeof history.back === 'function') {
+      history.back();
+      return;
+    }
+    if (window.location.hash === `#${RECOVERY_ROUTE}`) {
+      try { history.replaceState(null, '', '#login'); } catch { /* the view still changes */ }
+    }
+    showLoginBaseView();
+  }, [showLoginBaseView]);
+
+  /**
    * Per-route side effect for `#reset-password/<token>`. The inputs it clears
    * may not be mounted yet on the first call — `ensureResetUi()` has only just
    * queued their render — and that is fine: a fresh mount is empty, and a
@@ -409,7 +590,6 @@ export function LoginScreen() {
       ensureResetUi();
       st.resetToken = token || null;
       setResetError(null);
-      setResetStatus(null);
       if (resetNewPassword.current) resetNewPassword.current.value = '';
       if (resetConfirmPassword.current) resetConfirmPassword.current.value = '';
       setView('reset');
@@ -488,6 +668,15 @@ export function LoginScreen() {
       // (issue #1158). Same idiom as ?shot=waitlist-joined; display-only,
       // no writes, so it works in every environment.
       const shot = currentShot();
+      // `#login/forgot`: the recovery view has its own address (see
+      // openRecovery), reached here by a reload or a Back / Forward to it.
+      if (!openSignup && seg === 'forgot') showRecovery();
+      // The terminal state after the magic-link form succeeds. A real reset
+      // reaches this through onResetConfirm; the shot paints the same state
+      // without consuming a token, so proposal checks can see it.
+      if (!openSignup && shot === 'password-reset-complete') {
+        setPasswordResetComplete(true);
+      }
       if (!openSignup && (shot === 'password-recovery' || shot === 'password-recovery-sent')) {
         showRecovery();
         setRecoveryPath('email');
@@ -566,6 +755,7 @@ export function LoginScreen() {
   const onLoginSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setLoginError(null);
+    setLoginDetails(null);
     if (blockedOffline(setLoginError)) return;
     try {
       const res = await fetchSessionMint('/api/auth/login', {
@@ -584,6 +774,7 @@ export function LoginScreen() {
       finishLogin();
     } catch (error) {
       setLoginError(sessionMintFailureMessage(error));
+      setLoginDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
   }, []);
 
@@ -599,6 +790,7 @@ export function LoginScreen() {
    */
   const otpRequestCode = useCallback(async (explicitEmail?: string) => {
     setOtpError(null);
+    setOtpDetails(null);
     const email = (explicitEmail || otpEmailInput.current?.value || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
       setOtpError('Enter a valid email address');
@@ -671,6 +863,7 @@ export function LoginScreen() {
 
   const onOtpVerify = useCallback(async () => {
     setOtpError(null);
+    setOtpDetails(null);
     const code = (otpCode.current?.value || '').trim();
     if (!code) {
       setOtpError('Enter the code from the email');
@@ -716,17 +909,34 @@ export function LoginScreen() {
         return;
       }
       otpShowStep('password');
+      setOtpSignup({
+        created: data.created === true,
+        needsUsername: data.needsUsername === true,
+        suggestedUsername: typeof data.suggestedUsername === 'string' ? data.suggestedUsername : null,
+        waitlisted: typeof data.waitlisted === 'boolean' ? data.waitlisted : null,
+      });
       // Past the code: nothing left to resend, and setOtpStatus(null) above
       // has already taken the "we sent you a code" confirmation down.
       setCooldownUntil(0);
     } catch (error) {
       setOtpStatus(null);
       setOtpError(sessionMintFailureMessage(error));
+      setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
   }, [otpShowStep, showLoginBaseView, st]);
 
   const onOtpSetPassword = useCallback(async () => {
     setOtpError(null);
+    setOtpDetails(null);
+    setOtpUsernameError(null);
+    // The handle rides along only when this step asked for it; the server
+    // validates it exactly as the first-run "Choose your username" step does.
+    const handle = otpSignup?.needsUsername ? (otpUsername.current?.value || '').trim() : null;
+    if (handle === '') {
+      setOtpUsernameError('Enter a username.');
+      otpUsername.current?.focus();
+      return;
+    }
     const value = otpNewPassword.current?.value || '';
     const confirm = otpConfirmPassword.current?.value || '';
     if (value.length < 8) {
@@ -744,11 +954,22 @@ export function LoginScreen() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ password: value, passwordConfirmation: confirm }),
+        body: JSON.stringify({
+          password: value,
+          passwordConfirmation: confirm,
+          ...(handle ? { username: handle } : {}),
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.user) {
         setOtpStatus(null);
+        // A refused name leaves the signup session unspent: fix the field,
+        // submit again.
+        if (data.field === 'username' && data.error) {
+          setOtpUsernameError(data.error);
+          otpUsername.current?.focus();
+          return;
+        }
         setOtpError(data.error || 'Could not set the password');
         return;
       }
@@ -757,8 +978,9 @@ export function LoginScreen() {
     } catch (error) {
       setOtpStatus(null);
       setOtpError(sessionMintFailureMessage(error));
+      setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, [st]);
+  }, [otpSignup, st]);
 
   // ── Wallet sign-in ───────────────────────────────────────────────────
 
@@ -923,7 +1145,6 @@ export function LoginScreen() {
 
   const onResetConfirm = useCallback(async () => {
     setResetError(null);
-    setResetStatus(null);
     if (blockedOffline(setResetError)) return;
     const value = resetNewPassword.current?.value || '';
     const confirm = resetConfirmPassword.current?.value || '';
@@ -947,15 +1168,37 @@ export function LoginScreen() {
         setResetError(res.status === 401 ? EXPIRED_MSG : data.error || 'Reset failed. Try again');
         return;
       }
-      // The reset revoked every session on purpose; signing in with the new
-      // password is the one remaining step.
-      setResetStatus('Your password has been reset. Head back to login and sign in with it.');
+      // The token is single-use and the reset revoked every session on
+      // purpose. Clear every remaining copy of the new password/token, scrub
+      // the spent capability from browser history, then use the existing
+      // same-screen router to put the next action in front of the user.
+      if (resetNewPassword.current) resetNewPassword.current.value = '';
+      if (resetConfirmPassword.current) resetConfirmPassword.current.value = '';
+      if (password.current) password.current.value = '';
+      st.resetToken = null;
+      setLoginError(null);
+
+      const screens = legacy().AuthScreens as undefined | {
+        deepLinkUrl?: (target: string) => string;
+        show?: (route: string) => void;
+      };
+      try {
+        history.replaceState(null, '', screens?.deepLinkUrl?.('#login') || '/#login');
+      } catch {
+        location.hash = '#login';
+      }
+      if (screens?.show) screens.show('login');
+      else showLoginBaseView();
+      // AuthScreens.show('login') clears any previous completion state as it
+      // resets the base view, so publish the new result after that call.
+      setPasswordResetComplete(true);
+      window.requestAnimationFrame(() => username.current?.focus());
     } catch {
       setResetError('Network error');
     } finally {
       setBusy(null);
     }
-  }, [st]);
+  }, [showLoginBaseView, st]);
 
   // ── The invite link's automatic send (#1548) ─────────────────────────
 
@@ -1036,6 +1279,35 @@ export function LoginScreen() {
 
   const base = view === 'base';
 
+  /*
+      One heading for the screen, its words derived from the view and the step
+      rather than four headings switched by `hidden`. It covers `#login` and
+      the three otp steps only: the recovery and reset views bring their own
+      <h2> and are out of this change's scope, so the <h1> is hidden there
+      rather than stacking "Sign in" above "Reset your password". The
+      set-password step keeps the words its retired <h2> gave it, because that
+      step's look is out of scope too.
+  */
+  const heading =
+    view === 'otp'
+      ? otpStep === 'code'
+        ? 'Check your email'
+        : 'Sign in with email'
+      : 'Sign in';
+
+  /*
+      #btn-otp-back is ONE control under all three otp steps, so its words are
+      the step's: from the email step the way back is the password form, from
+      the code step it is a mistyped address. The set-password step keeps what
+      it shipped.
+  */
+  const backLabel =
+    otpStep === 'email'
+      ? 'Sign in with a password'
+      : otpStep === 'code'
+        ? 'Wrong address? Go back'
+        : 'Back to login';
+
   return (
     <main
       ref={rootRef}
@@ -1045,32 +1317,83 @@ export function LoginScreen() {
       {mounted ? (
         <>
       {/*
-          The corner Back disc. `location.hash` rather than the anchor's own
-          href: the href is '#' so the link is inert without JS, exactly as
-          shipped. auth-screens.js delegates the same click for the screens it
-          still owns; both do the same thing, and this one outlives it.
+          The corner Back disc, shared with register and the waitlist
+          (./back-button, #2444). `backToLanding` assigns `location.hash`
+          rather than letting the anchor's own href do it: the href is '#' so
+          the link is inert without JS, exactly as shipped. auth-screens.js
+          delegates the same click for the screens it still owns; both do the
+          same thing, and this one outlives it. It is `absolute` inside this
+          screen, so it moves down with the screen when the install strip is
+          up (QA 2026-09-24 Q8).
       */}
-      <a
-        href="#"
-        data-auth-back=""
-        className="fixed left-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
-        aria-label="Back"
-        onClick={(e) => {
-          e.preventDefault();
-          location.hash = '#landing';
-        }}
-      >
-        <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
-      </a>
-      <div className="min-h-full flex items-center justify-center">
-        <div className="w-full max-w-sm px-6 py-16">
-          <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100">
-            Homeroom
+      <AuthBackButton href="#" onClick={backToLanding} />
+      {/*
+          FOUR BANDS, TOP TO BOTTOM: the mark, the heading, the content, and
+          the one tertiary line each step ends on, pinned to the foot.
+
+          This was `items-center justify-center`, which centred the whole
+          stack as a single cluster: at 390x844 every step rendered as a tight
+          bob in the middle with roughly 250px of dead air above it and 250px
+          below. A flex COLUMN top-anchors instead (justify-content starts at
+          flex-start), and one `grow` spacer per step spends the leftover
+          height on the foot rather than splitting it above and below.
+
+          min-h-full, not h-full: the root is `overflow-y-auto`, so a short
+          viewport has to scroll rather than clip. The percentage resolves
+          because the root is `fixed inset-0`, and it resolves against the
+          height INSIDE it (.platform-safe-scroll puts the safe-area inset in
+          the root's own padding), so the pin adds no overflow of its own.
+      */}
+      <div className="min-h-full flex flex-col">
+        {/*
+            `px-4`, not the boards' 20px: the landing's header carries a
+            mandatory px-4 parity class, so aligning this column to it beats
+            matching the board by 4px, and the four logged-out screens
+            disagreeing with each other would be the worse outcome. One
+            recorded deviation for all of them.
+
+            THE TOP PADDING IS THE MARK BAND. The floating back disc is
+            `top: calc(env(safe-area-inset-top, 0px) + 0.75rem)` and h-11, so
+            its centre sits 34px below the safe-area top; seating a 24px
+            wordmark on that same band puts its top at 34 - 12 = 22px, which
+            is the 1.375rem below. It rides in an inline style for the reason
+            the disc's own `top` does: the value is an env() expression, and
+            this is that expression re-stated rather than a second rule.
+
+            `pb-[34px]` is the clearance above the home indicator, the figure
+            board 1's landing ends on. The inset itself is already the root's
+            padding, and it is zero on a desktop or an Android without one, so
+            the foot needs air of its own either way.
+        */}
+        <div
+          className="w-full max-w-sm mx-auto flex grow flex-col px-4 pb-[34px]"
+          style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 1.375rem)' }}
+        >
+          {/*
+              The mark carries the name, so it is a named figure and not
+              decoration: the <h1> under it says which step this is, not which
+              product, and nothing else on the screen says "Homeroom" (see
+              wordmark.tsx's note on the two accessible paths).
+
+              It STAYS 24px. The complaint that the name reads small is not
+              answered by growing it into the 28px heading it already sits a
+              hair under, which is what made the two compete and left neither
+              leading; it is answered by giving it a band of its own, where a
+              small mark reads as a logo instead of as undersized text.
+
+              `self-center` states the centring in the flex column's own
+              terms. `mx-auto` alone already does it, and does one more thing
+              worth keeping deliberate: auto cross-axis margins are what
+              suppress `align-items: stretch`, without which an svg at
+              `w-auto` would be stretched to the column's full width.
+          */}
+          <Wordmark
+            title="Homeroom"
+            className="mx-auto self-center mb-10 h-6 w-auto text-zinc-900 dark:text-zinc-100"
+          />
+          <h1 className={view === 'recovery' || view === 'reset' ? SCREEN_H1_HIDDEN : SCREEN_H1}>
+            {heading}
           </h1>
-          <p className="text-[15px] text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">
-            A place where users own and build apps together
-          </p>
           {/*
               Offline explanation (#1021). Signing in REQUIRES the network —
               the credential check happens on the server — so an offline
@@ -1080,7 +1403,7 @@ export function LoginScreen() {
               below carry data-offline-disabled so it's obvious which parts
               are the ones that can't work.
           */}
-          <div className="offline-only mb-8 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+          <div className={OFFLINE_NOTICE}>
             <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-400">
               You're offline
             </h2>
@@ -1133,7 +1456,50 @@ export function LoginScreen() {
               an optional fast path when the native app carries a linked
               wallet)
           */}
-          <form id="login-form" className={hiddenLast(!base, 'space-y-4')} onSubmit={onLoginSubmit}>
+          {/*
+              `flex flex-col gap-4`, not `space-y-4`. Same 16px, but a gap is
+              only drawn between items that are actually laid out, and
+              `space-y` is a margin on every child after the first whether or
+              not the one before it rendered. #login-reset-success is the
+              first child and is hidden on all but one state, so `space-y`
+              put a phantom 16px at the top of the form. Under the old block
+              column it collapsed out through the form's edge and nobody saw
+              it; a flex item establishes its own formatting context, so it
+              would now show as 16px of dead air under the heading on the
+              password step and on that step only, while #otp-view starts
+              flush. The gap keeps all three steps opening at the same y.
+
+              `mt-2.5` is the second half of board 2's `margin-top: 20px` on
+              the card; the <h1>'s own `mb-2.5` is the first. Split that way
+              because the heading's margin is shared with the two steps whose
+              next line is a sentence at 10 (boards 3 and 4), and this is the
+              one step where the card follows the heading directly.
+          */}
+          <form
+            id="login-form"
+            className={hiddenLast(!base, 'mt-2.5 flex flex-col gap-4')}
+            onSubmit={onLoginSubmit}
+          >
+            <div
+              id="login-reset-success"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+              className={hiddenLast(!passwordResetComplete, SENT_BOX)}
+            >
+              <strong className="block font-semibold">{RESET_COMPLETE_TITLE}</strong>
+              <span className="mt-1 block">{RESET_COMPLETE_MSG}</span>
+            </div>
+            {/*
+                NO PLACEHOLDER ON THESE TWO ROWS. The label above each field is
+                persistent, not a floating one that vanishes on focus, so a
+                placeholder repeating it says the same words twice in the same
+                box — "Username or email" over "username or email". The boards
+                draw it that way and it is still lazy; the rows that keep a
+                placeholder are the ones where it does different work (an
+                example address, an example code, a length rule), never an echo
+                of the label.
+            */}
             <div className={AUTH_CARD}>
             <div className={AUTH_ROW}>
               <label
@@ -1149,8 +1515,8 @@ export function LoginScreen() {
                 type="text"
                 required={true}
                 autoComplete="username"
+                {...HANDLE_FIELD}
                 {...AUTHFIELD}
-                placeholder="username or email"
               />
             </div>
             <div className={AUTH_ROW}>
@@ -1167,77 +1533,112 @@ export function LoginScreen() {
                 required={true}
                 autoComplete="current-password"
                 {...AUTHFIELD}
-                placeholder="password"
               />
             </div>
             </div>
             <div id="login-error" className={hiddenLast(!loginError, ERROR)}>
               {loginError}
+              <NativeLoginDetailsLink details={loginDetails} />
             </div>
             <Button type="submit" data-offline-disabled="" {...SOLID}>
-              Log in
+              Sign in
             </Button>
           </form>
-          <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-3')}>
+          {/*
+              The rest of board 2's action group: `gap: 10px` under the 16 the
+              form's own `gap-4` already draws between the card and the primary
+              button. Three separately-hidden wrappers rather than one flex
+              column, because #forgot-link-wrap and #otp-link-wrap are ids the
+              inventory resolves and each carries its own `hidden`.
+          */}
+          <p id="forgot-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
             <a
               id="forgot-password-link"
-              href="#"
+              href={`#${RECOVERY_ROUTE}`}
               className={PILL_LINK}
               onClick={(e) => {
                 e.preventDefault();
-                showRecovery();
+                openRecovery();
               }}
             >
               Forgot password?
             </a>
           </p>
-          <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2')}>
+          <p id="otp-link-wrap" className={hiddenLast(!base, 'mt-2.5')}>
             <a id="otp-link" href="#signup" className={PILL_LINK}>
               Sign in with an email code
             </a>
           </p>
-          <p
-            id="register-link"
-            className={hiddenLast(!base, 'mt-2')}
-          >
-            <a href="#register" className={PILL_LINK}>
-              {'Have an activation code? '}
-              <span className="ml-1 text-violet-700 dark:text-violet-400">Register</span>
-            </a>
-          </p>
           {/*
-              Email-code sign-in sub-view (thin-shell migration). The ONE
-              email-code path, backed by the web-auth endpoints. It serves both
-              first-time sign-ups (otp/verify creates the account — this is
-              the #signup route) and migrated password-less participants.
+              #2979: the password step no longer ends on a tertiary line — the
+              "Have an activation code? Register" foot pin (#register-link)
+              is gone, along with the spacer that pinned it to the foot. This
+              step now simply stops after the two link wraps above; the
+              leftover height is unclaimed space rather than a fourth band.
+
+              Email-code sign-in sub-view below (thin-shell migration). The
+              ONE email-code path, backed by the web-auth endpoints. It serves
+              both first-time sign-ups (otp/verify creates the account — this
+              is the #signup route) and migrated password-less participants.
           */}
-          <div id="otp-view" className={hiddenFirst(view !== 'otp', 'space-y-4')}>
-            <h2 className="text-lg font-bold text-center">
-              Sign in with email
-            </h2>
-            <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'space-y-3')}>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                We'll email you a 6-digit code to sign in. New here? This also
-                creates your account.
+          {/*
+              `flex grow flex-col gap-4` where this was `space-y-4`. `grow` is
+              what lets the email and code steps reach the foot of the screen:
+              this block is the whole of those two steps, so the spacer that
+              pins #btn-otp-back has to live inside it. `gap-4` is the same
+              16px as before, drawn only between the steps that are actually
+              showing, so the code step opens at the same y as the email step
+              rather than 16px lower for the hidden step above it.
+
+              `hidden` still wins over `flex` when the view is closed: they
+              are both display utilities, and Tailwind emits `hidden` last of
+              them. #app-viewer on the landing screen has shipped on that
+              same pair since step 2 chunk A.
+          */}
+          <div id="otp-view" className={hiddenFirst(view !== 'otp', 'flex grow flex-col gap-4')}>
+            {/*
+                Boards 3 and 4 run each step as three figures at three
+                different distances — the copy block, the card at
+                `margin-top: 20px`, then the action group at
+                `padding-top: 16px`. `space-y-3` drew one 12px everywhere, so
+                the card floated between its sentence and its button with
+                nothing saying which it belonged to. A plain column, with each
+                seam carrying its own board figure, is what says it.
+            */}
+            <div id="otp-step-email" className={hiddenFirst(otpStep !== 'email', 'flex flex-col')}>
+              <p className={STEP_P}>
+                We'll email you a 6-digit code to sign in. New here? You'll get
+                an account and a place on the waitlist.
               </p>
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Email
-                </label>
-                <Input
-                  ref={otpEmailInput}
-                  id="otp-email"
-                  type="email"
-                  autoComplete="email"
-                  {...FIELD}
-                  placeholder="you@example.com"
-                />
+              {/*
+                  One field, one card — the same white grouped card the
+                  password form above is, so the three sign-in screens are
+                  three views of one surface rather than three field
+                  treatments. AUTH_CARD / AUTH_ROW / AUTH_LABEL / AUTHFIELD
+                  are that form's own constants, reused rather than
+                  re-spelled.
+              */}
+              <div className={AUTH_CARD}>
+                <div className={AUTH_ROW}>
+                  <label htmlFor="otp-email" className={AUTH_LABEL}>
+                    Email
+                  </label>
+                  <Input
+                    ref={otpEmailInput}
+                    id="otp-email"
+                    type="email"
+                    autoComplete="email"
+                    {...AUTHFIELD}
+                    placeholder="you@example.com"
+                  />
+                </div>
               </div>
               <Button
                 id="btn-otp-request"
                 type="button"
                 data-offline-disabled=""
                 {...SOLID}
+                className="mt-4"
                 disabledStyle={cooldownLeft ? 'dim' : 'off'}
                 disabled={cooldownLeft > 0}
                 onClick={() => {
@@ -1249,54 +1650,113 @@ export function LoginScreen() {
                 {cooldownLeft ? `Email me a code in ${cooldownLeft}s` : 'Email me a code'}
               </Button>
             </div>
-            <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'space-y-3')}>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+            <div id="otp-step-code" className={hiddenFirst(otpStep !== 'code', 'flex flex-col')}>
+              <p className={STEP_P}>
                 {'Enter the 6-digit code we sent to '}
                 <span id="otp-email-echo" className="font-medium text-zinc-700 dark:text-zinc-300">
                   {otpEmailEcho}
                 </span>
                 .
               </p>
-              <div>
-                <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
-                  Code
-                </label>
-                <Input
-                  ref={otpCode}
-                  id="otp-code"
-                  type="text"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  {...FIELD}
-                  className="tracking-widest text-center"
-                  placeholder="123456"
-                />
+              {/*
+                  The same one-field card as the email step, with the value
+                  spelled as a code (CODE_FIELD). Left-aligned like every
+                  other row of this card: the label sits at the row's left
+                  edge, and `tracking-[8px]` puts its 8px after the last
+                  character too, which centring would then read as off-centre.
+              */}
+              <div className={AUTH_CARD}>
+                <div className={AUTH_ROW}>
+                  <label htmlFor="otp-code" className={AUTH_LABEL}>
+                    6-digit code
+                  </label>
+                  <Input
+                    ref={otpCode}
+                    id="otp-code"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="one-time-code"
+                    maxLength={6}
+                    {...AUTHFIELD}
+                    className={CODE_FIELD}
+                    placeholder="123456"
+                  />
+                </div>
               </div>
-              <Button
-                id="btn-otp-verify"
-                type="button"
-                data-offline-disabled=""
-                {...SOLID}
-                onClick={onOtpVerify}
-              >
-                Verify code
-              </Button>
-              <button
-                id="btn-otp-resend"
-                type="button"
-                data-offline-disabled=""
-                className={cooldownLeft ? QUIET_BUTTON_WAITING : QUIET_BUTTON}
-                disabled={cooldownLeft > 0}
-                onClick={onOtpResend}
-              >
-                {cooldownLeft ? `Send a new code in ${cooldownLeft}s` : 'Send a new code'}
-              </button>
+              {/*
+                  Board 4's action group, the one place on these three screens
+                  where two buttons sit together: `padding-top: 16px` off the
+                  card and `gap: 10px` between them, which is board 2's action
+                  group again. A wrapper rather than margins on the two
+                  buttons, because the resend button's className is already a
+                  choice between two complete literals and a third copy of
+                  that recipe is how the two stop matching.
+              */}
+              <div className="mt-4 flex flex-col gap-2.5">
+                <Button
+                  id="btn-otp-verify"
+                  type="button"
+                  data-offline-disabled=""
+                  {...SOLID}
+                  onClick={onOtpVerify}
+                >
+                  Verify code
+                </Button>
+                <button
+                  id="btn-otp-resend"
+                  type="button"
+                  data-offline-disabled=""
+                  className={cooldownLeft ? QUIET_BUTTON_WAITING : QUIET_BUTTON}
+                  disabled={cooldownLeft > 0}
+                  onClick={onOtpResend}
+                >
+                  {cooldownLeft ? `Send a new code in ${cooldownLeft}s` : 'Send a new code'}
+                </button>
+              </div>
             </div>
             <div id="otp-step-password" className={hiddenFirst(otpStep !== 'password', 'space-y-3')}>
               <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                Code verified. Now choose a password for your account.
+                {otpSignup?.created
+                  ? OTP_PASSWORD_INTRO_NEW
+                  : otpSignup?.needsUsername
+                    ? OTP_PASSWORD_INTRO_HANDLE
+                    : OTP_PASSWORD_INTRO}
               </p>
+              {/*
+                  QA 2026-09-24 Q12: the handle, asked HERE. An account made by
+                  a code used to get a derived name and meet it for the first
+                  time in the waiting room ("Your account qaflowfive doesn't
+                  have platform access yet"); the first-run gate that asks for
+                  it only runs at release. Prefilled with the same suggestion
+                  that gate would offer, and keyed on it so a second verify
+                  starts from the new one. `data-username-suggested` mirrors
+                  the prefill for the declared check, as the gate's does.
+              */}
+              {otpSignup?.needsUsername ? (
+                <div key={otpSignup.suggestedUsername || ''}>
+                  <label htmlFor="otp-username" className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
+                    Username
+                  </label>
+                  <Input
+                    ref={otpUsername}
+                    id="otp-username"
+                    type="text"
+                    autoComplete="username"
+                    maxLength={32}
+                    {...HANDLE_FIELD}
+                    defaultValue={otpSignup.suggestedUsername || ''}
+                    data-username-suggested={otpSignup.suggestedUsername || undefined}
+                    aria-describedby="otp-username-hint"
+                    aria-invalid={otpUsernameError ? true : undefined}
+                    onInput={() => setOtpUsernameError(null)}
+                    {...FIELD}
+                    placeholder="yourname"
+                  />
+                  <p id="otp-username-hint" className={otpUsernameError ? FIELD_HINT_ERROR : FIELD_HINT}>
+                    {otpUsernameError || OTP_USERNAME_HINT}
+                  </p>
+                </div>
+              ) : null}
               <div>
                 <label className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                   New password
@@ -1321,6 +1781,11 @@ export function LoginScreen() {
                   placeholder="re-enter password"
                 />
               </div>
+              {otpSignup?.waitlisted ? (
+                <p id="otp-waitlist-note" className={WAITLIST_NOTE}>
+                  {OTP_WAITLIST_NOTE}
+                </p>
+              ) : null}
               <Button
                 id="btn-otp-set-password"
                 type="button"
@@ -1328,15 +1793,26 @@ export function LoginScreen() {
                 {...SOLID}
                 onClick={onOtpSetPassword}
               >
-                Set password &amp; sign in
+                {otpSignup?.created ? 'Create account & sign in' : 'Set password & sign in'}
               </Button>
             </div>
             <div id="otp-error" className={hiddenLast(!otpError, ERROR)}>
               {otpError}
+              <NativeLoginDetailsLink details={otpDetails} />
             </div>
-            <div id="otp-status" className={hiddenLast(!otpStatus, STATUS)}>
+            <div
+              id="otp-status"
+              className={hiddenLast(!otpStatus, otpStep === 'password' ? STATUS : STEP_STATUS)}
+            >
               {otpStatus}
             </div>
+            {/*
+                THE FOOT PIN for the email and code steps, whose one tertiary
+                line is #btn-otp-back. Hidden on the set-password step, which
+                is out of this change's scope: that step keeps its controls in
+                one run, top-anchored, exactly as they sat before.
+            */}
+            <div className={otpStep === 'password' ? 'hidden' : 'grow'} />
             <button
               id="btn-otp-back"
               type="button"
@@ -1346,7 +1822,7 @@ export function LoginScreen() {
                 location.hash = '#login';
               }}
             >
-              Back to login
+              {backLabel}
             </button>
           </div>
           {/*
@@ -1464,30 +1940,45 @@ export function LoginScreen() {
                   alternative below the email flow (issue #1158).
               */}
               <hr className="border-zinc-200 dark:border-zinc-800" />
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {resetUi ? ADMIN_LEAD_WITH_EMAIL : ADMIN_LEAD_SHIPPED}
-              </p>
-              <p className="text-sm text-zinc-500 dark:text-zinc-400">
-                {/* JSX drops a line-ending space, so the separators before the
-                    inline elements must live inside the string expressions —
-                    without them the text renders as "atemporary" /
-                    "fromSettings" (issue #1158). */}
-                {'Ask a Homeroom platform admin to issue you a '}
-                <span className="font-medium text-zinc-700 dark:text-zinc-300">
-                  temporary password
-                </span>
-                {". Once you're back in, set a password you choose from "}
-                <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
-                  Settings → Change password
-                </a>
-                .
-              </p>
+              <div className={resetUi ? ADMIN_LEAD_NOTICE_BOX : ''}>
+                {resetUi ? (
+                  <WarningTriangleIcon
+                    className="h-4 w-4 mt-0.5 shrink-0 text-amber-800 dark:text-amber-300"
+                    aria-hidden="true"
+                  />
+                ) : null}
+                {resetUi ? (
+                  <div className="space-y-1">
+                    <p>{ADMIN_LEAD_WITH_EMAIL}</p>
+                    <p>{ADMIN_LEAD_SUPPORT_INSTRUCTIONS}</p>
+                  </div>
+                ) : (
+                  <p className="text-sm text-zinc-500 dark:text-zinc-400">{ADMIN_LEAD_SHIPPED}</p>
+                )}
+              </div>
+              {resetUi ? null : (
+                <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                  {/* JSX drops a line-ending space, so the separators before the
+                      inline elements must live inside the string expressions —
+                      without them the text renders as "atemporary" /
+                      "fromSettings" (issue #1158). */}
+                  {'Ask a Homeroom platform admin to issue you a '}
+                  <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                    temporary password
+                  </span>
+                  {". Once you're back in, set a password you choose from "}
+                  <a href="#settings/password" className="text-violet-700 hover:text-violet-400 underline dark:text-violet-400">
+                    Settings → Change password
+                  </a>
+                  .
+                </p>
+              )}
             </div>
             <button
               id="btn-recovery-back"
               type="button"
               className="w-full text-sm text-zinc-500 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-300"
-              onClick={showLoginBaseView}
+              onClick={leaveRecovery}
             >
               Back to login
             </button>
@@ -1498,7 +1989,14 @@ export function LoginScreen() {
               inserted it.
           */}
           {resetUi ? (
-            <div id="reset-password-view" className={hiddenFirst(view !== 'reset', 'space-y-4')}>
+            <form
+              id="reset-password-view"
+              className={hiddenFirst(view !== 'reset', 'space-y-4')}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void onResetConfirm();
+              }}
+            >
               <h2 className="text-lg font-bold text-center">Choose a new password</h2>
               <div>
                 <label className={LABEL} htmlFor="reset-new-password">New password</label>
@@ -1523,15 +2021,11 @@ export function LoginScreen() {
               <div id="reset-error" className={hiddenLast(!resetError, ERROR)}>
                 {resetError}
               </div>
-              <div id="reset-status" className={hiddenLast(!resetStatus, STATUS)}>
-                {resetStatus}
-              </div>
               <Button
                 id="btn-reset-confirm"
-                type="button"
+                type="submit"
                 {...SOLID}
                 disabled={busy === 'btn-reset-confirm'}
-                onClick={onResetConfirm}
               >
                 Set new password
               </Button>
@@ -1548,7 +2042,7 @@ export function LoginScreen() {
               >
                 Back to login
               </button>
-            </div>
+            </form>
           ) : null}
         </div>
       </div>

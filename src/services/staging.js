@@ -87,6 +87,13 @@ function hasInFlightBuild(sessionId) {
   return _stagingBuilds.has(Number(sessionId));
 }
 
+// Every session with a staging build in flight (or queued) in this process.
+// For the shutdown path (server.js cleanup): a build dies with its process,
+// and nothing on the cluster outlives it to be harvested.
+function inFlightBuildSessionIds() {
+  return [..._stagingBuilds.keys()].map(Number);
+}
+
 // #866 — display-only preview state for a proposal row, derived on read.
 //
 // An imported PR is promoted the instant it's imported, so its card exists
@@ -105,11 +112,16 @@ function hasInFlightBuild(sessionId) {
 // the trade the spec picks on purpose.
 function previewDisplayState(row) {
   const missing = !row.staging_url;
+  const stagingBuilding = !!(missing && hasInFlightBuild(row.id));
+  const stagingError = (missing && row.check_state === 'error' && row.check_error_detail)
+    ? row.check_error_detail
+    : null;
   return {
-    staging_building: !!(missing && hasInFlightBuild(row.id)),
-    staging_error: (missing && row.check_state === 'error' && row.check_error_detail)
-      ? row.check_error_detail
-      : null,
+    staging_building: stagingBuilding,
+    staging_error: stagingError,
+    preview_state: stagingBuilding ? 'building'
+      : stagingError ? 'failed'
+        : missing ? 'unavailable' : 'ready',
   };
 }
 
@@ -695,14 +707,28 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
 async function verifyStagingEdge(session, hostname, stagingUrl) {
   if (!hostname || !stagingUrl || !stagingUrl.startsWith('https://')) return;
   log.info('staging', 'Verifying edge before exposing preview', { sessionId: session.id, hostname });
-  const probe = await caddy.probeEdge(hostname, { handshakeOnly: false });
-  if (probe.ok) {
+  const raw = await caddy.probeEdge(hostname, { handshakeOnly: false });
+  // A completed request is not necessarily a usable preview. In particular,
+  // a 5xx proves that the public hostname reached a broken/default upstream,
+  // which is exactly the state Preview must not advertise as ready (#2328).
+  // 4xx remains acceptable here: the edge probe intentionally has no iframe
+  // identity token, so an app may auth-gate the root while still routing to
+  // the correct runtime. The authenticated iframe load follows only after
+  // this transport/upstream gate passes.
+  const serverError = raw?.code != null && raw.code >= 500;
+  const probe = serverError
+    ? { ...raw, ok: false, error: raw.error || new Error(`Preview edge returned HTTP ${raw.code}`) }
+    : raw;
+  if (probe?.ok) {
     log.info('staging', 'Edge verified', {
       sessionId: session.id, hostname, code: probe.code,
       ttfbMs: probe.timings ? probe.timings.ttfbMs : null,
     });
   } else {
-    log.warn('staging', 'Edge verification did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: probe.error?.message });
+    log.warn('staging', 'Edge verification did not complete; preview is not ready', {
+      sessionId: session.id, hostname, code: probe?.code ?? null,
+      err: probe?.error?.message,
+    });
   }
   return probe;
 }
@@ -857,14 +883,78 @@ function serializeRebuild(slug, fn) {
   return result; // callers still get the real containerId/sha or the real error
 }
 
-async function rebuildProduction(config, app) {
+// `options.reuseImage` — { imageRef, buildRef, treeSha, fromSha } — offers an
+// image that is ALREADY built, to be deployed instead of building a new one.
+// It is used only when the tree this rebuild is about to build is the same
+// tree that image was built from, which the caller states as `treeSha` and
+// this function verifies against the clone it just made. Same source, same
+// Dockerfile, same builder: the same image.
+//
+// What it saves is the build — measured at ~9s of an ~18s merge-to-live on a
+// small app, even with the layer cache warm, because a build is a Kubernetes
+// Job to schedule, a daemon to start and a push. What it costs is that the
+// image's baked GIT_SHA names `fromSha` (the commit whose code it is) rather
+// than the commit main now points at, so the caller has to be one for which
+// that is true and harmless. Today that is demo mode, and routes/votes.js
+// gates it there; a general "deploy the artifact the checks ran against"
+// needs that difference resolved rather than tolerated.
+async function rebuildProduction(config, app, options = {}) {
   return serializeRebuild(app.slug, () => withResourceUse(config, PRODUCTION_BUILD_LOCK, app.slug,
-    () => rebuildProductionInner(config, app)));
+    () => rebuildProductionInner(config, app, options)));
 }
 
-async function rebuildProductionInner(config, app) {
+// Whether an offered image is of the tree that was just cloned, and so the
+// image this rebuild would otherwise spend a build producing. Pure, and the
+// whole guarantee: same tree sha means the same source, byte for byte, so the
+// same Dockerfile and the same builder produce the same image. Anything
+// missing or unequal answers null, which means build.
+function reusedBuild(offered, mergedTree) {
+  if (!offered || !offered.imageRef || !offered.treeSha) return null;
+  if (!mergedTree || mergedTree !== String(offered.treeSha).toLowerCase()) return null;
+  return { imageRef: offered.imageRef, buildRef: offered.buildRef || null, reused: true };
+}
+
+// The tree the working copy is at, or null when git cannot say — in which
+// case no reuse happens, which is the safe direction.
+async function treeShaOf(dir) {
+  try {
+    const { stdout } = await docker.execFileAsync('git', ['-C', dir, 'rev-parse', 'HEAD^{tree}'], { timeout: 5000 });
+    const sha = (stdout || '').trim().toLowerCase();
+    return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
+  } catch (err) {
+    log.warn('staging', 'Could not read the merged tree; building rather than reusing', { err: err.message });
+    return null;
+  }
+}
+
+async function rebuildProductionInner(config, app, options = {}) {
   const containerName = `usernode-app-${app.slug}`;
   const imageName = `usernode-app-${app.slug}:latest`;
+
+  // Recovery may arrive after the runtime switched successfully but before
+  // apps.main_sha was saved. Read the running revision under the production
+  // rebuild lock before doing another external deploy. Ordinary/manual
+  // rebuilds never pass this option: they may need to apply changed secrets.
+  if (options.reuseRunningRevision) {
+    const expected = String(options.reuseRunningRevision).toLowerCase();
+    const ref = applicationRuntime.productionRef(config, app);
+    try {
+      const live = await applicationRuntime.inspect(config, ref);
+      if (live.status === 'running'
+          && live.labels?.['social.usernode.io/source-revision'] === expected
+          && await applicationRuntime.probeHealth(config, ref)) {
+        return {
+          containerId: ref.runtimeKind === 'docker' ? ref.runtimeName : null,
+          runtimeKind: ref.runtimeKind, runtimeName: ref.runtimeName,
+          sha: expected, recovered: true,
+        };
+      }
+    } catch (err) {
+      log.warn('staging', 'Could not inspect production for merge recovery', {
+        app: app.slug, err: err.message,
+      });
+    }
+  }
 
   log.info('staging', 'Rebuilding production', { app: app.slug });
 
@@ -980,13 +1070,30 @@ async function rebuildProductionInner(config, app) {
       throw new MissingSecretsError(merge.missingRequired);
     }
 
-    const build = await applicationRuntime.build(config, {
-      app,
-      revision: mainSha,
-      environment: 'production',
-      sourceDir: cloneDir,
-      dockerImage: imageName,
-    });
+    // An image built from this exact tree already exists: deploy it. The
+    // comparison is the whole guarantee, so it is made HERE, against the tree
+    // just cloned, rather than taken from the caller's word about which
+    // commits ought to match.
+    const offered = options.reuseImage;
+    const mergedTree = offered ? await treeShaOf(cloneDir) : null;
+    let build = reusedBuild(offered, mergedTree);
+    if (offered) {
+      log.info('staging', build
+        ? 'Deploying an image already built from this tree'
+        : 'Offered image is of a different tree; building', {
+        app: app.slug, mergedTree, offeredTree: offered.treeSha || null,
+        fromSha: offered.fromSha || null, imageRef: offered.imageRef || null,
+      });
+    }
+    if (!build) {
+      build = await applicationRuntime.build(config, {
+        app,
+        revision: mainSha,
+        environment: 'production',
+        sourceDir: cloneDir,
+        dockerImage: imageName,
+      });
+    }
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
     // Reload the app row to pick up apps.db_password — the per-role
@@ -1016,6 +1123,8 @@ async function rebuildProductionInner(config, app) {
       environment: 'production',
       imageRef: build.imageRef,
       dockerName: containerName,
+      labels: /^[a-f0-9]{40}$/i.test(mainSha || '')
+        ? { 'social.usernode.io/source-revision': mainSha.toLowerCase() } : {},
       env: {
         DATABASE_URL: dbUrl,
         ...appIdentityEnv(app, config),
@@ -1054,6 +1163,7 @@ async function rebuildProductionInner(config, app) {
       runtimeName: deployed.runtimeName,
       imageRef: build.imageRef,
       buildRef: build.buildRef,
+      imageReused: !!build.reused,
       sha: mainSha,
     };
   } catch (err) {
@@ -1062,6 +1172,17 @@ async function rebuildProductionInner(config, app) {
       log.warn('staging', 'Production rebuild blocked — missing required secrets', {
         app: app.slug, missing: err.missingSecrets,
       });
+      // This failure happens before runtime replacement. Persist its exact
+      // attempted revision so a merged proposal never reads as delivered
+      // while the previous container still serves.
+      try {
+        await getPool(config).query('UPDATE apps SET last_failure = $1 WHERE id = $2',
+          [JSON.stringify(require('./deploy-failure').record(err, { sha: mainSha || null })), app.id]);
+      } catch (e) {
+        log.warn('staging', 'Failed to persist missing-secret deploy failure', {
+          app: app.slug, err: e.message,
+        });
+      }
     } else {
       log.error('staging', 'Production rebuild failed', { app: app.slug, err: err.message });
       // Persist the failure detail (#416) so the "View build log" panel
@@ -1069,13 +1190,60 @@ async function rebuildProductionInner(config, app) {
       // (the old container keeps serving) — see app-deploy-status.js for
       // why rebuild progress never touches apps.status. Best-effort.
       const deployFailure = require('./deploy-failure');
+      let failureRecord = null;
+      // The record this one replaces, read in the same statement that
+      // writes the new one so the comparison below is against what was
+      // actually there. Left undefined when the write fails: "unknown" must
+      // read as a new incident, not a repeat.
+      let previousFailure;
       try {
-        await getPool(config).query(
-          'UPDATE apps SET last_failure = $1 WHERE id = $2',
-          [JSON.stringify(deployFailure.record(err, { sha: mainSha || null })), app.id]
+        failureRecord = deployFailure.record(err, { sha: mainSha || null });
+        const { rows } = await getPool(config).query(
+          `WITH before AS (SELECT last_failure FROM apps WHERE id = $2)
+           UPDATE apps SET last_failure = $1 WHERE id = $2
+           RETURNING (SELECT last_failure FROM before) AS previous_failure`,
+          [JSON.stringify(failureRecord), app.id]
         );
+        previousFailure = rows[0] ? rows[0].previous_failure : null;
       } catch (e) {
         log.warn('staging', 'Failed to persist last_failure', { app: app.slug, err: e.message });
+      }
+
+      // #1374: tell the people who can fix it. Before this the failure was
+      // recorded on the app row and surfaced only to whoever happened to
+      // look, so a production rebuild could stay broken until somebody
+      // noticed. Addressed to the creator and the app's admins, gated on
+      // the adminOnly `app_health` category.
+      //
+      // Once per incident, not per attempt. The drift poller retries a
+      // failed rebuild every tick, and a failure that is deterministic (a
+      // Dockerfile the build sandbox cannot build) fails the same way each
+      // time; the notification is about the commit that is broken, which
+      // has not changed. The row above still records every attempt, so
+      // "View build log" stays current. See deployFailure.sameIncident for
+      // what counts as the same incident.
+      //
+      // Best-effort, and deliberately after the row is persisted: the
+      // failure record is the durable part and must not depend on this.
+      if (deployFailure.sameIncident(previousFailure, failureRecord)) {
+        log.info('staging', 'Production rebuild failed again for the same commit; already notified', {
+          app: app.slug, sha: failureRecord.sha, stage: failureRecord.stage,
+        });
+      } else {
+        try {
+          const notifications = require('./notifications');
+          const pool = getPool(config);
+          const created = await notifications.createAppHealthNotification(pool, {
+            appId: app.id,
+            // A short token, not the reason: notifications.detail is
+            // VARCHAR(32) and the full reason is on apps.last_failure, which
+            // the UPDATE above just wrote.
+            detail: 'deploy_failed',
+          });
+          await Promise.all(created.map((row) => notifications.hydrateAndPush(pool, row)));
+        } catch (e) {
+          log.warn('staging', 'App-health notification failed', { app: app.slug, err: e.message });
+        }
       }
     }
     throw err;
@@ -1093,11 +1261,17 @@ module.exports = {
   _imageStepLabelForTest: imageStepLabel,
   buildAndDeployStaging,
   hasInFlightBuild,
+  inFlightBuildSessionIds,
   previewDisplayState,
   verifyStagingEdge,
   warmStagingCert,
   teardownStaging,
   rebuildProduction,
+  // The image-reuse decision and the tree read behind it, unit-tested
+  // directly: the decision IS the guarantee, and rebuildProductionInner
+  // around it is a clone, a database and a cluster.
+  reusedBuild,
+  treeShaOf,
   // Exported for services/app-rollover.js: its cheap respawn path
   // (appRespawn.runExistingImage) does its own stopAndRemove +
   // runContainer without going through rebuildProduction, so it has to

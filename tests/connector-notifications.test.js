@@ -281,6 +281,17 @@ test('the drawer renders both, and its waiting row uses the same safe wording', 
     'the row and the push must not disagree about what is being claimed');
 });
 
+test('submitted and shared connector changes open the same full change page', () => {
+  const at = FE_SRC.indexOf("item.kind === 'connector_submitted'");
+  const block = FE_SRC.slice(at, FE_SRC.indexOf("item.kind === 'auto_solve_done'", at));
+  assert.match(block, /ref: \{ kind: 'proposal', id \}/,
+    'the in-app route is lifecycle-neutral');
+  assert.match(block, /dev\/proposals\/\$\{id\}/,
+    'the hash fallback uses the same route');
+  assert.doesNotMatch(block, /kind = item\.detail|dev\/\$\{seg\}/,
+    'sharing no longer diverts to the reduced public-discussion page');
+});
+
 test('the wait table is private — it stores what somebody was asked', () => {
   assert.match(SCHEMA, /COMMENT ON TABLE connector_input_waits IS 'staging:private'/,
     'the question is personal content, so staging gets the schema and none of the rows');

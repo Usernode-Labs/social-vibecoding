@@ -82,14 +82,36 @@ test('the recovery view is URL-reachable for captures (#1158)', () => {
     'the shot boots the anonymous shell like ?shot=anon');
 });
 
+test('QA Q16: "Forgot password?" is its own history entry, so Back returns to Sign in', () => {
+  // It swapped the card's view on the same #login entry, so Back from it had
+  // no Sign in to land on and went straight on to the marketing landing.
+  const tsx = read(LOGIN_TSX);
+  assert.match(tsx, /const RECOVERY_ROUTE = 'login\/forgot';/);
+  assert.match(tsx, /id="forgot-password-link"\s*href=\{`#\$\{RECOVERY_ROUTE\}`\}/,
+    'the link names the address, so a modified click opens it too');
+  assert.match(tsx,
+    /history\.pushState\(\{ \[RECOVERY_ENTRY\]: true \}, '', `#\$\{RECOVERY_ROUTE\}`\);[\s\S]{0,160}showRecovery\(\);/,
+    'a plain click pushes the entry and shows the view without a router round trip');
+  // Loaded, reloaded or traversed to, the router hands the segment over…
+  assert.match(tsx, /if \(!openSignup && seg === 'forgot'\) showRecovery\(\);/);
+  assert.match(read('public/js/auth-screens.js'),
+    /if \(route === 'login'\) AuthScreens\._loginOnShow\(false, seg\);/);
+  // …and "Back to login" undoes the entry the card pushed rather than
+  // stacking a #login on top of it.
+  assert.match(tsx, /id="btn-recovery-back"[\s\S]{0,240}onClick=\{leaveRecovery\}/);
+  assert.match(tsx, /state\[RECOVERY_ENTRY\] && typeof history\.back === 'function'\) \{\s*history\.back\(\);/);
+});
+
 test('the stale "no email on file" claim is rewritten once the email path exists', () => {
   const tsx = read(LOGIN_TSX);
   // The frozen markup's lead still carries the pre-email copy; the screen
   // must swap it so the admin path reads as the fallback, not the rule.
   assert.match(tsx, /recovery-admin/, 'admin fallback block is still used');
-  assert.match(tsx, /No confirmed email on your account\?/,
-    'fallback copy repositions the admin path');
-  assert.match(tsx, /resetUi \? ADMIN_LEAD_WITH_EMAIL : ADMIN_LEAD_SHIPPED/,
+  assert.match(tsx, /If you did not confirm your email account, you will not receive the reset email\./,
+    'fallback copy explains the unconfirmed-email gap (#2969)');
+  assert.match(tsx, /ask Homeroom support team to issue you a temporary password \(support@usernodelabs\.org\)\./,
+    'fallback copy points to support instead of a platform admin (#2969)');
+  assert.match(tsx, /ADMIN_LEAD_WITH_EMAIL/,
     'the swap is tied to the same flag that mounts the email form');
 });
 
@@ -100,6 +122,58 @@ test('the reset view posts token + new password to the confirm endpoint', () => 
   assert.match(tsx, /\/api\/auth\/password-reset\/confirm/);
   assert.match(tsx, /reset-new-password/, 'new-password input exists');
   assert.match(tsx, /reset-confirm-password/, 'confirm input exists');
+});
+
+test('the reset view is a form, so Enter and its submit button take the same path', () => {
+  const tsx = read(LOGIN_TSX);
+  const start = tsx.indexOf('<form\n              id="reset-password-view"');
+  const form = tsx.slice(start, tsx.indexOf('</form>', start));
+  assert.ok(start > 0, 'the reset view is a form');
+  assert.match(form, /onSubmit=\{\(e\) => \{[\s\S]*?e\.preventDefault\(\);[\s\S]*?void onResetConfirm\(\)/);
+  assert.match(form, /id="btn-reset-confirm"[\s\S]{0,120}?type="submit"/);
+  assert.doesNotMatch(form, /onClick=\{onResetConfirm\}/,
+    'one submit seam prevents button and Enter behavior from drifting');
+});
+
+test('a successful reset clears secrets, replaces history and opens login without auto-login', () => {
+  const tsx = read(LOGIN_TSX);
+  const start = tsx.indexOf('const onResetConfirm =');
+  const handler = tsx.slice(start, tsx.indexOf('// ── The invite link', start));
+  for (const field of ['resetNewPassword', 'resetConfirmPassword', 'password']) {
+    assert.match(handler, new RegExp(`${field}\\.current\\.value = ''`), `${field} is cleared`);
+  }
+  assert.match(handler, /st\.resetToken = null/);
+  assert.match(handler, /history\.replaceState\(null, '', screens\?\.deepLinkUrl\?\.\('#login'\) \|\| '\/#login'\)/,
+    'the spent token is replaced, not left behind a pushed login entry');
+  assert.match(handler, /screens\.show\('login'\)/,
+    'the legacy router state and React sub-view move together');
+  assert.match(handler, /setPasswordResetComplete\(true\)/);
+  assert.match(handler, /requestAnimationFrame\(\(\) => username\.current\?\.focus\(\)\)/);
+  assert.doesNotMatch(handler, /finishLogin\(/,
+    'resetting still requires a fresh login, matching the server contract');
+});
+
+test('the login destination carries a durable accessible success notice', () => {
+  const tsx = read(LOGIN_TSX);
+  assert.match(tsx, /id="login-reset-success"[\s\S]{0,160}?role="status"[\s\S]{0,160}?aria-live="polite"/);
+  assert.match(tsx, /className=\{hiddenLast\(!passwordResetComplete, SENT_BOX\)\}/,
+    'success uses the established green auth treatment, not the error red');
+  assert.match(tsx, /Password changed/);
+  assert.match(tsx, /signed out everywhere/);
+  assert.match(tsx, /const showLoginBaseView = useCallback\(\(\) => \{[\s\S]{0,120}?setPasswordResetComplete\(false\)/,
+    'an ordinary later visit does not retain the one-time result');
+});
+
+test('the completed state is directly checkable without consuming a reset token', () => {
+  const manifest = JSON.parse(read('dapp.json'));
+  const check = manifest.tests.find((item) => String(item.name || '').includes('completed password reset'));
+  assert.ok(check, 'the final success state has a declared browser check');
+  assert.equal(check.path, '/?shot=password-reset-complete#login');
+  assert.match(check.expectSelector, /#login-form:not\(\.hidden\)/,
+    'the capture asserts the visible destination; the lazy reset form need not mount for a display-only shot');
+  assert.match(check.expectSelector, /#login-reset-success/);
+  assert.match(read('public/js/app.js'), /shot !== 'password-reset-complete'/,
+    'the signed-in capture user is held on the anonymous auth screen');
 });
 
 test('a refused token gets the generic expired-link message with a way back', () => {

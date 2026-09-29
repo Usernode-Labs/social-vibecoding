@@ -42,8 +42,8 @@ import { useSyncExternalStore } from 'react';
 
 export const LEADERBOARD_SECTION_STORE_KEY = '__usernodeLeaderboardSection';
 
-/** The primary section, and the one a fresh page load opens on. */
-export const DEFAULT_SECTION = 'topochain';
+/** The section a fresh page load opens on — Challenges since #2374. */
+export const DEFAULT_SECTION = 'challenges';
 
 export interface LeaderboardSectionStore {
   /** False until the screen has been opened once — see the header. */

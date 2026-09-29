@@ -1,4 +1,4 @@
-// The shell's eleven dialogs, and the seam that presents them.
+// The shell's dialogs, and the seam that presents them.
 //
 // #1078 chunk A extracted their markup into components and this file pinned
 // them as deliberately STATIC — no state, no effects, no refs, no handlers.
@@ -34,8 +34,11 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
+const { idsOf } = require('./helpers/html-tokens');
+
 const ROOT = path.join(__dirname, '..');
 const DIALOGS = path.join(ROOT, 'frontend', 'src', 'features', 'dialogs');
+const MESSAGES = path.join(ROOT, 'frontend', 'src', 'features', 'messages');
 
 function read(rel) {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -57,7 +60,12 @@ const USE_DIALOG = read('frontend/src/features/dialogs/use-dialog.ts');
 const DIALOG_IDS = [
   'create-modal', 'rename-modal', 'close-issue-modal', 'fork-modal',
   'import-pr-modal', 'members-modal', 'feedback-modal', 'share-modal',
-  'app-secrets-modal', 'board-filters-modal', 'wallet-recovery-modal',
+  'app-secrets-modal', 'board-filters-modal', 'wallet-recovery-modal', 'app-settings-modal',
+  // #1374: per-app notification settings. Its own dialog rather than a
+  // section of app-settings-modal, because that one is offered only to
+  // admins and the creator while these switches belong to everybody who
+  // uses the app.
+  'app-notifications-modal',
 ];
 
 /**
@@ -88,7 +96,28 @@ const allSrc = new Map(
 const componentFiles = allFiles.filter((f) => !SUPPORT_FILES.includes(f));
 const componentSrc = new Map(componentFiles.map((f) => [f, allSrc.get(f)]));
 
-test('the dialogs/ directory is exactly eleven dialogs plus its known support files', () => {
+/**
+ * The chassis rule below is about every component that renders its OWN modal
+ * root, and until #2436 it iterated features/dialogs/ alone. That scope is
+ * exactly how the three Messages dialogs came to transcribe the root class
+ * string, the `data-modal-backdrop` wrapper AND the card: they sit on the same
+ * `useDialog` seam, they own three more roots, and nothing scanned them. They
+ * had already drifted (`p-5` instead of the card's `p-6`, a text `×` instead of
+ * XIcon) by the time the UI-consistency audit found them.
+ *
+ * What is deliberately NOT here is features/dev-board/modals/**. Those cards
+ * mount INTO a root public/js/app-view.js creates rather than rendering one, so
+ * they have no DialogRoot to use and render the centring wrapper themselves —
+ * see the comment above AutoSessionModal. They already build on DialogCard,
+ * which is the whole of the chassis available to them.
+ */
+const MESSAGES_DIALOGS = ['agent-dialog.tsx', 'create-dialog.tsx', 'members-dialog.tsx', 'share-dialog.tsx'];
+const chassisSrc = new Map([
+  ...componentSrc,
+  ...MESSAGES_DIALOGS.map((f) => [`messages/${f}`, fs.readFileSync(path.join(MESSAGES, f), 'utf8')]),
+]);
+
+test('the dialogs/ directory is exactly the dialog roots plus its known support files', () => {
   assert.equal(componentFiles.length, DIALOG_IDS.length,
     `features/dialogs/ holds ${componentFiles.length} dialog components for ${DIALOG_IDS.length} roots — `
     + `a new file must either render a root or be listed in SUPPORT_FILES with a reason`);
@@ -115,7 +144,10 @@ function rootTag(src, id) {
 }
 
 test('every dialog root is rendered by exactly one dialog component', () => {
-  assert.equal(DIALOG_IDS.length, 11);
+  // 12 → 13 with #1374's per-app notification dialog. The count guards the
+  // list above against being trimmed to make this test pass; the per-id
+  // assertions below are what actually check the 1:1 mapping.
+  assert.equal(DIALOG_IDS.length, 13);
   for (const id of DIALOG_IDS) {
     const owners = [...componentSrc].filter(([, src]) => src.includes(`id="${id}"`));
     assert.equal(owners.length, 1, `#${id} should be rendered by exactly one features/dialogs/* component, got ${owners.map((o) => o[0])}`);
@@ -171,13 +203,21 @@ test('the chassis owns the backdrop root, the wrapper and the card', () => {
   assert.match(DIALOG_UI, /data-modal-backdrop=""/,
     'DialogRoot must render the wrapper useDialog dismisses on');
 
-  for (const [file, src] of componentSrc) {
+  // The Messages list is kept honest the way the dialogs/ partition is: a
+  // fourth root-rendering file there must be scanned, not silently skipped.
+  const strays = fs.readdirSync(MESSAGES)
+    .filter((f) => f.endsWith('.tsx') && !MESSAGES_DIALOGS.includes(f))
+    .filter((f) => /id="[a-z0-9-]+-(dialog|modal)"/.test(fs.readFileSync(path.join(MESSAGES, f), 'utf8')));
+  assert.deepEqual(strays, [],
+    'features/messages/ renders a modal root this test does not scan — add it to MESSAGES_DIALOGS');
+
+  for (const [file, src] of chassisSrc) {
     assert.match(src, /from '@\/components\/ui\/dialog'/, `${file} does not import the chassis`);
     assert.ok(!src.includes('data-modal-backdrop'),
       `${file} hand-writes the backdrop wrapper — DialogRoot renders it`);
     assert.ok(!/fixed inset-0 z-50/.test(src),
       `${file} hand-writes the backdrop root class — DialogRoot owns it`);
-    assert.ok(!/bg-white dark:bg-zinc-900 rounded-xl p-6 w-full/.test(src),
+    assert.ok(!/bg-white dark:bg-zinc-900 rounded-xl p-\d w-full/.test(src),
       `${file} hand-writes the card class — DialogCard owns it`);
   }
 });
@@ -308,4 +348,50 @@ test('the two modules the dialogs owned are retired from public/js/', () => {
   // screenshot-select's only consumer is the feedback dialog, which imports it.
   const feedback = fs.readFileSync(path.join(DIALOGS, 'feedback-controller.js'), 'utf8');
   assert.match(feedback, /import '\.\/screenshot-select'/);
+});
+
+test('a declared check anchored on a dialog ROOT reads only markup the shell ships', () => {
+  // The lift is why this rule exists. `useStaticModal` presents a dialog by
+  // MOVING its card out of the root (`#<name>-modal`) into the kit's modal
+  // shell — see the note at the top of frontend/src/lib/static-modal.ts — so
+  // while a dialog is OPEN its contents are no longer descendants of its
+  // root. A declared check written as `#<name>-modal <something inside>`
+  // therefore describes the CLOSED dialog, and can only ever be satisfied by
+  // markup the prerendered document already contains.
+  //
+  // This cost a check round. A new check read
+  // `#board-filters-modal:has(#board-filters-assignedtome) …` for two
+  // switches that render only once the dialog is open with a payload asking
+  // for them. It resolved perfectly in a local harness — which had no kit
+  // loaded, so nothing was lifted — and could not match on a preview, where
+  // the kit is present and the card had moved. The fix is to anchor such a
+  // check INSIDE the card (on the labels, here), never on the root.
+  //
+  // tests/dapp-selectors-resolve.test.js does not catch it: it allows any id
+  // that public/js/** or React injects at runtime, which these are.
+  const DAPP = JSON.parse(read('dapp.json'));
+  const shellIds = new Set(idsOf(INDEX_HTML));
+  // A root named inside a `:has()` PREDICATE is not an ancestor claim — it is
+  // the house pattern for "the document is in the state where this dialog is
+  // open", and the #2161 app-settings check uses it precisely BECAUSE the
+  // card has been lifted away from the root by then:
+  //
+  //   body:has(#app-settings-modal:not(.hidden)) #app-delete-blocked
+  //
+  // So the predicates come off first, and only a root still standing in the
+  // chain afterwards is asserting descent.
+  const withoutHas = (sel) => sel.replace(/:has\([^()]*(?:\([^()]*\)[^()]*)*\)/g, '');
+  const offenders = [];
+  for (const t of DAPP.tests) {
+    const chain = withoutHas(t.expectSelector || '');
+    const root = DIALOG_IDS.find((id) => chain.includes(`#${id}`));
+    if (!root) continue;
+    const after = chain.slice(chain.indexOf(`#${root}`) + root.length + 1);
+    for (const m of after.match(/#[a-zA-Z][\w-]*/g) || []) {
+      const id = m.slice(1);
+      if (!shellIds.has(id)) offenders.push(`${t.name}: #${id} is not in the shipped shell`);
+    }
+  }
+  assert.deepEqual(offenders.join('\n'), '',
+    'a root-anchored declared check cannot read markup that appears only once the dialog is open');
 });

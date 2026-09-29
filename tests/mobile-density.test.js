@@ -32,16 +32,18 @@ test('#1940: the provider and PR link show directly at every width — no Detail
 test('Discover keeps the full app name, metadata and explicit add/remove action in one row', () => {
   const row = { app: {}, slug: 'long-app', name: 'A very long community application name',
     meta: '11 users · Updated recently', status: 'Running', statusDot: 'bg-emerald-500',
-    openable: true, demo: false, added: false, addTitle: 'Add to Your apps' };
+    openable: true, demo: false, added: false, addTitle: 'Join A very long community application name' };
   const render = added => renderToHtml(createElement(BrowseRows, { rows: [{ ...row, added }] }));
   const html = render(false);
   for (const hook of ['browse-row-content', 'browse-row-title', 'browse-row-meta', 'browse-row-name']) assert.ok(html.includes(hook));
   assert.ok(html.includes(row.name));
   assert.ok(html.includes(row.meta));
-  assert.match(html, /data-added="false" aria-pressed="false"[^>]*>Add to Your apps</);
+  // QA 2026-09-24 Q10: one short word on screen ("+ Join", communities), and
+  // what is being joined in the accessible name.
+  assert.match(html, /data-added="false" aria-pressed="false" aria-label="Join A very long community application name"[^>]*>.*Join<\/button>/);
   assert.equal((html.match(/class="browse-add-btn/g) || []).length, 1, 'no duplicated responsive buttons');
   assert.match(render(true), /data-added="true" aria-pressed="true"/);
-  assert.match(render(true), />Added</);
+  assert.match(render(true), />Joined</);
 });
 
 test('the title reflow is phone-only and scoped to Discover and the Dev session title', () => {
@@ -61,4 +63,19 @@ test('#1940: the session header no longer carries a dialog of its own', () => {
   // The provider still caps its own width, which is what lets it sit in a
   // 360px strip beside the title, the PR link and the mode switch.
   assert.match(css, /\n\.dc-venue-select \{[^}]*max-width: min\(45%, 14rem\);/);
+});
+
+// QA 2026-09-24 Q10: at 1440 names were cut to ~10 characters in the desktop
+// boxes, at 1024 the name column was 0px wide, and at 360 the directory label
+// was clipped mid-word with no ellipsis.
+test('Discover names may take two lines in the boxes, and every meta line ellipsises', () => {
+  const css = read('public/css/app.css');
+  const block = css.slice(css.indexOf('QA 2026-09-24 Q10'));
+  assert.match(block, /@media \(min-width: 640px\) \{\s*\.browse-row \.browse-row-title \{ white-space: normal; \}/);
+  assert.match(block, /\.browse-row \.browse-row-name \{\s*display: -webkit-box;\s*-webkit-box-orient: vertical;\s*-webkit-line-clamp: 2;/);
+  const row = { app: { directory: { label: 'Reviewed working' } }, slug: 's', name: 'N', meta: '0 users · Updated 1d ago',
+    status: 'Running', statusDot: 'bg-emerald-500', openable: true, demo: false, added: false, addTitle: 'Add to Your apps' };
+  const html = renderToHtml(createElement(BrowseRows, { rows: [row] }));
+  assert.match(html, /<span class="block truncate text-xs[^"]*">Reviewed working<\/span>/);
+  assert.match(html, /<span class="block truncate">0 users · Updated 1d ago<\/span>/);
 });

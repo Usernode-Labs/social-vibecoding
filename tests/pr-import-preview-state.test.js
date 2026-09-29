@@ -137,7 +137,7 @@ test('a checks error with no preview surfaces its reason as staging_error', asyn
     const reason = 'app failed to boot: missing required secret DEMO_API_KEY';
     assert.deepEqual(
       subject.previewDisplayState({ id: 4, staging_url: null, check_state: 'error', check_error_detail: reason }),
-      { staging_building: false, staging_error: reason }
+      { staging_building: false, staging_error: reason, preview_state: 'failed' }
     );
     // A live preview means the reviewer can look for themselves — an older
     // checks error is not a preview failure.

@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const nodeAppPackage = require('../templates/node-app/package.json');
 const nodeAppLock = require('../templates/node-app/package-lock.json');
 
@@ -78,8 +80,12 @@ const DEV_CONSOLE_FORWARDER = `
 // platform that hosts them (the "Open in Homeroom" landing page) and
 // reference its `/claude.md` URL. Driven by USERNODE_DOMAIN env so a
 // fork running at a different domain templates the right URL into its
-// child apps. Fallback is the canonical standalone deploy.
-const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
+// child apps. The fallback is deliberately not a real host (the same
+// placeholder src/config.js uses): falling back to the canonical deploy's
+// domain is how scaffolds kept naming the platform's retired domain after
+// the platform had left it (#2322). Only the CLAUDE.md documentation
+// link uses this now — generated code reads the injected origin.
+const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'apps.example.invalid';
 const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 
 // The hosted connector's canonical name and the read-only allow rules built
@@ -98,6 +104,53 @@ const {
 const CONNECTOR_SPELLING_LIST = CONNECTOR_NAME_SPELLINGS
   .map((name) => `\`${name}\``)
   .join(', ');
+
+// The checkout freshness check every scaffolded repo runs at Claude Code
+// session start: the app-side counterpart of the platform repository's
+// .agents/hooks/upstream-drift.js (#3102). POSIX sh rather than Node, because
+// an imported app need not be a Node app; it lives as a real file so it can be
+// run and tested as itself rather than as a string with its `$`s escaped.
+const FRESHNESS_HOOK_PATH = '.claude/hooks/homeroom-freshness.sh';
+const FRESHNESS_HOOK_SCRIPT = fs.readFileSync(
+  path.join(__dirname, '..', 'templates', 'app-scaffold', 'homeroom-freshness.sh'),
+  'utf8'
+);
+
+// The one-line file naming the app's canonical repository, which the hook
+// above compares HEAD against. Platform-written rather than part of the
+// shared scaffold: a create and an import write the app's own URL, and a fork
+// ALWAYS rewrites it, since the copy it inherits names the parent.
+const CANONICAL_REPO_PATH = '.claude/homeroom-canonical-repo';
+
+// https://github.com/<owner>/<repo>, or null for anything else (no GitHub,
+// a local build). The hook reads this file as data, so only this one shape
+// is ever written.
+function canonicalRepoUrl(repoUrl) {
+  const match = String(repoUrl || '').trim()
+    .match(/^https:\/\/github\.com\/([A-Za-z0-9-]+)\/([A-Za-z0-9._-]+?)(?:\.git)?\/?$/);
+  return match ? `https://github.com/${match[1]}/${match[2]}` : null;
+}
+
+function getCanonicalRepoFile(repoUrl) {
+  const url = canonicalRepoUrl(repoUrl);
+  return url ? { path: CANONICAL_REPO_PATH, content: `${url}\n` } : null;
+}
+
+// Project settings the scaffold commits. Read-only connector grants, plus the
+// one advisory hook above; nothing that acts. JSON has no comments, so the
+// reasoning for both lives in .claude/README.md.
+const SCAFFOLD_SETTINGS = {
+  permissions: { allow: CONNECTOR_ALLOW_RULES },
+  hooks: {
+    SessionStart: [{
+      hooks: [{
+        type: 'command',
+        command: `sh "$CLAUDE_PROJECT_DIR/${FRESHNESS_HOOK_PATH}"`,
+        timeout: 10,
+      }],
+    }],
+  },
+};
 
 // The `.claude/` scaffold, on its own so every path that creates a repo can
 // place it — not just the one that writes the whole template.
@@ -134,8 +187,17 @@ function getConnectorScaffoldFiles() {
       //
       // JSON has no comments, so the reasoning lives in .claude/README.md
       // next to it.
+      //
+      // The one hook it carries is the freshness check (SCAFFOLD_SETTINGS).
+      // That was a deliberate exception to "grants capability and nothing
+      // more": the script only reads git state and prints, and the trust
+      // dialog lists it for review like the rules above.
       path: '.claude/settings.json',
-      content: `${JSON.stringify({ permissions: { allow: CONNECTOR_ALLOW_RULES } }, null, 2)}\n`,
+      content: `${JSON.stringify(SCAFFOLD_SETTINGS, null, 2)}\n`,
+    },
+    {
+      path: FRESHNESS_HOOK_PATH,
+      content: FRESHNESS_HOOK_SCRIPT,
     },
     {
       path: '.claude/README.md',
@@ -199,6 +261,28 @@ tool names you actually see are either \`mcp__<server>__whoami\` or
 \`<server>\` segment you see and edit the rules to match, or reconnect
 the connector naming it \`${CONNECTOR_SERVER_NAME}\` exactly.
 
+## The session-start freshness check
+
+\`settings.json\` also runs one hook when a Claude Code session starts:
+\`${FRESHNESS_HOOK_PATH}\`. Coding agents are often opened on a fork of this
+app whose \`main\` is behind the app's canonical repository, and nothing in
+the checkout says so, so an agent can answer questions or build changes from
+old code. The script asks the canonical repository, which Homeroom names in
+\`${CANONICAL_REPO_PATH}\`, where \`main\` is. When \`HEAD\` does not contain
+that commit, it prints a short notice for the agent; otherwise it prints
+nothing.
+
+It only reads: \`git rev-parse\`, \`git ls-remote\` and \`git merge-base\`. It is
+silent offline, always exits 0, and never blocks a session. The workspace
+trust dialog lists it alongside the rules above. To turn it off on your
+machine, set \`SOCIAL_VIBECODING_DRIFT_CHECK=off\` in your environment
+(Homeroom's hosted workers do, because the platform fixes their base commit),
+or delete the \`hooks\` entry from \`settings.json\`.
+
+Homeroom writes \`${CANONICAL_REPO_PATH}\` when it creates or imports the app,
+and rewrites it when the app is forked, so a fork points at itself rather
+than at its parent. Leave it as Homeroom wrote it.
+
 ## Adding your own rules
 
 This file is yours — add project rules alongside the connector ones. Just
@@ -215,7 +299,26 @@ connector registered under some other name.
   ];
 }
 
-function getTemplateFiles(appName, slug, dbUrl) {
+// repoUrl is the app's canonical GitHub repository; with it the scaffold
+// includes the pointer file the freshness check reads. A local build with no
+// GitHub has none, and gets no pointer.
+//
+// `governance` is the approval rule chosen on the create screen
+// ({ approverPolicy, approvalsRequired }, the apps row's two columns). A
+// non-default rule is written into dapp.json's `governance` block, the
+// rule's source of truth, so the repository says what the row says from its
+// first commit. The default rule writes nothing: dapp.json stays
+// `{ "secrets": [] }`.
+//
+// `description` is the create screen's optional "What is it?" line. It
+// becomes dapp.json's top-level `description` (what the join screen,
+// Discover and the project's page show) and the first sentence of
+// CLAUDE.md's About section, so the coding agent starts from the same
+// intent. Absent, both stay as they were.
+function getTemplateFiles(appName, slug, dbUrl, repoUrl = null, { governance = null, description = null } = {}) {
+  const canonicalRepoFile = getCanonicalRepoFile(repoUrl);
+  const governanceBlock = require('./create-options').governanceBlock(governance);
+  const about = typeof description === 'string' && description.trim() ? description.trim() : null;
   return [
     {
       path: 'CLAUDE.md',
@@ -251,6 +354,34 @@ for the whole story, including what to do if you are still being prompted
 (usually: your connector is registered under a different name than the rules
 assume).
 
+## Check that this checkout is current
+
+You may be working in a fork of this app whose \`main\` is behind the app's
+canonical repository, and nothing in the checkout says so: \`git fetch origin\`
+compares the fork with itself. This matters before you **read** code to answer
+a question about how the app behaves now, not only before you edit it.
+
+The canonical repository is named in \`${CANONICAL_REPO_PATH}\`. Check against
+it, not against \`origin\`:
+
+\`\`\`sh
+git fetch "$(cat ${CANONICAL_REPO_PATH})" main
+git merge-base --is-ancestor FETCH_HEAD HEAD && echo current || echo behind
+\`\`\`
+
+\`behind\` means this checkout does not contain the canonical \`main\`. To answer
+a question, read the canonical code instead (\`git show FETCH_HEAD:<path>\`,
+\`git grep <pattern> FETCH_HEAD\`). To change code, start from the exact base
+commit your Homeroom work order gives, and never merge or rebase onto the
+canonical \`main\` yourself: which commit a change is diffed against decides
+what the group votes on. With the Homeroom connector, \`get_checkout_status\`
+answers the same question.
+
+A session-start hook (\`${FRESHNESS_HOOK_PATH}\`, see \`.claude/README.md\`) runs
+this check for you and tells you when you are behind. It is silent offline, so
+its silence is not proof the checkout is current. Inside Homeroom's dev-chat
+the platform fixes the base commit, and none of this applies.
+
 ## Starter template
 
 The screen this app currently ships — the hero, the "What's already
@@ -281,8 +412,8 @@ tables you've marked private), etc.
 
 ## About ${appName}
 
-_(add a sentence or two of product context here so Claude Code has a
-shared understanding of what this app is for)_
+${about ? `${about}\n\n_(add a sentence or two more of product context here so Claude Code has a\nshared understanding of what this app is for)_` : `_(add a sentence or two of product context here so Claude Code has a
+shared understanding of what this app is for)_`}
 
 ## App-specific conventions
 
@@ -365,13 +496,16 @@ FROM node:22-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY . .
-# After COPY . . so the compiled stylesheet is not overwritten by the
+COPY --chown=1000:1000 . .
+# After the source copy so the compiled stylesheet is not overwritten by the
 # source tree (which deliberately does not contain one).
-COPY --from=css /build/public/tailwind.css ./public/tailwind.css
+COPY --chown=1000:1000 --from=css /build/public/tailwind.css ./public/tailwind.css
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \\
   CMD wget -qO- http://localhost:3000/health || exit 1
+# Kubernetes enforces runAsNonRoot without supplying a UID. Keep this numeric:
+# unlike a symbolic USER, it lets the kubelet verify the image before startup.
+USER 1000:1000
 CMD ["node", "server.js"]
 `,
     },
@@ -492,11 +626,21 @@ value = "build"
       // USERNODE_MISSING_SECRETS) are managed by the platform and
       // can't appear in this list.
       path: 'dapp.json',
-      content: JSON.stringify({ secrets: [] }, null, 2),
+      content: JSON.stringify(
+        {
+          ...(about ? { description: about } : {}),
+          secrets: [],
+          ...(governanceBlock ? { governance: governanceBlock } : {}),
+        },
+        null,
+        2,
+      ),
     },
-    // The two `.claude/` entries come from the shared helper above, which an
-    // import and a fork also call — see its note.
+    // The `.claude/` entries come from the shared helper above, which an
+    // import and a fork also call — see its note. The canonical-repo pointer
+    // is per app, so it is added beside them rather than inside them.
     ...getConnectorScaffoldFiles(),
+    ...(canonicalRepoFile ? [canonicalRepoFile] : []),
     {
       path: 'server.js',
       content: `const express = require('express');
@@ -544,16 +688,17 @@ app.use(express.json());
 // public: the platform serves them anonymously from any app origin, and a
 // login redirect arriving where a <script> was expected is exactly the
 // failure a relative path is meant to avoid.
-// The platform's origin, at RUNTIME. The value baked in here is only a
-// fallback for a container that was not handed the env var (local
-// development, mainly) — the injected one wins, so this app keeps working
-// when the platform's domain moves instead of pointing at wherever it used
-// to be. That is the failure mode that broke the whole fleet once already.
-const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '${PLATFORM_BASE_URL}')
+// The platform's origin, at RUNTIME, and ONLY from the variable the platform
+// injects. No hostname is written into this file: a baked-in one is what left
+// the whole fleet pointing at a domain the platform had moved away from.
+// Unset only outside the platform (a plain local \`node server.js\`) — set
+// USERNODE_PLATFORM_ORIGIN there too if you want the hosted assets locally.
+const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '')
   .replace(/\\/+$/, '');
 
 app.get(/^\\/usernode-(?:bridge|native|tailwind)\\//, async (req, res) => {
   try {
+    if (!PLATFORM_ORIGIN) return res.sendStatus(503);
     const upstream = await fetch(PLATFORM_ORIGIN + req.path);
     if (!upstream.ok) return res.sendStatus(upstream.status);
     const type = upstream.headers.get('content-type');
@@ -659,7 +804,7 @@ app.get('*', (req, res) => {
     // unusual falls back to the bare link.
     const deepPath = /^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)
       ? '?path=' + encodeURIComponent(req.originalUrl) : '';
-    if (req.get('sec-fetch-dest') === 'document') {
+    if (PLATFORM_ORIGIN && req.get('sec-fetch-dest') === 'document') {
       return res.redirect(302, PLATFORM_ORIGIN + '/app/${slug}/full' + deepPath);
     }
     return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Homeroom</title>
@@ -712,8 +857,21 @@ start().catch(err => { console.error(err); process.exit(1); });
        class assembled from fragments at runtime (e.g. "bg-" + tone + "-500")
        is invisible to the compiler. If you genuinely need runtime-generated
        classes, swap this link for the platform-hosted engine instead:
-       <script src="${PLATFORM_BASE_URL}/usernode-tailwind/v1/tailwind.js"></script> -->
+       <script src="/usernode-tailwind/v1/tailwind.js"></script> -->
   <link rel="stylesheet" href="/tailwind.css">
+  <!-- The platform bridge, centrally hosted and loaded by RELATIVE path (the
+       handler in server.js serves it under a plain "node server.js"; the
+       platform's edge answers it everywhere else). Never vendor it and never
+       write a hostname in front of it.
+       It is NOT conditional on this app calling a bridge API: it is also how
+       the app ANSWERS the shell, so a scaffold without it is invisible to
+       anything that asks the frame a question. Offline launch is one of those.
+       Another is the page's colour: the bridge reports this document's opaque
+       ground to the shell (#1581), which is what makes the platform bar above
+       the app take the app's tone instead of the viewer's theme (#1945). This
+       scaffold paints a dark page (bg-zinc-950 on the body element), so
+       without this tag a brand-new app sits under a light bar. -->
+  <script src="/usernode-bridge/v1/bridge.js"></script>
 </head>
 <body class="bg-zinc-950 text-zinc-100 min-h-screen">
   <main class="max-w-md mx-auto px-4 py-10 flex flex-col gap-6">
@@ -824,4 +982,11 @@ function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-module.exports = { getTemplateFiles, getConnectorScaffoldFiles };
+module.exports = {
+  getTemplateFiles,
+  getConnectorScaffoldFiles,
+  getCanonicalRepoFile,
+  canonicalRepoUrl,
+  CANONICAL_REPO_PATH,
+  FRESHNESS_HOOK_PATH,
+};

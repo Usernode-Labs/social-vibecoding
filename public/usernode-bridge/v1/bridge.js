@@ -90,6 +90,7 @@
     removeHomeScreenShortcut: true,
     reorderHomeScreenShortcuts: true,
     openNativeScreen: true,
+    setBackNavigationEnabled: true,
     captureScreenshot: true,
     getSettingsState: true,
     setNodeSleepEnabled: true,
@@ -5009,6 +5010,17 @@
     });
   }
 
+  // iOS WebKit's native history gesture. Feature-detect this capability;
+  // embedded apps cannot change the trusted shell's navigation policy.
+  window.usernode.setBackNavigationEnabled = function (state) {
+    if (!state || typeof state.enabled !== 'boolean') {
+      return Promise.reject(new Error('enabled must be a boolean'));
+    }
+    return callNativeChromeAction('setBackNavigationEnabled', {
+      enabled: state.enabled,
+    }, 3000);
+  };
+
   // captureScreenshot() → { contentType: "image/jpeg", base64 }. Captures
   // the currently visible native app window after the feedback dialog hides.
   // The app enforces the same 4 MB ceiling as the feedback upload endpoint.
@@ -5570,6 +5582,175 @@
     }
   })();
 
+  // Gated browser capabilities (#2219) — additive within v1.
+  //
+  // The powerful capabilities reach an app by Permissions Policy
+  // DELEGATION: the shell's `allow` attribute on this frame, and nothing
+  // else. Nine of them are gated on a per-user, per-app grant that the
+  // platform asks for in its own dialog:
+  //
+  //   geolocation  microphone  camera  display-capture
+  //   usb  serial  hid  bluetooth  midi
+  //
+  // (`clipboard-write` and `pointer-lock` are delegated to every app and
+  // need none of this.)
+  //
+  // WHY THE PLATFORM ASKS AND NOT JUST THE BROWSER. Under permission
+  // delegation a cross-origin child's request is attributed to the
+  // TOP-LEVEL origin, so the browser's own prompt names the platform
+  // rather than your app, and its answer is remembered for the platform
+  // origin — which would mean every app inheriting it silently. The
+  // platform's prompt is the one that can name the app that is actually
+  // asking.
+  //
+  // DECLARE FIRST. A capability your app has not declared in `dapp.json`
+  // is refused before any dialog is shown:
+  //
+  //   "permissions": [
+  //     { "capability": "microphone", "reason": "Records your voice notes" }
+  //   ]
+  //
+  // USE IT WHEN YOU NEED IT, not at startup. Call requestPermission() on
+  // the tap that needs the capability, then use the ordinary web API:
+  //
+  //   btn.onclick = function () {
+  //     usernode.requestPermission("microphone").then(function (r) {
+  //       if (r.state !== "granted") return showWhyWeNeedIt();
+  //       if (!r.active) return;  // the shell is reloading us; see below
+  //       return navigator.mediaDevices.getUserMedia({ audio: true });
+  //     });
+  //   };
+  //
+  // `active` is the one field worth reading twice. A container policy is
+  // computed when the frame NAVIGATES, so a capability granted just now
+  // cannot apply to the document that asked for it. On that first grant
+  // the platform tells the user the app will reopen, and reloads this
+  // frame — so `active: false` means "granted, and you are about to be
+  // reloaded": stop, do not call the web API, and let the reload land.
+  // Every later launch delegates it up front and resolves `active: true`
+  // with no dialog and no reload at all.
+  //
+  // Standalone (no shell), every call rejects — the same stance as
+  // requestLlmAccess. hasCapability() is the exception: it reads this
+  // document's own policy, so it answers anywhere.
+  (function () {
+    var _PERM_ACK_TIMEOUT_MS = 15000;
+    var _PERM_DECISION_TIMEOUT_MS = 5 * 60 * 1000;
+    var _permPending = {};
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_permission || !data.id) return;
+      var entry = _permPending[data.id];
+      if (!entry) return;
+      if (data.__usernode_permission === "ack") {
+        // The shell has the request; the user may sit on the dialog now.
+        if (entry.ackTimer) { clearTimeout(entry.ackTimer); entry.ackTimer = null; }
+        return;
+      }
+      if (data.__usernode_permission === "response") {
+        delete _permPending[data.id];
+        if (entry.ackTimer) clearTimeout(entry.ackTimer);
+        if (entry.timer) clearTimeout(entry.timer);
+        if (data.error) entry.reject(new Error(data.error));
+        else entry.resolve(data.value);
+      }
+    });
+
+    function permissionCall(type, capability) {
+      return new Promise(function (resolve, reject) {
+        if (window === window.parent) {
+          reject(new Error(
+            "App permissions require the Usernode platform shell (not available standalone)."
+          ));
+          return;
+        }
+        var id = "perm-" + String(Date.now()) + "-" +
+          Math.random().toString(16).slice(2);
+        var entry = { resolve: resolve, reject: reject, ackTimer: null, timer: null };
+        _permPending[id] = entry;
+        entry.ackTimer = setTimeout(function () {
+          if (!_permPending[id]) return;
+          delete _permPending[id];
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(new Error(
+            "Usernode shell did not respond — not running inside the platform, " +
+            "or the host page predates app permissions."
+          ));
+        }, _PERM_ACK_TIMEOUT_MS);
+        entry.timer = setTimeout(function () {
+          if (!_permPending[id]) return;
+          delete _permPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          reject(new Error("Permission request timed out."));
+        }, _PERM_DECISION_TIMEOUT_MS);
+        try {
+          console.log(_BRIDGE_TAG, "permission → parent:", type, capability || "", "id", id);
+          window.parent.postMessage({
+            __usernode_permission: type,
+            id: id,
+            capability: capability || null,
+          }, "*");
+        } catch (err) {
+          delete _permPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(err);
+        }
+      });
+    }
+
+    // Does THIS document hold the delegation right now? Synchronous, and
+    // the only call here that works standalone, because it reads the
+    // document's own Permissions Policy rather than asking the shell.
+    // `true` where the browser exposes no way to ask, so treat it as
+    // "try it and see" rather than a guarantee.
+    if (typeof window.usernode.hasCapability !== "function") {
+      window.usernode.hasCapability = function hasCapability(capability) {
+        if (!capability) return false;
+        try {
+          var policy = document.permissionsPolicy || document.featurePolicy;
+          if (!policy || typeof policy.allowsFeature !== "function") return true;
+          return !!policy.allowsFeature(capability);
+        } catch (err) {
+          return true;
+        }
+      };
+    }
+
+    // Ask for one capability, prompting the user if this app does not
+    // already hold it. Resolves { capability, state, active, reason }.
+    // `state` is "granted" or "denied"; on a denial `reason` is
+    // "declined" (the user said no), "not_declared" (missing from
+    // dapp.json) or "unknown_capability". Asking about one of the two
+    // UNGATED capabilities resolves granted and active with reason
+    // "ungated", so a caller can ask about any capability uniformly
+    // rather than having to know which ones the platform gates.
+    if (typeof window.usernode.requestPermission !== "function") {
+      window.usernode.requestPermission = function requestPermission(capability) {
+        return permissionCall("request", capability);
+      };
+    }
+
+    // Read the current state without ever prompting. Same shape as
+    // requestPermission's answer, so a UI can render an "enable" button
+    // from it before the user commits to anything.
+    if (typeof window.usernode.getPermission !== "function") {
+      window.usernode.getPermission = function getPermission(capability) {
+        return permissionCall("get", capability);
+      };
+    }
+
+    // The whole picture for this app: what it declared, what this user
+    // granted, and what is live in this document. Never prompts.
+    if (typeof window.usernode.getPermissions !== "function") {
+      window.usernode.getPermissions = function getPermissions() {
+        return permissionCall("get-all", null);
+      };
+    }
+  })();
+
   // App file storage (#752) — additive within v1.
   //
   // usernode.uploadFile(file, { visibility }) stores a user-picked image
@@ -5964,9 +6145,21 @@
   //      same object as `detail` (same convention as
   //      `usernode:locale-changed`), for apps that lay out in JS.
   //
-  // These are the SAFE AREA only — independent of the kit's
-  // `--un-kb-inset` keyboard tracking, which the app's own visualViewport
-  // already reports correctly inside the frame.
+  //   4. `--un-kb-inset` and the `un-kb` class on <html>, from the same
+  //      message's `keyboard` field. This USED to say the app's own
+  //      visualViewport already reported the keyboard correctly inside the
+  //      frame. It does not, and that assumption is why every app's
+  //      bottom-anchored UI was dead to the keyboard: an iframe's
+  //      visualViewport describes the FRAME, the keyboard does not resize the
+  //      frame, so the kit's tracker — innerHeight minus visualViewport.height
+  //      — computes 0 in here, forever. Measured with a docked keyboard and a
+  //      field in the frame focused: the shell read 810/450/360 while the
+  //      frame read 709/709/0 at the same moment. The shell can see it, so the
+  //      shell forwards it, and the kit's existing CSS (.un-kb-avoid,
+  //      .un-sheet, .un-panel-body, .un-action-sheet, .un-modal) plus any app
+  //      consuming the var start receiving a real number with no change of
+  //      their own. The kit's in-frame tracker does not fight this: computing
+  //      0 every time, it never writes the property at all.
   //
   // Standalone (no parent frame, or a host that never answers) the
   // properties are deliberately left UNSET rather than zeroed, so the
@@ -5987,6 +6180,33 @@
         out[EDGES[i]] = isFinite(n) && n > 0 ? n : 0;
       }
       return out;
+    }
+
+    // The keyboard travels in the same message but memoizes separately: it
+    // moves while the four edges sit still, so folding it into `apply`'s
+    // `changed` check below would swallow every keyboard event.
+    var _keyboard = 0;
+
+    function applyKeyboard(value) {
+      if (!value || typeof value !== "object") return;
+      var n = Number(value.keyboard);
+      var next = isFinite(n) && n > 0 ? Math.round(n) : 0;
+      if (next === _keyboard) return;
+      _keyboard = next;
+      try {
+        document.documentElement.style.setProperty("--un-kb-inset", next + "px");
+        document.documentElement.classList.toggle("un-kb", next > 0);
+      } catch (_) {}
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:keyboard-changed", {
+          detail: { inset: next },
+        }));
+      } catch (_) {}
+    }
+
+    function applyAll(value) {
+      applyKeyboard(value);
+      apply(value);
     }
 
     function apply(value) {
@@ -6033,11 +6253,11 @@
       // whenever the frame's rect shifts; `response` answers our startup
       // request. Both carry the same value shape.
       if (data.__usernode_safe_area === "changed") {
-        apply(data.value);
+        applyAll(data.value);
         return;
       }
       if (data.__usernode_safe_area === "response" && data.id === _getId) {
-        apply(data.value);
+        applyAll(data.value);
       }
     });
 
@@ -6053,6 +6273,79 @@
     } catch (_) {}
   })();
   /* __USERNODE_SAFE_AREA_END__ */
+
+  // =====================================================================
+  //  Public API: platform theme (usernode.theme) — additive within v1
+  // =====================================================================
+  //
+  // The viewer's resolved platform theme, "light" or "dark" (issue #3257).
+  //
+  // An app in the platform frame cannot see the viewer's Light/Dark choice
+  // on its own: `prefers-color-scheme` inside a cross-origin frame follows
+  // the OS, not the shell around it, so a viewer who picked Dark on a
+  // light-mode OS saw every app light. The shell forwards the RESOLVED
+  // theme (never "system") two ways, and this block turns both into:
+  //
+  //   1. `usernode.theme` — "light" | "dark", or null standalone or before
+  //      the shell has said. Seeded synchronously from `?un-theme=` on
+  //      the frame URL, so a bootstrap that runs after this <script> can
+  //      read it before first paint.
+  //   2. A `usernode:theme-changed` CustomEvent on window, `detail`
+  //      `{ theme }`, whenever it changes (the shell pushes one on every
+  //      theme change; nothing reloads the app).
+  //
+  // It reports only. The app decides what dark means for it, so nothing
+  // here writes a class, an attribute or a style.
+  /* __USERNODE_THEME_BEGIN__ */
+  (function () {
+    function normalize(value) {
+      return value === "dark" || value === "light" ? value : null;
+    }
+
+    var seeded = null;
+    try {
+      seeded = normalize(new URLSearchParams(window.location.search).get("un-theme"));
+    } catch (_) {}
+    window.usernode.theme = seeded;
+
+    // Standalone: no shell, and prefers-color-scheme is the right signal.
+    if (window === window.parent) return;
+
+    function apply(value) {
+      var next = normalize(value && value.theme);
+      if (!next || next === window.usernode.theme) return;
+      window.usernode.theme = next;
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:theme-changed", {
+          detail: { theme: next },
+        }));
+      } catch (_) {}
+    }
+
+    var _getId = "theme-" + String(Date.now()) + "-" +
+      Math.random().toString(16).slice(2);
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_theme) return;
+      if (data.__usernode_theme === "changed") {
+        apply(data.value);
+        return;
+      }
+      if (data.__usernode_theme === "response" && data.id === _getId) {
+        apply(data.value);
+      }
+    });
+
+    // Ask once at load: the URL value is only as fresh as the frame's last
+    // navigation, and a `changed` posted before this listener existed
+    // must not be missed.
+    try {
+      window.parent.postMessage({ __usernode_theme: "get", id: _getId }, "*");
+    } catch (_) {}
+  })();
+  /* __USERNODE_THEME_END__ */
 
   // #1581: iOS paints the embedding iframe's background behind a rubber-band
   // scroll, not the child document's html background. Publish the document's
@@ -6145,6 +6438,63 @@
     } catch (_) {}
   })();
   /* __USERNODE_BACKGROUND_END__ */
+
+  // #2902: the shell keeps the last few apps loaded in hidden frames so that
+  // coming back to one shows it exactly as it was left. A hidden app must not
+  // keep playing into the room, so on `hidden` this pauses every <audio> and
+  // <video> that is playing and, on `visible`, resumes exactly those — the
+  // ones the viewer had playing, not ones they had paused themselves. Anything
+  // else an app wants to stop (Web Audio, animation loops, polling) hangs off
+  // the `usernode:visibility-changed` event, whose `detail` is `{ hidden }`.
+  /* __USERNODE_VISIBILITY_BEGIN__ */
+  (function () {
+    if (window === window.parent) return;
+    var hidden = false;
+    var paused = [];
+
+    function pauseMedia() {
+      var media = document.querySelectorAll("audio, video");
+      for (var i = 0; i < media.length; i++) {
+        var m = media[i];
+        try {
+          if (!m.paused && !m.ended) {
+            m.pause();
+            paused.push(m);
+          }
+        } catch (_) {}
+      }
+    }
+
+    function resumeMedia() {
+      var list = paused;
+      paused = [];
+      for (var i = 0; i < list.length; i++) {
+        try {
+          if (!list[i].isConnected) continue;
+          var played = list[i].play();
+          if (played && typeof played.catch === "function") played.catch(function () {});
+        } catch (_) {}
+      }
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data) return;
+      var state = data.__usernode_visibility;
+      if (state !== "hidden" && state !== "visible") return;
+      var next = state === "hidden";
+      if (next === hidden) return;
+      hidden = next;
+      if (hidden) pauseMedia(); else resumeMedia();
+      try {
+        window.dispatchEvent(new CustomEvent("usernode:visibility-changed", {
+          detail: { hidden: hidden },
+        }));
+      } catch (_) {}
+    });
+  })();
+  /* __USERNODE_VISIBILITY_END__ */
 
   // Rendering invariants (issue #360) — additive within v1.
   //
@@ -6428,53 +6778,94 @@
   /* __USERNODE_OFFLINE_READY_END__ */
 
   /* __USERNODE_PLATFORM_LINK_START__ */
-  // ── Floating "Open in Usernode" pill (chromeless share views) ─────────
+  // ── Floating Homeroom mark (chromeless share views) ───────────────────
   //
   // Apps shared via their bare production subdomain
   // (<slug>.<platform-host>) render with no platform chrome at all —
-  // there's no visible path from the app back to its in-platform page.
-  // The bridge is the one piece of platform code every dapp loads, so it
-  // injects a small dismissible pill in the bottom-right corner that
-  // deep-links back to https://<platform-host>/app/<slug> — the clean,
-  // canonical App route the shell restores on a cold visit.
+  // nothing on the page says it IS a Homeroom app, and there is no
+  // visible path from it back to the app's in-platform page. The bridge
+  // is the one piece of platform code every dapp loads, so it injects a
+  // small mark in the bottom-left corner that deep-links back to
+  // https://<platform-host>/app/<slug> — the clean, canonical App route
+  // the shell restores on a cold visit.
   //
   // Shown ONLY when ALL of these hold:
-  //   * top frame         — inside the platform, apps render in iframes
-  //                         and the chrome is already present;
+  //   * top frame         — inside the platform an app renders in an
+  //                         iframe and the shell draws its own affordance
+  //                         (features/header/chromeless-pill.tsx), so a
+  //                         mark here would be the SECOND one on screen;
   //   * no native channel — the Flutter WebView has its own navigation,
   //                         a web link to the platform origin is wrong
   //                         there;
-  //   * location.host is exactly <label>.<platform-host> with no "--" in
-  //     the label — i.e. a production app subdomain. That excludes the
-  //     platform shell itself (same host, loads the bridge same-origin),
-  //     staging previews (<slug>--s<id>), localhost dev, and foreign
-  //     embeds. The platform host is derived from this script's own src,
-  //     so self-hosted forks serving their own bridge get the right
-  //     origin for free.
+  //   * not the platform's own document — the shell loads this same
+  //                         bridge in the TOP frame from its apex, and
+  //                         says so with window.__usernodePlatformShell
+  //                         (frontend/src/head.html);
+  //   * location.host is <label>.<registrable-domain> with no "--" in
+  //     the label — i.e. a production app subdomain, which is exactly
+  //     the shape the platform's routing gives an app (the
+  //     `*.{$USERNODE_DOMAIN}` site in the Caddyfile; one Ingress host
+  //     per app in services/kubernetes.js). That excludes staging
+  //     previews (<slug>--s<id>), `<slug>.localhost` and other dev hosts.
   //
-  // The × only hides the pill for the current page load — no storage
-  // flag is kept, so the pill reappears on every refresh.
+  // WHY THE HOSTNAME AND NOT THIS SCRIPT'S SRC. This used to derive the
+  // platform host from `document.currentScript.src` and bail when it
+  // came out equal to location.host. That is only ever unequal for an
+  // app that names the platform's hostname in the tag — and the
+  // conventions tell every app to load the bridge at the RELATIVE path
+  // /usernode-bridge/v1/bridge.js, which the platform serves on the
+  // app's OWN hostname precisely so that no app carries a hostname. So
+  // for every app that follows them the derived host WAS location.host
+  // and the pill returned null: it never rendered on a single shared
+  // link. The src still gets a say where an app does name a host — then
+  // it has to agree with the one the subdomain implies, which is what
+  // keeps a foreign page that embeds this bridge from drawing a mark.
+  //
+  // NOT DISMISSIBLE, and icon-sized rather than a labelled pill. Both
+  // follow from the same constraint: apps own their corners (a compose
+  // button, a floating control, the kit's own chrome), so an affordance
+  // that cannot be dismissed has to be small enough and far enough out
+  // of the way to be worth its permanence. Bottom-LEFT for that reason
+  // too — bottom-right is where a floating control conventionally goes,
+  // and is where the in-shell pill already sits.
   (function () {
     // document.currentScript is only valid during synchronous script
     // evaluation — which is exactly when this capture runs.
     var _script = document.currentScript;
 
+    // Served under one of the three centrally hosted asset prefixes, so
+    // this resolves on the app's own origin and carries no hostname —
+    // the same contract as the bridge itself. See mark.svg's header.
+    var MARK_SRC = "/usernode-bridge/v1/mark.svg";
+
+    // The platform host as NAMED BY THE TAG, or null when the tag is
+    // relative (the conventional form) and so names nothing at all.
+    function taggedPlatformHost() {
+      if (!_script || !_script.src) return null;
+      var host;
+      try {
+        host = new URL(_script.src, location.href).host;
+      } catch (_) { return null; }
+      return host && host !== location.host ? host : null;
+    }
+
     function platformLinkTarget() {
       if (_inIframe || _hasNativeChannel || window.Usernode) return null;
-      if (!_script || !_script.src) return null;
-      var platformHost;
-      try {
-        platformHost = new URL(_script.src, location.href).host;
-      } catch (_) { return null; }
-      if (!platformHost || location.host === platformHost) return null;
-      var suffix = "." + platformHost;
-      if (location.host.length <= suffix.length) return null;
-      if (location.host.slice(-suffix.length) !== suffix) return null;
-      var label = location.host.slice(0, -suffix.length);
+      if (window.__usernodePlatformShell) return null;
+
+      var dot = location.host.indexOf(".");
+      if (dot <= 0) return null;
+      var label = location.host.slice(0, dot);
+      var platformHost = location.host.slice(dot + 1);
       // A single clean label only: staging previews (<slug>--s<id>) and
-      // deeper/odd hostnames don't get the pill.
+      // deeper/odd hostnames don't get the mark.
       if (!/^[a-z0-9-]+$/i.test(label)) return null;
       if (label.indexOf("--") !== -1) return null;
+      // What is left has to be a registrable domain. `<slug>.localhost`
+      // and other single-label hosts are dev, not a shared app link.
+      if (platformHost.indexOf(".") === -1) return null;
+      var tagged = taggedPlatformHost();
+      if (tagged && tagged !== platformHost) return null;
       return {
         slug: label,
         href: "https://" + platformHost + "/app/" + label,
@@ -6491,14 +6882,13 @@
         style.id = "__usernode-platform-link-styles";
         style.textContent = [
           // z-index one below the QR overlay (999999) so a transaction
-          // prompt still covers the pill. safe-area insets keep it clear
-          // of iPhone home indicators.
-          ".__un-platform-link{position:fixed;right:calc(12px + env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;display:flex;align-items:center;background:rgba(15,20,32,0.82);color:#e7edf7;border-radius:999px;padding:6px 6px 6px 12px;font:12px/1.2 -apple-system,system-ui,sans-serif;text-decoration:none;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.85}",
-          ".__un-platform-link:hover{opacity:1}",
-          ".__un-platform-link-glyph{font-size:11px;opacity:0.75;margin-left:4px}",
-          ".__un-platform-link-close{background:none;border:none;color:inherit;font:14px/1 -apple-system,system-ui,sans-serif;padding:2px 6px;margin-left:2px;cursor:pointer;opacity:0.6;border-radius:999px}",
-          ".__un-platform-link-close:hover{opacity:1}",
-          "@media(prefers-color-scheme:light){.__un-platform-link{background:rgba(255,255,255,0.9);color:#0b1220;box-shadow:0 2px 10px rgba(0,0,0,0.18)}}",
+          // prompt still covers the mark. safe-area insets keep it clear
+          // of iPhone home indicators and the left-edge rounding.
+          ".__un-platform-link{position:fixed;left:calc(12px + env(safe-area-inset-left,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:999998;display:block;width:28px;height:28px;border-radius:7px;line-height:0;box-shadow:0 2px 10px rgba(0,0,0,0.3);opacity:0.9}",
+          ".__un-platform-link:hover,.__un-platform-link:focus-visible{opacity:1}",
+          // No radius here: the tile carries its own rounded corners, and a
+          // CSS clip at a different one would shave them.
+          ".__un-platform-link img{display:block;width:28px;height:28px}",
         ].join("\n");
         document.head.appendChild(style);
       }
@@ -6507,32 +6897,26 @@
       link.id = "__un-platform-link";
       link.className = "__un-platform-link";
       link.href = target.href;
-      link.setAttribute("aria-label", "Open this app on Usernode");
+      link.title = "Open this app on Homeroom";
+      link.setAttribute("aria-label", "Open this app on Homeroom");
 
-      var label = document.createElement("span");
-      label.textContent = "Open in Usernode";
-
-      var glyph = document.createElement("span");
-      glyph.className = "__un-platform-link-glyph";
-      glyph.textContent = "\u2197"; // ↗ (escaped: robust to mis-declared page charsets)
-      glyph.setAttribute("aria-hidden", "true");
-
-      var close = document.createElement("button");
-      close.className = "__un-platform-link-close";
-      close.type = "button";
-      close.textContent = "\u00d7"; // × (escaped, same reason)
-      close.setAttribute("aria-label", "Hide");
-      close.onclick = function (ev) {
-        // The button lives inside the anchor: cancel the navigation the
-        // bubbled click would otherwise trigger.
-        ev.preventDefault();
-        ev.stopPropagation();
+      var mark = document.createElement("img");
+      // A broken image is worse than no mark: an origin that does not
+      // route the platform asset prefixes — a self-hosted fork part-way
+      // through the migration — would otherwise leave a torn-image box
+      // sitting in the corner of somebody's app. Attached BEFORE src,
+      // which is what starts the load.
+      mark.onerror = function () {
         if (link.parentNode) link.parentNode.removeChild(link);
       };
+      mark.src = MARK_SRC;
+      // The anchor carries the accessible name; a second one here would
+      // have a screen reader read the same link twice.
+      mark.alt = "";
+      mark.width = 28;
+      mark.height = 28;
 
-      link.appendChild(label);
-      link.appendChild(glyph);
-      link.appendChild(close);
+      link.appendChild(mark);
       document.body.appendChild(link);
     }
 

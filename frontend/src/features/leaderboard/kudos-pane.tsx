@@ -27,9 +27,19 @@
  *   rounded-full` then the fill — so routing them through the primitive would
  *   need the group order changed, which would move the rendered class
  *   attribute of every other button in the shell.
- * - `<TabsTrigger>` renders `aria-current`, and these strips never had it. The
- *   section strip above them did, which is why chunk F could adopt the
- *   primitive there and this pane cannot.
+ * - `<TabsTrigger>` renders `aria-current`, which the window pills and history
+ *   chips never had — and should not, since they are not tabs.
+ *
+ * The SUB-TAB strip is the exception, and is a `<TabsTrigger>` as of #2441.
+ * It was an underline row (`border-b-2`, `border-violet-500` under the active
+ * label) sitting directly beneath the reskinned section strip on the same
+ * screen — the one shape @/components/ui/tabs.tsx exists to retire, two
+ * inches below a strip that had already retired it. Restyling it meant giving
+ * up the "nothing moves visually" clause for this strip anyway, so it adopts
+ * the primitive whole: the same track, the same near-black selected fill, and
+ * `aria-current` along with them. Nothing selects on these buttons —
+ * `data-lb-sub` appears in no dapp.json check — so the added attribute costs
+ * nothing and the strip stops being a second implementation of tabs.
  *
  * That leaves the two violet-filled toggles (the active window pill, the
  * active history chip) as literal `bg-violet-600` inside a `<button>` tag,
@@ -47,11 +57,21 @@
  * store's initial value is what makes it do so.
  */
 
-import { Fragment, type ReactNode } from 'react';
+import { Fragment, useRef, type ReactNode } from 'react';
 
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
+import {
+  SECTION_TAB_ACTIVE,
+  SECTION_TAB_INACTIVE,
+  SECTION_TABS_LIST_BASE,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs';
 
+import { useScrollFade } from '../../lib/use-scroll-fade';
 import { useStoreState } from '../../lib/use-store-state';
+import { MessageButton } from '../profile/message-button';
 import { kudosPaneStore } from './kudos-pane-store.js';
 
 type Tone = 'emerald' | 'amber' | 'zinc' | 'violet' | 'sky' | 'red';
@@ -59,7 +79,7 @@ type Tone = 'emerald' | 'amber' | 'zinc' | 'violet' | 'sky' | 'red';
 type Badge = { tone: Tone; label: string };
 
 type ChromeView =
-  | { kind: 'profile'; who: string; initial: string }
+  | { kind: 'profile'; who: string; initial: string; canMessage?: boolean }
   | {
       kind: 'tabs';
       subtitle: string;
@@ -281,10 +301,10 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
         ← Top users
       </a>
       <div className="flex items-center gap-3">
-        <div className="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
+        <div className="w-12 h-12 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-lg">
           {view.initial}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100 truncate">
             {`@${view.who}`}
           </h2>
@@ -292,17 +312,31 @@ function ProfileHeader({ view }: { view: Extract<ChromeView, { kind: 'profile' }
             All PRs this user has proposed, newest first.
           </p>
         </div>
+        {/*
+            The prototype's person page carries "Message" beside the name.
+            Never on your own page (Leaderboard._canMessage decides).
+        */}
+        {view.canMessage ? <MessageButton username={view.who} /> : null}
       </div>
     </header>
   );
 }
 
-const SUB_TAB = 'px-3 py-2 text-sm font-medium border-b-2';
-const SUB_TAB_ACTIVE = 'border-violet-500 text-violet-700 dark:text-violet-300';
-const SUB_TAB_INACTIVE = 'border-transparent text-zinc-500 dark:text-zinc-400 '
-  + 'hover:text-zinc-800 dark:hover:text-zinc-200';
+// QA 2026-09-24 Q21: on a phone the sub-tabs and the window pills shared one
+// row that did not wrap, so each label broke onto two lines inside a 32px
+// pill and was cut top and bottom. Now:
+//   * every label stays on one line (`whitespace-nowrap`, `shrink-0`);
+//   * below `sm` the two groups stack, sub-tabs over window pills, and the
+//     sub-tabs tighten to px-3 (the section strip above does the same at
+//     px-2), which fits three labels in a 360px column;
+//   * narrower still (320px) the sub-strip scrolls sideways like the section
+//     strip, with the same edge fade, rather than clipping.
+// SECTION_TAB_BASE's face otherwise: h-8, rounded-full, text-sm semibold.
+const SUB_TAB = 'inline-flex items-center justify-center h-8 px-3 sm:px-4 rounded-full text-sm font-semibold transition-colors whitespace-nowrap shrink-0';
+const SUB_TABS_LIST = `${SECTION_TABS_LIST_BASE} max-w-full overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden`;
+const TAB_ROW = 'flex flex-col items-start gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3';
 
-const WIN_TAB = 'px-3 py-1 text-xs font-medium rounded-full';
+const WIN_TAB = 'px-3 py-1 text-xs font-medium rounded-full whitespace-nowrap';
 const WIN_TAB_INACTIVE = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 '
   + 'hover:bg-zinc-200 dark:hover:bg-zinc-700';
 
@@ -312,25 +346,40 @@ const WIN_TAB_INACTIVE = 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-z
  * section tab above says "Kudos".
  */
 function TabChrome({ view }: { view: Extract<ChromeView, { kind: 'tabs' }> }): ReactNode {
+  const activeSub = view.subTabs.find((t) => t.active)?.key ?? '';
+  const subRef = useRef<HTMLDivElement | null>(null);
+  const subFade = useScrollFade(subRef, activeSub);
   return (
     <>
       <header className="mb-4">
         <p className="text-sm text-zinc-500 dark:text-zinc-400">{view.subtitle}</p>
       </header>
-      <div className="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 mb-3">
-        <div className="flex gap-4">
-          {view.subTabs.map((t) => (
-            <button
-              key={t.key}
-              data-lb-sub={t.key}
-              className={`${SUB_TAB} ${t.active ? SUB_TAB_ACTIVE : SUB_TAB_INACTIVE}`}
-              onClick={() => controller()?._setSub(t.key)}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex gap-2 pb-1">
+      {/*
+          No rule under this row any more (#2441). The strip separates by
+          figure/ground now, and a `border-b` beneath it would be the
+          underline reintroduced one element out.
+      */}
+      <div className={TAB_ROW}>
+        <Tabs
+          value={view.subTabs.find((t) => t.active)?.key ?? ''}
+          onValueChange={(key) => controller()?._setSub(key)}
+        >
+          <TabsList ref={subRef} className={SUB_TABS_LIST} style={subFade}>
+            {view.subTabs.map((t) => (
+              <TabsTrigger
+                key={t.key}
+                value={t.key}
+                data-lb-sub={t.key}
+                className={SUB_TAB}
+                activeClassName={SECTION_TAB_ACTIVE}
+                inactiveClassName={SECTION_TAB_INACTIVE}
+              >
+                {t.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <div className="flex shrink-0 gap-2">
           {view.winTabs.map((t) => (
             <button
               key={t.key}
@@ -589,7 +638,10 @@ function HistoryBody({ view }: { view: Extract<BodyView, { kind: 'history' }> })
         {view.chips.map((chip) => (
           <button
             key={chip.key}
+            type="button"
             data-lb-hfilter={chip.key}
+            // The on-state is otherwise only a fill colour (#2991).
+            aria-pressed={chip.on}
             className={`px-3 py-1 text-xs font-medium rounded-full border ${
               chip.on
                 ? 'bg-violet-600 text-white border-violet-600'

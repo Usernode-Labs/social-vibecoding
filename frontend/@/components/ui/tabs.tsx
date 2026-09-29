@@ -171,8 +171,19 @@ TabsTrigger.displayName = 'TabsTrigger';
  * ground, so the track is a raised white surface, like the header's hamburger
  * disc and an unselected chip.
  */
-export const SECTION_TABS_LIST =
-  'inline-flex items-center gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5 mb-4';
+/*
+ * Two spellings of the same track. `SECTION_TABS_LIST` is the one a strip on
+ * its own line wants, margin included. `SECTION_TABS_LIST_BASE` is the same
+ * surface WITHOUT that margin, for a strip that shares a flex row with
+ * something else — the Kudos pane's sub-strip sits opposite its window pills
+ * in an `items-center` row, where a bottom margin on one flex item lifts it
+ * off the row's centre line. The surface classes live in one string either
+ * way, so a track can never half-change.
+ */
+export const SECTION_TABS_LIST_BASE =
+  'inline-flex items-center gap-0.5 rounded-full bg-white dark:bg-zinc-900 p-0.5';
+
+export const SECTION_TABS_LIST = SECTION_TABS_LIST_BASE + ' mb-4';
 
 export const SECTION_TAB_BASE =
   'inline-flex items-center justify-center h-8 px-4 rounded-full text-sm font-semibold transition-colors';

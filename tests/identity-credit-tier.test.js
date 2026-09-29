@@ -76,6 +76,9 @@ test('unverified tier is exactly $0 and returns an actionable refusal', async ()
     // here: the tier's zero is IDENTITY-derived, not an admin switching a
     // cap off, so it keeps applying and the refusal below is unchanged.
     weeklyLimitCents: 20000, weeklySource: 'default',
+    // #838: the identity tier the weekly cap follows. This stub answers no
+    // proofs at all, so the base cap applies and the tier is unverified.
+    identityTier: 'unverified',
   });
   const budget = await limits.checkBudget(pool, 7);
   assert.equal(budget.reason, 'verification_required');
@@ -102,6 +105,8 @@ test('either one or both provider proofs resolve to the same non-stacking $10 ti
   const entitlementSql = pool.calls.find((sql) => /user_social_identities/.test(sql));
   assert.match(entitlementSql, /EXISTS/);
   assert.doesNotMatch(entitlementSql, /COUNT|SUM/, 'providers prove eligibility; they never stack');
+  assert.doesNotMatch(entitlementSql, /public_visible/,
+    'hiding a verified account from the profile does not revoke its credit proof');
 });
 
 test('an explicit administrator override wins, including intentional zero', async () => {
@@ -206,10 +211,11 @@ test('an unknown credit policy fails boot instead of silently choosing a payer',
 });
 
 test('post-turn helper calls cannot deliberately continue on stale platform billing', () => {
-  const sessionsSource = fs.readFileSync(
+  // #2779: the Mayor's pill ladder moved to services/mayor/pills.js.
+  const sessionsSource = [
     path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
-    'utf8',
-  );
+    path.join(__dirname, '..', 'src', 'services', 'mayor', 'pills.js'),
+  ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.doesNotMatch(sessionsSource, /continuing platform-billed|proceeds platform-billed/);
   assert.match(sessionsSource,
     /async function runHeadlessMayorEffect\(\{[\s\S]*allowInvoke = true/);

@@ -185,7 +185,13 @@ test('a user who already has a key is told to check it, not to add one', () => {
 });
 
 test('the lead distinguishes your allowance from the shared platform budget', () => {
-  assert.match(CreditOptions.lead({}), /you're out of today's free ai credits/i);
+  // #2571: the user's own allowance is weekly, so that is what the lead
+  // says. The operator's shared cap is still a daily one and still named
+  // as one; a payload that predates the window field keeps the old
+  // spelling.
+  assert.match(CreditOptions.lead({}), /you're out of this week's free ai credits/i);
+  assert.match(CreditOptions.lead({ capWindow: 'weekly' }), /this week's free ai credits/i);
+  assert.match(CreditOptions.lead({ capWindow: 'daily' }), /today's free ai credits/i);
   assert.match(CreditOptions.lead({ globalOut: true }), /shared daily ai budget/i);
   // Both states still offer every route: all of them bypass the platform
   // budget.

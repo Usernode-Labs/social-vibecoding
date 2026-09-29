@@ -59,7 +59,16 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
   return {
     sandbox, el, timers, calls, fixes, nav, toasts,
     failedReads: () => failedReads,
-    async submit() { el('feedback-text').value = 'The board jumps.'; el('feedback-submit').click(); await settle(); },
+    // #2707: this harness opens with an app on screen, so BOTH destinations
+    // are real and none is preselected — a submit refuses until one is tapped.
+    // Every test below is about what happens AFTER a submit, so the tap is
+    // part of getting there, the way typing the description is.
+    async submit() {
+      el('feedback-text').value = 'The board jumps.';
+      el('feedback-target-platform').click();
+      el('feedback-submit').click();
+      await settle();
+    },
     async fireTimers(ms) { for (const [key, timer] of [...timers]) if (timer.ms === ms) { timers.delete(key); timer.fn(); } await settle(); },
     flush(result = moment) { queueHooks.onFlushed({ sent: 1, filed: [{ target: 'platform', firstFeedback: result }] }); },
     shown: () => !el('feedback-first-success').classList.contains('hidden'),
@@ -102,11 +111,55 @@ test('view-only access keeps the board usable and explains the disabled fix', as
   assert.match(h.el('feedback-first-fix-note').textContent, /collaborator access/);
   h.el('feedback-first-fix').click(); await settle(); assert.equal(h.fixes.length, 0);
 });
-test('ordinary successful feedback retains the brief confirmation and auto-close', async () => {
-  const h = harness({ response: {} }); await h.submit();
-  assert.equal(h.shown(), false);
+// #3186: the ordinary confirmation used to close itself after 1.5 s, which
+// read as the report vanishing and left no time to reach "See your feedback".
+test('ordinary successful feedback stays on its own confirmation, with the way to Your feedback', async () => {
+  const h = harness({ response: { bounty: { placed: true, remaining: 4 } } }); await h.submit();
+  assert.equal(h.shown(), false, 'not the first-feedback moment');
+  const sent = h.el('feedback-sent');
+  assert.equal(sent.classList.contains('hidden'), false);
+  assert.ok(sent.focused, 'focus leaves the composer, so the keyboard comes down once');
+  assert.ok(h.el('feedback-form').classList.contains('hidden'));
+  assert.match(h.el('feedback-sent-notice').textContent, /^Thanks! Filed against Homeroom\. Pledged 1 kudos.*4 left/);
+  for (const id of ['feedback-text', 'feedback-title']) assert.equal(h.el(id).readOnly, true);
   await h.fireTimers(1500);
+  assert.equal(h.el('feedback-modal').classList.contains('hidden'), false, 'no auto-close');
+  h.el('feedback-sent-mine').click();
   assert.ok(h.el('feedback-modal').classList.contains('hidden'));
+  assert.equal(h.sandbox.location.hash, '#profile?feedback');
+  // The next open is the form again, not the last confirmation.
+  h.sandbox.App.openFeedbackModal();
+  assert.ok(sent.classList.contains('hidden'));
+  assert.equal(h.el('feedback-form').classList.contains('hidden'), false);
+});
+test('?shot=feedback-sent poses the sent confirmation without filing anything', async () => {
+  const h = harness({ response: {} });
+  h.sandbox.App._simulateFeedbackSent();
+  assert.equal(h.el('feedback-sent').classList.contains('hidden'), false);
+  assert.equal(h.el('feedback-sent-notice').textContent, 'Thanks! Filed against Homeroom.');
+  assert.equal(h.el('feedback-text').readOnly, true);
+  assert.equal(h.el('feedback-submit').disabled, true);
+  assert.equal(h.calls.filter((c) => c.url === '/api/feedback').length, 0);
+  const app = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
+  assert.match(app, /shot !== 'feedback-sent'\) return;/, 'the shot name is accepted');
+  assert.match(app, /App\._simulateFeedbackSent\?\.\(\);/);
+});
+test('Done closes the sent confirmation and goes nowhere', async () => {
+  const h = harness({ response: {} }); await h.submit();
+  h.el('feedback-sent-done').click();
+  assert.ok(h.el('feedback-modal').classList.contains('hidden'));
+  assert.equal(h.sandbox.location.hash, '');
+  assert.ok(h.el('feedback-sent').classList.contains('hidden'));
+});
+test('the first-feedback moment offers Your feedback too, and replaces a sent confirmation', async () => {
+  const h = harness(); await h.submit();
+  h.el('feedback-first-mine').click();
+  assert.ok(h.el('feedback-modal').classList.contains('hidden'));
+  assert.equal(h.sandbox.location.hash, '#profile?feedback');
+  const q = harness({ response: {} }); await q.submit();
+  q.flush();
+  assert.ok(q.shown());
+  assert.ok(q.el('feedback-sent').classList.contains('hidden'), 'one confirmation at a time');
 });
 test('a rejected submission never congratulates the user', async () => {
   const h = harness({ ok: false, response: { error: 'Try again' } }); await h.submit();
@@ -121,6 +174,11 @@ test('Done dismisses the moment and reopening restores the form', async () => {
   }
   h.sandbox.App.openFeedbackModal();
   assert.equal(h.shown(), false);
+  // #2707: a reopen asks for the destination again. #2888: Submit stays
+  // pressable while it does. What this assertion is about is that the
+  // confirmation did not leave the button locked, and that still holds.
+  assert.equal(h.el('feedback-submit').disabled, false);
+  h.el('feedback-target-platform').click();
   assert.equal(h.el('feedback-submit').disabled, false);
   assert.equal(h.el('feedback-form').classList.contains('hidden'), false);
   for (const id of ['feedback-text', 'feedback-title']) {
@@ -155,7 +213,9 @@ test('opening queued success does not consume failed outbox drafts', async () =>
 test('an account change during submit cannot show another user’s first feedback', async () => {
   let finish;
   const h = harness({ response: () => new Promise(resolve => { finish = resolve; }) });
-  h.el('feedback-text').value = 'Report'; h.el('feedback-submit').click(); await settle();
+  h.el('feedback-text').value = 'Report';
+  h.el('feedback-target-platform').click();
+  h.el('feedback-submit').click(); await settle();
   h.sandbox.App.user = { id: 8 }; finish({ firstFeedback: moment }); await settle();
   assert.equal(h.shown(), false);
   h.flush(); assert.equal(h.shown(), false);
@@ -163,7 +223,9 @@ test('an account change during submit cannot show another user’s first feedbac
 test('a stale submission does not overwrite a reopened draft', async () => {
   let finish;
   const h = harness({ response: () => new Promise(resolve => { finish = resolve; }) });
-  h.el('feedback-text').value = 'Old report'; h.el('feedback-submit').click(); await settle();
+  h.el('feedback-text').value = 'Old report';
+  h.el('feedback-target-platform').click();
+  h.el('feedback-submit').click(); await settle();
   h.el('feedback-cancel').click(); h.sandbox.App.openFeedbackModal(); h.el('feedback-text').value = 'New draft';
   finish({ firstFeedback: moment }); await settle();
   assert.equal(h.shown(), false); assert.equal(h.el('feedback-text').value, 'New draft');

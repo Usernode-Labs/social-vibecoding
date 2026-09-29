@@ -151,9 +151,14 @@ test('option rows carry data-attr-opt-mine, and the mine assignee row a deselect
     [['alice', true], ['bob', false]]);
 
   // The component's half: the attributes and the title that state it.
+  //
+  // Matched WITHIN one tag rather than as an exact adjacent run: #2479 added
+  // `aria-pressed` between these two, and an assertion that breaks because a
+  // third attribute was inserted is pinning the serializer's spacing, not the
+  // contract. `[^>]*` keeps them on the same element, which is the claim.
   const html = renderComponent(POPOVER, 'AttrPopoverView', { ...view, suggestions: [] });
-  assert.match(html, /data-attr-opt-value="alice" data-attr-opt-mine="1" title="Click again to remove your pick"/);
-  assert.match(html, /data-attr-opt-value="bob" data-attr-opt-mine="0"/);
+  assert.match(html, /data-attr-opt-value="alice"[^>]*data-attr-opt-mine="1"[^>]*title="Click again to remove your pick"/);
+  assert.match(html, /data-attr-opt-value="bob"[^>]*data-attr-opt-mine="0"/);
   assert.ok(!/data-attr-opt-mine="0"[^>]*title=/.test(html), 'and only on the mine row');
 });
 

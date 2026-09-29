@@ -27,14 +27,12 @@ const visualsJs = fs.readFileSync(path.join(root, 'src/services/visuals.js'), 'u
 const gate = (() => {
   const start = votesJs.indexOf("phase: 'gate:checks'");
   assert.notStrictEqual(start, -1, 'the checks gate anchor moved');
-  // A window over the gate region, not a length contract. 4000 → 5400 because
-  // #2061 records what each gate did beside the dstep that already narrates
-  // it, which legitimately lengthens the run between the checks anchor and the
-  // platform-variables block. Widen it again if the region grows; what the
-  // assertions below pin is that these things are IN the gate, and the bound
-  // only has to be loose enough to contain it and tight enough to exclude the
-  // merge body that follows.
-  return votesJs.slice(start, start + 5400);
+  const end = votesJs.indexOf('// Main-health gate', start);
+  assert.notStrictEqual(end, -1, 'the gate-region end anchor moved');
+  // Use semantic anchors rather than a character budget. New independent
+  // gates may legitimately sit between checks and platform variables, while
+  // the main-health anchor still keeps the later merge body out of scope.
+  return votesJs.slice(start, end);
 })();
 
 test('the gate re-resolves rather than reading the stored verdict', () => {

@@ -138,6 +138,33 @@
       + '</div>';
   }
 
+  // #2597: the running row says the EVENT, and the venue underneath.
+  //
+  // The owner's dev chat rewrites "<venue> is running" into one heading with
+  // the venue as a muted caption (`_runningRowLabel` in
+  // frontend/src/features/dev-chat/dev-chat.js). These are the same rows read
+  // by somebody who was not in the session, so they have to say the same
+  // thing. The rule is duplicated rather than borrowed on purpose: this
+  // renderer's whole point is that it works without dev-chat.js loaded, and
+  // the markdown fallback path is tested with DevChat absent.
+  //
+  // The venue comes from the row's metadata, with the sentence's own wording
+  // as the fallback the older rows — written before a backend was recorded —
+  // depend on.
+  var RUNNING_VENUE_RE = /^(?:Claude Code|Codex|OpenRouter) is running\b/i;
+
+  function runningRowLabel(msg, text) {
+    const m = RUNNING_VENUE_RE.exec(text);
+    if (!m) return null;
+    const meta = (msg && msg.metadata) || {};
+    const openrouter = meta.agentBackend === 'codex_openrouter'
+      || /^(?:Codex|OpenRouter)\b/i.test(text);
+    return {
+      text: 'Coding agent is running' + text.slice(m[0].length),
+      caption: openrouter ? 'Homeroom \u00b7 OpenRouter' : 'Homeroom \u00b7 Claude',
+    };
+  }
+
   function systemRowHtml(msg) {
     const activity = agentActivityHtml(msg);
     const spec = specPreviewHtml(msg);
@@ -146,9 +173,13 @@
     // is fine — it's the same one-line "Claude Code log" the owner sees.
     // Rows with no content at all render nothing.
     const text = String((msg && msg.content) || '').trim();
+    const running = text ? runningRowLabel(msg, text) : null;
     const line = text
-      ? '<div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>'
-        + '<span>' + esc(text) + '</span></div>'
+      ? '<div class="dc-status-line' + (running ? ' dc-status-line-captioned' : '') + '">'
+        + '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>'
+        + '<span>' + esc(running ? running.text : text) + '</span>'
+        + (running ? '<span class="dc-status-venue">' + esc(running.caption) + '</span>' : '')
+        + '</div>'
       : '';
     return line + activity + spec;
   }

@@ -60,23 +60,33 @@ function dnsAlias({ environment, sessionId, dockerName }) {
 
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
-  port = 3000, memory, cpus, labels,
+  port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
+  command = [],
 }) {
   if (mode(config) === 'docker') {
-    await docker.stopAndRemove(dockerName).catch(() => {});
-    const alias = dnsAlias({ environment, sessionId, dockerName });
-    await docker.runContainer(dockerName, {
+    const name = runtimeName || dockerName;
+    if (!name) throw new Error('Docker deployment requires a runtime name');
+    await docker.stopAndRemove(name).catch(() => {});
+    const alias = internalOnly ? null : dnsAlias({ environment, sessionId, dockerName: name });
+    await docker.runContainer(name, {
       image: imageRef, env, port, memory, cpus, labels,
       aliases: alias ? [alias] : [],
+      command,
     });
-    await docker.waitForHealthy(dockerName, port, '/health');
+    await docker.waitForHealthy(name, port, '/health');
+    if (internalOnly) {
+      return {
+        runtimeKind: 'docker', runtimeName: name, imageRef,
+        hostname: name, url: `http://${name}:${port}`,
+      };
+    }
     const hostname = environment === 'production'
       ? caddy.productionHostname(app.slug)
       : caddy.stagingHostname(app.slug, `s${sessionId}`);
     let url = `https://${hostname}`;
     const isLocal = process.env.NODE_ENV === 'development' || process.env.USERNODE_LOCAL_DEV === '1';
     if (isLocal) {
-      const hostPort = await docker.getHostPort(dockerName, port);
+      const hostPort = await docker.getHostPort(name, port);
       if (hostPort) url = `http://localhost:${hostPort}`;
     }
     // Docker returns the container's full ID from `docker run`, but that ID
@@ -84,9 +94,12 @@ async function deploy(config, {
     // `runtimeName` is used both for later Docker commands (which accept the
     // stable --name value) and as the proposal-check capture hostname, so
     // persist the deterministic name rather than the opaque run result.
-    return { runtimeKind: 'docker', runtimeName: dockerName, imageRef, hostname, url };
+    return { runtimeKind: 'docker', runtimeName: name, imageRef, hostname, url };
   }
-  return kubernetes.deployApplication(config, { app, environment, sessionId, imageRef, env, cpus, labels });
+  return kubernetes.deployApplication(config, {
+    app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,
+    command,
+  });
 }
 
 async function inspect(config, ref) {
@@ -99,14 +112,45 @@ async function status(config, ref) {
   return kubernetes.getApplicationStatus(config, ref.runtimeName);
 }
 
+// THE ONE PLACE THAT KNOWS HOW TO REACH A RUNNING APP FROM THE PLATFORM,
+// given the ref productionRef() hands back. Every in-cluster caller goes
+// through this rather than building the host itself, because the host is
+// runtime-specific and a caller that hardcodes one lane silently stops
+// reaching apps in the other — with no error to read, just a connection
+// that never lands.
+//
+// That is #1894 exactly: the anonymous-shell probe built
+// `usernode-app-<slug>` inline, which is the DOCKER container name. On
+// kubernetes every probe failed DNS, classified the app 'unknown', and the
+// directory read `requires_login` off that verdict — so the whole fleet
+// showed as "account required" while nothing logged an error.
+//
+// The two lanes:
+//   docker      the container name IS the hostname on the shared network
+//   kubernetes  a ClusterIP Service in `appNamespace`, which is NOT the
+//               platform's own namespace, so the name needs qualifying
+//
+// Port 3000 in both: the app container listens on it, and
+// createApplication()'s Service declares `port: 3000, targetPort: 3000`.
+const APP_PORT = 3000;
+
+function appOrigin(config, ref) {
+  if (!ref || !ref.runtimeName) return null;
+  if ((ref.runtimeKind || mode(config)) === 'docker') {
+    return `http://${ref.runtimeName}:${APP_PORT}`;
+  }
+  const namespace = config?.kubernetes?.appNamespace || process.env.APP_NAMESPACE || 'social-apps';
+  return `http://${ref.runtimeName}.${namespace}.svc:${APP_PORT}`;
+}
+
 async function probeHealth(config, ref, { timeoutMs = 3000 } = {}) {
   if ((ref.runtimeKind || mode(config)) === 'docker') {
     return docker.probeHealthOnce(ref.runtimeName, 3000, '/health', { timeoutMs });
   }
-  if (!ref.runtimeName) return false;
-  const namespace = config?.kubernetes?.appNamespace || process.env.APP_NAMESPACE || 'social-apps';
+  const origin = appOrigin(config, ref);
+  if (!origin) return false;
   try {
-    const response = await fetch(`http://${ref.runtimeName}.${namespace}.svc:3000/health`, {
+    const response = await fetch(`${origin}/health`, {
       signal: AbortSignal.timeout(timeoutMs), redirect: 'error',
     });
     await response.body?.cancel();
@@ -135,5 +179,5 @@ async function remove(config, ref, options = {}) {
 }
 
 module.exports = {
-  mode, productionRef, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
+  mode, productionRef, appOrigin, build, cleanupFailedBuilds, deploy, dnsAlias, status, inspect, probeHealth, logs, restart, remove,
 };

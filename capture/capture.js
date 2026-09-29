@@ -14,7 +14,7 @@
 //   TARGETS             JSON array of capture targets, each:
 //                         { index, beforeUrl, afterUrl, beforeFallbackUrl,
 //                           beforeCookie, afterCookie, viewport?,
-//                           companion? }
+//                           companion?, ready? }
 //                       Looped over sequentially; `index` tags every shot
 //                       frame so the orchestrator attributes each artifact
 //                       to its route. Per-target failures stay independent.
@@ -31,6 +31,9 @@
 //                       under the companion's own index. Absent → no
 //                       companion (an older orchestrator sends a separate
 //                       `still: true` target instead, still supported).
+//                       `ready` reuses a named dapp.json scenario's
+//                       expectSelector / expectText assertions as a bounded
+//                       staging-only wait before either screenshot is taken.
 //   BEFORE_URL          single-target fallback when TARGETS is unset/empty
 //   AFTER_URL           (an older orchestrator, or a rolling deploy). Each
 //   BEFORE_FALLBACK_URL of these mirrors the same-named TARGETS field for a
@@ -88,6 +91,22 @@ const { execFile } = require('child_process');
 // entirely and made any WebGL context (hardware or software) impossible.
 // Rendering is CPU-bound and deterministic across runs; non-WebGL pages
 // are unaffected.
+//
+// Software COMPOSITING, separately from software WebGL. Left to itself, the
+// SwiftShader GPU process above also composites every frame of every page:
+// one OpenGL draw per layer, one fragment shader per pixel, on the CPU, at
+// display rate wherever anything on the page animates. Sampled in a live
+// capture pod that was ~5.6 of the pod's 8 cores in the GPU process alone,
+// with the renderers — the app actually under test — throttled on what was
+// left, and pods that shared a node halving each other's speed. The pool's
+// cold-load loop reproduced against this repo's own shell (32 groups, 8
+// lanes) measured 6.3 CPU-seconds per group, 88% of it in the GPU process;
+// with this flag, 0.9 CPU-seconds and 14%. Compositing moves to Skia's
+// software path, which repaints damaged rectangles only. WebGL is
+// unaffected: contexts still come from the SwiftShader GPU process (same
+// renderer string, same readback, verified), its surface is just copied
+// into the software compositor instead of drawn by it. Not --disable-gpu,
+// which would take that GPU process — and every WebGL context — with it.
 const CHROMIUM_LAUNCH_ARGS = [
   '--no-sandbox',
   '--disable-setuid-sandbox',
@@ -95,6 +114,7 @@ const CHROMIUM_LAUNCH_ARGS = [
   '--use-gl=angle',
   '--use-angle=swiftshader',
   '--enable-unsafe-swiftshader',
+  '--disable-gpu-compositing',
   '--hide-scrollbars',
   '--mute-audio',
   '--force-color-profile=srgb',
@@ -137,6 +157,15 @@ function parseCompanion(raw) {
   return { index, viewport };
 }
 
+function parseReady(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const expectSelector = typeof raw.expectSelector === 'string'
+    ? raw.expectSelector.trim().slice(0, 256) : '';
+  const expectText = typeof raw.expectText === 'string'
+    ? raw.expectText.trim().slice(0, 256) : '';
+  return (expectSelector || expectText) ? { expectSelector, expectText } : null;
+}
+
 const NAV_TIMEOUT_MS = 30000;
 const NETWORK_IDLE_CONCURRENCY = 2;
 const NETWORK_IDLE_MS = 500;
@@ -172,6 +201,87 @@ const MAX_SCROLL_VIEWPORTS = 3;
 const MAX_CONSOLE_ERRORS = 20;
 const MAX_CONSOLE_MSG_LEN = 500;
 const CONSOLE_ONLY_SETTLE_MS = 1500;
+const CONSOLE_ARG_RESOLVE_MS = 2000;
+
+// `msg.text()` renders an object argument as its handle's description, so
+// `console.error(err)` — how React reports an error an <Island> boundary
+// caught — arrived as "JSHandle@error". That named nothing, and because the
+// list dedupes by message, two different such errors collapsed into one.
+const OPAQUE_CONSOLE_ARG_RE = /JSHandle@/;
+
+// Newer puppeteer renders an Error argument as its bare message instead —
+// still without the stack or the island — so an Error is also recognised by
+// its protocol subtype.
+function isErrorHandle(h) {
+  try {
+    const ro = h && typeof h.remoteObject === 'function' ? h.remoteObject() : null;
+    return !!ro && ro.subtype === 'error';
+  } catch {
+    return false;
+  }
+}
+
+// Runs in the page. An Error becomes `Name: message`, tagged with the island
+// that caught it when `window.UsernodeReact.islandErrors` has recorded one,
+// followed by its stack frames.
+function describeConsoleArgInPage(v) {
+  if (v instanceof Error) {
+    const head = `${v.name || 'Error'}: ${v.message}`;
+    const root = typeof window !== 'undefined' ? window : {};
+    const caught = (root.UsernodeReact && root.UsernodeReact.islandErrors) || [];
+    let island = '';
+    for (let i = caught.length - 1; i >= 0; i -= 1) {
+      if (caught[i] && caught[i].message === v.message) { island = ` [island ${caught[i].island}]`; break; }
+    }
+    const frames = String(v.stack || '').split('\n').filter((l) => /^\s+at /.test(l)).join('\n');
+    return head + island + (frames ? `\n${frames}` : '');
+  }
+  if (typeof v === 'string') return v;
+  try { return JSON.stringify(v); } catch { return String(v); }
+}
+
+async function describeConsoleArgs(args) {
+  let timer;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('console arg resolve timeout')), CONSOLE_ARG_RESOLVE_MS);
+  });
+  try {
+    const parts = await Promise.race([
+      Promise.all(args.map((h) => h.evaluate(describeConsoleArgInPage))),
+      deadline,
+    ]);
+    return parts.filter((p) => p != null && p !== '').join(' ');
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The console listener both runners share. A message with an opaque argument
+// is resolved in the page before it is recorded; `settle()` waits for those
+// still in flight, so a caller that freezes the list afterwards counts each
+// error where it fired rather than wherever its resolution happened to land.
+function makeConsoleErrorSink(pushErr) {
+  const inFlight = new Set();
+  const onConsole = (msg) => {
+    if (msg.type() !== 'error') return;
+    const loc = typeof msg.location === 'function' ? msg.location() : null;
+    const src = loc && loc.url
+      ? `${loc.url}${loc.lineNumber != null ? ':' + loc.lineNumber : ''}`
+      : '';
+    const text = msg.text();
+    const args = typeof msg.args === 'function' ? (msg.args() || []) : [];
+    if (!args.length || !(OPAQUE_CONSOLE_ARG_RE.test(text) || args.some(isErrorHandle))) {
+      pushErr('console', text, src);
+      return;
+    }
+    const pending = describeConsoleArgs(args)
+      .then((detail) => pushErr('console', detail || text, src), () => pushErr('console', text, src))
+      .finally(() => inFlight.delete(pending));
+    inFlight.add(pending);
+  };
+  const settle = () => Promise.all([...inFlight]);
+  return { onConsole, settle };
+}
 
 // ── Settle: a bounded QUIET WINDOW, not a fixed sleep (#1144) ──
 //
@@ -261,6 +371,26 @@ function assertMaxMs(env) {
 // a truly missing element makes no requests, so it still fails in 5s.
 const ASSERT_REPORT_RESERVE_MS = 2000;
 
+// …but a page that never STOPS fetching must not roll it to the ceiling.
+//
+// The group ceiling was sized for the group — a six-cohort group's budget
+// is ~110s — and a screen that keeps fetching (a live feed, a status
+// ticker, a chat that re-polls every few seconds) makes a request inside
+// every window, so a cohort whose element had not rendered rolled all the
+// way there. In a logged run of this repo's own suite one such group held
+// its lane for the full 111s while the other lanes finished and sat idle,
+// then reported its last checks as "did not finish": the roll had eaten the
+// budget the cold-load fallback below needed, and it was that fallback which
+// passed them, alone, on the retry pass.
+//
+// So the rolling window is ALSO capped at a multiple of the fixed one. Data
+// on the wire lands within a few seconds even on a contended preview; a
+// window three times the fixed one still catches it, a poller is cut off at
+// 15s rather than ~110, and the fallback gets its turn inside the budget.
+// The group ceiling stays as the outer bound (it is still the smaller of
+// the two for a short budget), and the floor still holds beneath both.
+const ASSERT_ROLL_MAX_FACTOR = 3;
+
 // An activity clock a page's listeners bump. Created per group and shared by
 // every cohort's settle, so a late error from cohort 1 still holds cohort 2's
 // window open — the page is one document either way.
@@ -300,16 +430,22 @@ async function waitForQuiet(activity, opts) {
 // real manifest halved suite wall clock, 96s → 47s), and the groups run
 // through a bounded pool of concurrent pages.
 //
-// 8: production timings put a navigation at ~3.9s sequential, so ~110
-// groups at pool 8 is ~54s of ideal work; the staging preview (2 CPUs) is
-// the real serialising resource, so budget 55-70% efficiency → ~80-100s,
-// well inside the deadlines below. Raising this past ~16 buys nothing
-// while the preview is the bottleneck, and each live page costs 80-150 MB
-// against the container's 4g.
+// 8 was sized when a navigation cost ~3.9s and the pool's own container
+// was the bottleneck: eight groups saturated its 8-core quota, because the
+// SwiftShader GPU process was compositing every page on the CPU (see
+// CHROMIUM_LAUNCH_ARGS). With compositing in software a group costs under
+// a CPU-second, so the pool is bound by the wire — a cold load is ~5-7s of
+// DNS, TLS, assets, boot and the settle regardless of how many run at once
+// — and doubling the lanes roughly halves the wall clock: this repo's 169
+// groups replayed at 16 lanes come in at ~80-100s against ~186s at 8. The
+// staging preview idled at 8 concurrent loads (its cost is static assets
+// and a handful of API calls), and each live page is ~80-150 MB against the
+// container's 6g. The ceiling is the memory bound; a wider pool needs a
+// bigger container first.
 function poolSize(env) {
   const raw = parseInt((env || {}).TEST_CONCURRENCY, 10);
-  if (!Number.isFinite(raw) || raw < 1) return 8;
-  return Math.min(16, raw);
+  if (!Number.isFinite(raw) || raw < 1) return 16;
+  return Math.min(24, raw);
 }
 
 // Per-check wall clock. NAV_TIMEOUT_MS bounds cold document readiness; the
@@ -557,13 +693,30 @@ async function awaitRepaint(page) {
 // lands in the same rendered row it always has. Best-effort throughout: a
 // failed companion is reported as a failure frame and never costs the
 // target its desktop artifacts.
-async function shootCompanion(page, kind, companion, status, usedFallback) {
+async function waitForScenarioReady(page, ready, { maxMs = ASSERT_MAX_MS, pollMs = ASSERT_POLL_MS } = {}) {
+  if (!ready) return;
+  const boundedMaxMs = Number.isFinite(maxMs) ? Math.max(0, maxMs) : ASSERT_MAX_MS;
+  const boundedPollMs = Number.isFinite(pollMs) ? Math.max(1, pollMs) : ASSERT_POLL_MS;
+  const deadline = Date.now() + boundedMaxMs;
+  let reason = '';
+  while (true) {
+    reason = await assertPresence(page, ready);
+    if (!reason) return;
+    if (Date.now() >= deadline) {
+      throw new Error(`Visual scenario was not ready: ${reason}`);
+    }
+    await sleep(boundedPollMs);
+  }
+}
+
+async function shootCompanion(page, kind, companion, status, usedFallback, ready = null) {
   if (!companion) return;
   const { index, viewport } = companion;
   try {
     await page.setViewport({ ...viewport, deviceScaleFactor: VIEWPORT.deviceScaleFactor });
     await page.reload({ waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
     await sleep(SETTLE_MS);
+    await waitForScenarioReady(page, ready);
     const png = await page.screenshot({ type: 'png' });
     emit(kind, 'png', status, Buffer.from(png), index, usedFallback);
   } catch (err) {
@@ -598,6 +751,11 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
       source: source ? String(source).slice(0, MAX_CONSOLE_MSG_LEN) : '',
     });
   };
+  const consoleSink = makeConsoleErrorSink(pushErr);
+  const settledConsoleErrors = async () => {
+    await consoleSink.settle();
+    return consoleErrors;
+  };
 
   const page = await browser.newPage();
   if (collectConsole) {
@@ -607,14 +765,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     // console.error(); pageerror covers uncaught exceptions; Chromium
     // surfaces unhandled rejections through pageerror too.
     page.on('console', (msg) => {
-      try {
-        if (msg.type() !== 'error') return;
-        const loc = typeof msg.location === 'function' ? msg.location() : null;
-        const src = loc && loc.url
-          ? `${loc.url}${loc.lineNumber != null ? ':' + loc.lineNumber : ''}`
-          : '';
-        pushErr('console', msg.text(), src);
-      } catch { /* ignore a single malformed console message */ }
+      try { consoleSink.onConsole(msg); } catch { /* ignore a single malformed console message */ }
     });
     page.on('pageerror', (err) => {
       try { pushErr('pageerror', (err && (err.stack || err.message)) || String(err), ''); }
@@ -658,7 +809,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     // the console frame (loadStatus 0) before the media-fail frames.
     if (collectConsole) {
       pushErr('load', `navigation failed: ${err.message}`, url);
-      emitConsole(index, consoleErrors, 0);
+      emitConsole(index, await settledConsoleErrors(), 0);
     }
     if (media) {
       emitFail(kind, 'png', err.message, index);
@@ -675,7 +826,30 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     return;
   }
 
-  await sleep(SETTLE_MS);
+  try {
+    await sleep(SETTLE_MS);
+    // A scenario assertion is both a merge check and the capture's readiness
+    // barrier. Only staging receives it: production may not contain a newly
+    // introduced element yet, and that absence is exactly what the "before"
+    // side is meant to document. A timed-out assertion produces failure
+    // frames rather than a screenshot of a state we know is not ready.
+    if (kind === 'after') await waitForScenarioReady(page, opts.ready);
+  } catch (err) {
+    if (collectConsole) {
+      pushErr('assertion', err.message, url);
+      emitConsole(index, await settledConsoleErrors(), status);
+    }
+    if (media) {
+      emitFail(kind, 'png', err.message, index);
+      if (!stillOnly) {
+        emitFail(kind, 'webm', err.message, index);
+        emitFail(kind, 'gif', err.message, index);
+      }
+      if (opts.companion) emitFail(kind, 'png', err.message, opts.companion.index);
+    }
+    await page.close().catch(() => {});
+    return;
+  }
 
   // An HTTP error status that still rendered a body is a failed load too.
   if (collectConsole && status >= 400) {
@@ -686,7 +860,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   if (!media) {
     if (collectConsole) {
       await sleep(CONSOLE_ONLY_SETTLE_MS);
-      emitConsole(index, consoleErrors, status);
+      emitConsole(index, await settledConsoleErrors(), status);
     }
     await page.close().catch(() => {});
     return;
@@ -704,9 +878,10 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   // errors (if wired) and stop before the expensive recording steps.
   if (stillOnly) {
     if (collectConsole) {
-      emitConsole(index, consoleErrors, status);
+      emitConsole(index, await settledConsoleErrors(), status);
     }
-    await shootCompanion(page, kind, opts.companion, status, usedFallback);
+    await shootCompanion(page, kind, opts.companion, status, usedFallback,
+      kind === 'after' ? opts.ready : null);
     await page.close().catch(() => {});
     return;
   }
@@ -735,9 +910,10 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     emitFail(kind, 'webm', 'page-not-scrollable', index);
     emitFail(kind, 'gif', 'page-not-scrollable', index);
     if (collectConsole) {
-      emitConsole(index, consoleErrors, status);
+      emitConsole(index, await settledConsoleErrors(), status);
     }
-    await shootCompanion(page, kind, opts.companion, status, usedFallback);
+    await shootCompanion(page, kind, opts.companion, status, usedFallback,
+      kind === 'after' ? opts.ready : null);
     await page.close().catch(() => {});
     return;
   }
@@ -812,10 +988,11 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   // always described this target's own load, and the companion re-boots
   // the page, so emitting first keeps that frame's content unchanged.
   if (collectConsole) {
-    emitConsole(index, consoleErrors, status);
+    emitConsole(index, await settledConsoleErrors(), status);
   }
 
-  await shootCompanion(page, kind, opts.companion, status, usedFallback);
+  await shootCompanion(page, kind, opts.companion, status, usedFallback,
+    kind === 'after' ? opts.ready : null);
 
   await page.close().catch(() => {});
 }
@@ -872,6 +1049,7 @@ function resolveTargets(env) {
       // null, which is also what a legacy orchestrator produces (it sends
       // a sibling `still: true` target instead, still handled above).
       companion: parseCompanion(t.companion),
+      ready: parseReady(t.ready),
     });
   }
   return out;
@@ -1213,6 +1391,10 @@ async function runTestGroup(browser, group, opts) {
   const groupCeilingAt = Number.isFinite(o.groupDeadlineAt)
     ? o.groupDeadlineAt - ASSERT_REPORT_RESERVE_MS
     : Infinity;
+  // How many fixed windows request traffic may roll into at most (see
+  // ASSERT_ROLL_MAX_FACTOR). Never below one: the floor is the fixed window.
+  const rollMaxFactor = Number.isFinite(o.assertRollMaxFactor)
+    ? Math.max(1, o.assertRollMaxFactor) : ASSERT_ROLL_MAX_FACTOR;
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
@@ -1225,6 +1407,7 @@ async function runTestGroup(browser, group, opts) {
       source: source ? String(source).slice(0, MAX_CONSOLE_MSG_LEN) : '',
     });
   };
+  const consoleSink = makeConsoleErrorSink(pushErr);
   const emitAll = (status, reasonFor) => {
     for (const t of tests) {
       const failureReason = reasonFor(t);
@@ -1258,6 +1441,10 @@ async function runTestGroup(browser, group, opts) {
     const pollPresence = async (cohortTests) => {
       const presence = new Map();
       const floorAt = Date.now() + assertMax;
+      // How far request traffic may roll the window at most (see
+      // ASSERT_ROLL_MAX_FACTOR): a page that never stops fetching is judged
+      // here, not at the group ceiling.
+      const rollCeilingAt = floorAt + assertMax * (rollMaxFactor - 1);
       let assertDeadlineAt = floorAt;
       let seenNetAt = netActivity.lastAt;
       let pending = cohortTests;
@@ -1274,7 +1461,7 @@ async function runTestGroup(browser, group, opts) {
           seenNetAt = netActivity.lastAt;
           assertDeadlineAt = Math.max(
             floorAt,
-            Math.min(Date.now() + assertMax, groupCeilingAt)
+            Math.min(Date.now() + assertMax, groupCeilingAt, rollCeilingAt)
           );
         }
         const leftMs = assertDeadlineAt - Date.now();
@@ -1288,14 +1475,7 @@ async function runTestGroup(browser, group, opts) {
     };
     on('console', (msg) => {
       activity.bump();
-      try {
-        if (msg.type() !== 'error') return;
-        const loc = typeof msg.location === 'function' ? msg.location() : null;
-        const src = loc && loc.url
-          ? `${loc.url}${loc.lineNumber != null ? ':' + loc.lineNumber : ''}`
-          : '';
-        pushErr('console', msg.text(), src);
-      } catch { /* ignore a single malformed console message */ }
+      try { consoleSink.onConsole(msg); } catch { /* ignore a single malformed console message */ }
     });
     on('pageerror', (err) => {
       activity.bump();
@@ -1343,6 +1523,7 @@ async function runTestGroup(browser, group, opts) {
         activity.bump();
         await waitForQuiet(activity, { quietMs, maxMs, minMs: Math.min(SETTLE_MIN_MS, maxMs) });
       } else {
+        await consoleSink.settle();
         cohortFrom = consoleErrors.length;
         try {
           await page.evaluate((h) => {
@@ -1428,6 +1609,7 @@ async function runTestGroup(browser, group, opts) {
       // verdicts across the checks judging it. Frozen AFTER the poll, so an
       // error that fires while assertions wait is still heard — the flat
       // settle this replaced would have been listening through that window.
+      await consoleSink.settle();
       if (ci === 0) sharedErrorCount = consoleErrors.length;
       const cohortErrors = ci === 0
         ? consoleErrors.slice(0, sharedErrorCount)
@@ -1704,6 +1886,14 @@ async function main() {
   const media = mediaEnabled(process.env);
   const haveTests = tests.length > 0;
   try {
+    // The media pass and the test suite run CONCURRENTLY on the one browser.
+    // They used to run back to back, and the media pass is 6-14s of the
+    // run's wall clock (two cold loads, a recording, a GIF transcode) that
+    // no check waits on: the suite takes its pages from its own contexts
+    // (below) and the frames are parsed by kind, so nothing on the platform
+    // side depends on the shots arriving first. Both are awaited to
+    // completion before the browser closes, whichever finishes last.
+    //
     // Sequential per target (a shared browser, one newPage per shot), and
     // before-then-after within each target so the per-target before/after
     // pair lands together. Per-target failures stay independent. In
@@ -1714,16 +1904,19 @@ async function main() {
     // check (per-test frames). So: suppress the after-target's legacy
     // console collection (collectConsole:false), and when media is off skip
     // the after-target navigation entirely — the tests cover that load.
-    for (const t of targets) {
-      if (media && t.beforeUrl) {
-        await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index,
-          { media, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
+    const shots = (async () => {
+      for (const t of targets) {
+        if (media && t.beforeUrl) {
+          await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index,
+            { media, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
+        }
+        if (t.afterUrl && (media || !haveTests)) {
+          await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index,
+            { media, collectConsole: !haveTests, viewport: t.viewport, stillOnly: t.still,
+              companion: t.companion, ready: t.ready });
+        }
       }
-      if (t.afterUrl && (media || !haveTests)) {
-        await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index,
-          { media, collectConsole: !haveTests, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
-      }
-    }
+    })();
     // #47: run the declared test suite (assertions + per-test console
     // check). Checks are grouped by URL (one navigation per route) and the
     // groups run through a bounded pool; per-test failures stay independent
@@ -1732,18 +1925,25 @@ async function main() {
     // runTests creates a fresh browser context per URL group (see its
     // comment): each starts with an empty cookie jar, so the screenshot
     // pass's NON-admin session cookie (exchanged into the default context
-    // above) can never downgrade a test navigation carrying the view-only-
-    // admin ?token= — the failure mode that once rendered the "Admins only"
-    // gate on the /debug badge check — and each group's page is its own
-    // window, so its document stays visible under concurrency.
-    if (tests.length) {
-      await runTests(browser, tests, {
+    // by the media pass) can never downgrade a test navigation carrying the
+    // view-only-admin ?token= — the failure mode that once rendered the
+    // "Admins only" gate on the /debug badge check — and each group's page
+    // is its own window, so its document stays visible under concurrency.
+    // The same isolation is what makes running the two side by side safe.
+    const suite = tests.length
+      ? runTests(browser, tests, {
         concurrency: poolSize(process.env),
         testTimeoutMs: testTimeoutMs(process.env),
         deadlineMs: testsDeadlineMs(process.env),
         env: process.env,
-      });
-    }
+      })
+      : Promise.resolve();
+    // Settle both before closing the browser: a media-pass failure must not
+    // tear down the suite mid-flight (its missing frames would read as a
+    // crashed container), so it is re-raised only once both are done.
+    const outcomes = await Promise.allSettled([shots, suite]);
+    const failed = outcomes.find((r) => r.status === 'rejected');
+    if (failed) throw failed.reason;
   } finally {
     await browser.close().catch(() => {});
   }
@@ -1763,4 +1963,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

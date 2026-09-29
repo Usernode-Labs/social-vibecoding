@@ -21,6 +21,7 @@ const mod = () => (api || (api = loadTsx(
 
 function composerHtml(draft, posting = false) {
   return renderToHtml(createElement(mod().FeedReplyComposer, {
+    slug: 'usernode-2d5619',
     draft,
     posting,
     onDraftChange: () => {},
@@ -36,7 +37,13 @@ test('the reply is a one-row textarea that grows with its controlled value', () 
     SOURCE.indexOf('export function FeedReplyComposer'),
     SOURCE.indexOf('\nexport function FeedThread')
   );
-  assert.doesNotMatch(component, /onKeyDown/,
+  // #2145 gave the field a keydown handler — for ⌘/Ctrl+Enter and for the
+  // `@` list's keys while it is open — but plain Enter is still the
+  // textarea's own, so it still adds a line (tests/feed-reply-mentions.test.js
+  // covers the chord itself).
+  assert.match(component, /if \(!isSendChord\(e\)\) return;/,
+    'only the modifier chord submits from the keyboard');
+  assert.doesNotMatch(component, /key === 'Enter' && !e\.shiftKey/,
     'plain Enter keeps the textarea default: insert a newline');
 
   const html = composerHtml('First line\nSecond line');
@@ -118,6 +125,8 @@ test('a successfully posted reply survives the inline-thread reload', () => {
         userId: null,
         content: 'Existing reply',
         createdAt: '2026-09-04T10:00:00Z',
+        // #2236: a person typing; only a connector-posted row says 'agent'.
+        postedVia: null,
       },
       {
         id: 42,
@@ -125,6 +134,7 @@ test('a successfully posted reply survives the inline-thread reload', () => {
         userId: null,
         content: 'Newly posted reply',
         createdAt: '2026-09-04T11:00:00Z',
+        postedVia: null,
       },
     ],
     total: 2,
@@ -155,6 +165,24 @@ test('the inline reply preview preserves composer line breaks', () => {
   // JSX spelling and HTML attribute names are case-insensitive anyway.
   assert.match(html, /<span class="dev-feed-msg-author">bob<\/span><time class="dev-feed-msg-time" datetime="2026-09-04T11:00:00Z" title="[^"]*2026[^"]*">/i);
   assert.match(html, /class="dev-feed-msg-avatar" aria-hidden="true" style="background-color:#[0-9a-f]{6}">B</);
+});
+
+test('a long reply in the panel shows four lines and a way to see the rest', () => {
+  // #2556. The panel previews the last two replies under a card; one reply
+  // pasted from somewhere else used to push the next card off the screen.
+  const html = renderToHtml(createElement(mod().MessageLine, {
+    m: {
+      id: 43,
+      author: 'bob',
+      content: 'word '.repeat(400),
+      createdAt: '2026-09-04T11:00:00Z',
+    },
+  }));
+  assert.match(html, /class="dev-feed-msg-text whitespace-pre-wrap break-words line-clamp-4"/,
+    'the clamp joins the classes the reply text already carried');
+  // The control is measured into place by an effect — renderToStaticMarkup
+  // runs none, and an island's first paint must match the prerendered shell.
+  assert.doesNotMatch(html, /Show more|Show less/);
 });
 
 test('the Workshop staging route requires both the textarea and arrow', () => {

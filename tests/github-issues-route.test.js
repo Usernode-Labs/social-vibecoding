@@ -104,6 +104,27 @@ test('github-issues route ?refresh=1 returns issues plus refresh metadata', asyn
   }
 });
 
+test('feedback report keeps the platform author visible after the body is cleared (#2427)', async () => {
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/FROM feedback_reports fr JOIN users/.test(s)) {
+      return { rows: [{ n: 1, username: 'tester' }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.issues.find((issue) => issue.number === 1).created_by_username, 'tester');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
 test('per-issue chatCount counts only human messages (msg_type=message)', async () => {
   // Answer the per-issue thread-count grouped query with rows shaped the
   // way Postgres would after the FILTER: issue #1 has 2 human messages
@@ -501,7 +522,9 @@ test('staging comments endpoint serves mock thread (with a bot comment) on an em
     // Three rows of its own, over the three-row stamp ladder every mock
     // thread now opens with (#1808): an earlier year, six weeks back, a few
     // days back, so the three branches the stamp formats are all on screen.
-    assert.strictEqual(body.comments.length, 6, 'mock 900001 thread has 6 comments');
+    // Plus the long reply every thread closes with (#2556), which is what
+    // gives the comment clamp something to hide in a preview.
+    assert.strictEqual(body.comments.length, 7, 'mock 900001 thread has 7 comments');
     assert.ok(body.comments.some((c) => c.author === 'usernode-bot'), 'includes a bot-authored comment');
     assert.strictEqual(body.comments[0].createdAt, '2024-03-05T09:15:00Z',
       'the ladder leads with a fixed earlier year, so that branch stays reachable');
@@ -585,6 +608,15 @@ test('staging substitutes a thread for a REAL issue number too, with dated comme
     // Oldest-first, the order fetchIssueComments returns.
     const times = body.comments.map((c) => Date.parse(c.createdAt));
     assert.deepStrictEqual(times, [...times].sort((a, b) => a - b), 'oldest first');
+    // #2556: the thread ends with a deliberately LONG reply, so the clamp
+    // and its "Show more" have something to hide in a preview. It is LAST
+    // because the Workshop's inline slot renders only the final two
+    // comments — a long row further up would be invisible on the surface
+    // the clamp matters most on.
+    const last = body.comments[body.comments.length - 1];
+    assert.ok(last.body.length > 600,
+      'the stand-in thread carries a comment long enough to be clamped');
+    assert.ok(/^\[Mock\]/.test(last.body), 'and it is marked like every other row');
   } finally {
     global.fetch = baselineFetch;
     server.close();
@@ -1013,6 +1045,248 @@ test('production never synthesizes in_progress state', async () => {
       assert.strictEqual(issue.in_progress, null);
     }
   } finally {
+    server.close();
+  }
+});
+
+// ── #2261: a refused GitHub read is not an empty board ─────────────────
+// The route hands the client whatever fetchPublicIssues answers. When the
+// refetch behind an expired (or merge-invalidated) entry is refused, that
+// answer is now the last list with `note` and `stale: true` — and the route
+// passes both through, so the board can keep what it has and say why.
+test('#2261 a refused GitHub read serves the last list with note + stale instead of an empty one', async () => {
+  const server = await startServer();
+  const stubbed = global.fetch;
+  try {
+    const port = server.address().port;
+    // Warm the entry through the route (the stub answers five issues), then
+    // expire it the way a platform merge does and make GitHub refuse.
+    let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual((await res.json()).issues.length, 5);
+    assert.strictEqual(github.invalidateIssuesCache('o', 'r'), true);
+    global.fetch = async (url, opts) => (String(url).includes('api.github.com')
+      ? { ok: false, status: 503, headers: { get: () => null }, json: async () => ({}) }
+      : realFetch(url, opts));
+
+    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.issues.length, 5, 'the last list is served, not an empty one');
+    assert.strictEqual(body.issues[0].number, 1);
+    assert.strictEqual(body.note, 'fetch failed');
+    assert.strictEqual(body.stale, true);
+  } finally {
+    global.fetch = stubbed;
+    // Leave the shared entry fresh for whatever runs next: expire it and let
+    // the restored stub re-warm it.
+    github.invalidateIssuesCache('o', 'r');
+    await realFetch(`http://127.0.0.1:${server.address().port}/api/apps/demo/github-issues`);
+    server.close();
+  }
+});
+
+// ── #2365: GET /api/apps/:slug/github-issues/:number ────────────────────
+//
+// The list above is OPEN issues only, so the issue a merged proposal closed
+// — which that proposal still links to — had no page. This route resolves
+// one issue, open or closed, through github.fetchPublicIssue, in the list's
+// row shape. Each test scripts the single-issue response itself; number 142
+// is nowhere in the shared o/r list cache, so the endpoint is really asked.
+
+const closedGhIssue = (over) => ({
+  number: 142,
+  title: 'Toggle resets after refresh',
+  body: 'Steps.\n\n**Source:** usernode user (reporter)',
+  labels: [{ name: 'usernode' }],
+  created_at: '2026-06-01T00:00:00Z',
+  updated_at: '2026-06-09T00:00:00Z',
+  closed_at: '2026-06-09T00:00:00Z',
+  state: 'closed',
+  html_url: 'https://github.com/o/r/issues/142',
+  user: { login: 'usernode-bot' },
+  ...over,
+});
+
+function stubSingleIssue(answer) {
+  const calls = [];
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('api.github.com')) {
+      calls.push(String(url));
+      return answer(url);
+    }
+    return baselineFetch(url, opts);
+  };
+  return calls;
+}
+
+test('single-issue endpoint returns a CLOSED issue in the list row shape', async () => {
+  const calls = stubSingleIssue(() => ({
+    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
+  }));
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/FROM issue_bounties/.test(s)) return { rows: [{ cnt: 2, mine: true }] };
+    if (/FROM chat_messages/.test(s)) return { rows: [{ cnt: 3, last_at: '2026-06-10T00:00:00Z' }] };
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
+    assert.strictEqual(res.status, 200);
+    const { issue } = await res.json();
+    assert.ok(calls.some((u) => u.endsWith('/repos/o/r/issues/142')), 'the single-issue endpoint was asked');
+    assert.strictEqual(issue.number, 142);
+    assert.strictEqual(issue.state, 'closed');
+    assert.strictEqual(issue.closedAt, '2026-06-09T00:00:00Z');
+    assert.strictEqual(issue.title, 'Toggle resets after refresh');
+    // Enriched the way the list enriches a row.
+    assert.strictEqual(issue.created_by_username, 'reporter', 'the Source line names the creator, never the bot');
+    assert.strictEqual(issue.bounty_count, 2);
+    assert.strictEqual(issue.my_bounty, true);
+    assert.strictEqual(issue.chatCount, 3);
+    assert.strictEqual(issue.lastMessageAt, '2026-06-10T00:00:00Z');
+    assert.strictEqual(issue.headless, null);
+    assert.strictEqual(issue.in_progress, null);
+    assert.ok(issue.priority && 'top' in issue.priority, 'attribute summary rides along');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('single-issue endpoint 404s on a missing issue and on a pull request number', async () => {
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    stubSingleIssue(() => ({ ok: false, status: 404, headers: { get: () => null }, json: async () => ({}) }));
+    let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/143`);
+    assert.strictEqual(res.status, 404);
+    assert.ok((await res.json()).error);
+
+    stubSingleIssue(() => ({
+      ok: true, status: 200, headers: { get: () => null },
+      json: async () => closedGhIssue({ number: 144, pull_request: { url: 'x' } }),
+    }));
+    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/144`);
+    assert.strictEqual(res.status, 404, 'a PR is not an issue');
+  } finally {
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('single-issue endpoint is view-gated and validates the number before asking GitHub', async () => {
+  const calls = stubSingleIssue(() => ({
+    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
+  }));
+  const server = await startServer();
+  const prev = appAccess.getAppForUser;
+  try {
+    const port = server.address().port;
+    let level = null;
+    appAccess.getAppForUser = async (_pool, _slug, _user, lvl) => { level = lvl; return null; };
+    let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
+    assert.strictEqual(res.status, 404);
+    assert.strictEqual(level, 'view');
+    assert.strictEqual(calls.length, 0, 'an inaccessible app never reaches GitHub');
+
+    appAccess.getAppForUser = prev;
+    for (const bad of ['0', 'abc', '12x']) {
+      res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/${bad}`);
+      assert.strictEqual(res.status, 400, `rejects ${bad}`);
+    }
+    assert.strictEqual(calls.length, 0);
+  } finally {
+    appAccess.getAppForUser = prev;
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+test('staging demo mode serves a MOCK issue by number without the live round trip', async () => {
+  const calls = stubSingleIssue(() => ({
+    ok: false, status: 404, headers: { get: () => null }, json: async () => ({}),
+  }));
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    let res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900008?demo=1`);
+    assert.strictEqual(res.status, 200);
+    const { issue } = await res.json();
+    assert.strictEqual(issue.number, 900008);
+    assert.strictEqual(issue.state, 'open');
+    assert.strictEqual(calls.length, 0, 'no live fetch for a number no real issue has');
+
+    // Without ?demo=1 the live fetch goes first, and the mock backs its miss.
+    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900008`);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(calls.length, 1);
+
+    // A number that is neither real nor a mock is still a 404.
+    res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/424242?demo=1`);
+    assert.strictEqual(res.status, 404);
+  } finally {
+    global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+// ── #2431: the route ships the proposal that closed the issue ────────────
+//
+// The resolution rules are pinned in tests/issue-proposal-ref.test.js. This
+// is the wiring: both issue routes have to carry `addressed_by`, because the
+// topic page of a CLOSED issue renders from the single-issue payload and the
+// page of an OPEN one renders from the list.
+
+test('both issue routes carry addressed_by, resolved in one extra query', async () => {
+  stubSingleIssue(() => ({
+    ok: true, status: 200, headers: { get: () => null }, json: async () => closedGhIssue(),
+  }));
+  let sessionReads = 0;
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/linked_issues && /.test(s)) {
+      sessionReads += 1;
+      return { rows: [{
+        id: 5001, status: 'merged', user_id: 9, shared_at: null,
+        pr_number: 2431, pr_url: 'https://github.com/o/r/pull/2431',
+        linked_issues: [142, 1], created_from_issue_number: null,
+        last_activity_at: '2026-09-10T00:00:00Z', created_at: '2026-09-01T00:00:00Z',
+        title: 'A closed issue says which proposal closed it',
+      }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const one = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142`);
+    assert.strictEqual(one.status, 200);
+    const { issue } = await one.json();
+    assert.deepStrictEqual(issue.addressed_by, {
+      sessionId: 5001,
+      state: 'merged',
+      prNumber: 2431,
+      prUrl: 'https://github.com/o/r/pull/2431',
+      title: 'A closed issue says which proposal closed it',
+    });
+
+    // The list resolves every number it carries in the SAME one query — the
+    // reference must never cost a read per card.
+    sessionReads = 0;
+    const list = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(list.status, 200);
+    const body = await list.json();
+    assert.strictEqual(sessionReads, 1, 'one read for the whole board');
+    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
+    assert.strictEqual(byNumber.get(1).addressed_by.sessionId, 5001);
+    assert.strictEqual(byNumber.get(2).addressed_by, null, 'an unlinked issue says nothing');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    global.fetch = baselineFetch;
     server.close();
   }
 });

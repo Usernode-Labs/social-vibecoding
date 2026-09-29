@@ -97,6 +97,9 @@ async function verifyCode(pool, userId, rawCode) {
     return { email: proof.email, verified: true, passwordRequired: !!user.password_set, recoveryAllowed: !user.is_admin };
   });
   if (!result) throw new AccountEmailError(400, 'Invalid or expired code. Request a new code if needed.');
+  // A newly confirmed address: project invites waiting on it become this
+  // account's (services/email-invites.js). Best-effort; never throws.
+  await require('./email-invites').claimEmailInvites(pool, { userId, email: result.email });
   return result;
 }
 

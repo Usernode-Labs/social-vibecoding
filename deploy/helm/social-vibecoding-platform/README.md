@@ -7,19 +7,24 @@ created later by the platform through the scoped runtime service account.
 
 The `Build Kubernetes images` workflow resolves platform, worker, and capture
 images, then packages their exact digests into `values.release.yaml` and
-publishes this chart to `oci://ghcr.io/<repository-owner>/charts`. The chart is
-the atomic release marker: no chart version exists unless all three components
-have resolved successfully, either through a build or reuse of a published image.
+publishes this chart to `oci://ghcr.io/<repository-owner>/charts`. It runs for
+source pushes and once each day so the worker can pick up a new Claude Code
+release even when the repository is unchanged. The chart is the atomic release
+marker: no chart version exists unless all three components have resolved
+successfully, either through a build or reuse of a published image.
 
 The platform image still builds at every release revision. Worker and capture
 images reuse a published digest when their complete tracked build directory and
 the build recipe are unchanged. The reuse key hashes the component's Git tree
 (including Dockerfile, ignore files, file modes, and dependency files), the
 release workflow, the resolver script, the target architecture, and the branch
-ref. An unrelated platform change therefore does not rebuild worker/capture;
-a workflow or resolver change conservatively rebuilds both. Each component's
-Docker build context must remain its own directory; additional inputs or build
-arguments must also be represented in the reuse key if the workflow is extended.
+ref. The worker key also includes the exact Claude Code version resolved from
+npm; a new release rebuilds the worker, while the daily run reuses its digest
+when that version is unchanged. An unrelated platform change therefore does
+not rebuild worker/capture; a workflow or resolver change conservatively
+rebuilds both. Each component's Docker build context must remain its own
+directory; additional inputs or build arguments must also be represented in
+the reuse key if the workflow is extended.
 
 The registry stores these lookup tags as `inputs-<hash>`, separately for each
 component and branch. The release always records the resolved `sha256` digest,
@@ -36,9 +41,12 @@ commit tag is created for them. The chart's release revision identifies the
 platform source and chart, while the three digests identify the actual artifacts.
 Workflow summaries show each component's resolution reason and selected digest.
 
-To refresh dependencies or base images without changing source, manually run
-`Build Kubernetes images` with `force_rebuild` set to `worker`, `capture`, or
-`all` (default: `none`). For example:
+Claude Code is the one automatically refreshed floating dependency: the
+workflow resolves its current npm version, validates it, includes it in the
+worker reuse key, and passes that exact version to the Docker build. Other
+dependencies and base images can be refreshed without changing source by
+manually running `Build Kubernetes images` with `force_rebuild` set to
+`worker`, `capture`, or `all` (default: `none`). For example:
 
 ```bash
 gh workflow run build-kubernetes-images.yml --ref main -f force_rebuild=worker
@@ -49,8 +57,7 @@ images again. This refreshes floating apt/npm/tool dependencies; explicitly
 pinned versions still require source changes. The refreshed digest replaces the
 lookup tag for subsequent releases with the same inputs; previously published
 charts retain their original digests. Registry retention must preserve images
-referenced by releases for rollback. There is no scheduled refresh: operators
-choose when to update dependencies. A manual run on `main` publishes a normal
+referenced by releases for rollback. A manual run on `main` publishes a normal
 stable release for Argo CD, including a new platform build and the selected
 component refreshes.
 
@@ -111,6 +118,44 @@ optional for chart installation. Register
 updated chart and sync the encrypted values through Argo CD; the existing
 secrets checksum rolls out credential changes.
 
+For GitHub and X waitlist OAuth, merge these fields into the same
+SOPS-encrypted `platform.secrets.sops.yaml` file's existing `secrets` block:
+
+```yaml
+secrets:
+  waitlistGithubClientId: "<GitHub OAuth client ID>"
+  waitlistGithubClientSecret: "<GitHub OAuth client secret>"
+  waitlistXClientId: "<X OAuth client ID>"
+  waitlistXClientSecret: "<X OAuth client secret>"
+```
+
+With `secrets.create: true`, these map to `WAITLIST_GITHUB_CLIENT_ID`,
+`WAITLIST_GITHUB_CLIENT_SECRET`, `WAITLIST_X_CLIENT_ID`, and
+`WAITLIST_X_CLIENT_SECRET` in the platform Secret, imported through the
+Deployment's `envFrom`. Each provider requires both its ID and secret; empty
+defaults leave that provider disabled. Waitlist OAuth does not fall back to
+the account-linking credential fields above. Register
+`https://<config.domain>/waitlist/connect/github/callback` and
+`https://<config.domain>/waitlist/connect/x/callback` on the respective OAuth
+apps. With `secrets.create: false`, provide the environment-variable keys in
+`secrets.existingSecret`. Publish the updated chart and sync the encrypted
+values through Argo CD; the existing secrets checksum rolls out changes to
+chart-managed credentials.
+
+To override the waitlist OAuth callback origin, set this non-secret value in
+the infra repository's plaintext `platform.yaml`:
+
+```yaml
+config:
+  waitlistOauthOrigin: "https://onhomeroom.com"
+```
+
+This maps to `WAITLIST_OAUTH_ORIGIN` in the platform Deployment. The empty
+default preserves the application's canonical-origin fallback. Supply an
+origin including the scheme, with no path or trailing slash; the application
+appends `/waitlist/connect/<provider>/callback`. When overriding it, register
+the resulting callback URLs with the OAuth providers.
+
 For OpenRouter managed keys, set `secrets.openrouterManagementApiKey` in the
 same SOPS-encrypted values file. With `secrets.create: true`, it maps to
 `OPENROUTER_MANAGEMENT_API_KEY` in the platform Secret, imported through the
@@ -151,16 +196,22 @@ session previews (`USERNODE_APPS_DOMAIN`). When empty, it defaults to
 
 ```yaml
 config:
-  domain: my.onhomeroom.com
+  domain: app.onhomeroom.com
   appsDomain: onhomeroom.com
 ```
 
-This serves the platform at `my.onhomeroom.com`, production apps at
+This serves the platform at `app.onhomeroom.com`, production apps at
 `<slug>.onhomeroom.com`, and previews at `<slug>--s<sessionId>.onhomeroom.com`.
 Platform links, CLI authentication, and access-grant redirects continue to use
 `config.domain`. The platform hostname is reserved: app deployment rejects a
 collision before writing Kubernetes resources, and app access parsing never
 treats the platform as a generated app.
+
+Agent-authored visual evidence is active by default. The chart always injects
+`VISUAL_EVIDENCE_V2_ENABLED=true`; in an incident, set
+`platform.visualEvidenceV2Enabled: false` and sync Argo CD to stop collection,
+execution, and presentation together. This kill switch does not restore
+legacy default-route screenshots.
 
 DNS and cert-manager must support both hostname sets before rollout. Keep
 session cookies host-only. Update external OAuth callback URLs and any
@@ -275,10 +326,11 @@ helm template social-vibecoding-platform ./social-vibecoding-platform \
 ## Proposal checks in Kubernetes
 
 Capture Jobs honor the same `CAPTURE_CPUS` and `CAPTURE_MEMORY` limits as
-Docker (eight CPUs / 4 GiB by default). Their requests are one CPU / 3 GiB,
-matching the observed browser working set; smaller limit overrides also lower
-the requests so Kubernetes can admit the Pod. Per-job ephemeral storage remains
-1 GiB requested / 4 GiB limited. Changes apply to newly created check Jobs.
+Docker (eight CPUs / 6 GiB by default, for a pool of sixteen concurrent
+browser groups). Their requests are one CPU / 3 GiB, matching the observed
+browser working set; smaller limit overrides also lower the requests so
+Kubernetes can admit the Pod. Per-job ephemeral storage remains 1 GiB
+requested / 4 GiB limited. Changes apply to newly created check Jobs.
 
 Capture Jobs visit the generated app and preview HTTPS ingress hostnames. The
 self-app's production capture uses the canonical platform hostname. Worker
@@ -294,8 +346,10 @@ checks. Each Job has no service-account token or shared workspace volume,
 uses the existing worker service account for image pulls, and runs as UID 1000.
 Clone credentials are in a temporary Secret owned by the Job and deleted when
 the runner finishes. Jobs have no retries, a default ten-minute deadline, and
-a one-hour cleanup TTL. The default limit is four CPUs / 2 GiB, with requests
-of one CPU / 1 GiB; existing `UNIT_SUITE_CPUS`, `UNIT_SUITE_MEMORY` and
+a one-hour cleanup TTL. The default limit is eight CPUs / 4 GiB (`node --test`
+sizes its process pool from the CPU quota, so the limit sets the suite's
+parallelism), with requests of one CPU / 1 GiB; existing `UNIT_SUITE_CPUS`,
+`UNIT_SUITE_MEMORY` and
 `UNIT_SUITE_TIMEOUT_MS` settings apply. Allow worker quota for simultaneous
 capture and unit-suite Jobs. Unit-suite log reads are bounded to 32 MiB.
 

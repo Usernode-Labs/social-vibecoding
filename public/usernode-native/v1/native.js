@@ -75,9 +75,11 @@
  *                                        call site serves both idioms
  *   unNative.toast(message, opts?)    — transient status toast / snackbar
  *                                        ({ duration?, action?, priority?,
+ *                                        error?, dismissible?,
  *                                        onClose?(reason) }; a priority
  *                                        toast holds the slot for undo
- *                                        flows)
+ *                                        flows; a long message stays
+ *                                        longer and taps away)
  *   unNative.attachNavBar(bar, opts)  — blurred nav bar + large-title collapse
  *   unNative.attachKeyboardAvoidance(scrollEl, opts) — keyboard avoidance
  *                                        for a fixed-shell app's content
@@ -90,10 +92,19 @@
  *   unNative.physics                  — the pure math (also the node export)
  *
  * On mobile the kit also maintains `--un-kb-inset` on <html> (the
- * on-screen-keyboard occlusion, tracked via visualViewport) plus class
+ * on-screen-keyboard occlusion, tracked via visualViewport while a text
+ * field is focused) plus class
  * `un-kb` while it is non-zero, so sheets / action sheets / modals /
  * alerts ride above the keyboard out of the box. Apps may consume the
  * var for their own fixed bottom bars. No-op on desktop.
+ *
+ * A presented sheet or side panel also carries `--un-presence` on its own
+ * element: 1 at rest, 0 off-screen, and 1:1 with the finger in between,
+ * the same number the backdrop's opacity is driven from. Nothing in
+ * native.css reads it; it exists so a host stylesheet can tie a treatment
+ * of its own to the slide (the platform shell casts the modal dim from the
+ * surface rather than the backdrop, so its frosted panes never sample a
+ * dimmed page). Apps that ignore it render exactly as before.
  *
  * Fidelity requirements this file implements (binding; see the kit section
  * of app-conventions.md): 1:1 finger tracking after intent lock, gestures
@@ -152,10 +163,43 @@
     return Math.abs(state.v) < REST_VELOCITY && Math.abs(state.x - target) < REST_DELTA;
   }
 
+  // A DISMISSAL IS DONE WHEN THE SURFACE IS OFF-SCREEN, not when its spring
+  // is at rest. The rest thresholds above are for a surface you can see: an
+  // entrance has to land on its pixel. An exit's target is the position
+  // where the surface has just left the screen, and the underdamped `sheet`
+  // preset spent another ~200ms there settling an overshoot nobody could
+  // see, holding back teardown, onDismiss and an action sheet's handler
+  // (Messages' "+" → New message started ~0.5s after the tap). So an exit
+  // finishes once the surface is within EXIT_DELTA of its target along the
+  // way it is travelling, or past it, while moving toward it (or already
+  // there); `from` fixes that direction. Entrances keep isAtRest.
+  var EXIT_DELTA = 1; // px
+
+  function isExitDone(state, from, target) {
+    var dir = target > from ? 1 : (target < from ? -1 : 0);
+    return (target - state.x) * dir < EXIT_DELTA && state.v * dir >= 0;
+  }
+
+  // How much time a runtime spring integrates on an animation frame. The
+  // clock starts on the FIRST frame, not when the spring is created: a tap
+  // handler that does real work after presenting a sheet used to hand the
+  // first frame up to 64ms of integration, so the sheet's first painted
+  // position was already part-way up. The first frame advances one nominal
+  // frame; later ones the real gap, clamped so a background tab or a long
+  // task cannot make the spring jump.
+  var FRAME_MS = 1000 / 60;
+  var MAX_FRAME_GAP_MS = 64;
+
+  function springFrameDelta(now, last) {
+    if (last == null) return FRAME_MS;
+    return Math.min(now - last, MAX_FRAME_GAP_MS);
+  }
+
   // Run a spring to rest synchronously (tests, curve pre-computation).
   // Returns { x, v, durationMs, samples: [{t, x}] }. Hard cap keeps a
-  // mis-tuned preset from hanging.
-  function simulateSpring(from, to, velocity, params, maxMs) {
+  // mis-tuned preset from hanging. `exit` ends it where a dismissal would
+  // (isExitDone) instead of at rest.
+  function simulateSpring(from, to, velocity, params, maxMs, exit) {
     var state = { x: from, v: velocity || 0 };
     var samples = [{ t: 0, x: from }];
     var t = 0;
@@ -164,7 +208,7 @@
       springStep(state, to, params, STEP_MS);
       t += STEP_MS;
       samples.push({ t: t, x: state.x });
-      if (isAtRest(state, to)) break;
+      if (isAtRest(state, to) || (exit && isExitDone(state, from, to))) break;
     }
     return { x: state.x, v: state.v, durationMs: t, samples: samples };
   }
@@ -392,22 +436,64 @@
   // shorter than this.
   var KB_MIN_INSET = 50;
 
-  // On-screen keyboard occlusion: height of the layout-viewport strip
-  // hidden behind the keyboard, derived from visualViewport metrics.
-  // input: { innerHeight, vvHeight, vvOffsetTop?, vvScale?, minInset? }.
-  // Returns integer px (0 when no keyboard). iOS overlays the layout
-  // viewport, so the difference is positive while the keyboard is up;
-  // Android's default resize mode shrinks innerHeight in lockstep with
-  // vvHeight, so this degenerates to 0 (no double compensation). Forced
-  // to 0 while pinch-zoomed — a zoomed visual viewport is not a keyboard.
+  // On-screen keyboard occlusion: height of the LAYOUT-viewport strip
+  // hidden behind the keyboard.
+  // input: { layoutHeight, vvHeight, vvScale?, minInset? }.
+  // Returns integer px (0 when no keyboard). Forced to 0 while pinch-zoomed
+  // — a zoomed visual viewport is not a keyboard.
+  //
+  // ── WHY layoutHeight, AND WHY NO vvOffsetTop (#1938) ─────────────────
+  //
+  // This used to read `innerHeight - vvHeight - vvOffsetTop`, on the stated
+  // reasoning that iOS OVERLAYS the layout viewport and so leaves
+  // `window.innerHeight` at full height. It does not. Measured on an
+  // iPhone 17 Pro with the keyboard up, in Safari AND in an installed PWA:
+  //
+  //             innerHeight  vvHeight  vvOffsetTop  documentElement.clientHeight
+  //   standalone    409        409        403            812
+  //   Safari        377        377        337            714
+  //   Android       810        498          0            810
+  //
+  // On iOS `innerHeight` collapses to the visual viewport AND the page is
+  // panned, so the old expression came out NEGATIVE (409-409-403 = -403),
+  // fell through the `occluded > 0` guard, and returned 0. The `un-kb` class
+  // was therefore never set and `--un-kb-inset` never left 0: every piece of
+  // keyboard avoidance the kit publishes — its own sheets and modals, and
+  // `.platform-kb-column` in the shell (#1937, #1491) — was inert on iOS,
+  // while working correctly on Android. It read as a fix that worked, because
+  // iOS pans the document on focus and that happens to reveal a composer at
+  // the foot of a SHORT column; a taller one inside an `overflow: hidden`
+  // shell (the dev session's) stayed behind the keys, which is #1938.
+  //
+  // The layout viewport is the frame of reference that holds still on all
+  // three, so the occlusion is simply what the keyboard took from it. The
+  // pan term goes with it: at scale 1 a non-zero `vvOffsetTop` IS the
+  // keyboard pan, so subtracting it cancelled the very thing being measured.
+  // Callers pass the layout height; `layoutViewportHeight()` below is how the
+  // kit obtains one that iOS cannot move. `innerHeight` is still accepted as
+  // the old name so an app calling this directly keeps working.
   function keyboardInset(input) {
     if (!input) return 0;
     var scale = input.vvScale == null ? 1 : input.vvScale;
     if (Math.abs(scale - 1) > 0.01) return 0;
     var min = input.minInset == null ? KB_MIN_INSET : input.minInset;
-    var occluded = input.innerHeight - input.vvHeight - (input.vvOffsetTop || 0);
+    var layout = input.layoutHeight == null ? input.innerHeight : input.layoutHeight;
+    var occluded = layout - input.vvHeight;
     if (!(occluded > 0) || occluded < min) return 0;
     return Math.round(occluded);
+  }
+
+  // The layout viewport's height — the one the on-screen keyboard does not
+  // move. `documentElement.clientHeight` is that viewport in standards mode
+  // (CSS on <html> does not change it), and it stayed at full height on every
+  // platform measured above while `innerHeight` collapsed on iOS. The max of
+  // the two covers the reverse case: a browser in `interactive-widget:
+  // resizes-content` mode genuinely shrinks the layout viewport, and there
+  // both agree, so no keyboard is reported and nothing is compensated twice.
+  function layoutViewportHeight() {
+    var docEl = document.documentElement;
+    var client = docEl && docEl.clientHeight ? docEl.clientHeight : 0;
+    return Math.max(window.innerHeight || 0, client);
   }
 
   // Text-entry classifier for keyboard-avoidance tap interception. Only
@@ -436,6 +522,21 @@
     var type = input.type ? String(input.type).toLowerCase() : 'text';
     if (KB_TEXT_INPUT_TYPES[type]) return true;
     return !KB_NON_TEXT_INPUT_TYPES[type]; // unknown types default to text
+  }
+
+  // Whether the focused element can be holding the on-screen keyboard up.
+  // Only a text-entry field raises it, and blurring that field is what
+  // retracts it, so with nothing editable focused there is no keyboard —
+  // whatever the visual viewport still reports. iOS reports the retraction
+  // only once its animation has finished, 250–400ms after the keys are
+  // gone, and everything keyed off the inset (the tab bar, a dialog's
+  // height, a column's padding) used to wait that long and then snap.
+  // A focused IFRAME may hold a field the page cannot see into, so it
+  // keeps the measurement. input: isTextEntryField's descriptor, or null.
+  function keyboardCanBeUp(input) {
+    if (!input) return false;
+    if (String(input.tag || '').toLowerCase() === 'iframe') return true;
+    return isTextEntryField(input);
   }
 
   // Keyboard-aware reveal math for a focused field inside a content
@@ -586,6 +687,40 @@
     };
   }
 
+  // How long a toast stays when the caller names no duration. A short
+  // status ("Copied") keeps the 2.2s it always had; a longer message gets
+  // reading time — about 60ms a character over a one-second glance — up to
+  // 8s, because an error that wraps to three lines was gone before it could
+  // be read. `error: true` holds at least 5s whatever its length. An action
+  // toast keeps its 4s: its clock is the undo window, not reading time. An
+  // explicit `duration` always wins. Pure; unit-tested in
+  // tests/native-kit.test.js.
+  var TOAST_MIN_MS = 2200;
+  var TOAST_MAX_MS = 8000;
+  var TOAST_ERROR_MIN_MS = 5000;
+  var TOAST_ACTION_MS = 4000;
+  function toastDuration(message, opts) {
+    var o = opts || {};
+    if (o.duration != null) return o.duration;
+    if (o.action && o.action.label != null) return TOAST_ACTION_MS;
+    var len = message == null ? 0 : String(message).length;
+    var ms = Math.min(TOAST_MAX_MS, Math.max(TOAST_MIN_MS, 1000 + 60 * len));
+    return o.error ? Math.max(TOAST_ERROR_MIN_MS, ms) : ms;
+  }
+
+  // Whether tapping the toast dismisses it. Only a toast that outstays the
+  // short default (or asks to, or is an error) takes taps: a 2.2s "Copied"
+  // stays pass-through, as the kit has always promised, while a long one
+  // that now lingers for up to 8s can be tapped away. Never an action
+  // toast: its only tappable part is its button. `dismissible: false`
+  // opts out.
+  function toastTapDismisses(opts, duration) {
+    var o = opts || {};
+    if (o.action && o.action.label != null) return false;
+    if (o.dismissible != null) return !!o.dismissible;
+    return !!o.error || duration > TOAST_MIN_MS;
+  }
+
   /* ────────────────────────────────────────────────────────────────────
    * Zoom-from-element math — pure functions for the 'zoom-in'/'zoom-out'
    * transition types. Unit-tested via the physics export.
@@ -697,6 +832,13 @@
     DECEL_RATE: DECEL_RATE,
     REST_VELOCITY: REST_VELOCITY,
     REST_DELTA: REST_DELTA,
+    EXIT_DELTA: EXIT_DELTA,
+    STEP_MS: STEP_MS,
+    FRAME_MS: FRAME_MS,
+    MAX_FRAME_GAP_MS: MAX_FRAME_GAP_MS,
+    isAtRest: isAtRest,
+    isExitDone: isExitDone,
+    springFrameDelta: springFrameDelta,
     // Default horizon (ms) for release-decision projection. Mutable via the
     // ?un-tune=1 overlay; projectDisplacement reads it at call time.
     COMMIT_HORIZON_MS: 120,
@@ -723,7 +865,9 @@
     remeasuredSheetY: remeasuredSheetY,
     KB_MIN_INSET: KB_MIN_INSET,
     keyboardInset: keyboardInset,
+    layoutViewportHeight: layoutViewportHeight,
     isTextEntryField: isTextEntryField,
+    keyboardCanBeUp: keyboardCanBeUp,
     revealScrollDelta: revealScrollDelta,
     reorderDropIndex: reorderDropIndex,
     gridDropSide: gridDropSide,
@@ -731,6 +875,8 @@
     placePopover: placePopover,
     createArbiter: createArbiter,
     createToastSlot: createToastSlot,
+    toastDuration: toastDuration,
+    toastTapDismisses: toastTapDismisses,
     zoomPose: zoomPose,
     zoomRectUsable: zoomRectUsable,
     ICON_NAMES: Object.keys(ICONS),
@@ -790,37 +936,82 @@
    * spring/drag semantics are unchanged. Apps may consume the var for
    * their own fixed bottom bars. Structural no-op on desktop or where
    * visualViewport is absent: no listeners, no var, CSS falls back to 0px.
+   *
+   * The inset drops to 0 the moment focus leaves a text field
+   * (keyboardCanBeUp), not when iOS finally reports the smaller keyboard:
+   * that report lands after the keys have gone, so the surfaces riding the
+   * inset moved late and all at once. Cleared on blur, they move WITH the
+   * retracting keyboard instead.
    * ──────────────────────────────────────────────────────────────────── */
 
   // Current keyboard inset (px), shared with attachKeyboardAvoidance so
   // instances read it directly instead of parsing the CSS custom property.
   var kbInset = 0;
+  // Called with the new inset after the var and the class are written: a
+  // presented modal waits on it to reveal the field it just focused.
+  var kbWatchers = [];
 
   (function () {
     var vv = window.visualViewport;
     if (!vv || platform === 'desktop') return;
     var rafPending = false;
-    function apply() {
-      rafPending = false;
-      var inset = keyboardInset({
-        innerHeight: window.innerHeight,
-        vvHeight: vv.height,
-        vvOffsetTop: vv.offsetTop,
-        vvScale: vv.scale,
-      });
+    function describe(el) {
+      // Focus inside a shadow root is reported as its host.
+      while (el && el.shadowRoot && el.shadowRoot.activeElement) el = el.shadowRoot.activeElement;
+      if (!el || el === document.body || el === document.documentElement) return null;
+      return {
+        tag: el.tagName,
+        type: el.type,
+        readOnly: !!el.readOnly,
+        disabled: !!el.disabled,
+        contentEditable: !!el.isContentEditable,
+      };
+    }
+    function publish(inset) {
       if (inset === kbInset) return;
       kbInset = inset;
       document.documentElement.style.setProperty('--un-kb-inset', inset + 'px');
       document.documentElement.classList.toggle('un-kb', inset > 0);
+      kbWatchers.slice().forEach(function (fn) {
+        try { fn(inset); } catch (e) { /* one surface must not stop the rest */ }
+      });
+    }
+    function apply() {
+      rafPending = false;
+      publish(!keyboardCanBeUp(describe(document.activeElement)) ? 0 : keyboardInset({
+        layoutHeight: layoutViewportHeight(),
+        vvHeight: vv.height,
+        vvScale: vv.scale,
+      }));
+    }
+    // A blur that takes focus nowhere a keyboard can live clears the inset
+    // IN the event, not a frame later: iOS starts scrolling the page back
+    // down the moment the field blurs, and the first frame after a blur has
+    // measured ~100ms late on iOS — long enough for the page to slide down
+    // before a dialog riding the inset began to follow. `relatedTarget` is
+    // where focus is going; a hop to another field keeps the keyboard.
+    function onFocusOut(e) {
+      if (!keyboardCanBeUp(describe(e.relatedTarget))) publish(0);
+      schedule();
     }
     function schedule() {
       if (rafPending) return;
       rafPending = true;
       requestAnimationFrame(apply);
     }
-    vv.addEventListener('resize', schedule, { passive: true });
+    // The keyboard's own report is read IN the event. iOS pans the page
+    // to a focused field in the same frame it reports the smaller visual
+    // viewport, and anything answering that pan (the shell moves a modal
+    // by it, keyed on `un-kb`) has to land in that frame too: the next
+    // animation frame measured ~45ms later there, long enough to see the
+    // page move and the dialog follow. Scrolls, which fire every frame of
+    // a pinch or pan, stay coalesced to one read per frame.
+    vv.addEventListener('resize', apply, { passive: true });
     vv.addEventListener('scroll', schedule, { passive: true });
     window.addEventListener('resize', schedule, { passive: true });
+    // Re-read a frame later as well, once focus has landed.
+    document.addEventListener('focusin', schedule, true);
+    document.addEventListener('focusout', onFocusOut, true);
   })();
 
   /* ────────────────────────────────────────────────────────────────────
@@ -868,12 +1059,16 @@
   // spring(target, opts) — target is an Element (transform written per
   // frame; opts.axis 'x'|'y' picks translateX/translateY) or a callback
   // called with the current value. opts: { from, to, velocity (px/ms),
-  // preset | mass/tension/friction, onUpdate, onRest }.
+  // preset | mass/tension/friction, exit, onUpdate, onRest }. `exit: true`
+  // marks a dismissal: it rests as soon as isExitDone says the surface has
+  // left the screen, and onRest runs then.
   // Returns { current(): {x, v}, stop(), done }.
   function spring(target, opts) {
     var params = resolvePreset(opts);
+    var from = opts.from;
     var to = opts.to;
-    var state = { x: opts.from, v: opts.velocity || 0 };
+    var exit = opts.exit === true;
+    var state = { x: from, v: opts.velocity || 0 };
     var axis = opts.axis === 'y' ? 'Y' : 'X';
     var apply = typeof target === 'function'
       ? target
@@ -887,19 +1082,21 @@
         if (raf) cancelAnimationFrame(raf);
       },
     };
-    var last = performance.now();
+    // The clock starts on the first frame (springFrameDelta): the time a
+    // handler spends between creating the spring and yielding to the frame
+    // is not motion anyone saw.
+    var last = null;
     var acc = 0;
     var raf = null;
     function frame(now) {
       if (handle.done) return;
-      // Clamp huge gaps (background tab) so the spring can't explode.
-      acc += Math.min(now - last, 64);
+      acc += springFrameDelta(now, last);
       last = now;
       var rested = false;
       while (acc >= STEP_MS) {
         springStep(state, to, params, STEP_MS);
         acc -= STEP_MS;
-        if (isAtRest(state, to)) {
+        if (isAtRest(state, to) || (exit && isExitDone(state, from, to))) {
           state.x = to;
           state.v = 0;
           rested = true;
@@ -1329,8 +1526,8 @@
       } else if (!windowMode) {
         var sr = scrollEl.getBoundingClientRect();
         // A hidden scroller measures 0 — keep the last good anchor rather
-        // than snapping the puck to the top of the shell. Re-measured at
-        // touchstart, so the first pull after a screen shows is correct.
+        // than snapping the puck to the top of the shell. Re-measured when
+        // a pull locks, so the first pull after a screen shows is correct.
         if (sr.height || sr.width) top = sr.top - puckHome.getBoundingClientRect().top;
       }
       // Window mode with no anchor keeps the stylesheet's safe-area top;
@@ -1408,10 +1605,49 @@
       });
     }
 
+    // THE BLOCKING LISTENER IS ONLY THERE WHILE A PULL CAN START. A
+    // non-passive `touchmove` makes the browser wait for this script before
+    // it scrolls, on every gesture that starts over the scroller: WebKit
+    // and Chromium both decide at touchstart, from the listeners present
+    // then, whether a touch's moves must be sent to the page synchronously.
+    // Attached for the life of the recognizer it held every scroll of Home,
+    // Discover, the leaderboard and the Workshop back on the main thread,
+    // mid-list, where no pull can begin. So it is attached only while the
+    // content is at its top (or a pull or its settle is in flight), and a
+    // passive `scroll` listener moves it on and off as the offset crosses
+    // 0; touchstart re-checks for an offset that changed with no scroll
+    // event. At the top nothing changes: the listener is there before the
+    // finger lands, as it always was.
+    var moveBound = false;
+    function bindMove(on) {
+      if (on === moveBound) return;
+      moveBound = on;
+      if (on) listenEl.addEventListener('touchmove', onTouchMove, { passive: false });
+      else listenEl.removeEventListener('touchmove', onTouchMove, { passive: false });
+    }
+    function syncMove(top) {
+      bindMove(!!drag || !!activeSpring || refreshing || display > 0 ||
+        (top == null ? scrollTop() : top) <= 0);
+    }
+    // Per scroll event this reads only the offset of the element that
+    // scrolled, and asks scrollTop() (which may resolve the scroll owner)
+    // only when that says the answer may have changed.
+    function onScroll(e) {
+      var t = e && e.target;
+      var own = t && t.nodeType === 1 ? t.scrollTop : (window.scrollY || 0);
+      if ((own <= 0) === moveBound) return;
+      syncMove();
+    }
+    // Element mode scrolls the element; a getScrollTop reader means the
+    // document may be the scroller instead (the platform's browser pages).
+    var scrollTargets = windowMode ? [window]
+      : (opts && typeof opts.getScrollTop === 'function' ? [scrollEl, window] : [scrollEl]);
+
     function onTouchStart(e) {
       if (refreshing || e.touches.length !== 1) return;
-      measureAnchor();
-      if (scrollTop() > 0 && !activeSpring && display === 0) return;
+      var top = scrollTop();
+      syncMove(top);
+      if (top > 0 && !activeSpring && display === 0) return;
       var baseRaw = 0;
       if (activeSpring) {
         // Catch the list mid-settle — which means claiming the sequence
@@ -1447,6 +1683,10 @@
             return;
           }
           drag.locked = 'y';
+          // Measured here, where a pull has actually begun, rather than on
+          // every touchstart: the anchor is two rect reads, and a touch that
+          // becomes a scroll or a tap never needs them.
+          measureAnchor();
         } else if (axis === 'y') { drag = null; return; }
       }
       if (drag.locked !== 'y') return;
@@ -1465,7 +1705,9 @@
       var samples = drag.samples;
       var locked = drag.locked === 'y';
       drag = null;
-      if (!locked || display === 0) return;
+      // A touch that scrolled away with no momentum left no scroll event
+      // behind to take the blocking listener off; do it here.
+      if (!locked || display === 0) { syncMove(); return; }
       // Anchor the velocity window at release (see the swipe handler) so a
       // held-still pause decays momentum before the commit decision.
       samples.push({ t: e.timeStamp, x: display });
@@ -1475,9 +1717,10 @@
     }
 
     listenEl.addEventListener('touchstart', onTouchStart, { passive: true });
-    listenEl.addEventListener('touchmove', onTouchMove, { passive: false });
     listenEl.addEventListener('touchend', onTouchEnd, { passive: true });
     listenEl.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    scrollTargets.forEach(function (el) { el.addEventListener('scroll', onScroll, { passive: true }); });
+    syncMove();
 
     return {
       // Programmatic refresh — the kit's beginRefreshing(). Used by the
@@ -1489,9 +1732,10 @@
       },
       detach: function () {
         listenEl.removeEventListener('touchstart', onTouchStart);
-        listenEl.removeEventListener('touchmove', onTouchMove);
+        bindMove(false);
         listenEl.removeEventListener('touchend', onTouchEnd);
         listenEl.removeEventListener('touchcancel', onTouchEnd);
+        scrollTargets.forEach(function (el) { el.removeEventListener('scroll', onScroll, { passive: true }); });
         window.removeEventListener('resize', measureAnchor);
         window.removeEventListener('orientationchange', measureAnchor);
         if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
@@ -3036,6 +3280,21 @@
     return function () { cancelAnimationFrame(raf); };
   }
 
+  // A surface on its way out stops taking input the moment it is dismissed,
+  // as a modal already does (animateDialog). The exit spring runs to rest
+  // well after the surface has left the screen, and until teardown the
+  // backdrop, faded to nothing by then, still covered the page: the first
+  // tap after closing a sheet (a tab, a row) landed on it and did nothing.
+  // Measured on a phone-sized viewport, taps 270-390ms after tapping a
+  // sheet's backdrop were swallowed. The surfaces themselves are released
+  // too; a dismissed surface has no more gestures to take.
+  function releaseInput() {
+    for (var i = 0; i < arguments.length; i++) {
+      var el = arguments[i];
+      if (el && el.style) el.style.pointerEvents = 'none';
+    }
+  }
+
   // Wire "click the backdrop to dismiss" WITHOUT eating the opening
   // gesture's ghost click — see decideBackdropDismiss above for why that
   // click exists and why it lands here. Every presented surface with a
@@ -3103,13 +3362,24 @@
     function render(val) {
       y = val;
       sheet.style.transform = 'translateY(' + val + 'px)';
-      backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / height)));
+      var presence = String(Math.max(0, Math.min(1, 1 - val / height)));
+      backdrop.style.opacity = presence;
+      // The same number, on the surface itself, as `--un-presence`: 1 at
+      // rest, 0 off-screen, 1:1 with the drag between. A host stylesheet
+      // that wants the dim to ride the slide from the SHEET's side (the
+      // platform shell casts its own scrim from the sheet, so its glass
+      // never frosts a dimmed page) reads this; the kit's own styles do
+      // not, so an app that ignores it renders exactly as before.
+      sheet.style.setProperty('--un-presence', presence);
     }
 
+    // Once closed, every spring is the exit (dismiss, or the retarget
+    // below when the height changes mid-exit): it ends off-screen, not at
+    // rest, so teardown and onDismiss are not held by an invisible settle.
     function springTo(to, velocity, onRest) {
       if (activeSpring) activeSpring.stop();
       activeSpring = spring(function (v) { render(v); }, {
-        from: y, to: to, velocity: velocity || 0, preset: 'sheet',
+        from: y, to: to, velocity: velocity || 0, preset: 'sheet', exit: closed,
         onRest: function () { activeSpring = null; if (onRest) onRest(); },
       });
     }
@@ -3124,6 +3394,7 @@
     function dismiss(velocity) {
       if (closed) return;
       closed = true;
+      releaseInput(backdrop, sheet);
       springTo(height, velocity || 0, teardown);
     }
 
@@ -3229,6 +3500,7 @@
    * ──────────────────────────────────────────────────────────────────── */
 
   var modalStack = []; // Escape dismisses the TOPMOST dismissible modal only
+  var alertSeq = 0;     // unique ids for each alert's title/message (aria)
 
   // Modal/alert cards and the dim over the page are one fade (#1566).
   // Explicitly commit BOTH starting opacities, including the separately
@@ -3304,6 +3576,199 @@
     }
   }, true);
 
+  // Tab stays inside the topmost modal or alert card. The card is appended
+  // to <body> after the page, over a backdrop that takes the pointer, but
+  // the page behind it was still one Tab away: from the card's last control
+  // focus walked out onto whatever was under the dim. So the entries a
+  // modal/alert pushes carry `trap` (their card), and Tab from the last
+  // focusable wraps to the first, Shift+Tab from the first to the last, and
+  // a Tab while focus is outside the card (a click on the backdrop drops it
+  // on <body>) brings it back in. Sheets and panels push no `trap` and keep
+  // their behaviour.
+  //
+  // BUBBLE phase, and it stands aside for a Tab something inside the card
+  // already handled (`defaultPrevented`: an autocomplete that picks on Tab)
+  // and for a popover presented over the modal (its own handler owns Tab).
+  var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type="hidden"]), ' +
+    'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"]), ' +
+    '[contenteditable="true"]';
+
+  function focusablesIn(root) {
+    return Array.prototype.filter.call(root.querySelectorAll(FOCUSABLE), function (el) {
+      if (el.closest && el.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+      return el.getClientRects().length > 0;
+    });
+  }
+
+  window.addEventListener('keydown', function (e) {
+    if (e.key !== 'Tab' || e.defaultPrevented || !modalStack.length) return;
+    if (activePopover) return;
+    var card = modalStack[modalStack.length - 1].trap;
+    if (!card || !card.parentNode) return;
+    var stops = focusablesIn(card);
+    var active = document.activeElement;
+    var inside = active && card.contains(active);
+    if (!stops.length) {
+      e.preventDefault();
+      try { card.focus(); } catch (err) { /* ignore */ }
+      return;
+    }
+    var first = stops[0];
+    var last = stops[stops.length - 1];
+    var next = null;
+    if (!inside) next = e.shiftKey ? last : first;
+    else if (e.shiftKey && (active === first || active === card)) next = last;
+    else if (!e.shiftKey && active === last) next = first;
+    if (next) {
+      e.preventDefault();
+      try { next.focus(); } catch (err) { /* ignore */ }
+    }
+  });
+
+  // ── A modal's fields take focus without moving the page ─────────────
+  // Tapping a field in a centred modal let iOS reveal it natively: it
+  // scrolled the whole page up under the dialog as the keyboard rose, and
+  // back down as it fell, and reported neither until the animation was
+  // over. The dialog is `position: fixed`, so it rode that scroll off the
+  // top of the screen, and anything compensating for the pan could only
+  // move once the report came: a dip on the way up, a throw on the way
+  // down. The modal needs no pan. It already moves into the band above the
+  // keyboard itself (`--un-kb-inset` in its `top` and height), so the pan
+  // is eliminated at its source, as attachKeyboardAvoidance does for a
+  // content scroller: the tap on a text field is taken (preventDefault
+  // kills the click, the native focus and the native reveal) and the field
+  // is focused with preventScroll. What the native reveal did for a field
+  // below the fold is done inside the card once it has settled at its new
+  // height. Scoped exactly as there: text-entry fields only, a field whose
+  // keyboard is up keeps its native caret and selection, a drag past the
+  // slop is not a tap, and a finger a recognizer owns is left alone. One
+  // addition: a field the dialog focused from code has no keyboard yet, and
+  // its first tap is taken too (see onTouchEnd). Returns detach.
+  var MODAL_SETTLE_MS = 280; // the modal's 250ms top/height ease, and a frame
+  var MODAL_REVEAL_FALLBACK_MS = 700; // no inset reported: resize mode, hardware keys
+  function attachModalFieldFocus(card) {
+    if (!window.visualViewport || platform === 'desktop') return function () {};
+    var touch = null;
+    var timers = [];
+    var watcher = null;
+    var offered = null; // a field focused from code whose keyboard a tap raised
+
+    function fieldAt(target) {
+      if (!target || target.nodeType !== 1 || !target.closest) return null;
+      var field = target.closest('input, textarea, [contenteditable]');
+      if (!field || !card.contains(field)) return null;
+      return isTextEntryField({
+        tag: field.tagName.toLowerCase(),
+        type: field.type,
+        readOnly: !!field.readOnly,
+        disabled: !!field.disabled,
+        contentEditable: !!field.isContentEditable,
+      }) ? field : null;
+    }
+
+    function reveal(field) {
+      if (document.activeElement !== field || !card.contains(field)) return;
+      var c = card.getBoundingClientRect();
+      var f = field.getBoundingClientRect();
+      var delta = revealScrollDelta({
+        fieldTop: f.top,
+        fieldBottom: f.bottom,
+        innerHeight: c.bottom,
+        inset: 0,
+        margin: 12,
+        topLimit: c.top + 12,
+      });
+      if (!delta) return;
+      var max = Math.max(0, card.scrollHeight - card.clientHeight);
+      var top = Math.max(0, Math.min(max, card.scrollTop + delta));
+      if (top === card.scrollTop) return;
+      try {
+        card.scrollTo({ top: top, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
+      } catch (e) {
+        card.scrollTop = top;
+      }
+    }
+
+    function clear() {
+      timers.forEach(clearTimeout);
+      timers = [];
+      if (watcher) {
+        var i = kbWatchers.indexOf(watcher);
+        if (i >= 0) kbWatchers.splice(i, 1);
+        watcher = null;
+      }
+    }
+
+    // Reveal once the card has its keyboard-up height: straight away on a
+    // hop between fields with the keys already up, else when the inset
+    // lands and the card has eased to it.
+    function settle(field) {
+      clear();
+      if (kbInset > 0) {
+        requestAnimationFrame(function () { reveal(field); });
+        return;
+      }
+      watcher = function (inset) {
+        if (!(inset > 0)) return;
+        clear();
+        timers.push(setTimeout(function () { reveal(field); }, MODAL_SETTLE_MS));
+      };
+      kbWatchers.push(watcher);
+      timers.push(setTimeout(function () { reveal(field); }, MODAL_REVEAL_FALLBACK_MS));
+    }
+
+    function onTouchStart(e) {
+      touch = e.touches.length === 1
+        ? { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: false }
+        : null;
+    }
+    function onTouchMove(e) {
+      if (!touch || touch.moved) return;
+      if (e.touches.length !== 1) { touch.moved = true; return; }
+      if (Math.abs(e.touches[0].clientX - touch.x) > KB_TAP_SLOP
+        || Math.abs(e.touches[0].clientY - touch.y) > KB_TAP_SLOP) touch.moved = true;
+    }
+    function onTouchCancel() { touch = null; }
+    function onTouchEnd(e) {
+      var t = touch;
+      touch = null;
+      if (!t || t.moved || !e.cancelable) return;
+      if (e.touches && e.touches.length) return;
+      if (gestures.owner('touch') != null) return;
+      var field = fieldAt(e.target);
+      if (!field) return;
+      if (document.activeElement === field) {
+        // Focused, with its keyboard up (or raised here once already): the
+        // tap places the caret, natively.
+        if (kbInset > 0 || offered === field) return;
+        // Focused from code (a dialog focusing its first field). iOS raises
+        // no keyboard for that, and raises it on this tap instead, panning
+        // the page as it does. Refocused inside the tap, it comes up with
+        // no pan. Once per field: a hardware keyboard never reports an
+        // inset, and every later tap there must still place the caret.
+        offered = field;
+        try { field.blur(); } catch (err) { /* ignore */ }
+      }
+      e.preventDefault();
+      try { field.focus({ preventScroll: true }); } catch (err) {
+        try { field.focus(); } catch (err2) { /* ignore */ }
+      }
+      settle(field);
+    }
+
+    card.addEventListener('touchstart', onTouchStart, { passive: true });
+    card.addEventListener('touchmove', onTouchMove, { passive: true });
+    card.addEventListener('touchend', onTouchEnd, { passive: false });
+    card.addEventListener('touchcancel', onTouchCancel, { passive: true });
+    return function detach() {
+      clear();
+      card.removeEventListener('touchstart', onTouchStart);
+      card.removeEventListener('touchmove', onTouchMove);
+      card.removeEventListener('touchend', onTouchEnd);
+      card.removeEventListener('touchcancel', onTouchCancel);
+    };
+  }
+
   // presentModal({ content | contentEl, onDismiss?, dismissible? }) —
   // content is an HTML string, contentEl an Element to adopt. dismissible
   // (default true) gates backdrop-tap and Escape. Returns { dismiss(), el }.
@@ -3324,8 +3789,10 @@
 
     var prevFocus = document.activeElement;
     var closed = false;
-    var entry = { dismissible: dismissible, dismiss: dismiss };
+    // `trap`: Tab cycles inside this card while it is the topmost entry.
+    var entry = { dismissible: dismissible, dismiss: dismiss, trap: card };
     modalStack.push(entry);
+    var detachFieldFocus = attachModalFieldFocus(card);
     var fade = animateDialog(card, backdrop, function () {
       var auto = card.querySelector('[autofocus]');
       try { (auto || card).focus(); } catch (e) { /* ignore */ }
@@ -3334,6 +3801,7 @@
     function dismiss() {
       if (closed) return;
       closed = true;
+      detachFieldFocus();
       var i = modalStack.indexOf(entry);
       if (i >= 0) modalStack.splice(i, 1);
       fade.dismiss(function () {
@@ -3417,7 +3885,10 @@
     function render(val) {
       x = val;
       panel.style.transform = 'translateX(' + (val * dir) + 'px)';
-      backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / width)));
+      var presence = String(Math.max(0, Math.min(1, 1 - val / width)));
+      backdrop.style.opacity = presence;
+      // `--un-presence` on the panel, as on the sheet: see presentSheet.
+      panel.style.setProperty('--un-presence', presence);
     }
 
     function springTo(to, onRest) {
@@ -3427,8 +3898,10 @@
         if (onRest) onRest();
         return;
       }
+      // Once closed the spring is the exit: it ends off-screen (see the
+      // sheet's springTo).
       activeSpring = spring(function (v) { render(v); }, {
-        from: x, to: to, preset: 'sheet',
+        from: x, to: to, preset: 'sheet', exit: closed,
         onRest: function () { activeSpring = null; if (onRest) onRest(); },
       });
     }
@@ -3448,6 +3921,7 @@
       closed = true;
       var i = modalStack.indexOf(entry);
       if (i >= 0) modalStack.splice(i, 1);
+      releaseInput(backdrop, panel);
       springTo(width, teardown);
     }
 
@@ -3625,10 +4099,13 @@
         backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / height)));
       }
 
+      // Once settled the spring is the exit, and it ends off-screen, so the
+      // chosen action's handler runs as the sheet leaves rather than ~200ms
+      // after (see the sheet's springTo).
       function springTo(to, velocity, onRest) {
         if (activeSpring) activeSpring.stop();
         activeSpring = spring(function (v) { render(v); }, {
-          from: y, to: to, velocity: velocity || 0, preset: 'sheet',
+          from: y, to: to, velocity: velocity || 0, preset: 'sheet', exit: settled,
           onRest: function () { activeSpring = null; if (onRest) onRest(); },
         });
       }
@@ -3646,6 +4123,7 @@
         if (settled) return;
         settled = true;
         settleAction = action || null;
+        releaseInput(backdrop, wrap);
         springTo(height, 0, finishSettle);
       }
 
@@ -3931,10 +4409,14 @@
    * { button, value } — value is the field text when a field was shown.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // alert({ title, message?, field?: { placeholder?, value? },
-  // buttons?: [{ label, style?: 'cancel'|'default'|'destructive',
-  // handler? }] }) — returns a Promise. Named alertDialog internally so it
-  // can't be confused with window.alert; exposed as unNative.alert.
+  // alert({ title, message?, field?: { placeholder?, value?, maxLength?,
+  // submitOnEnter? }, buttons?: [{ label, style?: 'cancel'|'default'|
+  // 'destructive', handler? }] }) — returns a Promise. Named alertDialog
+  // internally so it can't be confused with window.alert; exposed as
+  // unNative.alert. `maxLength` caps the field; `submitOnEnter` makes Enter
+  // in it press the last button that is not a cancel, the way a one-field
+  // form submits. Both are opt-in: a caller that passes neither gets the
+  // field it always got.
   function alertDialog(options) {
     var opts = options || {};
     var buttons = opts.buttons && opts.buttons.length
@@ -3945,16 +4427,26 @@
       backdrop.className = 'un-backdrop un-backdrop-fade';
       var card = document.createElement('div');
       card.className = 'un-alert';
+      // Announced as a modal alert dialog, named by its title and described
+      // by its message, and focusable as a last resort for the Tab trap.
+      var uid = 'un-alert-' + (++alertSeq);
+      card.setAttribute('role', 'alertdialog');
+      card.setAttribute('aria-modal', 'true');
+      card.setAttribute('aria-labelledby', uid + '-title');
+      card.tabIndex = -1;
 
       var title = document.createElement('div');
       title.className = 'un-alert-title';
+      title.id = uid + '-title';
       title.textContent = opts.title || '';
       card.appendChild(title);
       if (opts.message) {
         var msg = document.createElement('div');
         msg.className = 'un-alert-message';
+        msg.id = uid + '-message';
         msg.textContent = opts.message;
         card.appendChild(msg);
+        card.setAttribute('aria-describedby', uid + '-message');
       }
       var field = null;
       if (opts.field) {
@@ -3963,14 +4455,33 @@
         field.className = 'un-alert-field';
         if (opts.field.placeholder) field.placeholder = opts.field.placeholder;
         if (opts.field.value != null) field.value = opts.field.value;
+        if (opts.field.maxLength > 0) field.maxLength = opts.field.maxLength;
         card.appendChild(field);
       }
 
       var row = document.createElement('div');
       row.className = 'un-alert-buttons' + (buttons.length > 2 ? ' un-stacked' : '');
       var settled = false;
+      var btnEls = [];
+      var prevFocus = document.activeElement;
+      // The alert is a modal-stack entry too, so Escape answers IT rather
+      // than dismissing a modal underneath (Remove member is asked from
+      // inside the members dialog), and Tab stays on its buttons. Escape
+      // means the cancel-style button, or the only button there is; an
+      // alert with two answers and no cancel has no Escape.
+      var escapeIdx = -1;
+      buttons.forEach(function (button, i) { if (escapeIdx < 0 && button.style === 'cancel') escapeIdx = i; });
+      if (escapeIdx < 0 && buttons.length === 1) escapeIdx = 0;
+      var entry = {
+        dismissible: escapeIdx >= 0,
+        dismiss: function () { if (escapeIdx >= 0) btnEls[escapeIdx].click(); },
+        trap: card,
+      };
+      modalStack.push(entry);
+      var submitBtn = null;
       buttons.forEach(function (button) {
         var btn = document.createElement('button');
+        if (button.style !== 'cancel') submitBtn = btn;
         btn.type = 'button';
         btn.className = 'un-alert-btn' +
           (button.style === 'cancel' ? ' un-cancel' : '') +
@@ -3979,20 +4490,45 @@
         btn.addEventListener('click', function () {
           if (settled) return;
           settled = true;
+          var at = modalStack.indexOf(entry);
+          if (at >= 0) modalStack.splice(at, 1);
           var value = field ? field.value : undefined;
           fade.dismiss(function () {
+            // Focus goes back where it was before the alert, BEFORE the
+            // answer is delivered, so a caller that moves focus on the
+            // answer has the last word.
+            if (prevFocus && typeof prevFocus.focus === 'function' && prevFocus.isConnected !== false) {
+              try { prevFocus.focus(); } catch (e) { /* ignore */ }
+            }
             if (button.handler) button.handler(value);
             resolve({ button: button, value: value });
           });
         });
+        btnEls.push(btn);
         row.appendChild(btn);
       });
       card.appendChild(row);
+      if (field && opts.field.submitOnEnter && submitBtn) {
+        field.addEventListener('keydown', function (e) {
+          if (e.key !== 'Enter' || e.isComposing) return;
+          e.preventDefault();
+          submitBtn.click();
+        });
+      }
+
+      // Which control starts with focus: the text field when there is one;
+      // otherwise Cancel when another answer is destructive (the safe
+      // default for "Block", "Delete", "Leave"), else the last button, the
+      // primary answer.
+      var hasDestructive = buttons.some(function (b) { return b.style === 'destructive'; });
+      var initial = field
+        || (hasDestructive && escapeIdx >= 0 && buttons[escapeIdx].style === 'cancel' ? btnEls[escapeIdx] : null)
+        || btnEls[btnEls.length - 1];
 
       document.body.appendChild(backdrop);
       document.body.appendChild(card);
       var fade = animateDialog(card, backdrop, function () {
-        if (field) { try { field.focus(); } catch (e) { /* ignore */ } }
+        try { (initial || card).focus(); } catch (e) { /* ignore */ }
       });
     });
   }
@@ -4066,9 +4602,17 @@
       toastEl.className = 'un-toast';
       toastEl.setAttribute('role', 'status');
       toastEl.setAttribute('aria-live', 'polite');
+      // Tap to dismiss, for the records that allow it (toastTapDismisses);
+      // the CSS gives only those `pointer-events`, so every other toast
+      // still lets a tap through to the content under it.
+      toastEl.addEventListener('click', function () {
+        var shown = toastSlot.current();
+        if (shown && shown.tapDismiss && !shown.closed) resolveToast(shown, 'dismiss');
+      });
       document.body.appendChild(toastEl);
     }
     toastEl.classList.toggle('un-has-action', !!record.action);
+    toastEl.classList.toggle('un-dismissible', !!record.tapDismiss);
     while (toastEl.firstChild) toastEl.removeChild(toastEl.firstChild);
     var msg = document.createElement('div');
     msg.className = 'un-toast-msg';
@@ -4118,7 +4662,10 @@
   }
 
   // toast(message, { duration?, action?: { label, handler }, priority?,
-  // onClose?(reason) }) — returns { dismiss(), el }. A priority toast is
+  // error?, dismissible?, onClose?(reason) }) — returns { dismiss(), el }.
+  // With no `duration`, a longer message stays longer (toastDuration) and
+  // one that outstays the short default can be tapped away
+  // (toastTapDismisses); a tap closes it with reason 'dismiss'. A priority toast is
   // not displaced by ordinary toasts (those queue, one deep, latest
   // wins); onClose fires exactly once with 'timeout' | 'action' |
   // 'dismiss' | 'replaced'. `el` is the live toast element while this
@@ -4128,10 +4675,12 @@
   function toast(message, options) {
     var opts = options || {};
     var action = opts.action && opts.action.label != null ? opts.action : null;
+    var duration = toastDuration(message, opts);
     var record = {
       message: message,
       action: action,
-      duration: opts.duration != null ? opts.duration : (action ? 4000 : 2200),
+      duration: duration,
+      tapDismiss: toastTapDismisses(opts, duration),
       priority: !!opts.priority,
       onClose: typeof opts.onClose === 'function' ? opts.onClose : null,
       closed: false,

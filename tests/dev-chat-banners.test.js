@@ -237,8 +237,22 @@ test('the one primary-filled button routes through <Button>, byte for byte', () 
     tag,
     '<button id="dc-new-change-btn" type="button" class="rounded-md bg-violet-600 '
     + 'hover:bg-violet-500 disabled:opacity-60 disabled:cursor-not-allowed px-3 py-1 '
-    + 'text-xs font-medium text-white transition-colors shrink-0">'
+    + 'text-xs font-medium text-white transition-colors col-start-2 justify-self-start '
+    + 'sm:col-auto sm:justify-self-auto shrink-0">'
   );
+});
+
+test('the new-change explanation owns the phone row before its action', () => {
+  const html = bannersHtml({
+    sync: null, newChange: { stateLabel: 'proposed to the group (PR #7)', pending: false },
+    credits: null, creditsLow: null,
+  });
+  assert.match(html,
+    /id="dc-new-change-banner" class="grid grid-cols-\[auto_minmax\(0,1fr\)\][^\"]*sm:flex/,
+    'phone layout is a two-column grid; desktop returns to the existing flex strip');
+  assert.match(html,
+    /id="dc-new-change-btn"[^>]*col-start-2 justify-self-start sm:col-auto sm:justify-self-auto/,
+    'the phone action starts under the copy, then becomes an ordinary flex child at sm');
 });
 
 test('the sync button stays hand-written, and that is the rule, not an exception', () => {
@@ -284,6 +298,26 @@ test('the declared checks\' hooks all survive the conversion', () => {
   // …which is why the module's markup arrives WHOLE, through a host that
   // generates no box.
   assert.match(BANNERS_TSX, /className="contents" dangerouslySetInnerHTML/);
+});
+
+test('on a phone the banner folds to its lead and a Details toggle (QA 2026-09-24 Q27)', () => {
+  // At 360x740 the whole strip took ~130px under the session header, and its
+  // "Check API key" sat over the identical button on the transcript's card.
+  // Below 640px the lead stays and the rest waits behind "Details". It is all
+  // still RENDERED, so the declared checks' hooks resolve at every width.
+  const html = bannersHtml({ sync: null, newChange: null, credits: CREDITS, creditsLow: null });
+  assert.match(html, /<span id="dc-credits-banner-more" class="dc-credits-banner-more"><span data-credits-reset="1">/,
+    'what follows the lead is one hideable run, reset line included');
+  assert.match(html, /<button type="button" class="dc-credits-banner-toggle [^"]*" aria-expanded="false" aria-controls="dc-credits-banner-more">Details<\/button>/,
+    'the toggle starts closed and names what it opens');
+  assert.doesNotMatch(html, /data-credits-open/, 'and the banner starts folded');
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /\.dc-credits-banner-toggle \{ display: none; \}/, 'no toggle on a wide screen');
+  const phone = /@media \(max-width: 639\.98px\) \{\n  #dc-credits-banner:not\(\[data-credits-open\]\)([\s\S]*?)\n\}/.exec(css);
+  assert.ok(phone, 'a phone-only rule folds the banner');
+  assert.match(phone[0], /#dc-credits-low-banner:not\(\[data-credits-open\]\) :is\(\.dc-credits-banner-more, \.dc-credits-banner-actions\)/);
+  assert.match(phone[0], /display: none;/);
+  assert.match(BANNERS_TSX, /\{\.\.\.\(open \? \{ 'data-credits-open': '1' \} : null\)\}/, 'opening sets the attribute the CSS reads');
 });
 
 test('the low banner is the same shape, tagged for its own check', () => {
@@ -346,4 +380,47 @@ test('CreditOptions is wired from the component, and its guard makes that safe',
   assert.match(CREDIT_OPTIONS_SRC, /root\.__creditOptionsWired/);
   assert.match(BANNERS_TSX, /CO\?\.wire\?\.\(el, \{/);
   assert.doesNotMatch(DEV_CHAT_SRC, /CreditOptions\.wire\(banner/);
+});
+
+// ── #2602: the way back to the card ────────────────────────────────────
+
+test('the new-change banner offers the proposal card, in every state it shows', () => {
+  const { DevChat, view } = makeDevChat();
+  for (const status of ['promoted', 'merging', 'merged']) {
+    DevChat.currentSession = { ...SESSION, status, pr_number: 7, app_slug: 'demo-app' };
+    assert.equal(view().newChange.cardHref, '#app/demo-app/dev/proposals/5', status);
+  }
+});
+
+test('no slug, no link — the banner still renders the rest', () => {
+  const { DevChat, view } = makeDevChat();
+  DevChat.currentSession = { ...SESSION, status: 'promoted', pr_number: 7 };
+  const got = view().newChange;
+  assert.equal(got.cardHref, null, 'a dead href is worse than no link');
+  assert.match(got.stateLabel, /proposed to the group/, 'the rest of the banner is unaffected');
+
+  const html = bannersHtml({ sync: null, newChange: got, credits: null, creditsLow: null });
+  assert.doesNotMatch(html, /dc-open-card-link/);
+  assert.match(html, /id="dc-new-change-btn"/, 'and Start a new change is still there');
+});
+
+test('the link is an anchor to the hash route, not a button', () => {
+  const html = bannersHtml({
+    sync: null,
+    newChange: { stateLabel: 'proposed to the group (PR #7)', pending: false, cardHref: '#app/demo-app/dev/proposals/5' },
+    credits: null, creditsLow: null,
+  });
+  assert.match(html, /<a id="dc-open-card-link" href="#app\/demo-app\/dev\/proposals\/5"/);
+  assert.match(html, />Open proposal card</);
+  // An anchor so it middle-clicks and copies, and so the byte-for-byte
+  // <button> assertion above still reads the primary action.
+  assert.doesNotMatch(html, /<button[^>]*dc-open-card-link/);
+});
+
+test('both doors onto "which app is this" read the same helper', () => {
+  // They were two inline copies of the same fallback chain; #2602 needed the
+  // answer in a second place, and two spellings is how they drift.
+  assert.match(DEV_CHAT_SRC, /_sessionAppSlug\(session\) \{/);
+  assert.match(DEV_CHAT_SRC, /const slug = DevChat\._sessionAppSlug\(DevChat\.currentSession\);/);
+  assert.match(DEV_CHAT_SRC, /const slug = DevChat\._sessionAppSlug\(session\);/);
 });

@@ -66,24 +66,31 @@ test('state 5b — checks failing is amber, with failing-test count in the label
   assert.equal(failing.tone, 'amber');
 });
 
-// #237: an 'error' check_state means the staging preview itself never booted,
-// so no test ran — distinct from a test failure. It gets its own red
-// "Preview won't boot" badge, and the captured reason rides in the tooltip.
-test("state 5a — checks error renders a distinct red \"Preview won't boot\" badge", () => {
-  const errored = MergeStatus.lifecycle({
+// #2328: check-run errors and preview boot failures are separate facts.
+// A generic error keeps the healthy preview available and names the runner;
+// an explicit staging_error keeps the established boot-failure badge.
+test("state 5a — checks error renders a distinct red \"Checks couldn't run\" badge", () => {
+  const runnerError = MergeStatus.lifecycle({
     status: 'promoted', check_state: 'error',
-    check_error_detail: '[exited (exit=1)] error: no unique or exclusion constraint matching the ON CONFLICT specification',
+    check_error_detail: 'capture worker disappeared before writing browser rows',
   });
-  assert.equal(errored.key, 'preview_failed');
-  assert.equal(errored.label, "Preview won't boot");
-  assert.equal(errored.tone, 'red');
-  assert.match(errored.title, /ON CONFLICT/);
+  assert.equal(runnerError.key, 'checks_error');
+  assert.equal(runnerError.label, "Checks couldn't run");
+  assert.equal(runnerError.tone, 'red');
+  assert.match(runnerError.title, /capture worker/);
 
-  // Without a captured reason it still resolves to the same badge, with a
-  // generic tooltip.
+  // Without a captured reason it still names the checks runner, not the app.
   const bare = MergeStatus.lifecycle({ status: 'promoted', check_state: 'error' });
-  assert.equal(bare.key, 'preview_failed');
+  assert.equal(bare.key, 'checks_error');
   assert.equal(bare.tone, 'red');
+
+  const boot = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'error', preview_state: 'failed',
+    staging_error: '[exited (exit=1)] app failed to start',
+  });
+  assert.equal(boot.key, 'preview_failed');
+  assert.equal(boot.label, "Preview won't boot");
+  assert.match(boot.title, /app failed to start/);
 });
 
 test('state 6 — checks pending is neutral + spinner (not amber)', () => {

@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { DialogCard, DialogRoot } from '@/components/ui/dialog';
+import { XIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { confirmAction } from '../../lib/confirm';
 import { useDialog } from '../dialogs/use-dialog';
 import * as api from './api';
 import { inviteMembers, leave, removeMember, useMessagesSnapshot } from './store';
@@ -45,7 +48,9 @@ export function ConversationMembersDialog() {
   }
 
   async function remove(user: ConversationUser) {
-    if (!window.confirm(`Remove @${user.username} from this group?`)) return;
+    // QA 2026-09-24 Q15: the app's confirm dialog, not window.confirm().
+    const ok = await confirmAction({ title: `Remove @${user.username} from this group?`, confirmLabel: 'Remove', danger: true });
+    if (!ok) return;
     setBusy(true); setError('');
     try { await removeMember(user.id); }
     catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t remove this member.'); }
@@ -54,8 +59,14 @@ export function ConversationMembersDialog() {
 
   async function leaveCurrent() {
     const transfer = active?.myRole === 'owner' && (active.memberCount || 0) > 1
-      ? ' Ownership will transfer to the oldest remaining member.' : '';
-    if (!window.confirm(`Leave ${active?.title || 'this conversation'}?${transfer}`)) return;
+      ? 'Ownership will transfer to the oldest remaining member.' : '';
+    const ok = await confirmAction({
+      title: `Leave ${active?.title || 'this conversation'}?`,
+      message: transfer || undefined,
+      confirmLabel: 'Leave',
+      danger: true,
+    });
+    if (!ok) return;
     setBusy(true); setError('');
     try { await leave(); dialog.close(); }
     catch (err) { setError(err instanceof Error ? err.message : 'Couldn’t leave this conversation.'); }
@@ -63,38 +74,36 @@ export function ConversationMembersDialog() {
   }
 
   return (
-    <div ref={dialog.rootRef} id="messages-members-dialog" className="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60" {...dialog.backdropProps}>
-      <div data-modal-backdrop="" className="flex min-h-full items-center justify-center p-4">
-        <div className="bg-white dark:bg-zinc-900 rounded-xl p-5 w-full max-w-md shadow-xl">
-          <div className="flex items-center justify-between mb-4">
-            <div><h2 className="text-lg font-bold">Group members</h2><p className="text-xs text-zinc-500 dark:text-zinc-400">Accepted members can read the complete retained history.</p></div>
-            <button type="button" onClick={dialog.close} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close">×</button>
-          </div>
-          <div className="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800">
-            {active?.members.map((member) => (
-              <div key={member.id} className="flex items-center gap-3 py-2">
-                <UserAvatar user={member} size="sm" />
-                <div className="min-w-0"><div className="text-sm font-medium truncate">@{member.username}</div><div className="text-[11px] text-zinc-500 dark:text-zinc-400 capitalize">{member.role}{member.status !== 'member' ? ` · ${member.status}` : ''}</div></div>
-                {active.canManage && member.role !== 'owner' && member.status === 'member' ? <button type="button" disabled={busy} onClick={() => void remove(member)} className="ml-auto text-xs text-red-700 dark:text-red-400 disabled:opacity-50">Remove</button> : null}
-              </div>
-            ))}
-          </div>
-          {active?.canInvite ? (
-            <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
-              <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Invite people</label>
-              {selected.length ? <div className="flex flex-wrap gap-1 mb-2">{selected.map((user) => <button type="button" key={user.id} onClick={() => setSelected((current) => current.filter((item) => item.id !== user.id))} className="rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300 px-2 py-1 text-xs">@{user.username} ×</button>)}</div> : null}
-              <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by username" autoComplete="off" />
-              {query.trim() ? <div className="mt-1 max-h-32 overflow-y-auto">{available.map((user) => <button type="button" key={user.id} onClick={() => { setSelected((current) => [...current, user]); setQuery(''); }} className="w-full flex items-center gap-2 py-1.5 px-1 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded"><UserAvatar user={user} size="sm" />@{user.username}<span className="ml-auto text-xs text-violet-700 dark:text-violet-400">Add</span></button>)}</div> : null}
-              <Button type="button" className="mt-3 w-full" disabled={busy || !selected.length} onClick={() => void invite()}>{busy ? 'Inviting…' : `Invite ${selected.length || ''}`.trim()}</Button>
-            </div>
-          ) : null}
-          {error ? <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
-          <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
-            <button type="button" disabled={busy} onClick={() => void leaveCurrent()} className="text-xs text-red-700 dark:text-red-400 disabled:opacity-50">Leave group</button>
-            <Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>Done</Button>
-          </div>
+    <DialogRoot id="messages-members-dialog" layout="scroll" ref={dialog.rootRef} {...dialog.backdropProps}>
+      <DialogCard size="md">
+        <div className="flex items-center justify-between mb-4">
+          <div><h2 className="text-lg font-bold">Group members</h2><p className="text-xs text-zinc-500 dark:text-zinc-400">Accepted members can read the complete retained history.</p></div>
+          <button type="button" onClick={dialog.close} className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200 dark:text-zinc-400" aria-label="Close"><XIcon className="w-5 h-5" /></button>
         </div>
-      </div>
-    </div>
+        <div className="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800">
+          {active?.members.map((member) => (
+            <div key={member.id} className="flex items-center gap-3 py-2">
+              <UserAvatar user={member} size="sm" />
+              <div className="min-w-0"><div className="text-sm font-medium truncate">@{member.username}</div><div className="text-[11px] text-zinc-500 dark:text-zinc-400 capitalize">{member.role}{member.status !== 'member' ? ` · ${member.status}` : ''}</div></div>
+              {active.canManage && member.role !== 'owner' && member.status === 'member' ? <button type="button" disabled={busy} onClick={() => void remove(member)} className="ml-auto text-xs text-red-700 dark:text-red-400 disabled:opacity-50">Remove</button> : null}
+            </div>
+          ))}
+        </div>
+        {active?.canInvite ? (
+          <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800">
+            <label className="block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1">Invite people</label>
+            {selected.length ? <div className="flex flex-wrap gap-1 mb-2">{selected.map((user) => <button type="button" key={user.id} onClick={() => setSelected((current) => current.filter((item) => item.id !== user.id))} className="rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300 px-2 py-1 text-xs">@{user.username} ×</button>)}</div> : null}
+            <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search by username" autoComplete="off" />
+            {query.trim() ? <div className="mt-1 max-h-32 overflow-y-auto">{available.map((user) => <button type="button" key={user.id} onClick={() => { setSelected((current) => [...current, user]); setQuery(''); }} className="w-full flex items-center gap-2 py-1.5 px-1 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800 rounded"><UserAvatar user={user} size="sm" />@{user.username}<span className="ml-auto text-xs text-violet-700 dark:text-violet-400">Add</span></button>)}</div> : null}
+            <Button type="button" className="mt-3 w-full" disabled={busy || !selected.length} onClick={() => void invite()}>{busy ? 'Inviting…' : `Invite ${selected.length || ''}`.trim()}</Button>
+          </div>
+        ) : null}
+        {error ? <p role="alert" className="mt-3 text-xs text-red-700 dark:text-red-400">{error}</p> : null}
+        <div className="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
+          <button type="button" disabled={busy} onClick={() => void leaveCurrent()} className="text-xs text-red-700 dark:text-red-400 disabled:opacity-50">Leave group</button>
+          <Button type="button" variant="neutral" ink="neutral" onClick={dialog.close}>Done</Button>
+        </div>
+      </DialogCard>
+    </DialogRoot>
   );
 }

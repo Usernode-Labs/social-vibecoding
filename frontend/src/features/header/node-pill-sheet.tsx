@@ -19,6 +19,8 @@
 
 import { type ReactNode } from 'react';
 
+import { Alert } from '@/components/ui/alert';
+
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { useStoreState } from '../../lib/use-store-state';
 import { nodePillStore } from './node-pill-store';
@@ -50,10 +52,7 @@ function SheetRow({ label, value }: { label: string; value: string }): ReactNode
 function Warnings({ messages }: { messages: string[] }): ReactNode {
   if (!messages.length) return null;
   return (
-    <div
-      role="status"
-      className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300"
-    >
+    <Alert role="status" variant="notice" density="compact" className="mt-3">
       <ul className="space-y-1">
         {messages.map((message) => (
           <li key={message} className="flex gap-2">
@@ -62,7 +61,7 @@ function Warnings({ messages }: { messages: string[] }): ReactNode {
           </li>
         ))}
       </ul>
-    </div>
+    </Alert>
   );
 }
 

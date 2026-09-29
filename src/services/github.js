@@ -55,6 +55,19 @@ function publicFetchHeaders() {
 // directly on GitHub.
 const issuesCache = new Map();
 const ISSUES_CACHE_TTL_MS = 5 * 60 * 1000;
+// #2261: a cache entry outlives its TTL as the FALLBACK. An expired entry
+// (or one invalidateIssuesCache has expired on purpose) is refetched on the
+// next read, and when that refetch cannot get a list out of GitHub — rate
+// limited, timed out, a 5xx, an unflagged 403 — the read serves the entry's
+// list, marked `stale`, instead of an empty one. The Dev board's Issues and
+// Underway columns draw from this list, and an empty answer painted them as
+// "no open issues" for as long as GitHub was unreachable. The two constants
+// below bound how long a failed refetch keeps serving the entry before the
+// ordinary read path tries GitHub again (a forced refresh always tries): at
+// least ISSUES_RETRY_AFTER_MS, longer when GitHub's Retry-After or its
+// rate-limit reset says so, never more than ISSUES_RETRY_AFTER_MAX_MS.
+const ISSUES_RETRY_AFTER_MS = 30 * 1000;
+const ISSUES_RETRY_AFTER_MAX_MS = 10 * 60 * 1000;
 const ISSUES_MAX_PAGES = 10;          // 10 * 100 = up to 1000 open issues
 // Per-issue body cap applied ONLY at agent-facing surfaces (the Mayor's
 // list_github_issues tool and the worker's usernode-issues CLI) via
@@ -710,6 +723,22 @@ async function getCommitParents(owner, repo, sha) {
     .filter(Boolean);
 }
 
+// The tree one commit points at — the CONTENT, with no history attached.
+// Two commits with the same tree sha are byte-for-byte the same source, which
+// is what lets a merge reuse an image built from the commit it squashed (see
+// services/staging.js reuseImage). Same fixed-size endpoint getCommitParents
+// uses, deliberately not repos.getCommit: that carries the commit's whole
+// file list, which on a merge runs to hundreds of entries.
+async function getCommitTree(owner, repo, sha) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
+    { owner, repo, commit_sha: sha }
+  );
+  const tree = data?.tree?.sha;
+  return typeof tree === 'string' ? tree.toLowerCase() : null;
+}
+
 async function getBranchSha(owner, repo, branchName) {
   const octokit = await getOctokit(owner);
   const { data: ref } = await octokit.request(
@@ -776,6 +805,34 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
     repo: `${owner}/${repo}`, branch: branchName, from: currentSha, to: updated.object.sha,
   });
   return { previousSha: currentSha, sha: updated.object.sha, updated: true };
+}
+
+// Move a branch to an exact commit whether or not that is a fast-forward.
+//
+// This is deliberately not the module's general ref-update path. It exists
+// for exactly one caller, demo mode's reset (routes/demo-mode.js),
+// which puts a demo app's main back to where it stood before a recorded
+// take. That app is in demo mode, its creator asked, and the commits being
+// discarded are the partner's own demo proposals — the one situation where
+// rewinding main is the point rather than an accident.
+async function forceBranchToSha(owner, repo, branchName, sha) {
+  const octokit = await getOctokit(owner);
+  const { data: ref } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+    { owner, repo, ref: `heads/${branchName}` }
+  );
+  const previousSha = ref.object.sha;
+  if (String(previousSha).toLowerCase() === String(sha).toLowerCase()) {
+    return { previousSha, sha: previousSha, updated: false };
+  }
+  const { data: updated } = await octokit.request(
+    'PATCH /repos/{owner}/{repo}/git/refs/{+ref}',
+    { owner, repo, ref: `heads/${branchName}`, sha, force: true }
+  );
+  log.info('github', 'Branch force-moved', {
+    repo: `${owner}/${repo}`, branch: branchName, from: previousSha, to: updated.object.sha,
+  });
+  return { previousSha, sha: updated.object.sha, updated: true };
 }
 
 function proposalCommitMessage(message, localCommitSha) {
@@ -1061,7 +1118,7 @@ function _setCreatePrRetryDelaysForTests(delays) {
 // the same fixed-list caveat. Cross-fork callers must pass `false`; see the
 // note at the call below for why the default is not safe there.
 async function createPR(owner, repo, {
-  branch, title, body, head, headRepo, maintainerCanModify,
+  branch, title, body, head, headRepo, maintainerCanModify, draft,
 }) {
   const octokit = await getOctokit(owner);
   const headRef = head || branch;
@@ -1090,6 +1147,7 @@ async function createPR(owner, repo, {
         ...(typeof maintainerCanModify === 'boolean'
           ? { maintainer_can_modify: maintainerCanModify }
           : {}),
+        ...(typeof draft === 'boolean' ? { draft } : {}),
         base: 'main',
       }));
       break;
@@ -1294,6 +1352,28 @@ async function getPR(owner, repo, prNumber) {
   return data;
 }
 
+// GitHub's REST update-PR endpoint does not support changing draft state.
+// The GraphQL mutation is the supported transition at the review boundary.
+async function markPrReadyForReview(owner, repo, prNumber, existingPr = null) {
+  const pr = existingPr || await getPR(owner, repo, prNumber);
+  if (pr.draft === false) return pr;
+  if (pr.draft !== true) throw new Error(`GitHub did not report PR #${prNumber}'s draft state`);
+  if (!pr.node_id) throw new Error(`PR #${prNumber} has no GitHub node ID`);
+  const octokit = await getOctokit(owner);
+  const result = await octokit.graphql(
+    `mutation($pullRequestId: ID!) {
+      markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+        pullRequest { id isDraft }
+      }
+    }`,
+    { pullRequestId: pr.node_id }
+  );
+  if (result?.markPullRequestReadyForReview?.pullRequest?.isDraft !== false) {
+    throw new Error(`GitHub did not confirm PR #${prNumber} is ready for review`);
+  }
+  return { ...pr, draft: false };
+}
+
 // List the file paths changed between two refs ("main...branch-name").
 // Used by the visuals capture heuristic (src/services/visuals.js) to decide
 // whether a commit range plausibly touches the UI. Uses the compare API
@@ -1393,6 +1473,18 @@ async function updateIssueTitle(owner, repo, issueNumber, title) {
   return data;
 }
 
+// Replace an existing issue's Markdown body. Kept beside updateIssueTitle so
+// every issue edit goes through the same authenticated Octokit path and the
+// same mention-safety rule as issue creation.
+async function updateIssueBody(owner, repo, issueNumber, body) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.issues.update({
+    owner, repo, issue_number: issueNumber, body: safeMention(body),
+  });
+  log.info('github', 'Issue body updated', { repo: `${owner}/${repo}`, issue: issueNumber });
+  return data;
+}
+
 // PATCH a title onto a GitHub issue, PAT-first. Platform-repo issues were
 // filed with the PAT (routes/feedback.js), app-repo issues via the GitHub
 // App installation — try the PAT first (covers both on the canonical
@@ -1417,6 +1509,30 @@ async function patchIssueTitle(owner, repo, issueNumber, title) {
     });
   }
   await updateIssueTitle(owner, repo, issueNumber, title);
+}
+
+// PATCH a body onto a GitHub issue, PAT-first, matching patchIssueTitle's
+// credential fallback. The route has already authorised the platform author;
+// this helper owns only the remote write and mention safety.
+async function patchIssueBody(owner, repo, issueNumber, body) {
+  const safeBody = safeMention(body);
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (pat) {
+    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `token ${pat}`,
+        'User-Agent': 'usernode-social-vibecoding',
+      },
+      body: JSON.stringify({ body: safeBody }),
+    });
+    if (res.ok) return;
+    log.warn('github', 'PAT issue body PATCH failed; trying installation token', {
+      repo: `${owner}/${repo}`, issueNumber, status: res.status,
+    });
+  }
+  await updateIssueBody(owner, repo, issueNumber, safeBody);
 }
 
 async function closeIssue(owner, repo, issueNumber) {
@@ -1516,8 +1632,27 @@ function parseGithubUrl(input) {
   return { owner, repo };
 }
 
-// Find a pending invitation for *this exact repo* and accept it. Used
-// only as a side-effect of the import-flow pre-flight, never as a
+// The bot's own PAT client for the import pre-flight. The test seam
+// (_setOctokitFactoryForTests) stands in for it so the invitation and
+// permission logic below can be unit-tested with stubbed GitHub responses.
+async function botPatOctokit() {
+  if (_octokitFactoryForTests) return _octokitFactoryForTests(null);
+  const pat = process.env.GITHUB_BOT_TOKEN;
+  if (!pat) return null;
+  const { Octokit } = await import('@octokit/rest');
+  return new Octokit({ auth: pat });
+}
+
+// GET /user/repository_invitations returns 30 invitations per page by
+// default, oldest first. usernode-bot is ONE account every importer
+// invites, and invitations nobody finished importing linger until they
+// expire, so the invitation a user sent a minute ago routinely sat past the
+// first page and was never found (#3021). Walk every page, 100 at a time.
+const INVITATION_PAGE_SIZE = 100;
+const INVITATION_MAX_PAGES = 20;
+
+// Find the pending invitation(s) for *this exact repo* and accept them.
+// Used only as a side-effect of the import-flow pre-flight, never as a
 // background poller — that's the user-confirmed scoping rule.
 //
 // Returns true if an invitation was found+accepted, false otherwise.
@@ -1525,19 +1660,39 @@ function parseGithubUrl(input) {
 // invitation-list failure doesn't mask the real problem on the get-repo
 // call that follows.
 async function acceptInvitationFor(owner, repo) {
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat) return false;
-  const { Octokit } = await import('@octokit/rest');
-  const octokit = new Octokit({ auth: pat });
-  const invites = await octokit.rest.repos.listInvitationsForAuthenticatedUser();
-  const match = invites.data.find(
-    (i) => i.repository.owner.login.toLowerCase() === owner.toLowerCase()
-        && i.repository.name.toLowerCase() === repo.toLowerCase()
-  );
-  if (!match) return false;
-  await octokit.rest.repos.acceptInvitationForAuthenticatedUser({ invitation_id: match.id });
-  log.info('github', 'Accepted repo invitation', { repo: `${owner}/${repo}`, id: match.id });
-  return true;
+  const octokit = await botPatOctokit();
+  if (!octokit) return false;
+  const matches = [];
+  for (let page = 1; page <= INVITATION_MAX_PAGES; page++) {
+    const { data } = await octokit.rest.repos.listInvitationsForAuthenticatedUser({
+      per_page: INVITATION_PAGE_SIZE, page,
+    });
+    const invites = Array.isArray(data) ? data : [];
+    for (const i of invites) {
+      const r = i && i.repository;
+      if (r && r.owner && r.owner.login.toLowerCase() === owner.toLowerCase()
+          && r.name.toLowerCase() === repo.toLowerCase()) {
+        matches.push(i);
+      }
+    }
+    if (invites.length < INVITATION_PAGE_SIZE) break;
+  }
+  // A user who re-invites after an earlier invitation lapsed leaves BOTH
+  // on the list; accepting the expired one first fails and used to end the
+  // attempt with the live one still pending. Skip expired invitations.
+  const live = matches.filter((i) => i.expired !== true);
+  if (live.length === 0) return false;
+  let accepted = false;
+  for (const invite of live) {
+    try {
+      await octokit.rest.repos.acceptInvitationForAuthenticatedUser({ invitation_id: invite.id });
+      log.info('github', 'Accepted repo invitation', { repo: `${owner}/${repo}`, id: invite.id });
+      accepted = true;
+    } catch (err) {
+      log.warn('github', 'Accepting repo invitation failed', { repo: `${owner}/${repo}`, id: invite.id, err: err.message });
+    }
+  }
+  return accepted;
 }
 
 // The pre-flight that gates POST /api/apps when repoUrl is set. The
@@ -1545,15 +1700,13 @@ async function acceptInvitationFor(owner, repo) {
 // just forwards `{ status, error: message }` to the client when ok is
 // false, so the modal can show an actionable hint and stay open.
 async function verifyBotAccess(owner, repo) {
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (!pat) {
+  const octokit = await botPatOctokit();
+  if (!octokit) {
     return {
       ok: false, status: 500, code: 'no_token',
       message: 'GitHub bot token not configured on the platform.',
     };
   }
-  const { Octokit } = await import('@octokit/rest');
-  const octokit = new Octokit({ auth: pat });
 
   // Greedy first pass: if the user just invited the bot moments before
   // clicking submit, the invitation accept turns this into a one-step
@@ -1568,9 +1721,11 @@ async function verifyBotAccess(owner, repo) {
     resp = await octokit.rest.repos.get({ owner, repo });
   } catch (err) {
     if (err.status === 404) {
+      // A private repo is refused below even once the bot can see it, so
+      // this hint must not suggest that inviting the bot makes one work.
       return {
         ok: false, status: 404, code: 'not_found',
-        message: `Couldn't see ${owner}/${repo}. If it's private, invite \`usernode-bot\` as a collaborator with Write access and resubmit.`,
+        message: `Couldn't find ${owner}/${repo}. Check the URL. Homeroom imports public repositories only.`,
       };
     }
     if (err.status === 401) {
@@ -1596,9 +1751,23 @@ async function verifyBotAccess(owner, repo) {
   }
 
   // permissions.push covers everyone the bot would actually be able to
-  // commit through (Write, Maintain, Admin all set push:true).
+  // commit through (Write, Maintain, Admin all set push:true). It is never
+  // relaxed: read-only is refused for every owner type.
   const perms = resp.data.permissions || {};
   if (!perms.push) {
+    // A repository owned by a personal account has no permission levels:
+    // every collaborator on it can push (GitHub docs, "Permission levels
+    // for a personal account repository"). So push:false on a User-owned
+    // repo means the bot is not a collaborator YET — its invitation was
+    // never sent, has lapsed, or could not be accepted — and telling that
+    // user to "grant Write" names a setting their repo does not have.
+    const ownerType = resp.data.owner && resp.data.owner.type;
+    if (ownerType === 'User') {
+      return {
+        ok: false, status: 403, code: 'not_collaborator',
+        message: `\`usernode-bot\` is not a collaborator on ${owner}/${repo} yet. On a personal repository every collaborator can push, so no permission level is needed: invite \`usernode-bot\` under Settings → Collaborators (GitHub invitations expire after 7 days, so re-invite if yours is older) and check again.`,
+      };
+    }
     return {
       ok: false, status: 403, code: 'no_push',
       message: `\`usernode-bot\` has read-only access to ${owner}/${repo}. Grant Write/Maintain and resubmit.`,
@@ -1693,6 +1862,11 @@ function normalizeIssue(raw) {
     // it's the actual author, which the github-issues route uses as a
     // last-resort creator fallback.
     user: (raw.user && raw.user.login) || null,
+    // #2365: the single-issue endpoint resolves CLOSED issues too, and a
+    // proposal that closed one still links to it — so the page it opens has
+    // to know which it is. The open-issues list only ever carries 'open'.
+    state: raw.state === 'closed' ? 'closed' : 'open',
+    closedAt: raw.closed_at || null,
   };
 }
 
@@ -1725,6 +1899,44 @@ function truncateIssueBodies(result, fullTextHint) {
   };
 }
 
+// #2261: the answer for a read that could not get a fresh list out of
+// GitHub. When the repo has a cache entry — past its TTL, or expired on
+// purpose by invalidateIssuesCache — its list is served with `note` naming
+// the failure and `stale: true`, and the entry is stamped with the moment
+// the ordinary read path may try GitHub again (fetchPublicIssues honours
+// `retryAt`; a forced refresh ignores it). Overlays still apply, so an issue
+// the platform created or closed since the entry was taken is still added
+// or hidden. A repo nothing was ever cached for gets an empty list and the
+// note, as before: there is no better answer to give, and nothing is
+// stamped, so the next read tries GitHub again.
+function degradedIssuesResult(owner, repo, cacheKey, note, retryMs) {
+  const stale = issuesCache.get(cacheKey);
+  if (!stale) {
+    return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note };
+  }
+  issuesCache.set(cacheKey, { ...stale, retryAt: Date.now() + retryMs, failedNote: note });
+  return { ...applyIssueOverlays(owner, repo, stale.result), note, stale: true };
+}
+
+// How long a failed refetch keeps serving the fallback before the ordinary
+// read path asks GitHub again: at least ISSUES_RETRY_AFTER_MS; longer when
+// GitHub says so with Retry-After (secondary rate limits — seconds) or, on
+// an exhausted primary budget, with x-ratelimit-reset (epoch seconds);
+// never past ISSUES_RETRY_AFTER_MAX_MS.
+function retryDelayMs(resp) {
+  let ms = ISSUES_RETRY_AFTER_MS;
+  const get = (name) => (resp && resp.headers && typeof resp.headers.get === 'function'
+    ? resp.headers.get(name)
+    : null);
+  const retryAfter = Number(get('retry-after'));
+  if (Number.isFinite(retryAfter) && retryAfter > 0) ms = Math.max(ms, retryAfter * 1000);
+  const reset = Number(get('x-ratelimit-reset'));
+  if (get('x-ratelimit-remaining') === '0' && Number.isFinite(reset) && reset > 0) {
+    ms = Math.max(ms, reset * 1000 - Date.now());
+  }
+  return Math.min(ms, ISSUES_RETRY_AFTER_MAX_MS);
+}
+
 // Read-only fetch of a PUBLIC repo's OPEN issues (bot-PAT-authenticated
 // when configured, anonymous otherwise — publicFetchHeaders). Powers the
 // `list_github_issues` tool on all three agent surfaces (the Mayor's
@@ -1734,13 +1946,20 @@ function truncateIssueBodies(result, fullTextHint) {
 // NEVER throws and NEVER returns null: every failure mode resolves to a
 // well-formed `{ issues, truncatedList, note }` so callers can hand the
 // result straight back to the model without special-casing. Notes:
-//   - 'rate limited'        rate budget exhausted (returns stale cache
-//                           contents when we have them)
+//   - 'rate limited'        rate budget exhausted
 //   - 'issues unavailable'  404 (private or nonexistent — treated the same
 //                           since we assume public)
-//   - 'fetch failed'        network error / timeout / unexpected payload
-// Success returns `{ issues, truncatedList }` (no note). truncatedList is
-// true when the repo has more open issues than the page ceiling allows.
+//   - 'fetch failed'        network error / timeout / 5xx / unexpected
+//                           payload
+// A 'rate limited' or 'fetch failed' answer carries the LAST list this repo
+// did get — past its TTL or not — with `stale: true` beside the note; only
+// a repo nothing was ever cached for gets an empty list (#2261, see
+// degradedIssuesResult). Consumers that need a POSITIVE answer already
+// treat any note as "not confirmed" (the claim and close paths in
+// routes/issues.js, withoutClosedRequests in external-agent-tasks.js) and
+// are unchanged by that. Success returns `{ issues, truncatedList }` (no
+// note). truncatedList is true when the repo has more open issues than the
+// page ceiling allows.
 //
 // Every exit path runs through applyIssueOverlays (#192/#144): the
 // recently-created overlay is merged in and known-closed suppressions
@@ -1756,6 +1975,17 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
   const cached = issuesCache.get(cacheKey);
   if (!force && cached && cached.expiresAt > Date.now()) {
     return applyIssueOverlays(owner, repo, cached.result);
+  }
+  // #2261: a refetch that just failed is not retried on every read. Until
+  // its retryAt passes, the ordinary read path keeps serving the entry the
+  // failure fell back to — the board refreshes on every WS event, and every
+  // viewer's refresh retrying GitHub during a rate limit only lengthens it.
+  if (!force && cached && cached.retryAt > Date.now()) {
+    return {
+      ...applyIssueOverlays(owner, repo, cached.result),
+      note: cached.failedNote || 'fetch failed',
+      stale: true,
+    };
   }
 
   let url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`
@@ -1784,22 +2014,24 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
       // rather than returning an empty list that reads as "no issues".
       if ((resp.status === 403 && resp.headers.get('x-ratelimit-remaining') === '0') || resp.status === 429) {
         log.warn('github', 'Issue fetch rate-limited', { repo: cacheKey });
-        const stale = issuesCache.get(cacheKey);
-        if (stale) {
-          return { ...applyIssueOverlays(owner, repo, stale.result), note: 'rate limited' };
-        }
-        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'rate limited' };
+        return degradedIssuesResult(owner, repo, cacheKey, 'rate limited', retryDelayMs(resp));
       }
       if (resp.status === 404) {
         return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'issues unavailable' };
       }
+      // Anything else GitHub refuses — a 5xx, a 401 on a bad token, a 403
+      // that is a secondary rate limit (those keep x-ratelimit-remaining
+      // above zero and say Retry-After instead) — is the same outage from
+      // the board's side as a rate limit, and gets the same fallback (#2261).
       if (!resp.ok) {
-        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'fetch failed' };
+        log.warn('github', 'Issue fetch refused', { repo: cacheKey, status: resp.status });
+        return degradedIssuesResult(owner, repo, cacheKey, 'fetch failed', retryDelayMs(resp));
       }
 
       const batch = await resp.json();
       if (!Array.isArray(batch)) {
-        return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'fetch failed' };
+        log.warn('github', 'Issue fetch returned an unexpected payload', { repo: cacheKey });
+        return degradedIssuesResult(owner, repo, cacheKey, 'fetch failed', ISSUES_RETRY_AFTER_MS);
       }
       for (const item of batch) {
         // The /issues endpoint returns PRs too; drop anything carrying a
@@ -1825,7 +2057,7 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
     return applyIssueOverlays(owner, repo, result);
   } catch (err) {
     log.warn('github', 'Issue fetch failed', { repo: cacheKey, err: err.message });
-    return { ...applyIssueOverlays(owner, repo, { issues: [], truncatedList: false }), note: 'fetch failed' };
+    return degradedIssuesResult(owner, repo, cacheKey, 'fetch failed', ISSUES_RETRY_AFTER_MS);
   }
 }
 
@@ -1834,11 +2066,12 @@ async function fetchPublicIssues(owner, repo, { force = false } = {}) {
 // covering issues created directly on GitHub (where the platform gets no
 // create signal). Within the cooldown it serves the normal (cached) flow
 // with `refreshed: false`; otherwise it stamps the cooldown FIRST (so a
-// failing repo can't be hammered) and refetches. Deliberately not
-// invalidateIssuesCache()+fetch: deleting the entry would lose the
-// stale-cache fallback the rate-limited path depends on. Same
-// never-throws contract as fetchPublicIssues, plus `refreshed` and
-// `retryInMs` (ms until the next force is allowed).
+// failing repo can't be hammered) and refetches. Deliberately `force`
+// rather than invalidateIssuesCache()+fetch: the entry is the fallback a
+// failed refetch serves (#2261), and a forced read leaves it in place —
+// and skips the read path's failure backoff — until a fresh list replaces
+// it. Same never-throws contract as fetchPublicIssues, plus `refreshed`
+// and `retryInMs` (ms until the next force is allowed).
 async function refreshPublicIssues(owner, repo) {
   const key = normRepoKey(owner, repo);
   const now = Date.now();
@@ -1874,8 +2107,15 @@ async function fetchPublicIssue(owner, repo, number) {
   }
 
   const cacheKey = `${owner}/${repo}`;
+  // #2365: a number the merge path or the close watcher just recorded as
+  // closed (#144) is still in the open-issues cache, as OPEN — which is
+  // exactly when a reader follows the merged proposal's link to it. Ask
+  // GitHub instead of answering from a list the suppression exists to
+  // correct.
+  const suppressed = liveSuppressions(owner, repo);
+  const knownClosed = !!(suppressed && suppressed.has(n));
   const cached = issuesCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) {
+  if (!knownClosed && cached && cached.expiresAt > Date.now()) {
     const hit = cached.result.issues.find((i) => i.number === n);
     if (hit) return { issue: hit };
   }
@@ -1883,7 +2123,7 @@ async function fetchPublicIssue(owner, repo, number) {
   // #192: a just-created issue may predate both the cache and GitHub's
   // lagging anonymous endpoints — the overlay carries its full body, so
   // serving from it costs no network call (and no rate-limit budget).
-  const overlay = liveCreatedOverlay(owner, repo);
+  const overlay = knownClosed ? null : liveCreatedOverlay(owner, repo);
   const overlayHit = overlay && overlay.get(n);
   if (overlayHit) return { issue: overlayHit.issue };
 
@@ -2041,20 +2281,27 @@ function clipIssueComments(comments, { max = ISSUE_COMMENTS_KEEP, bodyMax = ISSU
   return { comments: clipped, truncated: !!wasTruncated || droppedOlder };
 }
 
-// Drop the cached open-issues list for a repo so the next fetchPublicIssues
+// Expire the cached open-issues list for a repo so the next fetchPublicIssues
 // call re-reads from GitHub. Called from the merge path (routes/votes.js
 // checkAndMerge) when a PR that closed one or more issues lands, so the
 // "Open Issues" panel reflects the change on the next refresh instead of
 // waiting out ISSUES_CACHE_TTL_MS. Case-insensitive match on owner/repo
 // because GitHub treats those as case-insensitive while the cache key
 // preserves whatever casing the caller passed. No-op when the repo has no
-// cache entry. Returns true if an entry was deleted.
+// cache entry. Returns true if an entry was expired.
 function invalidateIssuesCache(owner, repo) {
   if (!owner || !repo) return false;
   const target = `${owner}/${repo}`.toLowerCase();
   for (const key of issuesCache.keys()) {
     if (key.toLowerCase() === target) {
-      issuesCache.delete(key);
+      // Expire, don't delete (#2261). The entry doubles as the fallback a
+      // failed refetch serves, and deleting it here — on every platform
+      // merge — left the next read with nothing to fall back to: one slow
+      // or refused GitHub answer, and the board painted "no open issues".
+      // A fresh object also drops any failure backoff, so the read after
+      // an invalidation always goes to GitHub.
+      const entry = issuesCache.get(key);
+      issuesCache.set(key, { result: entry.result, expiresAt: 0 });
       log.debug('github', 'Invalidated open-issues cache', { repo: key });
       return true;
     }
@@ -2123,9 +2370,11 @@ module.exports = {
   ensureBranchAtSha,
   compareCommitAncestry,
   getCommitParents,
+  getCommitTree,
   getBranchSha,
   getRepoHead,
   advanceBranchToSha,
+  forceBranchToSha,
   createProposalCommit,
   createPR,
   describeGithubError,
@@ -2140,6 +2389,7 @@ module.exports = {
   HeadMovedError,
   _setOctokitFactoryForTests,
   getPR,
+  markPrReadyForReview,
   listChangedFiles,
   compareRefs,
   getProposalDiff,
@@ -2148,6 +2398,8 @@ module.exports = {
   createIssueComment,
   updateIssueTitle,
   patchIssueTitle,
+  updateIssueBody,
+  patchIssueBody,
   closeIssue,
   getCloneUrl,
   safeMention,

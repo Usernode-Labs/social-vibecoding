@@ -2,9 +2,30 @@ const notifications = require('./notifications');
 const { withTransaction } = require('./cli-auth');
 const log = require('./logger');
 
+// The server-wide cap (MAX_APPS) as this viewer meets it, or null when it
+// does not apply: no cap configured, or a full admin, who bypasses it on the
+// write routes too. Counted exactly as POST /api/apps and /fork count it
+// (every non-errored app on the server), so the panel can never say there
+// is room where the write route would answer 429.
+//
+// QA 2026-09-24 Q33b: the create dialog showed "0 of 2 app slots used" on
+// every step and only learned at Create that the SERVER was full. Carried
+// beside `quota`, not folded into it or into `canCreateApps`: those are the
+// viewer's own allowance, and the 403 refusal copy is written about them.
+async function serverCapacity(pool, user, maxApps) {
+  const limit = Number(maxApps);
+  if (!Number.isInteger(limit) || limit <= 0 || user?.canAdminWrite) return null;
+  const { rows } = await pool.query(`SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`);
+  const used = Number(rows[0]?.n);
+  if (!Number.isInteger(used) || used < 0) return null;
+  return { used, limit, remaining: Math.max(0, limit - used), full: used >= limit };
+}
+
 // Read independently of optional profile/credential data. A failed profile
 // lookup must not make a user with available slots appear unable to create.
-async function read(pool, user) {
+// `opts.maxApps` (the server's MAX_APPS) adds `server`; without it the shape
+// is the one every caller had before.
+async function read(pool, user, opts = {}) {
   const { rows } = await pool.query(
     `SELECT u.app_quota, u.app_quota_requested_at,
             (SELECT COUNT(*)::int FROM apps owned_app
@@ -20,11 +41,20 @@ async function read(pool, user) {
       || (limit !== null && (!Number.isInteger(limit) || limit < 0))) {
     throw new Error('Invalid app allowance');
   }
-  return {
+  const result = {
     quota: { used, limit, remaining: limit === null ? null : Math.max(0, limit - used) },
     canCreateApps: limit === null || used < limit,
     requestedAt: rows[0].app_quota_requested_at || null,
   };
+  if (opts.maxApps !== undefined) {
+    // Informational: a failed count must not take the allowance down with it.
+    try { result.server = await serverCapacity(pool, user, opts.maxApps); }
+    catch (err) {
+      log.warn('app-allowance', 'Server capacity lookup failed', { message: err.message });
+      result.server = null;
+    }
+  }
+  return result;
 }
 
 function refusal(allowance) {
@@ -46,7 +76,7 @@ async function publish(pool, rows, userIds) {
   }
 }
 
-async function requestMore(pool, user) {
+async function requestMore(pool, user, opts = {}) {
   const rows = await withTransaction(pool, async (db) => {
     // A user row is the single pending request. Concurrent clicks and retries
     // cannot create another notification while that request is outstanding.
@@ -67,7 +97,7 @@ async function requestMore(pool, user) {
     )).rows;
   });
   await publish(pool, rows, [user.id]);
-  return read(pool, user);
+  return read(pool, user, opts);
 }
 
 async function setQuota(pool, { userId = null, quota, actorId }) {
@@ -137,4 +167,4 @@ async function grantRequest(pool, { userId, actorId }) {
   return rows[0] || null;
 }
 
-module.exports = { read, refusal, requestMore, setQuota, declineRequest, grantRequest };
+module.exports = { read, serverCapacity, refusal, requestMore, setQuota, declineRequest, grantRequest };

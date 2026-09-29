@@ -80,7 +80,7 @@ function makeNotifEnv() {
   };
   sandbox.agoStamp = agoStamp;
   vm.runInNewContext(NOTIF_SRC, sandbox);
-  return { Notifications: sandbox.window.Notifications, elements };
+  return { Notifications: sandbox.window.Notifications, elements, sandbox };
 }
 
 // Build a fresh sandbox + DevAlerts instance with configurable environment.
@@ -137,7 +137,7 @@ function makeEnv({
   sandbox.Notification.requestPermission = () => { calls.permissionRequests += 1; return Promise.resolve(permission); };
 
   vm.runInNewContext(DEV_ALERTS_SRC, sandbox);
-  return { DevAlerts: sandbox.window.DevAlerts, calls, store };
+  return { DevAlerts: sandbox.window.DevAlerts, calls, store, sandbox };
 }
 
 // ── decision: visible → tone, hidden → systemNotify ──────────────────────
@@ -433,6 +433,47 @@ test('a live background browser still previews the alert without an eligible pho
   calls.timers[0].fn();
   assert.equal(calls.notifications[0].title, 'Homeroom test alert');
   assert.equal(DevAlerts._routeFor({ kind: 'test_alert' }), '#settings/alerts');
+});
+
+test('session completion alerts open the lifecycle-aware change page', () => {
+  const { DevAlerts, sandbox } = makeEnv();
+  assert.equal(
+    DevAlerts._routeFor({ kind: 'session_done', appSlug: 'demo', sessionId: 9 }),
+    '#app/demo/dev/proposals/9',
+  );
+  const calls = [];
+  sandbox.App = { openAppTab: (...args) => calls.push(args) };
+  DevAlerts._navigate({ kind: 'session_done', appSlug: 'demo', sessionId: 9 });
+  assert.deepEqual(JSON.parse(JSON.stringify(calls)), [[
+    'demo', 'dev', { subTab: 'topic', ref: { kind: 'proposal', id: 9 } },
+  ]]);
+});
+
+// #3181: a turn that stopped before finishing arrives on the same channels a
+// finished one does (chime or OS notification, and the away-tab marker), with
+// copy that says so, and it opens the same change page.
+test('a session that stopped before finishing alerts like a finished one, in its own words', () => {
+  const { Notifications, sandbox } = makeNotifEnv();
+  const alerts = [];
+  const marks = [];
+  sandbox.DevAlerts = { onCompletion: (info) => alerts.push(info) };
+  sandbox.DevChat = { setCompletionTitle: (m) => marks.push(m), _userIsAway: () => true };
+  Notifications.items = [];
+  Notifications.unread = 0;
+  Notifications.invites = [];
+  Notifications.handleIncoming({
+    id: 77, kind: 'session_stalled', readAt: null, appName: 'Notes', appSlug: 'notes',
+    sessionId: 9, sessionTitle: 'Kanban filters',
+  });
+  assert.equal(alerts.length, 1, 'one alert');
+  assert.equal(alerts[0].kind, 'session_stalled');
+  assert.equal(alerts[0].title, 'Session stopped before finishing');
+  assert.equal(alerts[0].body, 'Your session on Notes stopped before finishing. Open it to continue');
+  assert.deepEqual(marks, ['sessionStalled'], 'the away tab says it stopped, not that it is done');
+
+  const { DevAlerts } = makeEnv();
+  assert.equal(DevAlerts._routeFor(alerts[0]), '#app/notes/dev/proposals/9',
+    'the alert opens the change, where the session can be continued');
 });
 
 test('queue errors reject without scheduling a success preview', async () => {

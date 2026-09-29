@@ -145,7 +145,7 @@ export function RenameAppDialog() {
               ; the rename applies once the PR is voted in and merged.
             </p>
           </div>
-          <div id="rename-error" ref={errorRef} className="text-red-400 text-sm hidden">
+          <div id="rename-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
             {error}
           </div>
           <div className="flex gap-3">

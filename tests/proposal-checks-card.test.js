@@ -118,14 +118,20 @@ test('card: check_state="pending" renders the running pill', () => {
   assert.match(html, /dc-status-spinner-arc/, 'spinner inside the pill');
 });
 
-test('card: check_state="error" is a red tag naming the boot failure', () => {
+test('card: check_state="error" is a red tag naming a checks-run error', () => {
   const AppView = makeAppView(ME);
   const html = proposalCardHtml(AppView, baseProposal({ check_state: 'error', test_results: [] }));
-  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Preview won[^<]*<\/span>/,
-    'the tag names WHY checks could not run');
+  assert.match(html, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Checks couldn[^<]*<\/span>/,
+    'a runner error does not accuse a healthy preview of failing to boot');
   assert.doesNotMatch(html, /gc-vote-count-blocked/);
   // The standalone helper keeps its own wording for the other surfaces.
   assert.match(AppView.checksBadgeHtml(baseProposal({ check_state: 'error' })), /Checks couldn/);
+
+  const boot = proposalCardHtml(AppView, baseProposal({
+    check_state: 'error', preview_state: 'failed', staging_error: 'app exited', test_results: [],
+  }));
+  assert.match(boot, /<span class="dev-badge [^"]*red[^"]*"[^>]*>Preview won[^<]*<\/span>/,
+    'an explicit preview failure keeps the more specific diagnosis');
 });
 
 test('a legacy row (no check_state) surfaces its console errors as an amber tag', () => {
@@ -238,6 +244,29 @@ test('a stale fresh-NULL row (old created_at) offers the re-run escape hatch to 
   const html = checksHtml(AppView, baseProposal({ user_id: ME }));
   assert.match(html, /Checks are starting/);
   assert.match(html, /Re-run checks/);
+});
+
+// #2368: a change still being worked on with no check state has never started
+// a run (every push pends its checks first), so nothing is "starting".
+test('an underway change with nothing pushed says when checks will run, with no spinner', () => {
+  const AppView = makeAppView(ME);
+  for (const status of ['active', 'paused']) {
+    const html = checksHtml(AppView, baseProposal({
+      user_id: ME, status, pr_number: null, check_state: null,
+      created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+    }));
+    assert.doesNotMatch(html, /Checks are starting/, status);
+    assert.doesNotMatch(html, /dc-status-spinner-arc/, `${status}: no spinner`);
+    assert.doesNotMatch(html, /Re-run checks/, `${status}: nothing to re-run`);
+    assert.match(html, /No checks yet/, status);
+    assert.match(html, /once the agent commits a change/, status);
+  }
+  // Once a push pends the checks, the running state is unchanged.
+  const pending = checksHtml(AppView, baseProposal({
+    user_id: ME, status: 'active', check_state: 'pending', test_results: [],
+    checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
+  }));
+  assert.match(pending, /Checks are still running/);
 });
 
 test('a FRESH pending run shows the spinner + started line and hides the re-run button', () => {

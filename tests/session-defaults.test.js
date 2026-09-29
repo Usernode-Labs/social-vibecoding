@@ -180,13 +180,17 @@ test('Codex default but feature disabled → Claude fallback', async () => {
   assert.equal(out.backend, 'claude_code');
 });
 
-test('Codex default but beta access revoked → Claude fallback', async () => {
+// #2568 retired the gradual-rollout allowlist: a stale
+// CODEX_OPENROUTER_BETA_USER_IDS in a deployment's environment must no
+// longer steer anybody back to Claude. CODEX_OPENROUTER_ENABLED above is the
+// one remaining deployment switch.
+test('a leftover beta allowlist no longer revokes anyone', async () => {
   const { pool } = makePool({
     prefRow: { backend: 'codex_openrouter', model_id: 'm', reasoning_effort: null },
     credRow: { id: 1, status: 'valid', revision: 2 },
   });
   const out = await resolveDefaultAgentPreference(pool, 7, { ...BASE_CONFIG, openrouterBetaUserIds: ['999'] });
-  assert.equal(out.backend, 'claude_code');
+  assert.equal(out.backend, 'codex_openrouter');
 });
 
 test('Codex default but missing/invalid credential → managed key and provisioned model', async (t) => {
@@ -223,10 +227,13 @@ test('managed provisioning failures stop with an actionable stable error', async
   const { pool } = makePool({ prefRow: null, credRow: null });
   await assert.rejects(
     () => resolveDefaultAgentPreference(pool, 7, BASE_CONFIG),
+    // QA 2026-09-24: actionable for the PERSON, who cannot set a server
+    // variable; the variable's name stays in the server log.
     (err) => err instanceof AgentSelectionError
       && err.statusCode === 503
       && err.code === 'not_configured'
-      && /USERNODE_OPENROUTER_MANAGEMENT_API_KEY/.test(err.message),
+      && !/USERNODE_OPENROUTER_MANAGEMENT_API_KEY/.test(err.message)
+      && /Ask an admin to finish setting them up/.test(err.message),
   );
 });
 

@@ -16,6 +16,7 @@ import { SessionChecksPanel } from '../dev-board/modals/session-checks';
 import { SessionList } from './session-list';
 import { SpecViewer } from './spec-viewer';
 import { DevChatTranscript } from './transcript';
+import { ConnectorSetupInline } from './connector-setup-inline';
 import { OwnToolsGuide } from './own-tools-guide';
 import { devViewStore, type DevViewState, type PaneView } from './view-store';
 
@@ -115,10 +116,20 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
 
           No `overflow-hidden`: the session sheet's shoulders are painted
           OUTSIDE its own arc (see `.dc-lift` in app.css), and clipping to
-          the radius would erase exactly them. */}
+          the radius would erase exactly them.
+
+          #1941: ONE COMPACT ROW. `py-1`, not `py-2` — the 28px controls
+          set the row's height and the strip carries no more around them
+          than the platform header does around its own. Below `sm` the row
+          may WRAP, and only there: the title and the PR number take the
+          first line, the venue, the mode switch and the actions menu the
+          second (app.css gives the title the basis that forces that break).
+          It used to stay a single line at every width, which at 375px
+          shrank the title to nothing and pushed the actions menu off the
+          right edge — nothing was folded, it was just gone. */}
       <div
         id="dc-session-header"
-        className="flex items-center gap-2 px-3 py-2 shrink-0 dc-lift dc-lift-strip"
+        className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1 px-3 py-1 shrink-0 dc-lift dc-lift-strip"
       >
         <SessionHeader embedded={s.embedded} />
       </div>
@@ -127,22 +138,28 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
           child of a wrapper. */}
       <div id="dc-banners" className="contents"><DevChatBanners /></div>
       <div className="dc-session-body flex-1 flex min-h-0 dc-lift dc-lift-session">
-        <div id="dc-tab-chat" className="dc-chat-pane flex-1 flex flex-col min-h-0">
+        {/* `platform-kb-column` (app.css): #dc-messages scrolls and
+            #dc-composer-bar is a shrink-0 sibling below it, so the keyboard
+            inset is reserved here, on the column. */}
+        <div id="dc-tab-chat" className="dc-chat-pane platform-kb-column flex-1 flex flex-col min-h-0">
           {s.returnHint && !s.embedded ? (
             <aside
               id="dc-return-hint" aria-label="Returning to dev chat"
-              className="mx-3 mt-3 mb-1 flex flex-wrap items-center gap-3 rounded-xl bg-violet-500/10 p-3 text-sm text-zinc-700 dark:text-zinc-200 shrink-0"
+              className="mx-3 mt-3 mb-1 flex flex-col items-stretch gap-3 rounded-xl bg-violet-500/10 p-4 text-sm text-zinc-700 dark:text-zinc-200 shrink-0 sm:flex-row sm:flex-wrap sm:items-center sm:p-3"
             >
-              <div className="flex-1 min-w-[12rem]">
+              <div className="flex-1 min-w-0 sm:min-w-[12rem]">
                 <p className="font-semibold">You can come back later</p>
+                {/* Messages, because a change in flight is an agent
+                    conversation there (#2770). This named Improve until #2718
+                    retired that panel. */}
                 <p className="mt-1">
-                  You can leave this page and return anytime. Open <strong>Improve</strong> in
-                  the top bar to check your session’s status or find your chat again.
+                  You can leave this page and return anytime. Open <strong>Messages</strong> to
+                  check your change’s status or find this chat again.
                 </p>
               </div>
               <Button
                 id="dc-return-hint-dismiss" type="button" size="sm" layout="shrink"
-                variant="neutral" ink="muted" className="min-h-[44px]"
+                variant="neutral" ink="muted" className="min-h-[44px] self-end sm:self-auto"
                 onClick={() => window.DevChat?.dismissReturnHint()}
               >Got it</Button>
             </aside>
@@ -164,6 +181,22 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
           {s.ownToolsGuide ? (
             <div id="dc-launchpad-slot" className="dc-launchpad-slot">
               <OwnToolsGuide view={s.ownToolsGuide} />
+            </div>
+          ) : s.connectorSetup ? (
+            /* #2706: the walkthrough card is still DevFlowSelect's innerHTML
+               and the connector steps are React, so they are SIBLINGS here
+               rather than one tree — the statefulness rule in AGENTS.md is
+               exactly that no React-owned subtree may share an owner. The
+               card moves down a level in this branch, which every declared
+               check on it survives because they all select it as a
+               DESCENDANT of the slot.
+
+               Only this branch nests: an ordinary session must leave the
+               slot genuinely empty, or `.dc-launchpad-slot:empty` stops
+               collapsing it and every chat grows a bordered strip. */
+            <div id="dc-launchpad-slot" className="dc-launchpad-slot">
+              <div dangerouslySetInnerHTML={{ __html: s.launchpadHtml }} />
+              <ConnectorSetupInline view={s.connectorSetup} />
             </div>
           ) : (
             <div
@@ -213,17 +246,12 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
   );
 }
 
-/** Session URLs are the workspace; Open card has its own topic destination. */
+/** Session URLs are the workspace; the card has its own topic destination.
+ *  #2821: the way there is the session header's "Open proposal card", so the
+ *  workspace carries no strip of its own above the header. */
 function SessionView({ s }: { s: Extract<DevViewState, { kind: 'session' }> }): ReactNode {
   useEffect(() => { window.DevChat?.restoreSessionScroll?.(); }, []);
-  if (!s.change || s.embedded) return <WorkspaceView s={s} />;
-  return <>
-    <nav className="dev-change-tabs" aria-label="Change views">
-      <button type="button" className="gc-vote-btn" onClick={() => (window as any).AppView?.openTopic('proposal', s.change!.item.id)}>Change overview</button>
-      <span className="dev-topic-note">Agent workspace</span>
-    </nav>
-    <WorkspaceView s={s} />
-  </>;
+  return <WorkspaceView s={s} />;
 }
 
 export function DevChatViewView({ s }: { s: DevViewState }): ReactNode {

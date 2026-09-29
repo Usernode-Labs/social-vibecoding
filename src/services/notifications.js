@@ -9,15 +9,24 @@
 // active users + creator + favoriters so they come vote; self-app PRs
 // go to creator + favoriters only), 'session_done'
 // (#161 — a dev-session turn finished after its owner left),
+// 'session_stalled' (#3181 — a dev-session turn ended without finishing:
+// an error, a timeout or a lost worker, or a system pause mid-turn),
 // 'auto_solve_done' (#161 — a headless auto-solve run finished; `detail`
 // holds the outcome: spec | code | spec_code (#170) | question | failed)
 // and 'spec_shared' (#86 — someone privately shared a spec version with
-// you; `detail` carries the version number as a string). Managed OpenRouter
-// ownership/review events use openrouter_key_created/openrouter_key_review.
+// you; `detail` carries the version number as a string). Actionable managed
+// OpenRouter failures use openrouter_key_review; openrouter_key_created is a
+// historical render-only kind now that successful issuance is routine.
+// #2387 adds 'thread_reply': a reply in an app-chat reply thread you started
+// or replied in (chat_message_id is the reply; its thread_ref the root).
+// 'platform_limit' tells full admins a server-wide cap (MAX_APPS,
+// MAX_GLOBAL_SESSIONS) is nearly or completely used; `detail` carries the
+// cap, level and figures (services/platform-limit-alerts.js).
 
 const log = require('./logger');
 const usernames = require('./usernames');
 const { listActiveUserIds } = require('./active-users');
+const notificationPreferences = require('./notification-preferences');
 
 // Usernames in this app are [A-Za-z0-9_]+, length-restricted on signup.
 // Match @token that is NOT preceded by a word character (so emails don't
@@ -33,6 +42,8 @@ const CONVERSATION_NOTIFICATION_KINDS = new Set([
   'conversation_mention',
   'conversation_reply',
   'conversation_reaction',
+  // #2387: a reply in a thread you started or replied in.
+  'conversation_thread_reply',
 ]);
 const CONVERSATION_KIND_SQL = [...CONVERSATION_NOTIFICATION_KINDS]
   .map((kind) => `'${kind}'`).join(', ');
@@ -72,9 +83,38 @@ const CONVERSATION_ACCESS_SQL = `(
             WHERE direct_conversation.id = n.conversation_id
               AND direct_conversation.kind = 'direct'
          )
+         AND NOT EXISTS (
+           SELECT 1 FROM user_blocks sender_block
+            WHERE sender_block.blocker_id = n.user_id
+              AND sender_block.blocked_user_id = n.source_user_id
+         )
     )
   )
 )`;
+
+// App discussion notifications carry chat_message_id; block applies to
+// mentions, replies, and reactions even when the underlying post is visible.
+const CHAT_SENDER_ACCESS_SQL = `(
+  n.chat_message_id IS NULL OR NOT EXISTS (
+    SELECT 1 FROM user_blocks blocked
+     WHERE blocked.blocker_id = n.user_id
+       AND blocked.blocked_user_id = n.source_user_id
+  )
+)`;
+
+// #2386: the two friend kinds. A friend_request row carries Accept / Decline
+// only while it still ASKS something — the same sender's request to this
+// recipient is still pending — so that is read live off `friendships` rather
+// than remembered on the row: a request withdrawn, answered elsewhere or
+// ended by a block stops offering buttons at once. FALSE for every other kind.
+const FRIEND_NOTIFICATION_KINDS = new Set(['friend_request', 'friend_accept']);
+const FRIEND_REQUEST_PENDING_SQL = `(n.kind = 'friend_request' AND EXISTS (
+  SELECT 1 FROM friendships pending_friend
+   WHERE pending_friend.user_low_id = LEAST(n.user_id, n.source_user_id)
+     AND pending_friend.user_high_id = GREATEST(n.user_id, n.source_user_id)
+     AND pending_friend.requester_id = n.source_user_id
+     AND pending_friend.status = 'pending'
+))`;
 
 function parseMentions(text) {
   if (!text || typeof text !== 'string') return [];
@@ -142,13 +182,18 @@ async function createMentionNotifications(pool, { appId, chatMessageId, senderId
   const params = [];
   recipients.forEach((u, i) => {
     const base = i * 5;
-    values.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`);
+    values.push(`($${base + 1}::int, $${base + 2}::int, $${base + 3}::int, $${base + 4}::int, $${base + 5}::varchar)`);
     params.push(u.id, appId, chatMessageId, senderId, 'mention');
   });
 
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
-     VALUES ${values.join(', ')}
+     SELECT v.user_id, v.app_id, v.chat_message_id, v.source_user_id, v.kind
+       FROM (VALUES ${values.join(', ')}) AS v(user_id, app_id, chat_message_id, source_user_id, kind)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE blocked.blocker_id = v.user_id AND blocked.blocked_user_id = v.source_user_id
+      )
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     params
   );
@@ -163,9 +208,286 @@ async function createReplyNotification(pool, { appId, replyMessageId, senderId, 
   if (!recipientId || recipientId === senderId) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
-     VALUES ($1, $2, $3, $4, 'reply')
+     SELECT $1, $2, $3, $4, 'reply'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = $4
+      )
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     [recipientId, appId, replyMessageId, senderId]
+  );
+  return rows;
+}
+
+// #2387: a reply in an app-chat reply thread (chat_messages thread_type
+// 'message', thread_ref = the root). Addressed to the root's author and to
+// everybody who replied earlier, minus:
+//   * the sender;
+//   * `excludeUserIds` — the people this same message already reached with a
+//     more specific row (a 'mention', or a 'reply' for a quote). One row per
+//     person per message, and the specific one wins;
+//   * anybody blocked either way, and on a collab-private app anybody who is
+//     no longer a member (their row would deep-link to a chat they cannot
+//     read — filterToCollaborators, as for mentions);
+//   * anybody who switched this app's "Replies to you" category off
+//     (notification-preferences.js `thread_replies`, which gates this kind
+//     alongside the quote-reply `reply` kind).
+// Earlier repliers are read from live (non-deleted) replies: deleting your
+// reply is the one way to step out of a thread.
+async function createThreadReplyNotifications(pool, {
+  appId, replyMessageId, rootId, senderId, excludeUserIds = [],
+}) {
+  if (!appId || !replyMessageId || !rootId) return [];
+  const { rows: candidates } = await pool.query(
+    `SELECT root.user_id
+       FROM chat_messages root
+      WHERE root.id = $1 AND root.app_id = $2 AND root.user_id IS NOT NULL
+     UNION
+     SELECT earlier.user_id
+       FROM chat_messages earlier
+      WHERE earlier.app_id = $2 AND earlier.thread_type = 'message'
+        AND earlier.thread_ref = $1 AND earlier.id < $3
+        AND earlier.user_id IS NOT NULL AND earlier.deleted_at IS NULL`,
+    [rootId, appId, replyMessageId]
+  );
+  const skip = new Set([senderId, ...excludeUserIds].map(Number));
+  let ids = [...new Set(candidates.map((r) => Number(r.user_id)))]
+    .filter((id) => Number.isInteger(id) && !skip.has(id));
+  if (!ids.length) return [];
+  ids = await filterToCollaborators(pool, appId, ids);
+  if (!ids.length) return [];
+  ids = await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: ids, appId, categoryKey: 'thread_replies',
+  });
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
+     SELECT recipient, $2, $3, $4, 'thread_reply'
+       FROM UNNEST($1::int[]) AS recipient
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE (blocked.blocker_id = recipient AND blocked.blocked_user_id = $4)
+            OR (blocked.blocker_id = $4 AND blocked.blocked_user_id = recipient)
+      )
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
+    [ids, appId, replyMessageId, senderId]
+  );
+  return rows;
+}
+
+// ── #1374's four new notifications ───────────────────────────────────
+//
+// Each of these was a silence before this change. A new issue notified
+// nobody, a proposal MERGING notified nobody, a vote on your own proposal
+// notified nobody, and a failed deploy notified nobody. The per-app
+// preference screen would have been three switches over two real
+// notifications without them.
+//
+// All four gate through services/notification-preferences.js, which is what
+// makes one switch govern the on-platform row and the phone push together:
+// mobile_push_deliveries references notifications(id), so a row that is
+// never created can never be pushed.
+
+// A new issue on an app, to that app's stakeholders.
+//
+// The audience is deliberately the SAME one createPrProposedNotifications
+// computes — active users, the creator and favoriters, minus the author,
+// narrowed to collaborators on a collab-private app — because "who cares
+// about this app" should not have two different answers depending on which
+// kind of thing just happened. The self-app exception is here for the same
+// reason too: everyone active on any app counts as active on the platform
+// app, so without it filing an issue here would ping the entire user base.
+//
+// The issue NUMBER rides in `detail` rather than a column of its own.
+// notifications has app_id, session_id, chat_message_id and conversation_id,
+// and an issue is none of those; `detail` is the generic slot the schema
+// already keeps for exactly this ("a notification kind that needs a small
+// extra string"), and app_id + number is enough for the drawer to link.
+async function createIssueOpenedNotifications(pool, { appId, issueNumber, authorId }) {
+  if (!appId || !issueNumber) return [];
+
+  const { rows: appRows } = await pool.query(
+    'SELECT self_hosted FROM apps WHERE id = $1',
+    [appId]
+  );
+  const selfHosted = !!appRows[0]?.self_hosted;
+  const activeIds = selfHosted ? [] : await listActiveUserIds(pool, appId);
+
+  const { rows: extraRows } = await pool.query(
+    `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
+     UNION
+     SELECT user_id AS id FROM app_favorites WHERE app_id = $1`,
+    [appId]
+  );
+
+  let recipientIds = new Set([...activeIds, ...extraRows.map((r) => r.id)]);
+  recipientIds.delete(authorId);
+  recipientIds = new Set(await filterToCollaborators(pool, appId, [...recipientIds]));
+  if (!recipientIds.size) return [];
+
+  recipientIds = new Set(await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: [...recipientIds],
+    appId,
+    categoryKey: 'new_issues',
+  }));
+  if (!recipientIds.size) return [];
+
+  // NOT EXISTS rather than a read-then-write, matching pr_proposed: two
+  // concurrent creates of the same issue must not double-notify.
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     SELECT u, $2, $3, 'issue_opened', $4::text
+       FROM UNNEST($1::int[]) AS u
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = u AND n.app_id = $2
+          AND n.kind = 'issue_opened' AND n.detail = $4::text
+      )
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    [[...recipientIds], appId, authorId || null, String(issueNumber)]
+  );
+  return rows;
+}
+
+// Your proposal merged. Addressed to its author, and the one notification in
+// this set that is unambiguously good news rather than a request to act.
+//
+// System-generated, so source_user_id stays null: a merge is the group's
+// decision arriving, not a person doing something to you. `force` rides in
+// `detail` so the drawer can tell an admin override apart from a vote that
+// carried, which are the same event with very different meanings to the
+// person who wrote the change.
+// #1688: `credits` is the "Backed by alice and bob, shaped by carol." sentence
+// for a merge the vote carried — it rides in `detail`, which a force merge
+// uses for its own marker, so the two never meet.
+async function createPrMergedNotification(pool, { userId, appId, sessionId, forced = false, credits = null }) {
+  if (!userId || !sessionId) return [];
+  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'pr_merged' })) return [];
+  const detail = forced
+    ? 'forced'
+    : (typeof credits === 'string' && credits.trim() ? credits.trim().slice(0, 255) : null);
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT $1, $2, $3, NULL, 'pr_merged', $4
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3 AND n.kind = 'pr_merged'
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId, sessionId, detail]
+  );
+  return rows;
+}
+
+// #1688: a proposal this person had said yes to got a new version from its
+// author, and their yes no longer counts until they look again. One row per
+// (voter, session, epoch) — `detail` carries the epoch, so a second push
+// asks again and a resumed tail does not. The author is never asked to
+// re-confirm their own update, and a voter who muted the category is left
+// alone: the roster on the proposal's page still names them.
+async function createRevisionRecheckNotifications(pool, { appId, sessionId, authorId, voterIds, epoch }) {
+  const ids = [...new Set((voterIds || []).map((v) => Number(v)).filter((v) => Number.isFinite(v) && v !== Number(authorId)))];
+  if (!ids.length || !sessionId) return [];
+  const allowed = await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: ids, appId, categoryKey: 'revision_recheck',
+  });
+  if (!allowed.length) return [];
+  const detail = `epoch:${Number.isFinite(Number(epoch)) ? Number(epoch) : 0}`;
+  const values = [];
+  const params = [appId, sessionId, authorId || null, detail];
+  allowed.forEach((userId) => {
+    params.push(userId);
+    values.push(`($${params.length}, $1, $2, $3, 'revision_recheck', $4)`);
+  });
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT v.user_id, v.app_id, v.session_id, v.source_user_id, v.kind, v.detail
+       FROM (VALUES ${values.join(', ')}) AS v (user_id, app_id, session_id, source_user_id, kind, detail)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+         WHERE n.user_id = v.user_id AND n.session_id = v.session_id
+           AND n.kind = 'revision_recheck' AND n.detail = v.detail
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    params
+  );
+  return rows;
+}
+
+// Somebody voted on a proposal of yours.
+//
+// NOT de-duplicated per session, unlike its neighbours: a vote is a discrete
+// event and the second one is news, where a second "checks failed" for the
+// same proposal is noise. It IS de-duplicated per (voter, session) though,
+// because flipping a vote back and forth must not be a way to ping somebody
+// repeatedly. The direction rides in `detail`.
+async function createProposalVoteNotification(pool, { userId, appId, sessionId, voterId, vote }) {
+  if (!userId || !sessionId || !voterId) return [];
+  // Voting on your own proposal is allowed; notifying yourself about it is
+  // not useful.
+  if (userId === voterId) return [];
+  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'proposal_vote' })) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
+     SELECT $1, $2, $3, $4, 'proposal_vote', $5
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'proposal_vote' AND n.source_user_id = $4
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
+    [userId, appId, sessionId, voterId, vote === 'no' ? 'no' : 'yes']
+  );
+  return rows;
+}
+
+// The app is unwell: a deploy failed, or it stopped running.
+//
+// Addressed to the people who can actually do something about it, which is
+// the creator and the app's admins. That is also why `app_health` is the one
+// preference category marked adminOnly: offering the switch to everybody
+// else would be offering to mute something they were never going to get.
+//
+// De-duplicated on UNREAD rather than ever: a failure that is still unread
+// should not stack, but once you have seen and cleared one, the NEXT failure
+// is news again. Same rule check_failed uses.
+//
+// `detail` is a SHORT TOKEN, not a reason line: notifications.detail is
+// VARCHAR(32), and 32 characters of a build failure ("Command failed: npm
+// run build:sh") is a fragment rather than information. The drawer renders
+// the copy from the token, and the full reason is on apps.last_failure,
+// where an operator is going anyway.
+async function createAppHealthNotification(pool, { appId, detail }) {
+  if (!appId) return [];
+  const { rows: recipientRows } = await pool.query(
+    `SELECT created_by AS id FROM apps WHERE id = $1 AND created_by IS NOT NULL
+     UNION
+     SELECT user_id AS id FROM app_admins WHERE app_id = $1`,
+    [appId]
+  );
+  const ids = [...new Set(recipientRows.map((r) => r.id).filter(Boolean))];
+  if (!ids.length) return [];
+
+  const allowed = await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: ids,
+    appId,
+    categoryKey: 'app_health',
+  });
+  if (!allowed.length) return [];
+
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     SELECT u, $2, NULL, 'app_health', $3
+       FROM UNNEST($1::int[]) AS u
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = u AND n.app_id = $2
+          AND n.kind = 'app_health' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    // VARCHAR(32). See the note above the function: this is a short token,
+    // not a reason line.
+    [allowed, appId, (detail || '').slice(0, 32) || null]
   );
   return rows;
 }
@@ -178,7 +500,11 @@ async function createReactionNotification(pool, { appId, messageId, senderId, re
   if (!recipientId || recipientId === senderId) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, detail)
-     VALUES ($1, $2, $3, $4, 'reaction', $5)
+     SELECT $1, $2, $3, $4, 'reaction', $5
+      WHERE NOT EXISTS (
+        SELECT 1 FROM user_blocks blocked
+         WHERE blocked.blocker_id = $1 AND blocked.blocked_user_id = $4
+      )
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     [recipientId, appId, messageId, senderId, (emoji || '').slice(0, 32)]
   );
@@ -193,6 +519,7 @@ async function createReactionNotification(pool, { appId, messageId, senderId, re
 // the session so the dropdown can render the PR title + a deep link.
 async function createStalePrNotification(pool, { userId, appId, sessionId }) {
   if (!userId) return [];
+  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'stale_pr' })) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
      VALUES ($1, $2, $3, NULL, 'stale_pr')
@@ -211,6 +538,10 @@ async function createStalePrNotification(pool, { userId, appId, sessionId }) {
 // failure streak; the dedup is belt-and-suspenders against re-fires.
 async function createCheckFailedNotification(pool, { userId, appId, sessionId }) {
   if (!userId || !sessionId) return [];
+  // #1374. allowsKind fails OPEN on a read error: the quiet failure mode of
+  // this whole feature is a notification silently not arriving, and this one
+  // is telling somebody their proposal cannot merge.
+  if (!await notificationPreferences.allowsKind(pool, { userId, appId, kind: 'check_failed' })) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
      SELECT $1, $2, $3, NULL, 'check_failed'
@@ -243,6 +574,29 @@ async function createSessionDoneNotification(pool, { userId, appId, sessionId })
         SELECT 1 FROM notifications n
         WHERE n.user_id = $1 AND n.session_id = $3
           AND n.kind = 'session_done' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
+    [userId, appId, sessionId]
+  );
+  return rows;
+}
+
+// #3181: the other way a dev-session turn ends (kind='session_stalled'). A
+// turn that died on an error, a timeout or a lost worker, or a session the
+// platform paused in the middle of one, used to end in silence: nothing said
+// the work had stopped, and the owner found out when they next looked. The
+// caller decides what counts as stalled; a stop the user pressed never does.
+// Same shape and same unread dedup as session_done: at most one unread
+// session_stalled per (user, session).
+async function createSessionStalledNotification(pool, { userId, appId, sessionId }) {
+  if (!userId || !sessionId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     SELECT $1, $2, $3, NULL, 'session_stalled'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+        WHERE n.user_id = $1 AND n.session_id = $3
+          AND n.kind = 'session_stalled' AND n.read_at IS NULL
       )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [userId, appId, sessionId]
@@ -350,41 +704,73 @@ async function createSpecSharedNotification(pool, { recipientId, appId, sessionI
   return rows;
 }
 
-// Company-funded OpenRouter keys are security/billing objects, so every
-// platform admin receives an ownership record when one is created and a
-// review nudge when the optional verification policy is enabled and its user
-// loses their last verified identity. `detail`
-// carries only the local managed-key id; the raw child key never enters the
-// notification table, logs, WebSocket payload, or admin UI.
-async function createManagedOpenRouterAdminNotifications(pool, {
-  sourceUserId, managedKeyId, kind = 'openrouter_key_created',
+// Successful company-funded OpenRouter issuance is recorded on the managed
+// key itself and visible in Admin > Users; it is not an actionable inbox
+// event. Only a key that needs review creates a notification, and only full
+// admins receive it because read-only admins cannot block, enable, delete, or
+// reconcile the key. `detail` carries only the local managed-key id; the raw
+// child key never enters the notification table, logs, WebSocket payload, or
+// admin UI.
+async function createManagedOpenRouterReviewNotifications(pool, {
+  sourceUserId, managedKeyId,
 }) {
-  if (!sourceUserId || !managedKeyId
-      || !['openrouter_key_created', 'openrouter_key_review'].includes(kind)) return [];
+  if (!sourceUserId || !managedKeyId) return [];
   const { rows } = await pool.query(
     `INSERT INTO notifications (user_id, source_user_id, kind, detail)
-     SELECT admin.id, $1, $2::varchar(32), $3::varchar(32)
+     SELECT admin.id, $1, 'openrouter_key_review', $2::varchar(32)
        FROM users admin
       WHERE admin.is_admin = TRUE
-        AND (
-          $2::varchar(32) <> 'openrouter_key_review'
-          OR NOT EXISTS (
-            SELECT 1 FROM notifications existing
-             WHERE existing.user_id = admin.id
-               AND existing.source_user_id = $1
-               AND existing.kind = $2::varchar(32)
-               AND existing.detail = $3::varchar(32)
-               AND existing.read_at IS NULL
-          )
+        AND admin.admin_readonly = FALSE
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications existing
+           WHERE existing.user_id = admin.id
+             AND existing.source_user_id = $1
+             AND existing.kind = 'openrouter_key_review'
+             AND existing.detail = $2::varchar(32)
+             AND existing.read_at IS NULL
         )
      RETURNING id, user_id, source_user_id, kind, detail, created_at`,
-    [sourceUserId, kind, String(managedKeyId).slice(0, 32)],
+    [sourceUserId, String(managedKeyId).slice(0, 32)],
   );
   return rows;
 }
 
-async function notifyManagedOpenRouterAdmins(pool, args) {
-  const rows = await createManagedOpenRouterAdminNotifications(pool, args);
+// A server-wide cap (MAX_APPS, MAX_GLOBAL_SESSIONS) reached its warning line
+// or its ceiling — services/platform-limit-alerts.js decides when. Full
+// admins only: they are the people who can raise a cap or free room under
+// it, so a view-only admin is not paged about something they cannot act on.
+// `detail` is that module's "<limit>_<level>:<used>:<cap>" token. No app:
+// the cap belongs to the server, and an app_id would let opening the
+// platform's own app mark the alert read unseen (markReadForApp).
+//
+// De-dupe: an admin still holding an UNREAD alert for the same cap and level
+// gets no second one — the counts in the first are already stale, and a
+// pile of them says nothing the first did not.
+async function createPlatformLimitNotifications(pool, { detail }) {
+  const token = String(detail || '').slice(0, 32);
+  const sep = token.indexOf(':');
+  if (sep <= 0) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, source_user_id, kind, detail)
+     SELECT admin.id, NULL, 'platform_limit', $1::varchar(32)
+       FROM users admin
+      WHERE admin.is_admin = TRUE
+        AND admin.admin_readonly = FALSE
+        AND NOT EXISTS (
+          SELECT 1 FROM notifications existing
+           WHERE existing.user_id = admin.id
+             AND existing.kind = 'platform_limit'
+             AND split_part(existing.detail, ':', 1) = $2
+             AND existing.read_at IS NULL
+        )
+     RETURNING id, user_id, source_user_id, kind, detail, created_at`,
+    [token, token.slice(0, sep)],
+  );
+  return rows;
+}
+
+async function notifyManagedOpenRouterReviewAdmins(pool, args) {
+  const rows = await createManagedOpenRouterReviewNotifications(pool, args);
   await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
   return rows;
 }
@@ -404,12 +790,17 @@ async function hydrateAndPush(pool, row) {
               cm.thread_type, cm.thread_ref,
               n.session_id,
               cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+              cs.agent_session_id,
               n.conversation_id, c.kind AS conversation_kind,
               c.title AS conversation_title,
               n.conversation_message_id,
               conversation_message.content AS conversation_message_content,
+              conversation_message.thread_root_id AS conversation_thread_root_id,
               su.username AS source_username,
-              n.detail
+              n.source_user_id,
+              ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
+              n.detail,
+              pv.reason AS vote_reason
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -418,7 +809,8 @@ async function hydrateAndPush(pool, row) {
        LEFT JOIN conversation_messages conversation_message
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
-       WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL}`,
+       LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
+       WHERE n.id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
       [row.id]
     );
     if (!rows.length) return;
@@ -485,6 +877,22 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
   recipientIds = new Set(await filterToCollaborators(pool, appId, [...recipientIds]));
   if (!recipientIds.size) return [];
 
+  // #1374: drop the recipients who have muted new proposals for this app.
+  // ONE query for the whole fan-out rather than one per recipient — this
+  // list can be every active user of a busy app, and asking per person would
+  // turn a single insert into hundreds of round trips.
+  //
+  // This category defaults OFF, so on a platform with no stored preferences
+  // this returns nobody and the notification stops being sent at all. That
+  // is the intended change, and the daily digest (services/vote-digest.js)
+  // is what keeps the group's voting turnout from going with it.
+  recipientIds = new Set(await notificationPreferences.filterUsersByCategory(pool, {
+    userIds: [...recipientIds],
+    appId,
+    categoryKey: 'new_proposals',
+  }));
+  if (!recipientIds.size) return [];
+
   // INSERT ... SELECT with a NOT EXISTS guard so the per-recipient
   // de-dupe is atomic (no read-then-write race on concurrent promotes).
   const ids = [...recipientIds];
@@ -507,6 +915,51 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
 // drawer's pinned Invites section (driven by listPendingInvites below,
 // the authoritative "still actionable" source) — this row is the badge
 // bump + the history entry that remains after the invite resolves.
+// #2161: someone with the standing to delete a shared app tried to, and the
+// route refused the plain delete (the creator of a shared app, or a full
+// admin who has not yet acknowledged the other contributors). The other
+// contributors are told so the intent is not a surprise later. Unread-dedup
+// per (recipient, app): a retried click while the first row is unread does
+// not add a second one. `source_user_id` is the person who tried.
+async function createAppDeleteAttemptNotifications(pool, { appId, actorId, recipientIds }) {
+  const ids = [...new Set((recipientIds || []).filter((id) => id != null && id !== actorId))];
+  if (!appId || !ids.length) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
+     SELECT r.user_id, $1, $2, 'app_delete_attempted'
+       FROM unnest($3::int[]) AS r(user_id)
+      WHERE NOT EXISTS (
+        SELECT 1 FROM notifications n
+         WHERE n.user_id = r.user_id AND n.app_id = $1
+           AND n.kind = 'app_delete_attempted' AND n.read_at IS NULL
+      )
+     RETURNING id, user_id, app_id, source_user_id, kind, created_at`,
+    [appId, actorId ?? null, ids]
+  );
+  await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
+  return rows;
+}
+
+// #2161: a full admin deleted a shared app over the other contributors'
+// heads. By the time this runs the app row is gone, and notifications.app_id
+// cascades with it, so the row carries NO app reference: the name rides in
+// `detail` (widened to 255 for this, schema.sql) and the slug is only logged.
+// `source_user_id` is the admin who deleted it.
+async function createAppDeletedNotifications(pool, { appName, appSlug, actorId, recipientIds }) {
+  const ids = [...new Set((recipientIds || []).filter((id) => id != null && id !== actorId))];
+  if (!ids.length) return [];
+  const name = String(appName || appSlug || 'an app').slice(0, 255);
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind, detail)
+     SELECT r.user_id, NULL, $1, 'app_deleted', $2
+       FROM unnest($3::int[]) AS r(user_id)
+     RETURNING id, user_id, app_id, source_user_id, kind, detail, created_at`,
+    [actorId ?? null, name, ids]
+  );
+  await Promise.all(rows.map((row) => hydrateAndPush(pool, row)));
+  return rows;
+}
+
 async function createCollabInviteNotification(pool, { appId, recipientId, inviterId }) {
   if (!recipientId || !appId) return [];
   const { rows } = await pool.query(
@@ -670,12 +1123,17 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
             cm.thread_type, cm.thread_ref,
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
+            conversation_message.thread_root_id AS conversation_thread_root_id,
             su.username AS source_username,
-            n.detail
+            n.source_user_id,
+            ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
+            n.detail,
+            pv.reason AS vote_reason
      FROM notifications n
      LEFT JOIN apps a ON a.id = n.app_id
      LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -684,7 +1142,8 @@ async function listForUser(pool, userId, { limit = 100, before = null, kinds = n
      LEFT JOIN conversation_messages conversation_message
        ON conversation_message.id = n.conversation_message_id
      LEFT JOIN users su ON su.id = n.source_user_id
-     WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL}
+     LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
+     WHERE n.user_id = $1 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}
      ${cursorClause}
      ${kindClause}
      ORDER BY n.created_at DESC, n.id DESC
@@ -706,12 +1165,17 @@ async function getForUser(pool, userId, id) {
             cm.thread_type, cm.thread_ref,
             n.session_id,
             cs.session_title, cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
+            cs.agent_session_id,
             n.conversation_id, c.kind AS conversation_kind,
             c.title AS conversation_title,
             n.conversation_message_id,
             conversation_message.content AS conversation_message_content,
+            conversation_message.thread_root_id AS conversation_thread_root_id,
             su.username AS source_username,
-            n.detail
+            n.source_user_id,
+            ${FRIEND_REQUEST_PENDING_SQL} AS friend_request_pending,
+            n.detail,
+            pv.reason AS vote_reason
        FROM notifications n
        LEFT JOIN apps a ON a.id = n.app_id
        LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
@@ -720,7 +1184,8 @@ async function getForUser(pool, userId, id) {
        LEFT JOIN conversation_messages conversation_message
          ON conversation_message.id = n.conversation_message_id
        LEFT JOIN users su ON su.id = n.source_user_id
-      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL}`,
+       LEFT JOIN pr_votes pv ON pv.session_id = n.session_id AND pv.user_id = n.source_user_id
+      WHERE n.id = $1 AND n.user_id = $2 AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
     [id, userId]
   );
   return rows[0] || null;
@@ -730,7 +1195,7 @@ async function countUnread(pool, userId) {
   const { rows } = await pool.query(
     `SELECT COUNT(*)::int AS c FROM notifications AS n
       WHERE n.user_id = $1 AND n.read_at IS NULL
-        AND ${CONVERSATION_ACCESS_SQL}`,
+        AND ${CONVERSATION_ACCESS_SQL} AND ${CHAT_SENDER_ACCESS_SQL}`,
     [userId]
   );
   return rows[0]?.c || 0;
@@ -759,16 +1224,27 @@ async function countUnread(pool, userId) {
 // hardcoded table, never from request input, so there is no
 // SQL-injection surface in markReadForAction's interpolation.
 const ACTION_COMPLETIONS = {
-  vote_cast: { kinds: ['pr_proposed', 'stale_pr'], scope: 'session_id' },
-  message_sent: { kinds: ['mention', 'reply', 'reaction'], scope: 'app_id' },
+  // #1688: a vote also answers the re-confirm ask for that proposal — the
+  // row's "Still yes" is a vote, and so is a plain Yes or No on the card.
+  vote_cast: { kinds: ['pr_proposed', 'stale_pr', 'revision_recheck'], scope: 'session_id' },
+  // #2387: 'thread_reply' is a chat-actionable kind like the other three —
+  // posting in the app clears it, and it lights the message's unread dot.
+  message_sent: { kinds: ['mention', 'reply', 'reaction', 'thread_reply'], scope: 'app_id' },
   // #161: opening a dev session is the canonical "user saw it" signal —
   // it resolves that session's completion notification even when the
   // user navigated there on their own. Triggered in GET /api/sessions/:id.
-  session_opened: { kinds: ['session_done'], scope: 'session_id' },
+  // #3181: opening it also answers "it stopped before finishing".
+  session_opened: { kinds: ['session_done', 'session_stalled'], scope: 'session_id' },
   // #161: cloning a ready auto-solve session resolves its completion
   // notification. Triggered in POST /api/sessions/:id/clone-headless,
   // scoped to the SOURCE (headless) session id.
   headless_cloned: { kinds: ['auto_solve_done'], scope: 'session_id' },
+  // #2847: opening a proposal card, or touching anything on it, answers the
+  // "New proposal" nudge the same way a vote does — the viewer has seen it.
+  // Only pr_proposed: revision_recheck asks for a re-vote and stale_pr is the
+  // author's warning, and looking at a card resolves neither. Triggered by
+  // POST /api/notifications/read { session_id } from the dev board.
+  proposal_opened: { kinds: ['pr_proposed'], scope: 'session_id' },
 };
 
 // The scope columns the registry is allowed to target. A defensive
@@ -794,6 +1270,24 @@ async function markReadForAction(pool, userId, action, scopeId) {
         SET read_at = NOW()
       WHERE user_id = $1 AND ${def.scope} = $2 AND kind = ANY($3) AND read_at IS NULL`,
     [userId, scopeId, def.kinds]
+  );
+  return rowCount || 0;
+}
+
+// #2779: an agent session's changes finish into the bell as session_done
+// rows, and they are worked on in the conversation, not on a dev chat of
+// their own — so opening the conversation is the "user saw it" signal for
+// every one of them, the way opening a dev session is for its own. #3181: a
+// change that stopped before finishing is answered the same way.
+async function markReadForAgentSession(pool, userId, agentSessionId) {
+  if (!userId || !agentSessionId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications n
+        SET read_at = NOW()
+       FROM chat_sessions cs
+      WHERE n.user_id = $1 AND n.kind IN ('session_done', 'session_stalled') AND n.read_at IS NULL
+        AND n.session_id = cs.id AND cs.agent_session_id = $2`,
+    [userId, agentSessionId]
   );
   return rowCount || 0;
 }
@@ -913,6 +1407,28 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
   return rowCount || 0;
 }
 
+// App-chat kinds whose row is about ONE message, and so has a Messages
+// address of its own (#2387).
+const APP_CHAT_MESSAGE_KINDS = new Set(['mention', 'reply', 'reaction', 'thread_reply']);
+
+// Where an app-chat message notification opens, in the client's Messages
+// addresses: a reply-thread message opens its thread
+// (`#messages/app/<slug>/thread/<rootId>`), a general-stream message opens
+// on the message (`#messages/app/<slug>/m/<messageId>`). A topic-thread
+// message (issue / proposal / governance) and every other kind answer null,
+// and the client keeps routing those as it always has.
+function notificationHref(row) {
+  if (!row || !APP_CHAT_MESSAGE_KINDS.has(row.kind) || !row.app_slug) return null;
+  const slug = encodeURIComponent(row.app_slug);
+  if (row.thread_type === 'message' && row.thread_ref != null) {
+    return `#messages/app/${slug}/thread/${Number(row.thread_ref)}`;
+  }
+  if (!row.thread_type && row.chat_message_id != null) {
+    return `#messages/app/${slug}/m/${Number(row.chat_message_id)}`;
+  }
+  return null;
+}
+
 // Decorate a raw notification row with the fields the client dropdown wants.
 // Keeps the wire format identical whether the notif is fresh (over WS) or
 // loaded from history (`GET /api/notifications`).
@@ -939,6 +1455,9 @@ function serialize(row) {
     conversationKind: isConversation ? (row.conversation_kind || null) : null,
     conversationTitle: isConversation ? (row.conversation_title || null) : null,
     conversationMessageId: isConversation ? row.conversation_message_id : null,
+    // #2387: the thread the referenced message sits in (null: the main
+    // stream). A thread alert opens #messages/<id>/thread/<root>.
+    conversationThreadRootId: isConversation ? (row.conversation_thread_root_id ?? null) : null,
     messageContent: isConversation
       ? (row.conversation_message_content ?? null)
       : row.message_content,
@@ -959,8 +1478,24 @@ function serialize(row) {
     // session has neither a session title nor a PR title yet.
     headlessIssueNumber: isConversation ? null : row.headless_issue_number,
     branchName: isConversation ? null : row.branch_name,
+    // #2779: the agent session a change was started from, so its completion
+    // opens the conversation it is worked on in.
+    agentSessionId: isConversation ? null : (row.agent_session_id || null),
     sourceUsername: row.source_username,
     detail: row.detail,
+    // #1688: the line the voter left with their vote, read LIVE off their
+    // row (a vote's notification is one per voter per proposal, so a later
+    // edit of the line shows here without a second notification). Only the
+    // vote row has a voter to read it from.
+    voteReason: row.kind === 'proposal_vote' ? (row.vote_reason || null) : null,
+    // #2387: the Messages address this row opens, when it has one.
+    href: isConversation ? null : notificationHref(row),
+    // #2386: who to answer, and whether there is still a question. Only on
+    // the two friend kinds, so every other row's shape is unchanged.
+    ...(FRIEND_NOTIFICATION_KINDS.has(row.kind) ? {
+      sourceUserId: row.source_user_id || null,
+      friendRequestPending: row.kind === 'friend_request' && !!row.friend_request_pending,
+    } : {}),
   };
 }
 
@@ -969,18 +1504,28 @@ module.exports = {
   resolveUsers,
   createMentionNotifications,
   createReplyNotification,
+  createThreadReplyNotifications,
   createReactionNotification,
   createStalePrNotification,
+  createIssueOpenedNotifications,
+  createPrMergedNotification,
+  createProposalVoteNotification,
+  createRevisionRecheckNotifications,
+  createAppHealthNotification,
+  createPlatformLimitNotifications,
   createCheckFailedNotification,
   createSessionDoneNotification,
+  createSessionStalledNotification,
   createAutoSolveDoneNotification,
   createConnectorSubmittedNotification,
   createAgentAwaitingInputNotification,
   createSpecSharedNotification,
-  createManagedOpenRouterAdminNotifications,
-  notifyManagedOpenRouterAdmins,
+  createManagedOpenRouterReviewNotifications,
+  notifyManagedOpenRouterReviewAdmins,
   hydrateAndPush,
   createPrProposedNotifications,
+  createAppDeleteAttemptNotifications,
+  createAppDeletedNotifications,
   createCollabInviteNotification,
   createCollabInviteAcceptedNotification,
   createApproverInviteNotification,
@@ -995,12 +1540,16 @@ module.exports = {
   markRead,
   markReadForSession,
   markReadForAction,
+  markReadForAgentSession,
   markReadForApp,
   markReadForConversation,
   markReadForMessage,
   unreadMessageIdsForUser,
   ACTION_COMPLETIONS,
   CONVERSATION_NOTIFICATION_KINDS,
+  APP_CHAT_MESSAGE_KINDS,
+  notificationHref,
+  FRIEND_NOTIFICATION_KINDS,
   serialize,
 };
 

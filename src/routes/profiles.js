@@ -4,6 +4,8 @@
 //
 // Profile content itself is owned by the existing customization routes in
 // src/routes/profile.js: users.display_name, users.bio and user_avatars.
+// Verified social handles are read from user_social_identities; the legacy
+// users.github/users.x free-text columns never cross this public boundary.
 // This router adds only publication state, an anonymous allowlisted read,
 // reports and moderation. Keeping one content record prevents the private
 // editor and public page from drifting apart.
@@ -18,6 +20,11 @@ const {
 } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const usernames = require('../services/usernames');
+const socialIdentity = require('../services/social-identity');
+const friends = require('../services/friends');
+const { optionalSessionAuth } = require('../middleware/topochain-auth');
+
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 const REPORT_REASONS = new Set([
   'impersonation',
@@ -55,19 +62,23 @@ function profileUsername(value) {
   return username;
 }
 
-function publicShape(row) {
+function publicShape(row, verifiedLinks = {}) {
   return {
     username: row.username,
     displayName: row.display_name || null,
     bio: row.bio || null,
     avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    links: {
+      github: verifiedLinks.github ?? null,
+      x: verifiedLinks.x ?? null,
+    },
     url: `/#profile/${encodeURIComponent(row.username)}`,
   };
 }
 
 async function readOwnerProfile(db, userId) {
   const { rows } = await db.query(
-    `SELECT u.username, u.display_name, u.bio, u.profile_published,
+    `SELECT u.id, u.username, u.display_name, u.bio, u.profile_published,
             u.profile_disabled_at, av.id AS avatar_id
        FROM users u
        LEFT JOIN user_avatars av ON av.user_id = u.id
@@ -77,9 +88,9 @@ async function readOwnerProfile(db, userId) {
   return rows[0] || null;
 }
 
-function ownerShape(row) {
+function ownerShape(row, verifiedLinks = {}) {
   return {
-    profile: publicShape(row),
+    profile: publicShape(row, verifiedLinks),
     published: !!row.profile_published,
     moderationDisabled: !!row.profile_disabled_at,
   };
@@ -97,14 +108,36 @@ function publicProfileRoutes(config) {
   // Exact lookup only: there is deliberately no profile directory or search
   // endpoint. Missing, unpublished and moderation-disabled profiles return
   // the same response so this surface cannot reveal hidden account state.
+  //
+  // #2386: a SIGNED-IN viewer looking at someone else also gets `friendship`
+  // — { userId, state }, their OWN relationship with this person and nothing
+  // about anybody else's — which is what the page's friend button draws. This
+  // route sits under the anonymous /api/public prefix, so authMiddleware never
+  // runs for it; optionalSessionAuth reads the cookie if there is one and
+  // otherwise leaves the request anonymous, and an anonymous read is exactly
+  // what it always was. NO_STORE already keeps the per-viewer answer out of
+  // every shared cache.
   router.get(
     '/api/public/profiles/:username',
     publicProfileReadLimiter,
+    optionalSessionAuth(config),
     async (req, res) => {
       res.set('Cache-Control', NO_STORE);
       const username = profileUsername(req.params.username);
       if (!username) return res.status(404).json({ error: 'Profile not found' });
       try {
+        // Staging ?demo=1: `friendships` is staging:private, so a preview
+        // needs a person in each state to show the button at all
+        // (services/friends.js DEMO_PEOPLE). The relationship rides only for
+        // a signed-in viewer, exactly as the real field does.
+        const demo = IS_STAGING && req.query.demo === '1' ? friends.demoProfile(username) : null;
+        if (demo) {
+          return res.json({
+            profile: demo.profile,
+            ...(req.user ? { friendship: demo.friendship } : {}),
+            demo: true,
+          });
+        }
         // Resolved through the retired-handle ledger so a profile
         // link shared before the owner renamed still lands. `moved` carries
         // the canonical handle and the client rewrites its address; the body
@@ -121,7 +154,7 @@ function publicProfileRoutes(config) {
           return res.status(404).json({ error: 'Profile not found' });
         }
         const { rows } = await pool.query(
-          `SELECT u.username, u.display_name, u.bio, av.id AS avatar_id
+          `SELECT u.id, u.username, u.display_name, u.bio, av.id AS avatar_id
              FROM users u
              LEFT JOIN user_avatars av ON av.user_id = u.id
             WHERE u.id = $1
@@ -132,9 +165,14 @@ function publicProfileRoutes(config) {
         if (!rows.length) {
           return res.status(404).json({ error: 'Profile not found' });
         }
+        const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, rows[0].id);
+        const friendship = req.user
+          ? await friends.relationshipFor(pool, req.user.id, rows[0].id)
+          : null;
         return res.json({
-          profile: publicShape(rows[0]),
+          profile: publicShape(rows[0], verifiedLinks),
           ...(resolved.retired ? { moved: { from: username, to: resolved.username } } : {}),
+          ...(friendship ? { friendship } : {}),
         });
       } catch (err) {
         log.error('profiles', 'Public profile read failed', { message: err.message });
@@ -151,7 +189,8 @@ function publicProfileRoutes(config) {
     try {
       const row = await readOwnerProfile(pool, req.user.id);
       if (!row) return res.status(404).json({ error: 'User not found' });
-      return res.json(ownerShape(row));
+      const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, row.id);
+      return res.json(ownerShape(row, verifiedLinks));
     } catch (err) {
       log.error('profiles', 'Owner public-profile read failed', {
         userId: req.user.id,
@@ -184,11 +223,12 @@ function publicProfileRoutes(config) {
         );
         if (!rowCount) return res.status(404).json({ error: 'User not found' });
         const row = await readOwnerProfile(pool, req.user.id);
+        const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, row.id);
         log.info('profiles', 'Public profile publication changed', {
           userId: req.user.id,
           published: body.published,
         });
-        return res.json(ownerShape(row));
+        return res.json(ownerShape(row, verifiedLinks));
       } catch (err) {
         log.error('profiles', 'Public profile publication failed', {
           userId: req.user.id,
@@ -199,11 +239,7 @@ function publicProfileRoutes(config) {
     }
   );
 
-  router.post(
-    '/api/profiles/:username/report',
-    requireUser,
-    profileReportLimiter,
-    async (req, res) => {
+  const reportAccount = async (req, res) => {
       res.set('Cache-Control', NO_STORE);
       const reason = typeof req.body?.reason === 'string' ? req.body.reason : '';
       if (!REPORT_REASONS.has(reason)) {
@@ -226,11 +262,7 @@ function publicProfileRoutes(config) {
         // report could otherwise be inserted immediately after takedown and
         // remain pending forever. Both paths now lock this user row.
         const { rows } = await client.query(
-          `SELECT id FROM users
-            WHERE username = $1
-              AND profile_published = TRUE
-              AND profile_disabled_at IS NULL
-            FOR UPDATE`,
+          `SELECT id FROM users WHERE username = $1 FOR UPDATE`,
           [username]
         );
         if (rows.length) {
@@ -245,7 +277,8 @@ function publicProfileRoutes(config) {
           );
         }
         await client.query('COMMIT');
-        // Generic for missing, unpublished, disabled and duplicate targets.
+        // Generic for missing and duplicate targets. Account reporting does
+        // not depend on whether the account has published a public profile.
         return res.status(202).json({ ok: true });
       } catch (err) {
         if (client) await client.query('ROLLBACK').catch(() => {});
@@ -256,6 +289,34 @@ function publicProfileRoutes(config) {
         return res.status(500).json({ error: 'Internal server error' });
       } finally {
         if (client) client.release();
+      }
+    };
+  router.post('/api/profiles/:username/report', requireUser, profileReportLimiter, reportAccount);
+  router.post('/api/users/:username/report', requireUser, profileReportLimiter, reportAccount);
+
+  router.post(
+    '/api/admin/profile-reports/:id/resolve',
+    adminMiddleware,
+    requireAdminWrite,
+    async (req, res) => {
+      res.set('Cache-Control', NO_STORE);
+      const id = Number(req.params.id);
+      if (!Number.isSafeInteger(id) || id <= 0) {
+        return res.status(400).json({ error: 'Invalid report id' });
+      }
+      try {
+        const { rows } = await pool.query(
+          `UPDATE profile_reports
+              SET status = 'resolved', resolved_at = NOW(), resolved_by = $1
+            WHERE id = $2 AND status = 'pending'
+            RETURNING id, status`,
+          [req.user.id, id]
+        );
+        return rows.length ? res.json({ report: rows[0] })
+          : res.status(404).json({ error: 'Pending report not found' });
+      } catch (err) {
+        log.error('profiles', 'User report resolution failed', { reportId: id, message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
       }
     }
   );

@@ -2,6 +2,7 @@ const { execFile, spawn } = require('child_process');
 const crypto = require('crypto');
 const { promisify } = require('util');
 const log = require('./logger');
+const { redactValues, redactEnvAssignments } = require('./log-redaction');
 
 const execFileAsync = promisify(execFile);
 
@@ -170,7 +171,7 @@ function buildKitUnavailable(err) {
     || /unknown flag: --progress/.test(text);
 }
 
-async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null } = {}) {
+async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null, dockerfile = null } = {}) {
   const buildArgFlags = Object.entries(buildArgs).flatMap(
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
@@ -180,7 +181,8 @@ async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null 
   const runBuild = (useBuildKit) => {
     const promise = execFileAsync(
       'docker',
-      ['build', ...buildArgFlags, ...(useBuildKit ? ['--progress=plain'] : []), '-t', tag, contextPath],
+      ['build', ...buildArgFlags, ...(useBuildKit ? ['--progress=plain'] : []),
+        ...(dockerfile ? ['-f', dockerfile] : []), '-t', tag, contextPath],
       // Generous maxBuffer so a chatty build still yields a usable log
       // tail instead of a bare "maxBuffer exceeded" error (#416).
       {
@@ -227,6 +229,21 @@ async function buildImage(contextPath, tag, buildArgs = {}, { onProgress = null 
   return { durationMs, buildKit: usedBuildKit };
 }
 
+// Return an immutable identity for provenance even when callers address a
+// local image by a mutable Docker tag. Prefer a registry digest when one is
+// present; otherwise Docker's content-addressed image ID is still immutable
+// on this host and is enough to prove both replay passes used the same bytes.
+async function imageDigest(image) {
+  const { stdout } = await execFileAsync('docker', [
+    'image', 'inspect', '--format', '{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}', image,
+  ], { timeout: 10000 });
+  const digest = String(stdout || '').trim();
+  if (!digest || (!digest.includes('@sha256:') && !/^sha256:[0-9a-f]{64}$/i.test(digest))) {
+    throw new Error(`Docker image ${image} has no immutable digest`);
+  }
+  return digest;
+}
+
 // Linux caps a hostname at HOST_NAME_MAX (64 bytes) and runc's
 // sethostname() rejects anything longer with EINVAL, so the container dies
 // during init with nothing but "error during container init: sethostname:
@@ -269,10 +286,13 @@ function containerHostname(name) {
   return `${prefix}-${digest}`;
 }
 
-async function runContainer(name, {
+async function runContainerInner(name, {
   image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS, labels = {},
-  aliases = [],
+  aliases = [], command = [],
 }) {
+  if (!Array.isArray(command) || command.some((part) => typeof part !== 'string' || !part)) {
+    throw new Error('Container command must be an array of non-empty strings');
+  }
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   // Labels are metadata the platform can read back off a LIVE container
   // without knowing anything about how it was built — the one channel that
@@ -325,6 +345,7 @@ async function runContainer(name, {
     ...labelArgs,
     ...envArgs,
     image,
+    ...command,
   ];
 
   try {
@@ -389,7 +410,7 @@ async function runContainer(name, {
 // boundaries fall anywhere, so lines are re-assembled here and the trailing
 // partial is flushed at exit. Used to surface per-check progress while a
 // capture container is running, which the buffered result cannot do.
-async function runOneShot(name, {
+async function runOneShotInner(name, {
   image, env = {}, memory = '1g', cpus = '1',
   timeoutMs = 240000, maxBuffer = 128 * 1024 * 1024,
   salvagePartial = false, stdinPayload = null, cmd = null,
@@ -913,6 +934,54 @@ async function removeVolume(name) {
   }
 }
 
+
+// #2504: mask the app's OWN secret values out of any error these two throw,
+// before it can reach `apps.last_failure`.
+//
+// Both functions put every environment variable on the `docker run` argv as
+// `-e NAME=value`, and a rejected execFile carries that whole argv in its
+// `message` — which services/deploy-failure.js records and
+// GET /api/apps/:slug hands to every collaborator.
+//
+// services/log-redaction.js scrubs by PATTERN, and that inference has a
+// floor: a secret is any string a child app's author chose, so
+// `-e ADMIN_TOKEN=alpha beta gamma` is indistinguishable from three separate
+// arguments and no regex can know where the value ends. HERE the values are
+// in hand, so there is nothing to infer — mask the literals and the question
+// does not arise. The pattern list still runs downstream, for build and
+// container logs whose secrets nobody holds.
+function scrubEnvFromError(err, env) {
+  if (!err || !env) return err;
+  const values = Object.values(env);
+  // Two passes, and both are needed. `redactEnvAssignments` handles the
+  // exact `NAME=value` token this file wrote onto the argv, at ANY value
+  // length; `redactValues` then catches the value appearing loose elsewhere
+  // in the output, where only a length floor keeps it from blanking ordinary
+  // text. Assignments first, so the precise rule wins.
+  const scrub = (text) => redactValues(redactEnvAssignments(text, env), values);
+  if (typeof err.message === 'string') err.message = scrub(err.message);
+  if (typeof err.stderr === 'string') err.stderr = scrub(err.stderr);
+  if (typeof err.stdout === 'string') err.stdout = scrub(err.stdout);
+  if (typeof err.cmd === 'string') err.cmd = scrub(err.cmd);
+  return err;
+}
+
+async function runContainer(name, opts = {}) {
+  try {
+    return await runContainerInner(name, opts);
+  } catch (err) {
+    throw scrubEnvFromError(err, opts.env);
+  }
+}
+
+async function runOneShot(name, opts = {}) {
+  try {
+    return await runOneShotInner(name, opts);
+  } catch (err) {
+    throw scrubEnvFromError(err, opts.env);
+  }
+}
+
 module.exports = {
   execFileAsync,
   containerHostname,
@@ -934,6 +1003,7 @@ module.exports = {
   ensureNetworkAlias,
   containerExists,
   imageExists,
+  imageDigest,
   waitForHealthy,
   probeHealthOnce,
   getHostPort,

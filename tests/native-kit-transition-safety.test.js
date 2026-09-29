@@ -248,7 +248,7 @@ test('the first-paint guard cannot change what dapp.json asserts about entry typ
   // drawer; the stamp did not, because it is how a mid-animation state is
   // testable at all and the next check to need one will read it.
   const appJs = fs.readFileSync(path.join(ROOT, 'public', 'js', 'app.js'), 'utf8');
-  const entry = appJs.slice(appJs.indexOf('_entryTransition(preferred, screenEl)'));
+  const entry = appJs.slice(appJs.indexOf('_entryTransition(preferred, screenEl, viaTab)'));
   assert.match(
     entry.slice(0, 700), /setAttribute\('data-entered', preferred\)/,
     'app.js must keep stamping data-entered itself — it belongs to the shell.',

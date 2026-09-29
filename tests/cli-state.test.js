@@ -41,7 +41,7 @@ test('production defaults to Homeroom without an environment override', () => {
     encoding: 'utf8',
   }));
   assert.deepEqual(resolve(env), {
-    production: { name: 'production', origin: 'https://my.onhomeroom.com' },
+    production: { name: 'production', origin: 'https://app.onhomeroom.com' },
     local: { name: 'local', origin: 'http://localhost:3000' },
   });
   assert.deepEqual(resolve({ ...env, USERNODE_DOMAIN: 'self-hosted.example.com' }), {
@@ -388,6 +388,7 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
     profile: 'production',
     forwardEnv: false,
     hookSha256: 'a'.repeat(64),
+    driftHookSha256: 'c'.repeat(64),
   });
   assert.match(document, /command = "\/usr\/bin\/node"/);
   assert.match(document, /"mcp"/);
@@ -426,6 +427,7 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
     profile: 'lab',
     forwardEnv: true,
     hookSha256: 'b'.repeat(64),
+    driftHookSha256: 'c'.repeat(64),
   });
   assert.match(
     forwarded,
@@ -443,6 +445,7 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
     profile: 'production',
     forwardEnv: false,
     hookSha256: 'not-a-digest',
+    driftHookSha256: 'c'.repeat(64),
   }), /SHA-256/);
 });
 

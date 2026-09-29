@@ -37,6 +37,13 @@ let poolCalls = [];
 poolMod.getPool = () => ({
   async query(sql, params) {
     poolCalls.push({ sql, params });
+    // The spec an agent session's hand-off carries (#3078): the stub plays
+    // the WHERE clause, so a row is found only for the caller's own change
+    // on this app, which is the ownership the route must ask the database for.
+    if (/spec_md/.test(sql)) {
+      const [id, userId, appId] = params;
+      return { rows: stub.specRows.filter((r) => r.id === id && r.user_id === userId && r.app_id === appId) };
+    }
     // The hand-off target's row (#1071), read when the caller named one.
     if (/FROM chat_sessions/.test(sql)) {
       if (stub.targetThrows) throw new Error('database is on fire');
@@ -76,6 +83,7 @@ function resetStubs() {
     submitArgs: null,
     target: null,
     targetThrows: false,
+    specRows: [],
     // The discard route's service call: the id it closed, or null for
     // "not open any more".
     discard: 4242,
@@ -258,6 +266,32 @@ test('a linked account with no work order reports the fork and stops there', asy
   assert.equal(j.task, null);
   assert.equal(j.branch, null);
   assert.equal(j.connectors.count, 2, 'the advisory connector count comes from the pool');
+});
+
+test('an agent session\'s hand-off carries its OWN change\'s spec, and nobody else\'s (#3078)', async () => {
+  const plain = (await (await status('?sessionId=501&proposalId=501&targetKind=session')).json()).instructions;
+  assert.match(plain, /IF THE USER HAS NOT ALREADY TOLD YOU WHAT TO BUILD, ASK THEM\./, 'no specFrom: the text as it always was');
+  assert.equal(poolCalls.filter((c) => /spec_md/.test(c.sql)).length, 0, 'and no spec is read');
+
+  stub.specRows = [
+    { id: 501, user_id: 42, app_id: 7, spec_md: '# Dark mode\nA toggle in Settings.', title: 'Dark mode' },
+    { id: 502, user_id: 99, app_id: 7, spec_md: 'Somebody else\'s plan.', title: 'Theirs' },
+    { id: 503, user_id: 42, app_id: 8, spec_md: 'Another app\'s plan.', title: 'Elsewhere' },
+    { id: 504, user_id: 42, app_id: 7, spec_md: '   ', title: 'Empty' },
+  ];
+  const own = (await (await status('?sessionId=501&proposalId=501&targetKind=session&specFrom=501')).json()).instructions;
+  assert.match(own, /THE USER HAS ALREADY TOLD YOU WHAT TO BUILD/);
+  assert.match(own, /<untrusted-content>\nChange: Dark mode\n\n# Dark mode\nA toggle in Settings\.\n<\/untrusted-content>/);
+  assert.match(own, /proposalId 501, and that spec as `brief`/);
+  const read = poolCalls.find((c) => /spec_md/.test(c.sql));
+  assert.match(read.sql, /WHERE id = \$1 AND user_id = \$2 AND app_id = \$3/, 'ownership is the query\'s, not the caller\'s');
+  assert.deepEqual(read.params, [501, 42, 7]);
+
+  for (const id of [502, 503, 504, 'abc', '0x1f5']) {
+    const text = (await (await status(`?specFrom=${id}`)).json()).instructions;
+    assert.equal(text, (await (await status()).json()).instructions, `specFrom=${id}: nothing carried`);
+    assert.doesNotMatch(text, /Somebody else|Another app/);
+  }
 });
 
 test('an unreadable fork is "unknown", and a name conflict keeps its suffix', async () => {
@@ -685,6 +719,8 @@ test('staging never reaches GitHub, and only shows fixtures when asked', () => {
   // the other way, twice.
   assert.match(src, /req\.query\.order === 'connect' \? 'connect'/,
     'the demo payload picks its shape from the query, not from a guess');
+  assert.match(src, /req\.query\.order === 'link' \? 'link'/,
+    '#2679/#2680: the first step, GitHub unlinked, is a shape too');
   assert.match(src, /req\.query\.order === 'continue' \? 'continue' : null/);
   assert.match(src, /990601/, 'fixture ids stay in the obviously-fake 99xxxx range');
   // Every write is refused in staging: they would open a real pull request —
@@ -868,10 +904,15 @@ test('the fixture shape survives the round trip from page URL to status route', 
   // change on either side breaks this rather than drifting past it.
   const src = read('src/routes/dev-flow.js');
   assert.match(src, /const order = req\.query\.order === 'connect' \? 'connect'/);
+  assert.match(src, /req\.query\.order === 'link' \? 'link'/);
   assert.match(src, /req\.query\.order === 'continue' \? 'continue' : null/);
   assert.match(src, /req\.query\.demo === '1' \|\| req\.query\.demo === 'session'\s*\n?\s*\? demoStatus\(app, parsed, order\)/);
   const route = (q) => (q.demo === '1' || q.demo === 'session'
-    ? { fixture: true, order: q.order === 'connect' ? 'connect' : (q.order === 'continue' ? 'continue' : null) }
+    ? {
+      fixture: true,
+      order: q.order === 'connect' ? 'connect'
+        : (q.order === 'link' ? 'link' : (q.order === 'continue' ? 'continue' : null)),
+    }
     : { fixture: false });
 
   const roundTrip = (search) => {
@@ -891,6 +932,8 @@ test('the fixture shape survives the round trip from page URL to status route', 
     { fixture: true, order: 'connect' });
   assert.deepEqual(roundTrip('?demo=1&order=continue&flow=claude-code'),
     { fixture: true, order: 'continue' });
+  assert.deepEqual(roundTrip('?demo=1&order=link&flow=claude-code'),
+    { fixture: true, order: 'link' });
   assert.deepEqual(roundTrip('?demo=1&flow=claude-code'), { fixture: true, order: null });
   assert.deepEqual(roundTrip('?demo=session&flow=claude-code'), { fixture: true, order: null });
   // A value neither side knows is not forwarded at all.
@@ -919,7 +962,7 @@ test('the fixture shape survives the round trip from page URL to status route', 
   const shaped = dapp.tests.filter((t) => /[?&]order=/.test(t.path));
   assert.ok(shaped.length >= 2, 'the fixture shapes are covered by declared checks');
   const shot = new Set(shaped.map((t) => /[?&]order=([a-z-]+)/.exec(t.path)[1]));
-  for (const value of ['connect', 'continue']) {
+  for (const value of ['connect', 'continue', 'link']) {
     assert.ok(shot.has(value), `no declared check shoots ?order=${value}`);
   }
   for (const t of shaped) {
@@ -1077,4 +1120,43 @@ test('the client forwards EVERY order value the route reads', () => {
     assert.ok(forwarded.includes(m[1]), `${t.name} shoots ?order=${m[1]}, which is not forwarded`);
     assert.ok(/[?&]demo=1(&|#|$)/.test(t.path), `${t.name} must carry ?demo=1 too, or no fixture renders`);
   }
+});
+
+
+test('?order=link renders the walkthrough at its first step, GitHub unlinked (#2679, #2680)', () => {
+  // The other two shapes both start past the first step: the fixture has
+  // always been linked, so nothing in staging ever showed "Link GitHub" and
+  // the button could break (#2680) with no declared check looking at it.
+  const { demoStatus } = require('../src/routes/dev-flow');
+  const parsed = { owner: 'usernode-apps', repo: 'recipe-box' };
+  const linked = demoStatus(APP, parsed, null);
+  assert.equal(linked.github.linked, true, 'the plain fixture is unchanged');
+  assert.equal(linked.fork.state, 'ready');
+
+  const unlinked = demoStatus(APP, parsed, 'link');
+  assert.deepEqual(unlinked.github, { linked: false, login: null, available: true });
+  assert.equal(unlinked.fork, null,
+    'the fork read is keyed on the linked login, so an unlinked user has none');
+  assert.equal(unlinked.available, true, 'and the flow itself is still on offer');
+  assert.equal(unlinked.demo, true);
+  assert.equal(unlinked.connectors.count, 2, 'only the first step differs');
+  assert.equal(unlinked.instructions, null,
+    'no instructions yet, as the live route answers an unlinked user before writing them');
+  assert.equal(linked.instructions.length > 0, true);
+
+  // Rendered, that is the card open on "Link your GitHub account", with the
+  // anchor the declared check selects.
+  const DevFlowSelect = require('../public/js/dev-flow-select.js');
+  const html = DevFlowSelect.wizardHtml({ agent: 'claude-code', status: unlinked });
+  assert.match(html, /data-flow-step="github" data-flow-step-state="current"/);
+  assert.match(html, /<a [^>]*href="\/api\/me\/social-identities\/github\/connect\?intent=connect"[^>]*target="_blank"[^>]*data-flow-action="link-github">Link GitHub<\/a>/);
+  assert.match(html, /data-flow-step="fork" data-flow-step-state="todo"/);
+  assert.match(html, /data-flow-step="handoff" data-flow-step-state="todo"/);
+
+  const dapp = JSON.parse(read('dapp.json'));
+  const check = dapp.tests.find((t) => /[?&]order=link(&|#|$)/.test(t.path));
+  assert.ok(check, 'a declared check shoots this shape');
+  assert.match(check.expectSelector, /a\[data-flow-action="link-github"\]/);
+  assert.match(check.expectSelector, /\[href="\/api\/me\/social-identities\/github\/connect\?intent=connect"\]/,
+    'and it pins the destination, which is the whole point of the change');
 });

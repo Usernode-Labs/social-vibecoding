@@ -93,7 +93,17 @@ export interface StatusPillState {
  */
 export interface ActionRef {
   fn: string;
-  args?: (string | number | boolean | null)[];
+  args?: (string | number | boolean | null | VoteOptions)[];
+}
+
+/**
+ * #1688: `castVote`'s fourth argument. `reason` is the line to send with the
+ * vote; null sends none without asking (a re-confirmed Yes carries its
+ * earlier line server-side). The model never holds one — the vote button
+ * appends it at the click.
+ */
+export interface VoteOptions {
+  reason: string | null;
 }
 
 /** The icon Preview affordance, in its three states. */
@@ -128,6 +138,13 @@ export interface ActionSpec {
   preview?: PreviewSpec;
   /** #313/#827 — "Explore in dev chat", claimed by a delegated handler. */
   explore?: number;
+  /**
+   * #1688: on the Yes spec, the viewer's vote on an EARLIER version of the
+   * proposal — still on their row, no longer counted. The vote button then
+   * asks "Still yes?" and a Yes carries their earlier line onto this version
+   * without asking for it again.
+   */
+  prior?: 'yes' | 'no';
 }
 
 /** Everything that can appear in the status band, as a tagged union. */
@@ -158,6 +175,9 @@ export type AttrLabel =
   | { kind: 'avatar'; tint: string; initial: string; text: string }
   | { kind: 'avatarEmpty'; text: string };
 
+/** The existing issue editor and #2327's open-proposal editor share one band. */
+export type TitleEditTarget = { issue: number } | { session: number };
+
 /** The title band: the text, plus the two things that ride beside it. */
 export interface TitleSpec {
   text: string;
@@ -165,16 +185,16 @@ export interface TitleSpec {
   lead?: { s: string; cls: string };
   /** A muted run AFTER it — the close-issue row's author. */
   trail?: { s: string; cls: string };
-  /** #133/#556 — the author-only inline edit pencil, topic head only. */
-  edit?: { issue: number };
+  /** Author-only inline edit pencil, topic head only. */
+  edit?: TitleEditTarget;
   /**
    * #665 — the inline title editor, replacing `beginIssueTitleEdit`'s
    * innerHTML write into the title div. While set the band renders an
    * uncontrolled input seeded with `initial`; save/cancel stay module
-   * methods that read `#dev-issue-title-input` by id, exactly as before,
-   * and `#dev-issue-title-error` stays a module-written node.
+   * methods that read the target-specific input by id, exactly as before,
+   * and the matching error line stays a module-written node.
    */
-  editing?: { issue: number; initial: string };
+  editing?: TitleEditTarget & { initial: string };
   /** The full text, for the clamp's own tooltip. */
   title: string;
 }
@@ -198,8 +218,28 @@ export interface RequirementSpec {
 }
 
 /** An extra row under the four bands (the work note, the admin claim list). */
+/** One side of a featured-illustration card's preview (#2086). */
+export interface IllustrationPreviewSpec {
+  url: string;
+  darkUrl: string | null;
+  tint: string | number | null;
+}
+
 export type ExtraSpec =
   | { t: 'note'; key: string; text: string; workState: string }
+  | {
+    /**
+     * The proposed illustration beside the current one, on a
+     * `featured_illustration` governance card. Either side null means "no
+     * illustration" (the app icon shows instead); `remove` is the proposal
+     * to take the current one down.
+     */
+    t: 'illustration';
+    key: string;
+    proposed: IllustrationPreviewSpec | null;
+    current: IllustrationPreviewSpec | null;
+    remove: boolean;
+  }
   | { t: 'claims'; key: string; claims: { username: string; userId: number; issue: number }[] }
   | {
     t: 'requirements';
@@ -373,10 +413,14 @@ export interface DevWorkshopView {
   canPost?: boolean;
   /** Who is reading, so a dismissal is per account on a shared device. */
   viewerId?: number | null;
-  /** The no-items note, with its load-failure prefix. */
+  /**
+   * The no-items note, with its load-failure prefix. About the whole board,
+   * so `filtered` is false since #2915: a search narrows All items alone,
+   * which says "Nothing here matches" from `meta.filtered` itself.
+   */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
-  tab: 'status' | 'needs' | 'all' | null;
+  tab: 'status' | 'workshop' | 'needs' | 'all' | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and
@@ -412,6 +456,9 @@ export interface DevWorkshopView {
       after: string | null;
       beforeWebm: string | null;
       afterWebm: string | null;
+      /** Authenticated evidence URLs rather than legacy public artifact ids. */
+      protected?: boolean;
+      claim?: string;
     } | null;
   })[];
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */
@@ -442,10 +489,31 @@ export interface DevWorkshopView {
    */
   since: {
     baseline: number;
+    /** Newest activity stamp among `rows`, for Clear; 0 when nothing is new. */
+    through: number;
+    /**
+     * Everything that moved, uncapped — what the head counts. `rows` below
+     * is the same population capped for drawing, so this is the number and
+     * that is the page of it.
+     */
+    total: number;
+    /**
+     * The three biggest kinds within `total`, for the summary sentence.
+     * They count the SAME population `rows` is drawn from (activity since
+     * the baseline), not items created since it — the two disagreed, and
+     * the sentence was describing a different set from the list under it.
+     */
     shipped: number;
     opened: number;
     proposed: number;
     rows: ListRow[];
+    /**
+     * The rest of the same list — what moved BEFORE the baseline, newest
+     * first, which the reader has already seen. `Show older` walks into it
+     * and Clear moves the new rows here (#2183). `rows` is capped; `total`
+     * is the whole rest.
+     */
+    seen: { total: number; rows: ListRow[] };
   } | null;
   /** First-visit orientation: the board's shape in numbers. */
   /**
@@ -470,6 +538,14 @@ export interface DevWorkshopView {
     /** The merged history is paged; true means the week counts are floors. */
     partial: boolean;
     /**
+     * #2573: whether anything has EVER landed on this app, over its whole
+     * history rather than `shippedWeek`'s window — the server's Done-column
+     * total, so it is exact however little of that column is loaded. False
+     * plus `open: 0` is an app nobody has started on, which is the one
+     * state the status tab offers to start.
+     */
+    everShipped: boolean;
+    /**
      * The model's three windowed lines, drawn as cards under the tiles. A
      * field is '' when that window held nothing, and its card is then not
      * drawn at all — which is why these are strings rather than optional.
@@ -478,20 +554,32 @@ export interface DevWorkshopView {
       lastWeek: string;
       thisWeek: string;
       open: string;
-      /** Weeks before last week, newest first: one Monday-anchored window each. */
-      older: { start: number; line: string }[];
-      /** Monday of the app's first week of activity, when the server says. */
+      /**
+       * Weeks before last week, newest first: one Monday-anchored window
+       * each, derived by the server from what landed in it (#3293), back to
+       * the project's first week. `closed` is how many changes landed, over
+       * the whole history; null where the server sent no count.
+       */
+      older: { start: number; line: string; closed: number | null }[];
+      /**
+       * Monday of the week the project began, sent only beside a complete
+       * `older`, so a walk that reaches the end with it set has reached the
+       * project's start.
+       */
       firstWeek: number | null;
     } | null;
     /**
      * The same lines as a WALK BACKWARDS through the app's weeks, oldest
      * first — which is the order they are drawn, top to bottom. The pane
-     * shows only the last entry (`open`) and reveals the rest one step at a
-     * time, newest end first. Empty when no line has ever been written.
+     * shows the live window and reveals the rest one step at a time. Empty
+     * when no line has ever been written.
+     *
+     * WEEKS ONLY. `open` used to lead this list, which made the reveal
+     * button's first press land on This week; it is `openLine` below now.
      *
      * `startMs`/`endMs` bound the window a line was written from, so the
-     * pane can caption an older week with its dates; both are 0 on `open`,
-     * which is not a window at all.
+     * pane can name an older week by its dates. `title` is empty on every
+     * window but the live one — a dated window IS its range.
      */
     weeks: {
       key: string;
@@ -499,8 +587,22 @@ export interface DevWorkshopView {
       line: string;
       startMs: number;
       endMs: number;
+      /**
+       * What the server can stand behind for this window. Null where it has
+       * written nothing — an older window from a cache that predates #3293,
+       * or a board with no server counts — and the pane then draws the line
+       * alone rather than a zero.
+       * `partial` marks a page-counted floor, as the tiles' own does.
+       */
+      counts: { closed: number; partial: boolean } | null;
     }[];
-    /** Monday of the app's first week of activity, when the server says. */
+    /**
+     * What the app's open, unfinished work is about: the pane's lead
+     * paragraph, under the figures. Empty string when no line has been
+     * written, and `summary` then supplies the fallback.
+     */
+    openLine: string;
+    /** Monday of the week the project began, when the server says (`cards.firstWeek`). */
     firstWeek: number | null;
     /**
      * The same answer flattened to one paragraph. It is what a row last
@@ -511,12 +613,15 @@ export interface DevWorkshopView {
      */
     summary: string | null;
   } | null;
-  /** One unclaimed open issue to suggest, as a row. Null while filtering. */
+  /**
+   * One unclaimed open issue to suggest, as a row. Null when there is none;
+   * All items' search and filters do not reach it (#2915).
+   */
   nextUp: ListRow | null;
   /**
    * #1934: the next unclaimed issues after `nextUp`, capped at
-   * WORKSHOP_LANE_MAX — shown under it behind "Show N more". Empty while
-   * filtering or when there is nothing past the first.
+   * WORKSHOP_LANE_MAX — shown under it behind "Show N more". Empty when
+   * there is nothing past the first.
    */
   nextMore: ListRow[];
   /** The app's general discussion, as a row — see AppView._discussionCardModel. */
@@ -545,7 +650,11 @@ export interface DevWorkshopView {
     coverage: { total: number; placed: number; unplaced: number; pending: number } | null;
     /** Cards on screen the server has themes for but has not placed yet. */
     placing: number;
-    /** The shared filter bar is narrowing what the themes hold. */
+    /**
+     * The shared filter bar is narrowing what the themes hold. It narrows
+     * All items alone (#2915): nothing on Current status or Needs you reads
+     * it, and the tab strip draws its dot on All items from it.
+     */
     filtered: boolean;
   };
   /**
@@ -560,6 +669,12 @@ export interface KanbanColView {
   title: string;
   count: number;
   hint?: string | null;
+  /** A visible app-level fact under the heading (the Done deployment boundary). */
+  status?: {
+    text: string;
+    tone: 'neutral' | 'progress' | 'blocked' | 'ok';
+    title?: string;
+  } | null;
   rows: ListRow[];
   /** The no-cards note ('Nothing here yet' / 'No matching cards'), or null. */
   empty?: string | null;

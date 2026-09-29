@@ -16,9 +16,9 @@
 //   2. It is gated on `busy`. A row that is Ready or Handed off must not
 //      turn — a handed-off work order especially, whose agent runs where
 //      this side cannot see whether a turn is in flight (#1417).
-//   3. The pulse is GONE rather than joined. One fact wants one cue; the
-//      badge keeps its amber, which is what makes a column of tiles
-//      scannable, and gives up the motion the pill now carries.
+//   3. The pulse is GONE rather than joined. One fact wants one cue — and
+//      #1946/#1947 finished that argument by retiring the tile badge
+//      altogether, so the pill is the row's only activity cue now.
 //   4. The arc is recoloured to the pill's own ink. The shared class borders
 //      in `var(--accent)`, which is blue, and a blue arc in an amber pill is
 //      off-palette in both themes.
@@ -40,7 +40,7 @@ const CONTROLLER = read('frontend/src/features/improve/improve-controller.js');
 const DEV_CHAT_LIST = read('frontend/src/features/dev-chat/session-list.tsx');
 const APP_CSS = read('public/css/app.css');
 const MANIFEST = JSON.parse(read('dapp.json'));
-const appManifest = require('../src/services/app-manifest');
+const checkCap = require('./lib/check-cap');
 
 /** The `stateOf` table on its own — three branches, one per state. */
 function stateOfBody() {
@@ -112,13 +112,19 @@ test('what counts as busy is untouched', () => {
 
 // ── One fact, one cue ──────────────────────────────────────────────────
 
-test('the tile badge keeps its amber and gives up its pulse', () => {
+test('the tile badge gave up its pulse, and then the badge itself (#1946)', () => {
   const body = stateOfBody();
-  assert.match(body, /badge: 'bg-amber-400',/,
-    'the colour stays — it is what makes a column of tiles scannable');
   assert.doesNotMatch(ROW_TSX, /animate-pulse/,
     'the motion is the pill spinner now; two cues for one fact is the thing '
     + '#1610 already removed from the button that opens this panel');
+  // #1597 kept the badge's amber "because it is what makes a column of tiles
+  // scannable". App feedback triage 2026-09-10 read the same dot the other
+  // way round (rows 39a/39b): the emerald half never meant work at all, and
+  // the amber half repeated the pill beside it without a word. The state
+  // table has no badge left to colour; what the row renders in its place is
+  // tests/improve-session-activity.test.js.
+  assert.doesNotMatch(body, /badge:/,
+    'the state is the pill\'s alone (#1946, #1947)');
 });
 
 // ── The arc takes the pill's ink ───────────────────────────────────────
@@ -147,13 +153,19 @@ test('the pill lays its two children out like the platform\'s other one', () => 
 
 // ── The declared check follows the markup ──────────────────────────────
 
-test('the Improve busy-row check selects the arc, and no check was added', () => {
+test('the busy-row check selects the arc, and no check was added', () => {
+  // The SURFACE moved and the check moved with it (#2718 review): these rows
+  // were the Improve panel's, and with the panel retired they were the
+  // notifications sheet's Agents tab; #2815 folded that tab into Messages,
+  // so they are reached by `?shot=notifications-messages` now. The row, the
+  // mock and the arc are unchanged, which is why this still asserts one
+  // check owning one mock row.
   const busy = MANIFEST.tests.filter((t) =>
-    /improve-panel a\[href\$="\/sessions\/990102"\]/.test(t.expectSelector || ''));
+    /a\[href\$="\/proposals\/990102"\]/.test(t.expectSelector || ''));
   assert.equal(busy.length, 1, 'one check owns the busy mock row');
   assert.match(busy[0].expectSelector, /\.dc-status-spinner-arc$/,
     'retargeted with the markup — .animate-pulse now matches nothing there');
-  assert.equal(busy[0].path, '/?shot=improve&demo=1#app/usernode-2d5619/dev');
+  assert.equal(busy[0].path, '/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev');
 
   // …and it RETARGETS rather than adds, which is what the equality above
   // pins: one check owns the busy mock row, before and after.
@@ -172,9 +184,10 @@ test('the Improve busy-row check selects the arc, and no check was added', () =>
   // crossing that floor is what makes the reader drop checks silently. That
   // is stable against other people's work, and tests/checks-budget.test.js
   // asserts the consequence (ceilingDropped === 0) from the other side.
-  const ceiling = appManifest.MAX_DECLARED_TESTS;
-  assert.ok(MANIFEST.tests.length <= ceiling - 20,
-    `declared checks are at ${MANIFEST.tests.length} of ${ceiling}; the `
-    + 'manifest keeps 20 slots clear, and raising the cap is a coupled '
-    + 'change with TESTS_DEADLINE_MS — see services/app-manifest.js');
+  //
+  // What to do at the floor is stated once, for this guard and the other two
+  // (tests/lib/check-cap.js): fold first, then raise the cap in the same
+  // proposal. This one used to call the raise a coupled change while its
+  // twin said to make it, and the exact pin said nothing.
+  checkCap.assertFloor(MANIFEST.tests.length);
 });

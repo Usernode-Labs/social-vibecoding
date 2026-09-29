@@ -19,6 +19,9 @@
 //     `installGridStore(sandbox)` from ./home-grid-store creates both stores —
 //     each declaring its binding in the same global lexical scope home.js
 //     resolves it against.
+//     It also imports `detectInstallHost` (../mobile-install/environment),
+//     which only Home.menuItemsFor reads; a test that calls it declares the
+//     function on the sandbox, as tests/home-card-menu.test.js does.
 //   * home-panels.js imports ./panels-store, which
 //     `installPanelsStore(sandbox)` supplies the same way. Its renderers moved
 //     into frontend/src/features/home/panels/*.tsx, so a test that used to

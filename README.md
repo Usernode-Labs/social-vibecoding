@@ -329,6 +329,20 @@ node scripts/check-sql.js --write-dynamic-baseline
 Proposal unit suites run the same gate against the worker image's isolated
 PostgreSQL 17 instance before `npm test`.
 
+### Running the unit suite locally
+
+`npm test` runs every suite under `tests/` with a per-test timeout of three
+minutes, so a test that never settles fails instead of holding the run open.
+Before submitting a change, run only the suites that read the files it
+touched:
+
+```bash
+npm run test:changed -- --base <base-commit>   # --list shows the mapping, runs nothing
+```
+
+Homeroom runs the whole suite and every declared check against the submitted
+commit. `AGENTS.md` says when the whole suite is still the right local run.
+
 ### Codex, Claude Code, and OpenCode CLI authentication and MCP
 
 Ask Codex, Claude Code, or OpenCode for the platform operation directly, for example:

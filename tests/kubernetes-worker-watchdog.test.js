@@ -22,7 +22,9 @@ async function runWatchdog(t, { probes, stopped = false, terminalOnLastProbe = f
   });
   t.mock.method(kubernetes, 'execInWorker', async (_config, name, command, _input, options) => {
     assert.equal(name, `sv-worker-s${sessionId}`);
-    if (command[0] === 'cat') {
+    // The journal read (`tail -n +K`): empty until the terminal marker, so
+    // every read starts at line 1 and returns the whole file.
+    if (command[0] === 'tail') {
       if (terminal) return { stdout: '__USERNODE_EXIT__ 0\n', stderr: '' };
       if (missingJournal) throw new Error('journal does not exist');
       return { stdout: '', stderr: '' };

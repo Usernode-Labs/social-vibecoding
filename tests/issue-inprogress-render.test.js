@@ -7,8 +7,8 @@
 //      chip's clickable-vs-informational variants.
 //   3. _renderIssueRow — chip placement, the claim/release button, the
 //      topic-head work note (#1112) and the topic-view admin claim list.
-//   4. Session cards + proposal cards — reverse chips (live proposals go
-//      in-app; merged cards keep external GitHub links).
+//   4. Session cards + proposal cards — reverse chips (live proposals and
+//      merged kanban cards go in-app; the merged detail head stays external).
 //   5. _bucketDevItems — kanban routing of in-progress issues.
 //
 // Same harness as tests/archive-proposal-card.test.js: app-view.js is a
@@ -170,7 +170,7 @@ test('_issueWorkState names each of the seven states with its own tone', () => {
 
   const paused = st({ in_progress: ip({ sessions: [sess({ status: 'paused' })] }) });
   assert.equal(paused.key, 'paused');
-  assert.equal(paused.label, 'Paused · maya');
+  assert.equal(paused.label, 'Started · maya', 'the word "paused" is never shown');
   assert.equal(paused.tone, 'zinc');
 
   const question = st({ headless: { status: 'ready', outcome: 'question' } });
@@ -318,19 +318,21 @@ test('chip is a button when a target exists, a plain span otherwise', () => {
   assert.match(headlessOnly, /auto-solve/i);
 });
 
-test('openInProgressTarget dispatches to the existing navigation handlers', () => {
+test('openInProgressTarget always opens the lifecycle-aware change page', () => {
   const AppView = makeAppView();
   const calls = [];
   AppView.openTopic = (kind, id) => calls.push(['topic', kind, id]);
   AppView.openInProgressTarget('proposal', 5);
   AppView.openInProgressTarget('session-shared', 6);
-  assert.deepEqual(calls, [['topic', 'proposal', 5], ['topic', 'session', 6]]);
-  // A session-own target goes through App.switchTab, not openTopic.
   AppView.openInProgressTarget('session-own', 7);
-  assert.equal(calls.length, 2, 'own sessions never open a topic');
+  assert.deepEqual(calls, [
+    ['topic', 'proposal', 5],
+    ['topic', 'proposal', 6],
+    ['topic', 'proposal', 7],
+  ]);
   // Bad input is a no-op.
   AppView.openInProgressTarget('proposal', 'junk');
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });
 
 // ── 3. the issue row: chip + claim button + admin list ──────────────────
@@ -446,7 +448,7 @@ test('the topic head prints a plain dated work note; the feed card does not', ()
   const topic = cardHtml(topicModel);
   const note = topic.match(/data-work-note="paused"[^>]*>([^<]*)</);
   assert.ok(note, 'the head carries a [data-work-note]');
-  assert.match(note[1], /maya started work on this and paused it 5 days ago/);
+  assert.match(note[1], /maya started work on this and last worked on it 5 days ago/);
   assert.match(note[1], /clears itself on/);
   // The self-clear date is the paused window past the last activity, not today.
   const clears = new Date(Date.now() + 2 * 86400000).toLocaleDateString();
@@ -455,7 +457,7 @@ test('the topic head prints a plain dated work note; the feed card does not', ()
   const feedModel = AppView._issueCardModel(issue);
   const feed = cardHtml(feedModel);
   assert.ok(!feed.includes('data-work-note'));
-  assert.match(feed, /title="[^"]*paused it 5 days ago/);
+  assert.match(feed, /title="[^"]*last worked on it 5 days ago/);
 });
 
 test('the work note adds an "Also:" clause when more than one thing applies', () => {
@@ -529,13 +531,24 @@ test('LIVE proposal card links "Closes #N" to the in-app issue topic', () => {
   assert.ok(!html.includes('github.com/o/r/issues/6'), 'no external issue link on live cards');
 });
 
-test('MERGED proposal card keeps the external GitHub "Closed #N" links', () => {
+test('MERGED proposal detail head keeps the external GitHub "Closed #N" links', () => {
   const AppView = makeAppView();
   const model = AppView._proposalCardModel(baseProposal({ status: 'merged' }));
   const html = cardHtml(model);
   assert.ok(!html.includes('data-issue-chip'), 'merged cards do not use in-app chips');
   assert.match(html, /github\.com\/o\/r\/issues\/6/);
   assert.match(html, /Closed #6/);
+});
+
+test('MERGED kanban card opens "Closed #N" in the Homeroom issue topic', () => {
+  const AppView = makeAppView();
+  const model = AppView._mergedCardModel(baseProposal({ status: 'merged' }), 1);
+  const html = cardHtml(model);
+  assert.match(html, /data-issue-chip="6"/);
+  assert.match(html, /Closed #6/);
+  assert.match(html, /bg-emerald-500\/10/, 'keeps the completed-card tone');
+  assert.ok(hasAction(model, 'openTopic', 'issue', 6), 'opens the issue topic in-app');
+  assert.ok(!html.includes('github.com/o/r/issues/6'), 'no external issue link on the kanban card');
 });
 
 // ── 5. kanban routing ────────────────────────────────────────────────────

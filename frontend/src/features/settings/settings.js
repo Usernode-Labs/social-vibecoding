@@ -122,6 +122,23 @@
   // at the Settings screen forever, land them on the landing page.
   const NATIVE_LOGOUT_SAFETY_MS = 5000;
 
+  // How long the sign-out POST may take before it is abandoned. Two budgets,
+  // because the two paths fail differently (#2078):
+  //
+  //   - A capable phone (protocol 2 + `offlineLogout`) has native deleting the
+  //     cookie and the durable credential locally, so remote revocation is
+  //     best effort. Giving up after two seconds still ends in a real
+  //     sign-out, and waiting longer only holds a person on a screen whose
+  //     work is already done.
+  //   - The ordinary WEB path has no such guarantee: only the server can
+  //     revoke a web session, so abandoning the request means the sign-out did
+  //     NOT happen and the user is told so. The budget is therefore generous —
+  //     far longer than any working round trip, including a slow phone
+  //     network — and exists only to stop a request that will never settle
+  //     from holding the disabled button forever.
+  const OFFLINE_LOGOUT_TIMEOUT_MS = 2000;
+  const WEB_LOGOUT_TIMEOUT_MS = 15000;
+
   const Settings = {
     // Planted by ./mount.ts, never imported: this file is a classic IIFE that
     // tests/settings-mobile-push.test.js evaluates with vm.runInContext, where
@@ -137,7 +154,7 @@
     // otherwise 'platform' | 'claude-code' | 'codex'. `externalFlowsAvailable`
     // says whether this deployment can offer the Claude Code / Codex
     // hand-off at all — the server decides, we only render what it reports.
-    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
+    state: { hasApiKey: false, demoKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, sessionBridgeEnabled: false, agentSessionsEnabled: false, agentSessionsChoosable: false, locale: null, devFlowPreference: null, externalFlowsAvailable: false },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -189,6 +206,11 @@
     _pushedFromMenu: false,
     // #settings-screen scrollTop saved on drill-in, restored on the way back.
     _menuScrollTop: 0,
+    // A deep-linked section that is registered but not offered YET (#2893):
+    // its gate resolves after the route did — the Homeroom app one waits on
+    // the native bridge. _renderNavIfOpen spends it once the gate opens,
+    // provided the address still names it. open() and close() drop it.
+    _pendingSection: null,
     _mediaBound: false,
     _socialPushStateListener: null,
     // True between an open({ chrome: false }) and the syncChrome() that
@@ -233,6 +255,10 @@
       // gate lines in _renderLanguageSection.
       { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
       { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
+      // The replay control for Home's welcome tour (#2255). Last in
+      // Preferences: it configures nothing, it re-runs something, and the
+      // tour's own Skip promises this row exists.
+      { key: 'tour', label: 'Welcome tour', group: 'Preferences' },
       // "Home screen widgets" sat here. THE UI OVERHAUL made Discover,
       // Challenges and Create app FIXED SECTIONS of the home screen rather
       // than draggable, hideable widgets, so there is nothing left for the
@@ -241,8 +267,10 @@
       { key: 'username', label: 'Username', group: 'Account' },
       { key: 'email', label: 'Email & recovery', group: 'Account' },
       { key: 'password', label: 'Password', group: 'Account' },
+      { key: 'delete-account', label: 'Delete account', group: 'Account' },
       { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
 
+      { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & agents' },
       { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
       { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
       // Own section (not folded into 'cli') so the out-of-credits card can
@@ -267,6 +295,7 @@
       // into something to act on (a build in flight, a reload waiting). See
       // sections/about.tsx.
       { key: 'app-ai', label: 'App AI permissions', group: 'Advanced' },
+      { key: 'app-permissions', label: 'App device permissions', group: 'Advanced' },
       { key: 'agent-files', label: 'Agent instructions & skills', group: 'Advanced' },
       { key: 'cli', label: 'CLI & coding-agent access', group: 'Advanced' },
       { key: 'dev-console', label: 'Developer console', group: 'Advanced' },
@@ -311,7 +340,6 @@
       // existence so the section degrades cleanly if the feature flag is
       // off server-side (the section markup stays, the controls no-op).
       const orSave = document.getElementById('settings-openrouter-save');
-      const orClaim = document.getElementById('settings-openrouter-claim');
       const orRemove = document.getElementById('settings-openrouter-remove');
       const orSetDefault = document.getElementById('settings-openrouter-set-default');
       const orModel = document.getElementById('settings-openrouter-model');
@@ -321,7 +349,6 @@
       const orStarModel = document.getElementById('settings-openrouter-star-model');
       const claudeSetDefault = document.getElementById('settings-claude-set-default');
       if (orSave) orSave.addEventListener('click', () => this._saveOpenRouterKey());
-      if (orClaim) orClaim.addEventListener('click', () => this._claimManagedOpenRouterKey());
       if (orRemove) orRemove.addEventListener('click', () => this._removeOpenRouterKey());
       if (orSetDefault) orSetDefault.addEventListener('click', () => this._saveOpenRouterDefault());
       if (orModel) orModel.addEventListener('change', () => {
@@ -356,8 +383,8 @@
           const field = document.getElementById('connector-url');
           return field ? field.value : null;
         },
-        successMessage: 'Connector URL copied',
-        failureMessage: 'Could not copy the connector URL',
+        successMessage: 'MCP server URL copied',
+        failureMessage: 'Could not copy the MCP server URL',
         selectOnFail: () => {
           const field = document.getElementById('connector-url');
           if (field) field.select();
@@ -393,6 +420,39 @@
           },
           successMessage: RULE_BLOCKS[id].success,
           failureMessage: RULE_BLOCKS[id].failure,
+          selectOnFail: () => {
+            const block = document.getElementById(id);
+            if (!block || !window.getSelection || !document.createRange) return;
+            const range = document.createRange();
+            range.selectNodeContents(block);
+            const sel = window.getSelection();
+            sel.removeAllRanges();
+            sel.addRange(range);
+          },
+        });
+      }
+
+      // #1892: the two Codex CLI blocks. Read at click time for the same
+      // reason as above: _renderConnectors() swaps the URL placeholder for
+      // the live connector URL after this wiring runs.
+      const CODEX_BLOCKS = {
+        'connector-codex-add': {
+          success: 'Copied. Run it in a terminal where Codex is installed',
+          failure: 'Could not copy the Codex command',
+        },
+        'connector-codex-config': {
+          success: 'Copied. Paste it into ~/.codex/config.toml',
+          failure: 'Could not copy the Codex config entry',
+        },
+      };
+      for (const id of Object.keys(CODEX_BLOCKS)) {
+        this._wireCopyControl(`${id}-copy`, {
+          read: () => {
+            const block = document.getElementById(id);
+            return block ? block.textContent : null;
+          },
+          successMessage: CODEX_BLOCKS[id].success,
+          failureMessage: CODEX_BLOCKS[id].failure,
           selectOnFail: () => {
             const block = document.getElementById(id);
             if (!block || !window.getSelection || !document.createRange) return;
@@ -462,6 +522,13 @@
       const bridgeToggle = document.getElementById('session-bridge-enabled');
       if (bridgeToggle) {
         bridgeToggle.addEventListener('change', (e) => this._saveSessionBridge(e.target.checked));
+      }
+
+      // #2779: agent sessions, same shape again. Where new work starts is
+      // read from App.user by the entry points, so it moves with the save.
+      const agentSessionsToggle = document.getElementById('agent-sessions-enabled');
+      if (agentSessionsToggle) {
+        agentSessionsToggle.addEventListener('change', (e) => this._saveAgentSessions(e.target.checked));
       }
 
       // Platform-level language preference (issue #757). Server-side
@@ -600,6 +667,8 @@
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.sessionBridgeEnabled = !!j.user?.sessionBridgeEnabled;
+        this.state.agentSessionsEnabled = !!j.user?.agentSessionsEnabled;
+        this.state.agentSessionsChoosable = !!j.user?.agentSessionsChoosable;
         this.state.locale = j.user?.locale || null;
         this.state.devFlowPreference = j.user?.devFlowPreference || null;
         this.state.externalFlowsAvailable = !!j.user?.externalFlowsAvailable;
@@ -621,6 +690,7 @@
         // all, and it lands here too — a cold-boot deep link paints before
         // this resolves. Same reasoning as the two rows above.
         this._renderLanguageSection();
+        this._renderAgentSessionsRow();
         this._renderNavIfOpen();
       } catch {}
     },
@@ -694,6 +764,8 @@
       this._refreshSpend();
       this._refreshOpenRouter();
       this._renderLlmGrants();
+      this._renderAppPermissions();
+      this._renderNotificationPrefs();
       this._loadCliTokens(true);
       this._loadConnectors();
       this._loadGithubLink();
@@ -734,10 +806,12 @@
       // visit to Settings, not once per document.
       Settings._usernodeAuthRetryUsed = false;
       Settings._ensureMediaListener();
+      Settings._pendingSection = null;
       Settings._renderAllSections();
 
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
+      Settings._notePendingSection(section, valid);
       const fallback = visible.some((s) => s.key === Settings._section)
         ? Settings._section
         : (visible[0] ? visible[0].key : Settings.DEFAULT_SECTION);
@@ -787,6 +861,7 @@
       Settings._ensureMounted();
       const visible = Settings._visibleSections();
       const valid = !!section && visible.some((s) => s.key === section);
+      Settings._notePendingSection(section, valid);
       const mobile = Settings._isMobile();
       // The level and section this call WOULD end on. Level 1 keeps whatever
       // section sits behind the menu, so there the level is the whole target.
@@ -928,12 +1003,33 @@
     // gate node is absent or currently un-hidden. Reading the node rather
     // than re-deriving the condition is what keeps this in step with
     // _renderWalletSection / _renderUsernodeSection / _renderAdminSection.
+    //
+    // ONE GATE IS READ FROM ITS MODEL (#2893). The Homeroom app gate is
+    // decided here, in _renderUsernodeSection, and reaches its node through
+    // usernodeSectionStore — which, unlike the nav store, commits on React's
+    // next tick rather than synchronously. On the first open of the screen in
+    // a document, open() reads the gate straight after that decision, so a
+    // deep link to #settings/usernode (the block-production challenge's
+    // button) found the node still hidden and fell back to the Settings
+    // root. `_usernodeGated` is the value the node is rendered FROM, so once
+    // it has been decided it is the truth; before that the node still is.
     _visibleSections() {
       return Settings.SECTIONS.filter((s) => {
         if (!s.gate) return true;
+        if (s.gate === 'settings-usernode-section' && typeof Settings._usernodeGated === 'boolean') {
+          return Settings._usernodeGated;
+        }
         const el = document.getElementById(s.gate);
         return !!el && !el.classList.contains('hidden');
       });
+    },
+
+    // Remember a deep link to a REGISTERED section that is not offered yet
+    // (its gate resolves later), so _renderNavIfOpen can finish the route
+    // instead of leaving the viewer on the menu. Anything else clears it.
+    _notePendingSection(section, valid) {
+      Settings._pendingSection = (!!section && !valid
+        && Settings.SECTIONS.some((s) => s.key === section && s.gate)) ? section : null;
     },
 
     // The visible sections bucketed by `group`, in first-appearance order.
@@ -1109,7 +1205,11 @@
         label: Settings.str(s.label),
         active: s.key === active,
         className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
-          + (s.key === active
+          + (s.key === 'delete-account'
+            ? (s.key === active
+              ? 'bg-red-500/10 text-red-700 dark:text-red-400'
+              : 'text-red-700 dark:text-red-400 hover:bg-red-500/10')
+            : s.key === active
             ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
             : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
       });
@@ -1328,16 +1428,19 @@
       // unless the viewer arrived from elsewhere in the app (#1565, see
       // _upHref), so that is its href.
       //
-      // LEVEL 2 ONLY. The mobile drill-in keeps its chevron because that is
-      // not a way BACK to another screen, it is the only way up a level
-      // INSIDE this one — without it a phone viewer is stranded in a section.
-      // Level 1 no longer draws one: Settings is one of the three account
-      // screens the owner asked to lose the arrow (see the note beside
-      // App.navigateToProfile), reached from the Home account row and left
-      // through it, with the header's own title saying where you are. A
-      // second affordance pointing at the row you just came from was chrome.
-      // `'home'` means "hidden" to setBackIcon.
-      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home', inSection ? Settings._upHref() : undefined);
+      // TWO LEVELS, ONE GLYPH. The mobile drill-in's chevron is the only way
+      // up a level INSIDE this screen — without it a phone viewer is stranded
+      // in a section — and since #2718's review the ROOT draws one too.
+      //
+      // Level 1 spent two rounds hiding it. That was right while Settings was
+      // reached from Home's account row: the row you came from was one tap
+      // behind you and a second affordance pointing at it was chrome. The Me
+      // tab replaced that row, and `'home'` sends you to a screen the bar's
+      // own Home tab already reaches while the tab still lit is Me — so the
+      // root's arrow points at #profile, the level it is genuinely under.
+      // App._BACK_SLOT['settings-screen'] says the same thing on the screen
+      // reveal; this is the second writer, and the later one wins.
+      if (App.setBackIcon) App.setBackIcon('arrow', inSection ? Settings._upHref() : '#profile');
       if (!App.setHeaderTitle) return;
       if (inSection) {
         const s = Settings._visibleSections().find((x) => x.key === Settings._section);
@@ -1354,6 +1457,18 @@
     // menu would be missing those rows until the next navigation.
     _renderNavIfOpen() {
       if (!Settings._open) return;
+      // A deep link that arrived before its section's gate opened (#2893):
+      // finish it now, once, if the address still asks for that section —
+      // a viewer who has since moved elsewhere is not pulled back.
+      const want = Settings._pendingSection;
+      if (want && Settings._visibleSections().some((s) => s.key === want)) {
+        Settings._pendingSection = null;
+        const hash = String((typeof location !== 'undefined' && location.hash) || '');
+        if (hash === `#settings/${want}` || hash.startsWith(`#settings/${want}?`)) {
+          Settings.route(want);
+          return;
+        }
+      }
       Settings._ensureActiveGroupExpanded();
       Settings._renderNav();
       // A section that just became unavailable must not stay on screen.
@@ -1378,7 +1493,20 @@
       if (bridge) bridge.checked = !!this.state.sessionBridgeEnabled;
       const bridgeStatus = document.getElementById('session-bridge-status');
       if (bridgeStatus) { bridgeStatus.classList.add('hidden'); bridgeStatus.textContent = ''; }
+      this._renderAgentSessionsRow();
+      const agentStatus = document.getElementById('agent-sessions-status');
+      if (agentStatus) { agentStatus.classList.add('hidden'); agentStatus.textContent = ''; }
       this._renderLocalAgentsSection();
+    },
+
+    // #2779: offered only to a user the server lets choose. Painted again by
+    // refresh(), because a cold deep link to #settings/experimental paints
+    // the pane before /api/auth/me has answered.
+    _renderAgentSessionsRow() {
+      const agentRow = document.getElementById('settings-agent-sessions-row');
+      if (agentRow) agentRow.classList.toggle('hidden', !this.state.agentSessionsChoosable);
+      const agentToggle = document.getElementById('agent-sessions-enabled');
+      if (agentToggle) agentToggle.checked = !!this.state.agentSessionsEnabled;
     },
 
     // #907: the machines currently attached to one of this account's dev
@@ -1759,6 +1887,19 @@
         if (link) link.href = `${base}${encodeURIComponent(chatPrompt)}`;
       }
 
+      // #1892: the Codex CLI blocks ship with a placeholder where the URL
+      // goes, for the same reason the steps point at #connector-url instead
+      // of naming a host. Swap it for the derived value here, by textContent
+      // and never innerHTML. Idempotent: once swapped, the placeholder is
+      // gone and a re-render finds nothing to replace.
+      const CODEX_URL_PLACEHOLDER = 'https://<your-homeroom-host>/mcp';
+      for (const id of ['connector-codex-add', 'connector-codex-config']) {
+        const block = document.getElementById(id);
+        if (block && block.textContent.includes(CODEX_URL_PLACEHOLDER)) {
+          block.textContent = block.textContent.split(CODEX_URL_PLACEHOLDER).join(connectorUrl);
+        }
+      }
+
       this._connectorLoadId = (this._connectorLoadId || 0) + 1;
       const loadId = this._connectorLoadId;
       this._publishConnectors({ phase: 'loading', connectors: [] });
@@ -1964,7 +2105,7 @@
         const demo = new URLSearchParams(window.location.search).get('demo');
         if (demo === '1' || demo === 'identity-connected'
             || demo === 'identity-unverified' || demo === 'identity-legacy'
-            || demo === 'identity-x-misconfigured') {
+            || demo === 'identity-x-misconfigured' || demo === 'identity-replacement') {
           return `?demo=${encodeURIComponent(demo)}`;
         }
       } catch { /* ordinary production read */ }
@@ -2008,6 +2149,18 @@
       }
     },
 
+    // Keep the connector panel and every profile surface on the same
+    // post-mutation truth. The panel reads the provider-neutral status route;
+    // the profile editor reads App.user.links, which comes from /api/auth/me.
+    async _refreshSocialIdentitySurfaces() {
+      await Promise.all([
+        this._loadGithubLink(),
+        (typeof window !== 'undefined' && window.Profile?._refreshUser)
+          ? window.Profile._refreshUser()
+          : Promise.resolve(),
+      ]);
+    },
+
     _publishSocialIdentity(next) {
       const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
         ? window.UsernodeReact.settingsSocialIdentity : null;
@@ -2027,7 +2180,8 @@
           provider,
           payload.providers[provider] || { provider, linked: false, available: false },
           entitlement,
-          !!payload.demo
+          !!payload.demo,
+          payload.providers
         )),
       });
       // A SIBLING of the block, and still this module's: it reports the OAuth
@@ -2036,82 +2190,140 @@
       this._socialIdentityCallbackStatus(status);
     },
 
-    // The tier card's five states, as text plus a tone. Every one of them is
-    // a different answer to "how much can this account spend today, and why",
-    // so the wording is decided here, next to the entitlement it reads.
+    // The head row of the daily-credits list, in its five states. Every one
+    // of them is a different answer to "how much can this account spend today,
+    // and why", so the wording is decided here, next to the entitlement it
+    // reads.
+    //
+    // #2370: this was a bordered card carrying a title and a sentence — "Layer
+    // 1 locked · $0/day", then a paragraph explaining what would unlock it. It
+    // is the FIRST ROW of one list now, and the rows under it are the things
+    // that change the figure, so the relationship the paragraph described is
+    // the layout instead. Three fields rather than two:
+    //
+    //   title   what this row is ("Signed in" on the ladder, "Your credits"
+    //           where there is no ladder to stand on — never "Daily credits",
+    //           which is the label the list already sits under)
+    //   amount  the figure, or null where there honestly is none
+    //   note    one sentence under the list, or null
+    //   tone    'warn' for the one state that reports a fault. A locked ladder
+    //           is NOT a warning — it is the thing to do next, and the rows
+    //           under it say so — so the amber card it used to wear is gone.
+    //
+    // "Layer 1" is gone on purpose. It is the policy's name for the tier in
+    // src/services/limits.js, and a reader has no Layer 0 or Layer 2 to place
+    // it against.
+    //
+    // ONLY the two ladder states say "Signed in · $0 / day". On a deployment
+    // whose policy is `legacy` (the default — see IDENTITY_CREDIT_POLICY) or
+    // for an account with an administrator override, connecting an account
+    // changes nothing about credits, and a list that implied otherwise would
+    // be a false promise with a Connect button under it.
+    _socialIdentityMoney(cents) {
+      const value = Math.max(0, Number(cents) || 0) / 100;
+      return `$${Number.isInteger(value) ? value : value.toFixed(2)} / day`;
+    },
+
     _socialIdentityTierView(entitlement) {
       const e = entitlement || {};
-      const dollars = `$${(Math.max(0, Number(e.limitCents) || 0) / 100).toFixed(2)}/day`;
+      const amount = this._socialIdentityMoney(e.limitCents);
       if (e.entitlementAvailable === false) {
         return {
-          tone: 'plain',
-          title: 'Daily credit tier temporarily unavailable',
-          detail: 'Homeroom could not verify credit eligibility. Platform-funded calls fail closed; your own API key still works.',
+          tone: 'warn',
+          done: false,
+          title: 'Daily credits unavailable',
+          amount: null,
+          note: 'We could not check your credits, so calls we pay for are paused. Your own API key still works.',
         };
       }
       if (e.policy === 'legacy') {
         return {
           tone: 'plain',
-          title: `Current daily allowance: ${dollars}`,
-          detail: 'Social account linking is available, but identity-based credit tiers are not active on this deployment yet.',
+          done: true,
+          title: 'Your credits',
+          amount,
+          note: 'Your credits do not depend on a connected account yet.',
         };
       }
       if (e.tier === 'override') {
         return {
           tone: 'plain',
-          title: `Administrator-set allowance: ${dollars}`,
-          detail: 'This account has an explicit administrator override, which takes precedence over identity tiers.',
-        };
-      }
-      if (e.verificationRequired) {
-        return {
-          tone: 'warn',
-          title: 'Layer 1 locked · $0/day',
-          detail: 'Connect either GitHub or X below to unlock $10.00/day. A second provider does not add another $10.',
+          done: true,
+          title: 'Your credits',
+          amount,
+          note: 'An administrator set this amount. A connected account does not change it.',
         };
       }
       return {
-        tone: 'ok',
-        title: `Layer 1 unlocked · ${dollars}`,
-        detail: 'At least one social account ownership proof is current. Provider tokens are not stored.',
+        tone: 'plain',
+        done: true,
+        title: 'Signed in',
+        amount: this._socialIdentityMoney(0),
+        note: 'Either one is enough. Connecting both does not add more.',
       };
     },
 
-    // One provider row. Five mutually-exclusive states, and the two actions:
-    // a Connect anchor (or its inert ?demo= twin) and Disconnect.
-    _socialIdentityRowView(provider, link, entitlement, demo) {
+    // One provider row. Connection, provider verification, public visibility,
+    // replacement confirmation and destructive disconnect stay separate.
+    _socialIdentityRowView(provider, link, entitlement, demo, others) {
       const name = provider === 'github' ? 'GitHub' : 'X';
+      const actionHref = (intent) => demo
+        ? null
+        : `/api/me/social-identities/${provider}/connect?intent=${intent}`;
+      // #2370: `amount` is the row's figure on the ladder, and it is the
+      // reason a row is worth tapping — "$10 / day" sits where "Not connected ·
+      // connect X to unlock Layer 1" used to. Two rules keep it honest, both
+      // from src/services/limits.js ("provider proofs replace one another;
+      // they do not stack"):
+      //
+      //   * an UNLINKED row carries the figure only while the tier is still
+      //     locked. Once one provider has unlocked it, a second "$10 / day"
+      //     beside a Connect button reads as a further $10.
+      //   * of two LINKED rows, only the first carries it, for the same reason.
+      //
+      // Off the ladder (`legacy`, an override, an unverifiable entitlement)
+      // there is no figure at all, because connecting changes no figure.
+      const tiered = entitlement.policy === 'tiered' && entitlement.tier !== 'override'
+        && entitlement.entitlementAvailable !== false;
+      // The figure limits.js calls TIER_ONE_LIMIT_CENTS. A literal, as the
+      // sentence it replaces had it: the status payload reports the CURRENT
+      // limit, not what the next tier would be.
+      const unlock = '$10 / day';
+      const firstLinked = provider === 'github' || !(others && others.github
+        && others.github.linked && !others.github.reconnectRequired);
       let state;
+      let amount = null;
       if (link.reconnectRequired) {
         state = {
           tone: 'amber',
-          text: 'Linked for GitHub attribution · reconnect once to make this identity credit-eligible.',
+          text: 'Linked for GitHub attribution. Reconnect once to count it toward daily credits.',
         };
-      } else if (link.linked && entitlement.policy === 'tiered') {
-        state = {
-          tone: 'emerald',
-          text: 'Ownership verified · counts toward the single $10/day social tier.',
-        };
+      } else if (link.linked && tiered) {
+        state = { tone: 'muted', text: firstLinked ? '' : 'No extra credits' };
+        amount = firstLinked ? unlock : null;
       } else if (link.linked) {
-        state = {
-          tone: 'muted',
-          text: 'Ownership verified · identity credit tiers are not active yet.',
-        };
+        state = { tone: 'muted', text: '' };
       } else if (link.available === false) {
-        state = { tone: 'muted', text: `${name} linking is not configured on this deployment.` };
+        state = { tone: 'muted', text: 'Not set up on this server.' };
       } else {
-        state = {
-          tone: 'muted',
-          text: entitlement.verificationRequired
-            ? `Not connected · connect ${name} to unlock Layer 1.`
-            : 'Not connected.',
-        };
+        state = { tone: 'muted', text: tiered && entitlement.verificationRequired ? '' : 'Not connected.' };
+        amount = tiered && entitlement.verificationRequired ? unlock : null;
       }
       const offersConnect = (!link.linked || link.reconnectRequired) && link.available !== false;
       return {
         provider,
         name,
-        heading: link.linked && link.handle ? `${name} · @${link.handle}` : name,
+        // #2370: the title is the provider and nothing else, in every state, so
+        // the list's left edge reads the same before and after connecting. The
+        // handle moved to the second line: beside the badge and the chevron it
+        // was the first thing a 390px row truncated.
+        heading: name,
+        handle: link.linked && link.handle ? `@${link.handle}` : null,
+        // The leading mark: ticked once this row counts, an empty ring while
+        // it is still something to do. A reconnect-needed link is NOT ticked,
+        // for the reason the badge below is not "Connected".
+        done: !!link.linked && !link.reconnectRequired,
+        amount,
         // #1557: the durable half of "did that work?". The OAuth round trip
         // already writes a one-line result into #github-link-status, but that
         // line is transient, xs, and a sibling of this block — come back to
@@ -2135,10 +2347,31 @@
           : null,
         connect: offersConnect
           ? {
-            label: link.reconnectRequired ? 'Reconnect' : `Connect ${name}`,
+            // The row's own title already says which provider, so the
+            // control is the verb alone; `name` keeps the long form for
+            // the accessible name (see social-identity.tsx).
+            label: link.reconnectRequired ? 'Reconnect' : 'Connect',
             // A demo fixture gets the control inert rather than absent: the
             // real flow would navigate straight out of the fixture.
-            href: demo ? null : `/api/me/social-identities/${provider}/connect`,
+            href: actionHref('connect'),
+            intent: 'connect',
+          }
+          : null,
+        refresh: link.linked && !link.reconnectRequired && link.available !== false
+          ? { label: 'Refresh handle', href: actionHref('refresh'), intent: 'refresh' }
+          : null,
+        replace: link.linked && !link.reconnectRequired && link.available !== false
+          ? { label: 'Change account', href: actionHref('replace'), intent: 'replace' }
+          : null,
+        visibility: link.linked && !link.reconnectRequired
+          ? { checked: link.publicVisible !== false, disabled: !!demo }
+          : null,
+        pendingReplacement: link.pendingReplacement && link.handle
+          ? {
+            currentHandle: link.handle,
+            replacementHandle: link.pendingReplacement.handle,
+            expiresAt: link.pendingReplacement.expiresAt,
+            disabled: !!demo,
           }
           : null,
         unlink: link.linked ? { disabled: !!demo } : null,
@@ -2203,21 +2436,38 @@
       const name = provider === 'x' ? 'X' : 'GitHub';
       const messages = {
         linked: `${name} connected.`,
-        conflict: `That ${name} account is already linked elsewhere, or a different account must be disconnected first.`,
+        refreshed: `${name} handle refreshed.`,
+        confirm: `Another ${name} account was verified. Review the replacement below before anything changes.`,
+        in_use: `That ${name} account is already linked to another Homeroom account. Your current connection is unchanged.`,
+        different_account: `That is a different ${name} account. Use Change account instead; your current connection is unchanged.`,
+        conflict: `That ${name} account could not be used. Your current connection is unchanged.`,
         denied: `${name} connection was cancelled.`,
+        // #3044: the provider bounced the trip before any sign-in page because
+        // Homeroom's callback address is not the one registered on its OAuth
+        // app. Not something the viewer did, and not fixed by retrying.
+        callback_mismatch: `${name} did not accept Homeroom’s callback address, so nothing changed. `
+          + `Ask an administrator to register this site’s callback URL (${window.location.origin}) on the ${name} OAuth app.`,
         error: `${name} could not be connected. Try again.`,
         account_mismatch: 'This browser is signed into a different Homeroom account than the app. Sign out here, then tap Connect again in the app and sign in with the same account.',
       };
       status.textContent = messages[result] || '';
       if (!status.textContent) return;
       status.classList.remove('hidden', 'text-red-700', 'dark:text-red-400', 'text-emerald-700', 'dark:text-emerald-400');
-      status.classList.add(...(result === 'linked'
+      status.classList.add(...(['linked', 'refreshed', 'confirm'].includes(result)
         ? ['text-emerald-700', 'dark:text-emerald-400']
         : ['text-red-700', 'dark:text-red-400']));
     },
 
     async _unlinkGithub(button, provider = 'github') {
       const status = document.getElementById('github-link-status');
+      const name = provider === 'x' ? 'X' : 'GitHub';
+      const confirmed = await PlatformUI.confirm({
+        title: `Disconnect ${name}?`,
+        message: `This removes ${name} from your public profile and may change your daily credit eligibility.`,
+        confirmLabel: 'Disconnect',
+        danger: true,
+      });
+      if (!confirmed) return;
       if (button) button.disabled = true;
       try {
         const response = await fetch(`/api/me/social-identities/${encodeURIComponent(provider)}`, {
@@ -2225,8 +2475,8 @@
           credentials: 'same-origin',
           cache: 'no-store',
         });
-        if (!response.ok) throw new Error(`Could not disconnect ${provider === 'x' ? 'X' : 'GitHub'}.`);
-        await this._loadGithubLink();
+        if (!response.ok) throw new Error(`Could not disconnect ${name}.`);
+        await this._refreshSocialIdentitySurfaces();
       } catch (err) {
         if (button) button.disabled = false;
         if (status) {
@@ -2524,6 +2774,38 @@
       }
     },
 
+    // #2779: where new work starts. The server decides who may choose (403
+    // otherwise) and answers with the effective value; a failed save puts
+    // the checkbox back, as the two toggles above do.
+    async _saveAgentSessions(enabled) {
+      const toggle = document.getElementById('agent-sessions-enabled');
+      const status = document.getElementById('agent-sessions-status');
+      const fail = (msg) => {
+        if (toggle) toggle.checked = !!this.state.agentSessionsEnabled;
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-700', 'dark:text-emerald-400', 'text-zinc-500', 'dark:text-zinc-400');
+          status.classList.add('text-red-700', 'dark:text-red-400');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/agent-sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ enabled: !!enabled }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return fail(j.error || 'Failed to save.');
+        this.state.agentSessionsEnabled = !!j.enabled;
+        if (toggle) toggle.checked = !!j.enabled;
+        if (typeof App !== 'undefined' && App.user) App.user.agentSessionsEnabled = !!j.enabled;
+        if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
+    },
+
     // Show the admin-preview section only when the server reports the
     // user as a *real* admin. App._realIsAdmin is the un-masked value
     // captured in app.js before the localStorage override gets
@@ -2568,6 +2850,7 @@
     close() {
       Settings._open = false;
       Settings._pushedFromMenu = false;
+      Settings._pendingSection = null;
       const input = document.getElementById('settings-api-key');
       if (input) input.value = '';
       this._stopWalletPolling();
@@ -2794,11 +3077,13 @@
       const modelLabel = section.querySelector('label[for="settings-openrouter-model"]');
       if (heading) heading.textContent = 'OpenRouter';
       if (intro) {
-        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. OpenRouter is preferred after you add or claim a key; GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Keys are encrypted at rest and injected only for each turn.';
+        // #3296: the one worker detail worth naming. The platform runs some
+        // OpenRouter models in Claude Code, and the model list tags them; the
+        // default runner stays unnamed, like every other implementation
+        // detail. sections/openrouter.tsx renders this same text statically.
+        intro.textContent = 'Use any compatible model for all chat and coding in an OpenRouter session. These sessions do not use your platform Claude allowance. Your account comes with an included OpenRouter key, so OpenRouter is the default and GLM 5.3 Flash is selected when available, while the complete key-visible model list stays available. Models marked Claude Code in the model list run in Claude Code. Keys are encrypted at rest and injected only for each turn.';
       }
       if (modelLabel) modelLabel.textContent = 'OpenRouter model';
-      const betaGate = document.getElementById('settings-openrouter-beta-gated');
-      if (betaGate) betaGate.textContent = 'OpenRouter is being rolled out gradually and is not available for your account yet.';
     },
 
     _formatOpenRouterPrice(value) {
@@ -2830,6 +3115,9 @@
       const badges = [];
       if (model?.isFavorite) badges.push('★');
       if (model?.isRecommended) badges.push('Recommended');
+      // #3296: the platform runs some OpenRouter models in Claude Code rather
+      // than Codex. Only that exception is named; Codex is every other row.
+      if (model?.harness === 'claude') badges.push('Claude Code');
       if (model?.createdAt) {
         const age = Date.now() - Date.parse(model.createdAt);
         if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
@@ -2910,6 +3198,21 @@
       this._syncOpenRouterModelDetails();
     },
 
+    // #2600: the reasoning-effort picker's first choice is a real level, not
+    // an absence of one, so name the level the platform runs at when nobody
+    // has chosen. The server is the only thing that knows it; if the read
+    // fails the option keeps its plain wording rather than inventing a level.
+    _labelOpenRouterDefaultEffort(effort) {
+      const select = document.getElementById('settings-openrouter-reasoning');
+      const option = Array.from(select?.options || []).find((item) => item.value === '');
+      if (!option) return;
+      const names = {
+        minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high',
+      };
+      const name = names[String(effort || '')] || null;
+      option.textContent = name ? `Default (${name})` : 'Default';
+    },
+
     _syncOpenRouterModelDetails() {
       const select = document.getElementById('settings-openrouter-model');
       const effort = document.getElementById('settings-openrouter-reasoning');
@@ -2950,7 +3253,7 @@
         if (effort.disabled) effort.value = '';
         effort.title = effort.disabled
           ? 'This model does not expose reasoning-effort controls.'
-          : 'Optional OpenRouter reasoning effort for this model.';
+          : 'How long this model thinks before it answers. Default is the level the platform runs at; your choice overrides it.';
       }
     },
 
@@ -2961,7 +3264,6 @@
     },
 
     async _refreshOpenRouter() {
-      const betaGate = document.getElementById('settings-openrouter-beta-gated');
       const display = document.getElementById('settings-openrouter-key-display');
       const last4 = document.getElementById('settings-openrouter-key-last4');
       const info = document.getElementById('settings-openrouter-key-info');
@@ -2969,51 +3271,58 @@
       const input = document.getElementById('settings-openrouter-key');
       const saveBtn = document.getElementById('settings-openrouter-save');
       const modelsWrap = document.getElementById('settings-openrouter-models-wrap');
-      const managedCard = document.getElementById('settings-openrouter-managed-card');
-      const managedMessage = document.getElementById('settings-openrouter-managed-message');
-      const claimBtn = document.getElementById('settings-openrouter-claim');
+      const includedCard = document.getElementById('settings-openrouter-included');
+      const includedStatus = document.getElementById('settings-openrouter-included-status');
       const personalControls = document.getElementById('settings-openrouter-personal-controls');
       try {
+        // #2568: reading this is also what creates an included key for an
+        // account that somehow has none, so it stays ahead of the status
+        // line below. `codexAvailable` is a deployment switch now, not a
+        // per-account allowlist: off means the whole section has nothing
+        // to offer.
         const r = await fetch('/api/me/coding-agent', { credentials: 'same-origin' });
         const prefs = r.ok ? await r.json() : {};
-        const isBeta = !!prefs.codexAvailable;
-        if (betaGate) betaGate.classList.toggle('hidden', isBeta);
-        if (!isBeta) { if (modelsWrap) modelsWrap.classList.add('hidden'); return; }
+        if (!prefs.codexAvailable) {
+          if (includedCard) includedCard.classList.add('hidden');
+          if (modelsWrap) modelsWrap.classList.add('hidden');
+          return;
+        }
+        this._labelOpenRouterDefaultEffort(prefs.defaultReasoningEffort);
       } catch {}
       try {
         const r = await fetch('/api/me/credentials/openrouter', { credentials: 'same-origin' });
         const j = r.ok ? await r.json() : {};
         const managed = j.managed || null;
         const provisioning = j.managedProvisioning || {};
-        if (managedCard) managedCard.classList.toggle('hidden', !provisioning.available && !managed);
-        if (claimBtn) claimBtn.classList.toggle('hidden', !provisioning.canClaim);
-        if (managedMessage) {
+        // #2568: a STATUS line, not a claim card. It says whether the key is
+        // there, its last four and its allowance — and, when it is not
+        // there, what is standing in the way rather than what to press.
+        if (includedCard) includedCard.classList.toggle('hidden', !provisioning.available && !managed);
+        if (includedStatus) {
+          const managedLast4 = managed && j.source === 'usernode_managed' ? j.last4 : null;
           if (managed?.status === 'active') {
             // The key carries the platform's weekly allowance; a key issued
             // before that policy keeps its own limit until it is re-limited.
             const amount = `$${Number(managed.limitUsd || 0).toFixed(2)}`;
             const carries = managed.limitReset === 'weekly'
-              ? `with the platform's ${amount} weekly allowance`
-              : `with a ${amount} ${limitNoun(managed.limitReset)} until it is moved to the platform's weekly allowance`;
-            managedMessage.textContent = `Your Homeroom-managed key is active ${carries}. Admins can block or remove it; you may choose any available model.`;
+              ? `carries the platform's ${amount} weekly allowance`
+              : `carries a ${amount} ${limitNoun(managed.limitReset)} until it is moved to the platform's weekly allowance`;
+            const tail = managedLast4 ? ` (sk-or-…${managedLast4})` : '';
+            includedStatus.textContent = `Active${tail}. It ${carries}, and you may choose any available model.`;
           } else if (managed?.status === 'disabled') {
-            managedMessage.textContent = 'An admin has blocked this company key. Contact the platform admins if it should be enabled again.';
+            includedStatus.textContent = 'An admin has blocked this included key. Contact the platform admins if it should be enabled again.';
           } else if (managed?.status === 'deleted') {
-            managedMessage.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
+            includedStatus.textContent = 'Your included key was deleted by an admin. Included keys are issued once, but you may add a personal key below.';
           } else if (managed?.status === 'needs_review' || managed?.status === 'provisioning') {
-            managedMessage.textContent = 'This key needs admin review. Homeroom did not retry the provider request, which prevents accidental duplicate keys.';
-          } else if (provisioning.verificationRequired && !provisioning.verified) {
-            managedMessage.textContent = 'Connect and verify GitHub or X in Social accounts & connectors to claim one limited company key.';
+            includedStatus.textContent = 'This key needs admin review. Homeroom did not retry the provider request, which prevents accidental duplicate keys.';
           } else if (!provisioning.available) {
-            managedMessage.textContent = 'Included keys are not configured by the platform administrator yet.';
+            includedStatus.textContent = 'Included keys are not configured by the platform administrator yet.';
           } else if (provisioning.reason === 'no_allowance') {
-            managedMessage.textContent = provisioning.identityGated
-              ? 'Connect and verify GitHub or X in Social accounts & connectors to unlock included credits, then claim the company key.'
-              : 'Your account has no included weekly allowance right now, so there is no company key to create. You can add a personal OpenRouter key below.';
+            includedStatus.textContent = 'Your account has no included weekly allowance right now, so there is no included key. You can add a personal OpenRouter key below.';
           } else if (provisioning.reason === 'personal_key_configured') {
-            managedMessage.textContent = 'Remove your personal key first if you want to claim the included company key.';
+            includedStatus.textContent = 'You are using your own OpenRouter key. Remove it to fall back to the included one.';
           } else {
-            managedMessage.textContent = `You can create one included key that carries the platform's $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset, 'allowance')}.`;
+            includedStatus.textContent = `Your included key is being set up. It carries the platform's $${Number(provisioning.limitUsd || 0).toFixed(2)} ${limitNoun(provisioning.limitReset, 'allowance')}; reopen this screen in a moment.`;
           }
         }
         const managedOwnsCredential = !!managed && managed.status !== 'deleted';
@@ -3045,32 +3354,6 @@
           if (modelsWrap) modelsWrap.classList.add('hidden');
         }
       } catch {}
-    },
-
-    async _claimManagedOpenRouterKey() {
-      const btn = document.getElementById('settings-openrouter-claim');
-      if (btn) btn.disabled = true;
-      this._setOrStatus('Creating your limited OpenRouter key…', 'info');
-      try {
-        const r = await fetch('/api/me/credentials/openrouter/managed', {
-          method: 'POST', credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: '{}',
-        });
-        const j = await r.json().catch(() => ({}));
-        if (!r.ok) {
-          this._setOrStatus(j.error || 'Could not create the key.', 'error');
-          await this._refreshOpenRouter();
-          return;
-        }
-        if (typeof App !== 'undefined' && App.user) App.user.openrouterAvailable = true;
-        this._setOrStatus(`Created and selected OpenRouter${j.defaultModel ? ` with ${j.defaultModel}` : ''} as your default.`, 'ok');
-        await this._refreshOpenRouter();
-      } catch (err) {
-        this._setOrStatus(`Network error: ${err.message}`, 'error');
-      } finally {
-        if (btn) btn.disabled = false;
-      }
     },
 
     async _loadOpenRouterModels({ forceRefresh = false } = {}) {
@@ -3259,15 +3542,24 @@
       paintStatus(el, text, kind);
     },
 
+    // Browser-review state for the native-only password-creation link. It
+    // changes availability only: the wallet submit path still requires the
+    // real native bridge before it can make a request.
+    _passwordCreateDemo() {
+      return this._demoParam('shot') === 'password-create';
+    },
+
     // Decide whether the wallet option is even offered, then default to
-    // the password form. The "Use your wallet instead" link only appears
-    // in the Homeroom native app (signMessage available) AND when the
-    // logged-in account has a linked wallet to prove control of.
+    // the password form. The "Create one" link only appears in the Homeroom
+    // native app (signMessage available) AND when the logged-in account has a
+    // linked wallet to prove control of, except for the read-only screenshot
+    // state that makes this native-only copy reviewable in a browser.
     _renderChangePasswordSection() {
       const section = document.getElementById('change-password-section');
       if (!section) return;
       const isNative = !!(window.usernode && window.usernode.isNative);
-      this._walletChangeAvailable = isNative && !!this.state.usernodePubkey;
+      this._walletChangeAvailable = this._passwordCreateDemo()
+        || (isNative && !!this.state.usernodePubkey);
       // Clear any stale field values / status on each open.
       ['cp-current', 'cp-new', 'cp-confirm'].forEach((id) => {
         const el = document.getElementById(id);
@@ -3281,8 +3573,9 @@
     _setChangePasswordMode(mode) {
       // In password mode (or when wallet isn't available) show the
       // current-password field + the normal submit, and offer the
-      // "use your wallet" link only if it's available. In wallet mode hide
-      // the current-password field, swap the submit, and offer the way back.
+      // password-creation link only if the wallet-backed path is available. In
+      // wallet mode hide the current-password field, swap the submit, and offer
+      // the way back.
       const wallet = mode === 'wallet' && this._walletChangeAvailable;
       const show = (id, on) => {
         const el = document.getElementById(id);
@@ -3291,8 +3584,8 @@
       show('cp-current-row', !wallet);
       show('cp-save', !wallet);
       show('cp-wallet-save', wallet);
-      // Offer the "switch to wallet" link only in password mode and only
-      // when wallet change is available; offer the way back in wallet mode.
+      // Offer the password-creation link only in password mode and only when
+      // wallet change is available; offer the way back in wallet mode.
       show('cp-wallet-mode', !wallet && this._walletChangeAvailable);
       show('cp-password-mode', wallet);
     },
@@ -3463,7 +3756,7 @@
       }
     },
 
-    async logout() {
+    async logout({ accountDeleted = false } = {}) {
       const btn = document.getElementById('settings-logout');
       if (btn) btn.disabled = true;
 
@@ -3505,20 +3798,33 @@
       let controller;
       try {
         if (preflight.webRecoverySettled) await preflight.webRecoverySettled;
-        controller = offlineLogout ? new AbortController() : null;
-        const request = fetch('/api/auth/logout', {
+        controller = typeof AbortController === 'function' ? new AbortController() : null;
+        const request = accountDeleted ? Promise.resolve({ ok: true }) : fetch('/api/auth/logout', {
           method: 'POST', credentials: 'same-origin',
           ...(controller ? { signal: controller.signal } : {}),
         });
-        const response = offlineLogout ? await Promise.race([
+        // #2078: BOTH paths are bounded now. The capable-phone budget is
+        // short because native owns the cookie, so giving up early still
+        // ends in a real sign-out. The ordinary web path has to reach the
+        // server — only the server can revoke a web session — so it gets a
+        // generous budget instead, one no working request is near. What it
+        // must not be is ABSENT: this await used to be bare, with the
+        // button already disabled, so a request that never settled left the
+        // screen frozen with nothing to press. Running out here throws into
+        // the catch below, which for the web path is `fail()` — the toast
+        // and the button back, not a sign-out nobody performed.
+        const budgetMs = offlineLogout
+          ? OFFLINE_LOGOUT_TIMEOUT_MS
+          : WEB_LOGOUT_TIMEOUT_MS;
+        const response = await Promise.race([
           request,
           new Promise((_, reject) => {
             timeout = setTimeout(() => {
-              controller.abort();
+              if (controller) controller.abort();
               reject(new Error('Remote sign-out timed out'));
-            }, 2000);
+            }, budgetMs);
           }),
-        ]) : await request;
+        ]);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         webRevoked = true;
       } catch (error) {
@@ -3658,10 +3964,13 @@
     // Fetched fresh on every modal open. Each active grant renders as
     // a row: app name, $spent / $cap today, a cap editor, the BYOK
     // spillover toggle (only when a key is on file), and Revoke.
-    // Revoked grants show a muted badge — re-approving happens via the
-    // app's own consent dialog, not from here. In staging previews the
-    // page's ?demo=1 is passed through so the (always-empty,
-    // staging:private) grant tables still produce a reviewable list.
+    // Revoked grants show a muted badge and Re-enable (#1957), which
+    // re-grants through the consent dialog's own POST with the cap and
+    // BYOK choice the row still carries — before it, the only way back
+    // was that dialog, which an app that never asks again never opens.
+    // In staging previews the page's ?demo=1 is passed through so the
+    // (always-empty, staging:private) grant tables still produce a
+    // reviewable list.
 
     async _renderLlmGrants() {
       const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
@@ -3687,17 +3996,21 @@
     // inline is decided here, where `this.state.hasApiKey` and the demo flag
     // already live — see the note in ./grants-store.js. The money is
     // pre-formatted for the same reason: cents-to-dollars is this module's
-    // rule, not the component's.
+    // rule, not the component's. `appSlug` and `capCents` ride along for
+    // Re-enable (#1957): the re-grant endpoint is keyed on slug, and the
+    // previous cap is what it restores.
     _grantView(g) {
       const spent = ((g.spentTodayCents || 0) + (g.byokSpentTodayCents || 0)) / 100;
       const cap = (g.dailyCapCents || 0) / 100;
       return {
         appId: g.appId,
         appName: String(g.appName ?? ''),
+        appSlug: String(g.appSlug ?? ''),
         revoked: g.status !== 'active',
         spent: spent.toFixed(2),
         cap: cap.toFixed(2),
         capValue: cap.toFixed(2),
+        capCents: Number(g.dailyCapCents) || 0,
         showByok: !!(this.state.hasApiKey || g.allowByok),
         allowByok: !!g.allowByok,
       };
@@ -3708,13 +4021,14 @@
     // reach the API.
     _isDemoGrant(appId) { return appId < 0; },
 
-    // ── The three row handlers ───────────────────────────────────
+    // ── The row handlers ─────────────────────────────────────────
     //
-    // These were closures inside the row builder, wired with addEventListener
-    // to nodes it had just created. They are methods now, called by name from
-    // ./grants-list.tsx, because the component owns the markup and this module
-    // owns the writes. Each still reports through _setLlmGrantsStatus and
-    // re-renders on success, exactly as before.
+    // The first three were closures inside the row builder, wired with
+    // addEventListener to nodes it had just created. They are methods now,
+    // called by name from ./grants-list.tsx, because the component owns the
+    // markup and this module owns the writes. Each still reports through
+    // _setLlmGrantsStatus and re-renders on success, exactly as before.
+    // _onGrantReenable (#1957) is the fourth, written the same way.
 
     async _onGrantCapChange(appId, value) {
       const status = (t, k) => this._setLlmGrantsStatus(t, k);
@@ -3787,11 +4101,265 @@
       }
     },
 
+    // The way back from Revoke (#1957). The consent dialog's POST is an
+    // upsert keyed on slug that re-activates a revoked row, so re-enabling
+    // re-sends the cap and BYOK choice the row still carries and the grant
+    // comes back as it was; the active row's controls take over from there.
+    // No confirm dialog: this is not destructive, and the row's copy already
+    // says what the click restores.
+    //
+    // If the old cap no longer fits the user's allowance (the ceiling moved
+    // since the grant was made), the server refuses it with a 400 that
+    // carries no `code` — credit_required and byok_required both do — so
+    // retry once at the server's default cap rather than strand the row
+    // with no way back, and say so. Anything else is reported verbatim,
+    // as the cap editor's errors are.
+    async _onGrantReenable(grant) {
+      const status = (t, k) => this._setLlmGrantsStatus(t, k);
+      if (this._isDemoGrant(grant.appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      const post = (body) => fetch('/api/me/llm-grants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ appSlug: grant.appSlug, allowByok: !!grant.allowByok, ...body }),
+      });
+      try {
+        const withCap = grant.capCents > 0;
+        let r = await post(withCap ? { dailyCapCents: grant.capCents } : {});
+        let j = await r.json().catch(() => ({}));
+        let atDefault = false;
+        if (withCap && r.status === 400 && !j.code) {
+          r = await post({});
+          j = await r.json().catch(() => ({}));
+          atDefault = true;
+        }
+        if (!r.ok) { status(j.error || 'Failed to re-enable.', 'error'); return; }
+        const cap = ((j.grant && j.grant.dailyCapCents) || 0) / 100;
+        status(atDefault ? `Re-enabled at the default $${cap.toFixed(2)} daily cap.` : 'Re-enabled.', 'ok');
+        this._renderLlmGrants();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
+    },
+
     _setLlmGrantsStatus(text, kind) {
       const el = document.getElementById('llm-grants-status');
       if (!el) return;
       paintStatus(el, text, kind);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // ── App device permissions (#2219) ───────────────────────────
+    //
+    // The sibling of the AI-permissions block above, against
+    // /api/me/permission-grants. Grants are per (app, capability), so the
+    // rows are GROUPED by app here rather than in the component: which
+    // shape the list takes is this module's call, and the component
+    // renders the answer (see ./app-permissions-list.tsx).
+    //
+    // Like the AI grants, the table is staging:private and therefore always
+    // empty in a clone, so ?demo=1 is passed through for the preview.
+
+    async _renderAppPermissions() {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsAppPermissions : null;
+      if (!bridge) return;
+      const publish = bridge.publish;
+      publish({ phase: 'loading', apps: [] });
+      const demo = new URLSearchParams(window.location.search).get('demo') === '1';
+      let grants = [];
+      try {
+        const r = await fetch('/api/me/permission-grants' + (demo ? '?demo=1' : ''), { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('fetch failed');
+        const j = await r.json();
+        grants = j.grants || [];
+      } catch {
+        publish({ phase: 'error', apps: [] });
+        return;
+      }
+      publish({ phase: 'ready', apps: this._permissionAppViews(grants) });
+    },
+
+    // Grants as DATA, one entry per app. Insertion order is the server's
+    // (active apps first, then by name), and the capability order inside an
+    // app is the catalogue's, because that is the order the API returns.
+    _permissionAppViews(grants) {
+      const byApp = new Map();
+      for (const g of grants) {
+        const appId = g.appId;
+        if (!byApp.has(appId)) {
+          byApp.set(appId, {
+            appId,
+            appName: String(g.appName ?? g.appSlug ?? ''),
+            appSlug: String(g.appSlug ?? ''),
+            items: [],
+          });
+        }
+        byApp.get(appId).items.push({
+          capability: String(g.capability ?? ''),
+          label: String(g.label ?? g.capability ?? ''),
+          revoked: g.status !== 'active',
+        });
+      }
+      return [...byApp.values()];
+    },
+
+    _setAppPermissionsStatus(text, kind) {
+      const el = document.getElementById('app-permissions-status');
+      if (!el) return;
+      paintStatus(el, text, kind);
+      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // ── What apps tell you about (#1374) ─────────────────────────────
+    //
+    // Two layers, one fetch: the account-wide defaults and every per-app
+    // exception. GET /api/me/notification-preferences returns both, because
+    // an exception is meaningless without the default it departs from.
+    //
+    // Like the AI grants above, the table is staging:private and therefore
+    // always empty in a clone, so ?demo=1 is passed through for the preview.
+
+    async _renderNotificationPrefs() {
+      const bridge = (typeof window !== 'undefined' && window.UsernodeReact)
+        ? window.UsernodeReact.settingsNotificationPrefs : null;
+      if (!bridge) return;
+      const publish = bridge.publish;
+      publish({ phase: 'loading', categories: [], apps: [] });
+      const demo = new URLSearchParams(window.location.search).get('demo') === '1';
+      try {
+        const r = await fetch('/api/me/notification-preferences' + (demo ? '?demo=1' : ''),
+          { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('fetch failed');
+        const j = await r.json();
+        publish({
+          phase: 'ready',
+          categories: j.categories || [],
+          apps: j.apps || [],
+        });
+      } catch {
+        publish({ phase: 'error', categories: [], apps: [] });
+      }
+    },
+
+    _setNotificationPrefsStatus(text, kind) {
+      const el = document.getElementById('notification-prefs-status');
+      if (!el) return;
+      paintStatus(el, text, kind);
+      if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // Change the account-wide default for one category. Every app that has
+    // no exception of its own follows this immediately; the ones that do
+    // keep theirs, which is the whole point of the two layers.
+    async _onNotificationDefaultChange(category, enabled) {
+      const status = (t, k) => this._setNotificationPrefsStatus(t, k);
+      try {
+        const r = await fetch('/api/me/notification-preferences', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ preferences: { [category]: enabled } }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to save.', 'error'); return; }
+        status('Saved.', 'ok');
+        this._renderNotificationPrefs();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
+    },
+
+    // Drop one app's exceptions so it follows the defaults again.
+    //
+    // A DELETE rather than writing each category to the default's current
+    // value: the app goes back to INHERITING, so it keeps following if a
+    // default changes later. Writing the values would freeze them.
+    async _onNotificationAppReset(appId, appSlug) {
+      const status = (t, k) => this._setNotificationPrefsStatus(t, k);
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      if (!appSlug) { status('This app could not be identified.', 'error'); return; }
+      try {
+        const r = await fetch(
+          `/api/apps/${encodeURIComponent(appSlug)}/notification-preferences`,
+          { method: 'DELETE', credentials: 'same-origin' }
+        );
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to reset.', 'error'); return; }
+        status('Following your defaults again.', 'ok');
+        this._renderNotificationPrefs();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
+    },
+
+    // Revoke one capability from one app.
+    //
+    // The confirm copy says NEXT TIME IT OPENS rather than "immediately",
+    // and that difference is not hedging: a frame's Permissions Policy is
+    // computed from its `allow` attribute at navigation and cannot be
+    // narrowed afterwards, so a running app keeps what it already holds
+    // until it is reopened. The AI section can honestly promise immediate
+    // because its gate is a server-side check on every call.
+    async _onPermissionRevoke(appId, capability) {
+      const status = (t, k) => this._setAppPermissionsStatus(t, k);
+      const ok = await ConfirmModal.show({
+        title: 'Revoke this permission?',
+        message: 'The app loses it the next time it opens. It can ask you again later.',
+        confirmLabel: 'Revoke',
+        danger: true,
+      });
+      if (!ok) return;
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch(
+          `/api/me/permission-grants/${appId}/${encodeURIComponent(capability)}`,
+          { method: 'DELETE', credentials: 'same-origin' }
+        );
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { status(j.error || 'Failed to revoke.', 'error'); return; }
+        status('Revoked. It stops the next time the app opens.', 'ok');
+        this._renderAppPermissions();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
+    },
+
+    // The way back from Revoke, for the same reason the AI rows grew one
+    // (#1957): re-approving otherwise depends on the app asking again, and
+    // an app that never asks again never opens the prompt. The grant POST is
+    // an upsert keyed on (slug, capability) that re-activates the row, and
+    // it re-checks the declaration server-side — so an app that has since
+    // dropped the capability from its dapp.json is refused here too, which
+    // is the answer we want to show.
+    //
+    // No confirm dialog: this is not destructive, and the row's copy already
+    // says what the click restores.
+    async _onPermissionReenable(appId, appSlug, capability) {
+      const status = (t, k) => this._setAppPermissionsStatus(t, k);
+      if (!appSlug) { status('This app could not be identified.', 'error'); return; }
+      // The fabricated ?demo=1 rows name apps that do not exist, so the POST
+      // would 404. Same guard the revoke path above has.
+      if (this._isDemoGrant(appId)) { status('Demo data: changes are not saved.', 'info'); return; }
+      try {
+        const r = await fetch('/api/me/permission-grants', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ appSlug, capability }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          status(j.code === 'not_declared'
+            ? 'This app no longer asks for that permission.'
+            : (j.error || 'Failed to re-enable.'), 'error');
+          return;
+        }
+        status('Re-enabled. It applies the next time the app opens.', 'ok');
+        this._renderAppPermissions();
+      } catch (err) {
+        status('Network error: ' + err.message, 'error');
+      }
     },
 
     // ── Agent instructions & skills (#460) ───────────────────────
@@ -4366,7 +4934,6 @@
 
     DEMO_USERNODE_STATE: {
       buildInfo: { appVersion: '0.0.0-demo', buildNumber: '0' },
-      nodeSleepEnabled: true,
       debugMode: false,
       facematchStrict: true,
       authStatus: 'authenticated',
@@ -5299,11 +5866,6 @@
         belowDemoCut: !demo,
         socialPush: this._socialPushView(),
         blockProduction: this._bpView(),
-        nodeSleep: s ? {
-          label: 'Node sleep on inactivity',
-          checked: s.nodeSleepEnabled !== false,
-          action: '_setNodeSleep',
-        } : null,
         privacy: s ? {
           facematch: {
             label: 'Strict facematch',
@@ -5702,7 +6264,6 @@
 
     _openBatterySettings() { return window.usernode.openBatterySettings(); },
     _openNotifSettings() { return window.usernode.openNotificationSettings(); },
-    _setNodeSleep(v) { return this._unApply(window.usernode.setNodeSleepEnabled(v)); },
     _setFacematchStrict(v) { return this._unApply(window.usernode.setFacematchStrict(v)); },
     _setDebugMode(v) { return this._unApply(window.usernode.setDebugMode(v)); },
     _openZkIdentityScreen() {
@@ -5821,6 +6382,16 @@
         if (window.PlatformUI) PlatformUI.toast('Request sent. An admin will release your keys');
         this._bpState = Object.assign({}, this._bpState || {}, { bp_requested: true });
         this._publishUsernode();
+        // #2960: the Android "Set up your device" sheet (exact alarms +
+        // unrestricted background) waits for exactly this moment. Re-run the
+        // first-run trigger now that the account has asked to produce; it
+        // re-reads the queue, and on iOS or an already-answered device it
+        // presents nothing.
+        // `force`: the user just asked, so skip the once-a-day wait.
+        if (window.NativeChrome &&
+            typeof NativeChrome.maybeShowFirstRunPermissions === 'function') {
+          NativeChrome.maybeShowFirstRunPermissions({ force: true });
+        }
       } catch (e) {
         if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
       }

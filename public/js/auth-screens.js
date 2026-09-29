@@ -139,6 +139,9 @@
     // (`/app/...`). Restored right before the authed boot so the router lands
     // on the exact app instead of the platform home.
     _pendingHash: '',
+    // The token of an invite link an account still waiting opened, kept by
+    // showWaiting for the waiting room (features/auth/waiting.tsx).
+    _waitingInvite: '',
     _wired: {},           // per-screen one-shot wiring markers
     _waitingTimer: null,
 
@@ -198,6 +201,9 @@
     deepLinkUrl(target) {
       const value = String(target || '');
       if (value.startsWith('/app/')) return value;
+      // An invite link a visitor signed in from (App.restoreFromHash
+      // remembers it): back to it, so it is followed as the new session.
+      if (/^\/invite\/[A-Za-z0-9_-]{22}$/.test(value)) return value;
       if (value.startsWith('#')) return '/' + value;
       return '/';
     },
@@ -237,6 +243,11 @@
 
     // Waiting-room entry (App.enterAuthed with hasPlatformAccess=false).
     showWaiting() {
+      // An invite link opened by an account still waiting: the address is
+      // about to become /#waiting, so its token is kept for the waiting room,
+      // which follows it (features/auth/waiting.tsx) and clears this.
+      const invite = /^\/invite\/([A-Za-z0-9_-]{22})$/.exec(location.pathname);
+      if (invite) AuthScreens._waitingInvite = invite[1];
       if (AuthScreens.routeFromHash(location.hash.replace('#', '')) !== 'waiting') {
         const target = window.App?._rootUrl?.('#waiting') || '#waiting';
         history.replaceState(null, '', target);
@@ -264,7 +275,9 @@
       // Per-route side effects run even when the screen element is
       // already up (e.g. login ↔ signup share one screen).
       if (route === 'landing') AuthScreens._landingOnShow();
-      if (route === 'login') AuthScreens._loginOnShow(false);
+      // seg is `forgot` on #login/forgot, the recovery view's own address
+      // (QA 2026-09-24 Q16), so Back from it lands on Sign in.
+      if (route === 'login') AuthScreens._loginOnShow(false, seg);
       // seg is the url-encoded email address from a waitlist-release link
       // (#signup/<address>); the login island prefills it and asks for a code.
       if (route === 'signup') AuthScreens._loginOnShow(true, seg);
@@ -288,13 +301,25 @@
         : (DEPTH[route] > DEPTH[prev] ? 'push'
           : DEPTH[route] < DEPTH[prev] ? 'pop' : 'none');
 
+      // BEFORE the transition, not after it. `prev`, `sameScreen` and `type`
+      // are all resolved above, so nothing below still needs the old value —
+      // and App._syncPlatformTabs reads this to decide whether the platform's
+      // tab bar belongs on screen, from inside the callback. `fx` runs that
+      // callback synchronously on the no-animation path and a task later on
+      // the animated one; an assignment after the call is correct for one of
+      // those and a frame late for the other.
+      AuthScreens._current = route;
       fx(() => {
         window.UsernodeBrowserScroll?.capture();
         for (const r of Object.keys(SCREEN_IDS)) {
           setScreenVisible(SCREEN_IDS[r], SCREEN_IDS[r] === id);
         }
+        // The platform's tab bar has nothing to tab to from here, so it goes
+        // with the rest of the authed shell. In the callback because the kit
+        // captures the incoming page from what the callback did before it
+        // returned — the same rule App._showOnlyScreen states for the header.
+        window.App?._syncPlatformTabs?.();
       }, type);
-      AuthScreens._current = route;
     },
 
     // See show(). Reached by name — this file is a classic script, and
@@ -311,6 +336,11 @@
       AuthScreens._resetLandingViewer();
       for (const r of Object.keys(SCREEN_IDS)) setScreenVisible(SCREEN_IDS[r], false);
       AuthScreens._current = null;
+      // The authed shell is back, so the tab bar's decision changes — but
+      // WHETHER it comes back is App's to say, not this file's: the viewer
+      // may be landing straight into an app or a chromeless route. Cleared
+      // `_current` first, for the reason show() gives.
+      window.App?._syncPlatformTabs?.();
     },
 
     _wireScreen(route) {

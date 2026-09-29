@@ -60,20 +60,28 @@
 
 import { useCallback, useEffect, useRef } from 'react';
 
+import { LockIcon, UserGroupIcon } from '@/components/ui/icons';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { LIVE_APP_LABEL, LiveAppDot, useLiveAppSlugs } from '../app-frame/live-apps';
 import { AppsLoadError } from '../apps/load-error';
+import { NO_APPS_YET } from '../apps/no-apps-yet';
 import { TileSkeleton } from '../apps/tile-skeleton';
-import { gridStore, type GridItem, type HomeAppView, type IconView } from './grid-store';
+import { CreateTile } from './create-tile';
+import { gridStore, type GridItem, type GridPlacement, type HomeAppView, type IconView } from './grid-store';
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Home : null) || null;
 }
 
-function cellStyle(item: GridItem): string | undefined {
-  const p = item.placement;
+function placementStyle(p: GridPlacement | null): string | undefined {
   if (!p) return undefined;
   return `grid-column:${p.col + 1}/span ${p.w};grid-row:${p.row + 1}/span ${p.h}`;
+}
+
+function cellStyle(item: GridItem): string | undefined {
+  return placementStyle(item.placement);
 }
 
 function AppIcon({ icon }: { icon: IconView }) {
@@ -130,7 +138,29 @@ const wired = new WeakSet<Element>();
  */
 const SKELETON_TILES = 8;
 
-function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; yours: boolean }) {
+/*
+ * THE ERRORED TILE'S RETRY (QA 2026-09-24 Q9). It used to be a text button
+ * pinned to the tile's top-right corner (`absolute top-2 right-2`): on a phone
+ * the 56px icon, painted later with no z-index, covered it, so a tap landed on
+ * the icon and did nothing; on desktop it sat about 90px from the icon, and the
+ * whole tile was `grayscale` and `cursor-not-allowed`, so the one working
+ * control on it looked disabled.
+ *
+ * It is a small filled pill in the caption lane now, beside "Error". The lane
+ * is the tile's fixed 12px line (see --home-cell-h in app.css), so the pill is
+ * drawn at that height and its hit area is grown by an invisible `::before`
+ * rather than by padding, which would push the tile past its row. A tile with
+ * Retry greys only its ICON, so "Error" and the pill keep their colour.
+ * home.js's renderAppCard spells the same classes.
+ */
+const RETRY_BTN = 'retry-btn relative inline-flex items-center rounded-full bg-violet-600 hover:bg-violet-500 '
+  + 'px-1.5 text-[11px] leading-3 font-semibold text-white cursor-pointer transition-colors '
+  + "before:absolute before:-inset-x-1.5 before:-inset-y-2 before:content-[''] "
+  + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-1';
+
+function AppCardTile({ app, style, yours, live }: {
+  app: HomeAppView; style?: string; yours: boolean; live: boolean;
+}) {
   const node = useRef<HTMLDivElement | null>(null);
   const wireRef = useCallback((el: HTMLDivElement | null) => {
     node.current = el;
@@ -168,18 +198,20 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
     <div
       ref={wireRef}
       className={`app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-1.5 ${
-        app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer') : 'cursor-not-allowed grayscale-[0.75]'
+        app.clickable ? (yours ? 'cursor-grab' : 'cursor-pointer')
+          : app.showRetry ? 'cursor-not-allowed' : 'cursor-not-allowed grayscale-[0.75]'
       }`}
       data-slug={app.slug}
       data-status={app.status}
       data-locked={String(app.locked)}
       tabIndex={0}
       role="button"
-      aria-label={app.name}
+      aria-label={live ? `${app.name}, ${LIVE_APP_LABEL}` : app.name}
       aria-haspopup="menu"
       title={`${app.name}. Hold or right-click for app actions`}
       {...(app.demo ? { 'data-demo': 'true' } : null)}
       {...(yours ? { 'data-yours': 'true' } : null)}
+      {...(live ? { 'data-live': 'true' } : null)}
       onPointerDownCapture={(e) => {
         if ((e.target as HTMLElement).closest('.retry-btn')) { e.stopPropagation(); return; }
         const N = controller();
@@ -232,16 +264,7 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
         (window as any).App?.navigateToApp(app.slug);
       }}
     >
-      {app.showRetry ? (
-        <button
-          className="retry-btn absolute top-2 right-2 text-xs text-emerald-700 hover:text-emerald-800 dark:text-emerald-400 dark:hover:text-emerald-300 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors"
-          data-slug={app.slug}
-          onClick={(e) => { e.stopPropagation(); controller()?._onRetry?.(app.slug, e.currentTarget); }}
-        >
-          Retry
-        </button>
-      ) : null}
-      <div className="relative w-14 h-14 shrink-0">
+      <div className={app.showRetry ? 'relative w-14 h-14 shrink-0 grayscale-[0.75]' : 'relative w-14 h-14 shrink-0'}>
         {/*
             The tile KEEPS its 3.5rem box — the grid's cell height, the drag
             overlay's mirror and HomeLayout's geometry are all measured
@@ -269,10 +292,48 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
             ⑂
           </span>
         ) : null}
+        {/* #2902: still loaded — opening it resumes it as it was left. */}
+        {live ? <LiveAppDot className="app-card-live-dot" /> : null}
+        {/*
+            WHERE IT LIVES (communities, stage 4): people for a Group, a lock
+            for a project that is Just you, and nothing for a Community, which
+            is what most tiles are. The icon's bottom-right corner, the one
+            the fork tag (bottom-left) and the live dot (top-right) leave.
+        */}
+        {app.audience !== 'open' ? (
+          <span
+            className="app-card-stage absolute -bottom-1 -right-1 w-5 h-5 flex items-center justify-center rounded-full bg-white text-zinc-600 shadow-[0_0_0_1.5px_var(--app-sheet-line)] dark:bg-zinc-800 dark:text-zinc-300"
+            data-stage={app.audience}
+            title={app.audience === 'invited' ? 'Group' : 'Just you'}
+            aria-label={app.audience === 'invited' ? 'Group' : 'Just you'}
+          >
+            {app.audience === 'invited'
+              ? <UserGroupIcon className="w-3 h-3" aria-hidden="true" />
+              : <LockIcon className="w-3 h-3" aria-hidden="true" />}
+          </span>
+        ) : null}
       </div>
       <div className="w-full min-w-0">
         <div className="app-card-title" title={app.name}>{app.name}</div>
-        {app.statusLabel ? (
+        {app.statusLabel && app.showRetry ? (
+          <div className="app-card-retry flex items-center justify-center gap-1">
+            <p
+              className="app-card-status text-[color:var(--state-blocked)]"
+              {...(app.failureReason ? { title: app.failureReason } : null)}
+            >
+              {app.statusLabel}
+            </p>
+            <button
+              type="button"
+              className={RETRY_BTN}
+              data-slug={app.slug}
+              aria-label={`Retry ${app.name}`}
+              onClick={(e) => { e.stopPropagation(); controller()?._onRetry?.(app.slug, e.currentTarget); }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : app.statusLabel ? (
           <p
             className={`app-card-status ${app.isAwaiting ? 'text-[color:var(--state-attention)]' : 'text-[color:var(--state-blocked)]'}`}
             {...(app.failureReason ? { title: app.failureReason } : null)}
@@ -285,8 +346,45 @@ function AppCardTile({ app, style, yours }: { app: HomeAppView; style?: string; 
   );
 }
 
+/**
+ * "Your apps" with nothing in it (#2564).
+ *
+ * The launcher had no empty state: a finished load with no apps rendered an
+ * empty `#app-list`, so the area under the "Your apps" label was blank and a
+ * first sign-in read as a screen that had failed to fill rather than one with
+ * nothing in it yet. This is the one line it says instead, and it is the SAME
+ * sentence the app-context sheet's switcher strip already used for the same
+ * empty set — see ../apps/no-apps-yet.ts for why that is a shared constant.
+ *
+ * It is NOT the other two empty answers this grid already had, and it must not
+ * replace either: a failed load is `AppsLoadError` with a Retry, and a search
+ * that matched nothing names the query. Both mean "something went wrong or is
+ * being hidden"; this one means "there is genuinely nothing here yet", which is
+ * why it points at Discover rather than offering an action of its own.
+ *
+ * `col-span-full` because the item has no placement of its own — every tile on
+ * this canvas is placed at an explicit cell and this note is not a tile, so it
+ * auto-places into the first row and spans the four columns. `flex
+ * items-center` centres it in that row: a grid item stretches to the row box,
+ * and in the grid view app.css sizes every row at a fixed `--home-cell-h`, so
+ * padding alone would sit the line hard against the top of a 116px row. The
+ * `py-8` is for the case where no auto-row height applies and the item is only
+ * as tall as its content.
+ */
+export function AppsEmptyNote() {
+  return (
+    <div
+      data-home-apps-empty=""
+      className="col-span-full flex items-center justify-center px-4 py-8 text-center text-sm text-zinc-500 dark:text-zinc-400"
+    >
+      {NO_APPS_YET}
+    </div>
+  );
+}
+
 export function AppGrid() {
   const state = useStoreState(gridStore);
+  const live = useLiveAppSlugs();
   const listRef = useRef<HTMLDivElement | null>(null);
 
   // `grid-template-rows` is written to the ELEMENT rather than rendered as a
@@ -307,6 +405,22 @@ export function AppGrid() {
   // tail of _wireCards. Detach on unmount so a remount cannot leave two
   // recognizers fighting for the same gesture.
   const canDrag = state.view === 'grid' && state.ready;
+
+  // A FINISHED load of the launcher canvas that holds nothing.
+  //
+  // `state.ready` is the whole hydration contract here: the store's initial
+  // value is `ready: false` (grid-store.ts), the SSG pass renders that value,
+  // and so this branch is absent from the prerendered document — which is what
+  // it has to be, since the note is data-dependent and a first client render
+  // that disagreed with the prerender would `console.error` and fail the
+  // proposal checks. The other three conditions keep it out of the states that
+  // already answer for themselves: a load notice (offline, or the error card),
+  // a search that matched nothing, and the search view generally.
+  const empty = state.ready
+    && state.view === 'grid'
+    && !state.notice
+    && state.emptyQuery === null
+    && state.items.length === 0;
   useEffect(() => {
     const el = listRef.current;
     const N = controller();
@@ -331,6 +445,8 @@ export function AppGrid() {
     // before this commit is no longer a rendering of a lift. It finds the rail
     // itself — a repaint of the grid is not one of the panels.
     N?._maybeShowShotIncoming?.();
+    // And the one for the drop into the Homeroom widget strip (#2894).
+    if (el) N?._maybeShowShotWidgetDrop?.(el);
   });
 
   return (
@@ -369,14 +485,25 @@ export function AppGrid() {
           className="col-span-full grid grid-cols-4 gap-1.5 sm:gap-2"
         />
       ) : null}
+      {empty ? <AppsEmptyNote /> : null}
       {state.items.map((item) => (
         <AppCardTile
           key={`card:${item.app.slug}`}
           app={item.app}
           style={cellStyle(item)}
           yours={state.view === 'grid'}
+          live={live.includes(item.app.slug)}
         />
       ))}
+      {/*
+          "Create an app", the grid's LAST child (./create-tile.tsx). Null
+          until Home.render() has painted the launcher — the store's initial
+          value — so the prerender and the first client render agree on this
+          node's children. Its cell comes from the same paint as the tiles'.
+      */}
+      {state.create ? (
+        <CreateTile view={state.create} style={placementStyle(state.create.placement)} />
+      ) : null}
     </div>
   );
 }

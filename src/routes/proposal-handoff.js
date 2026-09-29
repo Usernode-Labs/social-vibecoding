@@ -4,15 +4,20 @@ const crypto = require('node:crypto');
 const express = require('express');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const github = require('../services/github');
 const staging = require('../services/staging');
 const stagingRecovery = require('../services/staging-recovery');
 const visuals = require('../services/visuals');
 const sessionLifecycle = require('../services/session-lifecycle');
 const proposalUpdate = require('../services/proposal-update');
+const prMetadata = require('../services/pr-metadata');
 const prImportSync = require('../services/pr-import-sync');
+const summaryFreshness = require('../services/summary-freshness');
 const branchNames = require('../services/branch-names');
 const externalAgentHead = require('../services/external-agent-head');
+const topicAttrs = require('../services/topic-attributes');
+const visualEvidencePlan = require('../services/visual-evidence-plan');
 // The connector-error → HTTP status map. It lives in routes/dev-flow.js
 // because tests/dev-flow-routes.test.js scrapes the services' emitted codes
 // against it in both directions; importing it here rather than restating it is
@@ -25,6 +30,7 @@ const connectorLimits = require('../services/connector-limits');
 const { drainGuard } = require('../services/lifecycle');
 const events = require('../services/events');
 const log = require('../services/logger');
+const { changeHashPath } = require('../services/change-destination');
 const {
   MAX_UPLOAD_FILES,
   MAX_UPLOAD_FILE_BYTES,
@@ -115,6 +121,47 @@ function parseBodySessionId(value, label) {
     throw new ValidationError(`${label} must be a positive session integer`);
   }
   return value;
+}
+
+function parseVisualEvidence(value) {
+  if (value === undefined) return undefined;
+  try {
+    return visualEvidencePlan.parseIntent(value);
+  } catch (err) {
+    throw new ValidationError(err.message);
+  }
+}
+
+function visualEvidenceResponse(applied, session = {}) {
+  const raw = applied || {
+    state: session.visual_evidence_state || null,
+    required: session.visual_evidence_detail?.required === true,
+    accepted: false,
+    rejected: false,
+  };
+  if (typeof proposalUpdate.visualEvidenceSubmissionFields === 'function') {
+    return proposalUpdate.visualEvidenceSubmissionFields(raw);
+  }
+  return {
+    visualEvidenceState: raw.state || null,
+    visualEvidenceAccepted: raw.accepted === true,
+    visualEvidenceRejected: raw.rejected === true,
+    visualEvidenceRequired: raw.required === true,
+    visualEvidenceNextStep: raw.nextStep || 'none',
+  };
+}
+
+async function applyVisualEvidenceRevision(args) {
+  if (typeof proposalUpdate.applyVisualEvidenceRevision === 'function') {
+    return proposalUpdate.applyVisualEvidenceRevision(args);
+  }
+  return {
+    state: args.session?.visual_evidence_state || null,
+    required: args.session?.visual_evidence_detail?.required === true,
+    accepted: false,
+    rejected: args.visualEvidence !== undefined,
+    changed: false,
+  };
 }
 
 function parseIssueNumbers(value) {
@@ -220,7 +267,7 @@ function parseContextBody(body) {
 }
 
 function parseBuildBody(body) {
-  exactKeys(body, ['schemaVersion', 'headSha', 'history', 'spec', 'tests'], 'body');
+  exactKeys(body, ['schemaVersion', 'headSha', 'history', 'spec', 'tests', 'visualEvidence'], 'body');
   if (body.schemaVersion !== 1) throw new ValidationError('schemaVersion must be 1');
   return {
     headSha: parseSha(body.headSha, 'headSha'),
@@ -229,6 +276,7 @@ function parseBuildBody(body) {
       label: 'spec', min: 1, max: MAX_SPEC_BYTES,
     }),
     tests: parseTests(body.tests),
+    visualEvidence: parseVisualEvidence(body.visualEvidence),
   };
 }
 
@@ -338,7 +386,7 @@ function requireCliMiddleware(req, res, next) {
 // anything. Everything else is the same field with the same cap, because the
 // two calls carry the same work — they differ only in where it lands.
 function parseShareInProgressBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'externalAgent'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'externalAgent', 'visualEvidence'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -378,6 +426,7 @@ function parseShareInProgressBody(body) {
     title,
     description,
     linkedIssues: body.linkedIssues == null ? null : body.linkedIssues,
+    visualEvidence: parseVisualEvidence(body.visualEvidence),
     testing: {
       ...(body.testingPaths != null ? { testingPaths: body.testingPaths } : {}),
       ...(body.testingSteps != null ? { testingSteps: body.testingSteps } : {}),
@@ -386,7 +435,7 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'recheck'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'recheck', 'visualEvidence'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -441,7 +490,7 @@ function parseUpdateFromForkBody(body) {
   const testing = require('../services/testing-notes').parseSubmitted(body);
   return { branch, forkRepo, expectedHeadSha, testing, title,
     description,
-    recheck, linkedIssues };
+    recheck, linkedIssues, visualEvidence: parseVisualEvidence(body.visualEvidence) };
 }
 
 function repoCoordinates(app) {
@@ -527,12 +576,12 @@ function currentProposalBranchHead(session) {
 
 // Managed local revisions follow the shared proposal lifecycle: active work
 // is mutable, promoted proposals are mutable with a vote reset, and states the
-// general rule freezes (notably merging/merged) remain frozen. Paused sessions
-// retain their existing resume-first behavior.
+// general rule freezes (notably merging/merged) remain frozen. Pausing hosted
+// coding does not prevent explicitly uploading or verifying local work.
 function managedRevisionKind(session) {
   const kind = proposalUpdate.isContinuableStatus(session?.status);
   if (kind === 'proposal') return kind;
-  if (kind === 'session' && session?.status === 'active') return kind;
+  if (kind === 'session') return kind;
   return null;
 }
 
@@ -557,7 +606,7 @@ function isoDateOrNull(value) {
 function checksSnapshot(session, runtime, options = {}) {
   const ranOnCommit = session.checks_commit_sha || null;
   const currentHead = currentProposalBranchHead(session);
-  const managed = session.status === 'active' || session.status === 'promoted';
+  const managed = ['active', 'paused', 'promoted'].includes(session.status);
   const stalled = managed
     && !hasUnsubmittedUpload(session)
     && !runtime.inFlight
@@ -596,11 +645,16 @@ function revisionBuildState(session, checks, runtime) {
 
 function statusNextStep(state, revisionState, checks) {
   const progress = revisionState || state;
+  if (state === 'paused') {
+    if (progress === 'failed') {
+      return 'Coding is paused. Re-run checks on this same revision with proposal_recheck without resuming coding. If the failure needs code changes, upload and submit a later fast-forwarding local commit to this same session; do not call proposal_start.';
+    }
+  }
   if (progress === 'stalled') {
     return 'This check run is overdue and no live worker owns it. Re-run checks on this same session with proposal_recheck, then keep polling proposal_status. Do not call proposal_start.';
   }
   if (progress === 'deploying' || progress === 'checking') {
-    return 'A build or check run is still in progress. Keep this session and request ID and poll proposal_status; do not push or call proposal_start.';
+    return 'A build or check run is still in progress. Keep this session and request ID and poll proposal_status; do not push or call proposal_start. If the user wants it opened for voting now, proposal_promote works while the checks run; it can merge only once they pass.';
   }
   if (progress === 'uploaded') {
     return 'Submit the uploaded head on this same session with proposal_submit_build.';
@@ -613,7 +667,7 @@ function statusNextStep(state, revisionState, checks) {
       ? 'The build or checks infrastructure failed. Re-run this same session with proposal_recheck; create a new proposal only if the user explicitly asks to replace it.'
       : 'Fix the reported failure and submit a later fast-forwarding commit to this same proposal.';
   }
-  if (progress === 'ready' && state === 'active') {
+  if (progress === 'ready' && ['active', 'ready', 'paused'].includes(state)) {
     return 'The proposal is ready. Promote this same session only if the user wants it opened for voting.';
   }
   if (state === 'promoted') return 'This proposal is already open for voting; keep any revision on this same session.';
@@ -634,7 +688,7 @@ function publicSessionStatus(session, options = {}) {
     externalAgent: session.external_agent || 'external',
     state,
     status: session.status,
-    ...(session.status === 'promoted' ? { revisionState } : {}),
+    ...(['active', 'paused', 'promoted'].includes(session.status) ? { revisionState } : {}),
     branch: session.branch_name,
     baseSha: session.handoff_base_sha,
     headSha,
@@ -650,9 +704,9 @@ function publicSessionStatus(session, options = {}) {
     supersedesSessionId: session.handoff_supersedes_session_id == null
       ? null
       : Number(session.handoff_supersedes_session_id),
-    webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+    webPath: changeHashPath(session.app_slug, session.id),
     nextStep: statusNextStep(state,
-      session.status === 'promoted' ? revisionState : null, checks),
+      ['paused', 'promoted'].includes(session.status) ? revisionState : null, checks),
   };
 }
 
@@ -818,6 +872,7 @@ function proposalHandoffRoutes(config) {
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
+          visualEvidence: input.visualEvidence,
           title: input.title,
           description: input.description,
           recheck: input.recheck,
@@ -840,7 +895,7 @@ function proposalHandoffRoutes(config) {
       }
       return res.json({
         ...result,
-        webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+        webPath: changeHashPath(session.app_slug, session.id),
       });
     } catch (err) {
       log.error('proposal-handoff', 'Proposal update failed', { sessionId, err: err.message });
@@ -895,7 +950,7 @@ function proposalHandoffRoutes(config) {
   // earlier is deleted before the error is returned. A half-made card in
   // everyone's In-progress area, with no commits behind it, is worse than the
   // refusal it came from.
-  router.post('/api/apps/:slug/work/share-in-progress', proposalJson, drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/work/share-in-progress', proposalJson, drainGuard, communities.requireAppMembership(pool), async (req, res) => {
     let input;
     try {
       input = parseShareInProgressBody(req.body);
@@ -948,6 +1003,7 @@ function proposalHandoffRoutes(config) {
         ]
       );
       const sessionId = created[0].id;
+      await topicAttrs.selfAssignProposal(pool, app.id, sessionId, req.user);
 
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
@@ -967,6 +1023,7 @@ function proposalHandoffRoutes(config) {
           forkRepo: input.forkRepo,
           expectedHeadSha: input.expectedHeadSha,
           testing: input.testing,
+          visualEvidence: input.visualEvidence,
           title: input.title,
           description: input.description,
           linkedIssues: input.linkedIssues,
@@ -1005,7 +1062,7 @@ function proposalHandoffRoutes(config) {
         ...result,
         sessionId,
         shared: true,
-        webPath: `/#app/${app.slug}/dev/sessions/${sessionId}`,
+        webPath: changeHashPath(app.slug, sessionId),
       });
     } catch (err) {
       log.error('proposal-handoff', 'Share to in-progress failed', { slug: req.params.slug, err: err.message });
@@ -1013,7 +1070,7 @@ function proposalHandoffRoutes(config) {
     }
   });
 
-  router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, communities.requireAppMembership(pool), async (req, res) => {
     if (!requireCli(req, res)) return;
     let input;
     try {
@@ -1125,7 +1182,11 @@ function proposalHandoffRoutes(config) {
       );
       const replacedActiveSlot = replacementSession?.status === 'active' ? 1 : 0;
       if (Number(ownCounts[0].cnt) - replacedActiveSlot >= caps.activeSessions) {
-        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
+        // Paused for the user rather than refused (session-lifecycle.freeUserSlot).
+        const { freed } = await sessionLifecycle.freeUserSlot({
+          pool, userId: req.user.id, excludeSessionId: replacementSession ? replacementSession.id : null,
+        });
+        if (!freed) return res.status(429).json({ error: sessionLifecycle.USER_SLOTS_BUSY });
       }
       const { rows: globalCounts } = await pool.query(
         `SELECT COUNT(*) AS cnt FROM chat_sessions
@@ -1201,6 +1262,7 @@ function proposalHandoffRoutes(config) {
               replacementSession ? replacementSession.id : null, input.externalAgent]
           );
           created = rows[0];
+          await topicAttrs.selfAssignProposal(client, app.id, created.id, req.user);
           await snapshotSpec(client, created.id, input.spec);
           await insertHistoryRows(client, created.id, input.history);
           await client.query('COMMIT');
@@ -1278,7 +1340,7 @@ function proposalHandoffRoutes(config) {
     }
     try {
       const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
-      if (!session || session.status !== 'active') return res.status(404).json({ error: 'Active handoff session not found' });
+      if (!session || !['active', 'paused'].includes(session.status)) return res.status(404).json({ error: 'Open handoff session not found' });
       if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
         return res.status(404).json({ error: 'Active handoff session not found' });
       }
@@ -1399,6 +1461,7 @@ function proposalHandoffRoutes(config) {
             const advanced = await pool.query(
               `UPDATE chat_sessions
                 SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
+                    ${summaryFreshness.INVALIDATE_SQL},
                     handoff_upload_checked_sha = checks_commit_sha,
                     check_state = NULL, check_phase = NULL,
                     check_error_detail = NULL, test_results = '[]'::jsonb,
@@ -1421,6 +1484,22 @@ function proposalHandoffRoutes(config) {
             );
             if (!advanced.rowCount) {
               return res.status(409).json({ error: 'session_state_changed' });
+            }
+          }
+          if (revisionKind === 'session' && !session.pr_number) {
+            try {
+              await prMetadata.applyPrMetadata({
+                pool, session, repoOwner: repo.owner, repoName: repo.repo,
+                userMessage: '', ccSummary: '', username: req.user.username,
+                userId: req.user.id, allowModelGeneration: false,
+                preferredTitle: session.proposed_pr_title || session.session_title || null,
+              });
+            } catch (err) {
+              // The commit is durable. A retry can adopt a PR that GitHub
+              // created before the DB write, or promotion can create it.
+              log.warn('proposal-handoff', 'Draft PR creation deferred after commit upload', {
+                sessionId: session.id, code: err.code || null, err: err.message,
+              });
             }
           }
           if (revisionKind === 'proposal') {
@@ -1451,8 +1530,10 @@ function proposalHandoffRoutes(config) {
             headSha: uploaded.sha,
             treeSha: uploaded.treeSha,
             branch: session.branch_name,
+            prNumber: session.pr_number || null,
+            prUrl: session.pr_url || null,
             uploaded: alreadyRecorded ? false : uploaded.created,
-            webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+            webPath: changeHashPath(session.app_slug, session.id),
           });
         } finally {
           releaseOperation();
@@ -1491,11 +1572,21 @@ function proposalHandoffRoutes(config) {
         if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
           return res.status(404).json({ error: 'Active handoff session not found' });
         }
+        let evidenceApplied = null;
+        if (currentCheckedHead(session) === input.headSha && input.visualEvidence !== undefined) {
+          evidenceApplied = await applyVisualEvidenceRevision({
+            pool, config, session, headSha: input.headSha,
+            visualEvidence: input.visualEvidence,
+          });
+        }
         if (revisionKind === 'proposal'
             && session.handoff_head_sha === input.headSha
             && session.reviewed_head_sha === input.headSha) {
           const status = publicSessionStatus(session);
-          return res.status(status.revisionState === 'ready' ? 200 : 202).json(status);
+          return res.status(status.revisionState === 'ready' ? 200 : 202).json({
+            ...status,
+            ...visualEvidenceResponse(evidenceApplied, session),
+          });
         }
         const localPipelineBusy = hasInFlightHandoffPipeline(session.id);
         const stagingBusy = staging.hasInFlightBuild(Number(session.id));
@@ -1506,13 +1597,13 @@ function proposalHandoffRoutes(config) {
             status: publicSessionStatus(session).state,
             sessionId: Number(session.id),
             headSha: input.headSha,
-            webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+            webPath: changeHashPath(session.app_slug, session.id),
           });
         }
         if (!isSessionBusy(Number(session.id))
             && !localPipelineBusy && !stagingBusy && !captureBusy
             && currentCheckedHead(session) === input.headSha
-            && publicSessionStatus(session).state === 'ready') {
+            && publicSessionStatus(session).revisionState === 'ready') {
           // The head SHA is the build's idempotency key. A retry after the
           // original 202 response was lost must not tear down a healthy
           // preview and run the entire staging/check pipeline again. Failed
@@ -1543,7 +1634,7 @@ function proposalHandoffRoutes(config) {
           // SHA pending. Build submission attaches the durable transcript/spec
           // and launches one proposal check run for the final uploaded commit.
           // It must not use the active-session pipeline, whose persistence is
-          // intentionally scoped to status='active'.
+          // scoped to the pre-vote lifecycle captured at submission.
           const releaseOperation = beginSessionOperation(session.id);
           try {
             const repo = repoCoordinates(session);
@@ -1603,6 +1694,11 @@ function proposalHandoffRoutes(config) {
             if (!adopted.rowCount) {
               return res.status(409).json({ error: 'session_state_changed' });
             }
+            evidenceApplied = evidenceApplied || await applyVisualEvidenceRevision({
+              pool, config, session, headSha: input.headSha,
+              visualEvidence: input.visualEvidence,
+              headChanged: currentCheckedHead(session) !== input.headSha,
+            });
 
             const freshSession = {
               ...session,
@@ -1626,7 +1722,8 @@ function proposalHandoffRoutes(config) {
               revisionState: 'deploying',
               sessionId: Number(session.id),
               headSha: input.headSha,
-              webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+              ...visualEvidenceResponse(evidenceApplied, session),
+              webPath: changeHashPath(session.app_slug, session.id),
             });
           } finally {
             releaseOperation();
@@ -1697,21 +1794,28 @@ function proposalHandoffRoutes(config) {
                     check_error_detail = NULL,
                     staging_container_id = NULL, staging_url = NULL,
                     last_activity_at = NOW()
-              WHERE id = $2 AND status = 'active' AND source = $3
+              WHERE id = $2 AND status = $7 AND source = $3
                 AND handoff_uploaded_sha = $1
                 AND checks_commit_sha IS NOT DISTINCT FROM $4
                 AND handoff_head_sha IS NOT DISTINCT FROM $5
                 AND handoff_upload_checked_sha IS NOT DISTINCT FROM $6`,
             [input.headSha, session.id, SOURCE, session.checks_commit_sha || null,
-              session.handoff_head_sha || null, session.handoff_upload_checked_sha || null]
+              session.handoff_head_sha || null, session.handoff_upload_checked_sha || null,
+              session.status]
           );
           // Manual archive/pause is intentionally allowed to abort work. If
           // it won while the GitHub checks above were in flight, keep the
           // pushed branch/history but do not resurrect a check pipeline for
-          // a session that is no longer active.
+          // a session whose lifecycle changed during this request. An explicit build
+          // submitted while paused keeps that exact paused status.
           if (!adopted.rowCount) {
             return res.status(409).json({ error: 'session_state_changed' });
           }
+          evidenceApplied = evidenceApplied || await applyVisualEvidenceRevision({
+            pool, config, session, headSha: input.headSha,
+            visualEvidence: input.visualEvidence,
+            headChanged: currentCheckedHead(session) !== input.headSha,
+          });
           const pending = await visuals.setChecksPending(pool, session.id, input.headSha, 'building', 'commit-push');
           if (pending === false) {
             return res.status(409).json({ error: 'session_state_changed' });
@@ -1738,7 +1842,8 @@ function proposalHandoffRoutes(config) {
             status: 'deploying',
             sessionId: Number(session.id),
             headSha: input.headSha,
-            webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+            ...visualEvidenceResponse(evidenceApplied, session),
+            webPath: changeHashPath(session.app_slug, session.id),
           });
         } finally {
           if (!pipelineDetached) releasePipeline();
@@ -1772,10 +1877,22 @@ function proposalHandoffRoutes(config) {
 
   // Server-side counterpart to proposal_promote's preflight. This router is
   // mounted before voteRoutes, so a handoff promoted from either MCP or its
-  // optionally-open web page must still be on the exact currently checked
-  // head with live staging and a terminal passing verdict. Local and web
-  // turns retain the same source/session and can alternate.
-  router.post('/api/sessions/:id/promote', async (req, res, next) => {
+  // optionally-open web page goes up for review on exactly the commit its
+  // checks describe. Local and web turns retain the same source/session and
+  // can alternate.
+  //
+  // #3173 / #3043: submitting does NOT wait for staging or a verdict. The
+  // merge gate requires passing checks on the exact reviewed commit
+  // (services/merge-requirements.js), so a vote may open while they run, and
+  // a proposal whose preview the idle sweep reclaimed is rebuilt by the
+  // promote route rather than stranded. What this still refuses is only what
+  // would put the wrong commit, or no commit, in front of the group: nothing
+  // submitted yet, an upload that was never submitted, a coding turn or sync
+  // that may still move the branch, and a branch that moved past its checks.
+  // Membership first (services/communities.js): proposing is for the
+  // community's members whichever router ends up promoting, and this one
+  // runs ahead of voteRoutes' own copy of the same gate.
+  router.post('/api/sessions/:id/promote', communities.requireSessionMembership(pool), async (req, res, next) => {
     let releasePromotion = null;
     let releaseOnResponse = false;
     try {
@@ -1790,17 +1907,23 @@ function proposalHandoffRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
         return res.status(404).json({ error: 'Active handoff session not found' });
       }
-      if (publicSessionStatus(session).state !== 'ready') {
-        return res.status(409).json({
-          error: 'proposal_not_ready',
-          message: 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
-        });
+      const refuse = (message) => res.status(409).json({ error: 'proposal_not_ready', message });
+      if (!['active', 'paused'].includes(session.status)) {
+        return refuse(`This change is ${session.status || 'closed'}, so it cannot be submitted for review.`);
       }
-      if (isSessionBusy(Number(session.id))) {
-        return res.status(409).json({
-          error: 'proposal_not_ready',
-          message: 'This proposal is not ready yet. Wait for staging and checks to finish, then try again.',
-        });
+      if (hasUnsubmittedUpload(session)) {
+        return refuse('A commit was uploaded to this change but has not been submitted for checks yet. Submit it first, then submit the change for review.');
+      }
+      if (!currentCheckedHead(session)) {
+        return refuse('Nothing has been submitted to this change yet, so there is nothing to put up for review.');
+      }
+      // A running handoff pipeline is checking this very commit and keeps
+      // publishing after promotion (services/handoff-pipeline.js). It holds
+      // the session for its whole run, so no coding turn or sync can start
+      // beside it; anything ELSE holding the session may still move its
+      // branch.
+      if (isSessionBusy(Number(session.id)) && !hasInFlightHandoffPipeline(session.id)) {
+        return refuse('An agent turn is still running on this change. Submit it for review when the turn finishes.');
       }
       // Hold the same cross-surface claim used by build/sync through the
       // downstream promotion handler. Releasing before next() would reopen a
@@ -1823,9 +1946,9 @@ function proposalHandoffRoutes(config) {
         const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
         await pool.query(
           `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
-            WHERE id = $2 AND status = 'active' AND source = $3
+            WHERE id = $2 AND status = $5 AND source = $3
               AND COALESCE(checks_commit_sha, handoff_head_sha) IS NOT DISTINCT FROM $4`,
-          [detail, session.id, SOURCE, checkedHead]
+          [detail, session.id, SOURCE, checkedHead, session.status]
         ).catch(() => {});
         return res.status(409).json({ error: 'branch_head_changed', message: detail });
       }
@@ -1834,6 +1957,7 @@ function proposalHandoffRoutes(config) {
       // authoritative PR-head read can close the remaining external-push
       // race before the row enters voting.
       req.cliHandoffCheckedHead = checkedHead;
+      req.cliHandoffStatus = session.status;
       res.once('finish', releasePromotion);
       res.once('close', releasePromotion);
       releaseOnResponse = true;
@@ -1854,6 +1978,7 @@ module.exports = {
   parseStartBody,
   parseContextBody,
   parseBuildBody,
+  parseVisualEvidence,
   parseCommitUploadBody,
   parseUpdateFromForkBody,
   parseSessionId,

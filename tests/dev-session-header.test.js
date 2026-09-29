@@ -182,6 +182,40 @@ test('mid-turn the venue is visibly and accessibly locked', () => {
     'the dropdown caret does not contradict the locked state');
 });
 
+test('#2607: an unsent change gets the same button, and only that', () => {
+  // The strip's other three facts are still absent on a change that has no
+  // row — no PR, no lifecycle pill, no ⋯ of owner-scoped calls — but the
+  // venue is a CHOICE rather than a report, and it is the screen where the
+  // choice is still open. So the dropdown paints, from the same spec and in
+  // the same position the real row's does, and the declared check reads it
+  // as the same direct child.
+  const { view } = makeDevChat();
+  const state = view({ pending: true, id: null, app_slug: 'recipe-box', status: 'active' });
+  const html = headerHtml(state);
+
+  assert.match(html, /<button[^>]*id="dc-venue-select"[^>]*data-venue-change="1"/);
+  assert.match(html, /data-venue-current="usernode-claude"/);
+  assert.match(html, /class="dc-venue-name">Homeroom · Claude</);
+  assert.match(html, /class="dc-venue-caret"[^>]*>▾</);
+  assert.doesNotMatch(html, /data-venue-busy|Thinking…/, 'nothing is running on an unsent change');
+  assert.match(html, /New change/, 'and the caption slot still says only that');
+  assert.doesNotMatch(html, /id="dc-session-actions"/,
+    'Pause / Archive / Free worker still have nothing to act on');
+  assert.doesNotMatch(html, /id="dc-pr-header-link"/, 'and there is no pull request to link');
+
+  // Same direct-child contract the check at every width reads.
+  const { tokenize } = require('./helpers/html-tokens');
+  let depth = 0;
+  const children = [];
+  for (const token of tokenize(html)) {
+    if (token.kind === 'open') {
+      if (depth === 0) children.push(Object.fromEntries(token.attrs.map((a) => [a.name, a.value])));
+      if (!token.selfClosing) depth++;
+    } else if (token.kind === 'close') depth--;
+  }
+  assert.equal(children.filter((c) => c.id === 'dc-venue-select').length, 1);
+});
+
 test('the busy screenshot route paints the same locked venue without faking a live turn', () => {
   const { DevChat, sandbox, view } = makeDevChat();
   sandbox.location.search = '?shot=busy-drafts';
@@ -207,8 +241,12 @@ test('the strip carries no back control — the platform header owns ← now', (
   DevChat.currentSession = { ...SESSION };
   let switched = null;
   sandbox.App.switchTab = (tab) => { switched = tab; };
+  sandbox.location = { hash: '' };
   assert.equal(DevChat.handleBack(), true);
-  assert.equal(switched, 'dev', 'backing out of a session lands on the Board');
+  // #2770: with no captured origin, a change — an agent conversation — goes
+  // up to Messages rather than landing on the Board.
+  assert.equal(sandbox.location.hash, '#messages', 'backing out of a session lands on Messages');
+  assert.equal(switched, null, 'and no longer on the Board');
   // And app.js's header listener actually consults it, before the
   // navigate-home fallback.
   const appJs = read('public', 'js', 'app.js');
@@ -220,12 +258,24 @@ test('the strip carries no back control — the platform header owns ← now', (
 test('a session with a pull request offers it; one without says so', () => {
   const { view } = makeDevChat();
   const withPr = headerHtml(view({ ...SESSION, pr_number: 42 }));
-  assert.match(withPr, /id="dc-pr-header-link"[^>]*>PR #42</);
+  // #2821: it names where it goes, not the PR number.
+  assert.match(withPr, /id="dc-pr-header-link"[^>]*>Open proposal card</);
+  assert.doesNotMatch(withPr, />PR #42</);
   assert.match(withPr, /title="[^"]*goes to PR #42/);
 
   const without = headerHtml(view(SESSION));
   assert.doesNotMatch(without, /dc-pr-header-link/);
   assert.match(without, /New change</);
+});
+
+test('#2821: "Open proposal card" opens the change\'s card page', () => {
+  const { DevChat, sandbox } = makeDevChat();
+  const opened = [];
+  sandbox.AppView = { openTopic: (kind, id) => opened.push([kind, id]) };
+  DevChat.currentSession = { ...SESSION, pr_number: 42 };
+  DevChat.openProposalCard();
+  assert.deepEqual(opened, [['proposal', SESSION.id]]);
+  assert.equal(typeof DevChat.revealPrCard, 'undefined', 'the in-page PR jump retired with the "PR #x" label');
 });
 
 test('the title falls back through its three sources, and the branch is the tooltip', () => {
@@ -274,12 +324,17 @@ test('the strip hosts no lifecycle pill — the header chip does', () => {
   const html = headerHtml(view({ ...SESSION, check_state: 'passing' }));
   assert.doesNotMatch(html, /dc-status-pill/);
   assert.doesNotMatch(html, /ms-pill/);
-  // The pill's seat moved from the bar's left slot INTO the chip, as its
+  // The pill's seat moved from the bar's left slot INTO the title, as its
   // subtitle. On a new change the old arrangement drew the lifecycle alone —
-  // the chip was empty on this route — so the top of the screen said "Draft"
+  // the label was empty on this route — so the top of the screen said "Draft"
   // and never said which app was being changed. Same store, same component,
   // same id, one control.
-  const chipTsx = read('frontend', 'src', 'features', 'header', 'app-switcher-chip.tsx');
+  //
+  // The FILE moved in #2718, and nothing else about this did: the chip that
+  // held the subtitle stopped being a button when the tab bar took the
+  // platform destinations out of its menu, and what is left is the heading.
+  // See features/header/header-title.tsx.
+  const chipTsx = read('frontend', 'src', 'features', 'header', 'header-title.tsx');
   assert.match(chipTsx, /id="header-status-pill"/);
   assert.match(chipTsx, /sessionHeaderStore/);
   assert.match(chipTsx, /MergeStatusPill/);
@@ -475,4 +530,343 @@ test('BuildVenues.selectorHtml is retired, and nothing still calls it', () => {
   // noteHtml and chipHtml stay strings — their callers still are.
   assert.match(VENUES_SRC, /function noteHtml/);
   assert.match(VENUES_SRC, /function chipHtml/);
+});
+
+// ── 5. The session's own actions, in a ⋯ (#1904) ───────────────────────
+//
+// Pause / Free worker / Resume / Unarchive / Archive lived on the session's
+// row in the list, and opening the session put every one of them out of
+// reach. They are back at the strip's right edge, behind a ⋯ beside the two
+// switchers — and the rows are THE LIST'S: `_sessionRow` decides them once,
+// the store carries them, and each one dispatches the same `DevChat` method
+// by name the list's button does. On touch the kit draws them as a bottom
+// action sheet and on desktop as an anchored popover, through the same
+// `PlatformUI.menu` the venue dropdown opens with.
+
+const OWNER = { id: 7 };
+const OWNED = { ...SESSION, user_id: OWNER.id };
+
+/** A session's rows as the LIST computes them, copied out of the vm realm. */
+function listActions(DevChat, session) {
+  return JSON.parse(JSON.stringify(DevChat._sessionRow(session).actions));
+}
+
+/** The strip's direct children, as attribute maps, in order. */
+function directChildren(html) {
+  const { tokenize } = require('./helpers/html-tokens');
+  let depth = 0;
+  const children = [];
+  for (const token of tokenize(html)) {
+    if (token.kind === 'open') {
+      if (depth === 0) children.push(Object.fromEntries(token.attrs.map(a => [a.name, a.value])));
+      if (!token.selfClosing) depth++;
+    } else if (token.kind === 'close') depth--;
+  }
+  return children;
+}
+
+test('the ⋯ offers exactly the actions the list computes for the same session', () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  sandbox.App.user = OWNER;
+  const cases = [
+    // #2779 follow-up: no Pause and no Resume. The platform pauses an idle
+    // session by itself and resumes it when it is opened or messaged.
+    [{ ...OWNED, status: 'active' }, ['archive']],
+    [{ ...OWNED, status: 'paused' }, ['archive']],
+    [{ ...OWNED, status: 'promoted', warm: true }, ['free', 'archive']],
+    [{ ...OWNED, status: 'promoted', warm: false }, ['archive']],
+    [{ ...OWNED, status: 'archived' }, ['unarchive']],
+  ];
+  for (const [session, keys] of cases) {
+    const v = view(session);
+    assert.deepEqual(v.actions.map(a => a.key), keys, `${session.status} (warm: ${!!session.warm})`);
+    // Not merely the same keys: the same labels, tones, tooltips, methods
+    // and arguments — the row model, verbatim, so the confirm dialog names
+    // the same session the list's button would.
+    assert.deepEqual(v.actions, listActions(DevChat, session));
+  }
+  const archive = view({ ...OWNED, status: 'active' }).actions.find(a => a.key === 'archive');
+  assert.equal(archive.fn, '_sessionListArchive');
+  assert.deepEqual(archive.args, [SESSION.id, 'Widget language']);
+  assert.equal(archive.tone, 'danger');
+});
+
+test('“Free worker” survives the open session having no `warm` of its own', () => {
+  // The regression this guards: `warm` is computed by
+  // GET /api/apps/:slug/sessions and by nothing else, and `currentSession`
+  // comes from GET /api/sessions/:id, which has no such column. Read off the
+  // open session alone, a promoted session with a live worker would show
+  // Archive here and Free worker + Archive in the list — the two surfaces
+  // disagreeing about the one action that depends on it.
+  const { DevChat, sandbox, view } = makeDevChat();
+  sandbox.App.user = OWNER;
+  const open = { ...OWNED, status: 'promoted' };
+  assert.equal('warm' in open, false, 'the single-session payload carries no warm');
+
+  DevChat.sessions = [{ ...OWNED, status: 'promoted', warm: true }];
+  assert.deepEqual(view(open).actions.map(a => a.key), ['free', 'archive']);
+  assert.deepEqual(view(open).actions, listActions(DevChat, DevChat.sessions[0]));
+
+  // …and the list is equally the authority for its absence: a worker already
+  // gone leaves nothing to free.
+  DevChat.sessions = [{ ...OWNED, status: 'promoted', warm: false }];
+  assert.deepEqual(view(open).actions.map(a => a.key), ['archive']);
+
+  // A session the list does not hold (a deep link opened before the list
+  // loaded) falls back to the open session, rather than throwing.
+  DevChat.sessions = [];
+  assert.deepEqual(view(open).actions.map(a => a.key), ['archive']);
+  DevChat.sessions = null;
+  assert.deepEqual(view(open).actions.map(a => a.key), ['archive']);
+
+  // Only `warm` is taken from the row: the open session's status is the
+  // fresher of the two, because openSession flips paused → active on
+  // auto-resume before any list reload.
+  DevChat.sessions = [{ ...OWNED, status: 'paused', warm: true }];
+  assert.deepEqual(view({ ...OWNED, status: 'active' }).actions.map(a => a.key), ['archive']);
+});
+
+test('mid-turn, Archive stays gated exactly as the list gates it', () => {
+  // The list gates Archive on STATUS alone — active, promoted or paused —
+  // and never on a running turn. A busy session is the one the strip is most
+  // likely to be showing, so this is where a re-coupling would surface.
+  const { DevChat, sandbox, view } = makeDevChat({ isStreaming: true });
+  sandbox.App.user = OWNER;
+  DevChat._composerBusy = true;
+  const v = view({ ...OWNED, status: 'active' });
+  assert.equal(v.busy, true, 'the strip is painted busy');
+  assert.equal(v.venue.disabled, true, 'and the venue is locked, as before');
+  assert.deepEqual(v.actions.map(a => a.key), ['archive']);
+  assert.deepEqual(v.actions, listActions(DevChat, { ...OWNED, status: 'active' }));
+});
+
+test('the trigger is the strip’s last direct child, with menu semantics', () => {
+  const { sandbox, view } = makeDevChat();
+  sandbox.App.user = OWNER;
+  const html = headerHtml(view({ ...OWNED, status: 'active' }),
+    { previewSessionId: 7, previewUrl: 'https://staging.example/x' });
+  assert.match(html, /<button[^>]*id="dc-session-actions"[^>]*data-session-actions="1"/);
+  assert.match(html, /id="dc-session-actions"[^>]*aria-haspopup="menu"/);
+  assert.match(html, /id="dc-session-actions"[^>]*aria-expanded="false"/, 'closed at rest');
+  assert.match(html, /id="dc-session-actions"[^>]*aria-label="Session actions"/);
+  assert.match(html, /id="dc-session-actions"[^>]*un-touch-target/, 'a finger-sized target on phones');
+  // The far right: after the venue AND the mode switch, as a direct child —
+  // the declared checks select the strip's children by direct descent.
+  const children = directChildren(html);
+  assert.equal(children[children.length - 1].id, 'dc-session-actions');
+  assert.ok(children.findIndex(c => c.id === 'dc-venue-select') < children.findIndex(c => c.id === 'dc-session-actions'));
+  assert.ok(children.findIndex(c => c.id === 'dc-mode-switch') < children.findIndex(c => c.id === 'dc-session-actions'));
+  // The venue keeps every hook the checks read.
+  assert.match(html, /<button[^>]*id="dc-venue-select"[^>]*data-venue-change="1"/);
+  // The rows are the kit's to draw, so none of them is in the strip's markup.
+  assert.doesNotMatch(html, /role="menuitem"|>Archive<|>Pause</);
+});
+
+test('no action, no button: a viewer who does not own the session, or nothing left to offer', () => {
+  const { sandbox, view } = makeDevChat();
+  // Someone else's session — the endpoints are owner-scoped, so the list's
+  // rules are never consulted.
+  sandbox.App.user = { id: 8 };
+  const theirs = view({ ...OWNED, status: 'active' });
+  assert.deepEqual(theirs.actions, []);
+  assert.doesNotMatch(headerHtml(theirs), /dc-session-actions|data-session-actions/);
+  // Signed out: nobody owns anything.
+  sandbox.App.user = null;
+  assert.deepEqual(view({ ...OWNED, status: 'active' }).actions, []);
+  // Owned, but merged: the list offers nothing for it either.
+  sandbox.App.user = OWNER;
+  for (const status of ['merged', 'merging']) {
+    const v = view({ ...OWNED, status });
+    assert.deepEqual(v.actions, [], `${status} offers nothing`);
+    assert.doesNotMatch(headerHtml(v), /dc-session-actions/, `${status} draws no button`);
+  }
+  // And the states hand-built before this field existed still render.
+  assert.doesNotMatch(headerHtml({ ...view(SESSION), actions: undefined }), /dc-session-actions/);
+});
+
+test('a row calls the controller method by name, and its answer becomes a toast', async () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  sandbox.App.user = OWNER;
+  const actions = view({ ...OWNED, status: 'promoted', warm: true }).actions;
+  assert.deepEqual(actions.map(a => a.key), ['free', 'archive']);
+
+  const m = mod();
+  const calls = [];
+  const toasts = [];
+  let presented = null;
+  const pick = (label) => async (opts) => {
+    presented = opts;
+    const row = opts.items.find(i => i.label === label);
+    row.handler();
+    return row;
+  };
+  // The component reaches both by name at call time, exactly as it does in
+  // the browser, so the test hands it a window with the two seams on it.
+  globalThis.window = {
+    PlatformUI: { menu: pick('Archive'), toast: (msg) => toasts.push(msg) },
+    DevChat: {
+      _sessionListArchive: async (...args) => { calls.push(['_sessionListArchive', ...args]); return null; },
+      _sessionListPause: async (...args) => { calls.push(['_sessionListPause', ...args]); return 'Worker freed'; },
+    },
+  };
+  try {
+    await m.openSessionActionsMenu(actions, null);
+    await new Promise(r => setImmediate(r));
+    // The kit was handed the list's rows, in the list's order and wording,
+    // with Archive marked destructive — the sheet's red row.
+    assert.deepEqual(presented.items.map(i => i.label), ['Free worker', 'Archive']);
+    assert.deepEqual(presented.items.map(i => i.destructive), [false, true]);
+    assert.equal(presented.items[0].title, 'Frees the AI worker. The PR stays up for voting.');
+    assert.equal(presented.items[1].title, 'Archive (frees the slot; restorable for a while)');
+    // …and the pick is the list button's click: the method, by name, with
+    // the row's own arguments (the id and the title the confirm names).
+    assert.deepEqual(calls, [['_sessionListArchive', SESSION.id, 'Widget language']]);
+    assert.deepEqual(toasts, [], 'Archive answers nothing to flash');
+
+    globalThis.window.PlatformUI.menu = pick('Free worker');
+    await m.openSessionActionsMenu(actions, null);
+    await new Promise(r => setImmediate(r));
+    assert.deepEqual(calls[1], ['_sessionListPause', SESSION.id, 'pause']);
+    assert.deepEqual(toasts, ['Worker freed'], 'the flash the list put on its button is a toast here');
+
+    // No kit: nothing to present, and nothing thrown.
+    globalThis.window.PlatformUI = null;
+    await m.openSessionActionsMenu(actions, null);
+    assert.equal(calls.length, 2);
+  } finally {
+    delete globalThis.window;
+  }
+  assert.ok(DevChat, 'the vm module is untouched by the component-side dispatch');
+});
+
+test('an action’s outcome is folded back into the strip', async () => {
+  // The list's buttons never needed this: their row is replaced by the next
+  // publish. The strip acts on `currentSession`, whose copy of the status
+  // would otherwise still say "active" after Archive — so `_reloadSessionList`,
+  // where every action ends, folds the reloaded row back in and repaints.
+  const { DevChat, sandbox, published, view } = makeDevChat();
+  sandbox.App.user = OWNER;
+  sandbox.AppView = { appData: { slug: 'recipe-box' } };
+  sandbox.ConfirmModal = { show: async () => true };
+  const fetched = [];
+  sandbox.fetch = async (url, init) => {
+    fetched.push(`${(init && init.method) || 'GET'} ${url}`);
+    if (url === '/api/apps/recipe-box/sessions') {
+      return { ok: true, json: async () => ({ sessions: [{ ...OWNED, status: 'archived', warm: false }] }) };
+    }
+    return { ok: true, json: async () => ({}) };
+  };
+  DevChat.currentSession = { ...OWNED, status: 'active' };
+  assert.deepEqual(view(DevChat.currentSession).actions.map(a => a.key), ['archive']);
+  published.length = 0;
+
+  await DevChat._sessionListArchive(SESSION.id, 'Widget language');
+
+  assert.ok(fetched.includes('POST /api/sessions/5/archive'), 'the same endpoint the list hits');
+  assert.equal(DevChat.currentSession.status, 'archived');
+  assert.equal(published.length, 1, 'one repaint, of the strip alone');
+  assert.equal(published[0].mounted, false);
+  // Cross-realm, like `view`: copy the published state out as data.
+  const repainted = JSON.parse(JSON.stringify(published[0].state));
+  assert.deepEqual(repainted.actions.map(a => a.key), ['unarchive'],
+    'the menu now offers the way back, not the action just taken');
+  // The sync is `_reloadSessionList`'s, so every action lands on it.
+  const at = DEV_CHAT_SRC.indexOf('async _reloadSessionList() {');
+  assert.ok(at !== -1);
+  assert.match(DEV_CHAT_SRC.slice(at, at + 500), /_syncCurrentSessionFromList\(\)/);
+});
+
+// ── 5. #1941: one compact row ──────────────────────────────────────────
+//
+// The strip is the session's descriptor — its name, its PR, where it is
+// built, the doing<->seeing switch and its own actions — and it was asked to
+// take less height. Two things had made it tall: `py-2` around 28px controls,
+// and, on a phone, a single line that could not hold every control, so the
+// PR number broke into two lines while the title shrank to nothing and the ⋯
+// ran off the right edge. It is `py-1` and ONE line from `sm` up, and at most
+// TWO lines below it, with every fact still on the strip.
+
+const VIEW_TSX_SRC = read('frontend', 'src', 'features', 'dev-chat', 'view.tsx');
+const APP_CSS_SRC = read('public', 'css', 'app.css');
+
+function stripTag() {
+  const at = VIEW_TSX_SRC.indexOf('id="dc-session-header"');
+  assert.ok(at > 0);
+  return VIEW_TSX_SRC.slice(at, VIEW_TSX_SRC.indexOf('>', at));
+}
+
+test('#1941: the strip is a compact row — py-1 around the 28px controls, one line from sm up', () => {
+  const tag = stripTag();
+  assert.match(tag, /\bpy-1\b/);
+  assert.doesNotMatch(tag, /\bpy-2\b|\bpy-3\b/, 'no taller padding than the controls need');
+  assert.match(tag, /\bitems-center\b/);
+  // The row may wrap ONLY below sm. From sm up nothing wraps, so the desktop
+  // strip is exactly one line whatever the session carries.
+  assert.match(tag, /\bflex-wrap\b/);
+  assert.match(tag, /\bsm:flex-nowrap\b/);
+  assert.match(tag, /\bgap-y-1\b/, 'the two phone lines sit close');
+  // Still the constant className the kit writes onto, still the lift strip.
+  assert.match(tag, /className="[^"{]*"/);
+  assert.match(tag, /\bdc-lift dc-lift-strip\b/);
+});
+
+test('#1941: the PR number never wraps into two lines of its own', () => {
+  // At 375px "PR #21" broke after "PR" and made the strip two lines tall
+  // with half a word on the second one. Both the link and its "New change"
+  // resting state are one unbreakable run that keeps its width.
+  const { view } = makeDevChat();
+  const withPr = headerHtml(view({ ...SESSION, pr_number: 42 }));
+  const link = withPr.match(/<button[^>]*id="dc-pr-header-link"[^>]*>/)[0];
+  assert.match(link, /\bshrink-0\b/);
+  assert.match(link, /\bwhitespace-nowrap\b/);
+  const without = headerHtml(view(SESSION));
+  const caption = without.match(/<span[^>]*>New change<\/span>/)[0];
+  assert.match(caption, /\bshrink-0\b/);
+  assert.match(caption, /\bwhitespace-nowrap\b/);
+  assert.match(caption, /\bmax-sm:hidden\b/, 'and it still yields the phone line to the name');
+});
+
+test('#1941: on a phone the title takes the first line and the controls the second', () => {
+  // Wrapping is decided on hypothetical sizes, so `flex-1`'s zero basis put
+  // every child on one line and left the title whatever was over — nothing,
+  // at 375px. The title's basis is the strip less room for the PR number,
+  // which is what breaks the line before the venue.
+  const at = APP_CSS_SRC.indexOf('@media (max-width: 639px) {\n  #dc-session-header > .dc-session-title {');
+  assert.ok(at > 0, 'the phone title rule is where the two-line clamp already lived');
+  const block = APP_CSS_SRC.slice(at, APP_CSS_SRC.indexOf('\n}', at));
+  assert.match(block, /flex-basis: calc\(100% - 4rem\);/);
+  assert.match(block, /-webkit-line-clamp: 2;/, 'a long name is still capped at two lines');
+  // The second line is the venue, the mode switch and the ⋯. Its widest
+  // member caps itself so the ⋯ never starts a THIRD line: 10.5rem, the
+  // floor that keeps the two "Your computer · …" venues apart, or what is
+  // left beside a 7.5rem switch, a 1.75rem ⋯ and their two gaps.
+  const cap = APP_CSS_SRC.indexOf('@media (max-width: 30rem) {\n  .dc-venue-select {');
+  assert.ok(cap > 0);
+  const capBlock = APP_CSS_SRC.slice(cap, APP_CSS_SRC.indexOf('\n}', cap));
+  assert.match(capBlock, /max-width: min\(10\.5rem, calc\(100% - 10\.5rem\)\);/);
+  assert.doesNotMatch(APP_CSS_SRC, /#dc-session-header > \.dc-venue-select \{[^}]*flex: 0 1 auto/,
+    'shrinking cannot do this job — a wrapped line never shrinks');
+});
+
+test('#1941: every fact stays on the strip — nothing is folded away to make it shorter', () => {
+  const { DevChat, sandbox, view } = makeDevChat();
+  sandbox.App.user = OWNER;
+  DevChat.currentSession = { ...OWNED, pr_number: 7 };
+  const html = headerHtml(view(DevChat.currentSession), { previewSessionId: 5, previewUrl: 'https://x.test' });
+  for (const hook of ['dc-session-title', 'dc-pr-header-link', 'dc-venue-select', 'dc-mode-switch', 'dc-session-actions']) {
+    assert.ok(html.includes(`${hook}`), `${hook} is still a child of the strip`);
+  }
+  // …and each one is a DIRECT child, as the declared checks read them.
+  const { tokenize } = require('./helpers/html-tokens');
+  let depth = 0;
+  const top = [];
+  for (const token of tokenize(html)) {
+    if (token.kind === 'open') {
+      if (depth === 0) top.push(Object.fromEntries(token.attrs.map(a => [a.name, a.value])));
+      if (!token.selfClosing) depth++;
+    } else if (token.kind === 'close') depth--;
+  }
+  const ids = top.map(c => c.id || c.class.split(' ')[0]);
+  assert.deepEqual(ids, ['dc-session-title', 'dc-pr-header-link', 'dc-venue-select', 'dc-mode-switch', 'dc-session-actions']);
+  for (const c of top) assert.doesNotMatch(c.class || '', /\bhidden\b|max-sm:hidden/);
 });

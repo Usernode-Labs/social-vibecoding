@@ -79,6 +79,23 @@ test('AGENTS keeps always-on rules and routes conditional work to skills', () =>
   assert.doesNotMatch(guidance, /social-vibecoding codex setup/);
 });
 
+// The local test run is scoped to the change, and the whole suite is the
+// platform's job. Without the rule an agent runs all 13,000+ tests before
+// every push, minutes at a time, and one hung test held such a run open for
+// an hour with no failure in it; the script it names is what makes the rule
+// cheap to follow, and the timeout is what makes a hang a failure.
+test('AGENTS scopes the local test run to the files the change touched', () => {
+  const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  assert.match(guidance, /Run the suites that pin what you changed; leave the whole suite to Homeroom/);
+  assert.match(guidance, /npm run test:changed -- --base <40-character-base-sha>/);
+  assert.match(guidance, /Run `npm test` only when shared code moved/);
+  assert.match(guidance, /re-run the failing suites and the ones for your fix/);
+  assert.match(guidance, /--test-timeout=180000/);
+  const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  assert.equal(pkg.scripts['test:changed'], 'node scripts/test-changed.js');
+  assert.match(pkg.scripts.test, / --test-timeout=180000 /);
+});
+
 // #1246 — the base-commit check has to be ALWAYS-ON, not skill-scoped.
 //
 // The check itself is not new: step 2 of the usernode-proposal skill has
@@ -112,6 +129,30 @@ test('the base-commit check is always-on, not only in the proposal skill', () =>
     /Verify `git rev-parse HEAD` equals the proposal base SHA/,
     'the skill keeps its own check — AGENTS.md hoists it, it does not replace it'
   );
+});
+
+// The base-commit rule above is scoped to writing code, and a session that
+// only answers a question never reaches it: one read a fork 1044 commits
+// behind the canonical main and answered from it. So the freshness check is
+// its own section, first after the scope note, covering reads as well, and it
+// names the one command that settles it plus the hook that runs it.
+test('the freshness check covers reading, comes first, and names its command and hook', () => {
+  const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  const heading = '## Check that this checkout is current before you read or write code';
+  assert.ok(guidance.includes(heading));
+  const headings = guidance.match(/^## .+$/gm);
+  assert.deepEqual(headings.slice(0, 3), [
+    '## Scope of this guidance',
+    heading,
+    '## Know your base commit and create its work branch before you write code',
+  ]);
+  assert.match(guidance, /before you \*read\* code to answer a question/);
+  assert.match(guidance, /git fetch https:\/\/github\.com\/Usernode-Labs\/social-vibecoding main/);
+  assert.match(guidance, /git merge-base --is-ancestor FETCH_HEAD HEAD/);
+  assert.match(guidance, /git show FETCH_HEAD:<path>/);
+  assert.match(guidance, /\.agents\/hooks\/upstream-drift\.js/);
+  assert.match(guidance, /SOCIAL_VIBECODING_DRIFT_CHECK=off/);
+  assert.match(guidance, /Silence is therefore not proof the checkout is current/);
 });
 
 test('shared Homeroom skills retain API safety and scope the hook UI to Codex CLI', () => {

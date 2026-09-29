@@ -45,6 +45,20 @@ const PINNED_HOOK_RUNNER = [
   'process.exit(2);',
   '}',
 ].join('');
+// The same integrity pin for the advisory checkout freshness check
+// (.agents/hooks/upstream-drift.js), but it fails OPEN: a changed or broken
+// file skips the notice and never blocks the prompt.
+const PINNED_ADVISORY_HOOK_RUNNER = [
+  "const fs=require('fs'),crypto=require('crypto'),p=process.argv[1],expected=process.argv[2];",
+  'try {',
+  "if (!/^[0-9a-f]{64}$/.test(expected)) throw new Error('missing generated integrity pin');",
+  "const actual=crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');",
+  "if (actual!==expected) throw new Error('hook file changed; rerun social-vibecoding codex setup');",
+  'require(p).main();',
+  '} catch (error) {',
+  "process.stderr.write('Checkout freshness check skipped: '+error.message+'\\n');",
+  '}',
+].join('');
 
 // Options that take no value. Anything not listed here consumes the next
 // argument, so a new boolean flag that forgets to register lands as
@@ -956,15 +970,22 @@ function windowsCommandArg(value) {
 }
 
 function setupToml({
-  nodePath, scriptPath, checkoutRoot, profile, forwardEnv, hookSha256,
+  nodePath, scriptPath, checkoutRoot, profile, forwardEnv, hookSha256, driftHookSha256,
 }) {
   if (!/^[0-9a-f]{64}$/.test(hookSha256)) {
     throw new Error('Promotion hook SHA-256 is required');
+  }
+  if (!/^[0-9a-f]{64}$/.test(driftHookSha256)) {
+    throw new Error('Freshness check hook SHA-256 is required');
   }
   const hookPath = path.join(checkoutRoot, '.codex', 'hooks', 'promotion-approval.js');
   const hookArgs = [nodePath, '-e', PINNED_HOOK_RUNNER, hookPath, hookSha256];
   const hookCommand = hookArgs.map(posixShellArg).join(' ');
   const hookCommandWindows = hookArgs.map(windowsCommandArg).join(' ');
+  const driftHookPath = path.join(checkoutRoot, '.agents', 'hooks', 'upstream-drift.js');
+  const driftArgs = [nodePath, '-e', PINNED_ADVISORY_HOOK_RUNNER, driftHookPath, driftHookSha256];
+  const driftCommand = driftArgs.map(posixShellArg).join(' ');
+  const driftCommandWindows = driftArgs.map(windowsCommandArg).join(' ');
   const lines = [
     GENERATED_HEADER,
     '',
@@ -1012,6 +1033,15 @@ function setupToml({
     `command_windows = ${tomlString(hookCommandWindows)}`,
     'timeout = 5',
     'additionalContextLimit = 256',
+    '',
+    '# Advisory: tells the agent when HEAD does not contain the canonical',
+    '# main. Runs its check on the first prompt of a session only.',
+    '[[hooks.UserPromptSubmit.hooks]]',
+    'type = "command"',
+    `command = ${tomlString(driftCommand)}`,
+    `command_windows = ${tomlString(driftCommandWindows)}`,
+    'timeout = 10',
+    'additionalContextLimit = 1200',
     '',
     '[[hooks.PreToolUse]]',
     'matcher = "(^Bash$|api_write$)"',
@@ -1095,6 +1125,15 @@ async function codexSetup(args, io, launcherPath) {
   const hookSha256 = crypto.createHash('sha256')
     .update(await fsp.readFile(hookPath))
     .digest('hex');
+  const driftHookPath = path.join(checkoutRoot, '.agents', 'hooks', 'upstream-drift.js');
+  const driftHookStat = await fsp.lstat(driftHookPath);
+  if (!driftHookStat.isFile() || driftHookStat.isSymbolicLink()
+      || await fsp.realpath(driftHookPath) !== driftHookPath) {
+    throw new Error('Checkout freshness hook must be a real file in this checkout');
+  }
+  const driftHookSha256 = crypto.createHash('sha256')
+    .update(await fsp.readFile(driftHookPath))
+    .digest('hex');
   const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '.codex/config.toml'], {
     cwd: checkoutRoot,
     stdio: 'ignore',
@@ -1128,6 +1167,7 @@ async function codexSetup(args, io, launcherPath) {
           profile: options.profile || 'production',
           forwardEnv: !!options.forward_env_token,
           hookSha256,
+          driftHookSha256,
         }));
         throw new Error('Existing .codex/config.toml is not generated; merge the table printed above manually');
       }
@@ -1146,6 +1186,7 @@ async function codexSetup(args, io, launcherPath) {
       profile: profile.name,
       forwardEnv: !!options.forward_env_token,
       hookSha256,
+      driftHookSha256,
     });
     if (existing !== document) {
       const temp = path.join(codexDirectory, `.config.toml.tmp-${process.pid}-${crypto.randomBytes(8).toString('hex')}`);
@@ -2079,6 +2120,31 @@ async function runMcp(args, launcherPath) {
     status: z.enum(['passed', 'failed', 'skipped']),
     summary: z.string().max(2048).optional(),
   })).max(50);
+  const visualEvidenceViewportSchema = z.object({
+    name: z.string().regex(/^[a-z0-9](?:[a-z0-9_-]{0,30}[a-z0-9])?$/),
+    width: z.number().int().min(320).max(1920),
+    height: z.number().int().min(480).max(1440),
+  }).strict();
+  const visualEvidenceIntentSchema = z.object({
+    version: z.literal(1),
+    impact: z.enum(['ui', 'motion', 'none']),
+    rationale: z.string().min(1).max(1000),
+    stories: z.array(z.object({
+      id: z.string().regex(/^[a-z0-9](?:[a-z0-9_-]{0,94}[a-z0-9])?$/),
+      claim: z.string().min(1).max(1000),
+      persona: z.enum(['member', 'read_only_admin', 'full_admin']),
+      viewports: z.array(visualEvidenceViewportSchema).min(1).max(2),
+      intent: z.object({
+        startPath: z.string().min(1).max(512),
+        steps: z.array(z.string().min(1).max(200)).min(1).max(40),
+        checkpoint: z.string().min(1).max(500),
+        focus: z.string().min(1).max(200),
+        baseState: z.enum(['present', 'not_present']).optional()
+          .describe('Use not_present only for a genuinely new screen/control; base replay must still prove the stable parent or explicit absence state.'),
+        animation: z.enum(['none', 'steps', 'motion']).optional(),
+      }).strict(),
+    }).strict()).max(3),
+  }).strict().describe('Version-1 visual evidence declaration. Use impact ui or motion with 1-3 real user flows; use none with a concrete rationale and no stories. Never include credentials or screenshot-only application routes.');
   // chat_sessions.id is PostgreSQL INTEGER. Keep the MCP contract aligned
   // with the HTTP route's canonical-ID parser so an accepted tool argument
   // cannot later turn into a misleading 404.
@@ -2188,18 +2254,19 @@ async function runMcp(args, launcherPath) {
   });
 
   server.registerTool('social_vibecoding.proposal_submit_build', {
-    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Homeroom verifies the pinned head, deploys staging, and runs its normal proposal checks. Poll proposal_status afterward; for an already-promoted revision, poll revisionState instead of the lifecycle state.',
+    description: 'Submit an implemented local build to the native proposal. First run proposal_push_commit and use its returned bot-owned head SHA. Declare visual_evidence while implementation context is fresh: describe the real UI flow for ui/motion changes, or explicitly use impact none with a rationale. Homeroom verifies the pinned head, deploys staging, runs checks, and independently explores then deterministically replays the evidence flow against base and head. Poll proposal_status afterward; for an already-promoted revision, poll revisionState instead of the lifecycle state.',
     inputSchema: {
       session_id: sessionIdSchema,
       head_sha: z.string().regex(/^[0-9a-fA-F]{40}$/),
       history: proposalHistorySchema.optional(),
       spec: z.string().min(1).max(32768).optional(),
       tests: proposalTestsSchema.optional(),
+      visual_evidence: visualEvidenceIntentSchema.optional(),
       profile: apiProfileSchema,
     },
     outputSchema: apiOutputSchema,
     annotations: proposalAnnotations,
-  }, async ({ session_id: sessionId, head_sha: headSha, history, spec, tests, profile }) => mcpApiRequest({
+  }, async ({ session_id: sessionId, head_sha: headSha, history, spec, tests, visual_evidence: visualEvidence, profile }) => mcpApiRequest({
     method: 'POST',
     target: `/api/sessions/${sessionId}/proposal-handoff/build`,
     body: {
@@ -2207,6 +2274,7 @@ async function runMcp(args, launcherPath) {
       ...(history === undefined ? {} : { history }),
       ...(spec === undefined ? {} : { spec }),
       ...(tests === undefined ? {} : { tests }),
+      ...(visualEvidence === undefined ? {} : { visualEvidence }),
     },
     profileName: profile,
   }));
@@ -2273,7 +2341,7 @@ async function runMcp(args, launcherPath) {
   });
 
   server.registerTool('social_vibecoding.proposal_promote', {
-    description: 'Open/promote a ready native CLI proposal through Homeroom’s normal app proposal and voting workflow. Call only after proposal_status reports ready and the user wants promotion. Codex requires manual approval for this dedicated tool; its project guard blocks direct api_write and literal raw-shell promotion substitutes. This acts in Homeroom, never directly in GitHub.',
+    description: 'Open/promote a native CLI proposal through Homeroom’s normal app proposal and voting workflow. Call when the user wants promotion, once a build has been submitted with proposal_submit_build: staging and checks may still be running, and the proposal can merge only once they pass. Codex requires manual approval for this dedicated tool; its project guard blocks direct api_write and literal raw-shell promotion substitutes. This acts in Homeroom, never directly in GitHub.',
     inputSchema: {
       session_id: sessionIdSchema,
       profile: apiProfileSchema,
@@ -2289,7 +2357,7 @@ async function runMcp(args, launcherPath) {
     // A sandboxed stdio MCP process commonly cannot access the host's native
     // credential store. Return the exact promotion command in that case,
     // rather than a status-only host command that strands the approved flow.
-    // The server repeats the ready/head/check gate before promotion.
+    // The server repeats the submitted-head gate before promotion.
     if (statusResult.structuredContent?.code === 'host_execution_required') {
       return mcpApiRequest({
         method: 'POST',
@@ -2305,10 +2373,14 @@ async function runMcp(args, launcherPath) {
         && ['promoted', 'merging', 'merged'].includes(statusBody.state)) {
       return statusResult;
     }
-    if (statusCode !== 200 || !statusBody || statusBody.state !== 'ready') {
+    // #3043: promotion no longer waits for a ready revision. Staging and
+    // checks may still be running; the merge gate waits for them instead.
+    // The server refuses, in its own words, only a proposal with nothing
+    // submitted or a turn still moving its branch.
+    if (statusCode !== 200 || !statusBody) {
       return mcpError(
         'proposal_not_ready',
-        'The proposal is not ready to promote. Poll proposal_status and resolve staging or check failures first.',
+        'The proposal status could not be read. Poll proposal_status, then try again.',
         { status: statusCode, body: statusBody, retryable: true, profile: profile || pinned.name }
       );
     }

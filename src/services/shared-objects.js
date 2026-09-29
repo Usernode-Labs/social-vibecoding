@@ -86,6 +86,16 @@ function unavailable(ref) {
   };
 }
 
+// A message stores only the canonical app + issue number, so an unavailable
+// GitHub read must not make that identity unsendable. In particular, the
+// anonymous GitHub quota is shared by every app on a host; exhausting it used
+// to turn a real issue card into a generic 404 from the message endpoint.
+// Keep hard answers (404 / pull-request number) fail-closed, but let transient
+// reads preserve the already-validated identity and hydrate a safe fallback.
+function isTransientIssueRead(result) {
+  return !result?.issue && ['rate limited', 'fetch failed'].includes(result?.note);
+}
+
 async function validateForShare(pool, user, raw, { conversationId = null } = {}) {
   const ref = normalizeInput(raw);
   if (!ref) return null;
@@ -101,8 +111,8 @@ async function validateForShare(pool, user, raw, { conversationId = null } = {})
     const repo = parseRepo(app.repo_url);
     if (!repo) return null;
     const result = await github.fetchPublicIssue(repo.owner, repo.repo, ref.objectRef);
-    if (!result.issue) return null;
-    row = result.issue;
+    if (!result.issue && !isTransientIssueRead(result)) return null;
+    row = result.issue || { number: ref.objectRef };
   } else if (ref.type === 'code_proposal') {
     ({ rows: [row] } = await pool.query(
       `SELECT id, app_id, session_title, pr_title, pr_number, status, user_id
@@ -117,7 +127,8 @@ async function validateForShare(pool, user, raw, { conversationId = null } = {})
       `SELECT id, app_id, title, status, kind, created_by
          FROM issues
         WHERE id = $1 AND app_id = $2
-          AND kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign')`,
+          AND kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
+                       'featured_illustration')`,
       [ref.objectRef, app.id]
     ));
   } else if (ref.type === 'spec') {
@@ -165,7 +176,14 @@ async function hydrateOne(pool, user, ref) {
       const repo = parseRepo(app.repo_url);
       if (!repo) return unavailable(ref);
       const result = await github.fetchPublicIssue(repo.owner, repo.repo, ref.object_ref);
-      if (!result.issue) return unavailable(ref);
+      if (!result.issue && !isTransientIssueRead(result)) return unavailable(ref);
+      if (!result.issue) {
+        return {
+          ...base, issueNumber: ref.object_ref, title: `Issue #${ref.object_ref}`,
+          state: null, author: null,
+          href: `#app/${encodeURIComponent(app.slug)}/dev/issues/${ref.object_ref}`,
+        };
+      }
       return {
         ...base, issueNumber: ref.object_ref, title: result.issue.title,
         state: result.issue.state, author: result.issue.author || result.issue.user?.login || null,
@@ -194,7 +212,8 @@ async function hydrateOne(pool, user, ref) {
         `SELECT i.id, i.title, i.status, u.username
            FROM issues i LEFT JOIN users u ON u.id = i.created_by
           WHERE i.id = $1 AND i.app_id = $2
-            AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign')`,
+            AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
+                           'featured_illustration')`,
         [ref.object_ref, app.id]
       );
       if (!rows.length) return unavailable(ref);

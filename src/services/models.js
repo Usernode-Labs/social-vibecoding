@@ -50,10 +50,13 @@ const MODELS = {
       long: 'One small thing at a time: a text tweak, a colour, a single file.',
     },
   },
-  'claude-opus-5': {
-    label: 'Opus 5',
+  // #2818: Opus 5.5 replaces Opus 5 as the Opus entry. Anthropic publishes
+  // it at $4 in / $20 out per MTok, below Opus 5's $5 / $25, and the copy
+  // below is the same product opinion about the Opus tier it always was.
+  'claude-opus-5-5': {
+    label: 'Opus 5.5',
     tier: 'opus',
-    outputCostPerMTok: 25,
+    outputCostPerMTok: 20,
     changeSize: {
       short: 'general coding work',
       long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
@@ -75,18 +78,32 @@ const MODELS = {
   },
 };
 
-const DEFAULT_MODEL = 'claude-opus-5';
+const DEFAULT_MODEL = 'claude-opus-5-5';
+
+// Retired ids and the model that took their place. A stored pick of a
+// retired model (a browser's saved choice, a request built before the
+// change) resolves to its successor BY NAME rather than by falling through
+// to DEFAULT_MODEL, so the mapping survives the default moving elsewhere.
+// Historical rows keep the id they were written with; this map is read
+// only where a model is about to be RUN.
+const RETIRED_MODELS = Object.freeze({
+  'claude-opus-5': 'claude-opus-5-5',
+});
 
 function isAllowed(m) {
   return typeof m === 'string' && Object.prototype.hasOwnProperty.call(MODELS, m);
 }
 
 function resolve(m) {
-  return isAllowed(m) ? m : DEFAULT_MODEL;
+  if (isAllowed(m)) return m;
+  if (typeof m === 'string' && Object.prototype.hasOwnProperty.call(RETIRED_MODELS, m)) {
+    return RETIRED_MODELS[m];
+  }
+  return DEFAULT_MODEL;
 }
 
 function list() {
   return Object.entries(MODELS).map(([id, meta]) => ({ id, ...meta }));
 }
 
-module.exports = { MODELS, DEFAULT_MODEL, isAllowed, resolve, list };
+module.exports = { MODELS, DEFAULT_MODEL, RETIRED_MODELS, isAllowed, resolve, list };

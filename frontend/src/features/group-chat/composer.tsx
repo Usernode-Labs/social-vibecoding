@@ -93,10 +93,10 @@ export function useComposerSlot(scope: ComposerScope): ComposerSlot {
 /**
  * "↩ Replying to @alice" over the quoted line (#15).
  *
- * `.gc-reply-preview-inner` shares its rules in app.css with `.gc-quoted`, the
- * block a sent reply carries — deliberately, so staging a reply looks like
- * what it is about to produce. That is why neither moved into the widget
- * language on its own.
+ * `.gc-reply-preview-inner` is styled in app.css as the Messages screen's
+ * reply draft (#2391): full width on the composer, accent tint, the same
+ * accent border `.gc-quoted` — the block a sent reply carries — opens with,
+ * so staging a reply still reads as what it is about to produce.
  */
 function ReplyPreview({ scope, quote }: { scope: ComposerScope; quote: QuoteChipView | null }) {
   return (

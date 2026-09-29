@@ -101,8 +101,10 @@ function boot(opts) {
       getElementById() { return null; },
       createElement(tag) { return fakeNode(tag); },
       addEventListener() {},
+      removeEventListener() {},
     },
     addEventListener() {},
+    removeEventListener() {},
     dispatchEvent() {},
     // Real, REF'D timers. An unref'd timer here starves the grant-recheck
     // loop (native-chrome's only setTimeout, bounded at 4 iterations): the
@@ -112,7 +114,17 @@ function boot(opts) {
     // — cancelling every later test in the file with it.
     setTimeout, clearTimeout,
     setInterval() {},
-    fetch() { return Promise.reject(new Error('unexpected fetch')); },
+    // #2960: the Android sheet waits for block production. `opts.bp` is the
+    // /challenges-api/bp/state payload; Android cases here have asked.
+    fetch(url) {
+      if (url === '/challenges-api/bp/state') {
+        return Promise.resolve({ ok: true, async json() {
+          return { success: true,
+            data: opts.bp || { bp_requested: true, bp_released: false } };
+        } });
+      }
+      return Promise.reject(new Error('unexpected fetch'));
+    },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -221,11 +233,11 @@ test('concurrent and repeat triggers in one document present exactly one ' +
     'the sv:session/auth-status trigger storm must not stack sheets');
 });
 
-test('Android: the marker still suppresses the sheet with no bridge ' +
-     'reads', async () => {
+test('Android: asked within the last day, the sheet waits with no ' +
+     'bridge reads', async () => {
   let settingsReads = 0;
   const { sandbox, sheets } = boot({
-    stored: { [MARKER]: '1' },
+    stored: { [MARKER]: '1', 'sv:device_permissions_asked_at': String(Date.now()) },
     kitPlatform: 'android',
     permissions: { platform: 'android', exactAlarmGranted: false, batteryOptDisabled: false },
   });
@@ -234,7 +246,21 @@ test('Android: the marker still suppresses the sheet with no bridge ' +
   await sandbox.NativeChrome.maybeShowFirstRunPermissions();
   assert.equal(sheets.length, 0);
   assert.equal(settingsReads, 0,
-    'a marked Android device keeps the instant-return fast path');
+    'an Android device asked today keeps the instant-return fast path');
+});
+
+test('Android: the old marker alone no longer ends the asking', async () => {
+  let settingsReads = 0;
+  const { sandbox } = boot({
+    stored: { [MARKER]: '1' },
+    kitPlatform: 'android',
+    permissions: { platform: 'android', exactAlarmGranted: false, batteryOptDisabled: false },
+  });
+  const inner = sandbox.usernode.getSettingsState;
+  sandbox.usernode.getSettingsState = async () => { settingsReads += 1; return inner(); };
+  await sandbox.NativeChrome.maybeShowFirstRunPermissions();
+  assert.equal(settingsReads, 1,
+    'a device that skipped once, or lost a permission later, is re-checked');
 });
 
 const IOS_PERMS = {

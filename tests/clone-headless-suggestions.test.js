@@ -61,7 +61,7 @@ const SUGGESTIONS = [
 // A programmable pool stub that walks the clone-headless query sequence.
 // `outcome` sets src.headless_outcome; `suggestionsRow` is what the
 // "most recent assistant message with suggestions" lookup returns.
-function makeHandler({ outcome, suggestionsRow }) {
+function makeHandler({ outcome, suggestionsRow, repoUrl = null }) {
   return async (sql) => {
     if (/FROM chat_sessions cs\s+JOIN apps a/.test(sql)) {
       return {
@@ -70,7 +70,7 @@ function makeHandler({ outcome, suggestionsRow }) {
           app_id: 11,
           app_slug: 'demo',
           app_name: 'Demo App',
-          repo_url: null, // no owner/name → branch + title fetch skipped
+          repo_url: repoUrl, // absent in the quick-reply-only fixtures
           // appAccess.sessionCollabGuard selects both visibility columns
           // alongside the session; checkAppAccess THROWS without them.
           collab_visibility: 'public',
@@ -207,6 +207,43 @@ for (const outcome of ['spec', 'code', 'spec_code']) {
     }
   });
 }
+
+test('cloning pushed code opens a draft PR on the human branch; a spec clone stays PR-free', async () => {
+  const prMetadata = require('../src/services/pr-metadata');
+  const oldEnabled = github.isEnabled;
+  const oldCreateBranch = github.createBranch;
+  const oldFetchIssue = github.fetchPublicIssue;
+  const oldApply = prMetadata.applyPrMetadata;
+  const branches = [];
+  const prs = [];
+  github.isEnabled = () => true;
+  github.createBranch = async (_owner, _repo, branch, from) => { branches.push({ branch, from }); };
+  github.fetchPublicIssue = async () => ({ issue: { title: 'Make the header nicer' } });
+  prMetadata.applyPrMetadata = async (args) => {
+    prs.push(args);
+    args.session.pr_number = 78;
+    args.session.pr_url = 'https://github.com/acme/demo/pull/78';
+  };
+  try {
+    for (const outcome of ['code', 'spec_code', 'spec']) {
+      handler = makeHandler({ outcome, repoUrl: 'https://github.com/acme/demo' });
+      const server = await startServer();
+      try {
+        const { res, body } = await clone(server);
+        assert.equal(res.status, 201);
+        assert.equal(body.session.pr_number, outcome === 'spec' ? undefined : 78);
+      } finally { server.close(); }
+    }
+    assert.equal(prs.length, 2);
+    assert.ok(prs.every((call) => call.session.status === undefined || call.session.status === 'active'));
+    assert.ok(branches.every((item) => item.from === 'auto/issue-42'));
+  } finally {
+    github.isEnabled = oldEnabled;
+    github.createBranch = oldCreateBranch;
+    github.fetchPublicIssue = oldFetchIssue;
+    prMetadata.applyPrMetadata = oldApply;
+  }
+});
 
 test('question clone carries chips but no pills', async () => {
   captured = [];

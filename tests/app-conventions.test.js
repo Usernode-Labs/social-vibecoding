@@ -120,11 +120,26 @@ test('the server-side directory section covers staging previews (#1213)', () => 
   // alone.
   assert.match(doc, /if \(process\.env\.USERNODE_LLM_PROXY_TOKEN\) \{/);
   assert.match(doc, /send \*\*only\*\*\n\s*`x-usernode-user-token`/);
-  // The URL is now injected into both environments…
-  assert.match(doc, /`USERNODE_PLATFORM_API_URL` is injected into \*\*both\*\* production and\nstaging containers/);
+  // The version-pinned URL and legacy fallback are injected into both
+  // environments…
+  assert.match(doc, /`USERNODE_PLATFORM_API_V1_URL` and its legacy fallback are injected into\n\*\*both\*\* production and staging containers/);
   // …but the governance feed stays token-gated, so the FEED_ENABLED
   // check that ANDs both env vars must still be documented as required.
-  assert.match(doc, /`FEED_ENABLED` check above \(which ANDs `USERNODE_PLATFORM_API_URL`\n\*\*and\*\* `USERNODE_LLM_PROXY_TOKEN`\) remains correct and required/);
+  assert.match(doc, /`FEED_ENABLED` check above \(which ANDs `PLATFORM_API_BASE` \*\*and\*\*\n`USERNODE_LLM_PROXY_TOKEN`\) remains correct and required/);
+});
+
+test('app-facing APIs publish a pinned v1 directory contract (#1908)', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^## App-facing platform API — use the pinned v1 base$/m);
+  assert.match(doc, /USERNODE_PLATFORM_API_V1_URL/);
+  assert.match(doc, /Within v1, existing route paths, response field names, field types, and\nfield meanings stay compatible/);
+  assert.match(doc, /breaking shape\nrequires a new `\/v2` path and `USERNODE_PLATFORM_API_V2_URL`/);
+  assert.match(doc, /unversioned paths and\n`USERNODE_PLATFORM_API_URL` remain aliases of v1/);
+  assert.match(doc, /^## App directory — apps and contributors$/m);
+  assert.match(doc, /`GET \/apps` on `PLATFORM_API_BASE`/);
+  assert.match(doc, /'x-usernode-app-token': process\.env\.USERNODE_LLM_PROXY_TOKEN/);
+  assert.match(doc, /Use the returned `url`, never rebuild a hostname from `slug`/);
+  assert.match(doc, /obviously fake directory fixture/);
 });
 
 test('the offline essentials excerpt points at the user directory (#1195)', () => {

@@ -63,6 +63,10 @@ stub(ids.rateLimits, {
   appCreateLimiter: (_req, _res, next) => next(),
   appAllowanceRequestLimiter: (_req, _res, next) => next(),
   issueCreateLimiter: (_req, _res, next) => next(),
+  // Every limiter apps.js imports must appear here: express rejects an
+  // `undefined` middleware at mount time, so a missing one fails the whole
+  // route module, not just the route that uses it.
+  githubLookupLimiter: (_req, _res, next) => next(),
 });
 
 const pool = {

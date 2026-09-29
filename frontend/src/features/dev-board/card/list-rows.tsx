@@ -21,7 +21,7 @@ import { useState, type ReactNode } from 'react';
 import { ChevronRightIcon } from '@/components/ui/icons';
 
 import { CardIcon, DevCard } from './dev-card';
-import { CardRowView, type DetailPlacement, type OpenMode } from './fold';
+import { CardRowView, type DetailPlacement } from './fold';
 import type { ArchivedRow, ListRow } from './model';
 
 /**
@@ -35,13 +35,16 @@ export interface RowFold {
   open: boolean;
   onToggle: () => void;
   /**
-   * Where the open card's "Open card" toggle sits. A kanban column asks for
+   * Where the open card's "Open card" pill sits. A kanban column asks for
    * the action band: the facts-line seat moves the card's actions up beside
    * it, which ~300px cannot hold (see fold.tsx).
    */
   detail?: DetailPlacement;
-  /** What "Open card" does there: the Board sends it to the item's page. */
-  expand?: OpenMode;
+  /**
+   * Whether the sheet draws #1887's "Open session ›" line under it. A column
+   * does not — there is no rule to style it with there (fold.tsx).
+   */
+  sessionLink?: boolean;
 }
 
 function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
@@ -57,6 +60,7 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
       >
         <ChevronRightIcon
           data-archived-caret=""
+          aria-hidden="true"
           className="w-3 h-3 transition-transform"
           style={open ? { transform: 'rotate(90deg)' } : undefined}
         />
@@ -67,8 +71,8 @@ function ArchivedBlock({ rows }: { rows: ArchivedRow[] }): ReactNode {
           <div key={r.id} className={r.cls}>
             <CardIcon spec={r.icon} />
             <span className="flex-1 min-w-0">
-              <span className="block text-sm font-medium text-zinc-500 dark:text-zinc-400 break-words">{r.label}</span>
-              <span className="block text-xs text-zinc-500 dark:text-zinc-500 truncate">Archived</span>
+              <span className="block text-sm font-medium text-zinc-700 dark:text-zinc-300 break-words">{r.label}</span>
+              <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Archived</span>
             </span>
             <button type="button" className="gc-vote-btn" data-unarchive-chip={r.id} title="Restore this session (reopens its PR)">
               Unarchive
@@ -88,7 +92,7 @@ export function ListRowView({ row, fold }: { row: ListRow; fold?: RowFold | null
   switch (row.t) {
     case 'card':
       return fold
-        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} expand={fold.expand} />
+        ? <CardRowView row={row} slug={fold.slug} canPost={fold.canPost} open={fold.open} onToggle={fold.onToggle} detail={fold.detail} sessionLink={fold.sessionLink} />
         : <DevCard model={row.card} />;
     case 'divider':
       return (

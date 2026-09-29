@@ -137,6 +137,10 @@ test('each kind renders its own title and body from send-time context', () => {
     ['reply', CONTEXT,
       '@alice replied in "Fix login redirect loop" · MyPage',
       'hey can you look at the header'],
+    // #2387: a reply in an app-chat reply thread you are in.
+    ['thread_reply', CONTEXT,
+      '@alice replied in a thread · MyPage',
+      'hey can you look at the header'],
     ['reaction', { ...CONTEXT, detail: '👍' },
       '@alice reacted 👍 to your message · MyPage',
       'You said: hey can you look at the header'],
@@ -161,9 +165,25 @@ test('each kind renders its own title and body from send-time context', () => {
     ['session_done', CONTEXT,
       'Your build is ready · MyPage',
       '"Fix login redirect loop" finished. Review it while it\'s fresh'],
+    // #3181: the turn stopped before finishing. Where, then what to do.
+    ['session_stalled', CONTEXT,
+      'Your session on MyPage stopped before finishing',
+      'Open "Fix login redirect loop" to continue'],
     ['pr_proposed', { ...CONTEXT, prTitle: 'Fix login redirect loop', sessionTitle: null },
       '@alice proposed "Fix login redirect loop" · MyPage',
       '@alice would love your eyes on this'],
+    ['proposal_vote', CONTEXT,
+      '@alice voted yes on "Fix login redirect loop" · MyPage',
+      'Open the proposal to review their vote'],
+    ['pr_merged', CONTEXT,
+      '"Fix login redirect loop" merged · MyPage',
+      'The vote carried. Your change is live'],
+    ['issue_opened', { ...CONTEXT, detail: '2273' },
+      '@alice filed issue #2273 · MyPage',
+      'Open the issue to see what needs attention'],
+    ['vote_digest', { ...CONTEXT, detail: '3' },
+      '3 proposals are waiting for your vote',
+      'Open Dev to review them'],
     ['check_failed', CONTEXT,
       'Checks failed on "Fix login redirect loop" · MyPage',
       'Needs a fix before it can merge'],
@@ -292,6 +312,21 @@ test('missing context degrades to the generic notification, never a throw', () =
     buildMessage({ ...INPUT, kind: 'session_done', context: {} }).notification,
     { title: 'Your build is ready' }
   );
+  // #3181: a stalled session still says what happened and what to do.
+  assert.deepEqual(
+    buildMessage({ ...INPUT, kind: 'session_stalled', context: {} }).notification,
+    { title: 'Your session stopped before finishing', body: 'Open it to continue' }
+  );
+  // The new system-owned kinds can still identify the event without an
+  // actor, app or proposal label, so they never regress to generic activity.
+  assert.deepEqual(
+    buildMessage({ ...INPUT, kind: 'pr_merged', context: {} }).notification,
+    { title: 'Your proposal merged', body: 'The vote carried. Your change is live' }
+  );
+  assert.deepEqual(
+    buildMessage({ ...INPUT, kind: 'vote_digest', context: {} }).notification,
+    { title: 'Proposals are waiting for your vote', body: 'Open Dev to review them' }
+  );
 });
 
 test('context never leaks into the data payload', () => {
@@ -341,4 +376,83 @@ test('test alert uses explicit copy with the normal opaque push envelope', () =>
   });
   assert.equal(message.data.notification_id, '42');
   assert.equal(message.android.notification.channelId, 'social_activity');
+});
+
+test('app health alerts say what happened and what to do (#2253, #2273)', () => {
+  // The storage cap and deploy-failure tokens all produce contextual copy.
+  // Unknown future tokens still identify the app and direct the recipient to
+  // the durable detail instead of degrading to generic activity.
+  const warn = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'storage_warn' },
+  });
+  assert.deepEqual(warn.notification, {
+    title: 'Storage is nearly full · MyPage',
+    body: 'MyPage has used most of its storage. Clean up old data or ask an admin to raise the limit',
+  });
+  const full = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'storage_full' },
+  });
+  assert.deepEqual(full.notification, {
+    title: 'Out of storage · MyPage',
+    body: 'New data cannot be saved until an admin raises the limit or allows time to clean up',
+  });
+  const deploy = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'deploy_failed' },
+  });
+  assert.deepEqual(deploy.notification, {
+    title: 'Deploy failed · MyPage',
+    body: 'The latest change did not go live. Open the app to see what failed',
+  });
+  const other = buildMessage({
+    ...INPUT, kind: 'app_health', context: { ...CONTEXT, detail: 'future_token' },
+  });
+  assert.deepEqual(other.notification, {
+    title: 'App needs attention · MyPage',
+    body: 'Open the app to see what needs attention',
+  });
+});
+
+test('platform limit alerts name the cap, how full it is, and the lever', () => {
+  // Full admins only, and no app: the title carries no " · App" suffix.
+  const copy = (detail) => buildMessage({
+    ...INPUT, kind: 'platform_limit', context: { detail },
+  }).notification;
+  assert.deepEqual(copy('apps_warn:40:50'), {
+    title: 'Nearing the app limit',
+    body: '40 of 50 apps are in use. Raise the limit in Admin \u2192 Limits before new apps are refused',
+  });
+  assert.deepEqual(copy('apps_full:50:50'), {
+    title: 'App limit reached',
+    body: '50 of 50 apps are in use. New apps are refused until the limit is raised in Admin \u2192 Limits',
+  });
+  assert.deepEqual(copy('sessions_warn:60:75'), {
+    title: 'Nearing the session limit',
+    body: '60 of 75 coding sessions are running. At the limit, idle sessions are paused to make room',
+  });
+  assert.equal(copy('sessions_full:75:75').title, 'Session limit reached');
+  assert.match(copy('sessions_full:75:75').body, /MAX_GLOBAL_SESSIONS/);
+  // An unreadable token still says what kind of alert it is.
+  assert.equal(copy('disk_warn:1:2').title, 'Platform limit');
+  assert.equal(copy(undefined).title, 'Platform limit');
+});
+
+test('#2386: a friend request and its acceptance name the person and what to do', () => {
+  const request = buildMessage({ ...INPUT, kind: 'friend_request', context: { sourceUsername: 'lin' } });
+  assert.deepEqual(request.notification, {
+    title: '@lin sent you a friend request',
+    body: 'Accept or decline in Notifications',
+  });
+  const accepted = buildMessage({ ...INPUT, kind: 'friend_accept', context: { sourceUsername: 'ada' } });
+  assert.equal(accepted.notification.title, '@ada accepted your friend request');
+  assert.match(accepted.notification.body, /friends now/);
+  // No app and no conversation ride along, so nothing is appended.
+  assert.doesNotMatch(request.notification.title, / · /);
+  // Without the person there is nothing true to say: the generic copy.
+  assert.deepEqual(
+    buildMessage({ ...INPUT, kind: 'friend_request', context: {} }).notification,
+    { title: 'Homeroom', body: 'You have new activity' },
+  );
+  // The opaque data payload is unchanged by the kind.
+  assert.equal(request.data.notification_id, '42');
+  assert.equal(Object.keys(request.data).includes('source_username'), false);
 });

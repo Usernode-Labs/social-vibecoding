@@ -53,6 +53,32 @@ const STAGING_BUILD_LOCK = 991005;
 const PRODUCTION_BUILD_LOCK = 991006;
 const STAGING_TEMPLATE_LOCK = 991007;
 const PREVIEW_LIFECYCLE_LOCK = 991008;
+// #1374: the once-a-day "what needs your vote" digest. Exclusive across
+// platform Pods, because every instance runs the same interval and a digest
+// sent twice is worse than one sent late.
+const VOTE_DIGEST_LOCK = 991009;
+// The automatic challenge scorer's tick. Exclusive across platform Pods for
+// the same reason the digest is: every instance runs the same interval, and
+// two of them planning the same credits at once would both read an empty
+// ledger before either wrote to it. The unique index on `source_key` would
+// still refuse the duplicate row, so this lock is about not doing the work
+// (and not spending the grading calls) twice, rather than about correctness.
+const CHALLENGE_SCORER_LOCK = 991010;
+// #1688: the Friday "this week on <app>" card. Exclusive across platform
+// Pods for the digest's reason: every instance runs the interval, and a card
+// posted twice into one chat is worse than one posted an hour late.
+const WEEKLY_DIGEST_LOCK = 991011;
+// #2684: the Homeroom bot's work loop. Session-scoped, held by the leader
+// for the length of one pass over the queue, because a pass runs container
+// turns that cost money: two Pods draining the same queue would triage the
+// same issue twice and pay twice. The queue's UNIQUE (app_id, issue_number)
+// would still refuse a duplicate row, so this is about not doing the work
+// twice rather than about correctness.
+const HOMEROOM_BOT_LOCK = 991012;
+// Held from the GitHub merge call through its finalizer. Recovery may only
+// inspect/replay that proposal after the live owner has released it.
+const MERGE_FINALIZATION_LOCK = 991013;
 
-module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, BUILD_RETENTION_LOCK,
-  STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK };
+module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, MERGE_FINALIZATION_LOCK, BUILD_RETENTION_LOCK,
+  STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK };

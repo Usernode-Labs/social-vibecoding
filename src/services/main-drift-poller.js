@@ -8,6 +8,12 @@
  * (the import-existing flow) and for any out-of-band pushes by the bot
  * to its own repos.
  *
+ * The platform's own row (apps.self_hosted) is polled too, but never
+ * rebuilt from here: its main_sha is the build that is serving, and its
+ * releases come from the repository's Actions workflow through Argo CD.
+ * Drift on that row means "merged, not released", and goes to
+ * services/release-watch.js, which says so once the release is late.
+ *
  * Why polling and not webhooks?
  *   Webhooks would be lower-latency but require a public callback URL
  *   and the bot to register them on every repo. Polling at a 5-minute
@@ -37,6 +43,7 @@ const github = require('./github');
 const staging = require('./staging');
 const { broadcastGlobal } = require('./ws');
 const { checkAndResolveConflicts } = require('./conflict-resolver');
+const releaseWatch = require('./release-watch');
 
 // 5 minutes default. GitHub's rest API has a 5000 req/hr limit per token,
 // so even with ~100 imported apps polling every minute we'd be at ~6000
@@ -49,7 +56,47 @@ const FIRST_POLL_DELAY_MS = 30_000;
 
 const inFlight = new Set();
 
-async function fetchRemoteHeadSha(owner, repo) {
+// Back off a rebuild that keeps failing for the same commit.
+//
+// A drift rebuild that fails is retried on the next tick, forever, at full
+// cadence. That is right when the fault is transient (GitHub hiccup, the
+// build host busy). It is wrong when the fault is in the commit itself: a
+// Dockerfile the build sandbox cannot build, a syntax error on main. That
+// fails identically every time, and every attempt costs a full image build
+// plus, until staging.js learned to suppress repeats, a "Deploy failed"
+// notification to everyone who could fix it. Twenty-five in a night for
+// one falling-sands commit.
+//
+// So: while the sha a rebuild is ATTEMPTING stays the same, each failure
+// doubles the wait before the next attempt, from one tick up to a cap. A
+// new commit on main is a new attempt and starts over; so does a rebuild
+// that succeeds, and the admin's "Check for updates" button ignores the
+// wait entirely (an admin asking now has usually just fixed something).
+//
+// In memory on purpose: the poller runs on the leader, and a restart
+// merely costs one extra attempt.
+const BACKOFF_MAX_MS = parseInt(process.env.MAIN_DRIFT_BACKOFF_MAX_MS, 10) || 60 * 60 * 1000;
+const failedAttempts = new Map(); // app.id -> { sha, failures, notBefore }
+let now = () => Date.now();
+
+function backoffRemaining(appId, sha) {
+  const entry = failedAttempts.get(appId);
+  if (!entry || entry.sha !== sha) return 0;
+  return Math.max(0, entry.notBefore - now());
+}
+
+function noteFailure(appId, sha) {
+  const prev = failedAttempts.get(appId);
+  const failures = prev && prev.sha === sha ? prev.failures + 1 : 1;
+  const delayMs = Math.min(POLL_INTERVAL_MS * 2 ** (failures - 1), BACKOFF_MAX_MS);
+  failedAttempts.set(appId, { sha, failures, notBefore: now() + delayMs });
+  return { failures, delayMs };
+}
+
+// main's tip: its sha, and — for the self-hosted row's release watch — when
+// it landed and what it says, so a stall can be dated from the merge and
+// name its PR. Both are null when the API shape lacks them.
+async function fetchRemoteHead(owner, repo) {
   const octokit = await github.getOctokit(owner);
   // `repos.getBranch` returns the tip commit; cheaper than listing
   // commits and authoritative for "what would `git clone` get right
@@ -58,7 +105,13 @@ async function fetchRemoteHeadSha(owner, repo) {
   // we'd need to read the repo's default_branch otherwise — not
   // worth the extra call.
   const { data } = await octokit.rest.repos.getBranch({ owner, repo, branch: 'main' });
-  return data.commit?.sha || null;
+  const commit = data.commit || {};
+  return {
+    sha: commit.sha || null,
+    committedAt: commit.commit?.committer?.date || commit.commit?.author?.date || null,
+    subject: commit.commit?.message || null,
+    octokit,
+  };
 }
 
 // Returns a structured result so callers (the periodic poll loop, and
@@ -73,8 +126,16 @@ async function fetchRemoteHeadSha(owner, repo) {
 //   invalid_repo     — `apps.repo_url` couldn't be parsed (shouldn't happen for healthy rows)
 //   fetch_failed     — GitHub API call rejected (bot lost access, rate limit, …)
 //   rebuild_failed   — rebuildProduction threw (clone/build/healthcheck etc.)
+//   backing_off      — drift detected, but the same commit failed to rebuild
+//                      recently; not retried until `retryInMs` has passed
 //   first_seen       — main_sha was NULL; backfilled, no redeploy
-async function checkAndRedeployOne(config, pool, app) {
+//   release_pending  — the self-hosted row: main is ahead of the running
+//                      build, within a release's normal time
+//   release_stalled  — the self-hosted row: main is ahead and the release
+//                      has not come (services/release-watch.js)
+//
+// `manual: true` (the admin's "Check for updates") skips the backoff wait.
+async function checkAndRedeployOne(config, pool, app, { manual = false } = {}) {
   if (inFlight.has(app.id)) {
     return { status: 'in_flight', slug: app.slug };
   }
@@ -85,15 +146,16 @@ async function checkAndRedeployOne(config, pool, app) {
     return { status: 'invalid_repo', slug: app.slug, repoUrl: app.repo_url };
   }
 
-  let remoteSha;
+  let head;
   try {
-    remoteSha = await fetchRemoteHeadSha(parsed.owner, parsed.repo);
+    head = await fetchRemoteHead(parsed.owner, parsed.repo);
   } catch (err) {
     log.debug('drift-poller', 'Failed to fetch remote HEAD', {
       slug: app.slug, repo: `${parsed.owner}/${parsed.repo}`, err: err.message,
     });
     return { status: 'fetch_failed', slug: app.slug, error: err.message };
   }
+  const remoteSha = head.sha;
   if (!remoteSha) return { status: 'fetch_failed', slug: app.slug, error: 'GitHub returned no SHA' };
 
   // First-time backfill: no prior SHA recorded → just save it. This
@@ -109,7 +171,34 @@ async function checkAndRedeployOne(config, pool, app) {
   }
 
   if (remoteSha === app.main_sha) {
+    // Converged, by us or by some other path (a merge, a manual redeploy);
+    // whatever was failing is no longer what main points at.
+    failedAttempts.delete(app.id);
+    // For the platform's own row this is the new build's first look after
+    // a release: close out a stall the previous build recorded, if any.
+    if (app.self_hosted) await releaseWatch.converged(config, pool, app);
     return { status: 'no_drift', slug: app.slug, sha: remoteSha };
+  }
+
+  // The platform's own row. Its main_sha is the build that is serving
+  // (seedSelfApp writes GIT_SHA at boot), and its releases come from the
+  // repository's Actions workflow through Argo CD, never from here:
+  // rebuildProduction on this row can only fail — it did, every tick, during
+  // the #2589 gap ("missing required secrets", because the platform's
+  // dapp.json declares secrets a child app would hold in app_secrets). What
+  // main ahead of the running build means here is "merged, not released",
+  // and the watch says so once it is late (services/release-watch.js).
+  if (app.self_hosted) {
+    return releaseWatch.observe(config, pool, app, head, { octokit: head.octokit });
+  }
+
+  const retryInMs = manual ? 0 : backoffRemaining(app.id, remoteSha);
+  if (retryInMs > 0) {
+    const { failures } = failedAttempts.get(app.id);
+    log.debug('drift-poller', 'Drift rebuild backing off after repeated failure', {
+      slug: app.slug, attempted: remoteSha.slice(0, 7), failures, retryInMs,
+    });
+    return { status: 'backing_off', slug: app.slug, from: app.main_sha, attempted: remoteSha, failures, retryInMs };
   }
 
   // Drift detected. Claim the in-memory slot before doing any work
@@ -144,6 +233,7 @@ async function checkAndRedeployOne(config, pool, app) {
         prNumber: null,
       });
     } catch (_) { /* ws failures are non-fatal */ }
+    failedAttempts.delete(app.id);
     log.info('drift-poller', 'Drift redeploy succeeded', { slug: app.slug, sha: (sha || '').slice(0, 7) });
     // main moved out-of-band (direct push / bot commit). Any promoted PR
     // on this app may now conflict — sweep them through the worker-based
@@ -154,12 +244,18 @@ async function checkAndRedeployOne(config, pool, app) {
     });
     return { status: 'redeployed', slug: app.slug, from: app.main_sha, to: sha || remoteSha };
   } catch (err) {
-    log.error('drift-poller', 'Drift redeploy failed', { slug: app.slug, err: err.message });
-    // Don't update main_sha on failure — the next poll will see the
-    // same drift and retry. Eventually the upstream fault (e.g. bot
-    // lost access, syntax error in the new commit) gets fixed and
-    // we converge. No status flip needed.
-    return { status: 'rebuild_failed', slug: app.slug, from: app.main_sha, attempted: remoteSha, error: err.message };
+    // Don't update main_sha on failure — a later poll sees the same drift
+    // and retries, after the backoff above. Eventually the upstream fault
+    // (bot lost access, syntax error in the new commit) gets fixed and we
+    // converge. No status flip needed.
+    const { failures, delayMs } = noteFailure(app.id, remoteSha);
+    log.error('drift-poller', 'Drift redeploy failed', {
+      slug: app.slug, attempted: remoteSha.slice(0, 7), failures, retryInMs: delayMs, err: err.message,
+    });
+    return {
+      status: 'rebuild_failed', slug: app.slug, from: app.main_sha, attempted: remoteSha,
+      failures, retryInMs: delayMs, error: err.message,
+    };
   } finally {
     inFlight.delete(app.id);
   }
@@ -170,7 +266,7 @@ async function poll(config) {
   // Snapshot the candidate set once. Apps whose status changes during
   // the loop are filtered by the per-row claim above, not here.
   const { rows } = await pool.query(
-    `SELECT id, slug, repo_url, main_sha
+    `SELECT id, slug, repo_url, main_sha, self_hosted, release_stall
        FROM apps
       WHERE repo_url IS NOT NULL AND status = 'running'`
   );
@@ -211,4 +307,10 @@ module.exports = {
   // Exposed so the admin "Check for updates" button can run the same
   // single-app code path on demand without waiting for the next tick.
   checkAndRedeployOne,
+  _forTest: {
+    resetBackoff: () => failedAttempts.clear(),
+    setClock: (fn) => { now = fn || (() => Date.now()); },
+    POLL_INTERVAL_MS,
+    BACKOFF_MAX_MS,
+  },
 };

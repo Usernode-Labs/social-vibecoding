@@ -55,6 +55,46 @@ test('the head declares color-scheme for both grounds', () => {
   );
 });
 
+// ── 1b. the status-bar strip belongs to the page on iOS (#1929) ─────────
+
+test('an installed iOS web app gives the page the status-bar strip', () => {
+  const src = headSrc();
+  // Without `black-translucent` a home-screen install gets iOS's OPAQUE
+  // status bar: the system draws that strip, tints it from theme-color, and
+  // starts the web view below it. Two things follow, and the second is what
+  // #1929 reported.
+  //
+  //  - env(safe-area-inset-top) reads 0, because the page never reaches the
+  //    unsafe area. `--platform-safe-top` and the kit's .un-safe-top-extend
+  //    both resolve to nothing on the platform they exist for.
+  //  - no page pixel reaches the strip, so a dialog's `inset: 0` scrim cannot
+  //    dim it. Measured on an iPhone 17 Pro: the page went 241 -> 145 while
+  //    the strip held 241 in every frame, a 115-unit cliff at exactly 62pt.
+  //
+  // This meta is the whole fix, so it is worth an assertion of its own: it is
+  // one line, it is invisible in every screenshot a reviewer looks at, and
+  // deleting it silently restores the bug on one platform only.
+  assert.match(
+    src,
+    /<meta\s+name="apple-mobile-web-app-status-bar-style"\s+content="black-translucent">/,
+    'the head must hand the iOS status-bar strip to the page, or its scrim cannot dim it'
+  );
+  assert.match(
+    src,
+    /<meta\s+name="viewport"[^>]*viewport-fit=cover/,
+    'viewport-fit=cover is the other half: without it the page is inset back out of that strip'
+  );
+});
+
+test('theme-color survives, because it still owns other chrome', () => {
+  // black-translucent takes the iOS strip away from theme-color. It does NOT
+  // make the meta redundant: it still paints Android's address bar and the
+  // window ground a standalone install shows before the document paints, and
+  // frontend/src/head.html's theme module rewrites it from the resolved mode.
+  assert.match(headSrc(), /<meta name="theme-color" content="#f4f2e4">/);
+  assert.match(headSrc(), /meta\[name="theme-color"\]/, 'the theme module still writes it');
+});
+
 test('color-scheme is keyed off .dark, never delegated to the OS', () => {
   const src = headSrc();
   // `color-scheme: light dark` hands the choice to the OS preference. The

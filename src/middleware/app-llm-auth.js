@@ -1,10 +1,9 @@
 'use strict';
 
 const crypto = require('crypto');
-const { isPrivateIp } = require('./anthropic-proxy-auth');
 const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
-const { clientIp } = require('../services/client-ip');
+const { clientIp, isDirectInternalCall } = require('../services/client-ip');
 
 // Authenticates dapp → platform LLM-proxy requests (issue #34):
 // POST /api/app-llm/v1/messages etc.
@@ -102,7 +101,7 @@ async function resolveApp(pool, token) {
 // `{ allowUserTokenOnly: true }` (issue #1213, requires requireUser) lets
 // a caller with NO app token authenticate with the user token alone —
 // the staging-preview path for the user-directory endpoints: preview
-// containers hold USERNODE_PLATFORM_API_URL but deliberately no app
+// containers hold the USERNODE_PLATFORM_API_* base URLs but deliberately no app
 // token, and the person reviewing a proposal already has an iframe
 // token minted for that exact app. The app identity comes from the
 // token's own `aud` claim (`usernode:app:<id>`), which is only TRUSTED
@@ -136,9 +135,12 @@ function appPlatformAuth(pool, opts = {}) {
   const requireUser = !!opts.requireUser;
   const allowUserTokenOnly = !!opts.allowUserTokenOnly && requireUser;
   return async function appPlatformAuthMiddleware(req, res, next) {
-    const ip = clientIp(req);
-    if (!isPrivateIp(ip)) {
-      log.warn('app-platform-auth', 'Rejected non-private source IP', { ip, path: req.path });
+    // #2506: "is the resolved address private" is not the same question as
+    // "did this come from inside" — on a trusted-proxy DNS failure clientIp
+    // falls back to the ingress's own private address.
+    if (!isDirectInternalCall(req)) {
+      log.warn('app-platform-auth', 'Rejected non-direct internal call',
+        { ip: clientIp(req), path: req.path });
       return res.status(403).json({ ok: false, code: 'forbidden_ip' });
     }
 
@@ -213,6 +215,10 @@ function appPlatformAuth(pool, opts = {}) {
         return res.status(403).json({ ok: false, code: 'bad_user_token' });
       }
       userId = claims.id;
+      try {
+        const live = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+        if (!live.rows.length) return res.status(401).json({ ok: false, code: 'bad_user_token' });
+      } catch { return res.status(503).json({ ok: false, code: 'lookup_failed' }); }
     }
 
     req.appPlatform = { appId: app.id, appSlug: app.slug, userId };
@@ -223,9 +229,12 @@ function appPlatformAuth(pool, opts = {}) {
 
 function appLlmAuth(pool, config) {
   return async function appLlmAuthMiddleware(req, res, next) {
-    const ip = clientIp(req);
-    if (!isPrivateIp(ip)) {
-      log.warn('app-llm-auth', 'Rejected non-private source IP', { ip, path: req.path });
+    // #2506: "is the resolved address private" is not the same question as
+    // "did this come from inside" — on a trusted-proxy DNS failure clientIp
+    // falls back to the ingress's own private address.
+    if (!isDirectInternalCall(req)) {
+      log.warn('app-llm-auth', 'Rejected non-direct internal call',
+        { ip: clientIp(req), path: req.path });
       return res.status(403).json({ ok: false, code: 'forbidden_ip' });
     }
 

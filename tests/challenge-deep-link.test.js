@@ -38,9 +38,9 @@ const CHALLENGES_SRC = fs.readFileSync(
   path.join(root, 'frontend/src/features/leaderboard/topochain-challenges.js'), 'utf8'
 );
 const appJs = fs.readFileSync(path.join(root, 'public/js/app.js'), 'utf8');
-// #1191 slice 6 split the profile screen into a shaping module and a view:
-// the address is built in profile-store.js's completedView, and the anchor
-// that carries it is rendered in profile-view.tsx.
+// #1191 slice 6 split the profile screen into a shaping module and a view.
+// Me no longer builds a completion address at all (see the last tests below);
+// both are read to pin that.
 const profileStoreJs = fs.readFileSync(
   path.join(root, 'frontend/src/features/profile/profile-store.js'), 'utf8');
 const profileViewTsx = fs.readFileSync(
@@ -147,7 +147,7 @@ function loadPane({ challenges, eventId = null }) {
   pane._challenges = challenges;
   pane._challengesLoading = false;
   pane._loadedEventId = eventId;
-  return { pane, context, byId, subs, store };
+  return { pane, context, byId, subs, store, sandbox };
 }
 
 const CH = [
@@ -179,10 +179,12 @@ test('onboarding progress uses personal completion and explains the later unlock
   pane._onboarding = { total: 3, completed: 2, unlocked: false, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
-  assert.match(grid.summary, /^2 of 3 onboarding/);
-  assert.match(grid.notice, /unlock persistent and weekly/);
+  assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in Get started' },
+    'setup is its own scope while it gates the rest');
+  assert.equal(grid.notice, 'Finish these to unlock the rest of the season.');
+  assert.equal(grid.lockedCount, 0, 'no hidden_count in this payload, so no placeholder');
   assert.equal(grid.groups.length, 1);
-  assert.equal(grid.groups[0].heading, 'Get started');
+  assert.equal(grid.groups[0].heading, 'Get started', 'the setup group’s heading (key `setup`)');
   assert.equal(grid.groups[0].cards[0].done, false, 'the organiser flag cannot finish a personal step');
 });
 
@@ -196,12 +198,14 @@ test('unlocked challenge groups preserve each card’s detail target', () => {
   pane._onboarding = { total: 3, completed: 3, unlocked: true, event_id: 10 };
   pane._renderGrid();
   const grid = store.get().grid;
+  // The board's order (tests/challenge-groups.test.js): unlocked, Get started
+  // goes last. The identity card is found by its group rather than by position.
   assert.deepEqual(Array.from(grid.groups, (g) => g.heading),
-    ['Persistent challenges', 'Weekly challenges', 'Onboarding']);
-  const identity = grid.groups[0].cards[0];
+    ['This week', 'Always open', 'Get started']);
+  const identity = grid.groups.find((g) => g.key === 'always').cards[0];
   pane._openIdx(identity.idx);
   assert.equal(pane._detailChallenge.id, 4);
-  assert.match(grid.notice, /are unlocked/);
+  assert.equal('notice' in grid, false, 'unlocked, there is no notice');
 });
 
 test('a locked weekly event explains how to return to the introductory steps', () => {
@@ -425,24 +429,39 @@ test('a counted metric fills the rail by the viewer’s ledger rows', () => {
     { state: 'progress', stateLabel: '3/8 tried', fill: 0.375, earned: null });
 });
 
-test('block production with no ledger points claims nothing: a bare ring, no value', () => {
+test('block production with no ledger points says Not started, never a bare ring (#2492)', () => {
   // The real shape: block scores live in snapshots, never in user_activities,
-  // so an active block producer's row has no activities at all.
+  // so an active block producer's row has no activities at all. That used to
+  // return an empty label and draw a dot with nothing beside it; the words
+  // are the same ones Home has always shown for the same challenge.
   const { pane } = loadPane({ challenges: CH, eventId: 900500 });
   pane._mine = new Map([[900500, {
     id: 900500, activities_total: 0, activities: [],
     metric: { kind: 'blocks_produced', label: 'blocks', target: 1 },
   }]]);
   assert.deepEqual(stateOf(pane, CH[0]),
-    { state: 'new', stateLabel: '', fill: null, earned: null },
-    'not "Not started" — Home may be showing this viewer real block progress');
+    { state: 'new', stateLabel: 'Not started', fill: 0, earned: null });
 });
 
-test('before personalization lands, a block challenge still claims nothing', () => {
+test('the row’s own block count wins over the ledger fallback (#2492)', () => {
+  // What the server now attaches: `progress` resolved from the viewer's
+  // newest leaderboard snapshot, the same value Home's meter reads. The
+  // counted branch prints it, so the tab and Home agree on the number.
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const block = {
+    id: 900504, completed: false, card_preview: {},
+    metric: { kind: 'blocks_produced', label: 'blocks', target: 500 },
+    progress: { done: false, current: 180, target: 500 },
+  };
+  assert.deepEqual(stateOf(pane, block),
+    { state: 'progress', stateLabel: '180/500 blocks', fill: 0.36, earned: null });
+});
+
+test('before personalization lands, a block challenge says Not started too', () => {
   const { pane } = loadPane({ challenges: CH, eventId: 900500 });
   const block = { id: 900504, completed: false, activity_type: { metric_type: 'blocks_produced', metric_label: 'blocks' }, card_preview: {} };
-  assert.deepEqual(stateOf(pane, block), { state: 'new', stateLabel: '', fill: null, earned: null },
-    'first paint and a failed personalization read the public row’s metric kind');
+  assert.deepEqual(stateOf(pane, block), { state: 'new', stateLabel: 'Not started', fill: 0, earned: null },
+    'first paint and a failed personalization fall back to the ledger, which a block card never has');
 });
 
 test('ledger-credited block production and yes/no challenges are indeterminate, labelled Started', () => {
@@ -524,8 +543,13 @@ test('the task is not on the card; the detail overlay carries it in full, never 
   pane._openIdx(0);
   assert.equal(store.get().detail.task, 'Open three apps from the directory and use each one',
     'a tap reveals the task the card leaves out');
-  assert.doesNotMatch(require('node:fs').readFileSync(
-    require('node:path').join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8'), /title=\{/,
+  const paneSrc = require('node:fs').readFileSync(
+    require('node:path').join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
+  // `<SectionHeading title=…/>` is @/components/ui/field's PROP, not the DOM
+  // attribute of the same name: it renders the heading's visible text. Strip
+  // those and the blunt rule below still catches a real tooltip.
+  const noHeadings = paneSrc.replace(/<SectionHeading[\s\S]*?\/>/g, '');
+  assert.doesNotMatch(noHeadings, /title=\{/,
     'a phone has no hover: nothing on this screen may live only in a title attribute');
 });
 
@@ -601,6 +625,148 @@ test('an open card says how long it has left: its own end, else the event’s', 
   assert.equal(pane._timeLeft(null), null);
 });
 
+// #3185: a challenge the background scorer counts carries `scoring` ({
+// interval_minutes, last_scored_at }) on its public row, and its card and page
+// say it under the rail, because the count only moves when a run does. Times
+// are the viewer's own locale and zone, so the expected strings are built with
+// the same Intl call rather than typed out.
+test('a card the scorer counts says how often it updates and when it last did', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const noon = new Date();
+  noon.setHours(12, 0, 0, 0);
+  const last = new Date(noon.getTime() - 18 * 60000);
+  const clock = last.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  const scored = (scoring, extra = {}) => ({
+    id: 900500, completed: false, card_preview: { goal: 'Try Three Apps' },
+    progress: { done: false, current: 1, target: 3 }, scoring, ...extra,
+  });
+  const at = (minutes) => scored({ interval_minutes: minutes, last_scored_at: last.toISOString() });
+
+  assert.equal(pane._cadenceOf(at(15), noon.getTime()), `Updates every 15 min · last ${clock}`);
+  assert.match(clock, /11:42/, 'the time of the last complete pass, not of the page load');
+  for (const [minutes, every] of [[1, 'minute'], [10, '10 min'], [60, 'hour'], [90, '90 min'], [120, '2 hours']]) {
+    assert.equal(pane._cadenceOf(at(minutes), noon.getTime()), `Updates every ${every} · last ${clock}`, `${minutes} min`);
+  }
+  const twoDaysOn = noon.getTime() + 2 * 86400000;
+  assert.equal(pane._cadenceOf(at(15), twoDaysOn),
+    `Updates every 15 min · last ${last.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`,
+    'a pass from another day carries its date, so a stalled schedule reads as stale');
+  assert.notEqual(pane._cadenceOf(at(15), twoDaysOn), pane._cadenceOf(at(15), noon.getTime()));
+
+  // Nothing to state, or nothing left to count: no line.
+  const NONE = [
+    [scored(undefined), 'no schedule sent'],
+    [scored(null), 'a challenge nothing counts'],
+    [at(0), 'a zero interval'],
+    [at(-5), 'a negative one'],
+    [at(1.5), 'a fractional one'],
+    [scored({ interval_minutes: 'often', last_scored_at: last.toISOString() }), 'not a number'],
+    [scored({ interval_minutes: 15, last_scored_at: null }), 'never counted yet'],
+    [scored({ interval_minutes: 15, last_scored_at: 'yesterday' }), 'not a date'],
+    [scored({ interval_minutes: 15 }), 'no time at all'],
+    [{ ...at(15), progress: { done: true, current: 3, target: 3 } }, 'the viewer finished it'],
+    [{ ...at(15), progress: undefined, completed: true }, 'the organiser closed it'],
+  ];
+  for (const [c, why] of NONE) assert.equal(pane._cadenceOf(c, noon.getTime()), null, why);
+
+  // Both descriptors carry it, from the same rule.
+  const live = scored({ interval_minutes: 15, last_scored_at: new Date(Date.now() - 60000).toISOString() });
+  assert.match(pane.cardView(live, 0).cadence, /^Updates every 15 min · last /);
+  assert.equal(pane.cardView(live, 0).cadence, pane._cadenceOf(live));
+  assert.equal(pane.cardView(CH[0], 0).cadence, null, 'a card with no schedule has no line');
+  pane._detailChallenge = live;
+  assert.equal(pane.detailView().cadence, pane._cadenceOf(live), 'the page says what the card says');
+  pane._detailChallenge = CH[0];
+  assert.equal(pane.detailView().cadence, null);
+  pane._detailChallenge = null;
+});
+
+// The template's illustration rides both descriptors as a slug of the
+// registry's SHAPE, else null. Membership is the components' to decide
+// (frontend/src/lib/challenge-illustrations.ts), and the controller never
+// builds a path from it.
+test('card and page descriptors carry the illustration only when it is slug-shaped', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const withArt = (illustration) => ({ id: 900500, completed: false, card_preview: { goal: 'Report a bug', illustration } });
+  const pageOf = (c) => { pane._detailChallenge = c; return pane.detailView(); };
+  const CASES = [
+    ['useful-feedback', 'useful-feedback', 'a registry slug passes through'],
+    ['not-in-the-registry', 'not-in-the-registry', 'a well-shaped unknown slug too: the registry is the component’s'],
+    ['a'.repeat(64), 'a'.repeat(64), 'the longest slug the column holds'],
+    [`u-${'0a'.repeat(16)}`, `u-${'0a'.repeat(16)}`, 'an uploaded slug is slug-shaped too: the path is the registry’s to derive'],
+    ['a'.repeat(65), null, 'one longer is malformed'],
+    ['../icons/x.svg', null, 'a path is not a slug'],
+    ['Useful-Feedback', null, 'nor is an uppercase one'],
+    ['-useful', null, 'nor a leading hyphen'],
+    ['', null, 'empty'],
+    [42, null, 'not a string'],
+    [null, null, 'cleared'],
+    [undefined, null, 'missing'],
+  ];
+  for (const [input, want, why] of CASES) {
+    assert.equal(pane.cardView(withArt(input), 0).illustration, want, `card: ${why}`);
+    assert.equal(pageOf(withArt(input)).illustration, want, `page: ${why}`);
+  }
+  assert.equal(pane.cardView({ id: 7, completed: false }, 0).illustration, null, 'no card_preview at all');
+  assert.equal(pageOf({ id: 7, completed: false }).illustration, null);
+  pane._detailChallenge = null;
+  assert.doesNotMatch(CHALLENGES_SRC, /\/illustrations\//, 'the controller never spells the static path');
+  assert.doesNotMatch(CHALLENGES_SRC, /\/challenge-illustrations\//, 'nor the uploaded one');
+});
+
+// An uploaded illustration's tone rides beside the slug as
+// `card_preview.illustration_tone`: a lowercase word of a tone name's length,
+// else null. Whether it is one of the TONES is the registry's to decide (it
+// draws an unknown one on gray), so a well-shaped unknown word passes.
+test('card and page descriptors carry the illustration tone only when it is tone-shaped', () => {
+  const { pane } = loadPane({ challenges: CH, eventId: 900500 });
+  const withTone = (illustration_tone) => ({
+    id: 900500, completed: false,
+    card_preview: { goal: 'Report a bug', illustration: `u-${'0a'.repeat(16)}`, illustration_tone },
+  });
+  const pageOf = (c) => { pane._detailChallenge = c; return pane.detailView(); };
+  const CASES = [
+    ['teal', 'teal', 'a tone passes through'],
+    ['cream', 'cream', 'another'],
+    ['magenta', 'magenta', 'a well-shaped unknown word too: TONES are the registry’s'],
+    ['abcdefghij', 'abcdefghij', 'ten letters, the longest shape'],
+    ['abcdefghijk', null, 'eleven is not a tone'],
+    ['ab', null, 'nor two'],
+    ['Teal', null, 'nor an uppercase one'],
+    ['te-al', null, 'nor anything but letters'],
+    ['home-tone-teal', null, 'nor a class name'],
+    ['', null, 'empty'],
+    [3, null, 'not a string'],
+    [null, null, 'a built-in, which sends none'],
+    [undefined, null, 'missing'],
+  ];
+  for (const [input, want, why] of CASES) {
+    assert.equal(pane.cardView(withTone(input), 0).illustrationTone, want, `card: ${why}`);
+    assert.equal(pageOf(withTone(input)).illustrationTone, want, `page: ${why}`);
+  }
+  assert.equal(pane.cardView({ id: 7, completed: false }, 0).illustrationTone, null, 'no card_preview at all');
+  assert.equal(pageOf({ id: 7, completed: false }).illustrationTone, null);
+  pane._detailChallenge = null;
+});
+
+// The progress over the grid (ITERATION 03): "N/M done in <event>", scoped to
+// the selected event once the bar's list has it.
+test('the grid opens on its progress: the tally, scoped to the selected event', () => {
+  const { pane, context, store } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._renderGrid();
+  assert.deepEqual({ ...store.get().grid.progress }, { done: 2, total: 3, caption: 'done' },
+    'no event known yet: the bare tally');
+  context.selectedEvent = () => ({ id: 900500, name: 'Season 2' });
+  pane._renderGrid();
+  // QA 2026-09-24 Q17: an event's tally says it is an event's.
+  assert.equal(store.get().grid.progress.caption, 'done in this event · Season 2');
+  context.selectedEvent = () => ({ id: 900500, name: '  ' });
+  pane._renderGrid();
+  assert.equal(store.get().grid.progress.caption, 'done', 'a blank name is left out');
+  assert.equal(store.get().grid.points, undefined, 'and it carries no points');
+  delete context.selectedEvent;
+});
+
 test('the grid’s card descriptors carry the rail and never re-sort by it', () => {
   const { pane, store } = loadPane({ challenges: CH, eventId: 900500 });
   pane._mine = new Map([[900500, { id: 900500, activities_total: 50, activities: rows(1, 50) }]]);
@@ -614,6 +780,234 @@ test('the grid’s card descriptors carry the rail and never re-sort by it', () 
   for (const c of cards) {
     assert.ok(!/In progress/.test(c.stateLabel), 'the icon carries the state, the words never repeat it');
   }
+});
+
+// ─── The detail page (ITERATION 03) ─────────────────────────────────────
+//
+// The detail is a page now, so a tap gives it an address and a history entry:
+// the phone's back gesture pops it, the back disc spends it, and the router's
+// answer to the push must not reset the page it just opened.
+
+test('a card tap opens the page and pushes its address; leaving the address closes it', () => {
+  const { pane, store, sandbox } = loadPane({ challenges: CH, eventId: 900500 });
+  pane._openIdx(0);
+  const first = pane._ordered()[0];
+  assert.equal(store.get().detail.key, String(first.id));
+  assert.equal(sandbox.location.hash, `#leaderboard/challenges/900500/${first.id}`,
+    'the tap pushes the page’s own deep-link address');
+  const opened = store.get().detail;
+  pane.openFromHash(900500, Number(first.id));
+  assert.equal(store.get().detail, opened,
+    'the router resolving that address again leaves the open page untouched');
+  sandbox.location.hash = '#leaderboard/challenges';
+  pane._onHashChange();
+  assert.equal(store.get().detail, null, 'the back gesture’s hashchange closes the page');
+});
+
+test('the back disc spends the pushed entry; a page without one just closes', () => {
+  const { pane, store, sandbox } = loadPane({ challenges: CH, eventId: 900500 });
+  let backs = 0;
+  sandbox.window.history = { back() { backs += 1; } };
+  pane._openIdx(0);
+  pane._backFromDetail();
+  assert.equal(store.get().detail, null, 'closed at once, not on a later hashchange');
+  assert.equal(backs, 1, 'and the history step the tap added is taken back');
+  sandbox.location.hash = '#leaderboard/challenges';
+  pane.openChallengeDetail(CH[0]);
+  pane._backFromDetail();
+  assert.equal(store.get().detail, null);
+  assert.equal(backs, 1, 'a page opened without an entry (?shot, a cold link) takes no history step');
+});
+
+test('a challenge address reached from another section opens a page that survives the section switch', () => {
+  // Standings or Kudos showing, then Forward (or a pasted link) to a
+  // challenge: the router opens the page first and switches section second,
+  // and that switch replaceStates the address to #leaderboard/challenges.
+  const { pane, store, sandbox } = loadPane({ challenges: CH, eventId: 900500 });
+  sandbox.window.Leaderboard = { section: 'topochain' };
+  sandbox.location.hash = '#leaderboard/challenges/900500/900500';
+  pane.openFromHash(900500, 900500);
+  assert.ok(store.get().detail, 'the page opens');
+  assert.equal(pane._detailHash, null, 'but claims no entry the section switch is about to rewrite');
+  sandbox.window.Leaderboard.section = 'challenges';
+  sandbox.location.hash = '#leaderboard/challenges';
+  pane._onHashChange({ newURL: 'https://example.test/#leaderboard/challenges/900500/900500' });
+  assert.ok(store.get().detail, 'so the rewrite inside the same dispatch does not close it');
+  pane._onHashChange({ newURL: 'https://example.test/#leaderboard' });
+  assert.equal(store.get().detail, null, 'but a later move to another tab does');
+
+  // Already on the Challenges tab, Forward to the same address: no switch
+  // follows, and the page owns the entry as a tap would.
+  const again = loadPane({ challenges: CH, eventId: 900500 });
+  again.sandbox.window.Leaderboard = { section: 'challenges' };
+  again.sandbox.location.hash = '#leaderboard/challenges/900500/900500';
+  again.pane.openFromHash(900500, 900500);
+  assert.equal(again.pane._detailHash, '#leaderboard/challenges/900500/900500');
+  again.sandbox.location.hash = '#leaderboard/challenges';
+  again.pane._onHashChange();
+  assert.equal(again.store.get().detail, null, 'and Back closes it');
+});
+
+test('without an event id there is no address to push, and the page still opens', () => {
+  const { pane, store, sandbox } = loadPane({ challenges: CH, eventId: null });
+  pane._openIdx(0);
+  assert.ok(store.get().detail, 'the page opens');
+  assert.equal(sandbox.location.hash, '', 'no unresolvable address is pushed');
+  assert.equal(pane._detailHash, null);
+});
+
+test('the page descriptor: category, the card’s meta line, task, a clean rail', () => {
+  const ch = {
+    id: 5, completed: false,
+    effective: { schedule_end: inHours(71) },
+    card_preview: { label: 'ONBOARDING', goal: 'Join block production', task: 'Up to 2,000 pts a week', reward: '2000' },
+    detail_modal: { description: 'Run a node.', requirements: 'A node reachable all week.', reward_logic: 'Points scale with blocks.' },
+  };
+  const { pane, store } = loadPane({ challenges: [ch], eventId: 900500 });
+  pane.openChallengeDetail(ch);
+  const d = store.get().detail;
+  assert.equal(d.eyebrow, 'Get started',
+    'a grouped page names its group; Get started’s header has no clock, so the deadline stays on the meta line');
+  assert.equal(d.deadline, '3d left', 'in the card’s words, from the card’s rule');
+  assert.equal(d.goal, 'Join block production');
+  assert.equal(d.task, 'Up to 2,000 pts a week');
+  assert.equal(d.description, 'Run a node.');
+  assert.equal(d.requirements, 'A node reachable all week.');
+  assert.equal(d.scoring, 'Points scale with blocks.', 'reward logic reads as Scoring');
+  assert.deepEqual([d.state, d.stateLabel, d.fill, d.counted], ['new', 'Not started', 0, false]);
+  assert.deepEqual({ ...d.amount }, { text: '2000 pts', earned: false }, 'nothing scored yet: the reward on offer');
+  assert.equal(d.participants, 'Participants', 'no count before the breakdown lands');
+  assert.equal(d.pointsTotal, null);
+  for (const retired of ['label', 'mineNote', 'rewardLogic', 'totals', 'chip']) {
+    assert.equal(retired in d, false, `${retired} retired from the descriptor`);
+  }
+
+  pane._mine = new Map([[5, { id: 5, activities_total: 720, activities: rows(3, 240) }]]);
+  pane._renderDetailOverlay();
+  assert.deepEqual({ ...store.get().detail.amount }, { text: '720 pts so far', earned: false },
+    'the contribution line retired into the meta line');
+
+  ch.completed = true;
+  pane._renderDetailOverlay();
+  const done = store.get().detail;
+  assert.deepEqual({ ...done.amount }, { text: 'Earned 720 pts', earned: true });
+  assert.equal(done.deadline, null, 'a finished challenge counts down to nothing, as on the card');
+
+  ch.completed = false;
+  ch.effective.schedule_end = inHours(-1);
+  pane._renderDetailOverlay();
+  assert.equal(store.get().detail.deadline, null, 'an ended challenge shows no time left');
+});
+test('participants: count and total in the heading row, "Show all" only when one page finishes it', () => {
+  const { pane, store } = loadPane({ challenges: CH, eventId: 900500 });
+  pane.openChallengeDetail(CH[0]);
+  pane._breakdownLoading = false;
+  pane._breakdown = {
+    entries: Array.from({ length: 25 }, (_, i) => ({ user_id: i + 1, display_name: `P${i}`, points: 2000 - i, rate: null })),
+    totals: { participants: 34, total_points: 12800 },
+    has_more: true,
+    next_offset: 25,
+  };
+  pane._renderDetailOverlay();
+  let d = store.get().detail;
+  assert.equal(d.participants, 'Participants · 34');
+  assert.equal(d.pointsTotal, '12,800 pts between them');
+  assert.equal(d.moreLabel, 'Show all 34 →');
+  assert.equal(d.entries.rows[0].points, '2,000 pts');
+
+  pane._breakdown = { ...pane._breakdown, totals: { participants: 200, total_points: 0 } };
+  pane._renderDetailOverlay();
+  d = store.get().detail;
+  assert.equal(d.moreLabel, 'Show more →', 'beyond one more page, "all" would overpromise');
+  assert.equal(d.pointsTotal, null);
+});
+
+// App.LEADERBOARD_TITLES, parsed from public/js/app.js rather than copied:
+// the stub below stands in for the router's own naming, and a copy would let
+// the two disagree silently.
+const LEADERBOARD_TITLES = (() => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public/js/app.js'), 'utf8');
+  const at = src.indexOf('  LEADERBOARD_TITLES: {');
+  assert.ok(at > 0, 'App.LEADERBOARD_TITLES went missing');
+  const body = src.slice(at, src.indexOf('  },', at));
+  const out = {};
+  for (const [, k, v] of body.matchAll(/(\w+): '([^']+)'/g)) out[k] = v;
+  assert.ok(Object.keys(out).length >= 3, 'the table parsed empty');
+  return out;
+})();
+
+test('the page is a level of the screen: the platform header is its nav bar', () => {
+  const { pane, store, sandbox } = loadPane({ challenges: CH, eventId: 900500 });
+  const calls = [];
+  sandbox.window.App = {
+    setBackIcon: (mode, href) => calls.push(['back', mode, href ?? null]),
+    setHeaderTitle: (title) => calls.push(['title', title]),
+    // THE REAL TABLE, read out of app.js rather than retyped here (#2718
+    // review). The screen is titled after the SECTION it is showing, and the
+    // pane asks App for that name rather than knowing it — a stub that
+    // answered `undefined` would have this test passing on the fallback while
+    // the screen said the wrong word.
+    _leaderboardTitle: (sub) => LEADERBOARD_TITLES[sub || 'challenges'] || 'Leaderboard',
+  };
+  sandbox.window.Leaderboard = { isOpen: () => true, section: 'challenges' };
+  pane._openIdx(0);
+  assert.deepEqual(calls.splice(0), [['back', 'arrow', '#leaderboard/challenges'], ['title', 'Challenge']],
+    'the header chevron points up to the grid and the title is the generic word; the page names the challenge');
+  assert.equal(pane.handleBack(), true, 'on a page the header chevron is claimed');
+  assert.equal(store.get().detail, null, 'and goes up a level');
+  // #2718 review: the screen's own slot is an arrow to the Me tab, not the
+  // house. Challenges is reached from Me's Challenges row, and a house there
+  // sent you two levels up from a page you had gone one level into.
+  assert.deepEqual(calls.splice(0), [['back', 'arrow', '#profile'], ['title', 'Challenges']],
+    'the screen gets its own chrome back — its tab, and its own name');
+  assert.equal(pane.handleBack(), false, 'on the grid the chevron is not the page’s to claim');
+});
+
+test('a page closed by navigating away never retitles the screen being entered', () => {
+  const { pane, sandbox } = loadPane({ challenges: CH, eventId: 900500 });
+  const calls = [];
+  sandbox.window.App = { setBackIcon: () => calls.push('back'), setHeaderTitle: () => calls.push('title') };
+  sandbox.window.Leaderboard = { isOpen: () => true, section: 'challenges' };
+  pane._openIdx(0);
+  calls.length = 0;
+  sandbox.window.Leaderboard = { isOpen: () => false, section: 'challenges' };
+  sandbox.location.hash = '#profile';
+  pane._onHashChange();
+  assert.deepEqual(calls, [], 'the Leaderboard is not on show: its chrome is not restored over another screen');
+});
+
+test('back from a page reached from elsewhere in the app returns there; a cold page goes up to the grid', () => {
+  // Home's challenge card: the page owns no entry (the section switch rewrote
+  // the address), and Home is the route below it.
+  const { pane, store, sandbox } = loadPane({ challenges: CH, eventId: 900500 });
+  let backs = 0;
+  sandbox.window.history = { back() { backs += 1; } };
+  sandbox.window.App = { previousRoute: () => '' };
+  sandbox.location.hash = '#leaderboard/challenges';
+  pane.openChallengeDetail(CH[0]);
+  assert.equal(pane.handleBack(), true);
+  assert.equal(backs, 1, 'back to Home, where the viewer came from');
+  assert.ok(store.get().detail, 'the page closes as the address moves off it, not before');
+
+  // A cold arrival (bookmark, ?shot): nothing of ours below.
+  const cold = loadPane({ challenges: CH, eventId: 900500 });
+  let coldBacks = 0;
+  cold.sandbox.window.history = { back() { coldBacks += 1; } };
+  cold.sandbox.window.App = { previousRoute: () => null };
+  cold.pane.openChallengeDetail(CH[0]);
+  assert.equal(cold.pane.handleBack(), true);
+  assert.equal(coldBacks, 0, 'no step back out of the app');
+  assert.equal(cold.store.get().detail, null, 'up to the grid instead');
+
+  // A card tap owns its entry: up to the grid, spending it, even with a route below.
+  const tap = loadPane({ challenges: CH, eventId: 900500 });
+  let tapBacks = 0;
+  tap.sandbox.window.history = { back() { tapBacks += 1; } };
+  tap.sandbox.window.App = { previousRoute: () => '#leaderboard/challenges' };
+  tap.pane._openIdx(0);
+  assert.equal(tap.pane.handleBack(), true);
+  assert.equal(tap.store.get().detail, null, 'closed at once');
+  assert.equal(tapBacks, 1, 'and the pushed entry is spent');
 });
 
 // ─── 2. Static: the router carries both ids ─────────────────────────────
@@ -660,11 +1054,22 @@ test('the pane is told BEFORE the section mounts', () => {
 
 // ─── 3. Static: the anchors point at that address ───────────────────────
 
-test('the profile links each completed challenge to <event>/<challenge>', () => {
-  assert.match(profileStoreJs,
-    /href: '#leaderboard\/challenges\/'\s*\n\s*\+ `\$\{encodeURIComponent\(c\.season_event_id\)\}\/\$\{encodeURIComponent\(c\.id\)\}`/,
-    'both ids, in that order — the event id is what makes the challenge id resolvable');
-  assert.match(profileViewTsx, /href=\{row\.href\}/,
-    'the row renders as a real anchor to that address, not a click handler');
-  assert.match(profileViewTsx, /data-completed-challenge=\{row\.id\}/);
+test('Me no longer lists completions; its row lands on the Challenges tab', () => {
+  // The profile used to link each completed challenge to
+  // #leaderboard/challenges/<event>/<challenge>. The prototype's Me counts
+  // them instead (the "challenges" stat card) and leads to the Challenges
+  // tab, where every challenge, completed or not, is a card that opens this
+  // same detail page. The ADDRESS is unchanged and still resolves — the tests
+  // above pin that — it just has no Me row pointing at it.
+  assert.doesNotMatch(profileStoreJs, /#leaderboard\/challenges\/'/,
+    'no completion row is shaped on Me any more');
+  assert.doesNotMatch(profileViewTsx, /data-completed-challenge/);
+  const mePanel = fs.readFileSync(
+    path.join(root, 'frontend/src/features/profile/account-panel.tsx'), 'utf8');
+  assert.match(mePanel, /id="profile-row-challenges"[\s\S]{0,120}href="#leaderboard\/challenges"/);
+});
+
+test('the header back chevron asks the Challenges page first', () => {
+  assert.match(appJs, /if \(App\._inLeaderboard && window\.TopochainChallenges\?\.handleBack\?\.\(\)\) return;/,
+    'the same claim chain Settings, Admin and Browse use');
 });

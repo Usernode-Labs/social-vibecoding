@@ -46,12 +46,14 @@ const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
 const SRC = read('public/js/app-view.js');
 
 const FRAME = read('frontend/src/features/app-frame/app-frame.tsx');
+const POLICY = read('frontend/src/features/app-frame/app-frame-policy.js');
 const ISLAND = read('frontend/src/features/app-frame/app-view-island.tsx');
 const STORE = read('frontend/src/features/app-frame/app-frame-store.js');
 const BRIDGE = read('frontend/src/features/app-frame/app-frame-bridge.js');
 const MOUNT = read('frontend/src/features/app-frame/mount.ts');
 const MAIN = read('frontend/src/main.tsx');
 const SHELL = read('frontend/src/Shell.tsx');
+const DAPP = JSON.parse(read('dapp.json'));
 
 const SLUG = 'usernode-2d5619';
 const APP_URL = 'https://usernode-2d5619.example';
@@ -62,7 +64,7 @@ const APP_URL = 'https://usernode-2d5619.example';
 // reload is caught even in the (impossible-by-construction) case where the
 // element object itself were somehow reused across one.
 let frameSeq = 0;
-function makeIframe() {
+function makeIframe({ platformOrigin = 'https://platform.example' } = {}) {
   frameSeq += 1;
   const el = {
     id: 'app-iframe',
@@ -72,8 +74,11 @@ function makeIframe() {
     gen: frameSeq,
     loads: 0,
     _src: '',
+    _sandbox: '',
+    navigationSandboxes: [],
     isConnected: true,
-    contentWindow: { name: `win-${frameSeq}-0`, postMessage() {} },
+    ownerDocument: { defaultView: { location: { origin: platformOrigin } } },
+    contentWindow: { name: `win-${frameSeq}-0`, posted: [], postMessage(m) { this.posted.push(m); } },
     onload: null,
     onerror: null,
     style: { opacity: '0' },
@@ -85,8 +90,14 @@ function makeIframe() {
       contains(c) { return this._set.has(c); },
       toggle(c, v) { if (v) this._set.add(c); else this._set.delete(c); },
     },
-    getAttribute(name) { return name === 'src' ? (el._src || null) : null; },
-    setAttribute() {},
+    getAttribute(name) {
+      if (name === 'src') return el._src || null;
+      if (name === 'sandbox') return el._sandbox;
+      return null;
+    },
+    setAttribute(name, value) {
+      if (name === 'sandbox') el._sandbox = String(value);
+    },
     removeAttribute() {},
     remove() { el.isConnected = false; },
     getBoundingClientRect: () => ({ top: 0, left: 0, width: 390, height: 700 }),
@@ -98,8 +109,9 @@ function makeIframe() {
       // A real browser only navigates — and so only replaces contentWindow —
       // for a non-empty src.
       if (v) {
+        el.navigationSandboxes.push(el._sandbox);
         el.loads += 1;
-        el.contentWindow = { name: `win-${el.gen}-${el.loads}`, postMessage() {} };
+        el.contentWindow = { name: `win-${el.gen}-${el.loads}`, posted: [], postMessage(m) { this.posted.push(m); } };
       }
     },
   });
@@ -118,29 +130,58 @@ function makeIframe() {
 //
 // The structural half of this file asserts the JSX really has those four
 // properties, so the two halves together cover the real component.
-function attachRenderer(store, refs) {
+function attachRenderer(store, refs, policy) {
   const r = {
     el: null, key: null, renders: 0, creates: 0, hostHidden: true,
     history: [],
+    // #2902: every live element by slug — the mounted one and the kept ones.
+    els: new Map(),
   };
   const render = () => {
     r.renders += 1;
-    const { slug, active, faded, cover } = store.get();
+    const state = store.get();
+    const { slug, active, faded, sandboxReady, cover } = state;
+    const kept = state.kept || [];
+    const live = [...kept.map((k) => k.slug), ...(slug ? [slug] : [])];
+    // A key that leaves the live set is unmounted: its element is gone.
+    for (const [key, el] of [...r.els]) {
+      if (live.includes(key)) continue;
+      r.els.delete(key);
+      el.isConnected = false;
+      if (refs.kept && refs.kept[key] === el) delete refs.kept[key];
+      r.history.push(`unmount:${key}`);
+    }
+    // A key that joins it is created — and ONLY then.
+    for (const key of live) {
+      if (r.els.has(key)) continue;
+      r.els.set(key, makeIframe());
+      r.creates += 1;
+      r.history.push(`create:${key}`);
+    }
+    for (const k of kept) {
+      const el = r.els.get(k.slug);
+      el.id = '';
+      el.kept = true;
+      el.setAttribute('sandbox', k.sandboxReady ? policy.APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX);
+      if (refs.kept) refs.kept[k.slug] = el;
+    }
     if (!slug) {
-      if (r.el) r.history.push(`unmount:${r.key}`);
       r.key = null;
       r.el = null;
       refs.iframe = null;
     } else {
-      if (r.key !== slug) {
-        r.key = slug;
-        r.el = makeIframe();
-        r.creates += 1;
-        r.history.push(`create:${slug}`);
-      }
+      r.key = slug;
+      r.el = r.els.get(slug);
+      r.el.id = 'app-iframe';
+      r.el.kept = false;
+      if (refs.kept && refs.kept[slug] === r.el) delete refs.kept[slug];
       // Rendered props: a style change updates the existing node.
       r.el.style.opacity = faded ? '0' : '1';
-      r.el.style.backgroundColor = store.get().background || '';
+      r.el.style.backgroundColor = state.background || '';
+      r.el.setAttribute(
+        'sandbox',
+        sandboxReady ? policy.APP_FRAME_SANDBOX : policy.PENDING_FRAME_SANDBOX
+      );
       refs.iframe = r.el;
     }
     r.hostHidden = !active;
@@ -160,6 +201,9 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
   const bridgeMod = await import(
     new URL('../frontend/src/features/app-frame/app-frame-bridge.js', `file://${__filename}`).href
   );
+  const policyMod = await import(
+    new URL('../frontend/src/features/app-frame/app-frame-policy.js', `file://${__filename}`).href
+  );
   const stagingStoreMod = await import(
     new URL('../frontend/src/features/staging/staging-store.js', `file://${__filename}`).href
   );
@@ -176,8 +220,12 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
 
   // The stores are module-scope singletons, like the islands they feed: reset
   // them to the prerendered state between cases.
-  storeMod.appFrameStore.set({ slug: '', active: false, faded: true, background: '', cover: null });
+  storeMod.appFrameStore.set({
+    slug: '', active: false, faded: true, background: '', sandboxReady: false, cover: null,
+    seq: 0, navigatedAt: 0, kept: [],
+  });
   storeMod.appFrameRefs.iframe = null;
+  storeMod.appFrameRefs.kept = {};
   stagingStoreMod.stagingStore.set({
     open: false, mode: 'fullscreen', dockRect: null, urlLabel: '',
     loaderVisible: false, loaderTitle: 'Opening preview…', loaderSub: '',
@@ -191,7 +239,7 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
   stagingIframe.id = 'staging-iframe';
   stagingStoreMod.stagingRefs.iframe = stagingIframe;
 
-  const renderer = attachRenderer(storeMod.appFrameStore, storeMod.appFrameRefs);
+  const renderer = attachRenderer(storeMod.appFrameStore, storeMod.appFrameRefs, policyMod);
 
   // The nodes app-view.js legitimately still reads — everything OUTSIDE the
   // React-owned frame host. #app-content is the big one: it is deliberately
@@ -263,12 +311,7 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
       documentElement: { classList: { contains: () => true }, style: {} },
     },
     getComputedStyle: () => ({ getPropertyValue: () => '0px' }),
-    fetch: async (url) => ({
-      ok: true,
-      json: async () => (String(url).includes('/api/iframe-token')
-        ? { token: sandbox.__nextToken }
-        : { status: 'ready' }),
-    }),
+    fetch: async (url) => sandbox.__fetch(url),
     alert: () => {},
     setTimeout: (fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); return t; },
     clearTimeout,
@@ -308,6 +351,12 @@ async function makeHarness({ offline = false, offlineReady = false } = {}) {
     requestAnimationFrame: (fn) => { const t = setTimeout(fn, 0); if (t.unref) t.unref(); return t; },
     __nextToken: 'tok-1',
   };
+  sandbox.__fetch = async (url) => ({
+    ok: true,
+    json: async () => (String(url).includes('/api/iframe-token')
+      ? { token: sandbox.__nextToken }
+      : { status: 'ready' }),
+  });
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   // THE WIRING UNDER TEST — exactly what main.tsx publishes.
@@ -370,7 +419,7 @@ test('the app frame is the SAME element and the SAME document across every state
   assert.equal(h.mounts(), 1, 'one mount');
   assert.equal(el.loads, 1, 'one document load');
   assert.equal(h.navigations(), 1, 'one navigation');
-  assert.equal(el.src, `${APP_URL}/?token=tok-1`, 'src composed through the URL API');
+  assert.equal(el.src, `${APP_URL}/?token=tok-1&un-theme=dark`, 'src composed through the URL API');
   assert.equal(h.surface(), 'app', '#970: the app surface is asserted');
   assert.equal(renderer.hostHidden, false, 'the frame host is visible');
 
@@ -403,6 +452,15 @@ test('the app frame is the SAME element and the SAME document across every state
     ['activate', () => AppView.renderAppTab()],
     // A safe-area re-broadcast (#970) — it reads the frame, it must not move it.
     ['safe-area broadcast', () => AppView.broadcastSafeArea()],
+    // #3257: a theme toggle reaches the app over the bridge. The url a render
+    // would build now carries the other `un-theme`, and that must not read as
+    // a new url: App → Dev → App after a toggle keeps the document.
+    ['theme → light', () => {
+      h.sandbox.document.documentElement.classList.contains = () => false;
+      AppView.broadcastTheme();
+    }],
+    ['→ Dev after the toggle', async () => { try { await AppView.renderDevView('forum'); } catch { /* stubs */ } }],
+    ['→ App after the toggle', () => AppView.renderAppTab()],
   ];
   for (const [what, run] of steps) {
     await run();
@@ -463,7 +521,7 @@ test('a chromeless enter/exit navigates the SAME element', async () => {
   assert.equal(renderer.creates, 1, 'nothing re-created');
   assert.equal(h.mounts(), 1, 'the mount is the same mount');
   assert.equal(el.loads, 2, 'one navigation to the inner path');
-  assert.match(el.src, /\/settings\?tab=profile&token=tok-1$/,
+  assert.match(el.src, /\/settings\?tab=profile&token=tok-1&un-theme=dark$/,
     'inner path composed against the app origin, token appended via searchParams');
 
   AppView.pendingInnerPath = null;
@@ -471,7 +529,7 @@ test('a chromeless enter/exit navigates the SAME element', async () => {
   assert.equal(bridge.frame(), el, 'leaving chromeless keeps the element');
   assert.equal(renderer.creates, 1, 'still nothing re-created');
   assert.equal(el.loads, 3, 'one navigation back to the root');
-  assert.equal(el.src, `${APP_URL}/?token=tok-1`, 'back at the app root');
+  assert.equal(el.src, `${APP_URL}/?token=tok-1&un-theme=dark`, 'back at the app root');
 
   // A render that would build the same url it is already on does nothing at all.
   const win = el.contentWindow;
@@ -506,7 +564,7 @@ test('a token refresh re-points the SAME element — parked or not', async () =>
   assert.equal(renderer.creates, 1, 'nothing re-created');
   assert.equal(h.mounts(), 1, 'no re-mount');
   assert.equal(el.loads, 2, 'exactly one further navigation');
-  assert.match(el.src, /token=tok-2$/, 'now carrying the refreshed token');
+  assert.match(el.src, /token=tok-2&un-theme=dark$/, 'now carrying the refreshed token');
 
   // A parked frame must refresh too: its app is still running, and a parked app
   // whose token expired is an app whose API calls start failing.
@@ -517,7 +575,7 @@ test('a token refresh re-points the SAME element — parked or not', async () =>
   await intervals[0].fn();
   assert.equal(bridge.frame(), el, 'still the same element');
   assert.equal(el.loads, 3, 'the parked frame was refreshed');
-  assert.match(el.src, /token=tok-3$/, 'with the newest token');
+  assert.match(el.src, /token=tok-3&un-theme=dark$/, 'with the newest token');
 
   // With no frame at all the refresh writes nothing.
   AppView._unmountAppFrame();
@@ -593,7 +651,7 @@ test('a DIFFERENT app is a different frame — slug is the key, and it is honour
   assert.equal(renderer.creates, 2, 'exactly one new element');
   assert.equal(h.mounts(), 2, 'and one new mount');
   assert.equal(second.loads, 1, 'loaded once');
-  assert.match(second.src, /^https:\/\/other-app\.example\/\?token=tok-o$/, 'at its own origin');
+  assert.match(second.src, /^https:\/\/other-app\.example\/\?token=tok-o&un-theme=dark$/, 'at its own origin');
   assert.deepEqual(renderer.history, [`create:${SLUG}`, 'create:other-app'],
     'two creates, one per app');
 });
@@ -622,6 +680,55 @@ test('leaving the app drops the frame; a non-running app never gets one', async 
   assert.equal(bridge.frame(), null, 'the creating placeholder has no frame');
   assert.equal(h.surface(), 'platform', 'and keeps the platform clearance');
   assert.match(h.status().message, /spinning up/, 'the placeholder is published');
+  assert.notEqual(AppView._statusPollTimer, null,
+    'and one HTTP recovery is armed in case the terminal WebSocket event was missed');
+  AppView._stopStatusPolling();
+});
+
+test('#2154: a running event that beats the first detail response clears the spinner', async () => {
+  const h = await makeHarness();
+  const { AppView, sandbox } = h;
+  AppView.appData = null;
+  AppView.prefetchDevData = () => {};
+  AppView.startActivityTracking = () => {};
+  AppView.startTokenRefresh = () => {};
+
+  let releaseDetail;
+  const detail = new Promise((resolve) => { releaseDetail = resolve; });
+  sandbox.__fetch = async (url) => {
+    if (String(url).includes('/api/iframe-token')) {
+      return { ok: true, json: async () => ({ token: 'tok-1' }) };
+    }
+    if (String(url) === `/api/apps/${SLUG}`) return detail;
+    return { ok: true, json: async () => ({ status: 'ready' }) };
+  };
+
+  const opening = AppView.open(SLUG);
+  AppView._rememberPendingAppStatus({
+    slug: SLUG, status: 'running', url: APP_URL,
+  });
+  releaseDetail({
+    ok: true,
+    json: async () => ({ app: { slug: SLUG, name: 'Homeroom', status: 'creating', url: null } }),
+  });
+  await opening;
+
+  assert.equal(AppView.appData.status, 'running', 'the newer terminal event wins');
+  assert.equal(AppView.appData.url, APP_URL, 'the live app URL comes with it');
+  AppView.renderAppTab();
+  assert.equal(h.status(), null, 'the stale spinning-up placeholder is not painted');
+  assert.ok(h.bridge.frame(), 'the live app frame is mounted without a page refresh');
+});
+
+test('#2154: a new creating phase invalidates a terminal event from an earlier attempt', async () => {
+  const h = await makeHarness();
+  const { AppView } = h;
+  AppView._rememberPendingAppStatus({ slug: SLUG, status: 'error', errorReason: 'old failure' });
+  AppView._rememberPendingAppStatus({ slug: SLUG, status: 'creating', phase: 'build' });
+
+  const detail = { slug: SLUG, status: 'creating', url: null };
+  assert.equal(AppView._applyPendingAppStatus(detail), detail,
+    'retry progress clears the obsolete terminal event');
 });
 
 // ── canEagerLaunch is a PREDICATE ────────────────────────────────────────
@@ -676,6 +783,27 @@ test('a refused beginLaunch leaves the screen exactly as it found it', async () 
   assert.equal(h.status(), painted, 'the placeholder is still the one on screen');
 });
 
+test('a same-origin app address is never eagerly launched or framed', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+  const unsafe = 'https://platform.example/app';
+
+  h.sandbox.Home._apps[0].url = unsafe;
+  AppView.appData = { ...AppView.appData, url: unsafe };
+  assert.equal(AppView.canEagerLaunch(SLUG, 'app'), false,
+    'the cached launch path fails closed before mounting');
+
+  AppView.renderAppTab();
+  assert.equal(bridge.frame(), null, 'the detailed render also mounts no frame');
+  assert.deepEqual(JSON.parse(JSON.stringify(h.status())), {
+    dot: 'error',
+    message: 'This app cannot open safely.',
+    detail: 'Its address is not isolated from Homeroom.',
+    action: null,
+  });
+  assert.equal(h.surface(), 'platform', 'the error stays on the platform surface');
+});
+
 test('offline shows the placeholder and drops the frame — for an app with no worker of its own', async () => {
   const h = await makeHarness({ offline: true });
   const { AppView, bridge } = h;
@@ -705,7 +833,7 @@ test('offline MOUNTS the frame for an app that announced its own service worker'
   assert.equal(h.surface(), 'app', 'the app surface, not the platform one');
   // No mint is possible offline, so the app boots token-less and recovers
   // its identity from its own storage (that is the app-side contract).
-  assert.equal(el.src, `${APP_URL}/`, 'src carries no token offline');
+  assert.equal(el.src, `${APP_URL}/?un-theme=dark`, 'src carries no token offline');
   assert.equal(el.loads, 1, 'exactly one document load');
   assert.equal(AppView.canEagerLaunch(SLUG, 'app'), true, 'eager launch is allowed too');
 });
@@ -715,7 +843,7 @@ test('coming back online re-mints and reloads a frame that was mounted token-les
   const { AppView, bridge, sandbox } = h;
   AppView.renderAppTab();
   const el = bridge.frame();
-  assert.equal(el.src, `${APP_URL}/`, 'token-less to begin with');
+  assert.equal(el.src, `${APP_URL}/?un-theme=dark`, 'token-less to begin with');
 
   // The connection returns. Offline.isOffline() flips and the shell's own
   // `usernode:offline-change` event fires — the same signal the placeholder
@@ -726,7 +854,7 @@ test('coming back online re-mints and reloads a frame that was mounted token-les
   await new Promise((r) => setTimeout(r, 0));
   await new Promise((r) => setTimeout(r, 0));
 
-  assert.equal(bridge.frame().src, `${APP_URL}/?token=tok-2`,
+  assert.equal(bridge.frame().src, `${APP_URL}/?token=tok-2&un-theme=dark`,
     'the app is reloaded with a token so its API calls stop 401-ing');
   assert.equal(bridge.frame().loads, 2, 'one deliberate reload, not a loop');
 });
@@ -772,8 +900,10 @@ test('the offline-app screenshot states are self-contained — no running app re
   AppView.showOfflineAppShot(true);
   assert.ok(bridge.frame(), 'the ready state mounts a frame');
   assert.equal(h.surface(), 'app', 'on the app surface');
-  assert.equal(bridge.frame().src, 'https://platform.example/health',
-    "pointed at the shell's own /health, not a fabricated cross-origin app");
+  assert.equal(bridge.frame().getAttribute('src'), null,
+    'the self-contained fixture does not navigate to the platform origin');
+  assert.equal(bridge.frame().getAttribute('sandbox'), '',
+    'its blank document stays fully restricted');
   assert.equal(h.status(), null, 'and no placeholder underneath it');
 
   AppView.showOfflineAppShot(false);
@@ -781,6 +911,82 @@ test('the offline-app screenshot states are self-contained — no running app re
   assert.match(h.status().message, /needs a connection/,
     'and paints the placeholder the unchanged path still produces');
   assert.equal(h.surface(), 'platform', 'back on the platform surface');
+});
+
+test('#2154: the settled launch screenshot reproduces the status/detail race', async () => {
+  const h = await makeHarness();
+  const { AppView, bridge } = h;
+
+  AppView.showSettledLaunchShot();
+
+  assert.equal(AppView.appData.status, 'running', 'the pending terminal event wins');
+  assert.equal(AppView._pendingAppStatus['staging-demo-status-race'], undefined,
+    'the synthetic pending event is consumed just like open() consumes it');
+  assert.equal(h.status(), null, 'no spinning-up placeholder remains');
+  assert.ok(bridge.frame(), 'the resolved state mounts a live frame');
+  assert.equal(bridge.frame().getAttribute('src'), null,
+    'the synthetic state does not navigate to the platform origin');
+  assert.equal(bridge.frame().getAttribute('sandbox'), '',
+    'its blank document stays fully restricted');
+
+  const declaredCheck = DAPP.tests.find((check) =>
+    check.path === '/?shot=app-launching&settle=1');
+  assert.equal(declaredCheck?.expectSelector, '#app-iframe[sandbox=""]:not([src])',
+    'the staging check requires the same source-less, fully restricted frame');
+});
+
+test('the app-frame URL policy allows only absolute cross-origin HTTP(S) targets', async () => {
+  const policy = await import(
+    new URL('../frontend/src/features/app-frame/app-frame-policy.js', `file://${__filename}`).href
+  );
+  const platform = 'https://platform.example';
+
+  assert.equal(policy.isSafeAppFrameSrc(APP_URL, platform), true);
+  assert.equal(policy.isSafeAppFrameSrc('http://localhost:4100/app', 'http://localhost:3000'), true,
+    'a distinct local-development port is a distinct origin');
+  for (const src of [
+    'https://platform.example/app',
+    '/relative-app',
+    'data:text/html,hello',
+    'javascript:void(0)',
+    'not a url',
+    '',
+  ]) {
+    assert.equal(policy.isSafeAppFrameSrc(src, platform), false, `${src || '(empty)'} is refused`);
+  }
+  assert.equal(policy.isSafeAppFrameSrc(APP_URL, ''), false, 'a missing platform origin fails closed');
+});
+
+test('the bridge restricts the blank frame, then enables the app sandbox before navigation', async () => {
+  const h = await makeHarness();
+  const fullSandbox = 'allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock';
+
+  h.bridge.mount({ slug: SLUG, faded: false });
+  const frame = h.bridge.frame();
+  assert.equal(frame.getAttribute('sandbox'), '', 'the pending blank frame grants no permissions');
+  assert.equal(h.store.get().sandboxReady, false);
+
+  assert.equal(h.bridge.setSrc(APP_URL), true);
+  assert.equal(frame.getAttribute('sandbox'), fullSandbox);
+  assert.deepEqual(frame.navigationSandboxes, [fullSandbox],
+    'the full sandbox was present at the instant the document navigation began');
+  assert.equal(h.store.get().sandboxReady, true);
+
+  const loads = frame.loads;
+  assert.equal(h.bridge.setSrc('https://platform.example/app'), false,
+    'a same-origin target is refused at the final bridge boundary');
+  assert.equal(frame.loads, loads, 'the refused target did not navigate');
+  assert.equal(frame.src, APP_URL, 'and the safe app document remains in place');
+
+  h.bridge.park();
+  h.bridge.activate();
+  assert.equal(h.bridge.frame(), frame, 'parking still preserves the element');
+  assert.equal(frame.getAttribute('sandbox'), fullSandbox, 'and its navigable sandbox state');
+
+  h.bridge.mount({ slug: 'another-app', faded: false });
+  assert.notEqual(h.bridge.frame(), frame, 'a different app still receives a new element');
+  assert.equal(h.bridge.frame().getAttribute('sandbox'), '',
+    'the next app starts from the restricted pending state again');
 });
 
 test('an offline-ready record older than its TTL is not trusted', async () => {
@@ -802,8 +1008,12 @@ test('the bridge refuses to act on a frame it does not own', async () => {
     new URL('../frontend/src/features/app-frame/app-frame-bridge.js', `file://${__filename}`).href
   );
   const bridge = bridgeMod.appFrameBridge;
-  storeMod.appFrameStore.set({ slug: '', active: false, faded: true, cover: null });
+  storeMod.appFrameStore.set({
+    slug: '', active: false, faded: true, background: '', sandboxReady: false, cover: null,
+    seq: 0, navigatedAt: 0, kept: [],
+  });
   storeMod.appFrameRefs.iframe = null;
+  storeMod.appFrameRefs.kept = {};
 
   assert.equal(bridge.frame(), null, 'no element before the island mounts');
   assert.equal(bridge.hasFrame(), false);
@@ -837,10 +1047,19 @@ test('the island renders one iframe, keyed only by slug, with no src prop', () =
   assert.equal(body.split('<iframe').length - 1, 1,
     'exactly one iframe element — no second element a branch could swap in');
 
-  // The ONE key in the file is `key={state.slug}`, on <AppFrame/>.
+  // The ONE key in the file is `key={slug}`, on <AppFrame/>: each live frame's
+  // own app (#2902 renders the kept ones beside the mounted one).
   const keys = FRAME.match(/\bkey=\{[^}]*\}/g) || [];
-  assert.deepEqual(keys, ['key={state.slug}'],
+  assert.deepEqual(keys, ['key={slug}'],
     'slug is the only key — a different app is a different frame, nothing else is');
+  // Mounted or kept is an ATTRIBUTE change on the same element, never a
+  // different element: the id goes to the mounted frame alone, and a kept one
+  // is inert and hidden from assistive tech.
+  assert.match(tag, /id=\{active \? 'app-iframe' : undefined\}/, 'only the mounted frame is #app-iframe');
+  assert.match(tag, /inert=\{!active\}/, 'a kept frame is inert — no focus, no clicks');
+  assert.match(tag, /aria-hidden=\{active \? undefined : 'true'\}/, 'and out of the accessibility tree');
+  assert.match(tag, /tabIndex=\{active \? undefined : -1\}/, 'and out of the tab order');
+  assert.match(body, /const cover = active \? state\.cover : null;/, 'the cover is the mounted frame\'s alone');
 
   // The iframe is the first child of the fragment and the cover trails it, so
   // the cover coming and going can never move the iframe's position.
@@ -858,10 +1077,15 @@ test('the wrapper above the frame is unconditional, and parking hides rather tha
   // the frame's parent node is the same node for the document's lifetime.
   const wrapper = host.indexOf('<div className="app-launch-host w-full h-full">');
   assert.ok(wrapper !== -1, 'the launch host wrapper is rendered');
-  assert.ok(wrapper < host.indexOf('{state.slug ?'),
-    'and it is OUTSIDE the conditional that mounts the frame');
-  assert.match(host, /\{state\.slug \? <AppFrame key=\{state\.slug\} slug=\{state\.slug\} \/> : null\}/,
-    'the frame exists iff there is a slug');
+  assert.ok(wrapper < host.indexOf('{liveFrames(state).map('),
+    'and it is OUTSIDE the list that mounts the frames');
+  assert.match(host, /\{liveFrames\(state\)\.map\(\(slug\) => <AppFrame key=\{slug\} slug=\{slug\} \/>\)\}/,
+    'a frame exists for each live app: the mounted one and the kept ones (#2902)');
+  // In CREATION order, which never changes for a frame's life: a frame is only
+  // ever appended or removed, never moved — and moving an iframe reloads it.
+  const order = FRAME.slice(FRAME.indexOf('function liveFrames('));
+  assert.match(order.slice(0, 600), /sort\(\(a, b\) => a\.seq - b\.seq\)/,
+    'frames are ordered by their creation seq, not by recency');
   // `active` must not gate the frame's existence: parking is a class toggle.
   assert.match(host, /useHiddenClass\(hostRef, !state\.active\)/,
     'parking hides the host through a ref');
@@ -886,7 +1110,15 @@ test('`src` is not state, and the store starts from the prerendered markup', () 
   assert.match(store, /slug: '',/, 'no frame ships');
   assert.match(store, /active: false,/, 'the host ships hidden');
   assert.match(store, /faded: true,/, 'the #931 cross-fade starts faded');
+  assert.match(store, /sandboxReady: false,/, 'the pending blank frame grants no permissions');
   assert.match(store, /cover: null,/, 'and no cover');
+  assert.match(POLICY, /PENDING_FRAME_SANDBOX = ''/, 'the pending sandbox is fully restricted');
+  assert.match(POLICY,
+    /APP_FRAME_SANDBOX =[\s\S]*allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock/,
+    'the navigated app keeps the established capability contract');
+  assert.match(FRAME,
+    /sandbox=\{look\.sandboxReady \? APP_FRAME_SANDBOX : PENDING_FRAME_SANDBOX\}/,
+    'React owns the two-phase sandbox attribute');
   // Exactly one place in the whole chain assigns src.
   const srcWrites = BRIDGE.match(/el\.src = /g) || [];
   assert.equal(srcWrites.length, 1, 'exactly one src assignment: setSrc');
@@ -959,8 +1191,9 @@ test('every path that owned #app-content goes through the frame seam', () => {
   for (const call of [
     'AppView._appFrame()',            // the adopt-or-fall-back resolver
     'frame.mount({ slug, cover: AppView._coverDescriptor(rec), faded: true })', // #931 launch
-    'frame.mount({ slug: appData.slug, faded: false })',                        // plain render
-    'frame.setSrc(iframeSrc)',        // imperative navigation
+    // QA 2026-09-24 Q20: the plain render names the frame after the app.
+    "frame.mount({ slug: appData.slug, faded: false, title: appData.name || '' })", // plain render
+    'frame.setSrc(iframeSrc, { granted: AppView._grantedNow() })', // imperative navigation
     'frame.setOnLoad(',               // one slot, not a stacking listener
     'AppView._parkAppFrame()',        // Dev tab
     'AppView._unmountAppFrame()',     // leaving the app
@@ -972,11 +1205,12 @@ test('every path that owned #app-content goes through the frame seam', () => {
   const dev = SRC.slice(SRC.indexOf('async renderDevView('), SRC.indexOf('_devForumScroll'));
   assert.ok(dev.includes('AppView._parkAppFrame();'), 'renderDevView parks the frame');
   assert.ok(!dev.includes('AppView._unmountAppFrame();'), 'and never drops it');
-  // Closing the app does drop it — from the zoom-out's `after` callback, so the
-  // shrinking card keeps showing the app until it lands.
+  // Closing the app RETIRES it (#2902) — kept loaded, hidden — from the
+  // zoom-out's `after` callback, so the shrinking card keeps showing the app
+  // until it lands.
   const appJs = read('public/js/app.js');
-  assert.ok(appJs.includes('AppView._unmountAppFrame();'),
-    'closeApp drops the frame when the app is actually left');
+  assert.ok(appJs.includes('AppView._retireAppFrame();'),
+    'closeApp retires the frame when the app is actually left');
 });
 
 test('background updates preserve the app frame and clear when another app opens', async () => {
@@ -1000,4 +1234,190 @@ test('background updates preserve the app frame and clear when another app opens
   h.AppView.handleBackgroundBridgeMessage({ source: win,
     data: { __usernode_background: 'changed', color: '#0a0d14' } });
   assert.equal(h.store.get().background, '', 'a departed app cannot paint the next frame');
+});
+
+// ── 3. KEPT ALIVE (#2902) ────────────────────────────────────────────────
+//
+// The last few apps opened stay loaded in hidden frames, so Resume shows an
+// app exactly as it was left. Everything above still holds for the MOUNTED
+// frame; these cases prove the kept ones are the same elements and the same
+// documents when they come back, and that the list is least-recently-used.
+
+function openApp(h, slug, { innerPath = null } = {}) {
+  h.AppView.appData = {
+    slug, name: slug, url: `https://${slug}.example`, status: 'running', self_hosted: false,
+  };
+  h.AppView.iframeToken = `tok-${slug}-${h.bridge.stats().navigations}`;
+  h.AppView.iframeTokenSlug = slug;
+  h.AppView.pendingInnerPath = innerPath;
+  h.AppView.renderAppTab();
+  return h.bridge.frame();
+}
+
+test('#2902: resuming a kept app is the SAME element and the SAME document, as it was left', async () => {
+  const h = await makeHarness();
+  const a = openApp(h, 'app-a');
+  const win = a.contentWindow;
+  const loads = a.loads;
+  win.typed = 'half a sentence';
+  const b = openApp(h, 'app-b');
+  const c = openApp(h, 'app-c');
+  assert.notEqual(b, a);
+  assert.notEqual(c, b);
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-c', 'app-b', 'app-a'],
+    'three apps loaded: the mounted one, then the kept ones, most recent first');
+  assert.equal(a.kept, true, 'app-a is kept, not dropped');
+  assert.equal(a.id, '', 'and is no longer #app-iframe — the shell believes no message from it');
+  assert.deepEqual(win.posted.at(-1), { __usernode_visibility: 'hidden' },
+    'a kept document is told it is hidden, so the bridge pauses its media');
+
+  const creates = h.renderer.creates;
+  const navigations = h.navigations();
+  const back = openApp(h, 'app-a');
+  assert.equal(back, a, 'the very element');
+  assert.equal(back.contentWindow, win, 'the very document');
+  assert.equal(back.contentWindow.typed, 'half a sentence', 'with what the user left in it');
+  assert.equal(back.loads, loads, 'no reload');
+  assert.equal(h.navigations(), navigations, 'no navigation at all');
+  assert.equal(h.renderer.creates, creates, 'no element created');
+  assert.equal(back.id, 'app-iframe', 'it is the mounted frame again');
+  assert.equal(h.store.get().cover, null, 'with no launch cover over it');
+  assert.deepEqual(win.posted.at(-1), { __usernode_visibility: 'visible' });
+  assert.equal(h.surface(), 'app');
+});
+
+test('#2902: the keep-alive list is least-recently-used, three apps deep', async () => {
+  const h = await makeHarness();
+  openApp(h, 'app-a');
+  openApp(h, 'app-b');
+  openApp(h, 'app-c');
+  openApp(h, 'app-a'); // resumed: now the most recent
+  openApp(h, 'app-d');
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-d', 'app-a', 'app-c'],
+    'opening a fourth lets the least recently used (app-b) go, not the resumed app-a');
+  assert.ok(h.renderer.history.includes('unmount:app-b'), 'app-b\'s frame is gone');
+
+  // Opening one more than the limit, with no resume in between, drops the oldest.
+  const g = await makeHarness();
+  const a = openApp(g, 'app-a');
+  openApp(g, 'app-b');
+  openApp(g, 'app-c');
+  openApp(g, 'app-d');
+  assert.deepEqual(g.bridge.liveSlugs(), ['app-d', 'app-c', 'app-b']);
+  assert.equal(a.isConnected, false, 'app-a was evicted');
+  const again = openApp(g, 'app-a');
+  assert.notEqual(again, a, 'and reopening it is a fresh frame');
+  assert.equal(again.loads, 1, 'that loads');
+});
+
+test('#2902: backing out to Home keeps the app loaded; reopening it resumes', async () => {
+  const h = await makeHarness();
+  const a = openApp(h, 'app-a');
+  const win = a.contentWindow;
+  h.AppView._retireAppFrame();
+  assert.equal(h.bridge.slug(), '', 'nothing is mounted');
+  assert.equal(h.renderer.hostHidden, true);
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-a'], 'but app-a is still loaded');
+  assert.equal(a.isConnected, true);
+  // The eager launch from its tile resumes it instead of covering and reloading.
+  h.sandbox.Home._apps = [{ slug: 'app-a', name: 'A', url: 'https://app-a.example', status: 'running' }];
+  const navigations = h.navigations();
+  assert.equal(h.AppView.beginLaunch('app-a'), true);
+  assert.equal(h.bridge.frame(), a);
+  assert.equal(a.contentWindow, win);
+  assert.equal(h.navigations(), navigations, 'no navigation');
+  assert.equal(h.store.get().cover, null, 'no cover');
+  // …and the render that follows adopts it, even though the src it would build
+  // carries a newer token than the one the document booted with.
+  h.AppView.iframeToken = 'a-newer-token';
+  h.AppView.iframeTokenSlug = 'app-a';
+  h.AppView.renderAppTab();
+  assert.equal(h.bridge.frame(), a);
+  assert.equal(h.navigations(), navigations, 'still no navigation');
+});
+
+test('#2902: a stale kept document, or a deep link into it, reloads rather than resumes', async () => {
+  const h = await makeHarness();
+  const a = openApp(h, 'app-a');
+  openApp(h, 'app-b');
+  // Older than the token refresh period: its token is due a refresh, and a
+  // refresh is a reload anyway.
+  h.store.set((s) => ({
+    ...s,
+    kept: s.kept.map((k) => ({ ...k, navigatedAt: Date.now() - h.AppView.TOKEN_REFRESH_MS - 1 })),
+  }));
+  const loads = a.loads;
+  const back = openApp(h, 'app-a');
+  assert.equal(back, a, 'the element is reused');
+  assert.equal(back.loads, loads + 1, 'but its document is reloaded');
+
+  // A deep link into a kept app is somewhere to go: it navigates.
+  openApp(h, 'app-b');
+  const deep = openApp(h, 'app-a', { innerPath: '/thread/7' });
+  assert.equal(deep, a);
+  assert.equal(deep.loads, loads + 2, 'the deep link navigates the kept frame');
+});
+
+test('#2902: a new build, a placeholder and a sign-out each let frames go', async () => {
+  const h = await makeHarness();
+  openApp(h, 'app-a');
+  openApp(h, 'app-b');
+  // A build landed for kept app-a: its hidden document is the old build.
+  assert.equal(h.AppView.evictKeptApp('app-a'), true);
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-b']);
+  // The app on screen is not evicted from under the viewer.
+  assert.equal(h.AppView.evictKeptApp('app-b'), false);
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-b']);
+
+  // A placeholder drops the mounted frame but not the kept ones.
+  openApp(h, 'app-c');
+  h.AppView._unmountAppFrame();
+  assert.deepEqual(h.bridge.liveSlugs(), ['app-b']);
+
+  // Sign-out drops everything.
+  openApp(h, 'app-d');
+  h.AppView.evictAllAppFrames();
+  assert.deepEqual(h.bridge.liveSlugs(), []);
+  assert.equal(h.bridge.frame(), null);
+});
+
+test('#2902: a small device keeps one app fewer', async () => {
+  const { KEEP_ALIVE_LIMIT, keepAliveLimit, liveAppSlugs } = await import(
+    new URL('../frontend/src/features/app-frame/app-frame-store.js', `file://${__filename}`).href
+  );
+  assert.equal(KEEP_ALIVE_LIMIT, 3);
+  assert.equal(keepAliveLimit({}), 3, 'no report: the full three');
+  assert.equal(keepAliveLimit({ deviceMemory: 8 }), 3);
+  assert.equal(keepAliveLimit({ deviceMemory: 2 }), 2, 'a 2 GiB phone keeps two');
+  assert.deepEqual(
+    liveAppSlugs({ slug: 'x', kept: [{ slug: 'y' }, { slug: 'z' }] }),
+    ['x', 'y', 'z'],
+  );
+  assert.deepEqual(liveAppSlugs({ slug: '', kept: [{ slug: 'y' }] }), ['y']);
+});
+
+test('#2902: the green dot reads the frame store, on Home tiles and Recents rows', () => {
+  const live = read('frontend/src/features/app-frame/live-apps.tsx');
+  assert.match(live, /liveAppSlugs\(useStoreState\(appFrameStore\)\)/,
+    'the dot is derived from the frames actually loaded');
+  const grid = read('frontend/src/features/home/app-grid.tsx');
+  assert.match(grid, /live=\{live\.includes\(item\.app\.slug\)\}/);
+  assert.match(grid, /\{live \? <LiveAppDot className="app-card-live-dot" \/> : null\}/);
+  const recents = read('frontend/src/features/nav/recents-list.tsx');
+  assert.match(recents, /live=\{!!item\.app && live\.includes\(item\.app\.slug\)\}/);
+  assert.match(recents, /\{live \? <LiveAppDot className="platform-recent-live" \/> : null\}/);
+  const css = read('public/css/app.css');
+  assert.match(css, /\.app-launch-host > iframe\[data-kept\] \{[\s\S]{0,200}visibility: hidden;/,
+    'a kept frame keeps its box and is hidden by visibility, not display');
+});
+
+test('#2902: the shared bridge pauses a hidden app\'s media and resumes what it paused', () => {
+  const bridge = read('public/usernode-bridge/v1/bridge.js');
+  const block = bridge.slice(bridge.indexOf('__USERNODE_VISIBILITY_BEGIN__'),
+    bridge.indexOf('__USERNODE_VISIBILITY_END__'));
+  assert.ok(block.length > 0, 'the visibility block is in the bridge');
+  assert.match(block, /if \(e\.source !== window\.parent\) return;/, 'only the shell may say so');
+  assert.match(block, /querySelectorAll\("audio, video"\)/);
+  assert.match(block, /usernode:visibility-changed/);
+  assert.equal(read('public/usernode-bridge.js'), bridge, 'both bridge copies agree');
 });

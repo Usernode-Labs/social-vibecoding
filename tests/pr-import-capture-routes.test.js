@@ -64,32 +64,21 @@ test('they come from the same parse that feeds the INSERT, not a second one', ()
   assert.doesNotMatch(literal, /parseImportTesting/, 'the literal reuses that parse');
 });
 
-test('the consumer still reads its routes off the session object', () => {
+test('the consumer still hands the session object to the capture planner', () => {
   // The other half of the contract. If captureForSession ever starts loading
   // the row itself, the fields above become redundant rather than wrong —
   // but until it does, dropping them silently re-breaks every screenshot.
-  assert.match(VISUALS_SRC, /const pathDefaulted = !\(Array\.isArray\(session\.testing_paths\)/);
-  assert.match(VISUALS_SRC, /\?\s*session\.testing_paths\s*\n?\s*:\s*\[session\.testing_path \|\| '\/'\]/);
+  assert.match(VISUALS_SRC, /deriveCapturePlan\(session, declaredTests, changedFiles\)/);
+  assert.match(VISUALS_SRC, /Array\.isArray\(session\?\.testing_paths\)/);
 });
 
-test('a session with no routes still defaults to root (the browser import path)', () => {
-  // The browser's own import button sends no testing metadata, so the three
-  // fields are null and the capture must fall back exactly as before. This
-  // is the property that makes the change safe to ship: an import that says
-  // nothing about routes writes the row it always wrote.
-  const derive = (session) => ({
-    pathDefaulted: !(Array.isArray(session.testing_paths) && session.testing_paths.length)
-      && !session.testing_path,
-    raw: (Array.isArray(session.testing_paths) && session.testing_paths.length)
-      ? session.testing_paths
-      : [session.testing_path || '/'],
-  });
-
-  assert.deepEqual(derive({ testing_md: null, testing_path: null, testing_paths: null }),
-    { pathDefaulted: true, raw: ['/'] });
-  // And the pre-fix shape — the fields absent entirely — is what produced
-  // the bug: indistinguishable from "the agent named no routes".
-  assert.equal(derive({}).pathDefaulted, true);
+test('a session with no routes and no matching scenario retains the root default', () => {
+  const visuals = require('../src/services/visuals');
+  const plan = visuals.deriveCapturePlan(
+    { testing_md: null, testing_path: null, testing_paths: null }, [], ['frontend/app.js']
+  );
+  assert.deepEqual(plan,
+    { paths: ['/'], pathDefaulted: true, routeSource: 'default', scenarios: [] });
 });
 
 test('the shape the route hands over is the shape the capture can read', () => {

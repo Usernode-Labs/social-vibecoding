@@ -289,25 +289,109 @@ test('checks deferred on a head that STILL conflicts are left alone: the conflic
 
 // ── the main_healthy gate ────────────────────────────────────────────────
 
-test("a red main pauses this proposal's merge too, whatever its own checks said", async () => {
+const unitSuite = require('../src/services/unit-suite');
+// A proposal's own checks with the repo's unit suite among them, as
+// chat_sessions.test_results stores them (services/unit-suite.js shapeOutcome).
+const suiteRow = (status) => ({
+  index: unitSuite.UNIT_CHECK_INDEX, name: unitSuite.UNIT_CHECK_NAME, path: unitSuite.UNIT_CHECK_PATH, status,
+});
+const RED_MAIN = {
+  main_check_state: 'failing', main_check_sha: MAIN_SHA,
+  main_check_at: new Date().toISOString(),
+  main_check_detail: { failureReason: 'not ok 12 - votes › tally | # fail 1' },
+  main_check_resumed_sha: null, main_check_paused_sha: MAIN_SHA,
+};
+
+test("a red main pauses this proposal's merge too, whatever its own checks said — unless they were the whole answer", async () => {
+  // Level with main, merges clean, checks green — but the checks did NOT
+  // include the unit suite (a repo with declared browser checks only). What
+  // main's suite is red about is not something this run tested, so it waits.
   const { subject, restore } = loadVotes({
     measured: { behindBy: 0, aheadBy: 1, mergesClean: true, conflictPaths: [] },
   });
-  const p = poolWith({
-    main: {
-      main_check_state: 'failing', main_check_sha: MAIN_SHA,
-      main_check_at: new Date().toISOString(), main_check_detail: { summary: '2 failing' },
-      main_check_resumed_sha: null,
-    },
-  });
+  const p = poolWith({ main: RED_MAIN });
   try {
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
     assert.equal(r.merged, false);
     assert.equal(r.blockReason, 'main_failing');
     assert.equal(r.mainCheck.paused, true);
     assert.equal(r.mainCheck.sha, MAIN_SHA);
+    assert.equal(r.mainCheck.failingTest, 'votes › tally', 'the block names the culprit');
     assert.ok(!claimed(p), 'never claimed the merge');
   } finally { restore(); }
+});
+
+test('level with main, clean, and its own unit suite green on this head: it merges through the pause', async () => {
+  // The pause holds back trees nobody has tested. This head's merge lands
+  // exactly the tree its checks ran on — it is the fix candidate, and its
+  // own post-merge run re-tests main. It goes.
+  const { subject, restore } = loadVotes({
+    measured: { behindBy: 0, aheadBy: 1, mergesClean: true, conflictPaths: [] },
+  });
+  const p = poolWith({
+    checks: { test_results: [{ status: 'pass' }, suiteRow('pass')] },
+    main: RED_MAIN,
+  });
+  try {
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.merged, true, 'the pass-through');
+    assert.ok(claimed(p));
+    const rec = p.queries.find((q) => /merge_requirements\s*=/.test(q.sql));
+    assert.ok(rec, 'the requirements record was written');
+    assert.match(rec.params.join(' '), /level_and_green/, 'and the pass-through is named in it, not silently waved');
+  } finally { restore(); }
+});
+
+test('the pass-through needs all three: level, clean, and a green suite of its own', async () => {
+  const cases = [
+    ['one commit behind', { behindBy: 1, aheadBy: 1, mergesClean: true, conflictPaths: [] }, { test_results: [suiteRow('pass')] }],
+    ['level but a measured conflict', { behindBy: 0, aheadBy: 1, mergesClean: false, conflictPaths: ['x.js'] }, { test_results: [suiteRow('pass')] }],
+    ['level and clean, its suite red', { behindBy: 0, aheadBy: 1, mergesClean: true, conflictPaths: [] }, { test_results: [suiteRow('fail')], check_state: 'failing' }],
+    ['level and clean, its checks still running', { behindBy: 0, aheadBy: 1, mergesClean: true, conflictPaths: [] }, { test_results: [], check_state: 'pending' }],
+  ];
+  for (const [why, measured, checks] of cases) {
+    const { subject, restore } = loadVotes({ measured });
+    const p = poolWith({ checks, main: RED_MAIN });
+    try {
+      const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+      assert.equal(r.merged, false, why);
+      assert.ok(!claimed(p), why);
+    } finally { restore(); }
+  }
+});
+
+test('a first red under confirmation pauses the same way, and says the pause is provisional', async () => {
+  const { subject, restore } = loadVotes({
+    measured: { behindBy: 3, aheadBy: 1, mergesClean: true, conflictPaths: [] },
+  });
+  const p = poolWith({ main: { ...RED_MAIN, main_check_state: 'confirming' } });
+  try {
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.blockReason, 'main_failing', 'a genuine red must not let untested merges through for five more minutes');
+    assert.equal(r.mainCheck.confirming, true);
+  } finally { restore(); }
+});
+
+test('a run that could not happen does not lift a pause it found; a green verdict does', async () => {
+  let loaded = loadVotes({ measured: { behindBy: 2, aheadBy: 1, mergesClean: true, conflictPaths: [] } });
+  try {
+    // 'error' at a newer sha, the pause column still pointing at the red one.
+    const p = poolWith({
+      main: { ...RED_MAIN, main_check_state: 'error', main_check_sha: 'c'.repeat(40), main_check_paused_sha: MAIN_SHA },
+    });
+    const r = await loaded.subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.blockReason, 'main_failing', 'a run that says nothing about main cannot lift the pause');
+    assert.equal(r.mainCheck.pausedSha, MAIN_SHA);
+  } finally { loaded.restore(); }
+
+  loaded = loadVotes({ measured: { behindBy: 2, aheadBy: 1, mergesClean: true, conflictPaths: [] } });
+  try {
+    const p = poolWith({
+      main: { ...RED_MAIN, main_check_state: 'passing', main_check_sha: 'c'.repeat(40), main_check_paused_sha: null },
+    });
+    const r = await loaded.subject.checkAndMerge({ jwtSecret: 's' }, p, { ...session });
+    assert.equal(r.merged, true, 'green cleared the column');
+  } finally { loaded.restore(); }
 });
 
 test('an admin resuming merges on that exact red sha lets the merge through; a fresher red sha pauses again', async () => {

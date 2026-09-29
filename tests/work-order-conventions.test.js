@@ -75,6 +75,8 @@ test('the excerpt covers what an offline agent gets wrong, in priority order', (
   assert.match(essentials, /RS256/);
   assert.match(essentials, /USERNODE_JWT_PUBLIC_KEY/);
   assert.match(essentials, /LLM proxy|USERNODE_LLM_PROXY_URL/);
+  assert.match(essentials, /USERNODE_PLATFORM_API_V1_URL/);
+  assert.match(essentials, /never a hardcoded host/);
   assert.match(essentials, /SIGTERM/);
 });
 
@@ -158,23 +160,26 @@ test('the work order names all three hosted assets and the full document URL', (
   // The three files whose absence made the app render unstyled in a
   // sandbox browser and one declared check fail.
   assert.equal(svc.HOSTED_ASSET_PATHS.length, 3);
-  // They are named on THIS DEPLOYMENT's origin, taken from the webPath the
-  // task was created from — not on a compiled-in hostname. The literal this
-  // used to assert, social-vibecoding.usernodelabs.org, stopped answering
-  // when the platform moved to my.onhomeroom.com, and every work order went
-  // on handing agents three dead links and inviting them to write that host
-  // into the app they were building.
-  for (const url of svc.hostedAssetUrls('https://usernode.example')) {
-    assert.ok(order.includes(url), `the work order names ${url}`);
-    assert.match(url, /^https:\/\/usernode\.example\//);
+  // They are named as RELATIVE paths, with no hostname in front (#2319).
+  // Absolute URLs on a compiled-in host (social-vibecoding.usernodelabs.org)
+  // went dead when the platform moved; absolute URLs on the deployment's own
+  // origin then got copied into apps as my.onhomeroom.com, which breaks on
+  // the next move the same way. The platform serves these paths on every
+  // app's own address, so the relative form is the one to copy.
+  for (const assetPath of svc.HOSTED_ASSET_PATHS) {
+    assert.match(assetPath, /^\/usernode-/);
+    assert.ok(order.includes(assetPath), `the work order names ${assetPath}`);
+    assert.ok(!order.includes(`https://usernode.example${assetPath}`),
+      `and never on a hostname: ${assetPath}`);
   }
+  assert.match(order, /RELATIVE paths, exactly as written/);
   assert.doesNotMatch(order, /social-vibecoding\.usernodelabs\.org/);
   assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-bridge')));
   assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-native')));
   assert.ok(svc.HOSTED_ASSET_PATHS.some((u) => u.includes('usernode-tailwind')));
 
   // The diagnosis, so a less careful agent does not "fix" the sandbox.
-  assert.match(order, /may not be able to reach that host/);
+  assert.match(order, /local container does not serve these paths/);
   assert.match(order, /Vendoring those files into the repository is forbidden/);
   assert.match(order, /staging preview Homeroom builds/);
 
@@ -261,24 +266,42 @@ test('the work order says the appendix is partial and names the lookup', () => {
   assert.match(order, /connector traffic does not go through your container/i);
 });
 
-test('the work order asks for the testing routes, pointed at the changed screen', () => {
+test('the work order keeps agent instructions with their repository', () => {
+  const order = instructions(fullOrder());
+  assert.match(order, /has loaded this repository's own instructions/);
+  assert.match(order, /changing directory from an unrelated project may not\s+replace them/);
+  assert.match(order, /start a\s+fresh task rooted in this repository/);
+});
+
+test('the work order separates manual testing routes from interaction evidence', () => {
   const order = instructions(fullOrder());
   assert.match(order, /testingPaths/);
   assert.match(order, /testingSteps/);
-  // Why it matters, in the terms the agent can act on: this is what the
-  // before/after screenshots the voters see are shot from.
-  assert.match(order, /before\/after screenshot/i);
+  // Routes remain useful for a human entering the preview and for durable
+  // checks, but they are no longer presented as visual proof.
+  assert.match(order, /manual "Test this change" link/);
   assert.match(order, /THE SCREEN YOU\s+CHANGED/);
-  assert.match(order, /not the home page/);
-  // And the escape hatch for a screen no URL reaches, so "I cannot give a
-  // route" never becomes a reason to omit them.
-  assert.match(order, /deep link/i);
-  assert.match(order, /query param handled at boot/);
-  // #1214: a route the platform could not use is named in submit_work's own
-  // answer, so the agent checks it while it is still holding the branch
-  // instead of learning it from a boolean minutes later.
+  assert.match(order, /not the\s+home page/);
+  assert.match(order, /do not add a screenshot-only route/);
+  assert.doesNotMatch(order, /query param handled at boot/);
+
+  // The agent declares what changed and how a user reaches that exact state;
+  // Homeroom explores once, then deterministically proves the pair twice.
+  assert.match(order, /visualEvidence/);
+  assert.match(order, /record_visual_evidence_intent/);
+  assert.match(order, /helper is not exposed[\s\S]*documented version-1 object directly/,
+    'a connector without the helper still documents the supported v1 input path');
+  assert.match(order, /user-visible claim/);
+  assert.match(order, /real interaction steps/);
+  assert.match(order, /bounded plan/);
+  assert.match(order, /replays\s+it\s+twice\s+against\s+exact\s+base\s+and\s+head\s+revisions/);
+
+  // The submission response distinguishes a malformed manual route from the
+  // evidence lifecycle instead of silently replacing either with '/'.
   assert.match(order, /testingPathsRejected/);
-  assert.match(order, /re-shoots the screenshots and clears no votes/);
+  assert.match(order, /visualEvidenceAccepted/);
+  assert.match(order, /visualEvidenceState/);
+  assert.match(order, /visualEvidenceNextStep/);
 });
 
 test('the work order says the checks gate merge and how to clear them', () => {
@@ -296,8 +319,14 @@ test('the work order says the checks gate merge and how to clear them', () => {
   const step7 = order.slice(order.indexOf('7. THEN CHECK THE CHECKS'));
   assert.match(step7, /Do not call\s+`submit_work` again/);
   assert.match(step7, /do not call `prepare_work`/);
-  // The one signal that says the testing routes were dropped on the way in.
-  assert.match(step7, /captureDefaultedToRoot/);
+  // Evidence is revision-scoped and can fail honestly; no generic home-page
+  // screenshot is allowed to masquerade as proof of an unreachable state.
+  assert.match(step7, /visualEvidence/);
+  assert.match(step7, /structured claim and flow were accepted/);
+  assert.match(step7, /wait for `verified`/);
+  assert.match(step7, /`failed` includes a specific recovery reason/);
+  assert.match(step7, /does not substitute a home-page screenshot/);
+  assert.doesNotMatch(step7, /captureDefaultedToRoot/);
 });
 
 test('a task with nothing to submit gets none of the submission guidance', () => {
@@ -330,6 +359,7 @@ test('every addition sits above the appendix, and none brings a fence', () => {
   for (const marker of [
     'get_platform_conventions',
     'testingPaths',
+    'visualEvidence',
     '7. THEN CHECK THE CHECKS',
   ]) {
     const at = order.indexOf(marker);

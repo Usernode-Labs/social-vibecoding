@@ -373,13 +373,17 @@ const Notifications = {
     // browser tab sets the dedicated tab-title marker (the replacement
     // for the old streaming-driven "✅ Done"). If they're actively
     // looking at the page, the badge + drawer suffice.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+    // #3181: a turn that stopped before finishing is the other half of a
+    // finished one, and arrives on the same channels with its own marker.
+    if (PRIORITY_KINDS.has(notif.kind)
         && !notif.readAt
         && window.DevChat && DevChat.setCompletionTitle
         && DevChat._userIsAway && DevChat._userIsAway()) {
       DevChat.setCompletionTitle(notif.kind === 'session_done'
         ? 'sessionDone'
-        : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
+        : notif.kind === 'session_stalled'
+          ? 'sessionStalled'
+          : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
     }
     // #138: route an arriving completion through the alert channels — a
     // chime when the app is visible, an OS notification when it's hidden.
@@ -387,7 +391,7 @@ const Notifications = {
     // "user is elsewhere in the app, or backgrounded" path (notify_on_done
     // was armed, so a notification_new arrives); the "watching the same dev
     // chat" path is handled by DevChat._finishStreaming's direct tone.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
+    if (PRIORITY_KINDS.has(notif.kind)
         && !notif.readAt
         && window.DevAlerts && typeof DevAlerts.onCompletion === 'function') {
       DevAlerts.onCompletion(completionAlertInfo(notif));
@@ -445,12 +449,14 @@ const Notifications = {
   // mock rows to render. Once per page load — reopening after a manual
   // dismiss would fight the user, and refresh() runs again on live events.
   //
-  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That tab is
-  // React state inside the sheet, so without a URL that reaches it neither the
-  // capture pipeline nor a declared check could see the tab, its collapsed
-  // conversation rows, or its "All messages" entry — the platform's own rule
-  // for a screen that is otherwise only reachable by clicking. The sheet reads
-  // the same parameter for the tab; this only has to open it.
+  // `?shot=notifications-messages` opens it ON THE MESSAGES TAB. That is
+  // React state inside the sheet, so without a URL that reaches it neither
+  // the capture pipeline nor a declared check could see the tab, its
+  // collapsed conversation rows, its "All messages" entry, or the agent
+  // session rows it draws (#2815 folded the Agents tab into it) — the
+  // platform's own rule for a screen that is otherwise only reachable by
+  // clicking. The sheet reads the same parameter for the tab; this only has
+  // to open it.
   //
   _shotOpened: false,
   _maybeShotOpen() {
@@ -581,6 +587,9 @@ const Notifications = {
     let cleared = 0;
     for (const n of Notifications.items) {
       if (!n || n.readAt || Number(n.conversationId) !== id) continue;
+      // #2387: an alert about a message inside a reply thread waits for that
+      // thread to be read, as it does server-side.
+      if (n.conversationThreadRootId) continue;
       n.readAt = now;
       cleared += 1;
     }
@@ -590,6 +599,126 @@ const Notifications = {
     Notifications.unread = Math.max(0, Notifications.unread - cleared);
     Notifications._renderBadge();
     Notifications._renderList();
+  },
+
+  // #2387: one reply thread of a conversation was read — its alerts (a reply
+  // in it, a mention in it) clear, and nothing else of the conversation's.
+  markConversationThreadRead(conversationId, rootId) {
+    const id = Number(conversationId);
+    const root = Number(rootId);
+    if (!Number.isSafeInteger(id) || id <= 0 || !Number.isSafeInteger(root) || root <= 0) return;
+    const now = new Date().toISOString();
+    let cleared = 0;
+    for (const n of Notifications.items) {
+      if (!n || n.readAt || Number(n.conversationId) !== id) continue;
+      if (Number(n.conversationThreadRootId) !== root) continue;
+      n.readAt = now;
+      cleared += 1;
+    }
+    if (!cleared) return;
+    Notifications.unread = Math.max(0, Notifications.unread - cleared);
+    Notifications._renderBadge();
+    Notifications._renderList();
+  },
+
+
+  // #2847: the viewer opened a proposal card, or touched something on it, so
+  // its "New proposal" nudge is answered — clear it the way a vote already
+  // does server-side. Called by AppView (the topic page and the dev board's
+  // delegated card click) through `window.Notifications`. Skipped when
+  // nothing is unread, so the common click costs no request; the server
+  // scopes the clear to pr_proposed rows for this one session.
+  async markProposalSeen(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isSafeInteger(id) || id <= 0 || Notifications.unread === 0) return;
+    const now = new Date().toISOString();
+    for (const n of Notifications.items) {
+      if (n && !n.readAt && n.kind === 'pr_proposed' && Number(n.sessionId) === id) n.readAt = now;
+    }
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: id }),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data.cleared) return;
+      Notifications.unread = data.unread || 0;
+      Notifications._renderBadge();
+      Notifications._renderList();
+    } catch (err) {
+      console.warn('[notifications] markProposalSeen failed', err);
+    }
+  },
+
+  // #1688: a row's own button. 'still_yes' re-casts a Yes on the proposal a
+  // re-confirm ask names — the server carries the earlier line along, and
+  // the vote's auto-dismiss clears the row. Anything else opens the row.
+  async _onRowAction(id, key) {
+    const item = Notifications.items.find((n) => n.id === id);
+    if (!item) return false;
+    if ((key === 'friend_accept' || key === 'friend_decline') && item.kind === 'friend_request') {
+      return Notifications._answerFriendRequest(item, key === 'friend_accept');
+    }
+    const sessionId = Number(item.sessionId);
+    if (key === 'still_yes' && Number.isFinite(sessionId) && sessionId > 0
+        && window.AppView && typeof AppView.castVote === 'function') {
+      await AppView.castVote(sessionId, 'yes', null, { reason: null });
+      Notifications._markOneRead(id);
+      if (typeof Notifications.refresh === 'function') Notifications.refresh();
+      return true;
+    }
+    return Notifications._onItemClick(id);
+  },
+
+  // #2386: Accept / Decline right on a friend request row. The server marks
+  // the row read and answers the relationship; the row stops offering the
+  // buttons (`friendRequestPending`), and the page's friend caches hear about
+  // it through the same DOM event the profile button raises
+  // (features/friends/api.ts FRIENDS_CHANGED_EVENT) — an event, not an
+  // import, because this module stays import-free. A decline tells the sender
+  // nothing; the toast is only ever the viewer's own confirmation.
+  async _answerFriendRequest(item, accept) {
+    const userId = Number(item.sourceUserId);
+    if (!Number.isSafeInteger(userId) || userId <= 0) return false;
+    const toast = (message) => {
+      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) PlatformUI.toast(message);
+    };
+    try {
+      const init = {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: '{}',
+      };
+      const res = accept
+        ? await fetch(`/api/friends/${userId}/accept`, init)
+        : await fetch(`/api/friends/${userId}/decline`, init);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast(data.error && res.status === 429 ? data.error : 'Couldn’t answer this friend request. Try again.');
+        return false;
+      }
+      item.friendRequestPending = false;
+      if (!item.readAt) {
+        item.readAt = new Date().toISOString();
+        if (Notifications.unread > 0) Notifications.unread -= 1;
+        Notifications._renderBadge();
+      }
+      Notifications._renderList();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('usernode:friends-changed'));
+      }
+      const who = item.sourceUsername ? `@${item.sourceUsername}` : 'them';
+      if (accept) toast(data.state === 'friends' ? `You and ${who} are friends` : 'This request was withdrawn');
+      else toast('Request declined');
+      return true;
+    } catch (err) {
+      console.warn('[notifications] friend answer failed', err);
+      toast('Couldn’t answer this friend request. Try again.');
+      return false;
+    }
   },
 
   _onItemClick(id) {
@@ -618,14 +747,36 @@ const Notifications = {
           && conversationId <= 2147483647) {
         Notifications._dismissSheetForNav();
         const messages = window.UsernodeReact?.messages;
-        if (messages?.open) messages.open(conversationId);
-        else window.location.hash = `#messages/${conversationId}`;
+        // #2387: a row about a message or a thread opens that ADDRESS. The
+        // bridge's openAddress re-runs the router when it is the address
+        // already in the bar; open(id) would move to the bare conversation
+        // and close the thread the row is about.
+        const href = conversationNotificationHref(item);
+        if (messages?.openAddress) messages.openAddress(href);
+        else window.location.hash = href;
+      }
+      return;
+    }
+    // #2386: a friend request or acceptance is about a PERSON, so it opens
+    // their page — where the relationship's own button lives.
+    if (FRIEND_NOTIF_KINDS.has(item.kind)) {
+      if (item.sourceUsername) {
+        Notifications._dismissSheetForNav();
+        window.location.hash = `#profile/${encodeURIComponent(item.sourceUsername)}`;
       }
       return;
     }
     if (item.kind === 'app_quota_changed' || item.kind === 'app_quota_request_declined') {
       Notifications._dismissSheetForNav();
       App.showCreateModal();
+      return;
+    }
+    // #2161: the app this row is about no longer exists, so there is nothing
+    // to open. Home is the one screen that is still true.
+    if (item.kind === 'app_deleted') {
+      Notifications._dismissSheetForNav();
+      if (typeof App !== 'undefined' && App.navigateHome) App.navigateHome();
+      else window.location.hash = '#home';
       return;
     }
     if (item.kind === 'app_quota_requested') {
@@ -642,16 +793,44 @@ const Notifications = {
       }
       return;
     }
-    // #161/#194: completion notifications deep-link to their dev
-    // sub-tab. session_done opens the dev session itself;
+    // A platform limit opens where it is raised. The app limit is set in
+    // Admin → Limits (services/app-limit.js), which works on every deploy;
+    // the session cap opens Health & status, whose capacity meter shows the
+    // load behind it (MAX_GLOBAL_SESSIONS itself is deploy configuration).
+    if (item.kind === 'platform_limit') {
+      Notifications._dismissSheetForNav();
+      const limit = parsePlatformLimitDetail(item.detail);
+      const section = limit?.limit === 'apps' ? 'limits' : 'status';
+      if (typeof App !== 'undefined' && App.navigateToAdminConsole) {
+        App.navigateToAdminConsole(section);
+      } else {
+        window.location.hash = `#admin/${section}`;
+      }
+      return;
+    }
+    // #161/#194: completion notifications deep-link to their change.
+    // session_done opens the lifecycle-aware detail page around its workspace;
     // auto_solve_done opens the Issues tab with that issue's accordion
     // expanded.
-    if (item.kind === 'session_done' && item.appSlug && item.sessionId) {
+    // #2779: a change an agent session started is worked on in that
+    // conversation, so its completion opens the conversation.
+    // #3181: a session that stopped before finishing opens exactly where a
+    // finished one does, since continuing it is what the row asks for.
+    const sessionTurnEnd = item.kind === 'session_done' || item.kind === 'session_stalled';
+    if (sessionTurnEnd && item.agentSessionId) {
+      Notifications._dismissSheetForNav();
+      window.location.hash = `#messages/agent/${encodeURIComponent(item.agentSessionId)}`;
+      return;
+    }
+    if (sessionTurnEnd && item.appSlug && item.sessionId) {
       Notifications._dismissSheetForNav();
       if (typeof App !== 'undefined' && App.openAppTab) {
-        return App.openAppTab(item.appSlug, 'dev', { subTab: 'sessions', sessionId: item.sessionId });
+        return App.openAppTab(item.appSlug, 'dev', {
+          subTab: 'topic',
+          ref: { kind: 'proposal', id: parseInt(item.sessionId, 10) },
+        });
       } else {
-        window.location.hash = `#app/${item.appSlug}/dev/sessions/${item.sessionId}`;
+        window.location.hash = `#app/${item.appSlug}/dev/proposals/${item.sessionId}`;
       }
       return;
     }
@@ -682,21 +861,19 @@ const Notifications = {
     // #1405 path A: your agent submitted or shared work. Both are about ONE
     // change, and both used to fall through to the app's general chat with
     // everything else that had a slug — a screen that says nothing about the
-    // thing the notification is announcing. A submission is a proposal up for
-    // a vote; a share is a session on the Dev board with its own public
-    // discussion. Each lands on its own topic.
+    // thing the notification is announcing. A submission is up for a vote and
+    // a share is still underway, but the lifecycle-aware change page handles
+    // both states around the same full card.
     if (item.kind === 'connector_submitted' && item.appSlug && item.sessionId) {
       Notifications._dismissSheetForNav();
-      const kind = item.detail === 'shared' ? 'session' : 'proposal';
       const id = parseInt(item.sessionId, 10);
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', {
           subTab: 'topic',
-          ref: { kind, id },
+          ref: { kind: 'proposal', id },
         });
       } else {
-        const seg = kind === 'session' ? 'shared' : 'proposals';
-        window.location.hash = `#app/${item.appSlug}/dev/${seg}/${id}`;
+        window.location.hash = `#app/${item.appSlug}/dev/proposals/${id}`;
       }
       return;
     }
@@ -719,18 +896,34 @@ const Notifications = {
       // routing; an invalid topic ref falls through to the chat/proposals
       // navigation), so one dismiss covers the whole block.
       Notifications._dismissSheetForNav();
-      // Mentions/replies/reactions land on the app's Dev → Chat — unless
-      // the message lives in a topic thread (#194 parity), in which case
-      // the click opens that issue/proposal/governance discussion where
-      // the message is actually visible. Vote nudges and kudos land on
-      // the Proposals tab where their PR card lives (deep-linked when we
-      // know the session).
+      // Mentions/replies/reactions land on the app's discussion, in Messages
+      // (see _openAppDiscussion) — unless the message lives in a topic thread
+      // (#194 parity), in which case the click opens that
+      // issue/proposal/governance discussion where the message is actually
+      // visible. Vote nudges and kudos land on the Proposals tab where their
+      // PR card lives (deep-linked when we know the session).
       //
       // Navigate via App.openAppTab rather than assigning location.hash:
       // a same-value hash assignment fires no `hashchange`, so clicking a
       // notification for the app/tab already on screen wouldn't re-render.
       // openAppTab always renders (and keeps the URL in sync internally).
-      const chatKinds = new Set(['mention', 'reply', 'reaction']);
+      const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply']);
+      // #2387: a message in a REPLY thread (thread_type 'message', its ref
+      // the thread's first message) opens that thread beside the channel,
+      // at the address the server worked out for the row.
+      if (chatKinds.has(item.kind) && item.threadType === 'message' && item.threadRef != null) {
+        const root = parseInt(item.threadRef, 10);
+        const href = typeof item.href === 'string' && item.href.startsWith('#messages/app/')
+          ? item.href
+          : (Number.isInteger(root) && root > 0
+            ? `#messages/app/${encodeURIComponent(item.appSlug)}/thread/${root}` : null);
+        if (href) {
+          const messages = window.UsernodeReact?.messages;
+          if (messages?.openAddress) messages.openAddress(href);
+          else window.location.hash = href;
+          return;
+        }
+      }
       if (chatKinds.has(item.kind) && item.threadType && item.threadRef != null) {
         const kindMap = { issue: 'issue', session: 'proposal', governance: 'gov' };
         const topicKind = kindMap[item.threadType];
@@ -756,18 +949,64 @@ const Notifications = {
       // and the topic view opens full-screen. Without an id there is no
       // proposal to open and it falls back to the board, which is where the
       // card is.
-      const proposalKinds = new Set(['pr_proposed', 'stale_pr', 'kudos', 'check_failed']);
+      // #1374 adds three more that are ABOUT A PROPOSAL: it merged, somebody
+      // voted on it, and the daily digest of what is waiting on you. The
+      // digest carries no sessionId, so it lands on the board — which is
+      // right, since its subject is "these several proposals" rather than
+      // one of them.
+      // #1688: the re-confirm ask names one proposal and opens it; the
+      // weekly card is a chat message, so its row opens the chat it is in.
+      const proposalKinds = new Set([
+        'pr_proposed', 'stale_pr', 'kudos', 'check_failed',
+        'pr_merged', 'proposal_vote', 'vote_digest', 'revision_recheck',
+      ]);
       const toProposals = proposalKinds.has(item.kind);
+      // A new issue opens THAT ISSUE. `detail` is its number (the producer
+      // has no issue column), and this row fell through to the app's general
+      // chat, a screen that says nothing about the issue it announces.
+      const issueNumber = item.kind === 'issue_opened' && /^\d+$/.test(String(item.detail || ''))
+        ? Number(item.detail) : null;
+      if (!toProposals && !issueNumber) {
+        // Everything else is about a message in the app's general chat — a
+        // mention, a reply, a reaction, the weekly card — or has no better
+        // page than it.
+        Notifications._openAppDiscussion(item.appSlug, item.chatMessageId);
+        return;
+      }
       if (typeof App !== 'undefined' && App.openAppTab) {
         return App.openAppTab(item.appSlug, 'dev', toProposals
           ? { subTab: 'proposals', ref: item.sessionId || null }
-          : { subTab: 'chat' });
+          : { subTab: 'issues', ref: issueNumber });
       } else {
         window.location.hash = toProposals
           ? `#app/${item.appSlug}/dev/proposals${item.sessionId ? `/${item.sessionId}` : ''}`
-          : `#app/${item.appSlug}/dev/chat`;
+          : `#app/${item.appSlug}/dev/issues/${issueNumber}`;
       }
     }
+  },
+
+  // AN APP'S DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763), so a
+  // row about a message in it opens it THERE: `#messages/app/<slug>`, two
+  // panes on a desktop, with the side panel taking it beside a running app
+  // (#2854). These rows opened the old full-screen `#app/<slug>/dev/chat`,
+  // whose back arrow climbed to the app's Workshop — a screen the reader
+  // had not come from.
+  //
+  // When the row names ONE message, the discussion opens on it rather than
+  // at the newest: GroupChat scrolls it into view and flashes it, the same
+  // highlight a quote's jump-to-original lands on, once the transcript has
+  // loaded (or at once, when that discussion is already open). A message
+  // older than the page the discussion loads cannot be shown, and the
+  // thread opens at the newest as before. The Messages controller is the
+  // one door, with the address as the fallback for a shell still starting.
+  _openAppDiscussion(slug, messageId) {
+    if (!slug) return;
+    if (messageId && typeof GroupChat !== 'undefined' && GroupChat.revealMessage) {
+      GroupChat.revealMessage(slug, messageId);
+    }
+    const messages = window.UsernodeReact?.messages;
+    if (messages?.openDiscussion) messages.openDiscussion(slug);
+    else window.location.hash = `#messages/app/${encodeURIComponent(slug)}`;
   },
 
   // --- rendering -------------------------------------------------------
@@ -796,8 +1035,9 @@ const Notifications = {
     // invites, session kinds included. There is no second badge and no
     // split.
     //
-    // The split it replaces put unread session kinds on #improve-btn, on the
-    // grounds that the sessions themselves are behind that button so its
+    // The split it replaces put unread session kinds on #improve-btn — the
+    // header pill #2718 has since retired altogether — on the grounds that
+    // the sessions themselves are behind that button so its
     // count sent you somewhere the bell could not. What it actually did was
     // put a count on a control that CANNOT CLEAR IT: the only things that
     // mark a session notification read are a click on its row in this list,
@@ -810,9 +1050,11 @@ const Notifications = {
     // _badgeTotal) and the home-screen icon badge (_publishAppBadge, which
     // reads `unread`).
     //
-    // #improve-btn keeps a LIVE indicator — the working pulse dot — because
-    // "a session is running right now" is a fact about that button, not an
-    // event waiting to be read.
+    // The pulse dot survived both moves and is the reason the distinction
+    // matters: "a session is running right now" is a live fact, true only
+    // while it is true, so it needs no dismissal and belongs wherever the
+    // work is — the Homeroom mark, since #2718 — while a COUNT is an event
+    // waiting to be read and belongs where reading happens.
     const notifCount = Notifications._badgeTotal();
 
     const paint = (id, count) => {
@@ -927,7 +1169,8 @@ const Notifications = {
 
   // Clicking a saved row opens the message where it actually lives: the
   // topic discussion when it was posted in one (#194 parity with the
-  // mention/reply rows), otherwise the app's Dev → Chat. Deliberately does
+  // mention/reply rows), otherwise the app's discussion in Messages, opened
+  // on the saved message (_openAppDiscussion). Deliberately does
   // NOT unsave — a save is not a to-do item, and a row that vanished the
   // moment you looked at it would make the section unusable.
   _onSavedClick(messageId) {
@@ -968,11 +1211,7 @@ const Notifications = {
       }
       return;
     }
-    if (typeof App !== 'undefined' && App.openAppTab) {
-      App.openAppTab(saved.appSlug, 'dev', { subTab: 'chat' });
-    } else {
-      window.location.hash = `#app/${saved.appSlug}/dev/chat`;
-    }
+    Notifications._openAppDiscussion(saved.appSlug, saved.messageId);
   },
 
   // Unsave from the drawer — the "or there" half of "until unsaved in the
@@ -1057,11 +1296,12 @@ const Notifications = {
         Home.load();
       }
       const target = data.appSlug || slug;
-      if (target && typeof App !== 'undefined' && App.openAppTab) {
+      if (target) {
         // About to navigate — on touch the sheet would otherwise stay
-        // presented over the app screen this opens (#1329).
+        // presented over the screen this opens (#1329). The people you just
+        // joined are in the app's discussion, which is a thread of Messages.
         Notifications._dismissSheetForNav();
-        App.openAppTab(target, 'group-chat');
+        Notifications._openAppDiscussion(target);
       }
     } catch (err) {
       console.warn('[notifications] acceptInvite failed', err);
@@ -1256,7 +1496,41 @@ const CONVERSATION_NOTIF_KINDS = new Set([
   'conversation_mention',
   'conversation_reply',
   'conversation_reaction',
+  // #2387: a reply in a thread the viewer started or replied in.
+  'conversation_thread_reply',
 ]);
+
+// #2387: where a conversation row opens. A thread alert opens its thread; a
+// row about one message (mention, quote-reply, reaction) opens that message's
+// permalink, which lands inside its thread when it lives in one; an invite or
+// a plain new-message row opens the conversation itself.
+function conversationNotificationHref(n) {
+  const valid = (v) => Number.isSafeInteger(v) && v > 0 && v <= 2147483647;
+  const conversationId = Number(n && n.conversationId);
+  if (!valid(conversationId)) return null;
+  const messageId = Number(n.conversationMessageId);
+  const rootId = Number(n.conversationThreadRootId);
+  if (n.kind === 'conversation_thread_reply' && valid(rootId)) {
+    return `#messages/${conversationId}/thread/${rootId}`;
+  }
+  if (['conversation_mention', 'conversation_reply', 'conversation_reaction'].includes(n.kind)
+      && valid(messageId)) {
+    return `#messages/${conversationId}/m/${messageId}`;
+  }
+  return `#messages/${conversationId}`;
+}
+
+// #2386: the two friend kinds (src/services/notifications.js
+// FRIEND_NOTIFICATION_KINDS). No app and no conversation — a person.
+const FRIEND_NOTIF_KINDS = new Set(['friend_request', 'friend_accept']);
+
+// services/platform-limit-alerts.js detailToken(): "<limit>_<level>:<used>:<cap>".
+const PLATFORM_LIMIT_DETAIL_RE = /^(apps|sessions)_(warn|full):(\d{1,7}):(\d{1,7})$/;
+
+function parsePlatformLimitDetail(detail) {
+  const m = PLATFORM_LIMIT_DETAIL_RE.exec(String(detail || ''));
+  return m ? { limit: m[1], level: m[2], used: Number(m[3]), cap: Number(m[4]) } : null;
+}
 
 // #161 defined these as the kinds that "demand attention": a finished dev
 // session or headless run, while still unread.
@@ -1269,14 +1543,17 @@ const CONVERSATION_NOTIF_KINDS = new Set([
 // restoring a top-of-list pin is one stable partition in _renderList if the
 // group decides it wants one.
 //
-// Deliberately limited to these two kinds; grow this set rather than adding a
-// server-side priority column if more "priority" kinds emerge.
-const PRIORITY_KINDS = new Set(['session_done', 'auto_solve_done']);
+// Deliberately limited to these kinds; grow this set rather than adding a
+// server-side priority column if more "priority" kinds emerge. #3181 grew it
+// by session_stalled: a session that stopped before finishing demands the
+// same attention as one that finished, on the same channels (the tab title,
+// the chime, the OS notification; see handleIncoming).
+const PRIORITY_KINDS = new Set(['session_done', 'session_stalled', 'auto_solve_done']);
 function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
 }
 
-// The four system-generated (source-user-less) notifications about the
+// The system-generated (source-user-less) notifications about the
 // viewer's OWN sessions and proposals. Everything social — mentions,
 // replies, reactions, kudos, vote nudges, invites, spec shares — is
 // everything else.
@@ -1287,9 +1564,11 @@ function isPriorityNotif(n) {
 // split that outlived the drawer is gone as well — the bell counts these
 // along with everything else — so what the set is left doing is naming the
 // kinds the app-context sheet draws a per-change unread dot for
-// (`sessionUnreadIds`, published by _renderBadge).
+// (`sessionUnreadIds`, published by _renderBadge). #3181 adds the fifth,
+// session_stalled: a change that stopped before finishing is exactly what
+// that dot should point at.
 const SESSION_NOTIF_KINDS = new Set([
-  'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
+  'session_done', 'session_stalled', 'auto_solve_done', 'stale_pr', 'check_failed',
 ]);
 function isSessionNotif(n) {
   return !!n && SESSION_NOTIF_KINDS.has(n.kind);
@@ -1384,9 +1663,34 @@ function completionAlertInfo(n) {
       body,
     };
   }
+  // #3181: the turn stopped before finishing (an error, a timeout, a lost
+  // worker). Same deep link as a finished one; the copy says what to do.
+  if (n.kind === 'session_stalled') {
+    return {
+      kind: 'session_stalled',
+      appSlug: n.appSlug || null,
+      sessionId: n.sessionId || null,
+      ...(n.agentSessionId ? { agentSessionId: n.agentSessionId } : {}),
+      headlessIssueNumber: null,
+      title: 'Session stopped before finishing',
+      body: `Your session on ${appName} stopped before finishing. Open it to continue`,
+    };
+  }
   // session_done — #971: the session's own title first, then the PR title,
   // and only then the machine-generated branch name.
   const label = n.sessionTitle || n.prTitle || n.branchName || 'your session';
+  if (n.agentSessionId) {
+    // #2779: a run in an agent session (a spec drafted or a build done).
+    return {
+      kind: 'session_done',
+      appSlug: n.appSlug || null,
+      sessionId: n.sessionId || null,
+      agentSessionId: n.agentSessionId,
+      headlessIssueNumber: null,
+      title: 'The coding agent finished',
+      body: `The coding agent finished on ${appName}: ${label}`,
+    };
+  }
   return {
     kind: 'session_done',
     appSlug: n.appSlug || null,
@@ -1435,10 +1739,26 @@ function collapseConversationRuns(items) {
 // The sheet's rows: one descriptor per run. `count` rides only on a genuine
 // collapse, so a lone notification's view is byte-identical to what it was.
 function screenViews(items) {
-  return collapseConversationRuns(items).map((run) => (
-    run.count > 1 ? { ...rowView(run.item), count: run.count } : rowView(run.item)
-  ));
+  return collapseConversationRuns(items).map((run) => {
+    const view = AGENT_NOTIF_KINDS.has(run.item && run.item.kind)
+      ? { ...rowView(run.item), agent: true } : rowView(run.item);
+    return run.count > 1 ? { ...view, count: run.count } : view;
+  });
 }
+
+// #2815: what an AGENT did on your behalf — a session that finished, a
+// proposal run that came back, a question it asked, work it submitted or
+// shared. The sheet's Messages tab lists these beside the conversations and
+// the running sessions themselves, the way the Messages screen already puts
+// agents in its chats, so the bell has no separate Agents tab. Carried as a
+// flag for the same reason `conversation` is: the tab must never re-derive
+// the set from `kind` and drift from it. stale_pr and check_failed stay out:
+// they are about a proposal, not about an agent talking back to you.
+// #3181: a session that stopped before finishing is an agent talking back
+// too, so it lists beside the one that finished.
+const AGENT_NOTIF_KINDS = new Set([
+  'session_done', 'session_stalled', 'auto_solve_done', 'agent_awaiting_input', 'connector_submitted',
+]);
 
 // One notification row, as data. It has ONE renderer — ScreenRow in
 // ./notifications-sheet.tsx — which draws THREE lines:
@@ -1555,7 +1875,12 @@ function rowView(n) {
   }
 
   if (CONVERSATION_NOTIF_KINDS.has(n.kind)) {
-    const conversation = n.conversationTitle || 'Messages';
+    // QA 2026-09-24 Q33a: a direct conversation has no title of its own
+    // (the column is NULL), so a DM's row used to be headed "Messages" —
+    // the surface, not who wrote. The person on the other end of a DM is
+    // the sender, so it is headed with them.
+    const conversation = n.conversationTitle
+      || (n.conversationKind === 'direct' && n.sourceUsername ? `@${n.sourceUsername}` : 'Messages');
     const snippet = (n.messageContent || '').slice(0, 140);
     // The conversation is the SUBJECT of every one of these, so it leads —
     // and for a plain message the snippet follows it, which is the only part
@@ -1574,6 +1899,7 @@ function rowView(n) {
       conversation_message: headline(conversation, snippet),
       conversation_mention: headline('Mentioned you', conversation),
       conversation_reply: headline('Replied', conversation),
+      conversation_thread_reply: headline('Replied in thread', conversation),
       conversation_reaction: headline('Reacted', conversation),
     }[n.kind];
     const icons = {
@@ -1581,6 +1907,7 @@ function rowView(n) {
       conversation_message: '💬',
       conversation_mention: '@',
       conversation_reply: '↩️',
+      conversation_thread_reply: '🧵',
       conversation_reaction: n.detail || '❤️',
     };
     return {
@@ -1609,6 +1936,52 @@ function rowView(n) {
     };
   }
 
+  // #2386: the person is the SUBJECT of both friend rows, so their name is
+  // the headline and `by` stays null (as on the key rows). A request still
+  // waiting on you carries Accept and Decline beside the row; once answered —
+  // here, on your profile, or withdrawn by its sender — it is a plain row that
+  // opens their page.
+  if (FRIEND_NOTIF_KINDS.has(n.kind)) {
+    const request = n.kind === 'friend_request';
+    return {
+      ...base,
+      appLine: 'Friends',
+      wrap: true,
+      icon: request ? '👋' : '🤝',
+      label: request ? 'Friend request' : 'Accepted your friend request',
+      segments: [{ t: 'who', v: who }],
+      ...(request && n.friendRequestPending ? {
+        actions: [
+          { key: 'friend_accept', label: 'Accept', primary: true },
+          { key: 'friend_decline', label: 'Decline' },
+        ],
+      } : {}),
+    };
+  }
+
+  // #2161: the two deletion rows. An attempt still has its app (the meta
+  // line names it, the click opens it); a completed deletion has no app row
+  // left, so the name rides in `detail` and the meta line says Account.
+  if (n.kind === 'app_delete_attempted') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '🗑️',
+      by: n.sourceUsername || null,
+      ...headline('Tried to delete this shared app', null),
+    };
+  }
+  if (n.kind === 'app_deleted') {
+    return {
+      ...base,
+      appLine: 'Account',
+      wrap: true,
+      icon: '🗑️',
+      by: n.sourceUsername || null,
+      ...headline('Deleted a shared app you contributed to', n.detail || 'an app'),
+    };
+  }
+
   if (n.kind === 'app_quota_changed') {
     const [before, after] = String(n.detail || '').split(':');
     const detail = /^\d+$/.test(before) && /^\d+$/.test(after)
@@ -1626,10 +1999,10 @@ function rowView(n) {
       segments: [{ t: 'text', v: 'Your app allowance is unchanged.' }] };
   }
 
-  // The two OpenRouter-key rows: `who` is WHOSE KEY it is, not who acted, so
-  // the name stays in the headline and `by` stays null. They carry no app —
-  // a company key is an account-level fact — and clicking one opens Admin →
-  // Users, so that is what the meta line names as their source.
+  // Managed OpenRouter review alerts, plus historical successful-issuance
+  // rows created before #2121. `who` is WHOSE KEY it is, not who acted, so
+  // the name stays in the headline and `by` stays null. They carry no app and
+  // click through to Admin → Users, so that is what the meta line names.
   if (n.kind === 'openrouter_key_created' || n.kind === 'openrouter_key_review') {
     const review = n.kind === 'openrouter_key_review';
     return {
@@ -1637,8 +2010,40 @@ function rowView(n) {
       appLine: 'Admin',
       wrap: true,
       icon: review ? '⚠️' : '🔑',
-      label: review ? 'Company key needs review' : 'Company key issued',
+      label: review ? 'OpenRouter key needs admin review' : 'OpenRouter access enabled',
       segments: [{ t: 'who', v: who }],
+    };
+  }
+
+  // A server-wide cap nearing or at its ceiling (services/platform-limit-
+  // alerts.js). Full admins only, no app: the meta line says Admin like the
+  // two kinds above. `detail` is "<limit>_<level>:<used>:<cap>"; a token this
+  // build cannot read still says which kind of alert it is.
+  if (n.kind === 'platform_limit') {
+    const limit = parsePlatformLimitDetail(n.detail);
+    if (!limit) {
+      return { ...base, appLine: 'Admin', wrap: true, icon: '\u26A0\uFE0F',
+        ...headline('Platform limit', 'the server is nearing one of its limits') };
+    }
+    const noun = limit.limit === 'apps' ? 'apps' : 'coding sessions';
+    const full = limit.level === 'full';
+    const consequence = limit.limit === 'apps'
+      ? (full ? ' New apps are refused until the app limit is raised in Admin \u2192 Limits or an app is removed.'
+        : ' Raise the app limit in Admin \u2192 Limits before new apps are refused.')
+      : (full ? ' New sessions pause idle ones, or wait, until MAX_GLOBAL_SESSIONS is raised.'
+        : ' At the limit, idle sessions are paused to make room.');
+    return {
+      ...base,
+      appLine: 'Admin',
+      wrap: true,
+      icon: full ? '\u{1F6A8}' : '\u26A0\uFE0F',
+      label: full
+        ? (limit.limit === 'apps' ? 'App limit reached' : 'Session limit reached')
+        : (limit.limit === 'apps' ? 'Nearing the app limit' : 'Nearing the session limit'),
+      segments: [
+        { t: 'strong', v: `${limit.used} of ${limit.cap} ${noun} in use.` },
+        { t: 'text', v: consequence },
+      ],
     };
   }
 
@@ -1697,6 +2102,165 @@ function rowView(n) {
     };
   }
 
+  // ── #1374's five ────────────────────────────────────────────────────
+  //
+  // Each of these was a silence before that change: nothing told you your
+  // proposal had merged, that somebody had voted on it, or that an issue had
+  // been filed on an app you look after.
+
+  // The good-news row. `detail === 'forced'` is an admin override rather than
+  // a vote that carried, and the label says which: to the person who wrote
+  // the change those are the same event with very different meanings.
+  if (n.kind === 'pr_merged') {
+    const head = headline(
+      n.detail === 'forced' ? 'Merged by an admin' : 'Merged',
+      prLabel || n.sessionTitle || 'your proposal',
+    );
+    // #1688: on a merge the vote carried, `detail` names who backed and
+    // shaped it. An admin override's marker is not a sentence to show.
+    const credits = n.detail && n.detail !== 'forced' ? String(n.detail) : '';
+    return {
+      ...base,
+      icon: '\u{1F389}',
+      label: head.label,
+      segments: credits ? [...head.segments, { t: 'text', v: credits }] : head.segments,
+    };
+  }
+
+  // Somebody voted. The DIRECTION is in the label rather than the subject,
+  // because it is the part you want at a glance and the proposal title is
+  // usually long enough to push it off the row.
+  if (n.kind === 'proposal_vote') {
+    const head = headline(
+      n.detail === 'no' ? 'Voted no' : 'Voted yes',
+      prLabel || n.sessionTitle || 'your proposal',
+    );
+    // #1688: the voter's own line rides after the subject, quoted — the
+    // proposer's first sight of an objection is the sentence, not the thumb.
+    const reason = typeof n.voteReason === 'string' ? n.voteReason.trim() : '';
+    return {
+      ...base,
+      by: n.sourceUsername || null,
+      icon: n.detail === 'no' ? '\u{1F44E}' : '\u{1F44D}',
+      label: head.label,
+      segments: reason
+        ? [...head.segments, { t: 'text', v: `“${reason}”` }]
+        : head.segments,
+    };
+  }
+
+  // #1688: the author pushed a new version of a proposal this person had
+  // said yes to. The row's own button re-casts the yes with one tap (the
+  // server carries their earlier line along); the row itself opens the
+  // proposal for another look. Once read — by either — the button goes.
+  if (n.kind === 'revision_recheck') {
+    return {
+      ...base,
+      by: n.sourceUsername || null,
+      icon: '\u{1F501}',
+      ...headline('Still good?', prLabel || n.sessionTitle || 'a proposal you backed'),
+      actions: n.readAt ? [] : [{ key: 'still_yes', label: 'Still yes', primary: true }],
+    };
+  }
+
+  // #1688: the Friday card. `detail` is "<merged>:<open>" — what went live
+  // this week and what is waiting on votes. This is the whole card now: a
+  // channel carries no activity (services/ws.js sendSystemMessage).
+  if (n.kind === 'weekly_digest') {
+    const counts = /^(\d+):(\d+)$/.exec(String(n.detail || ''));
+    const merged = counts ? Number(counts[1]) : 0;
+    const open = counts ? Number(counts[2]) : 0;
+    const shipped = merged === 0
+      ? 'Nothing landed this week'
+      : `${merged} ${merged === 1 ? 'change' : 'changes'} went live`;
+    const waiting = open
+      ? `${open} ${open === 1 ? 'proposal is' : 'proposals are'} waiting for eyes`
+      : '';
+    return {
+      ...base,
+      icon: '\u{1F4F0}',
+      ...headline(`This week on ${n.appName || 'the app'}`, [shipped, waiting].filter(Boolean).join(' · ')),
+    };
+  }
+
+  // A new issue on an app you have a stake in. `detail` is the issue number
+  // (notifications has no issue column; see the producer), so the subject is
+  // the number rather than the title — the title is one tap away and a
+  // truncated one here would be worse than a precise reference.
+  if (n.kind === 'issue_opened') {
+    return {
+      ...base,
+      by: n.sourceUsername || null,
+      icon: '\u{1F4DD}',
+      ...headline('New issue', n.detail ? `#${n.detail}` : 'filed'),
+    };
+  }
+
+  // The app is unwell, and this row goes only to people who can fix it.
+  //
+  // `detail` is a short TOKEN, never a reason line: notifications.detail is
+  // VARCHAR(32), so a build failure's own message would arrive as a
+  // meaningless fragment. The copy is rendered from the token here, and the
+  // full reason is on the app (apps.last_failure) where the row leads.
+  // Rendering `detail` directly would also put an internal identifier on
+  // screen, which is the thing tests/settings-mobile-push.test.js bars
+  // elsewhere for good reason.
+  if (n.kind === 'app_health') {
+    // #2253: the app storage cap speaks through this channel too, and its
+    // two tokens carry copy that says what happened and what it means for
+    // the app. The app name leads the line on purpose: this row is only
+    // ever about one app, and "has used most of its storage" with nothing
+    // in front of it reads as the platform talking about itself.
+    const appName = n.appName || 'Your app';
+    if (n.detail === 'storage_warn') {
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F4BE}',
+        ...headline('App storage', `${appName} has used most of its storage`),
+      };
+    }
+    if (n.detail === 'storage_full') {
+      return {
+        ...base,
+        wrap: true,
+        icon: '\u{1F4BE}',
+        label: 'App storage',
+        segments: [
+          { t: 'strong', v: `${appName} is out of storage.` },
+          { t: 'text', v: ' New data cannot be saved until an admin raises its limit or allows time to clean up' },
+        ],
+      };
+    }
+    // release_stalled: the platform's own app, a merged commit that has not
+    // become the running release (services/release-watch.js).
+    const APP_HEALTH_COPY = {
+      deploy_failed: 'a deploy failed',
+      release_stalled: 'a merged change has not gone live',
+    };
+    return {
+      ...base,
+      wrap: true,
+      icon: '\u{1F6A8}',
+      ...headline('App problem', APP_HEALTH_COPY[n.detail] || 'something needs looking at'),
+    };
+  }
+
+  // The daily digest, and the counterweight to `new_proposals` defaulting
+  // off. `detail` is the COUNT, so the subject is a plural-aware phrase
+  // rather than a bare number nobody can parse without the label.
+  if (n.kind === 'vote_digest') {
+    const count = Number(n.detail) || 0;
+    return {
+      ...base,
+      icon: '\u{1F5F3}\uFE0F',
+      ...headline(
+        'Waiting on your vote',
+        count === 1 ? '1 proposal' : `${count} proposals`,
+      ),
+    };
+  }
+
   // #1405 path A: your agent put work somewhere while you were away. The label
   // carries the DESTINATION, because that is the part you cannot infer —
   // "submitted" is at a vote with checks running, "shared" is visible on the
@@ -1742,7 +2306,24 @@ function rowView(n) {
       wrap: true,
       icon: '✅',
       ...headline(
-        'Session finished',
+        // #2779: a run in an agent session says what finished, not "session".
+        n.agentSessionId ? 'The coding agent finished' : 'Session finished',
+        n.sessionTitle || prLabel || n.branchName || 'your session',
+      ),
+    };
+  }
+
+  // #3181: the other way a turn ends. It errored, timed out or lost its
+  // worker, or the platform paused the session mid-turn, so the work is not
+  // done and nothing else would say so. Same subject ladder as session_done;
+  // the app is on the meta line, so the label is the whole message.
+  if (n.kind === 'session_stalled') {
+    return {
+      ...base,
+      wrap: true,
+      icon: '⏸️',
+      ...headline(
+        n.agentSessionId ? 'The coding agent stopped before finishing' : 'Session stopped before finishing',
         n.sessionTitle || prLabel || n.branchName || 'your session',
       ),
     };
@@ -1813,7 +2394,9 @@ function rowView(n) {
     by: n.sourceUsername || null,
     ...headline(
       n.kind === 'mention' ? 'Mentioned you'
-        : (n.kind === 'reply' ? 'Replied to you' : 'Posted'),
+        : n.kind === 'reply' ? 'Replied to you'
+          // #2387: somebody answered in a reply thread you started or joined.
+          : n.kind === 'thread_reply' ? 'Replied in thread' : 'Posted',
       (n.messageContent || '').slice(0, 140),
     ),
   };

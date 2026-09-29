@@ -8,6 +8,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const appManifest = require('../src/services/app-manifest');
+const checkCap = require('./lib/check-cap');
 
 test('absent / non-array tests resolve to []', () => {
   assert.deepEqual(appManifest.readTests({}), []);
@@ -59,6 +60,43 @@ test('allowConsoleErrors + expectText pass through', () => {
   assert.equal(out[0].allowConsoleErrors, true);
 });
 
+test('a named visual scenario keeps its stable id and repository impact globs', () => {
+  const [scenario] = appManifest.readTests({ tests: [{
+    id: 'settings.profile-edit',
+    name: 'Profile editor is ready',
+    path: '/settings?demo=1',
+    expectSelector: '#profile-editor',
+    visual: true,
+    impact: ['frontend/src/features/settings/**', 'public/js/profile-?.js'],
+  }] });
+  assert.deepEqual(scenario, {
+    name: 'Profile editor is ready',
+    path: '/settings?demo=1',
+    expectSelector: '#profile-editor',
+    expectText: null,
+    allowConsoleErrors: false,
+    id: 'settings.profile-edit',
+    visual: true,
+    impact: ['frontend/src/features/settings/**', 'public/js/profile-?.js'],
+  });
+});
+
+test('bad or duplicate visual metadata never drops the underlying checks', () => {
+  const meta = appManifest.readTestsWithMeta({ tests: [
+    { id: 'bad id', path: '/a', visual: true, impact: ['frontend/**'] },
+    { id: 'board.main', path: '/b', visual: true, impact: ['/absolute/**', '../escape/**'] },
+    { id: 'board.main', path: '/c', expectSelector: '.board', visual: true, impact: ['frontend/board.js'] },
+    { id: 'board.main', path: '/d', expectText: 'Board', visual: true, impact: ['frontend/other.js'] },
+    { id: 'route.only', path: '/e', visual: true, impact: ['frontend/route.js'] },
+  ] });
+  assert.equal(meta.tests.length, 5, 'visual metadata does not control whether a check runs');
+  assert.ok(meta.tests.slice(0, 2).every((t) => !('visual' in t)));
+  assert.equal(meta.tests[2].visual, true);
+  assert.ok(!('visual' in meta.tests[3]), 'one stable scenario id cannot name two flows');
+  assert.ok(!('visual' in meta.tests[4]), 'a route without readiness is not a visual flow');
+  assert.equal(meta.invalidVisualDropped, 4);
+});
+
 test('duplicate (name+path) entries collapse', () => {
   const out = appManifest.readTests({
     tests: [{ path: '/a', name: 'A' }, { path: '/a', name: 'A' }, { path: '/a', name: 'B' }],
@@ -88,16 +126,28 @@ test('the list is bounded by MAX_DECLARED_TESTS, not by the old parse cap', () =
 // manifest, which is what a ceiling can only ever be wrong RELATIVE TO. It
 // crossed 300 and the tail was being dropped silently, so the ceiling is
 // stated as headroom over the real count rather than as a bare number.
+test("every declared selector fits the cap the reader and the capture clip at", () => {
+  // readTests and capture/capture.js both `slice(0, 256)` a selector. A
+  // longer one is not refused: it is cut mid-token, becomes an invalid
+  // selector, and its check fails on every build with "was not found" —
+  // which is how five checks of one proposal failed 6 of 6 runs while the
+  // page they described was right. The cap is asserted here, on the
+  // manifest as written, so the cut never happens silently again.
+  const tests = require('../dapp.json').tests;
+  const over = tests.filter((t) => typeof t.expectSelector === 'string' && t.expectSelector.length > 256)
+    .map((t) => `${t.expectSelector.length}: ${t.name}`);
+  assert.deepEqual(over, [], 'shorten these selectors: the runner clips them at 256 characters');
+});
+
 test("this repo's own manifest fits under the ceiling, with room to grow", () => {
   const meta = appManifest.readTestsWithMeta(require('../dapp.json'));
   assert.equal(meta.ceilingDropped, 0,
-    'declared checks are being dropped again — raise MAX_DECLARED_TESTS (and the '
-    + 'capture budget in tests/checks-budget.test.js) rather than deleting checks');
+    `${meta.ceilingDropped} declared checks are past MAX_DECLARED_TESTS `
+    + `${appManifest.MAX_DECLARED_TESTS} and are being dropped. ${checkCap.REMEDY}`);
   assert.equal(meta.tests.length, meta.rawCount,
     'every declared check survives validation, so the count here is the real one');
-  assert.ok(meta.tests.length + 20 <= appManifest.MAX_DECLARED_TESTS,
-    `only ${appManifest.MAX_DECLARED_TESTS - meta.tests.length} slots left — the next `
-    + 'few proposals would hit the ceiling mid-review');
+  // The same remedy as the other two guards (tests/lib/check-cap.js).
+  checkCap.assertFloor(meta.tests.length);
 });
 
 test('readTestsWithMeta separates ceiling drops from invalid drops', () => {

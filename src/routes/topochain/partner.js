@@ -58,6 +58,9 @@ const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { partnerApiKey } = require('../../middleware/topochain-auth');
 const {
+  partnerActivityLimiter, partnerActivityParticipantLimiter,
+} = require('../../middleware/rate-limits');
+const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { readDelegationState } = require('../../services/topochain/delegations');
@@ -98,7 +101,15 @@ function topochainPartnerRoutes(config) {
   // every call inserts a new user_activities row, so a retried request
   // awards the points twice. v4 keeps this behavior verbatim; there is no
   // client-supplied idempotency key in this task's scope.
-  router.post('/api/v4/user-activities', partnerApiKey(config), async (req, res) => {
+  //
+  // #2526: that quirk stands, but it is no longer UNBOUNDED. Two limiters,
+  // both after the key check so a caller rejected for a bad key cannot
+  // consume a real partner's budget. The participant bound is the one that
+  // bounds point inflation; the address bound caps how many buckets a caller
+  // can mint. middleware/rate-limits.js explains why neither the shared API
+  // key nor the (forgeable) address can be the security boundary on its own.
+  const activityLimiters = [partnerActivityLimiter, partnerActivityParticipantLimiter];
+  router.post('/api/v4/user-activities', partnerApiKey(config), ...activityLimiters, async (req, res) => {
     try {
       const body = req.body || {};
       const details = {};

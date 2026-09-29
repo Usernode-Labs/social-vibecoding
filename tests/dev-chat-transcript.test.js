@@ -133,12 +133,14 @@ test('no path writes into #dc-messages any more', () => {
     'the rows are one publish');
   assert.doesNotMatch(body, /innerHTML\s*=/, 'renderMessages assigns no markup');
 
-  // The four in-place patch paths all collapse onto one publish.
+  // The four in-place patch paths all collapse onto one publish — the two
+  // progress-driven ones coalesced to one per frame (`_publishTranscriptSoon`,
+  // pinned in tests/dev-chat-smoothness.test.js).
   for (const fn of ['_patchProgressDom', '_syncActivityNode', '_clearEstimate']) {
     const fnAt = DEV_CHAT_SRC.indexOf(`  ${fn}(`);
     assert.ok(fnAt > 0, `${fn} is still the entry point`);
     const fnBody = DEV_CHAT_SRC.slice(fnAt, DEV_CHAT_SRC.indexOf('\n  },', fnAt));
-    assert.match(fnBody, /DevChat\._publishTranscript\(\)/, `${fn} publishes`);
+    assert.match(fnBody, /DevChat\._publishTranscript(Soon)?\(\)/, `${fn} publishes`);
     assert.doesNotMatch(fnBody, /innerHTML|textContent|insertAdjacentHTML/,
       `${fn} touches no node`);
   }
@@ -384,7 +386,9 @@ test('three foreign builders arrive whole, through hosts that generate no box', 
   // rather than the inputs. `contents` keeps `#dc-messages`' own children the
   // direct children of the scroll container.
   for (const sink of ['visualsHtml', 'devFlowHtml']) {
-    assert.match(TRANSCRIPT_TSX, new RegExp(`__html: (r|s)\\.${sink}`), `${sink} is rendered whole`);
+    // Through `Html`, which holds the `{ __html }` wrapper steady (see
+    // tests/dev-chat-smoothness.test.js).
+    assert.match(TRANSCRIPT_TSX, new RegExp(`html=\\{(r|s)\\.${sink}\\}`), `${sink} is rendered whole`);
   }
   const at = TRANSCRIPT_TSX.indexOf("case 'credits':");
   assert.match(TRANSCRIPT_TSX.slice(at, at + 200), /className="contents"/,
@@ -447,4 +451,131 @@ test('the live bubble falls back to the model when no frame has landed', () => {
   setStream('other', '<p>someone else</p>');
   assert.match(rowHtml(row), /from the model/, 'a frame for another row is ignored');
   setStream('', '');
+});
+
+// ── #1942: a new session's empty state ────────────────────────────────
+
+test('an open, idle session with no messages shows its empty state', () => {
+  const h = makeDevChat();
+  const html = h.render([]);
+  assert.equal(h.t.state().empty, true);
+  assert.match(html, /id="dc-empty-state"/);
+  assert.match(html, /What should this session change\?/);
+});
+
+test('the empty state goes the moment there is a message, a run, or no session', () => {
+  let h = makeDevChat();
+  assert.doesNotMatch(h.render([user('hello')]), /dc-empty-state/, 'a message replaces it');
+  h = makeDevChat({ isStreaming: true });
+  h.render([]);
+  assert.equal(h.t.state().empty, false, 'a turn in flight is not empty');
+  h = makeDevChat();
+  h.render([], null);
+  assert.equal(h.t.state().empty, false, 'no open session, nothing to describe');
+});
+
+test('a walkthrough or a hand-off launchpad answers "what now?" instead (#1942)', () => {
+  let h = makeDevChat({ _devFlowHtml: () => '<div data-flow-wizard="1"></div>' });
+  h.render([]);
+  assert.equal(h.t.state().empty, false, 'the walkthrough is already in the pane');
+  h = makeDevChat({ _launchpadVenue: () => 'web-claude-code' });
+  h.render([]);
+  assert.equal(h.t.state().empty, false, 'the launchpad is already in the pane');
+});
+
+test('on a wide screen the new session’s composer comes up to meet the empty state (#1905)', () => {
+  const css = read('public', 'css', 'app.css');
+  const block = css.slice(css.indexOf('/* #1905:'), css.indexOf('}\n}', css.indexOf('/* #1905:')) + 3);
+  assert.match(block, /@media \(min-width: 768px\)/, 'tablet width and up; a phone keeps the box by the keyboard');
+  assert.match(block, /\.dc-chat-pane:has\(#dc-empty-state\) \{ justify-content: center; \}/);
+  assert.match(block, /\.dc-chat-pane:has\(#dc-empty-state\) > #dc-messages \{ flex: 0 0 auto;/,
+    'the message pane stops filling the column, so the pair can centre');
+  assert.match(block, /\.dc-chat-pane:has\(#dc-empty-state\) > #dc-composer-bar \{[^}]*max-width: 44rem;[^}]*align-self: center;/);
+  // Keyed on the empty state alone: the first message removes it, and the
+  // composer goes back to the bottom with no state of its own to clear.
+  assert.doesNotMatch(block, /data-|\.dc-new-session/);
+});
+
+// ── #2597: the running row says the event, and the venue underneath ────
+
+test('the running row is headed "Coding agent is running", whatever ran it', () => {
+  const h = makeDevChat();
+
+  h.render([sys('Claude Code is running...', { id: 201, _active: true })]);
+  const claude = h.t.state().rows.at(-1);
+  assert.equal(claude.text, 'Coding agent is running...',
+    'the heading names the event, not the venue — and keeps the server’s ellipsis');
+  assert.equal(claude.caption, 'Homeroom · Claude', 'the venue moves under it');
+  assert.equal(claude.html, undefined,
+    'the heading is our own copy now, so nothing is left to render unescaped');
+
+  // The other venue, resolved from the content alone — the fallback older
+  // rows rely on, since they carry no `agentBackend`.
+  h.render([sys('OpenRouter is running...', { id: 202, _active: true })]);
+  assert.equal(h.t.state().rows.at(-1).text, 'Coding agent is running...', 'same heading');
+  assert.equal(h.t.state().rows.at(-1).caption, 'Homeroom · OpenRouter', 'and the other venue');
+
+  // …and from the metadata, which is what a Codex-worded row has.
+  h.render([sys('Codex is running...', { id: 203, agentBackend: 'codex_openrouter' })]);
+  assert.equal(h.t.state().rows.at(-1).caption, 'Homeroom · OpenRouter', 'metadata wins the same way');
+
+  // The caption renders in the muted second-line style, on its own line.
+  const html = transcriptHtml(h.t.state());
+  assert.match(html, /class="dc-status-line dc-status-line-captioned"/,
+    'the captioned row opts into the wrap; every other status row stays one line');
+  assert.match(html, /class="dc-status-venue">Homeroom · OpenRouter</, 'the caption is on screen');
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /\.dc-status-line-captioned \{ flex-wrap: wrap; \}/);
+  assert.match(css, /\.dc-status-line-captioned > \.dc-status-venue \{\s*flex: 0 0 100%;/,
+    'and it takes a whole line rather than sitting beside the heading');
+});
+
+test('only "<venue> is running" is rewritten', () => {
+  const h = makeDevChat();
+  const untouched = [
+    'Claude Code is making changes...',
+    'Scout reading the codebase...',
+    'Syncing with main...',
+    'Building staging preview…',
+    'Claude Code finished',
+  ];
+  h.render(untouched.map((c, i) => sys(c, { id: 300 + i })));
+  const rows = h.t.state().rows;
+  assert.equal(rows.length, untouched.length, 'one row each');
+  rows.forEach((r, i) => {
+    assert.equal(r.text, untouched[i], `${untouched[i]} says what it says`);
+    assert.equal(r.caption, undefined, 'and grows no caption');
+  });
+});
+
+test('the run CARD gets the same heading and caption', () => {
+  const h = makeDevChat();
+  h.render([
+    sys('OpenRouter is running...', { id: 401, _active: true }),
+    sys('progress', { id: 402, progressLog: ['[claude (mode build)]', 'Editing src/a.js'] }),
+  ]);
+  const [row] = h.t.state().rows;
+  assert.equal(row.t, 'attached', 'still the summary of its log');
+  assert.equal(row.text, 'Coding agent is running...');
+  assert.equal(row.caption, 'Homeroom · OpenRouter');
+  // Under the head row, above the chips: a collapsed card shows the whole
+  // summary, so the caption is visible without opening anything.
+  const html = rowHtml(row);
+  const venueAt = html.indexOf('dc-status-venue');
+  assert.ok(venueAt > html.indexOf('dc-cc-head') && venueAt < html.indexOf('dc-cc-chips'),
+    'the caption sits between the head row and the chip row');
+});
+
+test('the pairing rules still read the text the server wrote', () => {
+  // The rewrite is a RENDER-time one. `_isLiveCcRun` and the pre-pass regex
+  // match `msg.content`, which is untouched — the day one of them is taught
+  // the new heading instead, every row already in the database stops pairing.
+  const h = makeDevChat();
+  const msgs = [
+    sys('Claude Code is running...', { id: 501, _active: true }),
+    sys('progress', { id: 502, progressLog: ['[claude (mode build)]'] }),
+  ];
+  h.render(msgs);
+  assert.equal(msgs[0].content, 'Claude Code is running...', 'the model keeps the stored sentence');
+  assert.ok(h.DevChat._isLiveCcRun(msgs[0]), 'and it is still recognised as a live coding run');
 });

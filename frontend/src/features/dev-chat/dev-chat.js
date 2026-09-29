@@ -54,6 +54,9 @@
 // the user goes — nobody wants "I set Opus here, but the next app
 // reset me back to Sonnet".
 const MODEL_STORAGE_KEY = 'usernode:dc:model';
+const OPENROUTER_MODEL_PREFIX = 'openrouter:';
+const ANTHROPIC_MODEL_PREFIX = 'anthropic:';
+const OPENROUTER_MORE_VALUE = `${OPENROUTER_MODEL_PREFIX}__add_more__`;
 
 // A `?shot=` screenshot-state deep link names a SURFACE, not a moment, so
 // the open is held up for a window rather than attempted once — see
@@ -79,7 +82,7 @@ const DevChat = {
   currentSession: null,
   messages: [],
   isStreaming: false,
-  selectedModel: loadStoredModel() || 'claude-opus-5',
+  selectedModel: loadStoredModel() || 'claude-opus-5-5',
   _staleTimer: null,
   _abortController: null,
   // Most recent event _seq we've processed across any channel (POST SSE,
@@ -127,7 +130,8 @@ const DevChat = {
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
 
   _titleStatus: null, // null | 'thinking'
-  // null | 'sessionDone' | 'autoSolveDone' | 'autoSolveFailed' (#161).
+  // null | 'sessionDone' | 'sessionStalled' | 'autoSolveDone' | 'autoSolveFailed'
+  // (#161, #3181).
   // Single slot, last-write-wins — the badge count carries multiplicity.
   _titleCompletion: null,
 
@@ -205,8 +209,8 @@ const DevChat = {
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
       },
     },
-    'claude-opus-5': {
-      label: 'Opus 5',
+    'claude-opus-5-5': {
+      label: 'Opus 5.5',
       changeSize: {
         short: 'general coding work',
         long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
@@ -224,7 +228,15 @@ const DevChat = {
   // Default model id used when sanitization rejects a stale storage
   // value. Overwritten by GET /api/models with the server's authoritative
   // default so the two stay aligned.
-  _defaultModel: 'claude-opus-5',
+  _defaultModel: 'claude-opus-5-5',
+
+  // The lightweight data behind the composer's unified picker. It is loaded
+  // once per page rather than every time the composer republishes (which can
+  // be every keystroke). The full catalog remains in the existing dialog;
+  // this cache is used only to build its saved/favorite shortlist.
+  _modelPickerData: null,
+  _modelPickerDataPromise: null,
+  _modelPickerChanging: false,
 
   // Fetch the authoritative model allowlist from the server. Replaces
   // the inline MODELS map so adding/removing a model on the server
@@ -272,111 +284,556 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
+  // #2570: what each model is good for and what a change on it is expected
+  // to cost. One read per page, cached on the module: the payload is the
+  // platform's own editorial table plus a token profile, and neither moves
+  // inside a session. A failure leaves it null, which is the pre-#2570
+  // picker — a note nobody can fetch is not an error a builder has to see.
+  _modelNotes: null,
+  _modelNotesPromise: null,
+
+  async _ensureModelNotes() {
+    if (DevChat._modelNotes) return DevChat._modelNotes;
+    if (DevChat._modelNotesPromise) return DevChat._modelNotesPromise;
+    const request = (async () => {
+      try {
+        const res = await fetch('/api/model-notes', { credentials: 'same-origin' });
+        if (!res.ok) return null;
+        const body = await res.json();
+        return (body && typeof body === 'object' && body.models) ? body : null;
+      } catch {
+        return null;
+      }
+    })();
+    DevChat._modelNotesPromise = request;
+    const notes = await request;
+    if (notes) {
+      DevChat._modelNotes = notes;
+      DevChat._publishComposer();
+    }
+    DevChat._modelNotesPromise = null;
+    return notes;
+  },
+
   /**
-   * The chat-model picker, as data. Null on every venue that has none.
+   * #2570: the note and the estimated cost for one model, as the picker
+   * states them. ONE helper, so every surface that shows the two facts
+   * says them the same way. The picker renders `compact` beside each
+   * option; #2807 retired the caption that rendered `full` under the
+   * selected one, and `full` stays for any later surface that wants the
+   * labelled sentence.
    *
-   * TWO SURFACES, and the split is what #1589 found. A native select's
-   * closed control shows the selected option's own text, so
-   * `modelOptionText`'s guidance ("Fable 5.1: design, taste, and difficult
-   * coding") set the control's width: 276px of a 344px strip on a phone,
-   * which pushed the label above it and the credit meter below it — three
-   * lines for a row that holds two things. Names brought it to 89px.
-   *
-   * That finding was about the CLOSED control, and `selectedLabel` still
-   * honours it. The picker is the kit's anchored menu now rather than a
-   * <select> (see `openModelSheet`), and a sheet row is a line of its own —
-   * so the blurb comes back on `options`, where it costs nothing and answers
-   * the only question this control is ever asked: which one for what.
-   *
-   * It is `changeSize.short`, not `modelOptionText`: the helper prefixes the
-   * name ("Opus 5: general coding work") and the row already opens with it,
-   * so the sheet joins the two itself. The Generate-proposal picker — the one
-   * a first-timer meets, in a dialog, with a caption under each option —
-   * still renders `modelOptionText`, which is untouched.
+   * `catalogModel` is the user's own OpenRouter catalogue entry when there
+   * is one. The server cannot read that catalogue (it holds no key), so a
+   * model the platform does not curate gets its estimate here instead:
+   * the catalogue's published per-token prices times the server's token
+   * profile for a typical change. Same arithmetic, same profile, either
+   * side of the wire.
    */
-  _modelPickerView() {
-    if (DevChat._currentVenueId() !== 'usernode-claude') return null;
-    const selected = DevChat.selectedModel;
-    const label = (id) => {
-      const meta = DevChat.MODELS[id];
-      return (meta && meta.label) || id;
-    };
+  _modelCostNote(modelId, catalogModel) {
+    const notes = DevChat._modelNotes;
+    const id = String(modelId || '').replace(/^openrouter:|^anthropic:/, '');
+    const entry = notes?.models?.[id] || null;
+    let note = entry?.note || '';
+    let cents = entry && entry.estimateCents != null ? Number(entry.estimateCents) : null;
+    if (cents == null && notes?.typicalChange && catalogModel) {
+      const input = Number(catalogModel.inputPricePerMillion);
+      const output = Number(catalogModel.outputPricePerMillion);
+      if (Number.isFinite(input) && Number.isFinite(output)) {
+        const dollars = (Number(notes.typicalChange.inputTokens) / 1_000_000) * input
+          + (Number(notes.typicalChange.outputTokens) / 1_000_000) * output;
+        cents = Math.round(dollars * 100 * 100) / 100;
+      }
+    }
+    // Under a cent is "<$0.01" rather than "$0.00": a model that costs
+    // something must not read as free.
+    const money = cents == null ? ''
+      : (cents > 0 && cents < 1 ? '<$0.01' : `$${(cents / 100).toFixed(2)}`);
+    // #2570: a bare dollar amount is never shown to anybody. The figure is
+    // per TYPICAL CHANGE, not per message, per hour or per month, and a
+    // naked "$1.55" beside a model name invites all three readings. So the
+    // amount only ever leaves here inside this phrase, and every surface
+    // that shows a cost renders it. "about" carries the estimate; what a
+    // typical change IS stays defined once, in the server's TYPICAL_CHANGE
+    // profile, which the admin screen prints.
+    const perChange = money ? `about ${money} for a typical change` : '';
     return {
-      options: Object.entries(DevChat.MODELS).map(([id, meta]) => ({
-        id,
-        label: (meta && meta.label) || id,
-        // Optional on the wire — loadModels() carries changeSize through
-        // only when the server sends it, and a server that omits it leaves
-        // the sheet rendering plain names.
-        blurb: (meta && meta.changeSize && meta.changeSize.short) || '',
-      })),
-      selected,
-      selectedLabel: label(selected),
+      note,
+      // The bare amount, for arithmetic and tests. Not for display on its
+      // own: render `compact` or `full`.
+      estimate: money,
+      // "general coding work · about $1.55 for a typical change (estimate)"
+      full: [note, perChange ? `${perChange} (estimate)` : ''].filter(Boolean).join(' · '),
+      // The same sentence, minus the explicit label, for the one line a
+      // closed native control shows.
+      compact: [note, perChange].filter(Boolean).join(' · '),
     };
   },
 
-  /**
-   * The model picker's sheet — `openVenueSheet`'s mirror, one screen down.
-   *
-   * The venue control at the top of the session opens the kit's adaptive
-   * menu (a bottom action sheet on touch, an anchored popover on desktop).
-   * This was the only native <select> left beside it, and the two are the
-   * same question asked at different scopes: where this is built, and by
-   * whom. They should not answer in two different idioms.
-   *
-   * The kit sets row labels with textContent, so the blurb and the tick ride
-   * IN the label — the same constraint build-venues.js states at its own
-   * call. The tick trails the row, as it does there, so the two sheets mark
-   * "you are here" the same way.
-   *
-   * No kit, no sheet — exactly what BuildVenues.open does. The kit ships
-   * with the shell (public/usernode-native/v1), so this is the "someone
-   * stripped native.js" case, not a route we serve.
-   */
-  openModelSheet(anchorEl) {
-    const view = DevChat._modelPickerView();
-    if (!view || !view.options.length) return Promise.resolve(null);
-    const kit = (typeof window !== 'undefined' && window.PlatformUI) || null;
-    if (!kit || !kit.hasKit()) return Promise.resolve(null);
-    DevChat._closeSessionOptions();
-    return kit.menu({
-      anchorEl: anchorEl || document.getElementById('dc-model-select') || undefined,
-      title: 'Which model should write this change?',
-      items: view.options.map((o) => ({
-        label: o.label
-          + (o.blurb ? ` \u2014 ${o.blurb}` : '')
-          + (o.id === view.selected ? ' \u2713' : ''),
-        handler: () => {
-          if (o.id !== view.selected) DevChat._onModelPicked(o.id);
-        },
-      })),
-    });
+  /** Load the saved OpenRouter choice and its key-visible model shortlist. */
+  async _ensureModelPickerData({ forceRefresh = false } = {}) {
+    if (!DevChat.currentSession) return null;
+    const venue = DevChat._currentVenueId();
+    if (venue !== 'usernode-claude' && venue !== 'usernode-openrouter') return null;
+    if (DevChat._modelPickerData && !forceRefresh) return DevChat._modelPickerData;
+    if (DevChat._modelPickerDataPromise && !forceRefresh) {
+      return DevChat._modelPickerDataPromise;
+    }
+
+    // #2570: the notes ride along with the picker's own read. They are a
+    // separate endpoint because they are platform-wide rather than
+    // per-user, and not awaited here because the picker must paint whether
+    // or not they land.
+    DevChat._ensureModelNotes();
+    const request = DevChat._loadCodingAgentChoiceData({ forceRefresh });
+    DevChat._modelPickerDataPromise = request;
+    try {
+      const data = await request;
+      DevChat._modelPickerData = data;
+      DevChat._publishComposer();
+      return data;
+    } finally {
+      if (DevChat._modelPickerDataPromise === request) {
+        DevChat._modelPickerDataPromise = null;
+      }
+    }
   },
 
-  /** The picker's `change`, which used to be an addEventListener per render. */
-  _onModelPicked(value) {
-    DevChat.selectedModel = value;
-    // Persist across refreshes + new sessions (fixes #31). Wrapped in
-    // try/catch so private-mode browsers or quota errors don't break the
-    // selector.
-    try { localStorage.setItem(MODEL_STORAGE_KEY, value); } catch {}
+  /**
+   * ONE FLAT LIST (#2569). The picker used to be two optgroups — "OpenRouter
+   * key" and "Anthropic key" — with every option repeating its key source in
+   * its own label, and the OpenRouter models only reachable after "Add more
+   * OpenRouter models…". That made the first question "whose key pays?" when
+   * the question a builder is actually asking is "which model?".
+   *
+   * So: no headings, no prefixes, one list. The order is
+   * `_flatModelOptions` below, and which key is charged survives as a `title`
+   * on each option — available on hover, absent from the label.
+   *
+   * The OPTION VALUES keep their `openrouter:` / `anthropic:` prefixes: they
+   * are what _onModelPicked dispatches on, and the backend resolves them.
+   */
+  _flatModelOptions({ data, byId, starterIds, extraIds }) {
+    const options = [];
+    const seen = new Set();
+    const pushOpenRouter = (id, { disabled = false, label = null } = {}) => {
+      if (!id || seen.has(`${OPENROUTER_MODEL_PREFIX}${id}`)) return;
+      seen.add(`${OPENROUTER_MODEL_PREFIX}${id}`);
+      const model = byId.get(id);
+      // #2570: the compact cost/note text rides beside the name so it is
+      // visible while the menu is open, not only once a model is picked.
+      const cost = disabled ? null : DevChat._modelCostNote(id, model);
+      options.push({
+        value: `${OPENROUTER_MODEL_PREFIX}${id}`,
+        label: label || `${model?.name || id}${cost?.compact ? ` · ${cost.compact}` : ''}`,
+        // The secondary hint, not part of the label (#2569).
+        title: 'Runs on your OpenRouter key',
+        ...(disabled ? { disabled: true } : null),
+      });
+    };
+
+    // 1. The starting models: the platform's curated OpenRouter pair, in the
+    //    server's own order (GLM first, because it is the default).
+    for (const id of starterIds) pushOpenRouter(id);
+
+    // 2. The three Anthropic models, by their DevChat.MODELS labels.
+    for (const [id, meta] of Object.entries(DevChat.MODELS)) {
+      const cost = DevChat._modelCostNote(id, null);
+      const label = (meta && meta.label) || id;
+      options.push({
+        value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+        label: cost.compact ? `${label} · ${cost.compact}` : label,
+        title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+      });
+    }
+
+    // 3. Anything else this account is already using: favourites starred in
+    //    the full catalog dialog, the model pinned to this session, and the
+    //    saved default. De-duplicated against the pair above.
+    for (const entry of extraIds) {
+      if (typeof entry === 'string') pushOpenRouter(entry);
+      else pushOpenRouter(entry.id, entry);
+    }
+
+    // 4. The door to the full catalog, still last.
+    options.push({
+      value: OPENROUTER_MORE_VALUE,
+      label: 'Add more OpenRouter models…',
+      title: 'Browse every model your OpenRouter key can reach',
+    });
+    return options;
+  },
+
+  /**
+   * The one in-composer model picker, as a flat option list. Null
+   * off-platform. See _flatModelOptions for the order and why there are no
+   * provider headings any more.
+   *
+   * MEMOIZED on its inputs, and the same object comes back while none of
+   * them moved. The composer republishes on every keystroke (see
+   * `_syncSaveDraftBtn`), and this was a Map and a sort over the whole
+   * OpenRouter catalogue each time — for a list that only changes when the
+   * catalogue, the notes, the session's backend or a pick does. Keeping the
+   * identity is also what lets `_publishComposer` see that nothing changed.
+   *
+   * The inputs are every value `_buildModelPickerView` reads. The three
+   * objects are compared by identity, which holds because each is only ever
+   * REPLACED: `_modelPickerData` by `_ensureModelPickerData` (a fresh object
+   * per load, never edited — the catalog dialog stars models on its own
+   * copy), `_modelNotes` by `_ensureModelNotes`, `MODELS` by `loadModels`.
+   * The session is read field by field, because it IS edited in place.
+   */
+  _modelPickerMemo: null,
+
+  _modelPickerView() {
+    const venue = DevChat._currentVenueId();
+    const s = DevChat.currentSession;
+    const inputs = [
+      venue,
+      DevChat._modelPickerData,
+      DevChat._modelNotes,
+      DevChat.MODELS,
+      DevChat.selectedModel,
+      DevChat._defaultModel,
+      !!DevChat._modelPickerChanging,
+      DevChat._stagedPickFor(s),
+      s ? !!s.pending : false,
+      s && s.pending_agent_choice ? s.pending_agent_choice.backend : undefined,
+      s ? s.agent_backend : undefined,
+      s ? s.agent_model : undefined,
+    ];
+    const memo = DevChat._modelPickerMemo;
+    if (memo && memo.inputs.every((v, i) => v === inputs[i])) return memo.view;
+    const view = DevChat._buildModelPickerView(venue);
+    DevChat._modelPickerMemo = { inputs, view };
+    return view;
+  },
+
+  _buildModelPickerView(venue) {
+    if (venue !== 'usernode-claude' && venue !== 'usernode-openrouter') return null;
+
+    const data = DevChat._modelPickerData;
+    const catalog = Array.isArray(data?.models) ? data.models : [];
+    const byId = new Map(catalog.map((model) => [model.id, model]));
+    const savedId = String(data?.backends?.codex_openrouter?.model || '').trim();
+    const recommendedId = byId.has(data?.recommendedModelId)
+      ? data.recommendedModelId
+      : (catalog.find((model) => model?.isRecommended)?.id
+        || catalog.find((model) => model?.compatibility === 'verified')?.id
+        || catalog[0]?.id
+        || '');
+    // A stale saved id is not an option. The server recommendation is GLM by
+    // default, so this is also the first-use fallback the user asked for.
+    const preferredId = byId.has(savedId) ? savedId : recommendedId;
+    const pendingChoice = DevChat.currentSession?.pending
+      ? DevChat.currentSession.pending_agent_choice
+      : null;
+    // An unsent change has no server row, so _agentBackend() deliberately
+    // falls back to Claude. That fallback is not the provider the first send
+    // will use: with no explicit pending choice, POST /sessions resolves the
+    // saved server default. Reflect that same default in the picker while
+    // keeping pending_agent_choice null, so merely opening the screen still
+    // performs no write and sends no explicit backend override.
+    const selectedBackend = DevChat.currentSession?.pending
+      ? (pendingChoice?.backend || data?.defaultBackend || 'claude_code')
+      : DevChat._agentBackend(DevChat.currentSession);
+    const openRouterSelected = selectedBackend === 'codex_openrouter';
+    const currentOpenRouterId = openRouterSelected
+      ? String(DevChat.currentSession?.agent_model || '').trim()
+      : '';
+
+    const shortlistIds = [];
+    const addShortlistId = (id) => {
+      if (id && !shortlistIds.includes(id)) shortlistIds.push(id);
+    };
+    // Keep the active session truthful first, then the saved/GLM default,
+    // then any extra models the user starred in the dialog.
+    addShortlistId(currentOpenRouterId);
+    addShortlistId(preferredId);
+    addShortlistId(recommendedId);
+    for (const model of DevChat._openRouterModelsForPicker(catalog, { favoritesOnly: true })) {
+      addShortlistId(model.id);
+    }
+
+    let selectedOpenRouterId = currentOpenRouterId || preferredId;
+    const extraIds = [...shortlistIds];
+    if (openRouterSelected && !selectedOpenRouterId) {
+      // Old/incomplete rows should say that they are still loading rather
+      // than make the select visually fall into the first real option.
+      selectedOpenRouterId = '__loading__';
+      extraIds.unshift({ id: selectedOpenRouterId, label: 'Loading model', disabled: true });
+    }
+
+    // The two starting models are the server's curated pair
+    // (config.openrouterRecommendedModels), with its single recommendation
+    // first. A deployment that changes that list changes what a new account
+    // starts on; nothing here hardcodes a model id.
+    const starterIds = [];
+    const addStarter = (id) => {
+      if (id && byId.has(id) && !starterIds.includes(id)) starterIds.push(id);
+    };
+    addStarter(recommendedId);
+    for (const model of catalog) if (model?.isDefaultFavorite) addStarter(model.id);
+    for (const model of catalog) if (model?.isRecommended) addStarter(model.id);
+
+    // Before the async read lands, keep the catalog door available. Once the
+    // capability response says OpenRouter is unavailable, drop the OpenRouter
+    // half of the list unless this is an existing OpenRouter session that
+    // must remain visible.
+    const openRouterUsable = !data || data.codexAvailable || data.loadError || openRouterSelected;
+    const options = openRouterUsable
+      ? DevChat._flatModelOptions({ data, byId, starterIds, extraIds })
+      : Object.entries(DevChat.MODELS).map(([id, meta]) => {
+        const cost = DevChat._modelCostNote(id, null);
+        const label = (meta && meta.label) || id;
+        return {
+          value: `${ANTHROPIC_MODEL_PREFIX}${id}`,
+          label: cost.compact ? `${label} · ${cost.compact}` : label,
+          title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+        };
+      });
+
+    const directId = Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat.selectedModel)
+      ? DevChat.selectedModel
+      : (Object.prototype.hasOwnProperty.call(DevChat.MODELS, DevChat._defaultModel)
+        ? DevChat._defaultModel
+        : (Object.keys(DevChat.MODELS)[0] || ''));
+    // #2807: there is no caption under the picker any more. #2570 put the
+    // selected model's note and estimate there in full, but each option
+    // already carries both in compact form, so the line only repeated the
+    // closed control in longer words.
+    //
+    // #2812: a pick made while a turn is running is STAGED rather than
+    // applied (see _stageMidTurnPick). The control shows the staged value
+    // so it reads as what the next turn will use, and says so.
+    const staged = DevChat._stagedPickFor(DevChat.currentSession);
+    const liveSelected = openRouterSelected
+      ? `${OPENROUTER_MODEL_PREFIX}${selectedOpenRouterId}`
+      : `${ANTHROPIC_MODEL_PREFIX}${directId}`;
+    const selected = staged ? staged.value : liveSelected;
+    if (staged && !options.some((option) => option.value === selected)) {
+      // A staged catalog pick outside the shortlist still has to be the
+      // selected option, or the native select would show its first row.
+      const id = selected.slice(OPENROUTER_MODEL_PREFIX.length);
+      const model = byId.get(id);
+      options.splice(Math.max(options.length - 1, 0), 0, {
+        value: selected,
+        label: model?.name || id,
+        title: 'Runs on your OpenRouter key',
+      });
+    }
+    return {
+      options,
+      selected,
+      pendingNextTurn: !!staged,
+      // #2812: the picker stays usable while a turn runs; only an in-flight
+      // switch (a reset-agent-context round trip) locks it.
+      changeDisabled: !!DevChat._modelPickerChanging,
+    };
+  },
+
+  // ── Mid-turn picks (#2812) ─────────────────────────────────────────
+  //
+  // Changing an OpenRouter session's model (or its backend) resets the
+  // agent context through POST reset-agent-context, which the server
+  // refuses with a 409 while a turn runs — and even an Anthropic pick,
+  // which only rides the NEXT send, cannot change the turn already under
+  // way. So a pick made mid-turn is recorded here, shown in the picker with
+  // an "applies next turn" hint, and applied when the turn ends (or, as a
+  // backstop, just before the next send).
+  //
+  // One record, keyed to the session it was made in, so switching sessions
+  // mid-turn can never carry a pick into a different change. `value` is the
+  // option value the picker shows; `choice` is the reset-agent-context body
+  // to send, or null when nothing has to reach the server (an Anthropic
+  // pick on a Claude session, which the next send already carries).
+  // `original` is what the picker showed before the first mid-turn pick,
+  // so picking it again un-stages rather than queueing a no-op switch.
+  _stagedPick: null,
+  _applyingStagedPick: null,
+
+  _stagedPickFor(session) {
+    const staged = DevChat._stagedPick;
+    if (!staged || !session || session.pending) return null;
+    return Number(staged.sessionId) === Number(session.id) ? staged : null;
+  },
+
+  _isMidTurn() {
+    return !!(DevChat.isStreaming && DevChat.currentSession && !DevChat.currentSession.pending);
+  },
+
+  _stageMidTurnPick(value, choice, { shownBefore = null } = {}) {
+    const session = DevChat.currentSession;
+    if (!session || session.pending) return;
+    const previous = DevChat._stagedPickFor(session);
+    const original = previous
+      ? previous.original
+      : (shownBefore || DevChat._modelPickerView()?.selected || '');
+    if (value === original) {
+      DevChat._stagedPick = null;
+    } else {
+      DevChat._stagedPick = { sessionId: session.id, value, choice: choice || null, original };
+    }
     DevChat._publishComposer();
   },
 
-  /** The OpenRouter row's "Browse models", likewise. */
-  _onOpenRouterModelChange() {
-    DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
+  /**
+   * Apply the staged pick, if any, now that no turn is running. Resolves
+   * true when nothing is left staged. A busy answer (the server has not
+   * released the turn yet) is retried a few times before giving up; the
+   * pick then stays staged for the next send to try again.
+   */
+  async _applyStagedPick({ attempts = 4, delayMs = 750 } = {}) {
+    if (DevChat._applyingStagedPick) return DevChat._applyingStagedPick;
+    // A record for another session waits for that session's next send:
+    // only the open session's turn is known to have ended here.
+    const staged = DevChat._stagedPickFor(DevChat.currentSession);
+    if (!staged) return true;
+    if (DevChat.isStreaming) return false;
+    const run = (async () => {
+      if (!staged.choice) {
+        DevChat._stagedPick = null;
+        DevChat._publishComposer();
+        return true;
+      }
+      for (let i = 0; i < attempts; i++) {
+        if (DevChat._stagedPick !== staged) return true;
+        if (DevChat.isStreaming) return false;
+        DevChat._modelPickerChanging = true;
+        DevChat._publishComposer();
+        let outcome;
+        try {
+          outcome = await DevChat._switchCurrentCodingAgent(staged.choice, { quietBusy: true });
+        } finally {
+          DevChat._modelPickerChanging = false;
+        }
+        if (outcome !== 'busy') {
+          // Applied, already current, or refused for a reason the switch has
+          // already toasted — none of which a retry would change.
+          if (DevChat._stagedPick === staged) DevChat._stagedPick = null;
+          DevChat._publishComposer();
+          return outcome === 'applied' || outcome === 'same';
+        }
+        if (i < attempts - 1) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+      DevChat._publishComposer();
+      return false;
+    })();
+    DevChat._applyingStagedPick = run;
+    try {
+      return await run;
+    } finally {
+      DevChat._applyingStagedPick = null;
+    }
   },
 
-  /** The OpenRouter row, as data. Null on every venue that has none. */
-  _openRouterRowView() {
-    if (DevChat._currentVenueId() !== 'usernode-openrouter') return null;
-    const model = String(DevChat.currentSession?.agent_model || '').trim();
-    return {
-      model: model || 'No model is pinned',
-      changeDisabled: !!DevChat._composerBusy,
-      note: DevChat._agentBillingNote(DevChat.currentSession),
-    };
+  /** Dispatch a grouped native-select value to its provider. */
+  async _onModelPicked(value) {
+    if (DevChat._modelPickerChanging) return;
+    if (value === OPENROUTER_MORE_VALUE) {
+      await DevChat._onOpenRouterModelChange();
+      return;
+    }
+    if (String(value).startsWith(ANTHROPIC_MODEL_PREFIX)) {
+      const model = String(value).slice(ANTHROPIC_MODEL_PREFIX.length);
+      if (!Object.prototype.hasOwnProperty.call(DevChat.MODELS, model)) return;
+      // Read before `selectedModel` moves: on a Claude session the picker's
+      // live value IS `selectedModel`.
+      const shownBefore = DevChat._isMidTurn() ? DevChat._modelPickerView()?.selected : null;
+      DevChat.selectedModel = model;
+      // Direct Anthropic selection is a global per-browser preference, as it
+      // was before this control learned about OpenRouter.
+      try { localStorage.setItem(MODEL_STORAGE_KEY, model); } catch {}
+      // #2812: mid-turn, the running turn keeps its model. `selectedModel`
+      // is only read at send, so on a Claude session that is already the
+      // whole change; an OpenRouter session also needs its backend switched
+      // back to Claude, which waits for the turn to end.
+      if (DevChat._isMidTurn()) {
+        DevChat._stageMidTurnPick(value, DevChat._isOpenRouterSession()
+          ? { backend: 'claude_code', model: null, reasoningEffort: null }
+          : null, { shownBefore });
+        return;
+      }
+      // An unsent change has no session id yet. Its explicit provider choice
+      // must be staged on the placeholder and carried into POST /sessions,
+      // not sent to reset-agent-context with a null id. This branch also
+      // matters when the saved server default is OpenRouter: choosing an
+      // Anthropic model here has to override that default on first send.
+      if (DevChat.isPendingSession()) {
+        DevChat._modelPickerChanging = true;
+        DevChat._publishComposer();
+        try {
+          await DevChat._switchCurrentCodingAgent({
+            backend: 'claude_code', model: null, reasoningEffort: null,
+          });
+        } finally {
+          DevChat._modelPickerChanging = false;
+          DevChat._publishComposer();
+        }
+      } else if (DevChat._isOpenRouterSession()) {
+        DevChat._modelPickerChanging = true;
+        DevChat._publishComposer();
+        try {
+          await DevChat._switchCurrentCodingAgent({
+            backend: 'claude_code', model: null, reasoningEffort: null,
+          });
+        } finally {
+          DevChat._modelPickerChanging = false;
+          DevChat._publishComposer();
+        }
+      } else {
+        DevChat._publishComposer();
+      }
+      return;
+    }
+    if (!String(value).startsWith(OPENROUTER_MODEL_PREFIX)) return;
+    const model = String(value).slice(OPENROUTER_MODEL_PREFIX.length);
+    if (!model || model === '__loading__') return;
+    const data = DevChat._modelPickerData;
+    const meta = Array.isArray(data?.models)
+      ? data.models.find((item) => item?.id === model)
+      : null;
+    const saved = data?.backends?.codex_openrouter || {};
+    const currentEffort = DevChat._isOpenRouterSession()
+      && DevChat.currentSession?.agent_model === model
+      ? DevChat.currentSession?.agent_reasoning_effort
+      : null;
+    const reasoningEffort = meta && meta.supportsReasoning !== true
+      ? null
+      : (currentEffort || saved.reasoningEffort || null);
+    if (DevChat._isMidTurn()) {
+      DevChat._stageMidTurnPick(value, {
+        backend: 'codex_openrouter', model, reasoningEffort,
+      });
+      return;
+    }
+    DevChat._modelPickerChanging = true;
+    DevChat._publishComposer();
+    try {
+      await DevChat._switchCurrentCodingAgent({
+        backend: 'codex_openrouter', model, reasoningEffort,
+      });
+    } finally {
+      DevChat._modelPickerChanging = false;
+      DevChat._publishComposer();
+    }
+  },
+
+  /** The unified select's final row opens the existing full catalog. */
+  async _onOpenRouterModelChange() {
+    if (DevChat._modelPickerChanging) return;
+    DevChat._modelPickerChanging = true;
+    DevChat._publishComposer();
+    try {
+      await DevChat._switchCurrentCodingAgent(null, { fixedBackend: 'codex_openrouter' });
+      // Favorite stars can change even when the dialog is cancelled. Re-read
+      // the decorated catalog so additions/removals reach the shortlist.
+      DevChat._modelPickerData = null;
+      await DevChat._ensureModelPickerData();
+    } finally {
+      DevChat._modelPickerChanging = false;
+      DevChat._publishComposer();
+    }
   },
 
   // ── Session-pinned coding-agent choice ────────────────────────────
@@ -420,6 +877,49 @@ const DevChat = {
     return DevChat._activityAgentBackend(source) === 'codex_openrouter'
       ? 'OpenRouter'
       : 'Claude Code';
+  },
+
+  // #2597: the running row's HEADING stops naming the venue.
+  //
+  // The server writes the in-flight status as "<venue> is running..." —
+  // "Claude Code is running...", "OpenRouter is running..." — so the loudest
+  // row in the transcript said one of two different things about what is, to
+  // the person reading it, the same event: the coding agent is working. The
+  // heading is that one sentence now, and the venue moves underneath it as a
+  // muted caption, the form the run card already uses for its secondary line.
+  //
+  // Rewritten at RENDER time rather than where the status is written, and
+  // deliberately: every row already in the database then reads the new way
+  // too, and the pairing rules that key off `msg.content`
+  // (ACTIVE_CC_STATUS_RE, _isLiveCcRun) keep matching the text the server
+  // actually wrote. Only "<venue> is running" is rewritten — the legacy
+  // "...is making changes", "Scout reading the codebase" and "Syncing with
+  // main" lines say what they say.
+  _RUNNING_VENUE_RE: /^(?:Claude Code|Codex|OpenRouter) is running\b/i,
+
+  // The heading and caption for a "<venue> is running" row, or null when
+  // `msg` is not one. Whatever trailed the venue's sentence (the server's
+  // "...", nothing on the older rows) is carried over untouched.
+  _runningRowLabel(msg) {
+    const content = String(msg?.content || '');
+    const m = DevChat._RUNNING_VENUE_RE.exec(content);
+    if (!m) return null;
+    return {
+      text: `Coding agent is running${content.slice(m[0].length)}`,
+      caption: DevChat._agentName(DevChat._activityAgentBackend(msg)),
+    };
+  },
+
+  // Put that heading on a row built from `msg`. `html` goes with the venue:
+  // the heading is our own copy now, not the row's stored content, so there
+  // is nothing left for the unescaped branch to render.
+  _withRunningLabel(row, msg) {
+    const label = DevChat._runningRowLabel(msg);
+    if (!label) return row;
+    row.text = label.text;
+    row.caption = label.caption;
+    delete row.html;
+    return row;
   },
 
   _copyActivityAgentMetadata(target, source) {
@@ -613,6 +1113,18 @@ const DevChat = {
     });
   },
 
+  /**
+   * The app this session belongs to. `App.currentApp` names the app VIEW's
+   * app, and a session can be open in the Messages pane (#2813) where no app
+   * view is up — so the session's own app comes first, then the loaded app.
+   */
+  _appSlug() {
+    return (DevChat.currentSession && DevChat.currentSession.app_slug)
+      || (typeof App !== 'undefined' && App.currentApp)
+      || (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+      || null;
+  },
+
   _ownToolsGuideView() {
     if (DevChat._launchpadVenue() !== 'own-tools-pr') return null;
     const session = DevChat.currentSession || {};
@@ -620,7 +1132,7 @@ const DevChat = {
     return {
       prompt: Launchpad.prefillText({
         ...resume,
-        slug: App.currentApp || '',
+        slug: DevChat._appSlug() || '',
         issueNumber: session.created_from_issue_number || null,
         sessionTitle: session.session_title || session.pr_title || '',
       }),
@@ -636,6 +1148,47 @@ const DevChat = {
     } else {
       window.location.hash = '#settings/cli';
     }
+  },
+
+  // #2706. Is the inline connector walkthrough on screen right now? An
+  // explicit answer from the toggle wins; otherwise it is open exactly when
+  // the hand-off step is asking for a connector, which is the state the
+  // request is about — nobody should have to press a button to be told how
+  // to satisfy the step they are stuck on.
+  _connectorStepsOpen() {
+    const flow = DevChat._devFlow;
+    if (typeof flow.connectorSteps === 'boolean') return flow.connectorSteps;
+    const status = flow.status;
+    if (!status || status.available === false) return false;
+    return !(status.connectors && status.connectors.count > 0);
+  },
+
+  // The card's own primary button. Closing it and re-reading the status are
+  // one act: if the connector did land, the step ticks over and the card
+  // would be wrong to stay; if it did not, the derivation above reopens it.
+  async _devFlowConnectorDone() {
+    DevChat._devFlow.connectorSteps = false;
+    await DevChat._devFlowEnsureStatus(true);
+  },
+
+  // What view.tsx renders beside the walkthrough card, or null for nothing.
+  // Only in a WEB hand-off launchpad: the own-tools venue needs no connector
+  // (a local agent is handed a token instead), and an ordinary chat has no
+  // launchpad at all.
+  _connectorSetupView() {
+    const venue = DevChat._launchpadVenue();
+    if (venue !== 'web-claude-code' && venue !== 'web-codex') return null;
+    if (!DevChat._connectorStepsOpen()) return null;
+    const status = DevChat._devFlow.status;
+    return {
+      // The connector belongs to the account the AGENT signs in as: Claude
+      // Code runs as a Claude.ai account and Codex as a ChatGPT one. Same
+      // mapping DevFlowSelect.connectorProduct makes for the step's copy.
+      product: venue === 'web-codex' ? 'ChatGPT' : 'Claude',
+      // Live, never written into the prose — the same rule Settings follows.
+      url: `${window.location.origin}/mcp`,
+      connected: !!(status && status.connectors && status.connectors.count > 0),
+    };
   },
 
   // Repaint whichever surface the walkthrough is currently living on.
@@ -669,7 +1222,7 @@ const DevChat = {
     if (window.DevFlowSelect) {
       host.querySelectorAll('[data-flow-wizard]').forEach((el) => {
         DevFlowSelect.wire(el, {
-          onAction: (action) => DevChat._devFlowAction(action),
+          onAction: (action, target, event) => DevChat._devFlowAction(action, target, event),
         });
       });
     }
@@ -704,22 +1257,6 @@ const DevChat = {
       const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
       if (cached) cached.build_venue = data.session.build_venue;
     } catch { /* see above: a lost choice degrades to the derivation */ }
-  },
-
-  // What an OpenRouter session bills, in one sentence — the model is the
-  // user's and so is the invoice, and none of that spend passes through the
-  // platform meter, so nothing else on the composer can state it.
-  //
-  // A Homeroom · Claude session had a sentence here too and no longer does
-  // (#1353): "Chat and coding use Homeroom · Claude and its normal credit
-  // rules" sat under a meter counting those very credits, beside a picker
-  // labelled Chat model, in a session whose header names the venue. Four
-  // ways of saying the same thing, on the surface with the least room for
-  // any of them. Empty string for every venue that is not OpenRouter.
-  _agentBillingNote(session) {
-    if (DevChat._agentBackend(session) !== 'codex_openrouter') return '';
-    const model = String(session?.agent_model || '').trim();
-    return `All chat and coding in this session use ${model || 'your selected model'} through OpenRouter and bill your OpenRouter key.`;
   },
 
   _busyComposerPlaceholder() {
@@ -758,6 +1295,9 @@ const DevChat = {
     const badges = [];
     if (model?.isFavorite) badges.push('★');
     if (model?.isRecommended) badges.push('Recommended');
+    // #3296: the platform runs some OpenRouter models in Claude Code rather
+    // than Codex. Only that exception is named; Codex is every other row.
+    if (model?.harness === 'claude') badges.push('Claude Code');
     if (model?.createdAt) {
       const age = Date.now() - Date.parse(model.createdAt);
       if (Number.isFinite(age) && age >= 0 && age <= 30 * 24 * 60 * 60 * 1000) badges.push('New');
@@ -1292,11 +1832,19 @@ const DevChat = {
   // `explicit` is a {backend, model, reasoningEffort} the caller already
   // has — the venue sheet picked it, so re-asking through the old modal
   // would be asking the same question twice. Omitted, this still opens the
-  // detail chooser, which is what the OpenRouter row needs (a backend is
-  // not a complete answer there: it wants a model and an effort too).
-  async _switchCurrentCodingAgent(explicit, { fixedBackend = null } = {}) {
+  // detail chooser, which is what the unified select's "Add more" action
+  // needs (a backend is not a complete answer: it wants a model and effort).
+  //
+  // Resolves to what happened: 'applied', 'same', 'staged', 'busy' (the
+  // server refused because a turn is still running), 'failed' or
+  // 'cancelled'. `quietBusy` suppresses the busy toast for a caller that
+  // retries it (_applyStagedPick).
+  async _switchCurrentCodingAgent(explicit, { fixedBackend = null, quietBusy = false } = {}) {
     const session = DevChat.currentSession;
-    if (!session || DevChat.isStreaming) return;
+    if (!session) return 'cancelled';
+    // #2812: the catalog dialog may be opened mid-turn (the picker stays
+    // enabled); an explicit switch still may not POST over a running turn.
+    if (DevChat.isStreaming && explicit && !session.pending) return 'busy';
     const current = {
       backend: DevChat._agentBackend(session),
       model: session.agent_model || null,
@@ -1307,14 +1855,54 @@ const DevChat = {
       current,
       fixedBackend,
     });
-    if (!choice || !DevChat.currentSession || DevChat.currentSession.id !== session.id) return;
+    const stillCurrent = session.pending
+      ? DevChat.currentSession === session
+      : DevChat.currentSession?.id === session.id;
+    if (!choice || !stillCurrent) return 'cancelled';
+
+    // #2812: a catalog pick made while a turn runs (or one that outlived
+    // the turn it was opened in the other way round) is staged for the
+    // turn's end rather than posted into a 409.
+    if (DevChat._isMidTurn()) {
+      const value = choice.backend === 'codex_openrouter'
+        ? `${OPENROUTER_MODEL_PREFIX}${choice.model || ''}`
+        : `${ANTHROPIC_MODEL_PREFIX}${DevChat.selectedModel}`;
+      DevChat._stageMidTurnPick(value, choice);
+      return 'staged';
+    }
+
+    // /sessions/new is a client-only placeholder by design (#2241), so there
+    // is no row reset-agent-context could update. Keep the explicit choice on
+    // that placeholder instead. `_materializePendingSession` sends it with
+    // the first real POST /sessions, preserving the no-write-before-send
+    // contract while still making the grouped model picker functional.
+    if (session.pending) {
+      const pendingChoice = choice.backend === 'codex_openrouter'
+        ? {
+          backend: 'codex_openrouter',
+          model: choice.model || null,
+          reasoningEffort: choice.reasoningEffort || null,
+        }
+        : { backend: 'claude_code', model: null, reasoningEffort: null };
+      session.pending_agent_choice = pendingChoice;
+      // Reuse the ordinary session-derived picker logic so the closed control
+      // immediately reflects what will be created, without a full chat render
+      // that could disturb the uncontrolled message textarea.
+      session.agent_backend = pendingChoice.backend;
+      session.agent_model = pendingChoice.model;
+      session.agent_reasoning_effort = pendingChoice.reasoningEffort;
+      DevChat._publishComposer();
+      return 'applied';
+    }
 
     const same = choice.backend === current.backend
       && (choice.model || null) === (current.model || null)
       && (choice.reasoningEffort || null) === (current.reasoningEffort || null);
     if (same) {
-      PlatformUI.toast(`${DevChat._agentName(choice.backend)} is already selected for this session.`);
-      return;
+      if (!quietBusy) {
+        PlatformUI.toast(`${DevChat._agentName(choice.backend)} is already selected for this session.`);
+      }
+      return 'same';
     }
 
     try {
@@ -1326,17 +1914,27 @@ const DevChat = {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        PlatformUI.toast(data.error || 'Could not switch coding agents.');
-        return;
+        const busy = response.status === 409 && /busy/i.test(String(data.error || ''));
+        if (!(busy && quietBusy)) {
+          PlatformUI.toast(data.error || 'Could not switch coding agents.');
+        }
+        return busy ? 'busy' : 'failed';
       }
-      Object.assign(DevChat.currentSession, data.session || {});
+      // The session may have changed while the request was in flight (a
+      // staged pick applies as a turn ends, when the user may already be
+      // navigating away). Update the cached row either way, and the open
+      // view only if it is still this session's.
       const cached = DevChat.sessions.find((s) => Number(s.id) === Number(session.id));
       if (cached) Object.assign(cached, data.session || {});
+      if (DevChat.currentSession?.id !== session.id) return 'applied';
+      Object.assign(DevChat.currentSession, data.session || {});
       if (data.message) DevChat.messages.push(data.message);
       DevChat.renderChatView();
       PlatformUI.toast(`This session now uses ${DevChat._agentName(choice.backend)}.`);
+      return 'applied';
     } catch {
       PlatformUI.toast('Network error while switching coding agents.');
+      return 'failed';
     }
   },
 
@@ -1464,7 +2062,7 @@ const DevChat = {
   // renders it silently. tests/dev-flow-routes.test.js scrapes the route's own
   // `req.query.order === '…'` literals and fails when this list does not cover
   // them, so the next one cannot repeat it.
-  DEV_FLOW_ORDERS: ['connect', 'continue'],
+  DEV_FLOW_ORDERS: ['connect', 'continue', 'link'],
 
   _devFlowDemoQS() {
     const base = DevChat._demoQS();
@@ -1557,10 +2155,22 @@ const DevChat = {
   // the stale id — so the user would see "Haiku" on screen but send
   // some ancient slug on submit. Called right after module load and
   // again after loadModels() refreshes the allowlist.
+  //
+  // #2818: a RETIRED id resolves to its successor by name first (the same
+  // map as src/services/models.js RETIRED_MODELS), and the successor is
+  // written back so the saved preference stops naming a model that no
+  // longer exists.
+  RETIRED_MODELS: { 'claude-opus-5': 'claude-opus-5-5' },
+
   _sanitizeStoredModel() {
-    if (!DevChat.MODELS[DevChat.selectedModel]) {
-      DevChat.selectedModel = DevChat._defaultModel;
+    if (DevChat.MODELS[DevChat.selectedModel]) return;
+    const successor = DevChat.RETIRED_MODELS[DevChat.selectedModel];
+    if (successor && DevChat.MODELS[successor]) {
+      DevChat.selectedModel = successor;
+      try { localStorage.setItem(MODEL_STORAGE_KEY, successor); } catch {}
+      return;
     }
+    DevChat.selectedModel = DevChat._defaultModel;
   },
 
   // ── Model selector copy (#800) ────────────────────────────────
@@ -1747,6 +2357,41 @@ const DevChat = {
     DevChat._maybeInjectDemoCreditsCard();
   },
 
+  // #2598: a model call's cost just landed against this user's weekly pool
+  // and the server pushed the new figures (services/budget-live.js) over the
+  // socket public/js/app.js already holds open. Re-render from them instead
+  // of refetching: a build makes a call every few seconds, and the whole
+  // point of the push is that the figure moves without a request per call.
+  //
+  // MERGED into the existing budget, never replacing it. The pushed payload
+  // is limits.getBudgetSnapshot — the shared snapshot — while GET /api/budget
+  // wraps that with three fields of its own (globalSpentCents,
+  // globalLimitCents, aiEnabled) and its own spelling of the BYOK figure.
+  // Replacing would blank all four, and the exhausted banner's shared-budget
+  // check reads two of them to decide whose budget it blames.
+  //
+  // renderBudget() repaints the composer's meter AND both credits banners, so
+  // an OpenRouter session — whose meter shows the KEY's allowance, not the
+  // pool (#2118) — still gets its low-balance and exhausted banners moved by
+  // the included key's pooled spend (#2571).
+  applyBudgetUpdate(budget) {
+    if (!budget || typeof budget !== 'object') return;
+    // ?demo= and ?shot= pages are showing a fixture on purpose. A real push
+    // arriving underneath would swap out the state a reviewer came to look
+    // at, which is the one thing those flags exist to prevent.
+    if (DevChat._budgetDemo() || DevChat._shotCreditsLowBudget()) return;
+    const previous = DevChat.budget || {};
+    const byokCents = Number(budget.byokCents);
+    DevChat.budget = {
+      ...previous,
+      ...budget,
+      // /api/budget's spelling of the same number, kept in step so the
+      // key-holder branch of the meter can't read a stale "your key $X".
+      byokSpentCents: Number.isFinite(byokCents) ? byokCents : previous.byokSpentCents,
+    };
+    DevChat.renderBudget();
+  },
+
   // Staging review aid: with ?demo=1 on a staging page whose demo budget
   // reports exhausted, drop ONE non-persisted credits card into the
   // transcript so the in-chat card (not just the banner) is reviewable.
@@ -1762,9 +2407,10 @@ const DevChat = {
       role: 'assistant',
       content: '',
       creditsCard: {
-        error: DevChat._creditWindow().weekly
-          ? 'Weekly limit reached ($175.00). Resets Monday 00:00 UTC.'
-          : 'Daily limit reached ($20.00). Resets at midnight UTC.',
+        // #2571: one allowance, one window. The fixture behind ?demo=1 is
+        // the weekly cap at its default, so the card names that.
+        error: 'Weekly limit reached ($50.00). Resets Monday 00:00 UTC.',
+        capWindow: 'weekly',
         hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
         globalOut: DevChat._globalBudgetOut(),
         verificationRequired: false,
@@ -1806,11 +2452,13 @@ const DevChat = {
     return CO.resetSentence(state);
   },
 
-  // #1788: the allowance runs over two windows now (daily and weekly) and
-  // the server reports whichever one is BINDING in the legacy
-  // limit/spent/remaining fields. Every sentence that used to hardcode
-  // "today" / "daily" asks here instead, so the meter, its tooltip and the
-  // banner all name the window the numbers actually describe.
+  // #1788 gave the allowance two windows and reported whichever was
+  // BINDING in the legacy limit/spent/remaining fields; #2571 leaves one —
+  // the server always answers `capWindow: 'weekly'` now. Every sentence
+  // that used to hardcode "today" / "daily" still asks here, so the meter,
+  // its tooltip and the banner name the window the numbers describe, and
+  // the daily spellings below remain only as the fallback for a payload
+  // that carries no window at all.
   _creditWindow() {
     const b = DevChat.budget || {};
     const weekly = b.capWindow === 'weekly';
@@ -1820,7 +2468,7 @@ const DevChat = {
       label: b.windowLabel || (weekly ? 'This week' : 'Today'),
       // "…left today" / "…left this week"
       when: weekly ? 'this week' : 'today',
-      // "your $20.00 platform daily limit"
+      // "your $50.00 platform weekly limit"
       limitNoun: weekly ? 'weekly limit' : 'daily limit',
       // "your free daily AI credits"
       creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
@@ -1891,9 +2539,9 @@ const DevChat = {
   _settledBudgetPillView() {
     const NONE = { title: null, parts: [] };
     const muted = 'text-zinc-500 dark:text-zinc-400';
-    // An OpenRouter session bills the user's own provider key, so the
-    // platform meter has nothing to say about it; what it shows instead is
-    // what is left on that key (#2118).
+    // An OpenRouter session's meter is the KEY's remaining figure, not the
+    // platform's (#2118) — see _openRouterAllowanceView on what that means
+    // for an included key now that #2571 pools its spend.
     if (DevChat._isOpenRouterSession()) return DevChat._openRouterAllowanceView();
 
     // #593: the reset time, rendered rather than hidden in a tooltip — it
@@ -2011,13 +2659,23 @@ const DevChat = {
 
   // #2118: the OpenRouter session's half of the meter. A session on an
   // OpenRouter key never touches the platform's Anthropic allowance, so
-  // the daily meter has nothing to say about it; what the viewer wants to
-  // know instead is how much of the KEY's limit is left. OpenRouter
+  // the platform meter has nothing to say about it; what the viewer wants
+  // to know instead is how much of the KEY's limit is left. OpenRouter
   // reports that itself (GET /key: limit, limit_remaining, limit_reset),
   // so the figure is shown as reported rather than derived, in the window
   // the key's reset cadence names. A key with no limit draws nothing
   // rather than a guess, and the Claude meter's red/yellow thresholds
   // colour what is left.
+  //
+  // #2571 pooled the INCLUDED key's spend with Claude spend against one
+  // weekly cap, and this figure does not know about that half: OpenRouter
+  // only ever counts OpenRouter. So for an included key it is an upper
+  // bound on what is left, and the pooled gate can refuse a turn while it
+  // still shows headroom — the refusal card names the weekly cap and the
+  // figure it was measured against. Showing the pooled number here instead
+  // is a change to this meter's contract (and to the ?shot= fixture and
+  // declared checks behind it), so it is deliberately left for its own
+  // change rather than folded into this one.
   _openRouterAllowanceView() {
     const NONE = { title: null, parts: [] };
     const a = DevChat.openrouterAllowance;
@@ -2046,13 +2704,30 @@ const DevChat = {
       ? `$${remaining.toFixed(2)} of its $${limit.toFixed(2)}${cadence ? ` ${cadence}` : ''} allowance left`
       : `$${remaining.toFixed(2)} left`;
     const reset = cadence ? ` OpenRouter resets it ${cadence}.` : '';
+    // #2666: name the budget. This pill and the platform one occupy the
+    // same slot and measure DIFFERENT things — `limit $7.05/$50.00` is the
+    // platform's weekly allowance, this is what OpenRouter says is left on
+    // the KEY — so side by side across two sessions they read as one
+    // number that will not add up. It was reported as exactly that.
+    //
+    // The distinguishing fact was already written, in the `title` below.
+    // This file's own #593 note says why that is not enough: a title
+    // attribute "is invisible on touch and absent from every screenshot".
+    // The platform meter learned that lesson; this one had not.
+    //
+    // Rendered as its own part with no `title`, so the amount keeps being
+    // the only `span[title]` in `#dc-budget` — two declared dapp.json
+    // checks select it that way, and their expectText is unchanged.
     return {
       title: null,
-      parts: [{
-        text: `$${remaining.toFixed(2)} left${when}`,
-        className: color,
-        title: `${owner} has ${allowance}.${reset}`,
-      }],
+      parts: [
+        { text: 'OpenRouter ', className: 'text-zinc-500 dark:text-zinc-400' },
+        {
+          text: `$${remaining.toFixed(2)} left${when}`,
+          className: color,
+          title: `${owner} has ${allowance}.${reset}`,
+        },
+      ],
     };
   },
 
@@ -2278,19 +2953,29 @@ const DevChat = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch { return null; }
     if (shot !== 'credits-low' && shot !== 'credits-exhausted') return null;
+    // #2571: the allowance is weekly, so the fixture is 80% (or all) of the
+    // $50 weekly cap and names Monday 00:00 UTC as the boundary.
     const reset = new Date();
-    reset.setUTCHours(24, 0, 0, 0);
+    reset.setUTCDate(reset.getUTCDate() + (((8 - reset.getUTCDay()) % 7) || 7));
+    reset.setUTCHours(0, 0, 0, 0);
     const exhausted = shot === 'credits-exhausted';
     return {
-      spentCents: exhausted ? 2500 : 2000,
-      limitCents: 2500,
-      remainingCents: exhausted ? 0 : 500,
+      spentCents: exhausted ? 5000 : 4000,
+      limitCents: 5000,
+      remainingCents: exhausted ? 0 : 1000,
       globalSpentCents: 4000,
       globalLimitCents: 100000,
       byokSpentCents: 0,
       aiEnabled: true,
       resetsAt: reset.toISOString(),
       lowBalancePct: 80,
+      capWindow: 'weekly',
+      windowLabel: 'This week',
+      resetLabel: 'Monday 00:00 UTC',
+      dailyApplies: false,
+      weeklyApplies: true,
+      weeklyLimitCents: 5000,
+      weeklySpentCents: exhausted ? 5000 : 4000,
       shot: true,
     };
   },
@@ -2504,7 +3189,16 @@ const DevChat = {
     const base = DevChat._sessionOptionsState();
     const user = (typeof App !== 'undefined' && App.user) || {};
     return {
-      mode: 'switch',
+      // #2607: an unsent change is build-venues.js's OWN 'start' case — "a
+      // session with nothing in it yet, where every answer is still open" —
+      // and it is the one that reads correctly there. 'switch' answers each
+      // row with what it keeps ("this chat, this branch and this proposal"),
+      // and an unsent change has no branch and no proposal to keep. The rows
+      // themselves are identical in both modes; only the sentence under them
+      // changes. The two web hand-offs say "Start new work with" either way,
+      // because `webTargetKind` reads the placeholder's missing branch and
+      // answers 'new'.
+      mode: DevChat.isPendingSession() ? 'start' : 'switch',
       current: DevChat._currentVenueId(),
       // Same three deployment capabilities the "…" menu reads, plus the two
       // this list needs on top: whether the OpenRouter backend is offerable
@@ -2555,7 +3249,7 @@ const DevChat = {
     BuildVenues.open({
       anchorEl: anchorEl || document.getElementById('dc-venue-select') || undefined,
       state,
-      onPick: (row) => {
+      onPick: async (row) => {
         if (!row || row.current) return;
         // #1348: the sheet answers coarsely now. `row.venue` is the venue a
         // choice resolves to, or null for the one the SERVER resolves.
@@ -2575,6 +3269,26 @@ const DevChat = {
           DevChat._persistBuildVenue(null);
           // …and the in-memory walkthrough, which outranks the column.
           DevChat._devFlowReturnToChat();
+          // #2607: on an unsent change this row creates NOTHING. There is no
+          // row for /build-venue or reset-agent-context to update (both are
+          // no-ops against a null id, the first by its own guard and the
+          // second by the return below), and there is nothing for them to
+          // do either: which in-chat agent the change is created with is
+          // already staged on the placeholder as `pending_agent_choice`, by
+          // the composer's model picker, exactly as it was before this row
+          // existed. Left null, POST /sessions resolves the saved default —
+          // which is the same resolution the no-backend reset-agent-context
+          // asks for on a real row, deferred to creation. So the pick's
+          // whole job here is to undo a hand-off: clear the venue, clear the
+          // walkthrough, and put the composer back.
+          if (DevChat.isPendingSession()) {
+            // The repaint the branch below explains, and nothing after it:
+            // `renderChatView` republishes the header strip too, so the
+            // dropdown restates the in-chat venue on the same paint that
+            // brings the composer back.
+            DevChat.renderChatView();
+            return;
+          }
           // Repaint NOW rather than leaving it to the switch below: that
           // one repaints only after its round trip, and only if the round
           // trip succeeds. The choice has already been made locally, so the
@@ -2592,6 +3306,14 @@ const DevChat = {
         }
         const pick = BuildVenues.preselect(row.venue);
         if (!pick) return;
+        // #2607: the other three answers all need a session row to act on —
+        // the lease is set up against a session id, the web hand-off and the
+        // import both RECORD themselves on `chat_sessions.build_venue`. On an
+        // unsent change there is no row yet, so one is created here, exactly
+        // as the first send would create it, and everything below then runs
+        // against a real session unchanged. A refused creation has already
+        // said why; the dropdown stays on the venue it was showing.
+        if (!(await DevChat._materializePendingSessionForVenue())) return;
         if (pick.kind === 'lease') {
           if (!window.SessionOptions) return;
           DevChat._optionsCard = SessionOptions.openInstructions({
@@ -2876,6 +3598,13 @@ const DevChat = {
     // rest of this session without writing a preference.
     dismissed: false,
     brief: null,
+    // #2706: is the inline connector walkthrough on screen? `null` means
+    // nobody has said, and the answer is derived from the status — open
+    // when there is no connector, because that is the step the reader is
+    // standing on. `true`/`false` are the "Connect Homeroom" toggle and
+    // "I've added it", and they outrank the derivation so a reader can put
+    // six steps away without first satisfying them.
+    connectorSteps: null,
   },
 
   // Deep link: ?flow=claude-code|codex opens straight into that
@@ -2906,6 +3635,8 @@ const DevChat = {
       // null means "not typed yet", which is what lets the session title
       // seed it once without overwriting an edit.
       brief: null,
+      // #2706: unset, so the next status read decides — see _devFlow above.
+      connectorSteps: null,
     };
   },
 
@@ -2975,7 +3706,7 @@ const DevChat = {
     if (!container) return;
     container.querySelectorAll('[data-flow-wizard]').forEach((el) => {
       DevFlowSelect.wire(el, {
-        onAction: (action) => DevChat._devFlowAction(action),
+        onAction: (action, target, event) => DevChat._devFlowAction(action, target, event),
       });
     });
   },
@@ -2985,7 +3716,7 @@ const DevChat = {
   // button and the tab-focus re-check.
   async _devFlowEnsureStatus(force) {
     const session = DevChat.currentSession;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     if (!session || !slug || !window.DevFlowSelect) return;
     const started = DevChat._devFlow;
     if (started.loading) return;
@@ -3032,7 +3763,53 @@ const DevChat = {
     }
   },
 
-  async _devFlowAction(action) {
+  // "Link GitHub" (#2679, #2680). The step's anchor points straight at the
+  // social-identity connect route, which answers with a redirect to GitHub's
+  // own authorization page. It used to point at Settings → Connectors and
+  // leave the person to find the Connect row there, and that detour is what
+  // #2680 caught broken. Two hosts, two roads:
+  //
+  //   * in a browser the anchor is already being followed — a new tab, like
+  //     "Fork on GitHub" (#1312) — so this only says where to look and
+  //     re-reads the status the way the other trips out do; coming back
+  //     re-checks again (_bindDevFlowVisibility) and ticks the step;
+  //   * inside the Homeroom app the webview cannot reach github.com and the
+  //     system browser has its own cookie jar, so the click is taken over
+  //     and the ACCOUNT-PINNED form of the URL goes out through the bridge,
+  //     exactly as the Settings row does (features/settings/
+  //     native-social-connect.js). That helper is reached by name through
+  //     the React bridge because this module cannot import; see the header.
+  async _devFlowLinkGithub(event) {
+    const flow = DevChat._devFlow;
+    const bridge = window.usernode;
+    if (!bridge || !bridge.isNative) {
+      flow.notice = 'Finish linking GitHub in the tab that just opened, then come back here.';
+      await DevChat._devFlowEnsureStatus(true);
+      return;
+    }
+    if (event && typeof event.preventDefault === 'function') event.preventDefault();
+    const react = window.UsernodeReact && window.UsernodeReact.devChat;
+    if (!react || typeof react.openNativeSocialConnect !== 'function') {
+      // A bundle without the bridge method: Settings still has the row.
+      window.location.hash = '#settings/connectors';
+      return;
+    }
+    try {
+      await react.openNativeSocialConnect({
+        bridge,
+        provider: 'github',
+        intent: 'connect',
+        accountId: typeof App !== 'undefined' && App.user ? App.user.id : null,
+        origin: window.location.origin,
+      });
+      flow.notice = 'Finish linking GitHub in your browser, then come back to the app. Sign in with the same Homeroom account if asked.';
+    } catch (err) {
+      flow.error = err.message;
+    }
+    DevChat._repaintDevFlow();
+  },
+
+  async _devFlowAction(action, target, event) {
     const flow = DevChat._devFlow;
     flow.error = null;
     flow.notice = null;
@@ -3051,8 +3828,23 @@ const DevChat = {
       DevChat.renderChatView();
       return;
     }
-    if (action === 'link-github' || action === 'link-connector') {
-      window.location.hash = '#settings/connectors';
+    if (action === 'link-github') return DevChat._devFlowLinkGithub(event);
+    if (action === 'link-connector') {
+      // #2706: the steps open HERE. This used to assign
+      // `#settings/connectors` — a whole screen away, to read six lines
+      // and find the way back — and the ask was to teach it in place.
+      // Settings still holds the rest of the reference (Claude Code's
+      // permission rules, Codex, the connector list), and the card links
+      // to it; what moved is the part this step is actually about.
+      //
+      // Always OPEN, never a toggle. The card is already on screen by
+      // default whenever the step is unsatisfied, and the way it closes is
+      // its own "I've added it — check again" — which re-reads the status,
+      // so closing means something. A button still labelled "Connect
+      // Homeroom" that HID the instructions would be the opposite of what
+      // it says, and it is also what puts the card back after that.
+      flow.connectorSteps = true;
+      DevChat._repaintDevFlow();
       return;
     }
     // #1281: the vendor toggle at the top of the launchpad. Switching is
@@ -3119,7 +3911,7 @@ const DevChat = {
   // flow costs them no re-typing.
   async _devFlowPrepare() {
     const flow = DevChat._devFlow;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     // #1281: the walkthrough carries its own brief field, because in a
     // launchpad venue the composer is hidden and #dc-input is not something
     // the user can reach. The composer stays the fallback for the one place
@@ -3195,7 +3987,7 @@ const DevChat = {
   // was reaching for.
   async _devFlowDiscard() {
     const flow = DevChat._devFlow;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     if (!task) {
       flow.error = 'No work order to put away.';
@@ -3229,7 +4021,7 @@ const DevChat = {
   // credentials and imports it as an ordinary proposal, then we jump to it.
   async _devFlowSubmit() {
     const flow = DevChat._devFlow;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     if (!task) {
       flow.error = 'No work order to submit yet.';
@@ -3278,7 +4070,7 @@ const DevChat = {
   // idempotent re-press into a false "somebody else advanced it".
   async _devFlowSubmitUpdate() {
     const flow = DevChat._devFlow;
-    const slug = App.currentApp;
+    const slug = DevChat._appSlug();
     const task = flow.status && flow.status.task;
     const target = task && task.targetProposal;
     if (!task || !target || !target.id) {
@@ -3489,6 +4281,189 @@ const DevChat = {
       PlatformUI.toast('Network error');
       return null;
     }
+  },
+
+  // ── #2241: a change starts when you send, not when you click ────────
+  //
+  // "New change" used to POST /sessions on the click and land the user in
+  // the chat it had just created. #1350 had already taken the BRANCH out of
+  // that POST — no ref is minted until something actually needs one — and
+  // this takes the ROW out of the click for the same reason: most of the
+  // sessions that got created were never used. They still spent a slot from
+  // the per-user active cap, still queued against the global one, still
+  // showed up in the session list and in Improve's "changes in progress",
+  // and the only way to be rid of one was to archive it by hand.
+  //
+  // So the screen comes up against a PLACEHOLDER — a client-only object
+  // that looks enough like a session row for the chat to render — and
+  // `sendMessage` creates the real row on the first send (see
+  // `_materializePendingSession`). Nothing reaches the server until then:
+  // arriving, reading the composer and leaving again writes nothing.
+  //
+  // The placeholder deliberately carries NO `id` and NO `user_id`:
+  //
+  //   * every automatic per-session request in this module already guards
+  //     on the id (the activity heartbeat, the draft reconcile, the
+  //     auto-resume, the status polls), so a null one is silence rather
+  //     than a round of requests against `/api/sessions/null/*`;
+  //   * `_ownsSession` is therefore false, which is what empties the
+  //     strip's ⋯ menu — Pause / Archive / Free worker are all
+  //     owner-scoped calls against a row that does not exist yet.
+  //
+  // `_sessionHeaderView` states the rest of the difference. The venue
+  // dropdown is NOT part of it (#2607): choosing where a change is built is
+  // exactly the question an unsent one still has open, so the control paints
+  // there and `openVenueSheet` creates the row for the answers that need it.
+
+  // The route segment that stands for "a change that has not been sent
+  // yet": /app/<slug>/dev/sessions/new. It is where the ROUTER's session
+  // ref is allowed to be a word instead of an id (see App._normalizeTab,
+  // which holds the only other copy of this literal and is pinned against
+  // this one by tests/dev-new-change.test.js). Giving the screen a real URL
+  // is what lets the session route reach it at all: `switchTab` normalizes
+  // a session sub-tab with no ref straight back to the board.
+  NEW_SESSION_REF: 'new',
+
+  // A creation is in flight. Send and attach both go through
+  // `_materializePendingSession`, and a double-tap on either must not
+  // create two sessions and then talk to the second one.
+  _pendingCreateInFlight: false,
+
+  /** True while the open screen is a change that has not been sent yet. */
+  isPendingSession() {
+    return !!(DevChat.currentSession && DevChat.currentSession.pending);
+  },
+
+  // Put the unsent-change placeholder in `currentSession`. The caller
+  // (AppView.renderDevChatTab) renders the chat view against it exactly as
+  // it would against a freshly-created empty session.
+  //
+  // No `issueNumber`: the issue row's own "Create proposal" still creates up
+  // front, because it stashes its kickoff message as the new session's DRAFT
+  // (#609) and a draft is keyed by session id. Nothing else links a change to
+  // an issue at creation time, so the placeholder has no issue to carry.
+  startPendingSession(appSlug) {
+    DevChat.currentSession = {
+      pending: true,
+      id: null,
+      app_slug: appSlug,
+      status: 'active',
+      created_from_issue_number: null,
+      branch_name: null,
+      pr_number: null,
+      session_title: null,
+      spec_md: '',
+      // Filled only after an explicit composer pick. Until then creation
+      // omits the backend keys and lets the server resolve the saved default.
+      pending_agent_choice: null,
+    };
+    DevChat.messages = [];
+    // A placeholder is a fresh start: never inherit the previous session's
+    // hand-off wizard, spec pane or fallback sentence. `_pickedHandoffVenue`
+    // reads `_devFlow`, so a stale one would swap this screen's composer for
+    // a launchpad pointed at a session that does not exist.
+    DevChat._devFlow = null;
+    DevChat._venueFallbackReason = null;
+    DevChat.specViewer.open = false;
+    DevChat.draftContent = '';
+    DevChat.pendingAttachments = [];
+    return DevChat.currentSession;
+  },
+
+  // Turn the placeholder into a real session. Returns true once
+  // `currentSession` is a server row (including when it already was), false
+  // when creation was refused — `createSession` has toasted the reason by
+  // then, so the caller just stands down and leaves the text in the box.
+  //
+  // Single-flight through `_pendingCreateInFlight`.
+  async _materializePendingSession() {
+    const pending = DevChat.currentSession;
+    if (!pending || !pending.pending) return !!pending;
+    if (DevChat._pendingCreateInFlight) return false;
+    DevChat._pendingCreateInFlight = true;
+    try {
+      const session = await DevChat.createSession(
+        pending.app_slug,
+        null,
+        pending.pending_agent_choice || null,
+      );
+      if (!session) return false;
+      // The viewer can leave the screen while the POST is in flight. The row
+      // exists either way (it is theirs, and the list will show it); it just
+      // must not be adopted as the open session on top of whatever they
+      // navigated to.
+      if (DevChat.currentSession !== pending) return false;
+      DevChat.currentSession = session;
+      // The placeholder had NO hand-off wizard — `startPendingSession` nulls
+      // `_devFlow` on purpose, because a stale one would paint a launchpad
+      // for a session that does not exist. Now one does, so it gets the
+      // per-session object every other session is given on the way in
+      // (`openSession` → `_resetDevFlow`). Without it the first thing to read
+      // `_devFlow` after a creation throws: `_devFlowFromCredits` and
+      // `_devFlowReturnToChat` both assign straight into it, and the venue
+      // sheet on the freshly created session is exactly what reaches them.
+      DevChat._resetDevFlow(session.id);
+      // From here the screen IS a session: it earns a URL of its own (in
+      // place of /dev/sessions/new, so Back does not return to an empty
+      // composer), the activity heartbeat, and the ⋯ menu of owner-scoped
+      // actions that had no row to act on. The venue dropdown is NOT in that
+      // list any more (#2607): it paints on the unsent screen too, and what
+      // changes here is only that the venue it names is the one the server
+      // resolved rather than the one the placeholder derived.
+      if (typeof App !== 'undefined' && App.updateHash) {
+        App.updateHash({ replace: true, ref: session.id });
+      }
+      DevChat._startHeartbeat();
+      DevChat._repaintSessionHeader();
+      DevChat.renderSessionList();
+      return true;
+    } finally {
+      DevChat._pendingCreateInFlight = false;
+    }
+  },
+
+  // #2607: create the row a venue pick needs, carrying the composer with it.
+  //
+  // The venue dropdown is on the unsent-change screen now, and three of its
+  // four answers cannot be given without a session: the lease is granted
+  // against a session id, and the web hand-off and the import both record
+  // themselves on that session's `build_venue` column. So the pick creates
+  // the row first — through `_materializePendingSession`, which is the
+  // FIRST SEND'S own path: same endpoint, same single-flight guard, the same
+  // `pending_agent_choice` (usually none, so the server resolves the saved
+  // default), the same URL replacement and the same session-list refresh.
+  // Picking a venue is simply the second thing that can bring a change into
+  // existence; it must not become a second way of doing it.
+  //
+  // Returns true when there is a real row to act on (including when there
+  // already was), false when creation was refused — `createSession` has
+  // already stated the server's own reason in the status line by then, so
+  // the caller stands down and leaves the dropdown on the venue it was
+  // showing, exactly as a refused first send leaves the screen unsent.
+  //
+  // THE TEXT IN THE BOX SURVIVES. The composer is uncontrolled and its
+  // stored draft is keyed by session id, which is null while the change is
+  // unsent — `_setDraft` drops those writes — so the next `renderChatView`
+  // would hand `_restoreDraft` a field whose session has changed and an
+  // empty draft under the new id, and it would clear what was typed. The
+  // text belongs to the CHANGE, not to the row that did not exist yet, so
+  // it is re-keyed onto the new id and the field is claimed for it before
+  // anything repaints.
+  async _materializePendingSessionForVenue() {
+    if (!DevChat.isPendingSession()) return true;
+    const input = document.getElementById('dc-input');
+    const typed = input ? String(input.value || '') : '';
+    if (!(await DevChat._materializePendingSession())) return false;
+    const id = DevChat.currentSession && DevChat.currentSession.id;
+    if (id && typed.trim()) {
+      DevChat._setDraft(id, typed);
+      // `_restoreDraft` compares this against the session it is rendering:
+      // claiming the field for the new id is what makes it leave the text
+      // alone instead of replacing it with the new row's empty draft.
+      DevChat._composerFieldSession = String(id);
+      DevChat._syncSaveDraftBtn();
+    }
+    return true;
   },
 
   // Re-sync the open session's server-side status and, if it was auto-
@@ -4026,6 +5001,20 @@ const DevChat = {
     // uploaded — each carries a server id + objectUrl for image thumbs).
     const sentAttachments = (attachments || []).filter((a) => a && a.id);
     if (!message && !sentAttachments.length) return;
+    // #2241: THIS is the moment a change starts existing. The screen may be
+    // the unsent placeholder `startPendingSession` put up, in which case the
+    // row (and, on the turn it runs, the branch) is created now — after the
+    // "is there anything to send?" checks above, so an empty submit still
+    // creates nothing. A refusal (cap reached, capacity, no repo) has
+    // already been toasted by `createSession`; put the text back and stand
+    // down rather than arming a turn with nowhere to send it.
+    if (DevChat.isPendingSession()) {
+      const started = await DevChat._materializePendingSession();
+      if (!started) {
+        DevChat._restoreComposer(message, { onlyIfEmpty: true });
+        return;
+      }
+    }
     // #138: a send is a user gesture — unlock the AudioContext and lazily
     // request OS-notification permission now, so the completion chime /
     // notification can fire when this turn finishes (browsers only allow
@@ -4033,6 +5022,17 @@ const DevChat = {
     if (window.DevAlerts) {
       DevAlerts._unlockAudio();
       DevAlerts.requestNotifyPermission();
+    }
+    // #2812: the backstop for a mid-turn pick the turn's end could not
+    // apply (the server still held the turn). If it still cannot, the
+    // switch has said why and this send runs on the current model.
+    if (DevChat._stagedPickFor(DevChat.currentSession)) {
+      const session = DevChat.currentSession;
+      await DevChat._applyStagedPick({ attempts: 2 });
+      if (DevChat.currentSession !== session || DevChat.isStreaming) {
+        DevChat._restoreComposer(message, { onlyIfEmpty: true });
+        return;
+      }
     }
     const model = DevChat.selectedModel;
     const openRouterSession = DevChat._isOpenRouterSession();
@@ -4083,6 +5083,10 @@ const DevChat = {
     DevChat.scrollToBottom();
 
     DevChat._abortController = new AbortController();
+    // #3177: set by the stream's `accepted` event, which the server writes
+    // once the message is stored. A stream that breaks after it lost a
+    // connection, not the message.
+    let accepted = false;
 
     try {
       const sessionId = DevChat.currentSession.id;
@@ -4152,7 +5156,8 @@ const DevChat = {
             role: 'assistant',
             content: '',
             creditsCard: {
-              error: data.error || 'They reset at midnight UTC.',
+              error: data.error || 'They reset Monday 00:00 UTC.',
+              capWindow: (DevChat.budget || {}).capWindow || 'weekly',
               hasApiKey: !!(window.Settings && Settings.state && Settings.state.hasApiKey),
               globalOut: DevChat._globalBudgetOut(),
               verificationRequired: !!data.verificationRequired,
@@ -4218,10 +5223,16 @@ const DevChat = {
       const decoder = new TextDecoder();
       let buffer = '';
       let gotFirstToken = false;
+      // #2599: while this loop runs, the primary stream is the authority on
+      // whether the turn is live — see _pollMayEndTurn. Every chunk counts
+      // as evidence, heartbeat comments included.
+      DevChat._primaryStreamOpen = true;
+      DevChat._lastLiveEventAt = Date.now();
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
+        DevChat._lastLiveEventAt = Date.now();
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -4239,7 +5250,18 @@ const DevChat = {
             const data = JSON.parse(line.slice(6));
             if (data._seq && DevChat._seenSeqs?.has(data._seq)) continue;
             if (data._seq) { DevChat._seenSeqs?.add(data._seq); DevChat._lastSeenSeq = data._seq; }
+            // #2599: a live event on a transcript something else already
+            // declared idle (a stale /status answer) re-arms the turn
+            // before the row below is drawn, so it never spins beside an
+            // enabled Send button.
+            DevChat._noteLiveTurnEvent(data, sessionId);
             switch (data.type) {
+              case 'accepted':
+                // #3177: the message is stored and its turn has started. Its
+                // _seq, recorded above, is where the resumable stream picks
+                // the turn up if this one breaks.
+                accepted = true;
+                break;
               case 'token':
                 gotFirstToken = true;
                 // #990: the reply is arriving — the dots have done their job.
@@ -4408,8 +5430,8 @@ const DevChat = {
                 // #195: the capture finished after staging_ready — stash
                 // the artifact ids on the session and re-render so the
                 // staging card upgrades in place with the media tiles.
-                if (DevChat.currentSession && data.visuals) {
-                  DevChat.currentSession.visuals = data.visuals;
+                if (DevChat.currentSession && Object.prototype.hasOwnProperty.call(data, 'visuals')) {
+                  DevChat.currentSession.visuals = data.visuals || null;
                   DevChat.renderMessages();
                 }
                 break;
@@ -4529,10 +5551,17 @@ const DevChat = {
         }
       }
     } catch (err) {
-      if (err.name !== 'AbortError') {
+      // #3177: after `accepted` a broken stream is a delivered message on a
+      // lost connection. The turn is still running, so its live cue stays up
+      // while the fallback below resumes it; only a stream that broke before
+      // the server took the message drops the cue.
+      if (err.name !== 'AbortError' && !accepted) {
         DevChat._removeSpinner();
       }
     }
+    // #2599: the primary stream is gone (drained, died or aborted) — from
+    // here the /status poll may believe a not-busy answer again.
+    DevChat._primaryStreamOpen = false;
 
     // The primary POST SSE either drained to 'done' (which already called
     // _finishStreaming and set isStreaming = false) or it died early.
@@ -4589,6 +5618,168 @@ const DevChat = {
     // arrival in Notifications.handleIncoming → DevAlerts.onCompletion is
     // the single source of the chime (foreground) / OS notification
     // (backgrounded), even when the user is watching this same dev chat.
+  },
+
+  // ── One source of truth for "a turn is live" (#2599) ───────────────
+  //
+  // `isStreaming` is that flag, and three things used to write it from
+  // three different vantage points: the primary POST SSE, the shared
+  // channels (global WS, resumable GET /events) and the 3s /status poll.
+  // They disagreed for an OpenRouter run in exactly the ways the report
+  // lists: a not-busy /status snapshot — served by a process that is not
+  // the one running the turn, or issued during the pre-dispatch window —
+  // tore the UI down while the stream was still delivering the turn, and
+  // the next live event then pushed a second spinning "OpenRouter is
+  // running…" row beside an enabled Send button; a refresh asked the
+  // server and got "running" back. The rules below make live evidence
+  // outrank snapshots:
+  //
+  //   1. A live event proves the runner is running NOW. If the transcript
+  //      is idle when one lands, the turn is adopted (Stop button, live
+  //      stream, poll) instead of painting a spinner into an idle screen.
+  //   2. The /status poll CONFIRMS: a not-busy answer ends the turn only
+  //      when nothing live contradicts it — no event since the request went
+  //      out, and no bytes on the primary stream within the quiet window.
+  //   3. A `done`/`stopped` on a SHARED channel belongs to whichever request
+  //      emitted it (the "already running" refusal of a second send is one),
+  //      so it asks /status before tearing the turn down.
+  //
+  // Wall-clock stamp of the last byte/event received on any live channel
+  // for the current session. Bumped by the POST reader loop (heartbeats
+  // included — they are bytes), the resumable stream and the WS.
+  _lastLiveEventAt: 0,
+  // True while sendMessage's POST SSE reader loop is running.
+  _primaryStreamOpen: false,
+  // How long the primary stream may be silent before a not-busy snapshot
+  // is believed over it. The coding phase heartbeats every 5s and the Mayor
+  // phases stream tokens, so 45s of silence means the server really has
+  // stopped talking (a restart, a dead proxy connection).
+  STREAM_QUIET_MS: 45 * 1000,
+  // The event types a turn's own stream emits — the ones whose arrival says
+  // the server is still talking about THIS turn. Board-level chatter rides
+  // the same socket and is not evidence: `checks_ready` ticks once a second
+  // for as long as a check run lasts, `visuals_ready` lands after the turn,
+  // `session_titled` is a name. Counting those would let a not-busy server
+  // never be believed.
+  TURN_STREAM_EVENTS: new Set([
+    'token', 'status', 'cc_progress', 'cc_log', 'cc_estimate', 'phase', 'stopping',
+    'mayor_reasoning', 'suggestions', 'quick_replies', 'assistant_message_end',
+    'usage', 'platform_issue_draft', 'billing_switched', 'staging_ready',
+    'staging_failed', 'pr_created', 'spec_updated',
+  ]),
+
+  // Is this event proof that a turn is executing on the session right now?
+  // Terminal statuses (a failure, a stop landing, the finished summary) and
+  // reply text are not: they can trail a turn that has already ended.
+  _isLiveTurnEvent(data) {
+    if (!data) return false;
+    const type = data.type || data.event;
+    if (type === 'cc_progress' || type === 'phase' || type === 'stopping') return true;
+    if (type !== 'status') return false;
+    if (data.turnError || data.stopLanding || data.ccOutput || data.stagingBuild) return false;
+    return DevChat._isLiveRunStatusText(data.text);
+  },
+
+  // The status lines that open a coding run: the spin-up line, then the
+  // "<agent> is running…" line the progress log attaches to. Kept beside the
+  // pairing regex in renderMessages (ACTIVE_CC_STATUS_RE) on purpose — a
+  // "Syncing with main" turn is deliberately NOT here, because openSession
+  // never arms the chat-turn UI for a sync either.
+  _isLiveRunStatusText(text) {
+    return /^(Starting OpenRouter|Spinning up coding agent|Handing this turn to|Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase)/i
+      .test(String(text || ''));
+  },
+
+  // Record live evidence, and adopt the turn when the transcript is idle.
+  // Returns true when the turn was adopted by this call.
+  _noteLiveTurnEvent(data, sessionId = null) {
+    const sid = sessionId != null ? sessionId : data?.sessionId;
+    if (sid != null && Number(sid) !== Number(DevChat.currentSession?.id)) return false;
+    if (!DevChat.TURN_STREAM_EVENTS.has(data?.type || data?.event)) return false;
+    DevChat._lastLiveEventAt = Date.now();
+    if (DevChat.isStreaming || !DevChat.currentSession) return false;
+    if (!DevChat._isLiveTurnEvent(data)) return false;
+    DevChat._adoptLiveTurn(DevChat.currentSession.id);
+    return true;
+  },
+
+  // Re-arm the streaming UI for a turn the server is running that this tab
+  // was not tracking — the same re-entry openSession's busy branch makes,
+  // driven by a live event instead of a snapshot. The poll it starts is the
+  // confirmation: if the server really is idle (a stale replay, say), the
+  // next not-busy answer with nothing live behind it ends the turn again.
+  _adoptLiveTurn(sessionId) {
+    DevChat.isStreaming = true;
+    DevChat._clearStoppingState();
+    DevChat._setStreamingUI(true, DevChat._streamingPhase, { stoppable: DevChat._streamingStoppable });
+    if (!DevChat._seenSeqs) DevChat._seenSeqs = new Set();
+    // The persisted progress row is the live append target again, so the
+    // next cc_progress extends it rather than opening a second log — the
+    // "second OpenRouter agent" of the report was a fresh progress row.
+    if (!DevChat._currentProgressMsg()) {
+      for (let i = DevChat.messages.length - 1; i >= 0; i--) {
+        const m = DevChat.messages[i];
+        if (m.role === 'user' || m.role === 'assistant') break;
+        if (m.role === 'system' && m.progressLog) { m._progress = true; break; }
+      }
+    }
+    DevChat._openResumableStream(sessionId);
+    if (!DevChat._progressPollTimer) DevChat._startProgressPolling(sessionId, []);
+  },
+
+  // May a not-busy /status snapshot requested at `issuedAt` end the turn?
+  // Not while a live channel contradicts it. When the streams are dead (a
+  // platform restart lost the ring buffer, the POST died), the poll is the
+  // only thing that can finish the UI, and it still does.
+  _pollMayEndTurn(issuedAt) {
+    if (DevChat._lastLiveEventAt > issuedAt) return false;
+    if (DevChat._primaryStreamOpen
+        && Date.now() - DevChat._lastLiveEventAt < DevChat.STREAM_QUIET_MS) return false;
+    return true;
+  },
+
+  // Tear the turn down on a `done`/`stopped` that arrived on a shared
+  // channel, once /status agrees the session is idle. A still-busy answer
+  // means the event was another request's (or the platform is still
+  // finishing this turn's tail), so the live UI stays up and the poll owns
+  // the end. Falls back to the old unconditional teardown when /status
+  // cannot be read at all.
+  //
+  // Resolves true when the session is idle now — the caller's cue to reload
+  // the timeline (#446) — and false while it is still busy.
+  async _endTurnFromSharedChannel(sessionId) {
+    const sid = sessionId != null ? sessionId : DevChat.currentSession?.id;
+    if (sid == null || Number(sid) !== Number(DevChat.currentSession?.id)) return false;
+    if (!DevChat.isStreaming) {
+      // Nothing live to tear down. A row this channel painted for the
+      // request that just ended must not keep spinning, and the teardown
+      // still closes whatever the poll's own end left open (its branch
+      // drops `isStreaming` without closing the resumable stream).
+      DevChat._deactivateLastStatus();
+      DevChat._finishStreaming();
+      return true;
+    }
+    let busy = null;
+    try {
+      const res = await fetch(`/api/sessions/${sid}/status`);
+      if (res.ok) {
+        const payload = await res.json();
+        busy = !!payload.busy && !(payload.sync && payload.sync.phase);
+      }
+    } catch { /* unreadable → the event is the best information we have */ }
+    if (Number(sid) !== Number(DevChat.currentSession?.id) || !DevChat.isStreaming) return false;
+    if (busy === true) {
+      // Another request's end. Its own status row (the refusal) is over;
+      // the turn this tab is following is not.
+      console.warn('[dc] shared-channel turn end ignored: the session is still busy');
+      DevChat._deactivateLastStatus();
+      DevChat.renderMessages();
+      return false;
+    }
+    DevChat._removeSpinner();
+    DevChat._deactivateLastStatus();
+    DevChat._finishStreaming();
+    return true;
   },
 
   // Self-healing sync for degraded turns (#446): called from the WS and
@@ -4680,6 +5871,9 @@ const DevChat = {
       DevChat._seenSeqs.add(data._seq);
       DevChat._lastSeenSeq = data._seq;
     }
+    // #2599: same rule as the primary stream — live evidence re-arms an
+    // idle transcript before the event paints.
+    DevChat._noteLiveTurnEvent(data, sessionId);
     const lastAssistantMsg = () => {
       for (let i = DevChat.messages.length - 1; i >= 0; i--) {
         if (DevChat.messages[i].role === 'assistant') return DevChat.messages[i];
@@ -4776,12 +5970,14 @@ const DevChat = {
         break;
       }
       case 'done':
-        DevChat._deactivateLastStatus();
-        DevChat._finishStreaming();
         // A 'done' on the resumable channel means the primary POST SSE never
         // finished this turn — reconcile from the DB so anything that rode
         // only the dead stream shows without a manual refresh (#446).
-        DevChat._reconcileAfterFallbackDone(sessionId);
+        // #2599: this channel is shared by every request on the session, so
+        // the teardown (and that reconcile) waits for /status to agree.
+        DevChat._endTurnFromSharedChannel(sessionId).then((idle) => {
+          if (idle) DevChat._reconcileAfterFallbackDone(sessionId);
+        });
         break;
       case 'phase':
         // Server announces which phase of the turn we're in so the UI
@@ -4797,12 +5993,11 @@ const DevChat = {
         DevChat._enterStoppingState({ by: data.by, stopRequestedAt: data.stopRequestedAt || null });
         break;
       case 'stopped': {
-        DevChat._removeSpinner();
-        DevChat._deactivateLastStatus();
         // The status system-message ("Stopped by @user.") was already
         // persisted and emitted server-side via sendStatus, so no need
-        // to add another row here — just tear down the streaming UI.
-        DevChat._finishStreaming();
+        // to add another row here — just tear down the streaming UI,
+        // once /status confirms the session is idle (#2599).
+        DevChat._endTurnFromSharedChannel(sessionId);
         break;
       }
       case 'assistant_message_end': {
@@ -4908,8 +6103,8 @@ const DevChat = {
         break;
       case 'visuals_ready':
         // #195: same upgrade-in-place as the primary POST-SSE path.
-        if (DevChat.currentSession && data.visuals) {
-          DevChat.currentSession.visuals = data.visuals;
+        if (DevChat.currentSession && Object.prototype.hasOwnProperty.call(data, 'visuals')) {
+          DevChat.currentSession.visuals = data.visuals || null;
           DevChat.renderMessages();
         }
         break;
@@ -5007,6 +6202,8 @@ const DevChat = {
     // #161 completion tier — set by notification arrival (see
     // setCompletionTitle), not by stream end.
     sessionDone: '✅ Session done · ',
+    // #3181: the turn stopped before finishing.
+    sessionStalled: '⏸️ Session stopped · ',
     autoSolveDone: '🤖 Proposal ready · ',
     autoSolveFailed: '⚠️ Proposal failed · ',
   },
@@ -5061,6 +6258,19 @@ const DevChat = {
     DevChat.applyTitleStatus();
   },
 
+  // #2779 follow-up: an agent session's turn wears the same "⏳ Thinking…"
+  // while its conversation is on screen and working. The agent-session store
+  // says when (it knows what is open, this tab's dev-chat scoping does not
+  // apply); this module stays the title's one writer, so the marker composes
+  // with the unread count and the completion tier exactly as the dev chat's.
+  _agentSessionThinking: false,
+  setAgentSessionThinking(on) {
+    const next = !!on;
+    if (DevChat._agentSessionThinking === next) return;
+    DevChat._agentSessionThinking = next;
+    DevChat.applyTitleStatus();
+  },
+
   // Re-derive document.title from the current base title + status
   // marker. Composes with Notifications._updateTitle's "(N) " unread
   // prefix: the count stays outermost — `(2) ⏳ MyApp` — because the
@@ -5080,7 +6290,8 @@ const DevChat = {
     // Precedence (#161): completion marker outranks the streaming
     // status; clearing the completion falls back to the live status, so
     // a still-streaming watched session reverts to "⏳ Thinking…".
-    const active = DevChat._titleCompletion || DevChat._titleStatus;
+    const active = DevChat._titleCompletion || DevChat._titleStatus
+      || (DevChat._agentSessionThinking ? 'thinking' : null);
     const marker = active ? DevChat.TITLE_STATUS_MARKERS[active] : '';
     const next = count + marker + base;
     if (next === full) return;
@@ -5107,6 +6318,12 @@ const DevChat = {
 
   _setStreamingUI(streaming, phase = null, { stoppable = true } = {}) {
     DevChat._composerBusy = !!streaming;
+    // #2812: a model picked mid-turn applies as the turn ends. Deferred a
+    // tick because the finish paths drop `isStreaming` around this call,
+    // not always before it.
+    if (!streaming && DevChat._stagedPick) {
+      setTimeout(() => { DevChat._applyStagedPick(); }, 0);
+    }
     if (streaming) DevChat._startSpendPolling();
     // #2118: an OpenRouter session keeps the turn's figure up after the
     // turn. There is no daily meter for it to be absorbed into, and the
@@ -5162,9 +6379,9 @@ const DevChat = {
     // `_headerVenue`'s `disabled` now, so this republishes the strip rather
     // than writing the attribute React would overwrite on its next paint.
     DevChat._repaintSessionHeader();
-    // The OpenRouter row's "Browse models" is guarded by the same rule and
-    // rides in on the publish above — it used to be a `disabled` written by
-    // hand here, which is a write React would clobber on its next paint.
+    // The grouped model selector is guarded by the same rule and rides in on
+    // the publish above — its old OpenRouter-only control received a
+    // `disabled` write here that React would clobber on its next paint.
     DevChat._syncSaveDraftBtn();
     // Re-render the saved-drafts list so each row's Send button picks up
     // the new busy state (disabled while thinking, live once idle).
@@ -5664,6 +6881,9 @@ const DevChat = {
 
     DevChat._progressPollTimer = setInterval(async () => {
       const spendGeneration = DevChat._spendPollGeneration;
+      // #2599: what this answer is a snapshot OF. A live event that lands
+      // after this instant makes a not-busy answer stale, not authoritative.
+      const issuedAt = Date.now();
       try {
         const res = await fetch(`/api/sessions/${sessionId}/status`);
         if (!res.ok) return;
@@ -5720,6 +6940,13 @@ const DevChat = {
         }
 
         if (!busy) {
+          // #2599: the poll confirms; it never contradicts a live stream.
+          // A not-busy snapshot with the primary stream still talking (or
+          // an event newer than the request) is the other process's — or
+          // the pre-dispatch window's — answer, not this turn's end. The
+          // stream delivers its own `done`; the next quiet poll ends it
+          // otherwise.
+          if (!DevChat._pollMayEndTurn(issuedAt)) return;
           DevChat._stopProgressPolling();
           DevChat.isStreaming = false;
           DevChat._setStreamingUI(false);
@@ -5815,8 +7042,15 @@ const DevChat = {
   // The auto-scroll the old code did on the `<pre>` goes with it: the
   // container's own MutationObserver (`initScrollTracking`) already follows
   // the transcript to the bottom while the reader is locked there.
+  //
+  // Coalesced to one publish per frame (`_publishTranscriptSoon`): a run's
+  // log can land dozens of lines a second over SSE, plus the 3s /status
+  // poll's whole-log replace, and each publish rebuilds and reconciles the
+  // entire transcript model. Nothing reads the DOM after a progress line —
+  // the follow-to-bottom is itself a frame callback — so the frame is the
+  // finest grain anyone could see.
   _patchProgressDom(msg) {
-    DevChat._publishTranscript();
+    DevChat._publishTranscriptSoon();
   },
 
   // Experimental AI progress estimate (opt-in, server-gated). Stores the
@@ -5872,7 +7106,9 @@ const DevChat = {
       delete m._estimateRemaining;
       delete m._countdownTo;
     }
-    DevChat._publishTranscript();
+    // A progress-driven publish, like `_patchProgressDom`'s: the 3s /status
+    // poll lands here on every tick that carries no guess.
+    DevChat._publishTranscriptSoon();
   },
 
   // Is this message the row of a coding run that is CURRENTLY running?
@@ -5946,8 +7182,9 @@ const DevChat = {
     // what painted a guess onto an already-finished Claude Code card. The
     // model carries it on the row it belongs to now, which makes the same
     // guarantee structural: a publish can only paint the run whose message
-    // object holds `_estimate`.
-    DevChat._publishTranscript();
+    // object holds `_estimate`. Coalesced with the progress lines it rides
+    // beside — see `_patchProgressDom`.
+    DevChat._publishTranscriptSoon();
   },
 
   // ── #50: elapsed-time ticker ────────────────────────────────
@@ -6143,7 +7380,7 @@ const DevChat = {
   async promotePR() {
     const session = DevChat.currentSession;
     if (!session || AppView.changeSubmissionState(session).kind !== 'ready') return;
-    return AppView.runChangeAction(session.id, 'promote');
+    return AppView.runChangeAction(session.id, 'promote', session);
   },
 
   // Append a live agent-suggested platform-report card to the timeline.
@@ -6283,7 +7520,7 @@ const DevChat = {
    * copy with markup in it, and escaping them now would be a visible change.
    */
   _statusRow(msg, msgIdx, over) {
-    return {
+    return DevChat._withRunningLabel({
       t: 'status',
       key: DevChat._rowKey(msg, msgIdx),
       icon: msg._active ? 'spinner' : 'check',
@@ -6292,7 +7529,7 @@ const DevChat = {
       elapsed: DevChat._elapsedSpec(msg),
       stamp: DevChat._rowStamp(msg),
       ...over,
-    };
+    }, msg);
   },
 
   // The attachment strip inside a user bubble. It is a SIBLING of the
@@ -6471,6 +7708,9 @@ const DevChat = {
     // live log we want to attach.
     const ACTIVE_CC_STATUS_RE
       = /^(Claude Code is (running|making changes)|(?:Codex|OpenRouter) is running|Scout reading the codebase|Syncing with main)/i;
+    // The line a run opens with, before the worker has started the agent —
+    // see the live-spin-up fallback below (#2599).
+    const SPIN_UP_STATUS_RE = /^(Starting OpenRouter|Spinning up coding agent|Handing this turn to)/i;
     // Helper: is this a viable status candidate for pairing? Stop on
     // any non-system row (status/progress pairs always live inside a
     // single dispatch turn) and skip rows that already carry their
@@ -6513,6 +7753,24 @@ const DevChat = {
           const ok = isPairableStatus(s);
           if (ok === null) break;
           if (ok === true) { paired = s; break; }
+        }
+      }
+
+      // #2599: still nothing, and the run is spinning up. The worker's
+      // bootstrap lines (clone / checkout) arrive BEFORE the "… is running…"
+      // line exists, under a spin-up line that is still live. Attach them
+      // to that line so the log opens under the arc that is already turning,
+      // instead of as an orphan "OpenRouter output" row wearing a ✓ for the
+      // first seconds of the run (the report's third symptom). Only a LIVE
+      // spin-up line qualifies: a historical run that died at bootstrap
+      // keeps its orphan row exactly as before.
+      if (!paired) {
+        for (let j = i - 1; j >= 0; j--) {
+          const s = DevChat.messages[j];
+          if (s.role !== 'system') break;
+          if (s.progressLog || s.ccLog || s.ccOutput || s.stagingUrl || s.specPreview) continue;
+          if (s._active && SPIN_UP_STATUS_RE.test(String(s.content || ''))) { paired = s; }
+          break;
         }
       }
 
@@ -6671,14 +7929,18 @@ const DevChat = {
           // #195: before/after tiles. Visuals are latest-set-per-session, so
           // only the NEWEST staging card carries them.
           let visualsHtml = '';
-          if (window.AppView && session?.visuals) {
+          if (window.AppView && (session?.visualEvidence || session?.visuals)) {
             let latest = null;
             for (let vi = DevChat.messages.length - 1; vi >= 0; vi--) {
               if (DevChat.messages[vi].stagingUrl || DevChat.messages[vi].changesReady) {
                 latest = DevChat.messages[vi]; break;
               }
             }
-            if (latest === msg && msg.stagingUrl) visualsHtml = AppView.visualsTilesHtml(session.visuals);
+            if (latest === msg && msg.stagingUrl) {
+              visualsHtml = session.visualEvidence
+                ? AppView.visualEvidenceHtml(session.visualEvidence, { sessionId: session.id })
+                : AppView.visualsTilesHtml(session.visuals);
+            }
           }
           // #405: driven by the shared lifecycle helper so the card tracks
           // In vote → Passed → Merging… → ✓ Merged rather than freezing on
@@ -6695,7 +7957,7 @@ const DevChat = {
           // already crossed into group voting. Keep the completed control on
           // every post-proposal state, disabled and handler-free; unrelated
           // terminal states still render no proposal action.
-          const propose = session && ['active', 'promoted', 'merging', 'merged'].includes(session.status)
+          const propose = session && ['active', 'paused', 'promoted', 'merging', 'merged'].includes(session.status)
             ? AppView.changeSubmissionState(session) : null;
           rows.push({
             t: 'changes', key,
@@ -6724,7 +7986,7 @@ const DevChat = {
             : { currentLabel: '', steps: 0, phaseLabel: '' };
           const cohortSince = msg._active && msg.created_at
             ? Math.min(new Date(msg.created_at).getTime(), Date.now()) : NaN;
-          rows.push({
+          rows.push(DevChat._withRunningLabel({
             t: 'attached', key,
             // #647: the open default follows the STATUS row, not the attached
             // progress row — keying off `msg` keeps it aligned with the
@@ -6748,7 +8010,7 @@ const DevChat = {
               persistId: DevChat._detailsId(attachedProgress, 'progress'),
               text: (attachedProgress.progressLog || []).join('\n'),
             },
-          });
+          }, msg));
           return;
         }
         // Post-turn ccOutput — the markdown summary the worker emits when the
@@ -6817,10 +8079,10 @@ const DevChat = {
           });
           return;
         }
-        rows.push({
+        rows.push(DevChat._withRunningLabel({
           t: 'status', key, icon: msg._active ? 'spinner' : 'check',
           html: msg.content || '', text: msg.content || '', elapsed, stamp,
-        });
+        }, msg));
         return;
       }
 
@@ -6867,8 +8129,14 @@ const DevChat = {
         t: 'msg', key, who: isUser ? 'user' : 'ai',
         model: msg.model ? `${msg.model.split('-').slice(0, 2).join('-')}${DevChat._messageCostLabel(msg)}` : '',
         stamp: msgStamp,
+        // The live row's text is still growing, so each republish mid-turn
+        // would cache one more prefix of it that nobody asks for again. It
+        // renders uncached; the `renderMessages` after the seal caches the
+        // final text like any other row's.
         contentHtml: content.trim()
-          ? DevChat.renderMarkdown(content)
+          ? (msgIdx === liveIdx
+            ? DevChat.renderMarkdown(content, { cache: false })
+            : DevChat.renderMarkdown(content))
           : '<span style="color:var(--text-muted);font-style:italic">(no visible reply, see reasoning below)</span>',
         ...(msgIdx === liveIdx ? { live: true } : null),
         ...(isUser ? { attachments: DevChat._attachmentRows(msg) } : null),
@@ -6881,13 +8149,27 @@ const DevChat = {
       });
     });
 
+    const devFlowHtml = DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml();
     return {
       rows,
       // #1281: in a hand-off venue the walkthrough IS the launchpad and
       // renders in the composer's place instead — rendering it here as well
       // would show it twice.
-      devFlowHtml: DevChat._launchpadVenue() ? '' : DevChat._devFlowHtml(),
+      devFlowHtml,
+      // #1942: an open session with nothing in it yet. The pane used to be
+      // blank above the composer, so a new session looked like a page that
+      // had not loaded. Only for a session that is actually open (its
+      // messages have arrived), idle, and not already showing a walkthrough
+      // or a hand-off launchpad, which answer "what now?" themselves. It
+      // stays until the first message lands, so it is persistent rather than
+      // a toast.
+      empty: !!session && !rows.length && !DevChat.isStreaming && !devFlowHtml && !DevChat._launchpadVenue(),
       activity: DevChat._activitySpec(),
+      // #1889: whether a turn is in flight. The transcript keeps the latest
+      // Changes card in its turn's slot while the run's tail is painting and
+      // draws it after the last row once the chat is idle — see
+      // `DevChatTranscript` in ./transcript.tsx.
+      busy: !!DevChat.isStreaming,
     };
   },
 
@@ -6925,6 +8207,8 @@ const DevChat = {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.publishTranscript) return;
+    // This publish carries everything a queued progress publish would have.
+    DevChat._cancelTranscriptPublishSoon();
     react.publishTranscript(DevChat._transcriptView());
 
     // The two FOREIGN cards in the transcript — `DevFlowSelect`'s walkthrough
@@ -6957,7 +8241,42 @@ const DevChat = {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.publishTranscript) return;
+    DevChat._cancelTranscriptPublishSoon();
     react.publishTranscript(DevChat._transcriptView());
+  },
+
+  /**
+   * `_publishTranscript`, at most once per animation frame.
+   *
+   * For the PROGRESS-driven republishes only — a coding run's log lines, the
+   * 3s /status poll's log replace and its AI estimate — which can arrive many
+   * times inside one frame and of which only the last is ever painted. Every
+   * other caller stays synchronous: `renderMessages` is followed by DOM reads
+   * (`scrollToBottom`, the cards' `wire()` scans) that expect the rows to be
+   * in the document already, and a synchronous publish supersedes a queued
+   * one, which is cancelled.
+   *
+   * Without `requestAnimationFrame` (the Node sandboxes the tests drive) it
+   * publishes on the spot, which is the ordering those callers had before.
+   */
+  _transcriptPublishRaf: null,
+
+  _publishTranscriptSoon() {
+    if (DevChat._transcriptPublishRaf != null) return;
+    if (typeof requestAnimationFrame !== 'function') {
+      DevChat._publishTranscript();
+      return;
+    }
+    DevChat._transcriptPublishRaf = requestAnimationFrame(() => {
+      DevChat._transcriptPublishRaf = null;
+      DevChat._publishTranscript();
+    });
+  },
+
+  _cancelTranscriptPublishSoon() {
+    if (DevChat._transcriptPublishRaf == null) return;
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(DevChat._transcriptPublishRaf);
+    DevChat._transcriptPublishRaf = null;
   },
 
   _onQaChipClick(chip) {
@@ -7448,12 +8767,26 @@ const DevChat = {
   // — which is what keeps a session's disclosures where the reader left them
   // across a reload, not just across a repaint.
   _detailsOpen(persistId, defaultOpen) {
+    if (DevChat._shotOpensRunLog(persistId)) return true;
     const sid = DevChat.currentSession?.id;
     if (!sid || !persistId) return !!defaultOpen;
     const state = DevChat._readDetailsState(sid);
     if (state[persistId] === 1) return true;
     if (state[persistId] === 0) return false;
     return !!defaultOpen;
+  },
+
+  // Screenshot-state deep link `?shot=cc-log-open` (#1944): the coding-run
+  // cards open on load, so a declared check and a capture can reach the
+  // open card — its flipped chevron and its log panel — without a click.
+  // Ungated by environment like ?shot=credits-low: it reads nothing and
+  // writes nothing (the persisted map is not touched), and any other
+  // `?shot=` value leaves the card on its stored state.
+  _shotOpensRunLog(persistId) {
+    if (!/:ccrun(orphan)?$/.test(String(persistId || ''))) return false;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch { return false; }
+    return shot === 'cc-log-open';
   },
 
   _detailsToggled(persistId, defaultOpen, open) {
@@ -7489,6 +8822,14 @@ const DevChat = {
     if (!DevChat._markdownReady) {
       const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const escAttr = (s) => esc(s).replace(/"/g, '&quot;');
+      const inlineImage = (src, alt) => {
+        const image = `<img class="dc-inline-img" src="${escAttr(src)}" alt="${escAttr(alt)}" loading="lazy">`;
+        // Preserve an explicit Markdown image link. Otherwise make the
+        // scaled issue screenshot itself the link to its original asset, so
+        // a click, tap or keyboard activation opens the full-size image.
+        if (DevChat._renderImageWithinLink) return image;
+        return `<a class="dc-inline-img-link" href="${escAttr(src)}" target="_blank" rel="noopener noreferrer" aria-label="View image full size">${image}</a>`;
+      };
 
       marked.use({
         breaks: true,
@@ -7527,7 +8868,7 @@ const DevChat = {
               const src = srcMatch ? (srcMatch[1] ?? srcMatch[2] ?? '') : '';
               const alt = altMatch ? (altMatch[1] ?? altMatch[2] ?? '') : '';
               if (/^https:\/\//i.test(src) || /^\/[^/]/.test(src)) {
-                return `<img class="dc-inline-img" src="${escAttr(src)}" alt="${escAttr(alt)}" loading="lazy">`;
+                return inlineImage(src, alt);
               }
             }
             return esc(text);
@@ -7592,8 +8933,16 @@ const DevChat = {
             return `<p class="dc-p">${this.parser.parseInline(tokens)}</p>`;
           },
           link({ href, title, tokens }) {
-            const inner = this.parser.parseInline(tokens);
-            if (!/^https?:\/\//i.test(href)) return inner;
+            const linkOk = /^https?:\/\//i.test(href);
+            const previous = !!DevChat._renderImageWithinLink;
+            if (linkOk) DevChat._renderImageWithinLink = true;
+            let inner;
+            try {
+              inner = this.parser.parseInline(tokens);
+            } finally {
+              DevChat._renderImageWithinLink = previous;
+            }
+            if (!linkOk) return inner;
             return `<a href="${href}" target="_blank" rel="noopener noreferrer">${inner}</a>`;
           },
           image({ href, title, text }) {
@@ -7607,7 +8956,7 @@ const DevChat = {
             const inlineOk = DevChat._renderImagesInline
               && (/^https:\/\//i.test(href) || (/^\/[^/]/.test(href)));
             if (inlineOk) {
-              return `<img class="dc-inline-img" src="${escAttr(href)}" alt="${escAttr(text || '')}" loading="lazy">`;
+              return inlineImage(href, text || '');
             }
             if (!/^https?:\/\//i.test(href)) return safeText;
             return `<a href="${href}" target="_blank" rel="noopener noreferrer">${safeText || esc(href)}</a>`;
@@ -7620,7 +8969,7 @@ const DevChat = {
           node.setAttribute('target', '_blank');
           node.setAttribute('rel', 'noopener noreferrer');
           const href = node.getAttribute('href') || '';
-          if (href && !/^https?:\/\//i.test(href)) {
+          if (href && !/^https?:\/\//i.test(href) && !/^\/[^/]/.test(href)) {
             node.removeAttribute('href');
           }
         }
@@ -7635,23 +8984,133 @@ const DevChat = {
     // inline — the flag is read by the global image renderer above during
     // this synchronous parse, and 'img' joins the sanitizer allowlist.
     const allowImages = !!opts.images;
+
+    // The cache (see `_mdCacheGet`). `_renderImageWithinLink` is the one
+    // piece of module state the renderers read that no option sets: the
+    // `link` renderer raises it for the duration of its own children and the
+    // `finally` below lowers it, so it is always false on entry — unless a
+    // renderer ever re-entered this function mid-parse, which is exactly the
+    // case whose output the key could not describe. That call renders
+    // uncached rather than being answered from a key that does not hold.
+    const cacheable = opts.cache !== false && typeof text === 'string'
+      && !DevChat._renderImageWithinLink;
+    const flags = `${breaks ? 'b' : '-'}${allowImages ? 'i' : '-'}`;
+    if (cacheable) {
+      const hit = DevChat._mdCacheGet(text, flags);
+      if (hit !== undefined) return hit;
+    }
+
     DevChat._renderImagesInline = allowImages;
     let html;
     try {
       html = marked.parse(text, { breaks });
     } finally {
       DevChat._renderImagesInline = false;
+      DevChat._renderImageWithinLink = false;
     }
 
-    return DOMPurify.sanitize(html, {
+    const out = DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
         'tr', 'th', 'td', 'hr', 'del', ...(allowImages ? ['img'] : [])],
       // 'start' keeps non-1 ordered lists numbering correctly (F2).
       ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start',
-        ...(allowImages ? ['src', 'alt', 'loading'] : [])],
+        ...(allowImages ? ['src', 'alt', 'loading', 'aria-label'] : [])],
       ALLOW_DATA_ATTR: false,
     });
+    if (cacheable && typeof out === 'string') DevChat._mdCachePut(text, flags, out);
+    return out;
+  },
+
+  // ── The rendered-markdown cache ───────────────────────────────────
+  //
+  // `_transcriptView` renders EVERY message on EVERY republish — a status
+  // line, a progress line, an estimate, a chip tap — and each render was a
+  // full `marked.parse` + `DOMPurify.sanitize` of text that had not changed.
+  // On a long session that is most of a republish's cost, paid on a phone
+  // many times a second while a coding run streams its log.
+  //
+  // The output is a pure function of the text and of what the key names:
+  //
+  //   - `breaks`, which marked reads per call;
+  //   - `images`, which the `image` and `html` renderers read (through
+  //     `_renderImagesInline`) and which widens the sanitizer's allowlists;
+  //   - `_renderImageWithinLink`, which is not keyed but EXCLUDED: see the
+  //     call site — it is false on every call that reaches the cache.
+  //
+  // Everything else the pipeline reads is fixed once `_markdownReady` is set:
+  // the renderers are registered once, DOMPurify's single hook is added once,
+  // and the sanitizer config is rebuilt from `allowImages` on every call. Only
+  // this module registers marked renderers or DOMPurify hooks. The one thing
+  // that could still change underneath — a different `marked` or `DOMPurify`
+  // object appearing on the page — empties the cache (`_mdCacheLibs`), and
+  // the fallback path that runs without them is never cached.
+  //
+  // Bounded both ways, least-recently-used first. The entry bound is generous
+  // on purpose: a republish walks the whole transcript in order, and an LRU
+  // smaller than the transcript it serves misses on EVERY row of every walk.
+  // The keys are mostly the very strings `DevChat.messages` already holds, so
+  // what an entry adds is its html, which the DOM is holding a copy of too.
+  //
+  // Streaming never writes here: a live turn's committed prefix changes on
+  // every newline and would fill the cache with prefixes of one message. See
+  // `_renderCommittedMarkdown`.
+  _MD_CACHE_MAX_ENTRIES: 1500,
+  _MD_CACHE_MAX_CHARS: 6000000,
+  /** Map<text, { size, html: { [flags]: string } }>, in LRU order. */
+  _mdCache: null,
+  _mdCacheChars: 0,
+  _mdCacheLibs: null,
+
+  _mdCacheGet(text, flags) {
+    const libs = DevChat._mdCacheLibs;
+    if (!DevChat._mdCache || !libs || libs[0] !== marked || libs[1] !== DOMPurify) {
+      DevChat._mdCacheClear();
+      return undefined;
+    }
+    const entry = DevChat._mdCache.get(text);
+    if (!entry || !Object.prototype.hasOwnProperty.call(entry.html, flags)) return undefined;
+    // Most recently used moves to the end of the Map's insertion order.
+    DevChat._mdCache.delete(text);
+    DevChat._mdCache.set(text, entry);
+    return entry.html[flags];
+  },
+
+  _mdCachePut(text, flags, html) {
+    if (!DevChat._mdCache) DevChat._mdCacheClear();
+    const cache = DevChat._mdCache;
+    let entry = cache.get(text);
+    if (entry) {
+      cache.delete(text);
+    } else {
+      entry = { size: text.length, html: Object.create(null) };
+      DevChat._mdCacheChars += entry.size;
+    }
+    if (Object.prototype.hasOwnProperty.call(entry.html, flags)) {
+      DevChat._mdCacheChars -= entry.html[flags].length;
+      entry.size -= entry.html[flags].length;
+    }
+    entry.html[flags] = html;
+    entry.size += html.length;
+    DevChat._mdCacheChars += html.length;
+    cache.set(text, entry);
+    // Evict from the least-recently-used end. The entry just written is the
+    // newest, so it survives unless it alone is over the character budget.
+    for (const [oldest, old] of cache) {
+      if (cache.size <= DevChat._MD_CACHE_MAX_ENTRIES
+        && DevChat._mdCacheChars <= DevChat._MD_CACHE_MAX_CHARS) break;
+      cache.delete(oldest);
+      DevChat._mdCacheChars -= old.size;
+    }
+  },
+
+  _mdCacheClear() {
+    DevChat._mdCache = new Map();
+    DevChat._mdCacheChars = 0;
+    DevChat._mdCacheLibs = [
+      typeof marked === 'undefined' ? undefined : marked,
+      typeof DOMPurify === 'undefined' ? undefined : DOMPurify,
+    ];
   },
 
   // ── The live bubble (#dc-messages' one 60fps writer) ──────────────
@@ -7720,22 +9179,43 @@ const DevChat = {
   _writeStreamingHtml(key, fullText, breaks, final) {
     let html;
     if (final) {
+      // The sealed text IS cached: the `renderMessages` that follows the seal
+      // renders the same content for the row model and finds it here.
       html = fullText ? DevChat.renderMarkdown(fullText, { breaks }) : '';
     } else if (typeof renderStreamingHtml === 'function') {
       html = renderStreamingHtml(
         fullText,
-        (md) => DevChat.renderMarkdown(md, { breaks }),
+        (md) => DevChat._renderCommittedMarkdown(md, breaks),
         escapeHtml
       );
     } else {
       // Helper script failed to load — degrade to the plain full render.
-      html = DevChat.renderMarkdown(fullText, { breaks });
+      html = DevChat.renderMarkdown(fullText, { breaks, cache: false });
     }
     if (DevChat._streamHtml === html) return;
     DevChat._streamHtml = html;
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (react && react.publishStream) react.publishStream({ key, html });
+  },
+
+  // The live bubble's FINISHED lines, rendered once per newline.
+  //
+  // `renderStreamingHtml` splits the text at its last newline and renders the
+  // part before it as markdown, every frame. That part only changes when a
+  // newline arrives, so the other frames of a line were re-parsing and
+  // re-sanitizing the whole reply so far to get the same html back. One slot
+  // is the whole cache this needs — the committed text only ever grows — and
+  // it deliberately bypasses `renderMarkdown`'s shared cache, which would
+  // otherwise gain a new, never-read-again prefix of this reply per line.
+  _streamCommitted: null,
+
+  _renderCommittedMarkdown(md, breaks) {
+    const last = DevChat._streamCommitted;
+    if (last && last.breaks === breaks && last.text === md) return last.html;
+    const html = DevChat.renderMarkdown(md, { breaks, cache: false });
+    DevChat._streamCommitted = { text: md, breaks, html };
+    return html;
   },
 
   // Flush any pending throttled render and re-render the active streaming
@@ -7763,6 +9243,7 @@ const DevChat = {
     DevChat._streamPending = null;
     if (pend) DevChat._writeStreamingHtml(pend.key, pend.fullText, pend.breaks, true);
     DevChat._streamHtml = null;
+    DevChat._streamCommitted = null;
   },
 
   _lockedToBottom: true,
@@ -7773,15 +9254,31 @@ const DevChat = {
   // regardless of saved scrollTop).
   _savedScrollBySession: {},
 
+  // The `#dc-messages` nodes `initScrollTracking` has already bound. See there.
+  _scrollTrackedNodes: null,
+
   initScrollTracking() {
     const container = document.getElementById('dc-messages');
     if (!container) return;
 
-    // Click delegation for inline spec preview cards. We rebind on
-    // every renderChatView re-render (since #dc-messages itself is
-    // recreated when the user navigates between sessions), so a single
-    // listener here is enough — innerHTML rewrites inside renderMessages
-    // don't break it.
+    // ONCE PER NODE. `renderChatView` calls this on every render — some
+    // thirty callers, a status poll among them — and `#dc-messages` is a
+    // React element now that survives those renders: it is replaced only
+    // when the session view itself remounts (a session switch). Binding per
+    // call stacked a click, a keydown and a scroll listener and a
+    // MutationObserver onto the same node each time, so a Q/A chip tap ran
+    // its handler once per render the screen had seen, and every mutation
+    // scheduled one scroll write per observer. A new node is a new entry
+    // here, and the old one takes its listeners with it when it goes.
+    const bound = DevChat._scrollTrackedNodes
+      || (DevChat._scrollTrackedNodes = new WeakSet());
+    if (bound.has(container)) return;
+    bound.add(container);
+    DevChat._transcriptTouchAt = 0;
+
+    // Click delegation for inline spec preview cards, Q/A chips and their
+    // actions. The host outlives every repaint of its contents, so one
+    // delegated listener on it covers every row a later publish adds.
     container.addEventListener('click', (e) => {
       // Q/A chips (#32) — delegated like the spec cards, so innerHTML
       // rewrites inside renderMessages don't drop the handlers.
@@ -7815,14 +9312,111 @@ const DevChat = {
           lockedToBottom: atBottom,
         };
       }
-    });
-    // Watch for DOM changes (collapsibles expanding, new content) and auto-scroll
-    const observer = new MutationObserver(() => {
-      if (DevChat._lockedToBottom) {
-        requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
-      }
+    }, { passive: true });
+    // A finger on the transcript. See `_transcriptTouched`.
+    const touched = () => { DevChat._transcriptTouchAt = Date.now(); };
+    const released = (e) => {
+      if (!e || !e.touches || !e.touches.length) DevChat._transcriptTouchAt = 0;
+    };
+    container.addEventListener('touchstart', touched, { passive: true });
+    container.addEventListener('touchmove', touched, { passive: true });
+    container.addEventListener('touchend', released, { passive: true });
+    container.addEventListener('touchcancel', released, { passive: true });
+    // Watch for DOM changes (new content) and auto-scroll.
+    //
+    // #1944: NOT for a disclosure the reader just toggled. This used to
+    // follow every mutation, the `open` flip included, so opening the
+    // coding-run card while pinned to the bottom scrolled the transcript
+    // straight past the card — on a phone-height pane the head, with the
+    // toggle on it, went off the top and what stayed in view was the log
+    // panel's stale first lines. The card's own toggle handler now brings
+    // the card into view (features/dev-chat/transcript.tsx); a batch that is
+    // nothing but that flip is the reader's, and the transcript leaves it.
+    const observer = new MutationObserver((records) => {
+      if (DevChat._isDisclosureToggle(records)) return;
+      if (DevChat._lockedToBottom) DevChat._followToBottom(container, false);
     });
     observer.observe(container, { childList: true, subtree: true, attributes: true });
+  },
+
+  // ── Following the transcript to the bottom ────────────────────────
+  //
+  // ONE pending frame, however many asked for it. A streamed frame, a
+  // republish and the MutationObserver batch each produce used to queue a
+  // write of their own, and a streaming turn asks on every token.
+  //
+  // The write is INSTANT. `.dc-messages-container` animated every
+  // programmatic scroll (`scroll-behavior: smooth`), so while a turn streamed
+  // the pane was always mid-animation towards a bottom that had already
+  // moved — the stutter the phone audit measured. A deliberate jump the
+  // reader asked for is animated where it is made, explicitly
+  // (`revealDisclosure` in ./log-follow.ts); following new content is not
+  // one.
+  //
+  // Both conditions are re-read when the frame runs rather than trusted from
+  // when it was asked for: a reader who scrolled up in between has unlocked,
+  // and a finger on the pane is the reader's, not the stream's.
+  _followRaf: null,
+  _followTarget: null,
+  _followForce: false,
+
+  _followToBottom(container, force) {
+    DevChat._followTarget = container;
+    if (force) DevChat._followForce = true;
+    if (DevChat._followRaf != null) return;
+    const run = () => {
+      DevChat._followRaf = null;
+      const el = DevChat._followTarget;
+      const forced = DevChat._followForce;
+      DevChat._followTarget = null;
+      DevChat._followForce = false;
+      if (!el) return;
+      if (!forced && (!DevChat._lockedToBottom || DevChat._transcriptTouched())) return;
+      DevChat._jumpToBottom(el);
+    };
+    if (typeof requestAnimationFrame === 'function') {
+      DevChat._followRaf = requestAnimationFrame(run);
+    } else {
+      run();
+    }
+  },
+
+  /** An instant jump to the end, whatever the stylesheet says. */
+  _jumpToBottom(el) {
+    const top = el.scrollHeight;
+    if (typeof el.scrollTo === 'function') el.scrollTo({ top, behavior: 'instant' });
+    else el.scrollTop = top;
+  },
+
+  // Is a finger on the transcript right now? A follow that fires under it
+  // yanks the pane out from under the drag that is about to unlock it — the
+  // scroll event that clears `_lockedToBottom` only comes once the drag has
+  // travelled 100px. So the follow waits while a touch is down and moving.
+  //
+  // SELF-HEALING, because a touch can lose its end: `touchend` is dispatched
+  // to the node the touch STARTED on, and when a republish replaces that
+  // node (the live bubble does, every frame) the event goes to a detached
+  // element and never bubbles here. A touch that has not moved for a second
+  // no longer counts, so a lost end cannot switch following off for good.
+  _transcriptTouchAt: 0,
+  _TRANSCRIPT_TOUCH_STALE_MS: 1000,
+
+  _transcriptTouched() {
+    const at = DevChat._transcriptTouchAt;
+    return !!at && Date.now() - at < DevChat._TRANSCRIPT_TOUCH_STALE_MS;
+  },
+
+  // A MutationObserver batch that is ONLY <details> open/closed flips. New
+  // rows, streamed text and every other attribute still count as content
+  // the transcript follows; an empty batch is not a toggle.
+  _isDisclosureToggle(records) {
+    if (!records || !records.length) return false;
+    for (const r of records) {
+      if (!r || r.type !== 'attributes' || r.attributeName !== 'open') return false;
+      const tag = r.target && r.target.tagName;
+      if (String(tag || '').toLowerCase() !== 'details') return false;
+    }
+    return true;
   },
 
   // Apply a previously saved scroll position for the current session, if
@@ -7830,12 +9424,12 @@ const DevChat = {
   // behavior on first entry into a session).
   //
   // We use scrollTo({ behavior: 'instant' }) rather than assigning
-  // .scrollTop directly because .dc-messages-container has CSS
-  // `scroll-behavior: smooth` set (so streaming messages glide nicely).
-  // That CSS rule applies to .scrollTop assignments too, which would
-  // otherwise turn the tab-switch restore into a multi-second animated
-  // scroll from 0 → scrollHeight. 'instant' overrides the CSS just for
-  // this one programmatic jump.
+  // .scrollTop directly because a CSS `scroll-behavior: smooth` on
+  // .dc-messages-container (it carried one, so streaming messages would
+  // glide) applies to .scrollTop assignments too, which turned the
+  // tab-switch restore into a multi-second animated scroll from
+  // 0 → scrollHeight. Saying 'instant' here keeps this jump instant
+  // whatever the stylesheet says — the same reason `_jumpToBottom` does.
   restoreSessionScroll() {
     const container = document.getElementById('dc-messages');
     if (!container) return;
@@ -7851,12 +9445,12 @@ const DevChat = {
     }
   },
 
+  // Every caller that just changed the transcript asks for this; they all
+  // share the one pending frame `_followToBottom` keeps.
   scrollToBottom(force) {
     const container = document.getElementById('dc-messages');
     if (!container) return;
-    if (force || DevChat._lockedToBottom) {
-      requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; });
-    }
+    if (force || DevChat._lockedToBottom) DevChat._followToBottom(container, !!force);
   },
 
   // ── Session list ──────────────────────────────────────────
@@ -7876,28 +9470,21 @@ const DevChat = {
     // row matches the board and the cog drawer without widening that payload.
     const busy = (typeof window !== 'undefined' && window.SessionState)
       ? SessionState.isBusy(s.id, false) : false;
+    // No Pause and no Resume (#2779 follow-up): pausing is the platform's
+    // bookkeeping. It pauses an idle session by itself, pauses the least
+    // recently used one when new work needs the slot, and resumes a session
+    // when it is opened or messaged, so neither is a step anybody takes.
+    //
     // Promoted sessions can't be demoted to 'paused' (their PR must stay
     // votable), but a warm worker can still be freed — same endpoint, server
     // keeps status 'promoted' (keptPromoted). Once the worker is gone
     // (`warm` false) there's nothing left to free, so no button.
     const actions = [];
-    if (s.status === 'active') {
-      actions.push({
-        key: 'pause', label: 'Pause', busy: 'Pausing…', tone: 'quiet',
-        fn: '_sessionListPause', args: [s.id, 'pause'],
-      });
-    }
     if (s.status === 'promoted' && s.warm) {
       actions.push({
         key: 'free', label: 'Free worker', busy: 'Freeing…', tone: 'quiet',
         title: 'Frees the AI worker. The PR stays up for voting.',
         fn: '_sessionListPause', args: [s.id, 'pause'],
-      });
-    }
-    if (s.status === 'paused') {
-      actions.push({
-        key: 'resume', label: 'Resume', busy: 'Resuming…', tone: 'go',
-        fn: '_sessionListPause', args: [s.id, 'resume'],
       });
     }
     if (s.status === 'archived') {
@@ -7919,11 +9506,12 @@ const DevChat = {
         fn: '_sessionListArchive', args: [s.id, title],
       });
     }
+    // A paused session is shown as the active one it is.
+    const shownStatus = s.status === 'paused' ? 'active' : s.status;
     return {
       id: s.id,
-      status: s.status,
-      statusTone: (s.status === 'active' || s.status === 'promoted' || s.status === 'paused')
-        ? s.status : 'other',
+      status: shownStatus,
+      statusTone: (shownStatus === 'active' || shownStatus === 'promoted') ? shownStatus : 'other',
       title,
       branch: s.branch_name || '',
       busy,
@@ -7971,6 +9559,25 @@ const DevChat = {
       DevChat.renderSessionList();
     }
     await DevChat.loadActiveSessions();
+    // #1904: the strip's ⋯ ends here too, and it acts on the OPEN session.
+    DevChat._syncCurrentSessionFromList();
+  },
+
+  // #1904: fold the reloaded row's status back into the open session and
+  // repaint the strip. The list's own buttons never needed this — their row
+  // is replaced by the publish above — but the strip's ⋯ calls the same
+  // methods on `currentSession`, whose `status` would otherwise still
+  // describe the session from before the click, leaving Archive on offer for
+  // a session that was just archived. (`_sessionListPause` already sets the
+  // paused status ahead of its round trip and keeps doing so; this is the
+  // answer for the other two.)
+  _syncCurrentSessionFromList() {
+    const current = DevChat.currentSession;
+    if (!current || !Array.isArray(DevChat.sessions)) return;
+    const row = DevChat.sessions.find((s) => Number(s.id) === Number(current.id));
+    if (!row) return;
+    current.status = row.status;
+    DevChat._repaintSessionHeader();
   },
 
   // Pause / Free-worker / Resume. One method, dispatched on `action`, so we
@@ -8112,10 +9719,16 @@ const DevChat = {
       localAgent: DevChat._localAgent,
     });
     if (!v) return null;
+    // #2607: on an unsent change nothing is being built yet, so the tooltip
+    // leads with the tense that is true. Everything after it is the same
+    // sentence, because the choice on offer is the same one.
+    const lead = session?.pending
+      ? 'This change will be built in ' + v.label + '. '
+      : 'Building in ' + v.label + '. ';
     return {
       id: v.id,
       label: v.label,
-      title: 'Building in ' + v.label + '. ' + v.blurb
+      title: lead + v.blurb
         + ' Pick a different venue: on Homeroom, on your computer, or handed to'
         + ' Claude Code or Codex on the web.',
       // Mid-turn the venue is not changeable: a running turn holds the
@@ -8134,6 +9747,42 @@ const DevChat = {
   _sessionHeaderView() {
     const session = DevChat.currentSession;
     const s = session || {};
+    // #2241: an unsent change has nothing for this strip to state but its
+    // own name. No PR (the "New change" caption is already the resting
+    // state of that slot), no lifecycle pill and no ⋯ menu — every row
+    // behind it is an owner-scoped call against a row that does not exist.
+    //
+    // #2607: the venue dropdown is the ONE exception, and it used to be
+    // excluded with them. The reasoning was that a venue is resolved by the
+    // server when the row is created (#1348), so before that the honest
+    // thing was to say nothing rather than guess — but saying nothing also
+    // took away the only control that CHOOSES. A new change is exactly where
+    // "where should this be built?" is still an open question, and the one
+    // screen that never offered it was the one screen it belonged on: the
+    // answer was reachable only by sending a first message into the venue
+    // you did not want and switching afterwards.
+    //
+    // So the dropdown paints here too, from the same `_headerVenue` spec the
+    // real row uses. What it STATES is a default, not a stored fact —
+    // `_currentVenueId()` derives it from the placeholder, so it names the
+    // in-chat venue this change would be created in — and picking from it
+    // is what `openVenueSheet` now handles for an unsent change: an in-chat
+    // pick stages the choice and creates nothing, and a pick that needs a
+    // row creates it first (see `_materializePendingSessionForVenue`).
+    if (s.pending) {
+      return {
+        sessionId: null,
+        busy: false,
+        title: 'New change',
+        branch: '',
+        pr: null,
+        prTitle: '',
+        newChangeTitle: '',
+        life: null,
+        venue: DevChat._headerVenue(session),
+        actions: [],
+      };
+    }
     return {
       sessionId: s.id || null,
       // Streamlined Concept: the strip's Building chip. `_composerBusy` is
@@ -8144,13 +9793,42 @@ const DevChat = {
       branch: s.branch_name || '',
       pr: s.pr_number || null,
       prTitle: s.pr_number
-        ? `This session's pull request. Every change in this chat goes to PR #${s.pr_number}. `
+        ? `Open this change's proposal card (PR #${s.pr_number}). Every change in this chat goes to PR #${s.pr_number}. `
           + 'Use “Start a new change” for separate work.'
         : '',
       newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
       life: DevChat._headerLife(session),
       venue: DevChat._headerVenue(session),
+      // #1904: the strip's ⋯ menu — see _headerActions.
+      actions: DevChat._headerActions(session),
     };
+  },
+
+  // The rows behind the strip's ⋯ (#1904).
+  //
+  // THE LIST'S rows, not a second set: `_sessionRow` is the one place that
+  // decides which of Pause / Free worker / Resume / Unarchive / Archive a
+  // session gets, and why Archive is gated apart from the rest, so the menu
+  // cannot offer what the list would not.
+  //
+  // Owner-only, like auto-resume (see `_ownsSession`): pause, archive and
+  // unarchive are all owner-scoped on the server, so for anyone else reading
+  // the session there is no button at all rather than a menu of calls that
+  // can only fail.
+  //
+  // `warm` comes from the LIST'S row rather than from `currentSession`.
+  // Whether a promoted session still has a worker to FREE is computed by
+  // GET /api/apps/:slug/sessions and by nothing else — the single-session
+  // payload `currentSession` is built from has no such column — so deriving
+  // it here would drop "Free worker" from the menu while the list two panes
+  // away still offered it. Everything else stays `currentSession`'s, whose
+  // status is the fresher of the two: `openSession` flips paused → active on
+  // auto-resume before any list reload.
+  _headerActions(session) {
+    if (!DevChat._ownsSession(session)) return [];
+    const rows = Array.isArray(DevChat.sessions) ? DevChat.sessions : [];
+    const row = rows.find((r) => Number(r.id) === Number(session.id));
+    return DevChat._sessionRow(row ? { ...session, warm: row.warm } : session).actions;
   },
 
   // Repaint the header strip WITHOUT re-rendering the view.
@@ -8175,13 +9853,12 @@ const DevChat = {
   // Named, because the component dispatches by name into `window.DevChat`
   // rather than holding a closure over a render that is already gone.
 
-  /** "PR #123" — jump to the change card below and flash it. */
-  revealPrCard() {
-    const card = document.getElementById('dc-pr-card');
-    if (!card) return;
-    card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    card.classList.add('dc-pr-card-highlight');
-    setTimeout(() => card.classList.remove('dc-pr-card-highlight'), 1500);
+  /** "Open proposal card" (#2821) — the change's card page, the same
+   *  destination the retired "Change overview" strip opened. */
+  openProposalCard() {
+    const id = DevChat.currentSession?.id;
+    if (id == null || typeof AppView === 'undefined') return;
+    AppView.openTopic('proposal', id);
   },
 
   /**
@@ -8228,10 +9905,11 @@ const DevChat = {
     const origin = window.Improve?.sessionOrigin?.();
     if (origin && typeof location !== 'undefined') {
       location.hash = origin;
-    } else if (typeof App !== 'undefined' && App.switchTab) {
-      // No origin: a cold deep link straight into the session. The Board is
-      // where its own card lives, which is the honest fallback.
-      App.switchTab('dev');
+    } else if (typeof location !== 'undefined') {
+      // No origin: a cold deep link straight into the session. A change is an
+      // agent conversation and Messages is its inbox (#2770), so that is the
+      // level up — the same fallback the header's arrow shows.
+      location.hash = '#messages';
     } else {
       DevChat.renderChatView();
     }
@@ -8319,43 +9997,75 @@ const DevChat = {
   // the banner — the user is presumably still refining that change.
   _newChangeBannerView(session) {
     if (!session || !session.pr_number) return null;
+    // #2779: its conversation starts the next change, not this chat.
+    if (DevChat._agentSessionBannerView(session)) return null;
     const status = session.status;
     if (status !== 'promoted' && status !== 'merging' && status !== 'merged') return null;
     const proposed = status === 'promoted' || status === 'merging';
+    // #2602: the card this session became. Offered in every state this
+    // banner renders in, not only the proposed one — the banner only exists
+    // once there is a PR, and a merged change's card is still where its
+    // discussion and its checks are.
+    const slug = DevChat._sessionAppSlug(session);
     return {
       stateLabel: proposed
         ? `proposed to the group (PR #${session.pr_number})`
         : `merged (PR #${session.pr_number})`,
       pending: !!DevChat._newChangePending,
+      cardHref: slug && session.id != null
+        ? `#app/${slug}/dev/proposals/${session.id}`
+        : null,
     };
   },
 
-  // Spin up a fresh session (new branch → new PR) for the same app and
-  // open it. Reuses createSession's per-user active-session cap (whatever
-  // the server resolves for this viewer — see `caps`) + error alerting. Intentionally does NOT carry over Claude's memory or
-  // the spec — a new change starts clean on its own branch.
+  // The app a session belongs to. `AppView.appData` is the screen the user is
+  // actually on; `app_slug` is what a session row carries when the screen has
+  // not loaded one. Extracted because startNewChange resolved it inline and
+  // #2602 needed the same answer — two spellings of "which app is this" is
+  // how they drift.
+  _sessionAppSlug(session) {
+    return (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+      || (session && session.app_slug)
+      || null;
+  },
+
+  // Open a fresh change for the same app. Intentionally does NOT carry over
+  // Claude's memory or the spec — a new change starts clean on its own
+  // branch.
+  //
+  // #2241: it no longer creates the session here either. This banner and
+  // Improve's "New change" row are two doors onto the same act, so they
+  // lead to the same place — /dev/sessions/new, the unsent-change screen —
+  // and the row is created by the first send (see `startPendingSession`).
+  // The per-user cap and its refusal message move with it: they are the
+  // server's answer to the POST, and the POST is the first send now.
   // The button's own busy state. It was `btn.disabled` + `btn.textContent`
   // written onto the element by id — a second author on a node the banners
-  // component renders now, so it is a published flag instead.
+  // component renders now, so it is a published flag instead. It now covers
+  // the navigation rather than a creation round trip — `switchTab` awaits
+  // the destination's own loads, so the button still has something to say.
   _newChangePending: false,
 
   async startNewChange() {
-    const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
-      || (DevChat.currentSession && DevChat.currentSession.app_slug);
+    const slug = DevChat._sessionAppSlug(DevChat.currentSession);
     if (!slug) return;
-    DevChat._newChangePending = true;
-    DevChat._publishBanners();
-    const session = await DevChat.createSession(slug);
-    if (!session) {
-      DevChat._newChangePending = false;
-      DevChat._publishBanners();
+    // #2779: with agent sessions on, a new change starts in a conversation
+    // with the Mayor, focused on this session's app.
+    const agent = window.UsernodeReact?.agentSession;
+    if (window.App?.user?.agentSessionsEnabled === true && agent) {
+      void agent.start({ slug, entry: 'banner' });
       return;
     }
-    DevChat._newChangePending = false;
-    await DevChat.openSession(session.id, { userOpened: true });
-    DevChat.renderChatView();
-    if (typeof App !== 'undefined' && App.updateHash) App.updateHash();
-    if (typeof DevChat.loadActiveSessions === 'function') DevChat.loadActiveSessions();
+    DevChat._newChangePending = true;
+    DevChat._publishBanners();
+    try {
+      if (typeof App !== 'undefined' && App.switchTab) {
+        await App.switchTab('dev', DevChat.NEW_SESSION_REF, 'sessions');
+      }
+    } finally {
+      DevChat._newChangePending = false;
+      DevChat._publishBanners();
+    }
   },
 
   // Every path that changes banner-relevant state — a behind_main update, a
@@ -8386,7 +10096,18 @@ const DevChat = {
       newChange: session ? DevChat._newChangeBannerView(session) : null,
       credits: session ? DevChat._creditsBannerView() : null,
       creditsLow: session ? DevChat._creditsLowBannerView() : null,
+      agentSession: session ? DevChat._agentSessionBannerView(session) : null,
     };
+  },
+
+  // #2779: a change its owner started from an agent session is revised in
+  // that conversation (this chat's own route answers 409 for it), so the
+  // composer gives way to a strip that leads there. Other readers see the
+  // chat as they always have.
+  _agentSessionBannerView(session) {
+    if (!session || !session.agent_session_id) return null;
+    if (typeof App === 'undefined' || !App.user || Number(session.user_id) !== Number(App.user.id)) return null;
+    return { href: `#messages/agent/${Number(session.agent_session_id)}` };
   },
 
   // Start a sync, from the banner's button. Named, because the component
@@ -8600,9 +10321,8 @@ const DevChat = {
       // in the box while still not re-explaining a settled fact on the next
       // full render. See `renderChatView`.
       venueNoteHtml: DevChat._venueNoteForRender || '',
-      hidden: !!DevChat._launchpadVenue(),
+      hidden: !!DevChat._launchpadVenue() || !!DevChat._agentSessionBannerView(DevChat.currentSession),
       models: DevChat._modelPickerView(),
-      openRouter: DevChat._openRouterRowView(),
       drafts: DevChat._savedDraftsView(),
       attachError: DevChat._attachError,
       placeholder: DevChat._composerBusy
@@ -8616,8 +10336,24 @@ const DevChat = {
    * The send button, as data — the four shapes `_setStreamingUI` painted by
    * hand. Every input is module state, so any caller can repaint it without
    * knowing which transition it is in the middle of.
+   *
+   * The same object comes back while the shape is the same, so a keystroke
+   * that does not flip it leaves the composer model untouched — see
+   * `_publishComposer`.
    */
+  _sendViewMemo: null,
+
   _sendButtonView() {
+    const next = DevChat._computeSendButtonView();
+    const last = DevChat._sendViewMemo;
+    if (last && last.kind === next.kind && last.label === next.label && last.title === next.title) {
+      return last;
+    }
+    DevChat._sendViewMemo = next;
+    return next;
+  },
+
+  _computeSendButtonView() {
     // TEXT IN THE BOX OUTRANKS EVERY BUSY SHAPE BELOW. This is #810's rule,
     // moved from a separate icon onto the button itself: while a turn runs
     // sending is impossible, so the only thing to do with typed text is park
@@ -8666,15 +10402,39 @@ const DevChat = {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.publishComposer) return;
-    react.publishComposer(DevChat._composerView());
+    const view = DevChat._composerView();
+    DevChat._lastComposer = { react, view };
+    react.publishComposer(view);
   },
 
-  /** Republish without re-mounting — every one of the six writers' end. */
+  /**
+   * Republish without re-mounting — every one of the six writers' end.
+   *
+   * ONLY WHEN SOMETHING CHANGED. Every keystroke lands here (through
+   * `_syncSaveDraftBtn`), and each publish is a synchronous render of the
+   * whole composer (./mount.ts flushes it). The three object fields keep
+   * their identity while their inputs hold still — `_modelPickerView`,
+   * `_savedDraftsView` and `_sendButtonView` are each memoized — so "nothing
+   * changed" is one identity check per field, and a keystroke that does not
+   * flip the circle between Send / Stop / Save publishes nothing at all.
+   */
+  _lastComposer: null,
+
   _publishComposer() {
     const react = (typeof window !== 'undefined' && window.UsernodeReact)
       ? window.UsernodeReact.devChat : null;
     if (!react || !react.publishComposer) return;
-    react.publishComposer(DevChat._composerView());
+    const view = DevChat._composerView();
+    const last = DevChat._lastComposer;
+    if (last && last.react === react && DevChat._sameComposerView(last.view, view)) return;
+    DevChat._lastComposer = { react, view };
+    react.publishComposer(view);
+  },
+
+  _sameComposerView(a, b) {
+    const keys = Object.keys(b);
+    if (keys.length !== Object.keys(a).length) return false;
+    return keys.every((k) => a[k] === b[k]);
   },
 
   /** The venue sentence this render is showing. See `_composerView`. */
@@ -8695,7 +10455,12 @@ const DevChat = {
     return {
       kind: 'session',
       embedded: !!document.getElementById('dc-view')?.dataset?.changeWorkspace,
-      change: window.AppView?._topicViewFor ? {
+      // #2241: an unsent change is not a card yet — there is no row for
+      // `_topicViewFor` to describe, so the embedded workspace's head has
+      // nothing to draw. (The placeholder only ever reaches the full-screen
+      // session route, where `embedded` is false anyway; this keeps the two
+      // from drifting apart if that changes.)
+      change: (!DevChat.currentSession.pending && window.AppView?._topicViewFor) ? {
         item: DevChat.currentSession,
         ...AppView._topicViewFor(['active', 'paused'].includes(DevChat.currentSession.status) ? 'session' : 'proposal', DevChat.currentSession),
 
@@ -8705,6 +10470,8 @@ const DevChat = {
       // makes it reversible — it is the way back to a chat.
       launchpadHtml: DevChat._launchpadHtml(),
       ownToolsGuide: DevChat._ownToolsGuideView(),
+      // #2706: the connector steps, inline under the hand-off card.
+      connectorSetup: DevChat._connectorSetupView(),
       // Is there anything left in the bottom bar to draw a border around?
       // The composer is hidden in a launchpad and the venue note is usually
       // absent, and an empty bordered strip reads as a broken composer.
@@ -8841,6 +10608,10 @@ const DevChat = {
     // is what starts the elapsed heartbeat and wires the quick-reply bar.
     DevChat._renderSessionHeader();
     DevChat._renderComposer();
+    // The first paint can already name the current model. This background
+    // read adds the saved/GLM OpenRouter default and favorite shortlist,
+    // then republishes only the composer when it lands.
+    DevChat._ensureModelPickerData();
     DevChat.renderMessages();
     DevChat._renderQuickReplies();
     DevChat._wireQuickReplies();
@@ -8880,7 +10651,12 @@ const DevChat = {
     DevChat._renderSavedDrafts();
     DevChat._wireSavedDrafts();
     DevChat._syncSaveDraftBtn();
-    if (DevChat.isStreaming) DevChat._setStreamingUI(true);
+    // #2599: repaint with the phase and stoppability the turn already has.
+    // A mid-turn re-render (the first-message `session_titled` lands here)
+    // must not reset an adopted turn's "Working" spinner to a live Stop.
+    if (DevChat.isStreaming) {
+      DevChat._setStreamingUI(true, DevChat._streamingPhase, { stoppable: DevChat._streamingStoppable });
+    }
     // #801 screenshot state: paint the mid-turn composer (the circle as Stop,
     // busy placeholder, drafts listed) without any turn actually running.
     // Pure UI — isStreaming stays false, so nothing can be sent or stopped.
@@ -8889,6 +10665,9 @@ const DevChat = {
     // turns the circle green. After the paint above, so the republish it
     // triggers is the last word on the button's shape.
     DevChat._applyTypedShot();
+    // …and `?shot=draft-sent` seeds the box and then runs the real clear, so
+    // the capture shows the composer as it looks once a draft has been sent.
+    DevChat._applyDraftSentShot();
 
     // #907: repaint from whatever the last status poll told us. The poll
     // itself runs a beat later; painting here means a re-render of an already
@@ -8911,19 +10690,17 @@ const DevChat = {
     // exactly as it always did.
     DevChat._maybeOpenShotVenueSheet();
 
-    // The chat-model picker's `change` and the OpenRouter row's "Change
-    // model" were two addEventListener calls here, re-bound on every render
-    // because the elements were new each time. They are the component's
-    // onChange / onClick now, dispatching into `_onModelPicked` and
-    // `_onOpenRouterModelChange` by name.
+    // The grouped model select owns its `change` now and dispatches into
+    // `_onModelPicked` by name. Its "Add more OpenRouter models" option
+    // reaches the existing catalog through `_onOpenRouterModelChange`.
 
     // `#dc-pr-header-link` and `#dc-back` are the header component's too —
-    // `revealPrCard()` and `leaveSession()` above are what they call.
+    // `openProposalCard()` and `leaveSession()` above are what they call.
 
     // `#dc-sync-btn` and `#dc-new-change-btn` are the banners component's —
     // `startSyncWithMain()` and `startNewChange()` are what they call.
 
-    document.getElementById('dc-form').addEventListener('submit', (e) => {
+    DevChat._bindOnce(document.getElementById('dc-form'), 'submit', (e) => {
       e.preventDefault();
       // The one circle, routed. This is now the SAME three-way decision
       // `_onComposerShortcut` makes, which is what let #920's hint line go:
@@ -8989,6 +10766,28 @@ const DevChat = {
     DevChat._submitFromInput();
   },
 
+  // #1962: emptying the composer is TWO writes, not one — the field the user
+  // is looking at, and the per-session key `_restoreDraft` reads back on the
+  // next render. Anything that clears one and forgets the other looks clear
+  // until the view repaints and the stored text walks back in, which is
+  // exactly the bug reported against the drafts list's Send.
+  //
+  // Both writes are synchronous and happen here together, so there is no
+  // window for a pending restore or a queued `input` listener to refill the
+  // box from the old value: the key is already gone by the time either runs.
+  // Callers must invoke this BEFORE `sendMessage` — #370's failure paths put
+  // the text back deliberately (`_restoreComposer`), and clearing after them
+  // would throw away a message that never actually sent.
+  _clearComposerField() {
+    const input = document.getElementById('dc-input');
+    if (input) {
+      input.value = '';
+      input.style.height = 'auto';
+    }
+    if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, '');
+    DevChat._syncSaveDraftBtn();
+  },
+
   _submitFromInput() {
     const input = document.getElementById('dc-input');
     const msg = input.value.trim();
@@ -9000,10 +10799,7 @@ const DevChat = {
       DevChat._setAttachError('Still uploading, one moment…');
       return;
     }
-    input.value = '';
-    input.style.height = 'auto';
-    if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, '');
-    DevChat._syncSaveDraftBtn();
+    DevChat._clearComposerField();
     DevChat.sendMessage(msg, atts);
   },
 
@@ -9030,6 +10826,23 @@ const DevChat = {
     imageExts: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
   },
 
+  // #2397: bind a composer listener once per ELEMENT. `renderChatView` runs
+  // again on the same session (a title arriving, a PR opening, a venue
+  // switch), and since the screen became a React mount the form, the textarea
+  // and the paperclip survive that re-render — the reconciler keeps the nodes
+  // an innerHTML write used to replace. Every re-render therefore stacked one
+  // more listener. Two submit listeners were the reported bug: the first sent
+  // the message and cleared the box, the second then saw a running turn with
+  // an empty box, took it as Stop, and `_stopCurrentTurn` restored the sent
+  // text into the input. A new element (another session) binds afresh.
+  _bindOnce(el, type, handler) {
+    if (!el) return;
+    const bound = el._dcBound || (el._dcBound = new Set());
+    if (bound.has(type)) return;
+    bound.add(type);
+    el.addEventListener(type, handler);
+  },
+
   _setupAttachments() {
     const btn = document.getElementById('dc-attach-btn');
     const fileInput = document.getElementById('dc-file-input');
@@ -9042,15 +10855,15 @@ const DevChat = {
     DevChat.pendingAttachments = DevChat.pendingAttachments.filter((a) => a.sessionId === sid);
     DevChat._renderAttachStrip();
 
-    btn.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', () => {
+    DevChat._bindOnce(btn, 'click', () => document.getElementById('dc-file-input')?.click());
+    DevChat._bindOnce(fileInput, 'change', () => {
       if (fileInput.files?.length) DevChat._addFiles(fileInput.files);
       fileInput.value = '';
     });
 
     // Paste an image straight from the clipboard (screenshots).
     if (textarea) {
-      textarea.addEventListener('paste', (e) => {
+      DevChat._bindOnce(textarea, 'paste', (e) => {
         const items = e.clipboardData?.items || [];
         const files = [];
         for (const item of items) {
@@ -9078,8 +10891,8 @@ const DevChat = {
     // Drag-and-drop onto the message area or the composer.
     for (const el of [messagesEl, document.getElementById('dc-form')]) {
       if (!el) continue;
-      el.addEventListener('dragover', (e) => { e.preventDefault(); });
-      el.addEventListener('drop', (e) => {
+      DevChat._bindOnce(el, 'dragover', (e) => { e.preventDefault(); });
+      DevChat._bindOnce(el, 'drop', (e) => {
         if (e.dataTransfer?.files?.length) {
           e.preventDefault();
           DevChat._addFiles(e.dataTransfer.files);
@@ -9126,6 +10939,17 @@ const DevChat = {
   async _addFiles(fileList) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
     DevChat._setAttachError(null);
+    // #2241: an upload is stored against a session row, so an unsent change
+    // has to become one first. This is the ONE thing other than the send
+    // itself that starts a change, and deliberately so: the upload happens
+    // the moment a file is picked (see the upload-before-send note above),
+    // so the alternative is holding the bytes in memory and a second,
+    // parallel upload path. Picking a file is already composing the
+    // message; merely opening the screen still writes nothing.
+    if (DevChat.isPendingSession()) {
+      const started = await DevChat._materializePendingSession();
+      if (!started) return; // createSession has said why
+    }
     const sid = DevChat.currentSession.id;
     const L = DevChat.ATTACH_LIMITS;
     for (const file of Array.from(fileList)) {
@@ -9248,7 +11072,7 @@ const DevChat = {
   _setupTextareaResize() {
     const textarea = document.getElementById('dc-input');
     if (!textarea) return;
-    textarea.addEventListener('input', () => {
+    DevChat._bindOnce(textarea, 'input', () => {
       textarea.style.height = 'auto';
       textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
       // Persist the draft per-session so it survives both tab switches
@@ -9322,7 +11146,7 @@ const DevChat = {
   _wantsDemoDrafts() {
     try {
       const shot = new URLSearchParams(location.search).get('shot');
-      return shot === 'drafts' || shot === 'busy-drafts';
+      return shot === 'drafts' || shot === 'busy-drafts' || shot === 'draft-sent';
     } catch { return false; }
   },
 
@@ -9417,6 +11241,41 @@ const DevChat = {
     if (!input || input.value) return;
     input.value = 'Also widen the meter a little';
     DevChat._syncSaveDraftBtn();
+  },
+
+  // `?shot=draft-sent` (#1962): the state right AFTER a saved draft is sent —
+  // text was in the box, a row's Send was tapped, and the composer is empty.
+  // Like `busy-typed` it is unreachable from a URL otherwise, because the
+  // emptiness only means something once something was there to clear.
+  //
+  // Seeds the field, then runs the module's real `_sendSavedDraft` in `dry`
+  // mode: the check is asserting the shipped clear, not a blank field some
+  // capture-only branch painted. Nothing is written to the drafts list, no
+  // request is made and no turn starts.
+  //
+  // Latched so a second render cannot re-seed the box and change what the
+  // capture shows (#1071).
+  _draftSentShotApplied: false,
+  _wantsDraftSentShot() {
+    try { return new URLSearchParams(location.search).get('shot') === 'draft-sent'; }
+    catch { return false; }
+  },
+  _applyDraftSentShot() {
+    if (!DevChat._wantsDraftSentShot() || DevChat._draftSentShotApplied) return;
+    const input = document.getElementById('dc-input');
+    if (!input) return;
+    DevChat._draftSentShotApplied = true;
+    input.value = 'Also widen the meter a little';
+    DevChat._syncSaveDraftBtn();
+    const [first] = DevChat._getSavedDrafts(DevChat.currentSession ? DevChat.currentSession.id : 0);
+    if (first) DevChat._sendSavedDraft(first.id, { dry: true });
+    else DevChat._clearComposerField();
+    // Marks the field as "this route seeded me and then sent". The check
+    // asserts emptiness THROUGH it, so a shot that silently did nothing
+    // fails instead of passing on a box that was never filled. Nothing
+    // renders a `data-shot-sent` prop, so React has no attribute to diff
+    // here — the same tolerated overlap as `style.height`.
+    input.dataset.shotSent = '1';
   },
 
   // Paint-only "is a turn running" predicate. Real behaviour must keep
@@ -9808,6 +11667,11 @@ const DevChat = {
   //
   // Every streaming transition also funnels through `_setStreamingUI`, which
   // calls this — so no extra listeners are needed for the other half.
+  //
+  // A keystroke that leaves the circle's shape alone publishes nothing:
+  // `_publishComposer` compares the model it would publish with the last one
+  // and drops an identical one. It used to be a synchronous render of the
+  // whole composer per character, model catalogue and drafts list included.
   _syncSaveDraftBtn() {
     DevChat._publishComposer();
   },
@@ -9841,16 +11705,39 @@ const DevChat = {
     DevChat._publishComposer();
   },
 
-  /** The saved-drafts list, as data. `busy` disables each row's Send. */
+  /**
+   * The saved-drafts list, as data. `busy` disables each row's Send.
+   *
+   * Memoized on the STORED STRING: the list is a pure function of the
+   * mirror's raw value (plus the `?shot=` demo pair, which only stands in
+   * while nothing is stored), so an unchanged string answers with the same
+   * object instead of a JSON.parse per keystroke. Every mutator writes the
+   * mirror, which changes the string, which is what invalidates this.
+   */
+  _savedDraftsMemo: null,
+
   _savedDraftsView() {
     const session = DevChat.currentSession;
+    const sid = session ? session.id : null;
+    // Paint-only predicate so `?shot=busy-drafts` renders the mid-turn
+    // rows; `_sendSavedDraft` still refuses on the real isStreaming flag.
+    const busy = DevChat._chatBusyForPaint();
+    let raw = null;
+    if (sid) {
+      try { raw = localStorage.getItem(DevChat._savedDraftsKey(sid)); } catch { raw = undefined; }
+    }
+    const demo = !!sid && raw == null && DevChat._wantsDemoDrafts();
+    const memo = DevChat._savedDraftsMemo;
+    if (memo && memo.sid === sid && memo.raw === raw && memo.busy === busy && memo.demo === demo) {
+      return memo.view;
+    }
     const drafts = session ? DevChat._getSavedDrafts(session.id) : [];
-    return {
+    const view = {
       rows: drafts.map((d) => ({ id: String(d.id), text: d.text })),
-      // Paint-only predicate so `?shot=busy-drafts` renders the mid-turn
-      // rows; `_sendSavedDraft` still refuses on the real isStreaming flag.
-      busy: DevChat._chatBusyForPaint(),
+      busy,
     };
+    DevChat._savedDraftsMemo = { sid, raw, busy, demo, view };
+    return view;
   },
 
   // Click delegation, bound once per renderChatView (the container node is
@@ -9909,10 +11796,7 @@ const DevChat = {
     // #940: optimistic — the list is already written and painted below; the
     // upload marks it synced when it lands, and reconcile retries if not.
     DevChat._pushDraftAdd(session.id, saved);
-    input.value = '';
-    input.style.height = 'auto';
-    DevChat._setDraft(session.id, '');
-    DevChat._syncSaveDraftBtn();
+    DevChat._clearComposerField();
     DevChat._renderSavedDrafts();
     DevChat._toast('Draft saved. Send it whenever you\'re ready');
     if (!DevChat._isCoarsePointer()) { try { input.focus(); } catch {} }
@@ -9921,7 +11805,21 @@ const DevChat = {
   // Send: always an explicit tap, never automatic. Refused mid-turn (the
   // button also renders disabled) so a draft can't join a running turn.
   // The draft leaves the list only once the send is actually issued.
-  _sendSavedDraft(id) {
+  //
+  // #1962: the composer is emptied as part of the send. It used to be left
+  // alone, which read as "sending a draft repopulates the box with another
+  // draft": Edit puts a draft's text in the field and stores it under the
+  // session's draft key, so a Send straight afterwards left that older text
+  // sitting there — and `_restoreDraft` put it back on every later render,
+  // tab switch and reopen. Whatever was typed is parked as a draft of its
+  // own first (the same rule Edit follows), so clearing the box still never
+  // throws away something the user wrote.
+  //
+  // `dry` runs everything up to and including the clear and then stops: no
+  // list write, no sync request, no turn. It exists for the `?shot=draft-sent`
+  // capture route, which has to exercise the real clear without starting a
+  // run on a screenshot.
+  _sendSavedDraft(id, { dry = false } = {}) {
     const session = DevChat.currentSession;
     if (!session) return;
     if (DevChat.isStreaming) {
@@ -9935,12 +11833,26 @@ const DevChat = {
       DevChat._toast('Still uploading a file, one moment…');
       return;
     }
-    DevChat._setSavedDrafts(session.id, drafts.filter((d) => d.id !== id));
+    const input = document.getElementById('dc-input');
+    const parked = input ? input.value.trim() : '';
+    const next = drafts.filter((d) => d.id !== id);
+    let parkedDraft = null;
+    if (parked && parked !== draft.text && next.length < DevChat.MAX_SAVED_DRAFTS) {
+      parkedDraft = { id: DevChat._newDraftId(), text: parked, savedAt: new Date().toISOString(), synced: false };
+      next.push(parkedDraft);
+    }
+    // Before sendMessage, never after: its 429 and error paths call
+    // `_restoreComposer`, which is meant to put the sent text BACK.
+    DevChat._clearComposerField();
+    if (dry) { DevChat._renderSavedDrafts(); return; }
+    DevChat._setSavedDrafts(session.id, next);
     // #940: a send removes the draft everywhere, not just here. Tombstone
     // first so an offline send still replays the delete on reconcile.
     DevChat._addDraftTombstone(session.id, id);
     DevChat._pushDraftDelete(session.id, id);
+    if (parkedDraft) DevChat._pushDraftAdd(session.id, parkedDraft);
     DevChat._renderSavedDrafts();
+    if (parked && parked !== draft.text) DevChat._toast('Kept what you had typed as another draft');
     DevChat.sendMessage(draft.text);
   },
 
@@ -9997,6 +11909,12 @@ const DevChat = {
     DevChat._toast('Draft deleted');
   },
 
+  // Which session's text the composer field is currently showing, as a
+  // string id. Read by `_restoreDraft` to tell a re-render of the same
+  // session (don't touch the field) from a switch to another one (the
+  // stored draft wins).
+  _composerFieldSession: null,
+
   // Per-session draft helpers, backed by localStorage.
   _draftKey(sessionId) {
     return `usernode:dc-draft:${sessionId}`;
@@ -10051,12 +11969,29 @@ const DevChat = {
     DevChat._syncSaveDraftBtn();
   },
 
+  // Runs on every renderChatView, and what it does depends on whether the
+  // field in front of it belongs to the session being rendered.
+  //
+  //  - SAME session, something typed: leave it alone (#1962). The stored key
+  //    is cleared synchronously by `_clearComposerField`, so after a send
+  //    there is nothing here to put back — and a re-render landing between a
+  //    keystroke and the `input` listener's write must not replace what is
+  //    being typed with the previous value. Same stance as the two
+  //    `if (!input.value)` fallbacks in public/js/app-view.js.
+  //  - DIFFERENT session: the field is authoritative-by-storage again, so an
+  //    A→B switch that reuses the textarea (openSession from a link, without
+  //    passing through the list) shows B's draft, or nothing, rather than
+  //    leaving A's text sitting in B's composer.
   _restoreDraft() {
-    if (!DevChat.currentSession) return;
+    const session = DevChat.currentSession;
+    if (!session) return;
     const textarea = document.getElementById('dc-input');
     if (!textarea) return;
-    const draft = DevChat._getDraft(DevChat.currentSession.id);
-    if (!draft) return;
+    const sameSession = DevChat._composerFieldSession === String(session.id);
+    DevChat._composerFieldSession = String(session.id);
+    if (sameSession && textarea.value) return;
+    const draft = DevChat._getDraft(session.id);
+    if (!draft && !textarea.value) return;
     textarea.value = draft;
     // Re-run the height calculation so the textarea opens at the right
     // size instead of collapsed.
@@ -10069,7 +12004,7 @@ const DevChat = {
     const textarea = document.getElementById('dc-input');
     if (!textarea) return;
 
-    textarea.addEventListener('keydown', (e) => {
+    DevChat._bindOnce(textarea, 'keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         // preventDefault is unconditional for the combination, including
         // the nothing-to-do case (#920) — the keystroke must never leave
@@ -10204,6 +12139,8 @@ const DevChat = {
   // so the chat is never squeezed between two panels.
   openStagingPanel() {
     if (!DevChat.currentSession) return;
+    // #2779: the dock is the dev chat's again, whoever held it last.
+    if (typeof AppView !== 'undefined' && AppView.setStagingDockHost) AppView.setStagingDockHost(null);
     DevChat.stagingPanel.open = true;
     if (DevChat.specViewer.open) {
       DevChat.specViewer.open = false;
@@ -10655,7 +12592,22 @@ if (typeof window !== 'undefined') {
   // Fire-and-forget: refreshes MODELS from the server's allowlist. If
   // the page rendered the dropdown before this resolves, the next
   // renderChatView() pass will pick up the new entries.
-  DevChat.loadModels();
+  //
+  // Only for a viewer the endpoint answers (QA 2026-09-24 Q35). This runs
+  // at module load on EVERY document, the signed-out landing and the
+  // waiting room included, where /api/models is a guaranteed 401 or 403
+  // and a red console line. Otherwise it waits for the authed boot's
+  // once-per-document `sv:authed`, the same test as
+  // frontend/src/lib/platform-viewer.ts (not imported: the vm-based suites
+  // evaluate this file as a classic script).
+  const hasPlatformViewer = () => !!(window.App && window.App.user
+    && window.App.user.hasPlatformAccess !== false);
+  if (hasPlatformViewer()) DevChat.loadModels();
+  else if (typeof document !== 'undefined') {
+    document.addEventListener('sv:authed', () => {
+      if (hasPlatformViewer()) DevChat.loadModels();
+    }, { once: true });
+  }
 }
 
 // Combined away/return handler (#142, #161). On leaving (tab hidden or

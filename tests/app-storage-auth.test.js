@@ -20,11 +20,13 @@ const APP_TOKEN = 'b'.repeat(64);
 const APP_ID = 11;
 
 const state = {
+  userExists: true,
   app: { id: APP_ID, slug: 'demo-app', storage_api_token: APP_TOKEN },
 };
 
 const pool = {
   async query(sql, params) {
+    if (/SELECT id FROM users WHERE id = \$1/.test(sql)) return { rows: state.userExists ? [{ id: params[0] }] : [] };
     if (/FROM apps WHERE storage_api_token/.test(sql)) {
       return { rows: params[0] === state.app.storage_api_token ? [state.app] : [] };
     }
@@ -45,7 +47,11 @@ function makeReq({ ip = '10.0.0.5', appToken = APP_TOKEN, userToken } = {}) {
   const headers = {};
   if (appToken != null) headers['x-usernode-app-token'] = appToken;
   if (userToken != null) headers['x-usernode-user-token'] = userToken;
-  return { clientIp: ip, headers, socket: {}, path: '/api/app-storage/files' };
+  // #2506: the gate reads the SOCKET PEER now, not req.clientIp — the whole
+  // point is that `clientIp` can be the ingress's address on a trusted-proxy
+  // DNS failure. A real request always has a socket peer; a fixture that set
+  // only `clientIp` was describing a request that cannot exist.
+  return { clientIp: ip, headers, socket: { remoteAddress: ip }, path: '/api/app-storage/files' };
 }
 
 // A real platform-minted user identity for THIS app.
@@ -160,4 +166,15 @@ test('success path attaches req.appStorage', async () => {
   assert.equal(res.statusCode, 200);
   assert.equal(nexted, true);
   assert.deepEqual(req.appStorage, { appId: APP_ID, appSlug: 'demo-app', userId: 7 });
+});
+
+
+test('a still-valid JWT cannot upload after its user is deleted', async () => {
+  const token = userJwt();
+  state.userExists = false;
+  try {
+    const { res, nexted } = await run(makeReq({ userToken: token }));
+    assert.equal(res.statusCode, 401);
+    assert.equal(nexted, false);
+  } finally { state.userExists = true; }
 });

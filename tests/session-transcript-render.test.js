@@ -227,3 +227,40 @@ test('is a pure string builder — no DOM or fetch needed', () => {
   assert.doesNotThrow(() => ST.renderHtml(null));
   assert.doesNotThrow(() => ST.renderHtml({ messages: [null, { role: null }] }));
 });
+
+test('#2597: a running row reads "Coding agent is running", with the venue under it', () => {
+  const ST = load();
+  const html = ST.renderHtml(payload([
+    { id: 1, role: 'system', content: 'Claude Code is running...', created_at: 'x', metadata: {} },
+  ]));
+  // The same heading the owner sees in the dev chat. A reader who was not in
+  // the session is the last person to whom "Claude Code" vs "OpenRouter"
+  // means anything, so the row says the event and captions the venue.
+  assert.match(html, /Coding agent is running/);
+  assert.doesNotMatch(html, /Claude Code is running/);
+  assert.match(html, /class="dc-status-venue">Homeroom · Claude</);
+  assert.match(html, /class="dc-status-line dc-status-line-captioned"/);
+});
+
+test('#2597: the venue comes from the metadata, or from the sentence itself', () => {
+  const ST = load();
+  // Recorded backend.
+  let html = ST.renderHtml(payload([
+    {
+      id: 1, role: 'system', content: 'Claude Code is running...', created_at: 'x',
+      metadata: { agentBackend: 'codex_openrouter' },
+    },
+  ]));
+  assert.match(html, /class="dc-status-venue">Homeroom · OpenRouter</);
+  // …and the fallback the rows written before it existed rely on.
+  html = ST.renderHtml(payload([
+    { id: 1, role: 'system', content: 'OpenRouter is running...', created_at: 'x', metadata: {} },
+  ]));
+  assert.match(html, /class="dc-status-venue">Homeroom · OpenRouter</);
+  // Every other status line is left alone — no caption, no rewrite.
+  html = ST.renderHtml(payload([
+    { id: 1, role: 'system', content: 'Claude Code log', created_at: 'x', metadata: {} },
+  ]));
+  assert.match(html, /Claude Code log/);
+  assert.doesNotMatch(html, /dc-status-venue/);
+});

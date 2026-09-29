@@ -95,6 +95,31 @@ test('classifyTests: no frames at all → error (fail-closed)', () => {
   assert.equal(visuals.classifyTests(visuals.parseTests('nothing here'), 1).state, 'error');
 });
 
+test('captureFailureDetail preserves fatal runner stderr and scrubs query credentials', () => {
+  const detail = visuals.captureFailureDetail({
+    stderr: 'capture: fatal Navigation failed at https://preview.test/?token=secret-value\n',
+  });
+  assert.equal(
+    detail,
+    'Browser check runner failed: Navigation failed at https://preview.test/?token=****'
+  );
+});
+
+test('captureFailureDetail reads Kubernetes-combined fatal logs and termination reasons', () => {
+  assert.equal(
+    visuals.captureFailureDetail({ stdout: 'noise\ncapture: fatal browser disconnected\n' }),
+    'Browser check runner failed: browser disconnected'
+  );
+  assert.equal(
+    visuals.captureFailureDetail({ runPartialReason: 'capture OOM killed' }),
+    'Browser check runner ended before producing results: capture OOM killed'
+  );
+  assert.equal(
+    visuals.captureFailureDetail(),
+    'Browser check runner produced no result frames.'
+  );
+});
+
 test('classifyTests: a partial run (fewer frames than expected) → error', () => {
   const frames = visuals.parseTests(testFrame(0, 'pass', 200, { name: 'Home', path: '/', consoleErrors: [], failureReason: '' }));
   // Expected 3 tests, only 1 frame came back → can't call it passing.

@@ -13,7 +13,9 @@
 const https = require('https');
 const log = require('./logger');
 
-const USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
+// Never a real host as the fallback (#2322): the one here used to be the
+// platform's retired domain. Same placeholder as src/config.js.
+const USERNODE_DOMAIN = process.env.USERNODE_DOMAIN || 'apps.example.invalid';
 // Keep platform links/auth on USERNODE_DOMAIN while apps and previews may
 // live beside it, e.g. my.example.com and <slug>.example.com.
 const USERNODE_APPS_DOMAIN = process.env.USERNODE_APPS_DOMAIN || USERNODE_DOMAIN;

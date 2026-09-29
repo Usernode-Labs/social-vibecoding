@@ -9,8 +9,9 @@
 //   3. authors of merged proposals (chat_sessions status='merged').
 //
 // This used to live inside src/routes/public-api.js, which is still the
-// unauthenticated consumer (GET /api/public/apps, GET /api/public/apps/:slug
-// /contributors) and re-exports `loadContributors` from here so its tests
+// unauthenticated consumer (GET /api/public/apps), the versioned app-facing
+// directory (GET /api/app-platform/v1/apps), and the per-app contributors
+// route. public-api.js re-exports `loadContributors` from here so its tests
 // keep importing it from the route module. The authed per-app read
 // (GET /api/apps/:slug/contributors) uses loadRankedContributors below.
 // Keeping BOTH callers on the same CTE is the point: "who counts as a

@@ -42,7 +42,21 @@ export interface CreateProgressProps {
   appName: string;
   /** Which verb to use while the asynchronous provisioning is pending. */
   mode: 'new' | 'import' | 'fork';
+  /**
+   * Which ground the view is drawn on. `card` (the default) is the fork
+   * dialog's white card, where the steps sit bare and the next-steps block
+   * is a bordered inset. `pane` is the create dialog's grey pane ground
+   * (#1910), where both become white cards floating on it and the actions
+   * are pills, matching the form view that preceded them.
+   */
+  surface?: 'card' | 'pane';
   progress: CreationProgressState;
+  /**
+   * The live ending's primary label. "Open app" (the default) for the fork
+   * dialog; the create dialog lands on the new project's own page instead
+   * and says "Open project" (communities, stage 3).
+   */
+  openLabel?: string;
   onOpenApp: () => void;
   onRetry: () => void;
   onSetSecrets: () => void;
@@ -93,7 +107,11 @@ function headline(
  * The one line under the steps. It is the `aria-live` region, so it is
  * also what a screen reader hears as the state moves.
  */
-function statusLine(progress: CreationProgressState, outcome: CreationOutcome): string {
+function statusLine(
+  progress: CreationProgressState,
+  outcome: CreationOutcome,
+  states: readonly StepState[] = [],
+): string {
   if (outcome === 'live') {
     return 'Your app is running. Open it to see what it shipped with.';
   }
@@ -104,12 +122,20 @@ function statusLine(progress: CreationProgressState, outcome: CreationOutcome): 
       : 'Set the required secrets and your app will finish starting.';
   }
   if (outcome === 'failed') {
-    // The broadcast reason is a concise one-liner (the full build log
-    // stays behind the gated app payload). When there is none — a
-    // watchdog timeout, or a process that died before recording one —
-    // say what we actually know rather than showing an empty box.
-    return progress.errorReason
-      || 'Setup stopped before your app was running. Retrying usually clears a transient failure.';
+    // QA 2026-09-24 Q32b: the broadcast reason is the server's own line
+    // ("Build failed: ERROR: failed to connect to the docker API at
+    // unix:///var/run/docker.sock…"), which is for whoever runs the server,
+    // not for the person who asked for an app. The line says what happened
+    // in plain words; the reason itself sits under Details below. When there
+    // is none (a watchdog timeout, or a process that died before recording
+    // one), say what we actually know rather than showing an empty box.
+    if (!progress.errorReason) {
+      return 'Setup stopped before your app was running. Retrying usually clears a transient failure.';
+    }
+    const failed = CREATION_STEPS[states.indexOf('failed')]?.key;
+    return failed === 'build'
+      ? 'The build didn’t finish. Try again, or ask an admin.'
+      : 'Setup didn’t finish. Try again, or ask an admin.';
   }
   return 'This usually takes under a minute. You can close this and keep going. We’ll finish in the background and your app will appear in your apps.';
 }
@@ -121,10 +147,42 @@ const NEXT_STEPS = [
   'Collaborators vote it in, and it goes live.',
 ];
 
+/**
+ * The two surfaces, keyed by `surface`. Every string a complete literal, for
+ * the extractor. The pane's cards are `dark:bg-zinc-800` for the reason
+ * create-app.tsx gives: the pane ground is darker than the page ground in
+ * dark mode, and the language's zinc-900 card did not separate from it.
+ */
+const SURFACES = {
+  card: {
+    title: 'text-lg font-bold',
+    steps: 'space-y-2.5',
+    // The dialog card is `bg-white dark:bg-zinc-900`, so an inset block
+    // must not reach for that same dark tone — it would be invisible
+    // against the card. This is the treatment the dialog's own segmented
+    // pills used.
+    next: 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-3',
+    actions: 'flex gap-3',
+    close: 'flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors',
+    primary: {} as const,
+  },
+  pane: {
+    title: 'text-[17px] font-semibold text-zinc-900 dark:text-zinc-100',
+    steps: 'space-y-2.5 rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
+    next: 'rounded-2xl bg-white dark:bg-zinc-800 px-4 py-3',
+    actions: 'flex gap-2 pt-1',
+    close: 'flex-1 h-11 rounded-full bg-white text-[15px] font-semibold text-zinc-900 shadow-sm '
+      + 'hover:bg-zinc-50 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 transition-colors',
+    primary: { variant: 'pillAccent', size: 'pill' } as const,
+  },
+} as const;
+
 export function CreateProgress({
   appName,
   mode,
+  surface = 'card',
   progress,
+  openLabel = 'Open app',
   onOpenApp,
   onRetry,
   onSetSecrets,
@@ -132,14 +190,15 @@ export function CreateProgress({
 }: CreateProgressProps) {
   const outcome = outcomeOf(progress.status);
   const states = stepStates(progress);
+  const look = SURFACES[surface];
 
   return (
     <div id="create-progress" className="space-y-4">
-      <h2 id="create-progress-title" className="text-lg font-bold">
+      <h2 id="create-progress-title" className={look.title}>
         {headline(outcome, mode, appName)}
       </h2>
 
-      <ol id="create-progress-steps" className="space-y-2.5">
+      <ol id="create-progress-steps" className={look.steps}>
         {CREATION_STEPS.map((step, i) => (
           <li
             key={step.key}
@@ -168,8 +227,24 @@ export function CreateProgress({
             aria-hidden="true"
           />
         ) : null}
-        {statusLine(progress, outcome)}
+        {statusLine(progress, outcome, states)}
       </p>
+
+      {/*
+          QA 2026-09-24 Q32b: the technical reason, one press away rather
+          than in the headline copy. A native disclosure, so it needs no
+          state and opens with the keyboard as well as a tap.
+      */}
+      {outcome === 'failed' && progress.errorReason ? (
+        <details id="create-progress-details" className="text-xs text-zinc-500 dark:text-zinc-400">
+          <summary className="cursor-pointer select-none font-medium text-zinc-600 dark:text-zinc-300">
+            Details
+          </summary>
+          <p className="mt-1.5 font-mono break-words whitespace-pre-wrap text-zinc-600 dark:text-zinc-300">
+            {progress.errorReason}
+          </p>
+        </details>
+      ) : null}
 
       {/*
           Next steps belong under a creation that is going somewhere. Under
@@ -177,14 +252,7 @@ export function CreateProgress({
           Retry button below.
       */}
       {outcome === 'failed' ? null : (
-        <div
-          id="create-progress-next"
-          // The dialog card is `bg-white dark:bg-zinc-900`, so an inset
-          // block must not reach for that same dark tone — it would be
-          // invisible against the card. This is the treatment the
-          // dialog's own segmented pills already use.
-          className="rounded-lg border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-800 p-3"
-        >
+        <div id="create-progress-next" className={look.next}>
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-2">
             What happens next
           </p>
@@ -199,27 +267,27 @@ export function CreateProgress({
         </div>
       )}
 
-      <div className="flex gap-3">
+      <div className={look.actions}>
         <button
           type="button"
           id="create-progress-close"
-          className="flex-1 rounded-lg bg-zinc-100 hover:bg-zinc-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-zinc-900 dark:text-zinc-100 transition-colors"
+          className={look.close}
           onClick={onClose}
         >
           {outcome === 'pending' ? 'Close' : 'Done'}
         </button>
         {outcome === 'live' ? (
-          <Button type="button" id="create-progress-primary" layout="flex" onClick={onOpenApp}>
-            Open app
+          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onOpenApp}>
+            {openLabel}
           </Button>
         ) : null}
         {outcome === 'needs-secrets' ? (
-          <Button type="button" id="create-progress-primary" layout="flex" onClick={onSetSecrets}>
+          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onSetSecrets}>
             Set secrets
           </Button>
         ) : null}
         {outcome === 'failed' ? (
-          <Button type="button" id="create-progress-primary" layout="flex" onClick={onRetry}>
+          <Button type="button" id="create-progress-primary" layout="flex" {...look.primary} onClick={onRetry}>
             Retry
           </Button>
         ) : null}

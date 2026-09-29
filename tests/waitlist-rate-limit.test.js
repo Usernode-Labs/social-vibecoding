@@ -294,3 +294,122 @@ test('a trusted integrator gets a client ceiling instead of the IP bucket', asyn
     assert.equal(anonAt, 6, 'a wrong key must fall back to the anonymous bucket');
   }, { waitlistIntegrationKeys: 'acme:s3cret,partner-two:other-secret' });
 });
+
+// ─── POST /api/public/waitlist/status (#2201) ─────────────────────────
+//
+// The status read writes nothing and mails nothing, so what its buckets
+// bound is an ORACLE rather than a send: the route answers the membership
+// question out loud, which makes it the one place in this family where a
+// scripted caller could turn a list of addresses into a list of members.
+// Hence two buckets and not one — per IP for a script working through a
+// list, and per address for one address hammered from many places, which a
+// per-IP bucket alone cannot see.
+//
+// The isolation below is the point of writing these at all. Every route in
+// this family shared one 5-per-window bucket before #1296, and the bug that
+// caused was a user's own confirm click coming back 429. A status check
+// happens on the SAME screen as a resend, moments apart, so a shared budget
+// would reproduce that failure on the very flow this route exists to fix.
+//
+// The mock pool has no answer for the status SELECT, so every lookup here
+// reads as "not on the list" — the right shape for a limiter test, which
+// cares only about the code.
+
+const STATUS_EMAIL = 'checker@example.invalid';
+
+test('the status read has its own bucket, and does not spend join or resend', async () => {
+  await withPublicApi(async (base) => {
+    const check = (email) => fetch(`${base}/api/public/waitlist/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+
+    // Ten is generous for honest use: a person checks where they stand
+    // once, maybe twice after a typo.
+    for (let i = 0; i < 10; i++) {
+      assert.equal((await check(STATUS_EMAIL)).status, 200, `status check #${i + 1} rate-limited early`);
+    }
+    const eleventh = await check(STATUS_EMAIL);
+    assert.equal(eleventh.status, 429, 'the 11th status check in a window must be limited');
+    assert.match((await eleventh.json()).error, /Too many status checks/);
+
+    // A different address is refused too, because the IP bucket is spent —
+    // that bucket is what bounds a script working through a list, so it
+    // must not be escapable by simply changing the address.
+    assert.equal((await check('someone-else@example.invalid')).status, 429,
+      'the per-IP bucket must not be escapable by changing the address');
+
+    // And none of that touched the two routes the same screen uses next.
+    // Reading where you stand must never cost you the code you then ask
+    // for, nor the join you fall back to when the address is not on the
+    // list — which is exactly the control this change adds.
+    const resend = await fetch(`${base}/api/public/waitlist/resend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: STATUS_EMAIL }),
+    });
+    assert.equal(resend.status, 200, 'the status bucket leaked into /resend');
+    const join = await fetch(`${base}/api/public/waitlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: STATUS_EMAIL,
+        made_url: 'https://example.invalid/thing',
+        discovery_source: 'other',
+      }),
+    });
+    assert.notEqual(join.status, 429, 'the status bucket leaked into the join');
+  });
+});
+
+test('an exhausted join or resend bucket still leaves the status read answerable', async () => {
+  await withPublicApi(async (base) => {
+    const join = () => fetch(`${base}/api/public/waitlist`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: STATUS_EMAIL,
+        made_url: 'https://example.invalid/thing',
+        discovery_source: 'other',
+      }),
+    });
+    const resend = () => fetch(`${base}/api/public/waitlist/resend`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: STATUS_EMAIL }),
+    });
+
+    // Spend both of the write-side budgets from this address.
+    for (let i = 0; i < 6; i++) await join();
+    assert.equal((await join()).status, 429, 'the join bucket should be spent by now');
+    for (let i = 0; i < 6; i++) await resend();
+    assert.equal((await resend()).status, 429, 'the resend bucket should be spent by now');
+
+    // The read is unaffected. Someone who fat-fingered their address a few
+    // times still gets told that it is not on the list, which is the whole
+    // difference between this screen and the dead end it replaces.
+    const res = await fetch(`${base}/api/public/waitlist/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: STATUS_EMAIL }),
+    });
+    assert.equal(res.status, 200, 'a spent write bucket must not silence the read');
+    assert.equal((await res.json()).on_list, false);
+  });
+});
+
+test('a malformed address is refused before it can buy a limiter bucket', async () => {
+  await withPublicApi(async (base) => {
+    // The per-address key is null when there is no usable address, so the
+    // keyed limiter skips the request entirely and only the IP bucket
+    // charges. The 422 must still be the answer, not a 429 and not a 500.
+    const res = await fetch(`${base}/api/public/waitlist/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: 'nope' }),
+    });
+    assert.equal(res.status, 422);
+    assert.deepEqual(await res.json(), { error: 'A valid email address is required.' });
+  });
+});

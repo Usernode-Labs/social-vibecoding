@@ -3,11 +3,14 @@
 // Profile customization (issue #982) — the write half of the #profile
 // screen plus the read that backs its "Completed challenges" section.
 //
-//   PATCH  /api/me/profile             display name / bio / github / x
+//   PATCH  /api/me/profile             display name / bio
 //   POST   /api/me/username            change the @handle
+//   GET    /api/me/username/suggestion  prefill for the first-run step
+//   POST   /api/me/username/choose      take the FIRST @handle (#2563)
 //   POST   /api/me/avatar              raw image bytes -> user_avatars
 //   DELETE /api/me/avatar              remove the picture
 //   GET    /api/me/challenges/completed  the viewer's OWN completions
+//   GET    /api/me/summary             Me's stat cards + "Your contributions"
 //
 // Every route is me-scoped and 401s without a session, so this router is
 // mounted AFTER authMiddleware in server.js. The public read side of an
@@ -47,9 +50,12 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { sniffImageType } = require('../services/attachments');
-const { profileWriteLimiter, usernameChangeLimiter } = require('../middleware/rate-limits');
+const {
+  profileWriteLimiter, usernameChangeLimiter, usernameChooseLimiter,
+} = require('../middleware/rate-limits');
 const usernames = require('../services/usernames');
 const accountEmail = require('../services/account-email');
+const socialIdentity = require('../services/social-identity');
 const {
   buildChallengeRow,
   DONE_EXPR,
@@ -67,12 +73,6 @@ const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 // and neither truncates at 40 on a phone.
 const MAX_DISPLAY_NAME = 40;
 const MAX_BIO = 280;
-// One leading '@' is stripped before this runs. Deliberately permissive
-// enough for both GitHub and X handle rules without trying to be either
-// vendor's exact validator — a handle that doesn't exist upstream is a
-// dead link, not a security problem.
-const HANDLE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,38}$/;
-
 // Avatar bytes. The express.raw() limit below must sit ABOVE this so an
 // over-size body gets the friendly 400 from validateAvatarUpload rather
 // than the parser's opaque 413 — same reasoning as the feedback-screenshot
@@ -86,6 +86,166 @@ const AVATAR_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 // exists so a season that accumulates hundreds can't turn one screen into
 // an unbounded response.
 const COMPLETED_LIMIT = 60;
+
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+// ─── GET /api/me/summary: Me's three numbers and its contributions ─────
+//
+// The prototype's Me page leads with three stat cards — merged, kudos,
+// challenges — and closes with "Your contributions". #2740 deferred both
+// because the three numbers live in three subsystems and nothing added them
+// up. This is that aggregation, ONE me-scoped read:
+//
+//   merged        the viewer's merged proposals, across every app. Headless
+//                 auto sessions are not proposals anybody authored, so they
+//                 are out, exactly as the builder page counts them.
+//   kudos         what the product calls kudos RECEIVED: the direct PR kudos
+//                 on the viewer's proposals plus the issue bounties awarded
+//                 to them on merge — the same two arms the Top users board
+//                 adds up (src/services/leaderboard-users.js). Unlike that
+//                 board this is not limited to public apps: it is the
+//                 viewer's own number on the viewer's own page, the same
+//                 me-scope GET /api/me/history reads with.
+//   challenges    completed in the profile season, by the one per-user done
+//                 rule (DONE_EXPR) the completed list and Home already share.
+//   contributions the newest merged proposals, each carrying what the row
+//                 needs to open it (#app/<slug>/dev/proposals/<session>).
+//
+// Two small counts and one bounded list: the counts ride the
+// chat_sessions (user_id, …) index, the list is LIMITed, and the challenge
+// totals are the query /api/me/challenges/completed already runs.
+const SUMMARY_CONTRIBUTIONS_LIMIT = 5;
+
+const SUMMARY_COUNTS_SQL = `
+  SELECT COUNT(*) FILTER (WHERE cs.status = 'merged')::int AS merged,
+         COUNT(DISTINCT cs.app_id) FILTER (WHERE cs.status = 'merged')::int AS apps,
+         (SELECT COUNT(*)::int
+            FROM pr_kudos pk
+            JOIN chat_sessions ks ON ks.id = pk.session_id
+           WHERE ks.user_id = $1) AS direct_kudos,
+         (SELECT COUNT(*)::int
+            FROM issue_bounties ib
+           WHERE ib.awarded_user_id = $1 AND ib.status = 'awarded') AS bounty_kudos,
+         (SELECT u.created_at FROM users u WHERE u.id = $1) AS member_since
+    FROM chat_sessions cs
+   WHERE cs.user_id = $1 AND cs.is_headless = FALSE
+`;
+
+const SUMMARY_CONTRIBUTIONS_SQL = `
+  SELECT cs.id AS session_id, cs.pr_number, cs.pr_title, cs.session_title,
+         cs.merged_at, cs.created_at,
+         a.slug AS app_slug, a.name AS app_name, a.icon_emoji, a.icon_image_id,
+         a.self_hosted,
+         ((SELECT COUNT(*) FROM pr_kudos pk WHERE pk.session_id = cs.id)
+          + (SELECT COUNT(*) FROM issue_bounties ib
+              WHERE ib.status = 'awarded' AND ib.awarded_session_id = cs.id))::int AS kudos
+    FROM chat_sessions cs
+    JOIN apps a ON a.id = cs.app_id
+   WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged'
+   ORDER BY cs.merged_at DESC NULLS LAST, cs.id DESC
+   LIMIT $2
+`;
+
+// The platform's own app, for the demo rows below.
+const SELF_APP_SQL = `
+  SELECT slug, name, icon_emoji, icon_image_id
+    FROM apps
+   WHERE self_hosted = TRUE
+   ORDER BY id ASC
+   LIMIT 1
+`;
+
+// Staging-only ?demo=1 rows. `chat_sessions` is staging:private, so a
+// prod-cloned preview holds no proposals and the whole lower half of Me
+// would read "nothing merged yet" — unreviewable in the preview and in the
+// before/after screenshots. These are four of the MERGED mocks
+// src/routes/votes.js serves under the same flag (stagingMockMerged), by id
+// and title, so a demo row opens the very proposal page it names.
+// tests/me-summary.test.js pins each id and title to that file.
+const DEMO_CONTRIBUTIONS = [
+  { sessionId: 9100000, prNumber: 910100, days: 0, kudos: 0,
+    title: '[Mock] Auto-merged: votes passed and checks turned green — merged automatically (#451)' },
+  { sessionId: 9100030, prNumber: 910130, days: 35, kudos: 2,
+    title: '[Mock] Completed: rework the onboarding checklist' },
+  { sessionId: 9100031, prNumber: 910131, days: 70, kudos: 0,
+    title: '[Mock] Completed: ship the notification digest' },
+  { sessionId: 9100032, prNumber: 910132, days: 110, kudos: 3,
+    title: '[Mock] Completed: split settings into sections' },
+];
+
+function appIconUrl(imageId) {
+  return typeof imageId === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(imageId)
+    ? `/app-icons/${imageId}` : null;
+}
+
+// Pure (exported for tests): one contributions row → the client's shape.
+function shapeContribution(r) {
+  const prNumber = r.pr_number != null ? Number(r.pr_number) : null;
+  const title = (r.pr_title && String(r.pr_title).trim())
+    || (r.session_title && String(r.session_title).trim())
+    || (prNumber ? `Proposal #${prNumber}` : 'Merged proposal');
+  const when = r.merged_at || r.created_at || null;
+  return {
+    sessionId: Number(r.session_id),
+    prNumber,
+    title,
+    appSlug: r.app_slug,
+    appName: r.app_name || r.app_slug,
+    appIconEmoji: r.icon_emoji || null,
+    appIconUrl: appIconUrl(r.icon_image_id),
+    platform: r.self_hosted === true,
+    mergedAt: when ? new Date(when).toISOString() : null,
+    kudos: Number(r.kudos) || 0,
+  };
+}
+
+// Pure (exported for tests): the three counts, the contributions and the
+// challenge totals → the response body.
+function shapeSummary({ counts, contributions, challenges }) {
+  const c = counts || {};
+  return {
+    merged: Number(c.merged) || 0,
+    apps: Number(c.apps) || 0,
+    kudos: (Number(c.direct_kudos) || 0) + (Number(c.bounty_kudos) || 0),
+    memberSince: c.member_since ? new Date(c.member_since).toISOString() : null,
+    challenges: {
+      done: Number(challenges && challenges.done) || 0,
+      total: Number(challenges && challenges.total) || 0,
+      season: challenges && challenges.season
+        ? { id: Number(challenges.season.id), name: challenges.season.name }
+        : null,
+    },
+    contributions: (contributions || []).map(shapeContribution),
+  };
+}
+
+// Pure (exported for tests): the ?demo=1 overlay. REAL DATA WINS — a
+// staging viewer who genuinely merged something sees their own rows, and
+// the mock only fills a lower half that would otherwise be empty. The
+// challenge totals are never mocked: they survive the staging clone.
+function withDemoSummary(summary, selfApp, now = Date.now()) {
+  if (!selfApp || summary.merged > 0 || summary.contributions.length > 0) return summary;
+  const contributions = DEMO_CONTRIBUTIONS.map((d) => ({
+    sessionId: d.sessionId,
+    prNumber: d.prNumber,
+    title: d.title,
+    appSlug: selfApp.slug,
+    appName: selfApp.name || selfApp.slug,
+    appIconEmoji: selfApp.icon_emoji || null,
+    appIconUrl: appIconUrl(selfApp.icon_image_id),
+    platform: true,
+    mergedAt: new Date(now - d.days * 86400000).toISOString(),
+    kudos: d.kudos,
+  }));
+  return {
+    ...summary,
+    merged: contributions.length,
+    apps: Math.max(summary.apps, 1),
+    kudos: Math.max(summary.kudos, contributions.reduce((n, row) => n + row.kudos, 0)),
+    contributions,
+    demo: true,
+  };
+}
 
 // Pure (exported for tests): validate an uploaded avatar body.
 // Returns { ok: true, contentType } or { ok: false, error }.
@@ -150,21 +310,15 @@ function parseProfileFields(body) {
     }
   }
 
+  // A pre-#1939 cached shell still posts the retired free-text fields. Do not
+  // answer 200 while discarding what the person typed: fail the stale request
+  // field-by-field so that client can keep the value visible and explain the
+  // provider-verified replacement path.
   for (const key of ['github', 'x']) {
-    if (!(key in src)) continue;
-    const raw = src[key];
-    if (raw !== null && typeof raw !== 'string') {
-      details[key] = ['Handle must be text.'];
-      continue;
-    }
-    // Strip ONE leading '@' — people paste "@octocat" out of habit.
-    const value = String(raw ?? '').trim().replace(/^@/, '');
-    if (value === '') {
-      fields[key] = null;
-    } else if (!HANDLE_RE.test(value)) {
-      details[key] = ['That doesn’t look like a valid handle.'];
-    } else {
-      fields[key] = value;
+    if (key in src) {
+      details[key] = [
+        'Social handles cannot be entered manually. Open Settings > Connectors > Social accounts to connect or change this account.',
+      ];
     }
   }
 
@@ -173,14 +327,17 @@ function parseProfileFields(body) {
 
 // The profile object echoed by PATCH and embedded in GET /api/auth/me, so
 // both surfaces speak one shape and the client can swap `App.user` wholesale.
-function shapeProfile(row) {
+// Social links are passed separately because their only trusted source is the
+// OAuth-backed user_social_identities table. In particular, never fall back to
+// row.github / row.x: those legacy columns contain self-declared text.
+function shapeProfile(row, verifiedLinks = {}) {
   return {
     displayName: row?.display_name ?? null,
     bio: row?.bio ?? null,
     avatarUrl: row?.avatar_id ? `/avatars/${row.avatar_id}` : null,
     links: {
-      github: row?.github ?? null,
-      x: row?.x ?? null,
+      github: verifiedLinks?.github ?? null,
+      x: verifiedLinks?.x ?? null,
     },
   };
 }
@@ -248,6 +405,24 @@ async function fetchProfileSeason(pool, preferredSeasonId = null) {
   return fallback[0] || null;
 }
 
+// The season's in-scope challenge count and how many of them the viewer has
+// done, by DONE_EXPR. Shared by the completed list's "N of M done" header
+// and Me's challenges stat card, so the two can never disagree. Totals over
+// the WHOLE in-scope set, so a capped row list never makes them lie.
+async function readChallengeTotals(pool, userId, seasonId) {
+  const { rows: totalRows } = await pool.query(
+        `SELECT COUNT(*)::int AS total,
+                COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done
+           FROM challenges c
+           JOIN season_events se ON se.id = c.season_event_id
+           LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+          WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE}`,
+        [userId, seasonId]
+  );
+  const row = totalRows[0];
+  return row ? { total: Number(row.total) || 0, done: Number(row.done) || 0 } : null;
+}
+
 function profileRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -298,14 +473,17 @@ function profileRoutes(config) {
   // the avatar writes can all echo the post-write truth rather than
   // reconstructing it from the request.
   async function readProfile(userId) {
-    const { rows } = await pool.query(
-      `SELECT u.display_name, u.bio, u.github, u.x, av.id AS avatar_id
-         FROM users u
-         LEFT JOIN user_avatars av ON av.user_id = u.id
-        WHERE u.id = $1`,
-      [userId]
-    );
-    return shapeProfile(rows[0]);
+    const [{ rows }, verifiedLinks] = await Promise.all([
+      pool.query(
+        `SELECT u.display_name, u.bio, av.id AS avatar_id
+           FROM users u
+           LEFT JOIN user_avatars av ON av.user_id = u.id
+          WHERE u.id = $1`,
+        [userId]
+      ),
+      socialIdentity.verifiedProfileLinks(pool, userId),
+    ]);
+    return shapeProfile(rows[0], verifiedLinks);
   }
 
   // ── PATCH /api/me/profile ────────────────────────────────────────────
@@ -452,6 +630,134 @@ function profileRoutes(config) {
     }
   );
 
+  // ── GET /api/me/username/suggestion ──────────────────────────────────
+  //
+  // What the first-run "Choose your username" step prefills (#2563).
+  //
+  // It is a route rather than a field on /api/auth/me because answering it
+  // costs an availability walk over `users` and `username_history`, and
+  // /api/auth/me is fetched on the boot of every tab by every signed-in
+  // member. The BOOLEAN that decides whether to ask rides that payload;
+  // the suggestion is fetched once, by the one screen that needs it.
+  //
+  // Never the email address, on any branch — that is the whole issue.
+  router.get('/api/me/username/suggestion', requireUser, async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        'SELECT username, email FROM users WHERE id = $1',
+        [req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'User not found' });
+      const { username: current, email } = rows[0];
+      const isEmailHandle = !!email
+        && String(current).toLowerCase() === String(email).toLowerCase();
+
+      // An account created since #2563 already HOLDS a derived suggestion
+      // (email-signup.js wrote one) — offering it back is both the best
+      // answer and a stable one across reloads of the gate. Accounts the
+      // migration flagged still wear their address, so theirs is derived
+      // here instead.
+      if (!isEmailHandle) {
+        const check = usernames.validateUsername(current);
+        if (check.ok) return res.json({ suggestion: check.value });
+      }
+
+      const suggestion = await usernames.suggestAvailableUsernameFromEmail(
+        pool, email, req.user.id
+      );
+      // null is a real answer: the field simply starts empty and the person
+      // types their own. Better than prefilling something they must delete.
+      return res.json({ suggestion: suggestion || null });
+    } catch (err) {
+      log.error('profile', 'Username suggestion failed', {
+        userId: req.user.id, err: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── POST /api/me/username/choose ─────────────────────────────────────
+  //
+  // Body: { username }. The FIRST handle an account ever takes (#2563) —
+  // not a rename, and deliberately not POST /api/me/username above.
+  //
+  // Three things that endpoint requires, this one cannot ask for, and the
+  // reasons are not the same reason:
+  //
+  //   • The current password. An email-code account has `password_set =
+  //     FALSE` and a random hash nobody knows, so requiring it would lock
+  //     the gate shut for exactly the accounts the gate exists for.
+  //   • The 30-day cooldown. It prices handle CHURN; a first choice is not
+  //     churn, and charging for it would leave a typo in place for a month.
+  //   • A `username_history` row. See chooseFirstUsername — what is being
+  //     left behind is an email address, and the ledger is read by every
+  //     handle resolver on the platform.
+  //
+  // What replaces the password as the authorization is the flag itself:
+  // the UPDATE only fires while `needs_username_choice` is TRUE, so this
+  // endpoint can be called exactly once per account and a session that
+  // reaches it can do nothing a rename would not already allow.
+  router.post(
+    '/api/me/username/choose',
+    requireUser,
+    usernameChooseLimiter,
+    express.json({ limit: '4kb' }),
+    async (req, res) => {
+      const { username: requested } = req.body || {};
+
+      const check = usernames.validateUsername(requested);
+      if (!check.ok) return res.status(400).json({ error: check.error });
+      const next = check.value;
+
+      try {
+        const { rows } = await pool.query(
+          'SELECT needs_username_choice FROM users WHERE id = $1',
+          [req.user.id]
+        );
+        if (!rows.length) return res.status(404).json({ error: 'User not found' });
+        if (!rows[0].needs_username_choice) {
+          // Already chosen — a replayed submit, or a second tab. Not an
+          // error the person can act on, so the client treats it as "the
+          // gate is done" and closes.
+          return res.status(409).json({
+            error: 'You have already chosen your username.',
+            alreadyChosen: true,
+          });
+        }
+
+        const free = await usernames.checkAvailability(pool, next, req.user.id);
+        if (!free.available) return res.status(409).json({ error: free.error });
+
+        const result = await usernames.chooseFirstUsername(pool, req.user.id, next);
+        // The flag went out from under us between the read and the write —
+        // the other tab won. Same answer as above.
+        if (!result) {
+          return res.status(409).json({
+            error: 'You have already chosen your username.',
+            alreadyChosen: true,
+          });
+        }
+
+        log.info('profile', 'First username chosen', {
+          userId: req.user.id, to: result.username,
+        });
+        return res.json({ username: result.username });
+      } catch (err) {
+        // The unique index on users.username and the two BEFORE triggers
+        // (case-variant and retired-handle, see schema.sql) are the backstop
+        // behind checkAvailability; a race between two people claiming the
+        // same handle lands here.
+        if (err.code === '23505') {
+          return res.status(409).json({ error: 'That username is taken.' });
+        }
+        log.error('profile', 'First username choice failed', {
+          userId: req.user.id, err: err.message,
+        });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+  );
+
   // ── POST /api/me/avatar ──────────────────────────────────────────────
   // Raw bytes (application/octet-stream) — deliberately sidesteps the
   // global express.json() parser, same reasoning as the feedback
@@ -570,15 +876,7 @@ function profileRoutes(config) {
 
       // Totals over the WHOLE in-scope set so the header's "N of M done"
       // is honest even when the row list is capped.
-      const { rows: totalRows } = await pool.query(
-        `SELECT COUNT(*)::int AS total,
-                COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done
-           FROM challenges c
-           JOIN season_events se ON se.id = c.season_event_id
-           LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-          WHERE se.season_id = $2 AND ${ALL_CHALLENGE_WHERE}`,
-        [req.user.id, season.id]
-      );
+      const totals = await readChallengeTotals(pool, req.user.id, season.id);
 
       const truncated = rows.length > COMPLETED_LIMIT;
       if (truncated) {
@@ -606,13 +904,46 @@ function profileRoutes(config) {
 
       return res.json({
         season: { id: Number(season.id), name: season.name },
-        total: totalRows[0]?.total ?? 0,
-        done: totalRows[0]?.done ?? completed.length,
+        total: totals ? totals.total : 0,
+        done: totals ? totals.done : completed.length,
         completed,
         ...(truncated ? { truncated: true } : {}),
       });
     } catch (err) {
       log.error('profile', 'Completed-challenge read failed', {
+        userId: req.user.id, err: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── GET /api/me/summary ──────────────────────────────────────────────
+  //
+  // Me's stat cards and "Your contributions" — see SUMMARY_COUNTS_SQL above
+  // for what each number means. The three independent reads go out together;
+  // only the challenge totals wait, on the season they are scoped to.
+  router.get('/api/me/summary', requireUser, async (req, res) => {
+    try {
+      const [countRows, contributionRows, season] = await Promise.all([
+        pool.query(SUMMARY_COUNTS_SQL, [req.user.id]),
+        pool.query(SUMMARY_CONTRIBUTIONS_SQL, [req.user.id, SUMMARY_CONTRIBUTIONS_LIMIT]),
+        fetchProfileSeason(pool, IS_STAGING ? 900500 : null),
+      ]);
+      const totals = season ? await readChallengeTotals(pool, req.user.id, season.id) : null;
+      let summary = shapeSummary({
+        counts: countRows.rows[0],
+        contributions: contributionRows.rows,
+        challenges: season
+          ? { done: totals ? totals.done : 0, total: totals ? totals.total : 0, season }
+          : null,
+      });
+      if (IS_STAGING && req.query.demo === '1') {
+        const { rows: selfRows } = await pool.query(SELF_APP_SQL);
+        summary = withDemoSummary(summary, selfRows[0] || null);
+      }
+      return res.json(summary);
+    } catch (err) {
+      log.error('profile', 'Me summary read failed', {
         userId: req.user.id, err: err.message,
       });
       return res.status(500).json({ error: 'Internal server error' });
@@ -629,6 +960,12 @@ module.exports = {
   parseProfileFields,
   shapeProfile,
   fetchProfileSeason,
+  readChallengeTotals,
+  shapeContribution,
+  shapeSummary,
+  withDemoSummary,
+  DEMO_CONTRIBUTIONS,
+  SUMMARY_CONTRIBUTIONS_LIMIT,
   MAX_DISPLAY_NAME,
   MAX_BIO,
   MAX_AVATAR_BYTES,

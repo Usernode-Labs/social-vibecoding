@@ -1,0 +1,1 @@
+../../.agents/hooks/opencode-upstream-drift.js

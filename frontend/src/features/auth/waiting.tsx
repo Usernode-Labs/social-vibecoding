@@ -23,6 +23,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { inviteTokenFrom } from './invite-card';
 import { AUTH_SCREEN_IDS, fx, legacy, useAuthScreensPatch } from './shared';
 
 /** How often to re-check for release. */
@@ -45,6 +46,10 @@ export function WaitingScreen() {
 
   const [who, setWho] = useState('');
   const [checkState, setCheckState] = useState('');
+  // The communities this account's invite links queued for the day it is
+  // let in (src/services/community-invites.js). Empty until loaded, and
+  // for most people forever.
+  const [queued, setQueued] = useState<Array<{ name: string; inviter: string | null }>>([]);
 
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -99,10 +104,39 @@ export function WaitingScreen() {
     timer.current = setInterval(() => void check(), POLL_MS);
   }, [check]);
 
+  // AN INVITE LINK OPENED FROM HERE. The shell routes a waiting account to
+  // this screen whatever the address (App.enterAuthed), and showWaiting
+  // keeps an invite link's token before it rewrites the address to
+  // #waiting. It is followed from this side, which only queues its
+  // community — the redeem route is open to a waiting account for exactly
+  // this (GATE_OPEN_PATHS). Following it twice spends nothing, so a sign-up
+  // that already followed it server-side is not counted again. Then the
+  // list.
+  const followAndList = useCallback(async () => {
+    try {
+      const host = legacy().AuthScreens as { _waitingInvite?: string } | undefined;
+      const token = (host && host._waitingInvite) || inviteTokenFrom(location.pathname);
+      if (host) host._waitingInvite = '';
+      if (token) {
+        await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+      }
+      const res = await fetch('/api/invite-links/queued', { credentials: 'same-origin' });
+      if (!res.ok) return;
+      const body = await res.json();
+      setQueued(Array.isArray(body?.queued) ? body.queued : []);
+    } catch {
+      /* the waiting room works without it */
+    }
+  }, []);
+
   const waitingOnShow = useCallback(() => {
     setWho(legacy().App?.user?.username || '');
     startWaitingPoll();
-  }, [startWaitingPoll]);
+    void followAndList();
+  }, [startWaitingPoll, followAndList]);
 
   const onLogout = useCallback(async () => {
     const w = legacy();
@@ -176,13 +210,29 @@ export function WaitingScreen() {
               {checkState}
             </p>
           </div>
+          {queued.length ? (
+            <div data-waiting-queued="" className="mt-3 rounded-2xl bg-white dark:bg-zinc-900 p-5 text-left">
+              <p className="text-[15px] font-[650] text-zinc-900 dark:text-zinc-100">When you're let in</p>
+              <ul className="mt-1 space-y-1 text-[15px] text-zinc-600 dark:text-zinc-300">
+                {queued.map((q) => (
+                  <li key={q.name}>
+                    {`You join ${q.name}${q.inviter ? `, from @${q.inviter}'s invite` : ''}.`}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+          {/*
+              QA 2026-09-24 Q12: this used to open with a violet "Use apps
+              while you wait" pill to `#landing`. The landing stopped listing
+              apps when its directory grid was removed (landing.tsx,
+              `landingTileFor`), and for a waiting-room session it shows one
+              pill, "Your queue status", back to this screen: the promise led
+              in a circle. Nothing a waiting-room account can reach lists apps
+              today, so the pill is gone rather than pointed at something that
+              does not exist. Log out is the one action left.
+          */}
           <div className="mt-6 space-y-3">
-            <a
-              href="#landing"
-              className="flex h-12 w-full items-center justify-center rounded-full bg-violet-600 hover:bg-violet-500 px-5 text-[17px] font-semibold transition-colors text-white"
-            >
-              Browse public apps while you wait
-            </a>
             <button
               id="waiting-logout"
               className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors"

@@ -247,6 +247,30 @@ test('unlinked rows are only readable by their uploader', async () => {
   }
 });
 
+test('a linked attachment from a blocked author is hidden on both serve routes', async () => {
+  accessGrants = { view: { id: 7 }, collab: { id: 7 } };
+  poolQueryHandler = async (sql, params) => {
+    if (/FROM chat_message_attachments/.test(sql)) return { rows: [{
+      kind: 'html', filename: 'hidden.html', data: Buffer.from('hidden'),
+      message_id: 9, user_id: 6,
+    }] };
+    if (/FROM user_blocks/.test(sql)) {
+      assert.deepEqual(params, [5, 6]);
+      return { rows: [{ blocker_id: 5 }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer(5);
+  try {
+    for (const suffix of ['', '/view']) {
+      const response = await fetch(urlFor(server, `/api/apps/demo/chat-attachments/${ATT_ID}${suffix}`));
+      assert.equal(response.status, 404);
+    }
+  } finally {
+    server.close();
+  }
+});
+
 test('non-viewers and malformed ids 404', async () => {
   accessGrants = { view: null, collab: null };
   let queried = false;

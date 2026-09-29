@@ -59,6 +59,17 @@ test('a wrapper that died with no marker says where to look instead of guessing'
   assert.match(msg, /platform log/);
 });
 
+test('a worker volume the namespace quota refused says the platform is out of room, not to read logs', () => {
+  const err = new Error('HTTP-Code: 403\nMessage: Forbidden\nBody: {"message":"persistentvolumeclaims \\"sv-worker-s4952-state\\" is forbidden: exceeded quota: social-vibecoding"}');
+  Object.defineProperty(err, 'bootstrapFailed', { value: true });
+  const msg = describeTurnError(err);
+  assert.match(msg, /no free workspace storage/);
+  assert.match(msg, /no code was changed/);
+  assert.match(msg, /try again in a few minutes/);
+  assert.doesNotMatch(msg, /platform log|sv-worker|quota/);
+  assert.ok(!/[—]|&mdash;|&#8212;/.test(msg));
+});
+
 test('a bootstrap failure with no detail after the prefix reads as a sentence', () => {
   // `clip` can legitimately produce nothing (a command that failed silently).
   const msg = describeTurnError(new Error('clone failed'));

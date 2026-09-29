@@ -145,6 +145,7 @@ const Browse = {
       Browse._apps = Home._apps;
     }
     Browse._applyInitialSort();
+    Browse._applyInitialFilter();
     Browse._syncLevel();
     Browse.render();
     Browse._load();
@@ -260,12 +261,30 @@ const Browse = {
     // target handleBack() would take — up to the list, or all the way
     // home when the detail page was opened from a home card's "App
     // details" entry (there is no list behind it to go up to).
-    // The list and Home are peer destinations in the navigation menu.
-    // Keep their header controls identical instead of inserting a Home icon
-    // and shifting the title whenever the directory opens (#1569). Details
-    // still have a way up: the list's arrow, or the house for a Home entry.
+    // #2639: the LIST shows the house. #1569 read the list and Home as peer
+    // destinations and kept their bars identical, which left the directory
+    // with an empty bar and the chip menu's Home row as the only way out.
+    // Browse took the house after that, like every other screen you navigate
+    // into.
+    //
+    // IT IS A TAB ROOT NOW (#2718 review), so the list level shows NOTHING:
+    // Discover is its own tab, the bar is on screen beside it, and a corner
+    // control that goes home is a second way to press a button already in
+    // view. The empty bar #2639 fixed is not back — what fixed it was giving
+    // the viewer a way out, and the tab bar is a better one than the house.
+    //
+    // DETAILS ARE UNCHANGED in shape and differ in one case: the arrow up to
+    // the list when there is a list behind it, and otherwise nothing, because
+    // a detail opened from a Home card has the same tab bar under it and no
+    // list to go up to.
+    //
+    // This runs AFTER _showOnlyScreen inside the same transition and calls
+    // setBackIcon unconditionally, so it is the value that survives. The two
+    // have to agree or the later one silently wins — which is exactly how a
+    // first attempt at #2639 changed only app.js and did nothing at all.
+    // App._BACK_SLOT is the other writer; 'browse-screen' is a root there.
     const upToList = onDetail && Browse._detailOrigin !== 'home';
-    const backMode = onDetail ? (upToList ? 'arrow' : 'home') : 'none';
+    const backMode = upToList ? 'arrow' : 'none';
     App.setBackIcon(backMode, upToList ? '#apps' : undefined);
     if (onDetail) {
       const app = Browse.appBySlug(Browse._slug);
@@ -402,6 +421,132 @@ const Browse = {
     Browse.render();
   },
 
+  // ── Filter chips (the prototype's scrDiscover) ────────────────────
+  //
+  // All · Featured · Joined · New, in a row above the list. A chip
+  // FILTERS where Sort only reorders, and the three controls compose in one
+  // fixed order: the chip picks the set, Sort orders it, the search narrows
+  // it. So "Featured, by Most users" is the featured apps ranked by users,
+  // and switching chips never loses the order the viewer chose.
+  //
+  // The order of this array is the order of the chips; the first is the
+  // default and the store's prerender value. Labels are user-facing, and
+  // browse-screen.tsx keeps a COPY of them for the same reason it keeps one
+  // of SORTS (tests/browse-screen.test.js pins the two together).
+  FILTERS: [
+    { key: 'all', label: 'All' },
+    { key: 'featured', label: 'Featured' },
+    // The key stays `yours` — ?filter=yours links and the declared checks
+    // select on it — while the label says what the chip now holds: the
+    // communities you are in, not the shortcuts on your Home screen.
+    { key: 'yours', label: 'Joined' },
+    { key: 'new', label: 'New' },
+  ],
+
+  // "New" is the apps CREATED in the last NEW_WINDOW_DAYS days (by
+  // `created_at`). A directory where nothing is that young would give the
+  // chip an empty list, which reads as a broken filter rather than a quiet
+  // fortnight, so it then answers with the NEW_FALLBACK_COUNT most recently
+  // created apps instead: the chip always shows what arrived last.
+  NEW_WINDOW_DAYS: 14,
+  NEW_FALLBACK_COUNT: 6,
+
+  // The chip, remembered for the SESSION only: it lives on this object, so it
+  // survives leaving Discover and coming back, and a reload starts on All. No
+  // storage, unlike Sort — a filter left on by a visit last week is a
+  // directory that silently hides most of itself.
+  _filter: 'all',
+  // ?filter= seeds the FIRST entry of a page load and is then spent, so a
+  // link someone was handed (and every declared check) lands on its chip
+  // without overriding a choice made by hand later in the same visit.
+  _urlFilterTaken: false,
+
+  // Anything unrecognised falls back to All rather than emptying the screen.
+  // Pure — unit-tested.
+  resolveFilter(raw) {
+    const key = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+    return Browse.FILTERS.some((f) => f.key === key) ? key : 'all';
+  },
+
+  // Runs on screen ENTRY, never during render — the same reason
+  // _applyInitialSort gives: location.search does not exist in the SSG pass,
+  // and a first client render that disagreed with the prerender (All) would
+  // be a hydration console.error.
+  _applyInitialFilter() {
+    if (!Browse._urlFilterTaken) {
+      Browse._urlFilterTaken = true;
+      let raw = null;
+      try { raw = new URLSearchParams(location.search).get('filter'); } catch (err) { raw = null; }
+      if (raw) Browse._filter = Browse.resolveFilter(raw);
+    }
+    if (Browse._store) Browse._store.set({ filter: Browse._filter });
+  },
+
+  // A chip's onClick.
+  setFilter(key) {
+    const next = Browse.resolveFilter(key);
+    Browse._filter = next;
+    if (Browse._store) Browse._store.set({ filter: next });
+    Browse.render();
+  },
+
+  // The New chip's set: see NEW_WINDOW_DAYS. `now` is injectable for the
+  // tests. Pure — unit-tested.
+  newApps(apps, now) {
+    const at = Number.isFinite(now) ? now : Date.now();
+    const created = (a) => {
+      const t = a && a.created_at ? new Date(a.created_at).getTime() : NaN;
+      return Number.isNaN(t) ? null : t;
+    };
+    const windowMs = Browse.NEW_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+    const list = (apps || []).filter(Boolean);
+    const recent = list.filter((a) => {
+      const t = created(a);
+      return t != null && at - t <= windowMs;
+    });
+    if (recent.length) return recent;
+    return list
+      .filter((a) => created(a) != null)
+      .sort((x, y) => created(y) - created(x))
+      .slice(0, Browse.NEW_FALLBACK_COUNT);
+  },
+
+  // The chip's set, before any sort or search. Each chip reads a predicate
+  // that already exists rather than growing its own:
+  //   featured — the per-viewer `featured` flag GET /api/apps serializes: the
+  //              admin's curation, the same flag Home's featured lane reads
+  //              (Home.featuredApps). Here it is the WHOLE curated set: the
+  //              directory lists apps you have too, and has no six-card cap.
+  //   yours    — Home.isJoined: the communities you are in, the same flag the
+  //              rows' Join pill reads, so the chip and the pill can never
+  //              disagree. Not Home.isYours — taking an app off Home is not
+  //              leaving it, and Discover is where you join and leave.
+  //   new      — newApps above.
+  // Pure — unit-tested.
+  filterApps(apps, key, now) {
+    const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
+    const list = (apps || []).filter(Boolean);
+    if (filter === 'featured') return list.filter((a) => !!a.featured);
+    if (filter === 'yours') return list.filter((a) => Home.isJoined(a));
+    if (filter === 'new') return Browse.newApps(list, now);
+    return list;
+  },
+
+  // The nothing-to-show line, per chip. Pure — unit-tested.
+  emptyText(query, key) {
+    const filter = Browse.resolveFilter(key == null ? Browse._filter : key);
+    const q = String(query || '').trim();
+    if (q) {
+      if (filter === 'featured') return `No featured apps match “${q}”.`;
+      if (filter === 'yours') return `Nothing you’ve joined matches “${q}”.`;
+      if (filter === 'new') return `No new apps match “${q}”.`;
+      return `No apps match “${q}”.`;
+    }
+    if (filter === 'featured') return 'No featured apps yet.';
+    if (filter === 'yours') return 'You haven’t joined anything yet. Join apps from All.';
+    return 'No apps to show yet.';
+  },
+
   // Unreviewed is not the same as broken. Apps with icons that have not yet
   // been reviewed remain visible below the reviewed group; explicit demos,
   // failures, and apps still needing setup/icon work go under Show more.
@@ -495,12 +640,14 @@ const Browse = {
     return (apps || []).slice().sort(cmp);
   },
 
-  // The rows for the current query. Search covers EVERY visible app here
-  // (home's own search is scoped to "Your apps"), reusing Home's matcher
-  // so both fields behave identically. Sort first, then filter: the two
-  // compose, and searching never changes the order.
+  // The rows for the current chip and query. The chip picks the set first
+  // (filterApps), then the sort orders it, then the search narrows it. The
+  // search covers every app the chip admits (home's own search is scoped to
+  // "Your apps"), reusing Home's matcher so both fields behave identically.
+  // The three compose, and searching never changes the order.
   visibleApps() {
-    const sorted = Browse.sortApps(Browse._apps, Browse._sort);
+    const pool = Browse.filterApps(Browse._apps, Browse._filter);
+    const sorted = Browse.sortApps(pool, Browse._sort);
     return sorted.filter((a) => Home.matchesQuery(a, Browse._query));
   },
 
@@ -562,7 +709,10 @@ const Browse = {
   // Pure — unit-tested in tests/browse-screen.test.js.
   rowView(app) {
     const isDemo = !!app.demo;
-    const isAdded = Home.isYours(app);
+    // The pill is membership now (Join / Joined), not the Home shortcut it
+    // used to be: see Home.setMembership. `added` keeps its name because the
+    // row's data-added attribute is what the declared checks select on.
+    const isAdded = Home.isJoined(app);
     return {
       app,
       directoryTier: Browse.directoryTier(app),
@@ -577,7 +727,7 @@ const Browse = {
       demo: isDemo,
       openable: !isDemo,
       added: isAdded,
-      addTitle: isAdded ? 'Added. Tap to remove from Your apps' : 'Add to Your apps',
+      addTitle: isAdded ? `Joined. Tap to leave ${app.name || app.slug}` : `Join ${app.name || app.slug}`,
     };
   },
 
@@ -599,6 +749,8 @@ const Browse = {
       // Republished on every list render so the <select> and the
       // #browse-list[data-sort] anchor can never lag the rows they describe.
       sort: Browse._sort,
+      // …and the chips and #browse-list[data-filter], for the same reason.
+      filter: Browse._filter,
       // #1912: EVERY sort tucks the demos and apps needing fixes behind
       // Show more — the disclosure used to exist on Recommended only, so
       // switching to a metric sort suddenly showed everything. Only
@@ -610,9 +762,7 @@ const Browse = {
       grouped: Browse._sort === 'recommended' && !query,
       moreExpanded: Browse._moreExpanded,
       error: false,
-      empty: rows.length
-        ? null
-        : (query ? `No apps match “${query}”.` : 'No apps to show yet.'),
+      empty: rows.length ? null : Browse.emptyText(query, Browse._filter),
     });
 
     Browse._maybeShotDetail(rows);
@@ -629,22 +779,31 @@ const Browse = {
   // cmd/middle-click is intercepted instead — NavLink.wireModified takes this
   // as its hrefFor, and it repeats the same guards openRow applies so an inert
   // row stays inert under a modifier too.
+  //
+  // THE ROW OPENS THE PROJECT'S HUB (the communities prototype). What a
+  // person browsing wants first is what it is, who it is for and Join, which
+  // is the hub's hero, with its channel and what it is working on under it —
+  // not a store page one level short of that. The address is the one
+  // App._hubHref builds (`#app/<slug>/workshop`, which opens on the hub),
+  // spelled here so the controller stays testable without App. The About
+  // page (#apps/<slug>) stays: Home's card menu opens it, links to it still
+  // work, and ?shot=browse-detail still drills into it for the captures.
   rowHref(view) {
     if (!view || view.demo || !view.slug) return null;
-    return `#apps/${encodeURIComponent(view.slug)}`;
+    return `#app/${encodeURIComponent(view.slug)}/workshop`;
   },
 
   openRow(view) {
     const href = Browse.rowHref(view);
     if (!href) return;
-    // Back from here means up to this list.
-    Browse.noteDetailOrigin('list');
+    // The hub, not the tab that project page was last left on.
+    if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(view.slug);
     location.hash = href;
   },
 
-  // #931: a row tap lands on the detail page, not in the app, so this is a
-  // warm-up for the "Open" button one screen later — by then the token is
-  // minted and the connection to the app's origin is open.
+  // #931: a warm-up for opening the app from its page one screen later — by
+  // then the token is minted and the connection to the app's origin is
+  // open. The hub is a screen short of the app, as the About page was.
   warmRow(view) {
     if (!view || view.demo || !view.slug) return;
     try { App.prewarmApp(view.slug); } catch (err) { /* ignore */ }
@@ -652,7 +811,7 @@ const Browse = {
 
   toggleRowAdded(view) {
     if (!view || !view.slug) return;
-    Home.toggleAdded(view.slug, !view.added, () => Browse.render());
+    Home.setMembership(view.slug, !view.added, () => Browse.render());
   },
 
   // Screenshot-state deep link (?shot=browse-detail): the detail page is
@@ -708,6 +867,64 @@ const Browse = {
     return items.filter((i) => i && !Browse.DETAIL_EXCLUDED_KEYS.includes(i.key));
   },
 
+  // ── Share (the prototype's About sheet: More, then Share) ─────────
+  //
+  // The link handed out is the app's PUBLIC one: `app.url`, the address the
+  // app itself is served on (GET /api/apps sets it for a running app). That
+  // is exactly what the platform's existing Share already gives away — the
+  // mark menu's About, "Share app" (Improve.share, then AppView.openShareModal,
+  // then features/dialogs/share.tsx), which reads the RUNNING app's
+  // `appData.url` through window.resolveDevHost and draws the row only on
+  // `canShare`: running, with a URL, and never the platform itself (its row
+  // has no per-slug app URL). The directory has no running app to read, so it
+  // takes the same field off the row it is showing, through the same rewrite
+  // and behind the same gate. Null means "no Share row".
+  // Pure — unit-tested.
+  shareUrlFor(app) {
+    if (!app || app.self_hosted) return null;
+    if (app.status !== 'running' || !app.url) return null;
+    const raw = String(app.url);
+    try {
+      return typeof window !== 'undefined' && typeof window.resolveDevHost === 'function'
+        ? window.resolveDevHost(raw)
+        : raw;
+    } catch (err) {
+      return raw;
+    }
+  },
+
+  // The detail page's Share row. The Web Share API where the device has one
+  // (a phone's own share sheet: Messages, Mail, AirDrop, a chat app); where it
+  // has none, which is most desktop browsers, the link goes to the clipboard
+  // and a toast says so, through PlatformUI.copyText (the shell's one
+  // clipboard helper, with the fallback the share dialog's own copy button
+  // documents).
+  async shareDetailApp(app) {
+    const url = Browse.shareUrlFor(app);
+    if (!url) return;
+    const data = { title: (app && (app.name || app.slug)) || '', url };
+    const nav = typeof navigator !== 'undefined' ? navigator : null;
+    if (nav && typeof nav.share === 'function'
+      && (typeof nav.canShare !== 'function' || nav.canShare(data))) {
+      try {
+        await nav.share(data);
+        return;
+      } catch (err) {
+        // Dismissing the sheet is an answer, not a failure: nothing to copy.
+        if (err && err.name === 'AbortError') return;
+        // Anything else (a refused permission, a webview with no share
+        // target) falls through to the clipboard, which always has one.
+      }
+    }
+    let ok = false;
+    try {
+      ok = !!(await PlatformUI.copyText(url));
+    } catch (err) {
+      ok = false;
+    }
+    PlatformUI.toast(ok ? 'Link copied' : 'Couldn’t copy the link');
+  },
+
   // ── Contributors (#919) ───────────────────────────────────────────
   //
   // Who has actually shipped changes to this app, ranked by merged
@@ -745,6 +962,9 @@ const Browse = {
       count: (state === 'ready' && total > 0) ? total : null,
       rows: [],
       toggle: null,
+      // Whether the fold is open, so the toggle can say so to assistive tech
+      // (aria-expanded) and not only through its label (#2991).
+      expanded,
       note: null,
     };
 
@@ -935,6 +1155,10 @@ const Browse = {
             : (app.status || 'Unavailable')),
         isAdded,
         favLabel: isAdded ? 'Remove from Your apps' : 'Add to Your apps',
+        // The Share row (shareDetailApp). A flag, not the URL: the click
+        // resolves the link from the app record it is handed, the same one
+        // Open and Add act on, rather than from a string frozen at paint.
+        canShare: !!Browse.shareUrlFor(app),
         actions: actions.map((a, i) => ({
           index: i,
           label: a.label,

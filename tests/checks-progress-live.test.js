@@ -153,7 +153,49 @@ test('notifyChecksProgress rides the existing checks_ready event with checkState
   assert.match(fn, /type: 'checks_ready'/, 'no second event type for clients to learn');
   assert.match(fn, /checkState: 'pending'/);
   assert.match(fn, /progress: progress \|\| null/);
-  assert.match(fn, /broadcastGlobal\(\{ type: 'session_event', sessionId, event: 'checks_ready'/);
+  assert.match(fn, /broadcastGlobal\(sessionEventEnvelope\(sessionId, 'checks_ready', event\)\)/);
+});
+
+// The shell's socket router has ONE case for these frames, 'session_event'.
+// Every notifier used to build the frame as `{ type: 'session_event', ...,
+// ...event }`, so the event's own `type: 'checks_ready'` overwrote it and the
+// router dropped every tick, verdict and before/after frame. Pages learned a
+// verdict only from their own polls.
+test('every checks and visuals frame on the global socket keeps type session_event', () => {
+  const ws = require('../src/services/ws');
+  const saved = ws.broadcastGlobal;
+  const seen = [];
+  ws.broadcastGlobal = (e) => seen.push(e);
+  try {
+    visuals.notifyChecksProgress(7, 'abc', { ran: 1, passed: 1, failed: 0 }, 'testing', 'manual-recheck');
+    visuals.notifyChecksPending(7, 'abc', 'building', 'manual-recheck');
+    visuals.notifyChecks(7, { state: 'passing', results: [] }, 'abc', null);
+    assert.deepEqual(seen.map((e) => [e.type, e.event, e.sessionId]), [
+      ['session_event', 'checks_ready', 7],
+      ['session_event', 'checks_ready', 7],
+      ['session_event', 'checks_ready', 7],
+    ]);
+    assert.deepEqual(
+      visuals.sessionEventEnvelope(7, 'visuals_ready', { type: 'visuals_ready', beforeUrl: 'b' }),
+      { type: 'session_event', sessionId: 7, event: 'visuals_ready', beforeUrl: 'b' },
+    );
+    assert.match(read('src/services/visuals.js'), /broadcastGlobal\(sessionEventEnvelope\(sessionId, 'visuals_ready', event\)\)/);
+    assert.equal(seen[2].checkState, 'passing', 'the verdict itself rides the frame');
+    assert.match(seen[2]._seq, /^chk/);
+  } finally { ws.broadcastGlobal = saved; }
+});
+
+// A live turn's `send` fans out to the bus and the socket itself, so the
+// notifiers hand the event to it alone. A caller with no turn passed a no-op
+// `send: () => {}` and the verdict reached nobody: the manual re-check, the
+// preview rebuild, a new head's re-run and a resumed run's capture.
+test('no caller without a turn passes a no-op send to the capture', () => {
+  for (const f of ['src/routes/sessions.js', 'src/services/staging-recovery.js', 'src/services/pr-import-sync.js', 'src/services/check-harvest.js']) {
+    assert.doesNotMatch(read(f), /send: \(\) => \{\s*\}/, `${f} swallows the verdict with a no-op send`);
+  }
+  for (const f of ['src/services/sync-main.js', 'src/services/staging-recovery.js']) {
+    assert.doesNotMatch(read(f), /broadcastGlobal\(\{ type: 'session_event',[^}]*\.\.\./, `${f} spreads an event over its envelope`);
+  }
 });
 
 test('the capture run feeds one observer to BOTH transports, throttled, with the done sentinel always flushed', () => {
@@ -343,30 +385,62 @@ test('a pending checks_ready patches the cached row and repaints WITHOUT refetch
   assert.equal(loads, 0, 'and did not refetch five endpoints to learn what it was just told');
 });
 
-test('a progress tick for a row the page does not hold refetches nothing', () => {
+test('a checks event for a row the page does not hold fetches and repaints nothing', () => {
+  // Every page hears every run on the platform: the event names no app. A
+  // tick, a run starting and a verdict for someone else's row cost nothing.
   const AppView = makeAppView();
   AppView._proposals = [];
   AppView._merged = [];
   AppView._topicProposal = null;
-  let refetched = 0;
+  let refetched = 0; let paints = 0;
   AppView.refreshDevData = () => { refetched += 1; };
+  AppView._renderTopicHead = () => { paints += 1; };
+  AppView._repaintDevBodyKeepingPosition = () => { paints += 1; };
   AppView.applyChecksEvent({ sessionId: 424242, checkState: 'pending', checkPhase: 'testing', progress: { ran: 3, passed: 3, failed: 0, expected: 9 } });
-  assert.equal(refetched, 0, 'someone else\'s run is not a reason to refetch five endpoints a second');
   AppView.applyChecksEvent({ sessionId: 424242, checkState: 'pending', checkPhase: 'building' });
-  assert.equal(refetched, 1, 'a run starting (no progress) still falls through to the refetch');
   AppView.applyChecksEvent({ sessionId: 424242, checkState: 'passing' });
-  assert.equal(refetched, 2, 'and so does a verdict');
+  assert.equal(refetched, 0);
+  assert.equal(paints, 0);
+  // And the burst's refresh asks the board for no part of it.
+  AppView._devDataReady = true;
+  const parts = AppView._partsForLive({ kinds: new Set(['checks']), ids: new Set([424242]), merged: false });
+  assert.equal(parts.size, 0);
 });
 
-test('a final verdict still refetches, but through a kind that keeps the roster', () => {
+test('a checks tick patches a DRAFT the page holds, and tells the change page', () => {
+  // Drafts are where checks are watched most, and they live in the session
+  // caches, not the proposal lists the patch used to search.
+  const AppView = makeAppView();
+  AppView._devTopic = { kind: 'proposal', id: 12 };
+  AppView._mySessions = [{ id: 12, status: 'active', check_state: null }];
+  const told = [];
+  AppView._forwardChangePatch = (id, patch) => told.push([id, patch.check_state, patch.checks_progress && patch.checks_progress.ran]);
+  AppView._renderTopicHead = () => {};
+  AppView.applyChecksEvent({ sessionId: 12, checkState: 'pending', checkPhase: 'testing', progress: { ran: 4, passed: 4, failed: 0, expected: 9 } });
+  assert.equal(AppView._mySessions[0].check_state, 'pending');
+  assert.equal(AppView._mySessions[0].checks_progress.ran, 4);
+  assert.deepEqual(told, [[12, 'pending', 4]]);
+});
+
+test('a verdict is one targeted read of the open proposal, and keeps the roster', async () => {
   const AppView = makeAppView();
   AppView._devTopic = { kind: 'proposal', id: 9 };
-  AppView._proposals = [{ id: 9, status: 'promoted', check_state: 'pending' }];
-  AppView._voteRoster[9] = { phase: 'ready' };
-  const kinds = [];
-  AppView.refreshDevData = (kind) => { kinds.push(kind); };
-  AppView.applyChecksEvent({ sessionId: 9, checkState: 'passing', failingCount: 0 });
-  assert.deepEqual(kinds, ['checks']);
+  const row = { id: 9, status: 'promoted', check_state: 'pending' };
+  AppView._proposals = [row];
+  const ready = { phase: 'ready' };
+  AppView._voteRoster[9] = ready;
+  const reads = [];
+  AppView._loadDevData = async () => { throw new Error('the whole board must not reload'); };
+  AppView._renderTopicHead = () => {};
+  AppView._readTopicRow = async (id, review) => { reads.push([id, review]); return { id: 9, status: 'promoted', check_state: 'passing', test_results: [] }; };
+  await AppView.refreshDevData('checks', { kinds: new Set(['checks']), ids: new Set([9]), merged: false });
+  assert.deepEqual(reads, [[9, true]]);
+  assert.equal(row.check_state, 'passing', 'the cached row takes the verdict too');
+  assert.equal(AppView._voteRoster[9], ready, 'a verdict does not touch the tally');
+  // A burst about another row reads nothing on this page.
+  reads.length = 0;
+  await AppView.refreshDevData('vote', { kinds: new Set(['vote']), ids: new Set([10]), merged: false });
+  assert.deepEqual(reads, []);
 });
 
 test('behind_main / freshness / sync_status patch the topic row the same way DevChat patches the banner', () => {
@@ -630,6 +704,127 @@ test('the build steps render as a line and a step row, live and finished', () =>
   assert.match(read('public/css/app.css'), /\.dev-ledger-build-step\.is-now \{/);
 });
 
+// ── 2d. the run's cost survives the verdict (#2170) ─────────────────────
+//
+// "built in 20s" and the checks' own time used to vanish the moment the
+// verdict landed: storeChecks nulled checks_progress. A reviewer opening a
+// passed card an hour later had no way to see how long the preview and the
+// checks had taken. The snapshot is reduced now, not dropped.
+
+test('#2170: the verdict keeps the finished build and the checking time on the row instead of dropping them', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rowCount: 1 }; } };
+  assert.equal(await visuals.storeChecks(pool, 7, 'abc', { state: 'passing', results: [] }), true);
+  const sql = calls[0].sql;
+  assert.match(sql, /SET check_state = \$1/);
+  assert.doesNotMatch(sql, /checks_progress = NULL,/, 'the live snapshot is reduced, not dropped');
+  assert.match(sql, /checks_progress = NULLIF\(jsonb_strip_nulls\(jsonb_build_object\(/);
+  // Only a FINISHED build is kept: a step still 'now' on the row would draw
+  // a live pipeline under a verdict.
+  assert.match(sql, /'build', CASE WHEN checks_progress #>> '\{build,step\}' = 'done'\s+THEN checks_progress -> 'build' END/);
+  // The checking time is NOW() minus the stamp the testing half opened
+  // with — the row's OLD checks_checked_at, read by the same statement
+  // that overwrites it — so no column had to be added for it.
+  assert.match(sql, /'checksMs', ROUND\(EXTRACT\(EPOCH FROM \(NOW\(\) - checks_checked_at\)\) \* 1000\)::bigint/);
+  assert.match(sql, /checks_checked_at = NOW\(\)/);
+  // A row with neither (no build steps, no stamp) goes back to NULL rather
+  // than carrying an empty object the card would have to learn to ignore.
+  assert.match(sql, /\)\), '\{\}'::jsonb\)/);
+  // The stamp the subtraction reads is the one captureForSession writes as
+  // the testing half opens, and every run that reaches a verdict opens so.
+  const src = read('src/services/visuals.js');
+  assert.match(src, /await setChecksPending\(pool, session\.id, commitHash, 'testing', trigger\)/);
+  // An error verdict has no run to cost — it still clears the snapshot, and
+  // so does the next run's start (tests/set-checks-pending.test.js).
+  await visuals.storeChecks(pool, 7, 'abc', { state: 'error', results: [] }, 'boom');
+  assert.match(calls[1].sql, /checks_progress = NULL,/);
+});
+
+test('a verdict row says when it last ran under its label; a building one keeps its live step', () => {
+  const AppView = makeAppView();
+  const plain = (o) => JSON.parse(JSON.stringify(o));
+  const four = [{ key: 'source_fetch', ms: 2000 }, { key: 'image_build', ms: 5000 }, { key: 'clone', ms: 2000, via: 'template' }, { key: 'health', ms: 9000 }];
+  const kept = { build: { step: 'done', steps: [...four, { key: 'prepare_checks', ms: 3000 }], totalMs: 18000 }, checksMs: 580000 };
+  const base = {
+    id: 21, status: 'promoted', username: 'maya', source: 'native',
+    yes_count: 1, no_count: 0, votes_required: 1,
+    checks_checked_at: new Date().toISOString(),
+    test_results: [{ name: 'Home loads', path: '/', status: 'pass' }],
+    freshness: { mergeability: 'clean', behindBy: 0, checkedAt: '2026-09-07T09:00:00Z' },
+  };
+  const rowOf = (pr) => plain(AppView._proposalDetailsView(pr).ledger).find((r) => r.key === 'checks');
+  // A verdict row's sub is WHEN the run happened. The counts moved into the
+  // row's sentence, and the run's cost (#2170's "built in · checked in")
+  // went with the caption it narrated: a reviewer reads the verdict here,
+  // not the timings. One `sub` string still, so dapp.json's
+  // `.dev-ledger-k small` finds one node.
+  const passed = rowOf({ ...base, check_state: 'passing', checks_progress: kept });
+  assert.equal(passed.sub, 'Last run just now');
+  assert.equal(passed.tone, 'ok');
+  assert.equal(passed.progress, undefined, 'no live bar under a verdict');
+  assert.deepEqual(passed.text, [{ b: 'Passing.', tone: 'ok' }, ' The one check passed on this build.']);
+  // Failed: the count is the sentence, and it names who has to act.
+  const failed = rowOf({ ...base, check_state: 'failing', checks_progress: kept,
+    test_results: [{ name: 'Home loads', path: '/', status: 'fail' }, { name: 'Board renders', path: '/b', status: 'pass' }] });
+  assert.equal(failed.sub, 'Last run just now');
+  assert.deepEqual(failed.text, [{ b: 'Failing.', tone: 'bad' },
+    ' 1 of 2 checks failed on this build. maya must fix it before this proposal can land.']);
+  // With or without a kept shape the row reads the same; with no stamp at
+  // all there is nothing under the label.
+  assert.equal(rowOf({ ...base, check_state: 'passing' }).sub, 'Last run just now');
+  assert.equal(rowOf({ ...base, check_state: 'passing', checks_progress: null }).sub, 'Last run just now');
+  assert.equal(rowOf({ ...base, check_state: 'passing', checks_progress: {} }).sub, 'Last run just now');
+  assert.equal(rowOf({ ...base, check_state: 'passing', checks_checked_at: null }).sub, null);
+  // A building card is unchanged: its sub line is the live step, and the
+  // ledger row still carries the bar.
+  const building = rowOf({ ...base, check_state: 'pending', check_phase: 'building', test_results: [],
+    checks_progress: { build: { step: 'clone', startedAt: 'x', steps: [{ key: 'source_fetch', ms: 2000 }] } } });
+  assert.equal(building.sub, 'build: cloning the database');
+  assert.equal(building.progress.build.length, 5);
+  // And a testing card keeps the finished build as its footnote, as before.
+  const testing = rowOf({ ...base, check_state: 'pending', check_phase: 'testing', test_results: [],
+    checks_progress: { ran: 1, passed: 1, failed: 0, expected: 5, build: kept.build } });
+  assert.equal(testing.sub, '1 of 5 run · 1 passed');
+  assert.match(testing.foot.map((f) => f[0]).join(' '), /Preview built in 18s, checks prepared in 3s/);
+});
+
+test('#2170: every ?demo=1 mock with a verdict carries the kept shape; a run in flight keeps its live one', () => {
+  // The rows stagingMockProposals actually serves, not a hand-made copy —
+  // the topic route's screenshot is taken of these.
+  const src = read('src/routes/votes.js');
+  const start = src.indexOf('function stagingMockProposals(viewer)');
+  let depth = 0; let end = -1;
+  for (let j = src.indexOf('{', start); j < src.length; j++) {
+    if (src[j] === '{') depth += 1;
+    else if (src[j] === '}') { depth -= 1; if (depth === 0) { end = j + 1; break; } }
+  }
+  const ctx = { module: {}, console, connectionExhaustionMessage: () => '' };
+  ctx.globalThis = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(`${src.slice(start, end)}\n;globalThis.__rows = stagingMockProposals;`, ctx);
+  const rows = JSON.parse(JSON.stringify(ctx.__rows('me')));
+  const byId = (id) => rows.find((r) => r.id === id);
+  const AppView = makeAppView();
+  for (const row of rows) {
+    const verdict = row.check_state === 'passing' || row.check_state === 'failing';
+    if (verdict) {
+      assert.equal(row.checks_progress.build.step, 'done', `${row.id}: the build is finished`);
+      assert.equal(row.checks_progress.build.totalMs, 19964, `${row.id}: and costed`);
+      assert.equal(row.checks_progress.checksMs, 252000, `${row.id}: so are the checks`);
+    } else if (row.id === 9000028) {
+      assert.equal(row.checks_progress.build.step, 'prepare_checks', 'the live fifth-step row is left alone');
+      assert.equal('checksMs' in row.checks_progress, false);
+    } else {
+      assert.equal(row.checks_progress, undefined, `${row.id}: a run in flight (or none) carries no cost`);
+    }
+  }
+  // The shared steps still draw the queued row exactly as they did.
+  assert.deepEqual(byId(9000028).checks_progress.build.steps.map((s) => [s.key, s.ms]),
+    [['source_fetch', 2555], ['image_build', 5372], ['clone', 2426], ['health', 9585]]);
+  assert.equal(byId(9000001).check_state, 'passing');
+  assert.equal(byId(9000093).check_state, 'failing');
+});
+
 test('a roster already on screen is never replaced by a loading line', async () => {
   // vote_update is broadcast for about two dozen things that are not a vote
   // — a rename, a title heal, a sync, a conflict resolution, a merge, fleet
@@ -729,16 +924,10 @@ test('an integration supersedes a check run rather than queueing behind it', () 
   // its verdict is keyed to the commit it started on, so letting it finish
   // writes a verdict nowhere.
   //
-  // sync-main used to work around that by deciding whether to carry the
-  // checks pin (`runInFlight` / `carryChecks`). The queue cancels the run
-  // instead, which is the thing that was actually wanted — the supersede
-  // primitive already existed in services/preview-lifecycle.js and simply was
-  // not called from here.
+  // The repair path must wait for actual termination before moving the branch.
   const queue = read('src/services/merge-queue.js');
-  assert.match(queue, /preview-lifecycle/,
-    'the queue must reach for the supersede primitive');
-  assert.match(queue, /cancelled\(session\.id/,
-    'and actually cancel the in-flight run before moving the branch under it');
+  assert.match(queue, /await require\('\.\/preview-lifecycle'\)\.supersede\(config, session\.id, measured\.headSha\)/,
+    'the queue must await the supersede operation');
   assert.doesNotMatch(read('src/services/sync-main.js'), /carryChecks/,
     'the carry-or-not workaround belongs to the deleted vote-carry path');
 });
@@ -761,7 +950,11 @@ test('app.js hands the events to the topic page before DevChat\'s early returns'
   // A progress tick (once a second, to every client, for the run's length)
   // must not fan out into fetches: only the start and verdict events do.
   assert.match(block, /const progressTick = data\.checkState === 'pending' && data\.progress && typeof data\.progress === 'object';/);
-  assert.match(block, /if \(!progressTick\) \{\n\s+\/\/[^\n]*\n(\s+\/\/[^\n]*\n)*\s+\/\/[^\n]*\n\s+if \(typeof DevChat !== 'undefined' && DevChat\.refreshCurrentSessionStatus\)[\s\S]*?App\.refreshHomeProposals\(\);\n\s+\}/);
+  // Only the start and the verdict reach anything else: the verdict one
+  // coalesced refresh, whose home half runs only for the viewer's own work.
+  assert.match(block, /if \(!progressTick\) \{[\s\S]*?DevChat\.refreshCurrentSessionStatus\(data\.sessionId\)[\s\S]*?if \(data\.checkState !== 'pending'\) \{\n\s+App\._liveRefresh\('checks', data\.sessionId, \{ home: App\._sessionIsMine\(data\.sessionId\) \}\);/);
+  assert.doesNotMatch(block, /refreshHomeProposals\(\)/, 'a verdict anywhere on the platform no longer reloads Home');
+  assert.doesNotMatch(block, /currentSubTab !== 'sessions'/, 'the page, not the tab, decides whether a row is its');
   const upd = src.slice(src.indexOf('handleSessionUpdate(data) {'), src.indexOf("if (data.action === 'sync_status')") + 400);
   assert.match(upd, /AppView\.applyBehindMainEvent\(data\.sessionId, data\.behindMain\)[\s\S]*DevChat\.applyBehindMainUpdate/);
   assert.match(upd, /AppView\.applyFreshnessEvent\(data\)[\s\S]*DevChat\.applyFreshnessUpdate/);

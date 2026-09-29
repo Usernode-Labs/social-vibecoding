@@ -12,6 +12,48 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 
 /**
+ * The survey field, in ONE spelling for both screens (#2437).
+ *
+ * Sixteen fields across `waitlist.tsx` and `more.tsx` each carried their own
+ * copy of `w-full rounded-lg bg-white dark:bg-zinc-900 border
+ * border-zinc-300 … focus:border-violet-500`. Sixteen copies of one recipe is
+ * sixteen chances for it to stop being one recipe — the #1529 fix had to visit
+ * every one of them, and the next such fix would too. These spread into
+ * `<Input>` / `<Textarea>` / `<Select>` the way login.tsx's `AUTHFIELD` does,
+ * so the box, the placeholder colour and the focus treatment are decided once.
+ *
+ * Why this is the primitive's `authWhite` box rather than sign-in's `card`:
+ * see the value's own note in `@/components/ui/input.tsx`. The short version
+ * is that a card ROW is box-less because the card is the box, and these
+ * screens have no card — they are long scrollable questionnaires on the page
+ * ground, where sixteen edge-less fields would leave nothing showing the
+ * reader where an answer goes.
+ */
+export const SURVEY_FIELD = { box: 'authWhite', hint: 'muted', ring: 'bordered' } as const;
+
+/** The same field on a `<select>`, whose variant table is its own. */
+export const SURVEY_SELECT = { variant: 'authWhite' } as const;
+
+/**
+ * And the label above it, likewise once for both screens.
+ *
+ * Deliberately NOT login.tsx's `AUTH_LABEL` (`block text-[13px]
+ * text-zinc-500 …`), and the difference is what the label IS on each screen.
+ * In the sign-in card it is a caption — four quiet characters over a 17px
+ * value that is the thing you are reading. Here it is the QUESTION
+ * ("Tell us about a group you're part of that could use its own app."), with
+ * {@link SURVEY_HINT}'s 12px zinc-500 gloss underneath it. Demoting it to 13px
+ * zinc-500 would render the question and its own footnote at almost the same
+ * weight, and a questionnaire whose questions do not out-rank their help text
+ * has no structure left to skim.
+ */
+export const SURVEY_LABEL = 'block text-sm font-medium text-zinc-700 dark:text-zinc-200';
+
+/** The help line under a label. `WIDE` is the same line with more air below. */
+export const SURVEY_HINT = 'text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5';
+export const SURVEY_HINT_WIDE = 'text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-2';
+
+/**
  * Where this signup stands in the queue, derived server-side from the row's
  * own timestamps. `state` is the one to read: it is ordered most-advanced
  * first, so an admitted row reads as admitted even though it also carries a
@@ -123,12 +165,27 @@ export interface WaitlistOptions {
   /** Flat `alpha2 -> name`, in display order (sorted by English name). */
   countries?: Record<string, string>;
   discovery_sources?: Record<string, string>;
-  discovery_detail_labels?: Record<string, string>;
   group_sizes?: Record<string, string>;
   group_roles?: Record<string, string>;
   group_tools?: Record<string, string>;
   loss_answers?: Record<string, string>;
   loss_kinds?: Record<string, string>;
+  /**
+   * The MARKETING site's /waitlist page, absolute — the logged-out landing's
+   * primary pill points at it. Built server-side from `MARKETING_BASE_URL`
+   * (src/services/marketing-links.js) precisely so no client hardcodes the
+   * host: a self-hosted deployment has its own marketing site, or none.
+   *
+   * Optional like its siblings, and the caller must mean it: render no href
+   * at all until it arrives rather than falling back to the in-app
+   * `#waitlist` route, which is the destination this design removed.
+   */
+  waitlist_url?: string;
+  /** The marketing site's front door, absolute and with no trailing slash.
+   *  The landing's "Learn more" line, for a reader who wants the long version
+   *  of what this is. Built server-side from config.marketingBaseUrl, like
+   *  waitlist_url above, so no client hardcodes the host. */
+  marketing_url?: string;
 }
 
 let optionsPromise: Promise<WaitlistOptions | null> | null = null;

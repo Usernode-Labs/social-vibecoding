@@ -17,6 +17,12 @@ const PART_OF = 'social-vibecoding';
 // slice of a ~25s preview turnaround.
 const BUILD_POLL_MS = 1000;
 const ROLLOUT_POLL_MS = 1000;
+const TERMINAL_CONTAINER_WAITING_REASONS = new Set([
+  'CreateContainerConfigError',
+  'CreateContainerError',
+  'InvalidImageName',
+  'ErrImageNeverPull',
+]);
 
 // The app container's health probes. The startup probe decides how soon a
 // booted container is seen (its period is the latency, its threshold the
@@ -56,6 +62,13 @@ function getClients() {
 
 function isNotFound(err) {
   return err?.code === 404 || err?.response?.statusCode === 404 || err?.response?.status === 404;
+}
+
+// The namespace's ResourceQuota refused an object: every slot it allows (for
+// a worker, a volume claim or the storage those claims request) is taken.
+function isQuotaExceeded(err) {
+  const code = err?.code ?? err?.response?.statusCode ?? err?.response?.status;
+  return code === 403 && /exceeded quota/i.test(String(err?.message || ''));
 }
 
 function dnsName(value, max = 63) {
@@ -609,6 +622,73 @@ function appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, as
   };
 }
 
+function platformAssetPath(prefix) {
+  return {
+    path: prefix,
+    pathType: 'Prefix',
+    backend: { service: { name: PLATFORM_ASSET_NAME, port: { number: 3000 } } },
+  };
+}
+
+function isSelfAppIngressHost(hostname, config) {
+  const slug = String(config?.selfAppSlug || '');
+  const domain = String(config?.kubernetes?.appDomain || '');
+  const host = String(hostname || '');
+  if (!slug || !domain || !host.endsWith(`.${domain}`)) return false;
+  const appLabel = host.slice(0, -(domain.length + 1));
+  if (appLabel === slug) return true;
+  const previewId = appLabel.slice(`${slug}--s`.length);
+  return appLabel.startsWith(`${slug}--s`) && /^\d+$/.test(previewId);
+}
+
+// Heal Ingresses that predate the shared asset backend. A recheck reuses a
+// healthy preview rather than redeploying it, so relying only on
+// deployApplication's Ingress upsert leaves those previews permanently on
+// their old catch-all route. Preserve every unrelated rule/path verbatim,
+// replace only our exact three prefixes, and strip them from the self app:
+// its preview must serve the asset bytes from the revision under review.
+function ingressWithPlatformAssetRoutes(ingress, config) {
+  let changed = false;
+  const rules = (ingress?.spec?.rules || []).map((rule) => {
+    if (!rule?.http || !Array.isArray(rule.http.paths)) return rule;
+    const selfApp = isSelfAppIngressHost(rule.host, config);
+    const kept = rule.http.paths.filter((item) =>
+      !PLATFORM_ASSET_PREFIXES.includes(item?.path)
+    );
+    const paths = selfApp
+      ? kept
+      : [...PLATFORM_ASSET_PREFIXES.map(platformAssetPath), ...kept];
+    if (JSON.stringify(paths) === JSON.stringify(rule.http.paths)) return rule;
+    changed = true;
+    return { ...rule, http: { ...rule.http, paths } };
+  });
+  if (!changed) return null;
+  return { ...ingress, spec: { ...ingress.spec, rules } };
+}
+
+async function reconcilePlatformAssetIngresses(config) {
+  const cfg = config.kubernetes;
+  const namespace = cfg.appNamespace;
+  const { networking } = getClients();
+  // Test doubles and non-runtime callers may provide only the APIs they
+  // exercise. A real Kubernetes client always exposes both methods.
+  if (!networking?.listNamespacedIngress || !networking?.replaceNamespacedIngress) return 0;
+  const listed = await networking.listNamespacedIngress({
+    namespace,
+    labelSelector: `app.kubernetes.io/managed-by=${MANAGED_BY}`,
+  });
+  let updated = 0;
+  for (const ingress of listed.items || []) {
+    if (ingress?.metadata?.labels?.['app.kubernetes.io/managed-by'] !== MANAGED_BY) continue;
+    const body = ingressWithPlatformAssetRoutes(ingress, config);
+    const name = ingress?.metadata?.name;
+    if (!body || !name) continue;
+    await networking.replaceNamespacedIngress({ name, namespace, body });
+    updated += 1;
+  }
+  return updated;
+}
+
 // Memoised for the life of the process, which is the right window rather
 // than just a convenience: the image is read from the RUNNING platform
 // Deployment, and a platform rollout replaces this process, so the next one
@@ -664,8 +744,8 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
           spec: {
             serviceAccountName: cfg.generatedAppServiceAccount,
             automountServiceAccountToken: false,
-            // Dockerfile.kubernetes declares USER node; Kubernetes needs
-            // the numeric UID to verify runAsNonRoot before starting it.
+            // Dockerfile.kubernetes runs as UID 1000; keep the explicit pod
+            // identity aligned with it for the shared asset backend.
             securityContext: nodePodSecurityContext(),
             containers: [{
               name: 'assets', image, imagePullPolicy: 'IfNotPresent',
@@ -689,6 +769,16 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
     // never becomes ready this throws, the caller logs, and the app deploys
     // with exactly its previous routing.
     await waitForDeployment(namespace, PLATFORM_ASSET_NAME, { timeoutMs: readyTimeoutMs });
+    // The backend is now safe to route to. Reconcile old app/preview
+    // Ingresses as well as the one deployApplication is about to upsert;
+    // otherwise an unchanged preview can be rechecked forever without ever
+    // receiving the new routes. Best-effort so an RBAC/list failure cannot
+    // withhold the known-ready backend from the current deployment.
+    await reconcilePlatformAssetIngresses(config).catch((err) => {
+      log.warn('kubernetes', 'existing platform asset routes could not be reconciled', {
+        namespace, error: err?.message,
+      });
+    });
     return PLATFORM_ASSET_NAME;
   })().catch((err) => {
     // Clear the memo so the next deploy retries rather than this process
@@ -705,11 +795,19 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
 // docker.STAGING_CPUS through application-runtime.deploy so the capture
 // run's eight concurrent pages get the same headroom on both runtimes;
 // production apps pass nothing and keep the 1-CPU limit they always had.
-async function deployApplication(config, { app, environment, sessionId, imageRef, env, cpus = null, labels: extraLabels = {} }) {
+async function deployApplication(config, {
+  app, environment, sessionId, imageRef, env, cpus = null,
+  labels: extraLabels = {}, runtimeName = null, internalOnly = false,
+  command = [],
+}) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
+  if (!Array.isArray(command) || command.some((part) => typeof part !== 'string' || !part)) {
+    throw new Error('Kubernetes container command must be an array of non-empty strings');
+  }
   const cfg = config.kubernetes;
   const namespace = cfg.appNamespace;
-  const name = appResourceName(app, environment, sessionId);
+  const name = runtimeName || appResourceName(app, environment, sessionId);
+  if (name !== dnsName(name) || name.length > 63) throw new Error('Invalid Kubernetes runtime name');
   const resourceLabels = { ...extraLabels, ...labels({ appId: app.id, sessionId, environment }) };
   const selectorLabels = { 'social.usernode.io/runtime-name': name };
   const secretName = withSuffix(name, 'env');
@@ -747,6 +845,7 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
           ...previewDatabaseAffinity(cfg, environment),
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
+            ...(command.length ? { command } : {}),
             ports: [{ name: 'http', containerPort: 3000 }],
             env: app.slug === config.selfAppSlug
               ? [{ name: 'USERNODE_SHELL_ASSETS_PREBUILT', value: '1' }]
@@ -778,24 +877,31 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
   // shared backend would serve a preview the production image's copy of its
   // own files, and the preview's checks would describe bytes that are not in
   // the preview. Its 15 native-kit demo checks caught exactly that.
-  let assetBackend = null;
-  try {
-    const backend = await ensurePlatformAssetBackend(config);
-    if (app.slug !== config.selfAppSlug) assetBackend = backend;
-  } catch (err) {
-    log.warn('kubernetes', 'platform asset backend unavailable — app deploys without asset routing', {
-      namespace, app: app.slug, error: err?.message,
-    });
+  if (!internalOnly) {
+    let assetBackend = null;
+    try {
+      const backend = await ensurePlatformAssetBackend(config);
+      if (app.slug !== config.selfAppSlug) assetBackend = backend;
+    } catch (err) {
+      log.warn('kubernetes', 'platform asset backend unavailable — app deploys without asset routing', {
+        namespace, app: app.slug, error: err?.message,
+      });
+    }
+    await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
+      appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend }));
   }
-  await upsert(networking, 'readNamespacedIngress', 'createNamespacedIngress', 'replaceNamespacedIngress', namespace,
-    appIngressManifest({ name, namespace, hostname, resourceLabels, cfg, assetBackend }));
   try {
-    await waitForDeployment(namespace, name, { generation: deployed?.metadata?.generation });
+    await waitForDeployment(namespace, name, {
+      generation: deployed?.metadata?.generation,
+      terminalPodFilter: { imageRef, environmentChecksum: envChecksum(env), container: 'app' },
+    });
   } catch (err) {
     const diagnostics = await collectPodDiagnostics(core, { namespace, runtimeName: name, imageRef,
       environmentChecksum: envChecksum(env) });
     err.healthcheckFailed = true;
-    err.containerLogs = boundedText([err.rolloutDetails, diagnostics.details, diagnostics.logs].filter(Boolean).join('\n'));
+    err.containerLogs = boundedText([
+      err.rolloutDetails, diagnostics.details, diagnostics.logs, err.terminalPodDetails,
+    ].filter(Boolean).join('\n'));
     err.containerStatus = 'not_ready';
     err.infrastructure = diagnostics.infrastructure || /exceeded quota/i.test(err.rolloutDetails || '');
     err.message = boundedText(err.message);
@@ -814,12 +920,36 @@ async function deployApplication(config, { app, environment, sessionId, imageRef
     }
     throw err;
   }
-  return { runtimeKind: 'kubernetes', runtimeName: name, imageRef, hostname, url: `https://${hostname}` };
+  return {
+    runtimeKind: 'kubernetes', runtimeName: name, imageRef,
+    hostname: internalOnly ? `${name}.${namespace}.svc` : hostname,
+    url: internalOnly ? `http://${name}.${namespace}.svc:3000` : `https://${hostname}`,
+  };
 }
 
-async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, generation = 0 } = {}) {
+function terminalPodFailureDetails(pods, { imageRef, environmentChecksum, container = 'app' } = {}) {
+  const details = [];
+  for (const pod of pods || []) {
+    if (pod.metadata?.deletionTimestamp) continue;
+    if (imageRef && !pod.spec?.containers?.some(item => item.name === container && item.image === imageRef)) continue;
+    if (environmentChecksum
+        && pod.metadata?.annotations?.['social.usernode.io/env-checksum'] !== environmentChecksum) continue;
+    const statuses = [...(pod.status?.initContainerStatuses || []), ...(pod.status?.containerStatuses || [])];
+    for (const status of statuses) {
+      if (container && status.name !== container) continue;
+      const waiting = status.state?.waiting;
+      if (!TERMINAL_CONTAINER_WAITING_REASONS.has(waiting?.reason)) continue;
+      details.push(`${status.name}: ${[waiting.reason, waiting.message].filter(Boolean).join(': ')}`);
+    }
+  }
+  return details;
+}
+
+async function waitForDeployment(namespace, name, {
+  timeoutMs = 5 * 60 * 1000, generation = 0, terminalPodFilter = null,
+} = {}) {
   const deadline = Date.now() + timeoutMs;
-  const { apps } = getClients();
+  const { apps, core } = getClients();
   let rolloutDetails = '';
   while (Date.now() < deadline) {
     const deployment = await apps.readNamespacedDeployment({ name, namespace });
@@ -833,6 +963,27 @@ async function waitForDeployment(namespace, name, { timeoutMs = 5 * 60 * 1000, g
         && status.observedGeneration >= Math.max(generation, deployment.metadata.generation)
         && status.updatedReplicas === desired && status.replicas === desired
         && status.readyReplicas >= desired && status.availableReplicas >= desired) return deployment;
+    // A Pod rejected before its process starts will never become healthy, so
+    // waiting the whole rollout budget only turns a precise configuration
+    // error into a five-minute "spinning up" delay. This read is best-effort:
+    // transient API errors keep the ordinary rollout waiter in control.
+    if (terminalPodFilter && typeof core?.listNamespacedPod === 'function') {
+      try {
+        const pods = await core.listNamespacedPod({ namespace,
+          labelSelector: `social.usernode.io/runtime-name=${name}` });
+        const terminal = terminalPodFailureDetails(pods.items, terminalPodFilter);
+        if (terminal.length) {
+          const detail = terminal.join('\n');
+          const err = new Error(`Deployment ${namespace}/${name} cannot start: ${terminal[0]}`);
+          err.rolloutDetails = rolloutDetails;
+          err.terminalPodDetails = boundedText(detail, 4096);
+          err.terminalPodFailure = true;
+          throw err;
+        }
+      } catch (err) {
+        if (err.terminalPodFailure) throw err;
+      }
+    }
     await new Promise((resolve) => setTimeout(resolve, ROLLOUT_POLL_MS));
   }
   const err = new Error(`Timed out waiting for Deployment ${namespace}/${name}`);
@@ -1008,7 +1159,15 @@ async function deleteBuildSnapshot(config, build) {
   });
 }
 
-async function ensureWorker(config, { sessionId, env, onProgress }) {
+const VOLUME_QUOTA_RETRY_MS = 2000;
+const VOLUME_QUOTA_RETRIES = 10;
+
+// `reclaimVolumes({ sessionId })` frees other changes' idle volumes when the
+// quota refuses this one and resolves how many it deleted. The quota's usage
+// drops only once the controller observes those deletions, so the claim is
+// retried for a short while rather than once.
+async function ensureWorker(config, { sessionId, env, onProgress, temporary = false,
+  reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS }) {
   const cfg = config.kubernetes;
   if (!cfg.workerImage?.includes('@sha256:')) throw new Error('KUBERNETES_WORKER_IMAGE must be an immutable digest');
   const namespace = cfg.workerNamespace;
@@ -1021,18 +1180,39 @@ async function ensureWorker(config, { sessionId, env, onProgress }) {
     : {};
   const selectorLabels = { 'social.usernode.io/runtime-name': name };
   const { core, apps } = getClients();
-  try {
-    const pvc = { apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { name: pvcName, namespace, labels: resourceLabels }, spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: cfg.workerStorageSize } } } };
-    if (cfg.workerStorageClass) pvc.spec.storageClassName = cfg.workerStorageClass;
-    await core.createNamespacedPersistentVolumeClaim({ namespace, body: pvc });
-  } catch (err) { if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err; }
+  const claimVolume = async () => {
+    try {
+      const pvc = { apiVersion: 'v1', kind: 'PersistentVolumeClaim', metadata: { name: pvcName, namespace, labels: resourceLabels }, spec: { accessModes: ['ReadWriteOnce'], resources: { requests: { storage: cfg.workerStorageSize } } } };
+      if (cfg.workerStorageClass) pvc.spec.storageClassName = cfg.workerStorageClass;
+      await core.createNamespacedPersistentVolumeClaim({ namespace, body: pvc });
+    } catch (err) { if (err?.code !== 409 && err?.response?.statusCode !== 409) throw err; }
+  };
+  if (!temporary) {
+    try {
+      await claimVolume();
+    } catch (err) {
+      if (!isQuotaExceeded(err) || typeof reclaimVolumes !== 'function') throw err;
+      const freed = await reclaimVolumes({ sessionId }).catch(() => 0);
+      if (!(freed > 0)) throw err;
+      let last = err;
+      for (let attempt = 0; attempt < VOLUME_QUOTA_RETRIES; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+        try { await claimVolume(); last = null; break; } catch (retryErr) {
+          if (!isQuotaExceeded(retryErr)) throw retryErr;
+          last = retryErr;
+        }
+      }
+      if (last) throw last;
+    }
+  }
   await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
     apiVersion: 'v1', kind: 'Secret', metadata: { name: secretName, namespace, labels: resourceLabels }, type: 'Opaque',
     stringData: Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)])),
   });
   const deployed = await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
     apiVersion: 'apps/v1', kind: 'Deployment', metadata: {
-      name, namespace, labels: { ...resourceLabels, ...workerContractLabels },
+      name, namespace, labels: { ...resourceLabels, ...workerContractLabels,
+        'social.usernode.io/storage-mode': temporary ? 'temporary' : 'persistent' },
     },
     spec: {
       replicas: 1,
@@ -1057,7 +1237,9 @@ async function ensureWorker(config, { sessionId, env, onProgress }) {
             resources: { requests: { cpu: '250m', memory: '512Mi' }, limits: { cpu: config.workerCpus || '2', memory: (config.workerMemory || '2Gi').replace(/g$/i, 'Gi') } },
             securityContext: containerSecurityContext(),
           }],
-          volumes: [{ name: 'state', persistentVolumeClaim: { claimName: pvcName } }],
+          volumes: [{ name: 'state', ...(temporary
+            ? { emptyDir: {} }
+            : { persistentVolumeClaim: { claimName: pvcName } }) }],
         },
       },
     },
@@ -1065,7 +1247,7 @@ async function ensureWorker(config, { sessionId, env, onProgress }) {
   await waitForWorkerBootstrap(core, apps, { namespace, name, onProgress,
     imageRef: cfg.workerImage, environmentChecksum: envChecksum(env),
     generation: deployed?.metadata?.generation || 0 });
-  return { runtimeKind: 'kubernetes', runtimeName: name, pvcName };
+  return { runtimeKind: 'kubernetes', runtimeName: name, pvcName: temporary ? null : pvcName };
 }
 
 async function getWorkerStatus(config, runtimeName) {
@@ -1118,14 +1300,30 @@ async function inspectWorkerTermination(config, runtimeName, { since, timeoutMs 
 }
 
 async function getWorkerContractVersion(config, runtimeName) {
+  return (await getWorkerRuntimeMetadata(config, runtimeName)).contractVersion;
+}
+
+// Read the desired Deployment identity rather than a transient Pod. Worker
+// images are immutable digest references, so this lets the host distinguish a
+// healthy-but-old warm worker from one already reconciled to the current
+// atomic platform release without depending on container runtime image IDs.
+async function getWorkerRuntimeMetadata(config, runtimeName) {
   try {
     const deployment = await getClients().apps.readNamespacedDeployment({
       name: runtimeName,
       namespace: config.kubernetes.workerNamespace,
     });
-    return deployment.metadata?.labels?.['social.usernode.io/worker-contract'] || null;
+    const worker = deployment.spec?.template?.spec?.containers?.find(
+      container => container.name === 'worker'
+    );
+    return {
+      contractVersion: deployment.metadata?.labels?.['social.usernode.io/worker-contract'] || null,
+      imageRef: worker?.image || null,
+      storageMode: deployment.spec?.template?.spec?.volumes?.find((volume) => volume.name === 'state')?.emptyDir
+        ? 'temporary' : 'persistent',
+    };
   } catch (err) {
-    if (isNotFound(err)) return null;
+    if (isNotFound(err)) return { contractVersion: null, imageRef: null, storageMode: null };
     throw err;
   }
 }
@@ -1141,6 +1339,25 @@ async function deleteWorker(config, sessionId, { deleteVolume = false } = {}) {
   if (deleteVolume) await deleteIfPresent(core, 'deleteNamespacedPersistentVolumeClaim', withSuffix(name, 'state'), namespace);
 }
 
+// A deletion acceptance is not proof that pods/PVCs finished terminating.
+// Account erasure keeps its durable task pending while finalizers run.
+async function eraseWorker(config, sessionId) {
+  await deleteWorker(config, sessionId, { deleteVolume: true });
+  const { apps, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  const name = dnsName(`sv-worker-s${sessionId}`);
+  const absent = async (api, method, resourceName) => {
+    try { await api[method]({ namespace, name: resourceName }); }
+    catch (err) { if (isNotFound(err)) return; throw err; }
+    throw new Error('worker_erasure_pending');
+  };
+  await absent(apps, 'readNamespacedDeployment', name);
+  await absent(core, 'readNamespacedSecret', withSuffix(name, 'env'));
+  await absent(core, 'readNamespacedPersistentVolumeClaim', withSuffix(name, 'state'));
+  const pods = await core.listNamespacedPod({ namespace, labelSelector: `social.usernode.io/runtime-name=${name}` });
+  if (pods.items?.length) throw new Error('worker_erasure_pending');
+}
+
 async function listWorkers(config) {
   const namespace = config.kubernetes.workerNamespace;
   const deployments = await getClients().apps.listNamespacedDeployment({
@@ -1152,6 +1369,31 @@ async function listWorkers(config) {
     sessionId: Number(deployment.metadata.labels?.['social.usernode.io/session-id']),
     state: deploymentState(deployment) === 'creating' ? 'created' : deploymentState(deployment),
   })).filter((item) => Number.isFinite(item.sessionId));
+}
+
+// Every worker state volume, with whether a worker Deployment still mounts it.
+async function listWorkerVolumes(config) {
+  const namespace = config.kubernetes.workerNamespace;
+  const { core, apps } = getClients();
+  const labelSelector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/environment=worker`;
+  const [claims, deployments] = await Promise.all([
+    core.listNamespacedPersistentVolumeClaim({ namespace, labelSelector }),
+    apps.listNamespacedDeployment({ namespace, labelSelector }),
+  ]);
+  const mounted = new Set((deployments.items || []).map((deployment) => deployment.metadata?.name));
+  return (claims.items || []).map((claim) => {
+    const sessionId = Number(claim.metadata?.labels?.['social.usernode.io/session-id']);
+    const runtimeName = dnsName(`sv-worker-s${sessionId}`);
+    return {
+      name: claim.metadata?.name,
+      sessionId,
+      createdAt: claim.metadata?.creationTimestamp || null,
+      terminating: !!claim.metadata?.deletionTimestamp,
+      attached: mounted.has(runtimeName),
+      state: claim.metadata?.name === withSuffix(runtimeName, 'state'),
+    };
+  }).filter((volume) => Number.isSafeInteger(volume.sessionId) && volume.state)
+    .map(({ state, ...volume }) => volume);
 }
 
 function deploymentState(deployment) {
@@ -1386,7 +1628,11 @@ async function cloneWorkerVolume(config, sourceSessionId, targetSessionId) {
 // swallowed: progress is a courtesy, the verdict still comes from the final
 // read below, unchanged.
 async function runCaptureJob(config, options) {
-  return runCheckJob(config, { memory: '4g', cpus: '8', ...options }, 'capture');
+  return runCheckJob(config, { memory: '6g', cpus: '8', ...options }, 'capture');
+}
+
+async function runEvidenceJob(config, options) {
+  return runCheckJob(config, { memory: '6g', cpus: '8', ...options }, 'evidence');
 }
 
 async function runUnitSuiteJob(config, options) {
@@ -1395,14 +1641,18 @@ async function runUnitSuiteJob(config, options) {
 
 // A DELETE response only acknowledges termination. Keep preview ownership
 // until every consuming Pod has stopped, including Jobs orphaned by a crash.
-async function cancelPreviewChecks(config, sessionId) {
+async function cancelPreviewChecks(config, sessionId, previewRunId = null) {
   const { batch, core } = getClients();
   const namespace = config.kubernetes.workerNamespace;
-  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`;
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
+    + (previewRunId ? `,social.usernode.io/preview-run-id=${previewRunId}` : '');
   const jobs = await batch.listNamespacedJob({ namespace, labelSelector: selector });
   await Promise.all((jobs.items || []).map(async job => {
     const name = job.metadata.name;
-    if (!name.startsWith(`sv-capture-s${sessionId}-`) && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+    if (!name.startsWith(`sv-capture-s${sessionId}-`)
+        && !name.startsWith(`sv-evidence-s${sessionId}-`)
+        && !name.startsWith(`sv-unit-suite-s${sessionId}-`)) return;
+    if (previewRunId && job.metadata.labels?.['social.usernode.io/preview-run-id'] !== previewRunId) return;
     const podsStopped = async () => {
       const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
       return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
@@ -1445,6 +1695,56 @@ function checkResourceRequest(request, limit, resource) {
   return quantityNumber(request) > limitNumber ? limit : request;
 }
 
+// Kubernetes pod-log reads are snapshots, not a durable stream contract. A
+// terminal read can legitimately arrive empty or shorter than an earlier
+// follow/poll read (for example while the Pod is completing). Keep complete
+// lines we have already observed and only let the terminal snapshot extend
+// that known prefix. An inconsistent snapshot must never erase evidence the
+// progress observer already received.
+function boundedCheckOutput(text, maxBuffer) {
+  const bytes = Buffer.from(text || '', 'utf8');
+  let end = Math.min(bytes.length, maxBuffer);
+  while (end > 0 && end < bytes.length && (bytes[end] & 0xc0) === 0x80) end -= 1;
+  return bytes.subarray(0, end).toString('utf8');
+}
+
+function createCheckOutputAccumulator(maxBuffer) {
+  const chunks = [];
+  let bytes = 0;
+  let truncated = false;
+  return {
+    appendLine(line) {
+      const chunk = Buffer.from(`${line}\n`, 'utf8');
+      // Retain complete protocol lines only. A partial frame is not useful to
+      // settlement, and keeping it would also risk cutting a UTF-8 sequence.
+      if (truncated || bytes + chunk.length > maxBuffer) {
+        truncated = true;
+        return false;
+      }
+      chunks.push(chunk);
+      bytes += chunk.length;
+      return true;
+    },
+    output() { return Buffer.concat(chunks, bytes).toString('utf8'); },
+    get truncated() { return truncated; },
+  };
+}
+
+function reconcileCheckOutput(observed, terminal) {
+  const known = String(observed || '');
+  const snapshot = String(terminal || '');
+  if (!known) return snapshot;
+  if (!snapshot) return known;
+  // The normal cumulative-log case: preserve any new complete lines or
+  // trailing fragment that only the terminal read saw.
+  if (snapshot.startsWith(known)) return snapshot;
+  // Empty/short terminal reads are the production failure #2340 reproduced.
+  if (known.startsWith(snapshot)) return known;
+  // A non-prefix snapshot is not safe to splice into a line protocol. The
+  // observed stream is the only version whose ordering we actually know.
+  return known;
+}
+
 async function runCheckJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
   onStdoutLine = null, cmd, memory = '2g', cpus = '4', maxBuffer = 64 * 1024 * 1024,
@@ -1452,11 +1752,12 @@ async function runCheckJob(config, {
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
+  const evidence = kind === 'evidence';
   const cpuLimit = String(cpus);
   const memoryLimit = String(memory).replace(/g$/i, 'Gi').replace(/m$/i, 'Mi');
   const resources = {
     requests: {
-      cpu: checkResourceRequest('1', cpuLimit, 'CPU'),
+      cpu: checkResourceRequest('4', cpuLimit, 'CPU'),
       memory: checkResourceRequest(unitSuite ? '1Gi' : '3Gi', memoryLimit, 'memory'),
       'ephemeral-storage': '1Gi',
     },
@@ -1465,7 +1766,13 @@ async function runCheckJob(config, {
   const image = unitSuite ? cfg.workerImage : cfg.captureImage;
   if (!image?.includes('@sha256:')) throw new Error(`${unitSuite ? 'KUBERNETES_WORKER_IMAGE' : 'KUBERNETES_CAPTURE_IMAGE'} must be an immutable digest`);
   const namespace = cfg.workerNamespace;
-  const name = dnsName(`sv-${kind}-s${sessionId}-${previewRunId || Date.now().toString(36)}`);
+  const runName = `sv-${kind}-s${sessionId}-${previewRunId || Date.now().toString(36)}`;
+  // One evidence run launches two clean replay passes, and a repair may
+  // launch more. Finished Jobs remain for their TTL, so the run id is a
+  // correlation label, not a unique Job name. Keep the suffix even if the
+  // base must be truncated to fit Kubernetes' DNS name limit. Reserve room
+  // for the input Secret's "-input" suffix without truncating the nonce.
+  const name = evidence ? withSuffix(runName, crypto.randomBytes(8).toString('hex'), 57) : dnsName(runName);
   const inputSecretName = !unitSuite && stdinPayload == null ? null : withSuffix(name, 'input');
   if (stdinPayload != null && Buffer.byteLength(String(stdinPayload), 'utf8') > 900 * 1024) {
     throw new Error('Capture stdin payload exceeds the Kubernetes Secret transport limit');
@@ -1485,7 +1792,9 @@ async function runCheckJob(config, {
   const podVolumes = [];
   if (!unitSuite && inputSecretName) {
     container.command = ['sh', '-c'];
-    container.args = ['exec node /app/capture.js < /var/run/usernode-capture/tests.json'];
+    container.args = [evidence
+      ? 'exec node /app/evidence-replay.js < /var/run/usernode-capture/tests.json'
+      : 'exec node /app/capture.js < /var/run/usernode-capture/tests.json'];
     container.volumeMounts = [{
       name: 'capture-input', mountPath: '/var/run/usernode-capture', readOnly: true,
     }];
@@ -1494,9 +1803,26 @@ async function runCheckJob(config, {
       secret: { secretName: inputSecretName, items: [{ key: 'tests.json', path: 'tests.json' }] },
     });
   }
-  const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) }, spec: {
+  // Count all check kinds and sessions together, excluding resident workers.
+  const checkSelector = {
+    'app.kubernetes.io/managed-by': MANAGED_BY,
+    'app.kubernetes.io/part-of': PART_OF,
+    'social.usernode.io/workload': 'check',
+  };
+  const checkLabels = { ...labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }), ...checkSelector };
+  const body = { apiVersion: 'batch/v1', kind: 'Job', metadata: { name, namespace, labels: { ...checkLabels } }, spec: {
     backoffLimit: 0, activeDeadlineSeconds: Math.ceil(timeoutMs / 1000), ttlSecondsAfterFinished: 3600,
-    template: { metadata: { labels: labels({ sessionId, environment: unitSuite ? 'worker' : 'capture' }) }, spec: { restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount, automountServiceAccountToken: false, securityContext: nodePodSecurityContext(), containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}) } },
+    template: { metadata: { labels: { ...checkLabels } }, spec: {
+      restartPolicy: 'Never', serviceAccountName: cfg.workerServiceAccount,
+      automountServiceAccountToken: false, securityContext: nodePodSecurityContext(),
+      // Prefer spare hosts without stranding checks when only one host fits.
+      topologySpreadConstraints: [{
+        maxSkew: 1, topologyKey: 'kubernetes.io/hostname', whenUnsatisfiable: 'ScheduleAnyway',
+        nodeAffinityPolicy: 'Honor', nodeTaintsPolicy: 'Honor',
+        labelSelector: { matchLabels: checkSelector },
+      }],
+      containers: [container], ...(podVolumes.length ? { volumes: podVolumes } : {}),
+    } },
   } };
   const { batch, core } = getClients();
   if (previewRunId) {
@@ -1508,24 +1834,14 @@ async function runCheckJob(config, {
   let following = false;
   let followAbort = null;
   const retainPartial = !unitSuite && salvagePartial;
-  const retained = [];
-  let retainedBytes = 0;
+  const retained = createCheckOutputAccumulator(maxBuffer);
   const reportLine = line => {
-    if (retainPartial && retainedBytes < maxBuffer) {
-      const bytes = Buffer.from(`${line}\n`, 'utf8').subarray(0, maxBuffer - retainedBytes);
-      retained.push(bytes);
-      retainedBytes += bytes.length;
-    }
+    if (retainPartial) retained.appendLine(line);
     if (typeof onStdoutLine === 'function') {
       try { onStdoutLine(line); } catch { /* observer must not break the run */ }
     }
   };
-  const boundedOutput = text => {
-    const bytes = Buffer.from(text || '', 'utf8');
-    let end = Math.min(bytes.length, maxBuffer);
-    while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
-    return bytes.subarray(0, end).toString('utf8');
-  };
+  const boundedOutput = text => boundedCheckOutput(text, maxBuffer);
   try {
     signal?.throwIfAborted();
     if (inputSecretName) {
@@ -1542,7 +1858,7 @@ async function runCheckJob(config, {
     const createdJob = await batch.createNamespacedJob({ namespace, body });
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
-    if (unitSuite && createdJob?.metadata?.uid) {
+    if (inputSecretName && createdJob?.metadata?.uid) {
       const secret = await core.readNamespacedSecret({ name: inputSecretName, namespace });
       secret.metadata.ownerReferences = [{ apiVersion: 'batch/v1', kind: 'Job', name, uid: createdJob.metadata.uid }];
       await core.replaceNamespacedSecret({ name: inputSecretName, namespace, body: secret });
@@ -1631,14 +1947,17 @@ async function runCheckJob(config, {
         const jobReason = job.status.conditions?.find(c => c.type === 'Failed')?.reason;
         err.stderr = [jobReason, terminated?.reason].filter(Boolean).join(': ');
         err.killed = jobReason === 'DeadlineExceeded' || terminated?.reason === 'OOMKilled';
+        err.captureJobTerminated = true;
         throw err;
       }
       if (job.status?.succeeded) {
-        let stdout;
-        try { stdout = await observeCheck(readOutput(), signal); }
+        let terminalOutput;
+        try { terminalOutput = await observeCheck(readOutput(), signal); }
         catch (err) { err.captureLogFailed = !unitSuite; throw err; }
         signal?.throwIfAborted();
-        if (!unitSuite && Buffer.byteLength(stdout, 'utf8') > maxBuffer) {
+        const stdout = reconcileCheckOutput(retained.output(), terminalOutput);
+        if (!unitSuite && (Buffer.byteLength(terminalOutput, 'utf8') > maxBuffer
+            || retained.truncated)) {
           const err = new Error('Capture output exceeds maxBuffer');
           err.code = 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER';
           err.stdout = boundedOutput(stdout);
@@ -1661,13 +1980,27 @@ async function runCheckJob(config, {
     throw err;
   } catch (err) {
     signal?.throwIfAborted();
-    const observed = Buffer.concat(retained).toString('utf8');
-    const stdout = boundedOutput(Buffer.byteLength(err.stdout || '', 'utf8') >= retainedBytes ? err.stdout : observed);
-    if (retainPartial && stdout && (err.killed || err.captureLogFailed || err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER')) {
+    const stdout = boundedOutput(reconcileCheckOutput(retained.output(), err.stdout));
+    // Capture output is a frame protocol, so every runtime-level ending can
+    // be settled honestly even when it produced zero complete frames. Keep
+    // the Job/container reason alongside the salvaged stream instead of
+    // throwing it past the verdict path and losing the only explanation.
+    // Unit suites retain their throwing contract; their outcome parser has
+    // a separate TAP/stderr path.
+    // Kubernetes API errors also use numeric codes (for example 409 when a
+    // Job already exists). Only a failed Job observed above is a container
+    // termination whose partial stdout can be salvaged.
+    const captureTerminated = err.captureJobTerminated === true;
+    if (retainPartial && (err.killed || err.captureLogFailed
+        || err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' || captureTerminated)) {
+      const termination = [err.stderr, Number.isInteger(err.code) ? `exit code ${err.code}` : '']
+        .filter(Boolean).join(', ');
       return { stdout, stderr: err.stderr || '', runtimeName: name, partial: true,
         partialReason: err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' ? 'output over maxBuffer'
           : err.captureLogFailed ? 'capture log unavailable'
-            : err.stderr?.includes('OOMKilled') ? 'capture OOM killed' : 'run timed out' };
+            : err.stderr?.includes('OOMKilled') ? 'capture OOM killed'
+              : err.killed ? 'run timed out'
+                : termination ? `capture terminated (${termination})` : 'capture Job failed' };
     }
     throw err;
   } finally {
@@ -1747,6 +2080,7 @@ async function collectCheckJob(config, {
   let podName = null;
   let consumed = 0;
   let tick = 0;
+  const retained = createCheckOutputAccumulator(maxBuffer);
   const findPod = async () => {
     if (podName) return podName;
     const pods = await core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` });
@@ -1758,22 +2092,19 @@ async function collectCheckJob(config, {
     return String(await core.readNamespacedPodLog({ name: podName, namespace, container: kind, limitBytes }) || '');
   };
   const deliverNew = (text) => {
-    if (typeof onStdoutLine !== 'function') return;
     if (text.length <= consumed) return;
     const fresh = text.slice(consumed);
     const lastNl = fresh.lastIndexOf('\n');
     if (lastNl === -1) return;
     for (const line of fresh.slice(0, lastNl).split('\n')) {
-      try { onStdoutLine(line); } catch { /* observer must not break the harvest */ }
+      retained.appendLine(line);
+      if (typeof onStdoutLine === 'function') {
+        try { onStdoutLine(line); } catch { /* observer must not break the harvest */ }
+      }
     }
     consumed += lastNl + 1;
   };
-  const boundedOutput = text => {
-    const bytes = Buffer.from(text || '', 'utf8');
-    let end = Math.min(bytes.length, maxBuffer);
-    while (end < bytes.length && (bytes[end] & 0xc0) === 0x80) end--;
-    return bytes.subarray(0, end).toString('utf8');
-  };
+  const boundedOutput = text => boundedCheckOutput(text, maxBuffer);
   const finish = async (job) => {
     const described = describeCheckJob(job);
     let raw = '';
@@ -1782,9 +2113,11 @@ async function collectCheckJob(config, {
     catch { logFailed = true; }
     // Everything the observer has not yet seen, so the progress state the
     // caller is rebuilding ends level with the verdict it is about to read.
-    deliverNew(raw.endsWith('\n') ? raw : `${raw}\n`);
-    const over = !unitSuite && Buffer.byteLength(raw, 'utf8') > maxBuffer;
-    const stdout = over ? boundedOutput(raw) : raw;
+    deliverNew(raw);
+    const reconciled = reconcileCheckOutput(retained.output(), raw);
+    const over = !unitSuite && (Buffer.byteLength(raw, 'utf8') > maxBuffer
+      || retained.truncated);
+    const stdout = over ? boundedOutput(reconciled) : reconciled;
     let exitCode = null;
     let terminatedReason = null;
     try {
@@ -1823,13 +2156,17 @@ async function collectCheckJob(config, {
     const described = describeCheckJob(job);
     if (described.state !== 'running') return finish(job);
     tick += 1;
-    if (tick % PROGRESS_EVERY_TICKS === 1 && typeof onStdoutLine === 'function') {
+    if (tick % PROGRESS_EVERY_TICKS === 1) {
       try { deliverNew(await readLog({ limitBytes: maxBuffer })); } catch { /* progress is best-effort */ }
     }
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
   let stdout = '';
-  try { stdout = boundedOutput(await readLog({ limitBytes: maxBuffer })); } catch { /* nothing salvageable */ }
+  try {
+    const raw = await readLog({ limitBytes: maxBuffer });
+    deliverNew(raw);
+    stdout = boundedOutput(reconcileCheckOutput(retained.output(), raw));
+  } catch { stdout = retained.output(); }
   return { state: 'timeout', stdout, stderr: '', exitCode: null, timedOut: true, partial: true, partialReason: 'run timed out' };
 }
 
@@ -1961,18 +2298,22 @@ module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
-  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
+  runCaptureJob, runEvidenceJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
-  getWorkerStatus, getWorkerContractVersion, deleteWorker, listWorkers, cloneWorkerVolume,
+  getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
+  listWorkerVolumes, isQuotaExceeded,
   listStatusResources, listNamespaceCapacity, inspectWorkerTermination, getPlatformDeployStatus,
   _setClientsForTest: setClientsForTest, _envChecksumForTest: envChecksum,
   _attachLineObserverForTest: attachLineObserver,
   _buildPhasesFromPodForTest: buildPhasesFromPod,
   _deploymentStateForTest: deploymentState,
+  _terminalPodFailureDetailsForTest: terminalPodFailureDetails,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,
   PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
   _appIngressManifestForTest: appIngressManifest,
+  _ingressWithPlatformAssetRoutesForTest: ingressWithPlatformAssetRoutes,
+  _reconcilePlatformAssetIngressesForTest: reconcilePlatformAssetIngresses,
   _ensurePlatformAssetBackendForTest: ensurePlatformAssetBackend,
   _resetPlatformAssetBackendForTest: () => { platformAssetBackend = null; platformAssetBackendRetryAfter = 0; },
 };

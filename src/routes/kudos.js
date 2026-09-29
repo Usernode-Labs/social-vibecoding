@@ -8,6 +8,9 @@ const appAccess = require('../services/app-access');
 const { rankedUsers, weekStartUtc } = require('../services/leaderboard-users');
 const {
   WEEKLY_KUDOS_LIMIT,
+  WEEKLY_BOUNTY_LIMIT,
+  countWeeklyKudosUsed,
+  countWeeklyBountiesUsed,
   countWeeklyAllowanceUsed,
 } = require('../services/bounties');
 
@@ -215,7 +218,9 @@ function kudosRoutes(config) {
       // parallel requests. Bounded, rare, not security-critical; the
       // alternative is a per-user advisory lock which adds complexity
       // for a near-zero-impact race. Documented in the plan.
-      const given = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
+      // #1688: thanks draw from their own allowance; bounties have theirs
+      // (services/bounties.js), so neither can drain the other.
+      const given = await countWeeklyKudosUsed(pool, req.user.id, weekStart);
       if (given >= WEEKLY_KUDOS_LIMIT) {
         return res.status(429).json({
           error: `Weekly kudos quota exceeded (${WEEKLY_KUDOS_LIMIT}/week). Resets every Monday 00:00 UTC.`,
@@ -383,14 +388,20 @@ function kudosRoutes(config) {
 
       // Best-effort cleanup of the author's "gave kudos" notification —
       // the underlying event no longer stands, read or unread. Never
-      // fail the retract itself over it. (No WS "notification removed"
-      // push exists; an open dropdown stays stale until next load.)
+      // fail the retract itself over it.
       try {
-        await pool.query(
+        const { rows: cleared = [] } = await pool.query(
           `DELETE FROM notifications
-             WHERE kind = 'kudos' AND session_id = $1 AND source_user_id = $2`,
+             WHERE kind = 'kudos' AND session_id = $1 AND source_user_id = $2
+           RETURNING user_id`,
           [sessionId, req.user.id]
         );
+        // #3050: the recipient's unread total may just have dropped —
+        // refresh their bell and re-badge their iPhone.
+        const { pushNotificationToUser } = require('../services/ws');
+        for (const userId of new Set(cleared.map((r) => r.user_id))) {
+          pushNotificationToUser(userId, { type: 'notifications_changed' });
+        }
       } catch (err) {
         log.warn('kudos', 'notification cleanup failed', {
           sessionId, giver: req.user.id, err: err.message,
@@ -469,13 +480,22 @@ function kudosRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
       const weekStart = weekStartUtc();
-      const given = await countWeeklyAllowanceUsed(pool, req.user.id, weekStart);
+      // #1688: two allowances. The top-level figures stay the thanks (PR
+      // kudos) budget the badge has always shown; `bounties` is the second
+      // meter beside it.
+      const given = await countWeeklyKudosUsed(pool, req.user.id, weekStart);
       const remaining = Math.max(0, WEEKLY_KUDOS_LIMIT - given);
+      const bountiesGiven = await countWeeklyBountiesUsed(pool, req.user.id, weekStart);
       res.json({
         given_this_week: given,
         remaining,
         limit: WEEKLY_KUDOS_LIMIT,
         week_start: weekStart,
+        bounties: {
+          given_this_week: bountiesGiven,
+          remaining: Math.max(0, WEEKLY_BOUNTY_LIMIT - bountiesGiven),
+          limit: WEEKLY_BOUNTY_LIMIT,
+        },
       });
     } catch (err) {
       log.error('kudos', 'budget failed', { userId: req.user.id, err: err.message });
@@ -925,6 +945,10 @@ module.exports = {
   weekStartUtc,
   countKudosGivenThisWeek,
   countWeeklyAllowanceUsed,
+  // #1688: the split allowances, re-exported the same way.
+  countWeeklyKudosUsed,
+  countWeeklyBountiesUsed,
+  WEEKLY_BOUNTY_LIMIT,
   loadKudosForSession,
   WEEKLY_KUDOS_LIMIT,
   ELIGIBLE_STATES,

@@ -339,6 +339,18 @@ test('the shared test fixture pairs CLI_CANONICAL_ORIGIN with the compiled produ
   // Guarded rather than asserted flat, because a self-hosted checkout with
   // USERNODE_DOMAIN exported is a supported way to run these tests.
   if (!domainAtRequire) {
-    assert.equal(constants.PRODUCTION_ORIGIN, 'https://my.onhomeroom.com');
+    assert.equal(constants.PRODUCTION_ORIGIN, 'https://app.onhomeroom.com');
   }
+});
+
+test('the env template names the hosted CLI origin, not the retired host', () => {
+  // #2995: .env.example still said https://my.onhomeroom.com after the move,
+  // and config.load() exits on any CLI_CANONICAL_ORIGIN that is not exactly
+  // PRODUCTION_ORIGIN, so a copied template could not boot the hosted
+  // platform. Exactly one active line, carrying the compiled fallback the
+  // test above pins.
+  const example = fs.readFileSync(path.join(__dirname, '../.env.example'), 'utf8');
+  assert.deepEqual(example.match(/^CLI_CANONICAL_ORIGIN=.*$/gm),
+    ['CLI_CANONICAL_ORIGIN=https://app.onhomeroom.com']);
+  assert.doesNotMatch(example, /my\.onhomeroom\.com/);
 });

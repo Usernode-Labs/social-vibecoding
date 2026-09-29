@@ -57,6 +57,29 @@ function isStuckCheckRecoveryScope(session) {
   return !hasUnsubmittedUpload;
 }
 
+// A deploy's SIGTERM kills the staging builds its process was running
+// (server.js cleanup), and nothing on the cluster outlives a build: the
+// check harvest (check-harvest.js) re-seats capture and unit-suite Jobs, not
+// builds. Left alone, the run reads as a live 'pending' build until
+// CHECKS_STALE_MS passes, and on a day that merges every few minutes the
+// next deploy often lands first. Clearing checks_checked_at makes it overdue
+// now (checkRunOverdue and findStuckCheckSessions read a missing clock as
+// overdue), so the next leader's reconcile re-drives it as it takes over.
+// Only a run still pending in its build phase: a run that reached its
+// capture is the harvest's, and a verdict that landed meanwhile is kept.
+async function markInterruptedBuilds(pool, sessionIds) {
+  const ids = [...new Set((sessionIds || []).map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+  if (!ids.length) return [];
+  const { rows } = await pool.query(
+    `UPDATE chat_sessions SET checks_checked_at = NULL
+      WHERE id = ANY($1::int[])
+        AND check_state = 'pending' AND check_phase = 'building'
+      RETURNING id`,
+    [ids]
+  );
+  return rows.map((r) => Number(r.id));
+}
+
 // One query shared by boot reconciliation and the live sweeper. Keeping the
 // scope here prevents the two recovery paths from drifting back to the old
 // promoted-only rule that stranded pre-vote CLI handoffs after a restart.
@@ -329,13 +352,16 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     // CHECK_MAX_AUTO_RETRIES bound the retries instead of the old silent
     // infinite skip loop (#461).
     const visuals = require('./visuals');
-    await visuals.storeChecks(
+    const stored = await visuals.storeChecks(
       pool, session.id, session.checks_commit_sha || null,
       { state: 'error', results: [] },
       `could not compare ${compareHead} with main: ${err.message}`.slice(0, 280)
     ).catch((e) => log.warn('staging-recovery', 'compare-failure verdict write failed', {
       sessionId: session.id, err: e.message,
     }));
+    if (stored) {
+      visuals.notifyChecks(session.id, { state: 'error', results: [] }, session.checks_commit_sha || null, null);
+    }
     return 'skipped';
   }
 
@@ -394,7 +420,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // on an imported session is a broken row, not an invitation to open a
   // second PR from someone else's fork. The `imported` guard makes that
   // explicit rather than relying on pr_number always being set.
-  if (!session.pr_number && !imported) {
+  if (!session.pr_number && !imported && !session.is_headless) {
     try {
       // username + latest user message give applyPrMetadata the same
       // signals the live dev-turn path has; without the username the
@@ -439,7 +465,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
         // names the recovered PR verbatim.
         preferredTitle: session.proposed_pr_title || null,
         broadcast: (event, data) =>
-          broadcastGlobal({ type: 'session_event', sessionId: session.id, event, ...data }),
+          broadcastGlobal({ ...data, type: 'session_event', sessionId: session.id, event }),
       });
     } catch (err) {
       log.warn('staging-recovery', 'Recovery PR creation via applyPrMetadata failed', {
@@ -541,7 +567,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // callers; captureForSession is itself _inFlight-guarded so a concurrent
   // live capture isn't duplicated.
   visuals.captureForSession(config, session, app, commitHash, stagingResult, {
-    send: () => {},
+    send: null,
     trigger: checkTriggerForReason(reason),
     // Deliberately NOT forced: a rebuild whose head already has a passing
     // verdict has nothing new to learn, and this path fires on every heal
@@ -646,7 +672,7 @@ async function recordChecksSkipped({
   log.info('staging-recovery', 'Checks marked skipped', { sessionId: session.id, reason });
   try {
     const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'skipped' });
+    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'skipped', checkState: 'skipped' });
   } catch (err) {
     log.warn('staging-recovery', 'skipped-verdict notify failed', { sessionId: session.id, err: err.message });
   }
@@ -680,6 +706,24 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     });
     return;
   }
+
+  // A failed rebuild can leave the row pointing at the previous preview.
+  // That URL may still serve an older revision (or a default/error page), so
+  // keeping it makes the UI advertise and open "the submitted build" while
+  // the submitted build never started (#2328). storeChecks' compare-and-set
+  // above proves this failure still belongs to the current checks commit;
+  // only then retire every pointer that could vouch for the stale runtime.
+  await pool.query(
+    `UPDATE chat_sessions
+        SET staging_container_id = NULL, staging_url = NULL,
+            staging_image_ref = NULL, staging_build_ref = NULL,
+            staging_runtime_kind = NULL, staging_runtime_name = NULL,
+            staging_commit_sha = NULL
+      WHERE id = $1 AND checks_commit_sha IS NOT DISTINCT FROM $2::text`,
+    [session.id, commitHash || null]
+  ).catch((clearErr) => log.warn('staging-recovery', 'Failed to retire stale preview after boot failure', {
+    sessionId: session.id, err: clearErr.message,
+  }));
 
   // Read back the streak bookkeeping to decide whether this is the first
   // failure of the streak (→ notify + post) or a quiet backoff retry.
@@ -726,7 +770,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     });
     try {
       const { broadcastGlobal } = require('./ws');
-      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error' });
+      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error', checkState: 'error' });
     } catch { /* narration only */ }
     return;
   }
@@ -769,7 +813,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
     });
     if (created.length) await notifications.hydrateAndPush(pool, created[0]);
     const { broadcastGlobal } = require('./ws');
-    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error' });
+    broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error', checkState: 'error' });
   } catch (e) {
     log.warn('staging-recovery', 'boot-failure notify failed', { sessionId: session.id, err: e.message });
   }
@@ -811,7 +855,7 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
   const visuals = require('./visuals');
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
   visuals.captureForSession(config, session, app, session.checks_commit_sha || null, null, {
-    send: () => {},
+    send: null,
     trigger: checkTriggerForReason(reason),
     // A human pressing "Re-run checks" — or an agent correcting the capture
     // routes (#1199) — is asking for a FRESH verdict, so these paths force
@@ -825,6 +869,7 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
 }
 
 module.exports = {
+  markInterruptedBuilds,
   DEFAULT_CHECKS_STALE_MS,
   checksStaleMs,
   checkRunOverdue,

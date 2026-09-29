@@ -88,6 +88,11 @@ export type TranscriptRow =
     text: string;
     /** `msg.content` reaches some rows as trusted html — see the builder. */
     html?: string;
+    /**
+     * #2597: a muted second line under the heading. The running row's
+     * heading no longer names the venue, so the venue is here instead.
+     */
+    caption?: string;
     elapsed: ElapsedSpec;
     stamp: string;
     dim?: boolean;
@@ -174,9 +179,12 @@ export type TranscriptRow =
     t: 'attached';
     key: string;
     details: DetailsSpec;
-    icon: 'spinner' | 'check';
+    /** `flag`: an agent session's run that failed or was stopped (#2779). */
+    icon: 'spinner' | 'check' | 'flag';
     text: string;
     html?: string;
+    /** #2597's venue caption, under the card's head row. */
+    caption?: string;
     elapsed: ElapsedSpec;
     stamp: string;
     /** The live run's four summary spans; absent on the other two shapes. */
@@ -211,8 +219,7 @@ export type TranscriptRow =
      * explicit is what lets an already-proposed card stay visibly disabled
      * across success re-renders, status polls and a fresh session load.
      */
-    propose: { kind: 'ready' } | { kind: 'pending' } | { kind: 'completed' }
-      | { kind: 'blocked'; label: string; reason: string } | null;
+    propose: { kind: 'ready'; note?: string } | { kind: 'pending' } | { kind: 'completed' } | null;
     /** MergeStatus's badge for the card, or the merged sentence. */
     status2: { kind: 'none' } | { kind: 'merged' } | { kind: 'badge'; html: string };
   }
@@ -271,9 +278,18 @@ export interface TranscriptState {
   devFlowHtml: string;
   /** #990's trailing dots. Null when a live coding run already shows progress. */
   activity: { label: string } | null;
+  /**
+   * #1889: true while a turn is in flight (`DevChat.isStreaming`). The
+   * component reads it to decide where the latest Changes card sits — in its
+   * turn's slot while the run's tail is painting, after the last row once the
+   * chat is idle again. See `DevChatTranscript`.
+   */
+  busy: boolean;
+  /** #1942: an open, idle session with no messages yet shows its empty state. */
+  empty?: boolean;
 }
 
-export const EMPTY_TRANSCRIPT: TranscriptState = { rows: [], devFlowHtml: '', activity: null };
+export const EMPTY_TRANSCRIPT: TranscriptState = { rows: [], devFlowHtml: '', activity: null, busy: false, empty: false };
 
 export const transcriptStore = createStore<TranscriptState>(EMPTY_TRANSCRIPT);
 

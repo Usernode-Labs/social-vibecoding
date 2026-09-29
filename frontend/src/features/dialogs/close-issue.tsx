@@ -159,7 +159,7 @@ export function CloseIssueDialog() {
               Posted publicly on the GitHub issue when the vote passes.
             </p>
           </div>
-          <div id="close-issue-error" ref={errorRef} className="text-red-400 text-sm hidden">
+          <div id="close-issue-error" ref={errorRef} className="text-red-700 dark:text-red-400 text-sm hidden">
             {error}
           </div>
           <div className="flex gap-3">

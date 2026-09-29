@@ -1,4 +1,6 @@
 const appAllowance = require('../services/app-allowance');
+const platformLimits = require('../services/platform-limit-alerts');
+const appLimit = require('../services/app-limit');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
@@ -17,32 +19,30 @@ const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
+const communities = require('../services/communities');
+const governance = require('../services/governance');
+const activeUsers = require('../services/active-users');
+const createOptions = require('../services/create-options');
+const collabInvites = require('../services/collab-invites');
+const emailInvites = require('../services/email-invites');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
 const MAX_INITIAL_APPROVERS = 20;
 
-const VISIBILITY_VALUES = new Set(['public', 'private']);
-
 // Validate a (collabVisibility, viewVisibility) pair against the
 // invariants (see schema.sql): both must be public|private, and
 // collab-public implies view-public. Returns an error string or null.
-function validateVisibilityCombo(collabVisibility, viewVisibility) {
-  if (!VISIBILITY_VALUES.has(collabVisibility) || !VISIBILITY_VALUES.has(viewVisibility)) {
-    return 'Visibility must be "public" or "private"';
-  }
-  if (collabVisibility === 'public' && viewVisibility === 'private') {
-    return 'An app that everyone can build cannot be private to view';
-  }
-  return null;
-}
+// The rule lives in services/create-options.js, which the create route's
+// audience parsing shares.
+const validateVisibilityCombo = createOptions.visibilityComboError;
 
 // A source must have finished the durable parts of provisioning before a
 // fork can take a database/repository snapshot. `awaiting_secrets` is safe:
@@ -74,11 +74,18 @@ function forkSourceReadinessError(sourceApp) {
 // to the literal "<deleted>" with an inert link. One batched query
 // covers the whole list (no per-row round trip). Replaces each app's
 // `forked_from` with { appId, slug, name, linkable } — or null for
-// non-forks / malformed refs.
+// non-forks / malformed refs, and for an app in demo mode, whose lineage is
+// masked here rather than resolved (see below).
 async function attachForkLineage(pool, apps) {
   const list = Array.isArray(apps) ? apps : [apps];
+  // Demo mode (routes/demo-mode.js): the app stands in for the one it was
+  // forked from, on camera, and the badge is the one tell. The lineage stays
+  // on the row untouched and is back the moment demo mode goes off; only the
+  // payload is quiet about it.
+  const masked = (a) => !!(a && a.demo_mode);
   const ids = [];
   for (const a of list) {
+    if (masked(a)) continue;
     const ref = a && a.forked_from;
     if (ref && typeof ref === 'object' && Number.isInteger(ref.appId)) {
       ids.push(ref.appId);
@@ -93,6 +100,10 @@ async function attachForkLineage(pool, apps) {
     for (const r of rows) nameById.set(r.id, r.name);
   }
   for (const a of list) {
+    if (masked(a)) {
+      a.forked_from = null;
+      continue;
+    }
     const ref = a && a.forked_from;
     if (!ref || typeof ref !== 'object') {
       if (a) a.forked_from = null;
@@ -117,14 +128,39 @@ async function attachForkLineage(pool, apps) {
 // helper is spread across every row of the home feed and a per-row
 // query would be N round-trips. Omitting it just means "no app-admin
 // rights", which is the correct fallback for an anonymous viewer.
-function canDeleteApp(app, user, contributorCount) {
-  return !!user?.canAdminWrite
-    || (user?.id != null
-      && app?.created_by === user.id
-      && Number(contributorCount) === 1);
+// #2161: the platform's own row (SELF-HOSTING.md: apps.self_hosted = TRUE,
+// slug = config.selfAppSlug) is a core app. Nobody deletes it from the UI,
+// full admins included: tearing down the row that IS the deployment is an
+// operator task, not a danger-zone click. `selfAppSlug` is the second signal
+// because a staging clone's platform row may predate the self_hosted seed.
+function isCoreApp(app, selfAppSlug = null) {
+  if (!app) return false;
+  if (app.self_hosted === true) return true;
+  return !!selfAppSlug && app.slug === selfAppSlug;
 }
 
-function accessFlags(app, user, isCollaborator, adminAppIds = null, contributorCount = null) {
+// Why this viewer cannot delete this app right now, or null when they can.
+//   'core'      — the platform's own app (see isCoreApp); blocks everyone.
+//   'shared'    — the creator asked, but the app has other contributors, so
+//                 no one person may destroy it (#1897, #2161).
+//   'not_owner' — neither a full admin nor the creator (or the contributor
+//                 count could not be established, which fails closed).
+// Full admins keep their operational override on shared apps, but the DELETE
+// route makes them acknowledge the other contributors explicitly.
+function deleteBlockReason(app, user, contributorCount, selfAppSlug = null) {
+  if (isCoreApp(app, selfAppSlug)) return 'core';
+  if (user?.canAdminWrite) return null;
+  if (user?.id == null || app?.created_by !== user.id) return 'not_owner';
+  if (Number(contributorCount) === 1) return null;
+  return Number(contributorCount) > 1 ? 'shared' : 'not_owner';
+}
+
+function canDeleteApp(app, user, contributorCount, selfAppSlug = null) {
+  return deleteBlockReason(app, user, contributorCount, selfAppSlug) === null;
+}
+
+function accessFlags(app, user, isCollaborator, adminAppIds = null, contributorCount = null,
+  selfAppSlug = null) {
   const isAdmin = !!user?.isAdmin;
   // `can_collaborate` is a visibility/read affordance → stays on isAdmin
   // (view-only admins keep it). `can_manage` gates mutating management
@@ -140,7 +176,47 @@ function accessFlags(app, user, isCollaborator, adminAppIds = null, contributorC
     // Deletion is deliberately narrower than general app management. App
     // admins can manage settings, but only a full platform admin or the
     // creator while they remain the app's ONE contributor may destroy it.
-    can_delete: canDeleteApp(app, user, contributorCount),
+    can_delete: canDeleteApp(app, user, contributorCount, selfAppSlug),
+    // The reason can_delete is false ('core' | 'shared' | 'not_owner'), so
+    // the settings dialog can say why instead of only hiding the control.
+    delete_block: deleteBlockReason(app, user, contributorCount, selfAppSlug),
+  };
+}
+
+// The Classic app directory intentionally carries deployment, manifest and
+// curation detail for every card. Global Chat's app chooser needs a much
+// smaller shape: enough to render the icon, identify the exact app, show its
+// useful activity counts and derive safe follow-up actions. Keeping this an
+// explicit projection avoids encrypting and sending hundreds of kilobytes of
+// unrelated manifest data for a one-click direct action.
+function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
+  const isCollaborator = !!app.is_collaborator;
+  const isAppAdmin = adminAppIds.has(app.id);
+  const description = typeof app.description === 'string'
+    ? app.description.replace(/\s+/g, ' ').trim().slice(0, 500)
+    : '';
+  return {
+    id: app.id,
+    slug: app.slug,
+    name: app.name,
+    ...(description ? { description } : {}),
+    status: app.status,
+    icon_emoji: app.icon_emoji || null,
+    icon_url: app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null,
+    isFavorited: !!app.is_favorited,
+    isCollaborator,
+    canCollaborate: !!user?.isAdmin || app.collab_visibility !== 'private' || isCollaborator,
+    canManage: !!user?.canAdminWrite
+      || (user?.id != null && app.created_by === user.id)
+      || isAppAdmin,
+    messagesLast7Days: parseInt(app.message_count, 10) || 0,
+    activitySecondsLast7Days: parseInt(app.total_seconds, 10) || 0,
+    activeUsers: parseInt(app.active_users, 10) || 0,
+    openIssues: parseInt(app.open_issues, 10) || 0,
+    openProposals: parseInt(app.open_prs, 10) || 0,
+    activeDevelopment: parseInt(app.active_sessions, 10) || 0,
+    createdAt: app.created_at || null,
+    updatedAt: app.last_deploy_at || app.created_at || null,
   };
 }
 
@@ -199,6 +275,14 @@ function demoIconApps(curation = false) {
     merged_prs_recent: 0,
     last_merged_at: null,
     open_issues: 0,
+    // Communities (services/communities.js). Outsiders by default, like the
+    // Your-apps flags above; the three rows below that set is_member are
+    // the Workshop's three sections, one each, so ?demo=1 shows every
+    // audience label whatever the clone's own memberships are.
+    is_member: false,
+    member_count: 0,
+    audience: 'open',
+    last_active_at: null,
     icon_emoji: null,
     icon_url: null,
     can_collaborate: false,
@@ -209,7 +293,12 @@ function demoIconApps(curation = false) {
     demo: true,
   };
   const apps = [
-    { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },
+    // "Just you" in the Workshop: a private project nobody else is in.
+    {
+      ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮',
+      view_visibility: 'private', collab_visibility: 'private',
+      is_member: true, member_count: 1, audience: 'solo', last_active_at: demoAgo(26),
+    },
     {
       ...base,
       id: 900002,
@@ -243,6 +332,13 @@ function demoIconApps(curation = false) {
       slug: 'staging-demo-long-name',
       name: 'Staging demo photo album and journal',
       icon_emoji: '📔',
+      // A "Group" in the Workshop: private, and more than one person in it.
+      view_visibility: 'private',
+      collab_visibility: 'private',
+      is_member: true,
+      member_count: 4,
+      audience: 'invited',
+      last_active_at: demoAgo(3),
     },
     // #1838: the ONE demo row that lands in "Your apps". Every other row
     // here inherits is_favorited/is_collaborator false from `base`, so
@@ -264,6 +360,11 @@ function demoIconApps(curation = false) {
       icon_emoji: '🏠',
       is_favorited: true,
       favorite_order: 99,
+      // ...and a "Community" in the Workshop, the most recent one, so the
+      // declared checks that find it there do not depend on the clone.
+      is_member: true,
+      member_count: 12,
+      last_active_at: demoAgo(0.5),
     },
     // Four more featured rows so the Discover widget's curated lane is
     // reviewable AT ITS CAP (#949): the lane holds six tiles — one per
@@ -583,6 +684,39 @@ async function sweepStuckCreatingApps(pool) {
   }
 }
 
+// #2524: how much time ONE activity heartbeat may report, and how much a
+// single (user, app, day) row may ever hold.
+//
+// These bound a column that RANKS: the home screen orders the directory by
+// `SUM(seconds_spent)` over the last seven days, so whatever reaches this
+// column decides which apps people are shown first.
+//
+// The per-post ceiling is generous on purpose. The browser client counts one
+// second at a time and flushes at 30 (`AppView.startActivityTracking`), so a
+// real body is 1..30; an hour leaves room for a caller that batches — a
+// native app returning from the background, say — without leaving the door
+// open. It is the DAILY cap that actually holds the line, because a ceiling
+// on one request is defeated by sending many.
+const ACTIVITY_MAX_PER_POST = 3600;
+const ACTIVITY_MAX_PER_DAY = 86400;
+
+/**
+ * The seconds to credit for one heartbeat, or `null` to refuse the body.
+ *
+ * Refuses anything that is not a finite number RATHER THAN COERCING IT. The
+ * old guard was `!seconds || seconds < 0`, which let a string through: 'abc'
+ * is truthy and `'abc' < 0` is false, so it reached `Math.round('abc')` →
+ * NaN → an INTEGER column rejecting NaN, i.e. a 500 where the honest answer
+ * was a 400. `Infinity` took the same route. A numeric STRING is refused too:
+ * this body comes from our own client, which sends a number.
+ */
+function activitySeconds(raw) {
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+  const rounded = Math.round(raw);
+  if (rounded <= 0) return null;
+  return Math.min(rounded, ACTIVITY_MAX_PER_POST);
+}
+
 function appRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -590,6 +724,8 @@ function appRoutes(config) {
   router.get('/api/apps', async (req, res) => {
     try {
       const appDeployStatus = require('../services/app-deploy-status');
+      const compactForGlobalChat = req.get('x-global-chat-loopback') === '1'
+        && req.query.view === 'global-chat';
       // SELF-HOSTING.md sub-step 2j: hide self_hosted rows from
       // non-admin listings. Admins see them so they can reach the
       // self-app's settings, dev-chat, etc. The same filter is applied
@@ -636,6 +772,17 @@ function appRoutes(config) {
           (fa.app_id IS NOT NULL) AS featured,
           fa.sort_order AS featured_order,
           (me.user_id IS NOT NULL) AS is_collaborator,
+          -- The community the app belongs to (services/communities.js):
+          -- whether you are in it, how many are, who it is for, and when
+          -- it last moved for you. The Workshop lists your communities by
+          -- audience and by that recency; Discover's Join button reads
+          -- is_member. last_active_at is the latest of your joining, your
+          -- own last visit and the last thing that happened in its changes,
+          -- so a community you have not opened but that has news rises.
+          (cm.user_id IS NOT NULL) AS is_member,
+          COALESCE(cmc.cnt, 0) AS member_count,
+          ${communities.audienceSql('a', 'cmc.cnt')} AS audience,
+          GREATEST(cm.joined_at, mine.last_visit::timestamptz, dev.last_activity_at) AS last_active_at,
           COALESCE(dev.open_prs, 0) AS open_prs,
           COALESCE(dev.active_sessions, 0) AS active_sessions,
           -- "How actively developed is this app?" (#1383). All three ride
@@ -676,8 +823,17 @@ function appRoutes(config) {
         LEFT JOIN featured_apps fa ON fa.app_id = a.id
         LEFT JOIN app_collaborators me
           ON me.app_id = a.id AND me.user_id = $2 AND me.status = 'member'
+        LEFT JOIN community_members cm
+          ON cm.community_id = a.community_id AND cm.user_id = $2
+        LEFT JOIN (
+          SELECT community_id, COUNT(*) AS cnt FROM community_members GROUP BY community_id
+        ) cmc ON cmc.community_id = a.community_id
+        LEFT JOIN (
+          SELECT app_id, MAX(date) AS last_visit FROM app_activity WHERE user_id = $2 GROUP BY app_id
+        ) mine ON mine.app_id = a.id
         LEFT JOIN (
           SELECT app_id,
+            MAX(last_activity_at) AS last_activity_at,
             COUNT(*) FILTER (WHERE status IN ('promoted', 'merging')) AS open_prs,
             COUNT(*) FILTER (WHERE status = 'active') AS active_sessions,
             -- A merged chat_session IS an accepted community proposal —
@@ -710,6 +866,12 @@ function appRoutes(config) {
       // of, so accessFlags below can resolve can_manage per row without
       // a round-trip each.
       const adminAppIds = await appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
+
+      if (compactForGlobalChat) {
+        return res.json({
+          apps: rows.map((app) => compactGlobalChatApp(app, req.user, adminAppIds)),
+        });
+      }
 
       // How many people BUILT each app, for the Discover cards on the
       // launcher. One round trip for the whole page over the shared
@@ -837,7 +999,12 @@ function appRoutes(config) {
           merged_prs_recent: parseInt(a.merged_prs_recent, 10) || 0,
           last_merged_at: a.last_merged_at || null,
           open_issues: parseInt(a.open_issues, 10) || 0,
-          ...accessFlags(a, req.user, a.is_collaborator, adminAppIds, contributorCount),
+          is_member: !!a.is_member,
+          member_count: parseInt(a.member_count, 10) || 0,
+          audience: a.audience || 'open',
+          last_active_at: a.last_active_at || null,
+          ...accessFlags(a, req.user, a.is_collaborator, adminAppIds, contributorCount,
+            config.selfAppSlug),
         };
       }));
       // Resolve fork lineage (live source-name lookup, "<deleted>"
@@ -857,7 +1024,11 @@ function appRoutes(config) {
   // Public-only repo info. Kept as a low-privilege fallback; not used by
   // the import modal anymore (verify-access below is strictly better
   // because it works for private repos the bot can read).
-  router.get('/api/github/repo-info', async (req, res) => {
+  //
+  // githubLookupLimiter (#2519): the call this makes spends the PLATFORM's
+  // shared GitHub installation quota, not the caller's. Failures count —
+  // see the limiter for why.
+  router.get('/api/github/repo-info', githubLookupLimiter, async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Invalid GitHub URL' });
     const info = await github.fetchPublicRepoInfo(parsed.owner, parsed.repo);
@@ -873,7 +1044,37 @@ function appRoutes(config) {
   //   2. confirm Write access
   //   3. return name/description so the form can prefill the app-name
   //      field with a sensible default
-  router.get('/api/github/verify-access', async (req, res) => {
+  //
+  // githubLookupLimiter (#2519): same shared installation quota as
+  // repo-info above, plus step 1 is a side effect worth bounding on its
+  // own. One bucket covers both routes.
+  // The four dapp.json fields that replace a create answer on an import's
+  // first deploy, read with the deploy's own readers: its name, description,
+  // visibility and approval rule. An unparseable file reads as {}, the way
+  // the deploy reader treats it.
+  async function readImportManifest(parsed) {
+    try {
+      const raw = await github.getFileContent(parsed.owner, parsed.repo, appManifest.MANIFEST_FILENAME);
+      if (raw == null) return {};
+      let json;
+      try { json = JSON.parse(raw); } catch { return {}; }
+      const governance = appManifest.readGovernance(json);
+      return {
+        name: appManifest.readName(json),
+        description: appManifest.readDescription(json),
+        visibility: appManifest.readVisibility(json),
+        governance: governance ? {
+          approvers: governance.approvers || 'anyone',
+          approvals: typeof governance.approvals === 'number' ? governance.approvals : null,
+        } : null,
+      };
+    } catch (err) {
+      log.warn('apps', 'Import dapp.json read failed', { repo: `${parsed.owner}/${parsed.repo}`, err: err.message });
+      return null;
+    }
+  }
+
+  router.get('/api/github/verify-access', githubLookupLimiter, async (req, res) => {
     const parsed = github.parseGithubUrl(req.query.url || '');
     if (!parsed) return res.status(400).json({ error: 'Repo URL must look like https://github.com/<owner>/<repo>' });
     // SELF-HOSTING.md sub-step 2k: refuse to import the platform's
@@ -894,6 +1095,10 @@ function appRoutes(config) {
       name: verify.name,
       description: verify.description,
       fullName: verify.fullName,
+      // What the repo's own dapp.json already says, so the dialog can say
+      // which answers it replaces. {} when there is no dapp.json; null when
+      // it could not be read, which the dialog says as well.
+      manifest: await readImportManifest(parsed),
     });
   });
 
@@ -901,7 +1106,7 @@ function appRoutes(config) {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
-      res.json(await appAllowance.read(pool, req.user));
+      res.json(await appAllowance.read(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
     } catch (err) {
       log.error('apps', 'App allowance lookup failed', { message: err.message });
       res.status(500).json({ error: 'Could not load your app allowance. Please try again.' });
@@ -913,7 +1118,7 @@ function appRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
     try {
-      res.json(await appAllowance.requestMore(pool, req.user));
+      res.json(await appAllowance.requestMore(pool, req.user, { maxApps: await appLimit.effective(pool, config) }));
     } catch (err) {
       log.error('apps', 'App allowance request failed', { message: err.message });
       res.status(500).json({ error: 'Could not send your request. Please try again.' });
@@ -927,13 +1132,14 @@ function appRoutes(config) {
       return res.status(400).json({ error: 'App name is required' });
     }
 
-    // Creation-time visibility (defaults preserve today's behavior).
-    const collabVisibility = req.body.collabVisibility || 'public';
-    const viewVisibility = req.body.viewVisibility || 'public';
-    const visibilityError = validateVisibilityCombo(collabVisibility, viewVisibility);
-    if (visibilityError) {
-      return res.status(400).json({ error: visibilityError });
+    // Who it is for, who is invited and who approves (communities, stage
+    // 3; services/create-options.js). A body with none of them is an older
+    // client and keeps today's visibility fields and defaults.
+    const options = createOptions.parseCreateOptions(req.body, { imported: !!repoUrl });
+    if (options.error) {
+      return res.status(400).json({ error: options.error });
     }
+    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -975,22 +1181,49 @@ function appRoutes(config) {
         if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
 
+      // A Group's invitees resolve BEFORE anything is created: a typo in a
+      // username is a 400 with the name in it, not a project that exists
+      // with half its people missing.
+      let inviteTargets = [];
+      if (invitees.length) {
+        const { rows: found } = await pool.query(
+          `SELECT id, username FROM users WHERE LOWER(username) = ANY($1::text[])`,
+          [invitees.map((u) => u.toLowerCase())]
+        );
+        const byName = new Map(found.map((u) => [u.username.toLowerCase(), u]));
+        const missing = invitees.filter((u) => !byName.has(u.toLowerCase()));
+        if (missing.length) {
+          return res.status(400).json({
+            error: missing.length === 1
+              ? `There is no Homeroom user named @${missing[0]}.`
+              : `There are no Homeroom users named ${missing.map((u) => '@' + u).join(', ')}.`,
+          });
+        }
+        inviteTargets = invitees
+          .map((u) => byName.get(u.toLowerCase()))
+          .filter((u) => u.id !== req.user.id);
+      }
+
       // Enforce global app cap (full admins bypass; view-only admins
       // don't — issue #311). Errored apps don't count
       // toward the limit — they hold ~no resources and can be deleted to
-      // free a slot.
-      if (!req.user?.canAdminWrite && config.maxApps > 0) {
+      // free a slot. The cap is the admin's setting when one is stored,
+      // else MAX_APPS (services/app-limit.js).
+      const maxApps = req.user?.canAdminWrite ? 0 : await appLimit.effective(pool, config);
+      if (maxApps > 0) {
         const { rows: countRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
-        if (countRows[0].n >= config.maxApps) {
+        if (countRows[0].n >= maxApps) {
           log.warn('apps', 'App creation blocked by max-apps cap', {
             userId: req.user.id,
             active: countRows[0].n,
-            cap: config.maxApps,
+            cap: maxApps,
           });
+          // Somebody was just refused: make sure the admins have heard.
+          platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
-            error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
+            error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
         }
       }
@@ -1013,7 +1246,70 @@ function appRoutes(config) {
         [name.trim(), slug, repoUrlNormalized, req.user.id, collabVisibility, viewVisibility]
       );
 
-      const appRow = rows[0];
+      let appRow = rows[0];
+
+      // WHO APPROVES, chosen on the create screen. Written to the row now so
+      // the rule holds from the first proposal, and passed to the template
+      // (appRow → app-creator → template.js) so the new repository's
+      // dapp.json says the same thing: that file is the rule's source of
+      // truth, and the first deploy's reconcile then finds nothing to change.
+      // "People I pick" starts with the creator as its one approver, the
+      // same seed applyGovernanceChange plants when a manifest switches a
+      // live app to invited approvers.
+      if (rule) {
+        const { rows: governed } = await pool.query(
+          `UPDATE apps SET approver_policy = $1, approvals_required = $2
+            WHERE id = $3 RETURNING *`,
+          [rule.approverPolicy, rule.approvalsRequired, appRow.id]
+        );
+        appRow = governed[0] || appRow;
+        if (rule.approverPolicy === 'invited') {
+          await pool.query(
+            `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)
+             VALUES ($1, $2, 'member', NOW())
+             ON CONFLICT (app_id, user_id) DO NOTHING`,
+            [appRow.id, req.user.id]
+          );
+        }
+      }
+
+      // WHAT IT IS, if the creator said. Seeded as the manifest snapshot the
+      // template's dapp.json is about to match ({ description, secrets: [] }),
+      // so app-creator writes it into the new repository and a Retry still
+      // has it. The first deploy then snapshots the real file over it.
+      if (description) {
+        const { rows: described } = await pool.query(
+          `UPDATE apps SET manifest_snapshot = $1 WHERE id = $2 RETURNING *`,
+          [JSON.stringify({ description, secrets: [] }), appRow.id]
+        );
+        appRow = described[0] || appRow;
+      }
+
+      // A Group's invites go out now, each the same invite (and the same
+      // notification) Members & approvals sends. Best-effort per person: the
+      // project exists either way, and anyone missed can be invited from
+      // its page.
+      let invited = 0;
+      for (const target of inviteTargets) {
+        try {
+          const sent = await collabInvites.sendInvite(pool, { app: appRow, target, inviterId: req.user.id });
+          if (sent.ok) invited += 1;
+        } catch (err) {
+          log.warn('apps', 'Create-time invite failed', { appId: appRow.id, invitee: target.username, err: err.message });
+        }
+      }
+      // Addresses: an account that already has one confirmed is invited as
+      // that account; anyone else gets a mail pointing at the waitlist, and
+      // the invite waits on their account (services/email-invites.js). The
+      // response counts them together, so it says nothing about who has an
+      // account.
+      if (inviteEmails.length) {
+        const byEmail = await emailInvites.inviteByEmail(pool, config, {
+          app: appRow, emails: inviteEmails, inviter: { id: req.user.id, username: req.user.username },
+        });
+        invited += byEmail.invited + byEmail.mailed;
+      }
+
       log.info('apps', repoUrlNormalized ? 'App imported (pending)' : 'App created (pending)', {
         appId: appRow.id,
         slug,
@@ -1023,7 +1319,15 @@ function appRoutes(config) {
         type: events.EVENT_TYPES.APP_CREATED,
         userId: req.user.id,
         appId: appRow.id,
-        metadata: { imported: !!repoUrlNormalized, collabVisibility, viewVisibility },
+        metadata: {
+          imported: !!repoUrlNormalized,
+          collabVisibility,
+          viewVisibility,
+          ...(options.audience ? { audience: options.audience } : {}),
+          ...(invited ? { invited } : {}),
+          ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
+          ...(description ? { described: true } : {}),
+        },
       });
 
       // Kick off async creation — don't await. If it throws, flip to error.
@@ -1041,7 +1345,8 @@ function appRoutes(config) {
       // watchdog will unstick the row after CREATION_TIMEOUT_MS.
       scheduleCreationWatchdog(pool, appRow.id);
 
-      res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
+      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited });
+      platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
@@ -1084,13 +1389,15 @@ function appRoutes(config) {
         const allowance = await appAllowance.read(pool, req.user);
         if (!allowance.canCreateApps) return res.status(403).json(appAllowance.refusal(allowance));
       }
-      if (!req.user?.canAdminWrite && config.maxApps > 0) {
+      const maxApps = req.user?.canAdminWrite ? 0 : await appLimit.effective(pool, config);
+      if (maxApps > 0) {
         const { rows: countRows } = await pool.query(
           `SELECT COUNT(*)::int AS n FROM apps WHERE status <> 'error'`
         );
-        if (countRows[0].n >= config.maxApps) {
+        if (countRows[0].n >= maxApps) {
+          platformLimits.nudge(pool, config, 'apps');
           return res.status(429).json({
-            error: `This server is at its app limit (${config.maxApps}). Ask an admin to remove an app or raise the limit.`,
+            error: `This server is at its app limit (${maxApps}). Ask an admin to remove an app or raise the limit.`,
           });
         }
       }
@@ -1137,6 +1444,7 @@ function appRoutes(config) {
       scheduleCreationWatchdog(pool, appRow.id);
 
       res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
+      platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
@@ -1222,6 +1530,18 @@ function appRoutes(config) {
       const phaseEntry = appRow.status === 'creating'
         ? appCreationPhase.read(appRow.slug) : null;
 
+      // Demo mode's partner, by name: the settings dialog says who the
+      // synthetic proposals and votes on this app come from
+      // (routes/demo-mode.js). Read by the flag, not just the column, so a
+      // row that lost it is not named as a partner.
+      let demoPartner = null;
+      if (appRow.demo_mode && appRow.demo_partner_id) {
+        const { rows: partnerRows } = await pool.query(
+          'SELECT username FROM users WHERE id = $1 AND is_synthetic = TRUE',
+          [appRow.demo_partner_id]
+        );
+        demoPartner = partnerRows[0]?.username || null;
+      }
       const [adminAppIds, contributorCounts] = await Promise.all([
         appAdmins.getAdminAppIdsForUser(pool, req.user?.id),
         contributors.loadContributorCounts(pool, [appRow.id]),
@@ -1229,6 +1549,7 @@ function appRoutes(config) {
       const contributorCount = contributorCounts.get(appRow.id) || 0;
       const appPayload = {
         ...appAccess.stripAppSecrets(appRow),
+        demo_partner: demoPartner,
         contributor_count: contributorCount,
         directory: discoveryCuration.describe(appRow),
         last_failure: undefined,
@@ -1237,10 +1558,20 @@ function appRoutes(config) {
         url,
         creationPhase: phaseEntry ? phaseEntry.phase : null,
         missingSecrets,
+        // Reviewer copy needs to distinguish an advisory evidence run from
+        // a real vote/merge gate. This is a platform rollout flag, not an app
+        // secret or capability grant.
+        visualEvidenceEnforced: !!config.visualEvidence?.enforce,
         // The whole-tree verdict under direct merges (services/main-watch.js):
         // is main green, and are this app's merges paused because it is not?
         mainCheck: require('../services/main-watch').describe(appRow),
-        ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount),
+        // A merged commit of the platform's own app that has not become the
+        // running release (services/release-watch.js). Never stalled for a
+        // child app. The raw column rides along in the allowlist; this is
+        // the shape clients read.
+        releaseStall: require('../services/release-watch').describe(appRow),
+        ...accessFlags(appRow, req.user, isCollaborator, adminAppIds, contributorCount,
+          config.selfAppSlug),
       };
       await attachForkLineage(pool, appPayload);
       res.json({ app: appPayload });
@@ -2015,7 +2346,9 @@ function appRoutes(config) {
   // check the periodic poller does, but on demand. Returns a structured
   // result so the UI can show a useful toast (no_drift / redeployed /
   // rebuild_failed / fetch_failed). Only meaningful for repo-backed
-  // apps; rejects with 400 otherwise.
+  // apps; rejects with 400 otherwise. `manual` skips the poller's
+  // backoff on a commit that has failed to rebuild before: an admin
+  // pressing this has usually just fixed the thing that was failing.
   router.post('/api/apps/:slug/check-updates', drainGuard, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
@@ -2029,7 +2362,7 @@ function appRoutes(config) {
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
-      const result = await driftPoller.checkAndRedeployOne(config, pool, app);
+      const result = await driftPoller.checkAndRedeployOne(config, pool, app, { manual: true });
       res.json(result);
     } catch (err) {
       log.error('apps', 'Manual drift check failed', { slug: req.params.slug, message: err.message });
@@ -2123,14 +2456,16 @@ function appRoutes(config) {
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
 
-      const { sendSystemMessage, pushAppUpdate } = require('../services/ws');
-      await sendSystemMessage(pool, app.id,
-        locked
-          ? `${req.user.username} locked this app, so merges now also require an admin yes vote`
-          : `${req.user.username} unlocked this app, so merges no longer require an admin yes vote`,
-        'system'
-      ).catch((err) => log.warn('apps', 'Lock chat msg failed', { err: err.message }));
+      // On the record for the project's Workshop notices
+      // (services/app-notices.js): a channel carries no activity.
+      events.record(pool, {
+        type: events.EVENT_TYPES.APP_LOCK_CHANGED,
+        userId: req.user.id,
+        appId: app.id,
+        metadata: { locked: app.locked },
+      });
 
+      const { pushAppUpdate } = require('../services/ws');
       pushAppUpdate({
         action: 'lock_changed',
         appSlug: app.slug,
@@ -2663,24 +2998,115 @@ function appRoutes(config) {
   // The contributor count is read at mutation time (not trusted from the
   // list/detail payload) so a newly accepted member or merged author closes
   // the gate before any destructive teardown starts.
+  //
+  // #2161 adds three checks in front of the teardown, in this order:
+  //   1. a core app (isCoreApp) is never deletable here, admins included;
+  //   2. the typed app name is verified HERE, not only in the dialog, so a
+  //      bare request cannot skip the confirmation the UI asks for;
+  //   3. a shared app (other contributors exist) refuses a plain delete. The
+  //      creator is turned away outright; a full admin must send
+  //      acknowledge_shared:true, and the other contributors are notified of
+  //      the attempt either way, and of the deletion when it goes through.
+  //      The vote-backed path for shared apps is request #1898.
   router.delete('/api/apps/:slug', async (req, res) => {
     try {
-      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
-      if (!rows.length) return res.status(404).json({ error: 'App not found' });
-      const app = rows[0];
-
-      let contributorCount = null;
-      if (!req.user?.canAdminWrite
-          && req.user?.id != null
-          && app.created_by === req.user.id) {
-        const counts = await contributors.loadContributorCounts(pool, [app.id]);
-        contributorCount = counts.get(app.id) || 0;
+      // #2523: resolve through the access wall, not a bare slug lookup.
+      // This used to `SELECT * FROM apps WHERE slug = $1` with no check and
+      // then branch on the row, so the three answers below were readable by
+      // anyone: a 404 meant the slug was free, `reason: 'core'` meant it
+      // existed and was a core app, and `reason: 'not_owner'` meant it
+      // existed and was somebody else's. That is an existence-and-coreness
+      // oracle for PRIVATE apps, reachable by any signed-in account, on a
+      // verb where probing looks like nothing in particular.
+      //
+      // `getAppForUser` returns null both for a slug that does not exist and
+      // for one this caller cannot see, so the two now answer identically.
+      // 'view' rather than 'collab': the leak is about apps you cannot SEE.
+      // Once an app is visible to you, that it is core — or not yours — is
+      // not a secret, and a 404 there would be a lie about a row on screen.
+      // Admins are unaffected (checkAppAccess short-circuits on isAdmin); a
+      // VIEW-ONLY admin still passes here and is still refused by the
+      // canAdminWrite eligibility check below, exactly as before.
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'view', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      // The core app carries its own gate, and `view_visibility` does not
+      // express it: the seeded row is 'public', so the wall above lets a
+      // non-admin through even when SELF_APP_PUBLIC_VOTING is off and the
+      // platform app is meant to be admin-only. Without this the oracle
+      // survives for the one app most worth probing — `reason: 'core'` would
+      // still confirm it. Four other routes already stand behind this check
+      // (lines ~1284, ~1690, ~1899, ~2507); this is the fifth.
+      //
+      // Keyed on `isCoreApp`, NOT on `self_hosted` alone. Those are not the
+      // same test: isCoreApp also recognises a row by the configured
+      // `selfAppSlug`, which is how a historical or staging platform row can
+      // be core without the flag set. Using the narrower condition here
+      // would leave exactly that row answering `reason: 'core'` to a
+      // stranger — one definition of "core", used by both the gate and the
+      // refusal it guards.
+      if (isCoreApp(app, config.selfAppSlug)
+        && !req.user?.isAdmin && !config.selfAppPublicVoting) {
+        return res.status(404).json({ error: 'App not found' });
       }
-      if (!canDeleteApp(app, req.user, contributorCount)) {
+
+      if (isCoreApp(app, config.selfAppSlug)) {
         return res.status(403).json({
-          error: "Only a full admin or the app's sole contributor can delete this app",
+          error: 'This is a core platform app. It cannot be deleted from the UI.',
+          reason: 'core',
         });
       }
+
+      const eligible = !!req.user?.canAdminWrite
+        || (req.user?.id != null && app.created_by === req.user.id);
+      if (!eligible) {
+        return res.status(403).json({
+          error: "Only a full admin or the app's sole contributor can delete this app",
+          reason: 'not_owner',
+        });
+      }
+      const counts = await contributors.loadContributorCounts(pool, [app.id]);
+      const contributorCount = counts.get(app.id) || 0;
+      const others = Math.max(0, contributorCount - 1);
+      const blocked = deleteBlockReason(app, req.user, contributorCount, config.selfAppSlug);
+      if (!canDeleteApp(app, req.user, contributorCount, config.selfAppSlug)) {
+        if (blocked === 'shared') {
+          await notifyDeleteAttempt(app, req.user);
+          return res.status(403).json({
+            error: `This app has ${others} other ${others === 1 ? 'contributor' : 'contributors'}, `
+              + 'so its creator cannot delete it alone. Deleting a shared app needs the group\'s agreement.',
+            reason: 'shared',
+            contributor_count: contributorCount,
+          });
+        }
+        return res.status(403).json({
+          error: "Only a full admin or the app's sole contributor can delete this app",
+          reason: blocked,
+        });
+      }
+
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const confirmName = typeof body.confirm_name === 'string' ? body.confirm_name.trim() : '';
+      if (!confirmName || confirmName !== String(app.name || '').trim()) {
+        return res.status(400).json({
+          error: "Type the app's exact name to confirm deletion.",
+          reason: 'confirm_name',
+        });
+      }
+
+      const shared = contributorCount > 1;
+      if (shared && body.acknowledge_shared !== true) {
+        await notifyDeleteAttempt(app, req.user);
+        return res.status(409).json({
+          error: `This app has ${others} other ${others === 1 ? 'contributor' : 'contributors'} `
+            + 'who have not agreed to this. Deleting a shared app is meant to go through a group '
+            + 'vote. A platform admin can override by acknowledging the other contributors.',
+          reason: 'shared',
+          contributor_count: contributorCount,
+        });
+      }
+      // Who to tell once the app is gone. Read BEFORE the teardown: the
+      // contributor set is derived from rows the app delete cascades away.
+      const recipients = shared ? await otherContributorIds(app, req.user) : [];
 
       // Teardown through the backend that owns this app. Historical rows
       // without runtime_kind/runtime_name remain Docker-compatible.
@@ -2729,13 +3155,51 @@ function appRoutes(config) {
       await pool.query('DELETE FROM apps WHERE id = $1', [app.id]);
       appAccess.invalidateVisibility(app.id, app.slug);
 
-      log.info('apps', 'App deleted', { appId: app.id, slug: app.slug });
+      log.info('apps', 'App deleted', {
+        appId: app.id, slug: app.slug, by: req.user?.id, shared, notified: recipients.length,
+      });
       res.json({ ok: true });
+
+      // Tell the other contributors after the fact. Best-effort: the app is
+      // already gone, so a notification failure must not turn into a 500 for
+      // a delete that succeeded.
+      if (recipients.length) {
+        const notifications = require('../services/notifications');
+        notifications.createAppDeletedNotifications(pool, {
+          appName: app.name, appSlug: app.slug, actorId: req.user?.id ?? null, recipientIds: recipients,
+        }).catch((err) => {
+          log.warn('apps', 'app_deleted notifications failed', { slug: app.slug, err: err.message });
+        });
+      }
     } catch (err) {
       log.error('apps', 'Failed to delete app', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
+
+  // The other contributors of `app` (the shared three-source set minus the
+  // actor), for the two #2161 notifications above.
+  async function otherContributorIds(app, user) {
+    const byApp = await contributors.loadContributors(pool, [app.id]);
+    const ids = (byApp.get(app.id) || []).map((c) => c.user_id);
+    return [...new Set(ids)].filter((id) => id != null && id !== user?.id);
+  }
+
+  // A refused delete of a shared app is still news to the people who share
+  // it. Best-effort and deduplicated in the service (one unread row per
+  // recipient per app), so a retried click is not a second ping.
+  async function notifyDeleteAttempt(app, user) {
+    try {
+      const recipients = await otherContributorIds(app, user);
+      if (!recipients.length) return;
+      const notifications = require('../services/notifications');
+      await notifications.createAppDeleteAttemptNotifications(pool, {
+        appId: app.id, actorId: user?.id ?? null, recipientIds: recipients,
+      });
+    } catch (err) {
+      log.warn('apps', 'app_delete_attempted notifications failed', { slug: app.slug, err: err.message });
+    }
+  }
 
   // Retry a failed app. Allowed for the app's creator or any admin, capped
   // at MAX_RETRY_COUNT per app to avoid a stuck app burning budget forever.
@@ -2865,6 +3329,151 @@ function appRoutes(config) {
     }
   });
 
+  // The community an app belongs to, as its page's community card draws it
+  // (features/dev-board/workshop/community-card.tsx): who it is for, who is
+  // in it, whether you are, and the rule a change has to meet to merge.
+  // View-gated like the page itself — a private app's community is as
+  // invisible to an outsider as the app.
+  //
+  // THE APPROVAL RULE IS READ, NOT RESTATED. `required` is what the merge
+  // gate would ask of an unopposed proposal right now: the app's own
+  // `approvals_required` when dapp.json sets one, otherwise
+  // active-users.requiredVotes over the same electorate governance.js
+  // counts (approvers on an invited-policy app, active members otherwise).
+  // It is the headline number, not the whole gate — opposition raises it
+  // and the lazy-consensus window can merge below it — and the card says
+  // "to merge", not "exactly".
+  router.get('/api/apps/:slug/community', async (req, res) => {
+    try {
+      const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
+      const { rows: appRows } = await pool.query(
+        `SELECT ${appAccess.ACCESS_COLUMNS}, name, repo_url,
+                LEFT(manifest_snapshot->>'description', 280) AS description
+           FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
+        [req.params.slug, showSelfHosted]
+      );
+      const app = appRows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      const membership = await communities.getMembership(pool, app, req.user?.id);
+      const members = await communities.listMembers(pool, app.id);
+      // The channel is the app's group chat, which is COLLAB-gated
+      // (app-access.js): a viewer who may see a view-public,
+      // collab-private app but not talk in it gets no row for it rather
+      // than a preview of a room they cannot enter.
+      const canChat = await appAccess.checkAppAccess(pool, app, req.user, 'collab');
+      // THE HOMEROOM COMMUNITY'S CHANNEL IS #general. The platform's own
+      // project talks in the platform's one channel, which every signed-in
+      // person can read; its old project discussion stays reachable as
+      // read-only history (`archive_href`). Any other project's channel is
+      // its own discussion, at its own address.
+      let channel = null;
+      if (app.slug === config.selfAppSlug) {
+        const general = await communities.generalChannelSummary(pool, req.user?.id);
+        if (general) {
+          const { conversation_id: conversationId, ...summary } = general;
+          channel = {
+            ...summary,
+            href: `#messages/${conversationId}`,
+            // Where the hub's composer posts: the room's own write route,
+            // which gates it on Homeroom membership (generalNeedsJoin).
+            post_url: `/api/conversations/${conversationId}/messages`,
+            handle: 'general',
+            archive_href: `#messages/app/${encodeURIComponent(app.slug)}`,
+          };
+        }
+      } else if (canChat) {
+        channel = {
+          ...(await communities.channelSummary(pool, app.id, req.user?.id)),
+          href: `#messages/app/${encodeURIComponent(app.slug)}`,
+          // The app chat's REST write path, the one CLI and MCP clients use:
+          // the same handler as the browser's socket, membership-gated.
+          post_url: `/api/apps/${encodeURIComponent(app.slug)}/messages`,
+          handle: null,
+        };
+      }
+      const activity = await communities.activitySummary(pool, app.id);
+      // WHO IT IS FOR, AS SOMETHING TO CHANGE. Opening a project up (or
+      // closing it to a group) is the visibility PR the settings dialog
+      // opens, offered on the hero to the people POST /visibility-pr lets
+      // open it: the creator, an app admin or a platform admin, on an app
+      // with a repository, never the platform's own. One in flight at a
+      // time, and the hero points at it rather than offering a second.
+      const canManage = !app.self_hosted && !!app.repo_url
+        && await appAdmins.canManageApp(pool, app, req.user);
+      const pendingAudience = canManage || membership?.is_member
+        ? await renamePr.findVisibilityPr(pool, app.id) : null;
+      const gov = await governance.getGovernance(pool, app.id);
+      const electorate = await governance.getElectorate(pool, app.id, gov);
+      const required = gov.approvalsRequired != null
+        ? gov.approvalsRequired
+        : activeUsers.requiredVotes(electorate.active, 0);
+      res.json({
+        slug: app.slug,
+        name: app.name,
+        // dapp.json's one line about what the app is, for the page's hero.
+        description: typeof app.description === 'string' && app.description.trim()
+          ? app.description.replace(/\s+/g, ' ').trim() : null,
+        ...membership,
+        members,
+        channel,
+        activity,
+        can_manage: !!canManage,
+        audience_change: pendingAudience ? {
+          session_id: pendingAudience.id,
+          pr_number: pendingAudience.pr_number,
+          title: pendingAudience.pr_title || null,
+        } : null,
+        approval: {
+          policy: gov.approverPolicy,
+          approvals_required: gov.approvalsRequired,
+          electorate: electorate.active,
+          required,
+        },
+      });
+    } catch (err) {
+      log.error('apps', 'Failed to load community', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Join or leave the community an app belongs to. `joined: true` needs only
+  // VIEW access: joining an open community is the point of the button, and a
+  // private app's community can only be seen by someone already in it.
+  // Joining also pins the app to Home (see communities.join) — the button
+  // this replaced was "Add to Your apps", and the directory's one tap keeps
+  // doing what it did. Leaving takes you out of the community, off the
+  // app's collaborators and off Home in one transaction (communities.leave).
+  router.post('/api/apps/:slug/membership', async (req, res) => {
+    const { joined } = req.body || {};
+    if (typeof joined !== 'boolean') {
+      return res.status(400).json({ error: 'joined must be a boolean' });
+    }
+    try {
+      const showSelfHosted = !!req.user?.isAdmin || !!config.selfAppPublicVoting;
+      const { rows: appRows } = await pool.query(
+        `SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`,
+        [req.params.slug, showSelfHosted]
+      );
+      const app = appRows[0];
+      if (!app || !(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (joined) {
+        await communities.join(pool, app, req.user.id);
+      } else {
+        const result = await communities.leave(pool, app, req.user.id);
+        if (!result.ok) return res.status(result.status).json({ error: result.error });
+      }
+      const membership = await communities.getMembership(pool, app, req.user.id);
+      res.json({ ok: true, ...membership });
+    } catch (err) {
+      log.error('apps', 'Failed to change membership', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Persist the caller's personal ordering of their "Your apps" cards
   // (issue #128; homepage restructure). Deliberately NOT under
   // /api/apps/… so it can never collide with the :slug-parameterised
@@ -2936,9 +3545,9 @@ function appRoutes(config) {
   });
 
   router.post('/api/apps/:slug/activity', async (req, res) => {
-    const { seconds } = req.body;
+    const seconds = activitySeconds(req.body?.seconds);
 
-    if (!seconds || seconds < 0) {
+    if (seconds === null) {
       return res.status(400).json({ error: 'Invalid seconds value' });
     }
 
@@ -2959,12 +3568,20 @@ function appRoutes(config) {
       // append-only events log. This matches the one-row-per-active-day
       // shape the migrate.js backfill produces from app_activity.
       const { rows: activityRows } = await pool.query(
+        // #2524: the accumulated total is clamped to a day's worth of
+        // seconds. The per-request ceiling above bounds ONE body; this is
+        // what bounds the column, because a caller that wanted to inflate
+        // its app's rank would simply post many times. A day cannot contain
+        // more than 86400 seconds, so no honest row is ever touched by it —
+        // and with the total bounded, the INTEGER column can no longer be
+        // driven to overflow.
         `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
          VALUES ($1, $2, $3, CURRENT_DATE)
          ON CONFLICT (app_id, user_id, date)
-         DO UPDATE SET seconds_spent = app_activity.seconds_spent + EXCLUDED.seconds_spent
+         DO UPDATE SET seconds_spent = LEAST(
+           app_activity.seconds_spent + EXCLUDED.seconds_spent, $4)
          RETURNING (xmax = 0) AS inserted`,
-        [appRows[0].id, req.user.id, Math.round(seconds)]
+        [appRows[0].id, req.user.id, seconds, ACTIVITY_MAX_PER_DAY]
       );
 
       if (activityRows[0]?.inserted) {
@@ -2985,4 +3602,13 @@ function appRoutes(config) {
   return router;
 }
 
-module.exports = { appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp };
+module.exports = {
+  // For tests/demo-mode-lineage.test.js: the masking is a property of this
+  // one resolver, so it is pinned there rather than through a route.
+  attachForkLineage,
+  appRoutes, sweepStuckCreatingApps, accessFlags, canDeleteApp, compactGlobalChatApp,
+  deleteBlockReason, isCoreApp,
+  // #2524: the activity guard and its two bounds, so the contract is
+  // unit-testable without standing up the whole app router.
+  activitySeconds, ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY,
+};

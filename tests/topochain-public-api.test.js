@@ -22,21 +22,25 @@ const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.now();
 const T = (offsetDays) => new Date(NOW + offsetDays * DAY);
 
+// Every fixture user also has a platform `username` (#2394). None of them
+// NEEDS it — each has an email, telegram or discord to mask — so the rows
+// that resolved a name before the username tail existed are unchanged, and
+// the username-only accounts live in their own test near the end.
 const USERS = [
-  { id: 1, email: 'alice@example.com', telegram: null, discord: null, display_name: null, exclude_podium: true },
-  { id: 2, email: 'bob@example.com', telegram: null, discord: 'bobdiscord', display_name: null, exclude_podium: false },
-  { id: 3, email: null, telegram: 'carolTG', discord: null, display_name: 'Carol Display', exclude_podium: false },
-  { id: 4, email: 'dave@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
-  { id: 5, email: 'erin@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
+  { id: 1, username: 'alice', email: 'alice@example.com', telegram: null, discord: null, display_name: null, exclude_podium: true },
+  { id: 2, username: 'bob', email: 'bob@example.com', telegram: null, discord: 'bobdiscord', display_name: null, exclude_podium: false },
+  { id: 3, username: 'carol', email: null, telegram: 'carolTG', discord: null, display_name: 'Carol Display', exclude_podium: false },
+  { id: 4, username: 'dave', email: 'dave@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
+  { id: 5, username: 'erin', email: 'erin@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
   // frank: enrolled (event 101) but has no snapshots/activities — a
   // participant who never scored, used by the "valid identifier, empty
   // result" tests.
-  { id: 6, email: 'frank@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
+  { id: 6, username: 'frank', email: 'frank@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
   // grace: an ordinary PLATFORM web account sharing the users table — no
   // enrollment, no snapshot, no onchain account. The participant-scoping
   // fix must make her unresolvable through the public endpoints exactly
   // like an unknown identifier/id (enumeration-oracle regression).
-  { id: 7, email: 'platform-only@example.com', telegram: 'graceTG', discord: 'gracediscord', display_name: 'Grace', exclude_podium: false },
+  { id: 7, username: 'grace', email: 'platform-only@example.com', telegram: 'graceTG', discord: 'gracediscord', display_name: 'Grace', exclude_podium: false },
 ];
 
 const SEASON_EVENTS = [
@@ -68,6 +72,14 @@ const SEASON_EVENTS = [
     id: 104, name: 'Inactive Past Event', description: 'is_active=false', starts_at: T(-60), ends_at: T(-50),
     is_active: false, internal: false, display_leaderboard: true, disclaimer: null,
     season_id: 10, type: 'regular', chain_id: null, start_epoch: null, end_epoch: null,
+  },
+  {
+    // The one event in ANOTHER season (#2495): long over, so it never
+    // becomes the default, and never scored, so the standings fixtures
+    // above are untouched. A trace here is what gives a member the history.
+    id: 105, name: 'Last Season Finale', description: 'season 9, ended long ago', starts_at: T(-400), ends_at: T(-300),
+    is_active: false, internal: false, display_leaderboard: true, disclaimer: null,
+    season_id: 9, type: 'regular', chain_id: null, start_epoch: null, end_epoch: null,
   },
 ];
 
@@ -131,6 +143,7 @@ const CHALLENGE_TEMPLATES = [
     created_at: T(-100), updated_at: T(-90), kind: 'REPORT_BUG_CHALLENGE', cta_type: 'link',
     mobile_cta_type: 'deeplink', mobile_cta_label: 'Report', mobile_cta_link: 'app://report',
     metric_type: null, metric_target: null, metric_label: null,
+    illustration: null,
   },
   {
     id: 2, category: 'onchain', goal: 'Produce a block', task: 'Produce at least one block', reward: '250 points',
@@ -139,6 +152,7 @@ const CHALLENGE_TEMPLATES = [
     created_at: T(-100), updated_at: T(-90), kind: 'SEND_TRANSACTION_CHALLENGE', cta_type: 'link',
     mobile_cta_type: 'deeplink', mobile_cta_label: 'Produce', mobile_cta_link: 'app://produce',
     metric_type: 'blocks_produced', metric_target: '1.0000', metric_label: 'blocks',
+    illustration: 'block-production',
   },
 ];
 
@@ -166,6 +180,21 @@ const CHALLENGES = [
     id: 12, season_event_id: 100, challenge_template_id: 1, goal: null, task: null, reward: null,
     description: null, requirements: null, schedule_start: null, schedule_end: null, reward_logic: null,
     cta_button: null, cta_label: null, cta_link: null, enabled: false, display_order: 3, kind: null,
+  },
+];
+
+// Automatic scoring rules (#3185). One on challenge 10's template, which the
+// list must report; one on challenge 11 itself, which the organiser has
+// closed, so the scorer skips it and the card must promise nothing.
+const LAST_SCORED = new Date(NOW - 7 * 60 * 1000);
+const SCORING_RULES = [
+  {
+    id: 1, measure: 'USEFUL_FEEDBACK', target: null, points: null, enabled: true,
+    challenge_id: null, challenge_template_id: 1, interval_minutes: 15, last_scored_at: LAST_SCORED,
+  },
+  {
+    id: 2, measure: 'PROPOSAL_SENT', target: null, points: '100.00', enabled: true,
+    challenge_id: 11, challenge_template_id: null, interval_minutes: null, last_scored_at: LAST_SCORED,
   },
 ];
 
@@ -201,6 +230,10 @@ const USER_ENROLLMENTS = [
   // users_count stays 3 while frank still counts as a participant for
   // the enrollment-or-snapshot scoping predicate below.
   { season_event_id: 101, user_id: 6 },
+  // A user whose ONLY trace is an enrollment in last season's event 105
+  // (#2495). No USERS row on purpose: the events list never resolves a
+  // name, and every other route still treats id 8 as unknown.
+  { season_event_id: 105, user_id: 8 },
 ];
 
 // Mirrors the participant predicate the routes now apply (security fix):
@@ -217,6 +250,18 @@ function collapse(sql) {
   return sql.replace(/\s+/g, ' ').trim();
 }
 
+// A user's identity columns as a query that SELECTs them returns them: the
+// `username` key exists only when the SQL really asks for `u.username`, so a
+// query that forgets the column hands the name chain `undefined` here exactly
+// as Postgres would, instead of the fixture quietly supplying it. Only the
+// text before GROUP BY counts: a column grouped on but not selected is not
+// in the row.
+function identityCols(sql, user) {
+  const cols = { email: user.email, telegram: user.telegram, discord: user.discord, display_name: user.display_name };
+  if (sql.split(' GROUP BY ')[0].includes('u.username')) cols.username = user.username;
+  return cols;
+}
+
 function latestPerUserForEvent(eventId) {
   const byUser = new Map();
   for (const s of LEADERBOARD_SNAPSHOTS) {
@@ -229,7 +274,7 @@ function latestPerUserForEvent(eventId) {
   return [...byUser.values()];
 }
 
-function computeStandingsRows(seasonId) {
+function computeStandingsRows(seasonId, sql) {
   const events = SEASON_EVENTS.filter((e) => !e.internal && (seasonId == null || e.season_id === seasonId));
   const byUser = new Map();
   for (const e of events) {
@@ -259,7 +304,7 @@ function computeStandingsRows(seasonId) {
       total_produced_blocks: acc.total_produced_blocks,
       total_produced_blocks_last_event: acc.lastProduced,
       is_non_podium: user.exclude_podium,
-      email: user.email, telegram: user.telegram, discord: user.discord, display_name: user.display_name,
+      ...identityCols(sql, user),
     };
   });
   rows.sort((a, b) => Number(b.total_points) - Number(a.total_points) || a.user_id - b.user_id);
@@ -270,12 +315,40 @@ function makeMockPool() {
   async function query(rawSql, params = []) {
     const sql = collapse(rawSql);
     if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
+    // GET /season-events/{id}/challenges: the scoring rules bound to the
+    // list's challenges or their templates, beside the event's dates (#3185).
+    if (sql.startsWith('/* challenge scoring cadence */')) {
+      const [eventId, challengeIds, templateIds] = params;
+      const event = SEASON_EVENTS.find((e) => e.id === eventId && !e.internal && e.is_active);
+      if (!event) return { rows: [] };
+      const rows = SCORING_RULES
+        .filter((r) => r.enabled && (challengeIds.includes(r.challenge_id) || templateIds.includes(r.challenge_template_id)))
+        .map((r) => ({ ...r, event_starts_at: event.starts_at, event_ends_at: event.ends_at }));
+      return { rows };
+    }
+
+    // GET /season-events: the viewer's season history (#2495). Mirrors the
+    // route's three-table EXISTS against the fixtures, season by season;
+    // first so no broader matcher below claims a statement that names all
+    // three tables at once.
+    if (sql.includes('AS has_history')) {
+      const [userId, seasonId] = params;
+      const seasonOf = (eventId) => {
+        const e = SEASON_EVENTS.find((x) => x.id === eventId);
+        return e && !e.internal ? e.season_id : undefined;
+      };
+      const elsewhere = (sid) => sid !== undefined && sid !== seasonId;
+      const history = USER_ENROLLMENTS.some((r) => r.user_id === userId && elsewhere(seasonOf(r.season_event_id)))
+        || USER_ACTIVITIES.some((a) => a.user_id === userId && elsewhere(seasonOf(a.season_event_id)))
+        || LEADERBOARD_SNAPSHOTS.some((s) => s.user_id === userId && elsewhere(seasonOf(s.season_event_id)));
+      return { rows: [{ has_history: history }] };
+    }
 
     // standings.js shared aggregate (used by /leaderboard/global, the
     // 'season'/'all_time' branch of fetchEventLeaderboardRows, and the
     // profile all-time mode).
     if (sql.includes('last_event AS')) {
-      return { rows: computeStandingsRows(params[0] ?? null) };
+      return { rows: computeStandingsRows(params[0] ?? null, sql) };
     }
 
     // GET /leaderboard: regular-event rows (EVENT_LEADERBOARD_SQL).
@@ -291,8 +364,7 @@ function makeMockPool() {
             && (a.season_event_id === eventId || (a.season_event_id == null && a.season_id === event.season_id)));
           return {
             ...s,
-            email: user.email, telegram: user.telegram, discord: user.discord,
-            display_name: user.display_name, exclude_podium: user.exclude_podium,
+            ...identityCols(sql, user), exclude_podium: user.exclude_podium,
             wallet_address: acct ? acct.public_key : null, bech32m: acct ? acct.address : null,
           };
         });
@@ -462,8 +534,8 @@ function makeMockPool() {
           const user = USERS.find((u) => u.id === userId);
           const snap = latestPerUserForEvent(eventId).find((s) => s.user_id === userId);
           return {
-            user_id: userId, points: points.toFixed(2), discord: user.discord, display_name: user.display_name,
-            email: user.email, telegram: user.telegram, exclude_podium: user.exclude_podium,
+            user_id: userId, points: points.toFixed(2), ...identityCols(sql, user),
+            exclude_podium: user.exclude_podium,
             event_success_rate: snap ? snap.event_success_rate : null,
           };
         })
@@ -473,9 +545,9 @@ function makeMockPool() {
     }
 
     // GET /users/{id}/profile: base user lookup (participant-scoped).
-    if (sql.includes('u.email, u.telegram, u.discord, u.display_name FROM users u')) {
+    if (sql.includes('u.email, u.telegram, u.discord, u.display_name, u.username FROM users u')) {
       const user = USERS.find((u) => u.id === params[0] && isParticipant(u.id));
-      return { rows: user ? [user] : [] };
+      return { rows: user ? [{ id: user.id, ...identityCols(sql, user) }] : [] };
     }
     // GET /users/{id}/profile (event mode): single latest snapshot.
     if (sql.includes('FROM leaderboard_snapshots') && sql.includes('user_id = $2')) {
@@ -550,6 +622,7 @@ function joinChallengeTemplate(c, t) {
     t_kind: t.kind, t_cta_type: t.cta_type, t_mobile_cta_type: t.mobile_cta_type,
     t_mobile_cta_label: t.mobile_cta_label, t_mobile_cta_link: t.mobile_cta_link,
     t_metric_type: t.metric_type, t_metric_target: t.metric_target, t_metric_label: t.metric_label,
+    t_illustration: t.illustration, t_illustration_tone: t.illustration_tone,
   };
 }
 
@@ -605,6 +678,8 @@ test.before(async () => {
     // so it never overwrites this test-injected value.
     app.use((req, _res, next) => {
       if (req.headers['x-test-admin'] === '1') req.user = { id: 999, username: 'admin', isAdmin: true };
+      // Any signed-in member, by id (#2495's viewer tests).
+      if (req.headers['x-test-user']) req.user = { id: Number(req.headers['x-test-user']), username: 'member', isAdmin: false };
       next();
     });
     app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake' }));
@@ -939,7 +1014,48 @@ test('GET /season-events: include_past=true still hides internal, shows inactive
   const res = await get('/api/v4/season-events?include_past=true');
   const body = await res.json();
   const ids = body.data.map((e) => e.id).sort();
-  assert.deepEqual(ids, [100, 101, 103, 104]);
+  assert.deepEqual(ids, [100, 101, 103, 104, 105]);
+});
+
+// ─── GET /season-events: the viewer's season history (#2495) ───────────
+//
+// The Leaderboard screen draws its event picker only for a viewer with the
+// season history: an admin, or a member with a season to go back to. The
+// default event here is 100 (the season-type 103 has not started), so
+// "another season" means anything outside season 10.
+
+test('GET /season-events: signed out, viewer is null — unknown, not no', async () => {
+  const res = await get('/api/v4/season-events?include_past=1');
+  const body = await res.json();
+  assert.equal(body.viewer, null);
+  assert.ok(Array.isArray(body.data), 'the list itself is unchanged');
+});
+
+test('GET /season-events: a member whose every trace is in the default season gets no history', async () => {
+  // bob: enrolled in 100, on its board, credited on its ledger — all season 10.
+  const res = await get('/api/v4/season-events?include_past=1', { headers: { 'x-test-user': '2' } });
+  const body = await res.json();
+  assert.deepEqual(body.viewer, { history: false });
+});
+
+test('GET /season-events: a member enrolled in another season gets the history', async () => {
+  const res = await get('/api/v4/season-events?include_past=1', { headers: { 'x-test-user': '8' } });
+  const body = await res.json();
+  assert.deepEqual(body.viewer, { history: true });
+});
+
+test('GET /season-events: a member with no trace anywhere gets no history', async () => {
+  // grace: a platform account with no enrollment, no board row, no credit.
+  const res = await get('/api/v4/season-events', { headers: { 'x-test-user': '7' } });
+  const body = await res.json();
+  assert.deepEqual(body.viewer, { history: false });
+});
+
+test('GET /season-events: an admin gets the history whatever their own trace', async () => {
+  // The admin fixture (id 999) has no row in any table.
+  const res = await get('/api/v4/season-events', { headers: { 'x-test-admin': '1' } });
+  const body = await res.json();
+  assert.deepEqual(body.viewer, { history: true }, 'admins run the seasons and read every one');
 });
 
 // ─── GET /season-events/{id} ─────────────────────────────────────────
@@ -982,6 +1098,58 @@ test('GET /season-events/:id/challenges: only enabled challenges, override/effec
   assert.equal(overridden.detail_modal.cta_type, 'link'); // always from the template, never overridden
 });
 
+test('GET /season-events/:id/challenges: card_preview carries the TEMPLATE\'s illustration slug, or null', async () => {
+  const res = await get('/api/v4/season-events/100/challenges');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  const drawn = body.data.find((c) => c.id === 11);
+  assert.equal(drawn.card_preview.illustration, 'block-production');
+  assert.equal(drawn.activity_type.illustration, 'block-production');
+  // Template-level only: nothing a challenge row sets can override it.
+  assert.equal('illustration' in drawn.overrides, false);
+  assert.equal('illustration' in drawn.effective, false);
+
+  const plain = body.data.find((c) => c.id === 10);
+  assert.equal(plain.card_preview.illustration, null, 'a template without artwork');
+
+  // A challenge whose template row is gone: every t_* column arrives NULL (or
+  // absent) from the LEFT JOIN, and the card simply has no artwork.
+  const { buildChallengeListItem } = require('../src/routes/topochain/challenge-view');
+  const orphan = buildChallengeListItem({ id: 1, season_event_id: 100, challenge_template_id: 9, enabled: true, t_id: null });
+  assert.equal(orphan.card_preview.illustration, null);
+});
+
+// An UPLOADED illustration's tone travels beside its slug, from the scalar
+// subquery TEMPLATE_JOIN_COLUMNS_SQL adds. A built-in slug gets null: its tone
+// lives in the client registry, which ignores the payload's for it anyway.
+test('GET /season-events/:id/challenges: card_preview carries an uploaded illustration\'s tone, null otherwise', async () => {
+  const res = await get('/api/v4/season-events/100/challenges');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const drawn = body.data.find((c) => c.id === 11);
+  assert.equal(drawn.card_preview.illustration_tone, null, 'a built-in slug');
+  assert.equal(drawn.activity_type.illustration_tone, null);
+  assert.equal(body.data.find((c) => c.id === 10).card_preview.illustration_tone, null, 'no artwork at all');
+
+  const { buildChallengeListItem, TEMPLATE_JOIN_COLUMNS_SQL } = require('../src/routes/topochain/challenge-view');
+  const slug = `u-${'c'.repeat(32)}`;
+  const uploaded = buildChallengeListItem({
+    id: 1, season_event_id: 100, challenge_template_id: 9, enabled: true,
+    t_id: 9, t_illustration: slug, t_illustration_tone: 'teal',
+  });
+  assert.equal(uploaded.card_preview.illustration, slug);
+  assert.equal(uploaded.card_preview.illustration_tone, 'teal');
+  assert.equal(uploaded.activity_type.illustration_tone, 'teal');
+  assert.equal('illustration_tone' in uploaded.overrides, false, 'template-level, like the slug');
+
+  const orphan = buildChallengeListItem({ id: 1, season_event_id: 100, challenge_template_id: 9, enabled: true, t_id: null });
+  assert.equal(orphan.card_preview.illustration_tone, null);
+
+  assert.match(TEMPLATE_JOIN_COLUMNS_SQL.replace(/\s+/g, ' '),
+    /\(SELECT ci\.tone FROM challenge_illustrations ci WHERE ci\.slug = ct\.illustration\) AS t_illustration_tone/);
+});
+
 test('GET /season-events/:id/challenges: each item carries its EFFECTIVE metric beside the template', async () => {
   // The challenge card counts toward this target ("0/3 bugs filed") for every
   // viewer, signed out included, so it must be the organiser's override when
@@ -1019,6 +1187,26 @@ test('GET /season-events/:id/challenges: publishes the organiser `completed` fla
   const open = body.data.find((c) => c.id === 10);
   assert.equal(open.completed, false);
   assert.ok('completed' in open, 'the key is always present, never omitted');
+});
+
+// #3185: progress on a scored challenge moves only when the background scorer
+// runs, and the card used to sit on "1/3" with nothing saying so. The list
+// now carries the schedule the admin screen already showed: the interval and
+// the last complete pass, for a challenge a rule counts right now.
+test('GET /season-events/:id/challenges: a challenge the scorer counts says how often, and when it last did', async () => {
+  const res = await get('/api/v4/season-events/100/challenges');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+
+  const counted = body.data.find((c) => c.id === 10);
+  assert.deepEqual(counted.scoring, {
+    interval_minutes: 15,
+    last_scored_at: LAST_SCORED.toISOString().replace('Z', '+00:00'),
+  }, 'the rule on its template: its own interval and last pass, in the v4 timestamp shape');
+
+  const closed = body.data.find((c) => c.id === 11);
+  assert.equal(closed.scoring, null, 'a rule the scorer skips (the challenge is closed) promises nothing');
+  assert.ok('scoring' in closed, 'the key is always present, never omitted');
 });
 
 test('GET /season-events/:id/challenges: internal event -> 404', async () => {
@@ -1169,4 +1357,106 @@ test('POST /app-version/check: missing build_number -> 422', async () => {
   assert.equal(res.status, 422);
   const body = await res.json();
   assert.ok(body.details.build_number);
+});
+
+// ─── Accounts whose only name is a platform username (#2394) ─────────────
+
+test('an account with only a platform username is named by it on every standings surface; a generated topochain_ handle is not', async () => {
+  // Two accounts the shared fixture set does not have, because adding them
+  // there would move every count above: henry signed up on the platform
+  // itself (username + password, nothing else), and the other was created by
+  // the admin console, which fills the NOT NULL column with a random handle.
+  // Before #2394 both rows arrived with display_name null — points, no name.
+  const henry = { id: 8, username: 'henry', email: null, telegram: null, discord: null, display_name: null, exclude_podium: false };
+  const generated = {
+    id: 9, username: 'topochain_0123456789abcdef01234567',
+    email: null, telegram: null, discord: null, display_name: null, exclude_podium: false,
+  };
+  const base = makeMockPool();
+  const pool = {
+    async query(rawSql, params = []) {
+      const sql = collapse(rawSql);
+      const { rows } = await base.query(rawSql, params);
+      const extra = (user, fields) => ({ user_id: user.id, ...fields, ...identityCols(sql, user) });
+      if (sql.includes('accounts AS (') && params[0] === 100) {
+        return { rows: [
+          ...rows,
+          { ...extra(henry, { rank: 5, total_points: '20.00' }), exclude_podium: false },
+          { ...extra(generated, { rank: 6, total_points: '10.00' }), exclude_podium: false },
+        ] };
+      }
+      if (sql.includes('last_event AS')) {
+        return { rows: [
+          ...rows,
+          { ...extra(henry, { total_points: '20.00', extra_points: '0.00' }), is_non_podium: false },
+          { ...extra(generated, { total_points: '10.00', extra_points: '0.00' }), is_non_podium: false },
+        ] };
+      }
+      if (sql.includes('LEFT JOIN LATERAL') && params[0] === 11) {
+        return { rows: [
+          ...rows,
+          { ...extra(henry, { points: '5.00' }), exclude_podium: false },
+          { ...extra(generated, { points: '1.00' }), exclude_podium: false },
+        ] };
+      }
+      return { rows };
+    },
+  };
+  let srv;
+  withInjectedPool(pool, ({ topochainPublicRoutes }) => {
+    const app = express();
+    app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake' }));
+    srv = app.listen(0);
+  });
+  await new Promise((r) => srv.once('listening', r));
+  const localBase = `http://127.0.0.1:${srv.address().port}`;
+  const json = async (path) => {
+    const res = await fetch(`${localBase}${path}`);
+    assert.equal(res.status, 200, path);
+    return res.json();
+  };
+  try {
+    const event = (await json('/api/v4/leaderboard?season_event_id=100')).data.leaderboard;
+    const henryRow = event.find((r) => r.rank === 5);
+    assert.equal(henryRow.display_name, 'henry', 'the event board names a username-only account');
+    assert.equal(henryRow.identifier, null, 'and still has no identifier to mask');
+    assert.equal(event.find((r) => r.rank === 6).display_name, null,
+      'a generated topochain_<hex> handle is nobody\'s name, so the row stays unnamed');
+    // The username sits at the END of the chain: rows that already had a
+    // name keep exactly the one they rendered with.
+    assert.equal(event.find((r) => r.rank === 1).display_name, 'dav***@***.com');
+    assert.equal(event.find((r) => r.rank === 2).display_name, 'bobdiscord');
+    assert.equal(event.find((r) => r.identifier === 'car***').display_name, 'Carol Display');
+
+    // The season aggregate (a 'season'-type event) and the all-time board
+    // both read services/topochain/standings.js's query.
+    const season = (await json('/api/v4/leaderboard?season_event_id=103')).data.leaderboard;
+    assert.equal(season.find((r) => r.total_points === 20).display_name, 'henry');
+    assert.equal(season.find((r) => r.total_points === 10).display_name, null);
+    const global = (await json('/api/v4/leaderboard/global')).data.leaderboard;
+    assert.equal(global.find((r) => r.total_points === 20).display_name, 'henry',
+      'the anon discord redaction does not affect a username');
+    assert.equal(global.find((r) => r.total_points === 10).display_name, null);
+
+    const entries = (await json('/api/v4/season-events/100/challenges/11/breakdown')).data.entries;
+    assert.equal(entries.find((e) => e.user_id === 8).display_name, 'henry', 'challenge entries too');
+    assert.equal(entries.find((e) => e.user_id === 9).display_name, null);
+    assert.equal(entries.find((e) => e.user_id === 4).display_name, 'dav***@***.com');
+  } finally { srv.close(); }
+});
+
+test('resolveDisplayName: discord, display_name and the masked identifier all still outrank the username', () => {
+  const { resolveDisplayName } = require('../src/services/topochain/event-standings');
+  const bare = { email: null, telegram: null, discord: null, display_name: null };
+  assert.equal(resolveDisplayName({ ...bare, username: 'henry' }), 'henry');
+  assert.equal(resolveDisplayName({ ...bare, username: 'topochain_ab12CD34' }), null, 'generated, any hex case');
+  assert.equal(resolveDisplayName({ ...bare, username: 'topochain_fan' }), 'topochain_fan',
+    'only the generated shape is hidden, not every name with that prefix');
+  assert.equal(resolveDisplayName({ ...bare, username: null }), null);
+  assert.equal(resolveDisplayName(bare), null, 'a row without the column at all');
+  assert.equal(resolveDisplayName({ ...bare, email: 'dave@example.com', username: 'dave' }), 'dav***@***.com');
+  assert.equal(resolveDisplayName({ ...bare, display_name: 'Dave D', username: 'dave' }), 'Dave D');
+  assert.equal(resolveDisplayName({ ...bare, discord: 'davediscord', username: 'dave' }), 'davediscord');
+  assert.equal(resolveDisplayName({ ...bare, discord: 'davediscord', username: 'dave' }, { includeDiscord: false }),
+    'dav***', 'the redacted global chain still masks discord before reaching the username');
 });

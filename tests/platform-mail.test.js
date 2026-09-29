@@ -185,7 +185,7 @@ test('a requested code is not swallowed by the join mail\'s daily cap', () => {
   }).allowed, true, 'a different kind keeps its own history');
 });
 
-test('requested codes are one a minute, five a day, per address', () => {
+test('requested codes are one a minute, ten a day, per address', () => {
   const at = (msAgo) => ({ status: 'sent', created_at: new Date(T0 - msAgo) });
   // The minute gap the endpoint's advertised cooldown corresponds to.
   assert.equal(rateLimit.decide({
@@ -194,15 +194,29 @@ test('requested codes are one a minute, five a day, per address', () => {
   assert.equal(rateLimit.decide({
     kind: 'waitlist_code', now: T0, recipientHistory: [at(61 * 1000)],
   }).allowed, true);
-  // And the ceiling that bounds a determined one. Four earlier sends, the
-  // most recent well outside the gap, so only the daily count can refuse it.
-  const four = [2, 3, 4, 5].map((h) => at(h * 60 * 60 * 1000));
+  // And the ceiling that bounds a determined one. It was five a day until
+  // #2201, which is a number a person reaches without trying: a join, a
+  // re-join, one status read and one mistyped address is four, and the fifth
+  // refusal is silent, so the code simply never arrives. Ten still bounds a
+  // harvester (the 60-second gap is what actually costs them) without
+  // spending the day's whole allowance on ordinary use.
+  const nine = [2, 3, 4, 5, 6, 7, 8, 9, 10].map((h) => at(h * 60 * 60 * 1000));
+  assert.equal(nine.length, 9);
   assert.equal(rateLimit.decide({
-    kind: 'waitlist_code', now: T0, recipientHistory: four,
-  }).allowed, true, 'the fifth of the day is allowed');
+    kind: 'waitlist_code', now: T0, recipientHistory: nine,
+  }).allowed, true, 'the tenth of the day is allowed');
   assert.equal(rateLimit.decide({
-    kind: 'waitlist_code', now: T0, recipientHistory: [...four, at(6 * 60 * 60 * 1000)],
-  }).allowed, false, 'the sixth is not');
+    kind: 'waitlist_code', now: T0, recipientHistory: [...nine, at(11 * 60 * 60 * 1000)],
+  }).allowed, false, 'the eleventh is not');
+  // The gap still outranks the count, so being under the ceiling is not a
+  // licence to send twice in a minute.
+  assert.equal(rateLimit.decide({
+    kind: 'waitlist_code', now: T0, recipientHistory: [at(30 * 1000)],
+  }).reason && true, true);
+  // And the window is a day, not an hour: a send this morning still counts
+  // against this evening's ask.
+  assert.equal(rateLimit.RULES.waitlist_code.windowMs, 24 * 60 * 60 * 1000);
+  assert.equal(rateLimit.RULES.waitlist_code.perWindow, 10);
 });
 
 test('the global ceiling outranks every per-recipient allowance', () => {
@@ -393,10 +407,13 @@ test('the join mail carries the CODE, the confirm link AND the survey link', asy
   // #1540: the sentence is shorter and the HTML half is a button, but the
   // text part must still carry the URL for a reader who cannot see HTML.
   assert.match(msg.text, /confirm in one tap/i);
-  // Andrea's copy for the optional questions, and the rolling-groups
-  // promise that replaced the placeholder "[September 9]" date — no wave
-  // has been committed to, and a date that slips is worse than none.
-  assert.match(msg.text, /increase your chances of getting into an earlier group/i);
+  // The rolling-groups promise that replaced the placeholder "[September 9]"
+  // date — no wave has been committed to, and a date that slips is worse
+  // than none. #2908 dropped the closing "increase your chances" paragraph
+  // and its survey link, so neither may come back.
+  assert.doesNotMatch(msg.text, /increase your chances of getting into an earlier group/i);
+  assert.ok(!msg.text.includes(seen[0].url) && !msg.html.includes('#more/'),
+    'the survey link is no longer in the mail');
   assert.match(msg.text, /rolling basis/i);
   assert.doesNotMatch(msg.text, /September/i);
   assert.ok(msg.html.includes('<a href='), 'the HTML part must link, not just print');
@@ -545,6 +562,7 @@ test('every kind renders subject, text and html with no leaked undefined', () =>
       provider: 'gmail', from: 'Homeroom <no-reply@x.invalid>',
       sentAt: '2026-01-01T00:00:00.000Z', reference: 'abcd1234',
     },
+    project_invite: { inviter: 'ada', project: 'Book club', url: 'https://x.invalid/waitlist' },
   };
   for (const kind of templates.KINDS) {
     const m = templates.buildMessage(kind, payloads[kind]);
@@ -842,11 +860,21 @@ test('the staging mail fixture only writes when USERNODE_ENV=staging', async () 
     process.env.USERNODE_ENV = 'staging';
     await seedStagingPlatformMail(pool);
     const inserts = seen.filter((s) => /INSERT INTO mail_deliveries/.test(s));
-    assert.equal(inserts.length, 11,
+    assert.equal(inserts.length, 13,
       'one row per status the card renders, plus three admin_test rows, plus '
       + 'the admission mail behind the admitted waitlist fixture, plus the '
-      + 'delivered and throttled shapes of a requested waitlist code');
+      + 'delivered and throttled shapes of a requested waitlist code, plus '
+      + "#2201's two delivery states: a window filled to the daily ceiling "
+      + 'and a code delivered seconds ago');
     for (const sql of inserts) {
+      // Every fixture is idempotent, but #2201's capped one cannot say so
+      // with WHERE NOT EXISTS: it needs TEN identical rows, and that guard
+      // would seed exactly one of them. It counts what is already in the
+      // window and inserts only the shortfall instead, behind an
+      // `if (shortfall > 0)`, which is also what heals it as rows age past
+      // the 24 hours. The mock has no history to count, so it takes the
+      // branch here and inserts the full ten.
+      if (/generate_series\(1, \$2::int\)/.test(sql)) continue;
       assert.match(sql, /WHERE NOT EXISTS/, 'a re-boot must not grow the table');
     }
     assert.ok(seen.some((s) => /INSERT INTO waitlist_signups/.test(s)));
@@ -1006,4 +1034,16 @@ test('admin_test has its own per-recipient throttle rule', () => {
     recipientHistory: [{ status: 'sent', created_at: new Date(now - 5000) }],
   });
   assert.equal(decision.allowed, false);
+});
+
+test('a project invite names who sent it and where, and links only to the waitlist', () => {
+  const m = templates.buildMessage('project_invite', { inviter: 'ada', project: 'Book club', url: 'https://onhomeroom.test/waitlist' });
+  assert.equal(m.subject, '@ada invited you to Book club on Homeroom');
+  assert.match(m.text, /@ada invited you to Book club, a group on Homeroom/);
+  assert.match(m.text, /Join the waitlist with this email address\. Once you are in, the invite will be waiting for you\./);
+  assert.match(m.text, /https:\/\/onhomeroom\.test\/waitlist/, 'the link is in the text part too');
+  assert.match(m.html, /Join the waitlist<\/a>/);
+  const bare = templates.buildMessage('project_invite', {});
+  assert.equal(bare.subject, 'Someone invited you to a project on Homeroom', 'renders with nothing to go on');
+  assert.doesNotMatch(bare.html, /<a /, 'and no button without a link');
 });

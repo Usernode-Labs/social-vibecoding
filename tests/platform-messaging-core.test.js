@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const conversations = require('../src/services/conversations');
+const github = require('../src/services/github');
 const sharedObjects = require('../src/services/shared-objects');
 
 const ROOT = path.join(__dirname, '..');
@@ -52,12 +53,72 @@ test('shared object references accept UI aliases but no labels or arbitrary URLs
   assert.equal(sharedObjects.normalizeInput({ type: 'spec', appId: 1, sessionId: 2 }), null);
 });
 
+function publicAppPool() {
+  return {
+    query: async (sql, params) => {
+      if (sql.includes('FROM apps WHERE id = $1')) {
+        assert.deepEqual(params, [7]);
+        return { rows: [{
+          id: 7,
+          slug: 'demo',
+          name: 'Demo',
+          repo_url: 'https://github.com/example/demo.git',
+          view_visibility: 'public',
+          collab_visibility: 'public',
+        }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+}
+
+test('transient GitHub reads do not reject a valid issue-card identity', async (t) => {
+  const original = github.fetchPublicIssue;
+  t.after(() => { github.fetchPublicIssue = original; });
+  const pool = publicAppPool();
+  const user = { id: 3, isAdmin: false };
+  const raw = { type: 'issue', appId: 7, issueNumber: 1956 };
+
+  for (const note of ['rate limited', 'fetch failed']) {
+    github.fetchPublicIssue = async () => ({ issue: null, note });
+    assert.deepEqual(await sharedObjects.validateForShare(pool, user, raw), {
+      objectType: 'github_issue',
+      appId: 7,
+      objectRef: 1956,
+      objectVersion: null,
+      specShare: null,
+    });
+
+    const hydrated = await sharedObjects.hydrateOne(pool, user, {
+      object_type: 'github_issue', app_id: 7, object_ref: 1956, object_version: null,
+    });
+    assert.deepEqual(hydrated, {
+      type: 'issue', available: true, appId: 7, appSlug: 'demo', subtitle: 'Demo',
+      issueNumber: 1956, title: 'Issue #1956', state: null, author: null,
+      href: '#app/demo/dev/issues/1956',
+    });
+  }
+});
+
+test('definitive GitHub misses still reject issue-card identities', async (t) => {
+  const original = github.fetchPublicIssue;
+  t.after(() => { github.fetchPublicIssue = original; });
+  const pool = publicAppPool();
+  const user = { id: 3, isAdmin: false };
+  const raw = { type: 'issue', appId: 7, issueNumber: 1956 };
+
+  for (const note of ['not found', 'not an issue (pull request)']) {
+    github.fetchPublicIssue = async () => ({ issue: null, note });
+    assert.equal(await sharedObjects.validateForShare(pool, user, raw), null);
+  }
+});
+
 test('invitation serialization cannot hydrate private conversation content', () => {
   assert.match(serviceSource, /const accepted = row\.membership_status === 'member'/);
   assert.match(serviceSource, /const members = accepted && includeMembers/);
   assert.match(serviceSource, /const latest = accepted && row\.latest_message_id/);
   assert.match(serviceSource, /const peer = accepted && row\.peer_id/);
-  assert.match(serviceSource, /listMessages[\s\S]*loadMembership\(pool, conversationId, user\.id\)/);
+  assert.match(serviceSource, /listMessages[\s\S]*loadMembership\(pool, conversationId, user\.id, \{ allowDeletedPeer: true \}\)/);
   assert.doesNotMatch(serviceSource, /allowInvited:\s*true[\s\S]{0,200}listMessages/);
 });
 
@@ -71,7 +132,11 @@ test('direct consent, retry, and block rules are explicit in canonical service',
   assert.match(serviceSource,
     /SELECT 1 FROM conversation_messages WHERE conversation_id = \$1 LIMIT 1/,
     'the requester gets exactly one pre-acceptance opening message');
-  assert.match(serviceSource, /if \(existingMessages\.rows\.length\) return null/);
+  // QA 2026-09-24 Q2: a second pre-acceptance message is refused with its
+  // own answer (409 awaiting_acceptance at the route), not the null that the
+  // route turned into a 404 "Conversation not found" and the client into a
+  // Retry that could never succeed.
+  assert.match(serviceSource, /if \(existingMessages\.rows\.length\) return \{ error: 'awaiting_acceptance' \}/);
   assert.match(serviceSource, /toggleReaction[\s\S]*blockedEitherWay/);
   assert.match(serviceSource, /editMessage[\s\S]*blockedEitherWay/);
   const interactionHelper = serviceSource.match(
@@ -172,9 +237,9 @@ test('block revocation closes every private direct-message read channel', () => 
   assert.match(serviceSource, /DELETE FROM notifications n[\s\S]*conversation_direct_pairs p/);
 });
 
-test('archived conversations are absent from REST, notifications, and mobile push', () => {
-  assert.match(serviceSource, /WHERE c\.id = \$1 AND c\.status = 'active'/);
-  assert.match(serviceSource, /WHERE me\.user_id = \$1 AND c\.status = 'active'/);
+test('only deletion archives are readable; archives stay absent from notifications and mobile push', () => {
+  assert.match(serviceSource, /WHERE c\.id = \$1 AND \(c\.status = 'active' OR \(c\.status = 'archived' AND c\.deleted_peer\)\)/);
+  assert.match(serviceSource, /WHERE me\.user_id = \$1 AND \(c\.status = 'active' OR \(c\.status = 'archived' AND c\.deleted_peer\)\)/);
   assert.match(notificationsSource, /notification_conversation\.status = 'active'/);
   assert.match(pushWorkerSource, /row\.conversation_status !== 'active'/);
   assert.match(serviceSource,

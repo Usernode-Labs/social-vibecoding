@@ -169,7 +169,129 @@
 // the meter that draws them is the shell bundle's, and the installed one
 // skips OpenRouter sessions entirely: without the bump the new responses
 // reach a reader that never asks for them.
-const SW_VERSION = 'v21';
+//
+// v22: verified social accounts gain Change account, Refresh handle, pending
+// replacement confirmation, and profile-visibility controls (#2260). The
+// previous cached bundle has only Disconnect once an account is linked and
+// still contains the retired free-text profile inputs, so this is also the
+// remote repair for the silent stale-client failure reported after #1939.
+// v23: the four composer columns reserve the on-screen keyboard's height, so
+// the message box stops hiding behind the keys (#1937, #1491). The whole
+// user-visible surface is public/css/app.css and the React shell bundle —
+// precisely the case the v10 entry names — and the miss was caught the way
+// v15 describes, one step earlier for once: the topic thread was verified on
+// a FRESH preview, then the same preview, by then holding a shell cache, drew
+// the general chat from the old stylesheet and read as a fix that simply had
+// not worked. The deployed CSS had the new rule the whole time. Bumped here so
+// an installed client is not the next one to report it as unfixed.
+// v24: the on-screen keyboard is forwarded into app frames (#1937/#1491).
+// An iframe's visualViewport describes the FRAME and the keyboard does not
+// resize the frame, so the kit's tracker computed 0 inside every app and
+// `--un-kb-inset` was never set — every app's bottom-anchored UI was dead to
+// the keyboard however correctly it consumed the var. app-view.js computes and
+// posts it now and the bridge applies it in-frame; both are precached, which
+// is the case the v10 note names. Without the bump an installed client keeps a
+// shell that never sends the value, so no app would see the fix.
+//
+// NOTE FOR WHOEVER MERGES SECOND: the "stop reserving the inset twice"
+// proposal also takes v24 from v23. These two are independent changes that
+// both need a cache retirement, so the loser of the race is a real conflict
+// and wants v25 — not a silent pick of one side.
+
+// v25: and the OTHER half of the same work — the composer column was
+// reserving the inset twice. v23 shipped `.platform-kb-column`, but
+// `attachKeyboardAvoidance` ADDS `un-kb-avoid` to the scroller it is given,
+// so the general chat, the topic thread and the dev chat reserved the
+// keyboard height on the column AND again inside the scroller. A scroll
+// container cannot shrink below its own padding, so #gc-messages floored at
+// 368px and held the composer 197px behind the keys; only the topic thread
+// had enough slack to absorb it, which is why v23 looked verified.
+// app.css again, so the bump belongs here per v10 — and per v15, an
+// installed client that took v23 or v24 would otherwise keep the half-fix.
+//
+// This is the conflict the v24 entry predicted, resolved the way it asked:
+// both notes kept, the version advanced rather than one side silently won.
+//
+// v26 (#1938): /usernode-native/v1/native.js, which is precached in
+// SHELL_ASSETS, so the bump belongs in this same proposal per v10. The kit's
+// keyboardInset() measured the keyboard against window.innerHeight, which iOS
+// collapses to the visual viewport when the keyboard opens — the expression
+// went negative there and reported NO keyboard, which left every iOS client
+// (Safari and installed PWA alike) with --un-kb-inset pinned at 0 and every
+// keyboard-avoidance rule in the kit and in app.css inert. v23-v25 all shipped
+// that, so per v15 an installed client holding any of them would keep serving
+// the old kit from cache and stay broken however correct the new one is.
+//
+// v27 (#1938 follow-up): app.css, precached in SHELL_ASSETS, so per v10 the
+// bump belongs in this same proposal. The Workshop card sheet kept its own
+// copy of the keyboard arithmetic and published `--ws-kb`; its floor now reads
+// the kit's `--un-kb-inset` like every other surface. Without the bump an
+// installed client would pair the NEW shell.js (which no longer sets --ws-kb)
+// with a CACHED app.css (which still reads it) — the sheet would stop lifting
+// on every platform, not just iOS, which is worse than the bug being fixed.
+//
+// v28 (#1929): frontend/src/head.html gains
+// `apple-mobile-web-app-status-bar-style: black-translucent`, so an installed
+// iOS web app gives the PAGE the status-bar strip instead of letting iOS draw
+// it. /index.html carries that meta and is precached in SHELL_ASSETS, so per
+// v10 the bump belongs here — and per v15 an installed client holding v27
+// would otherwise keep serving the old document and never take the meta at
+// all, which is the one asset where a stale copy hides the whole change.
+//
+// v29 (#2307 follow-up): #2311 taught an unsent change's model picker to use
+// the saved OpenRouter backend, but that fix lives entirely in the React shell
+// bundle and omitted the cache retirement required by v10. Existing clients
+// therefore kept drawing the pre-fix Anthropic default even though production
+// was running the merged commit. Retire that stale shell now.
+//
+// v32 (logged-out screens): the signed-out landing and the sign-in steps are
+// redrawn in the shell's own language, and the header chip names the platform
+// with the logotype. All of that lives in /shell/assets/shell.js plus the
+// prerendered /index.html — both precached here — so per v10 the retirement
+// belongs in this same proposal, or an installed PWA and the native app keep
+// drawing the app grid and the "Log in" pill against a server that no longer
+// serves them. The new /brand/people.png joins SHELL_ASSETS in the same
+// change; an entry alone would be install bandwidth nothing ever reads, so
+// classifyRequest gains the matching /brand/ rule below.
+//
+// v33 (#2695): the Done column gains a production-deployment summary. The
+// server and app-view.js publish the new deployment state, but the node that
+// displays the summary lives in /shell/assets/shell.js. A preview browser
+// that already cached v32 therefore kept the old component and silently
+// ignored the new field, making the proposal look unchanged even though the
+// preview served the new API and controller code. Retire that shell here so
+// existing preview tabs and installed clients receive the renderer too.
+//
+// v34 (#2718): THE NAVIGATION REDESIGN, which is the largest shell change
+// these notes have had to cover and exactly the case v10 names. The five
+// places as a permanent bar, the desktop rail and its fold, the header taking
+// the rail's surface, Messages as two panes, the mark's menu — all of it is
+// public/css/app.css, /shell/assets/shell.js and the prerendered
+// /index.html, and all three are precached here. public/js/** changes with
+// them, but a stale shell has no rail for the router to publish to and no
+// second pane for the inbox to fill, so the controller code lands against
+// markup that cannot show it.
+//
+// Found the way v15 says it gets found. The preview was rebuilt and served
+// the new code, and testing still reported one pane in Messages and a back
+// button that went to the Workshop — behaviours measured as correct on the
+// built shell, from a browser that was drawing the cached one. v15 recorded
+// "two rounds of 'still not fixed'" for the same omission; this is the
+// third, and it is the same lesson: the bump belongs in the proposal that
+// changes the shell, not in the one after it.
+//
+// v35 (home-screen icon): the icons are the real Homeroom mark on the brand
+// cream now, and they moved from /icons/icon-*.png to /icons/v2/ — Chrome
+// judges an installed app's icon changed by its URL, so new art gets a new
+// directory. The old files are deleted, and the precached /index.html is
+// what names them in its <head>: a client serving the v34 copy would keep
+// linking a favicon and touch icon the server no longer has. Per v10 the
+// retirement ships with the change, and it drops the old pictures too.
+//
+// v36 (home-screen icon on black): the same mark, now cream on a black tile
+// after feedback, so it moves again, /icons/v2/ to /icons/v3/, for the
+// reason v35 gives — and the cached /index.html names the v2 favicon.
+const SW_VERSION = 'v36';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 
@@ -345,6 +467,37 @@ function apiTimeoutFor(url, selfOrigin) {
   return isBootReadRequest(url, selfOrigin) ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 }
 
+// How long an announced refresh keeps the lane shut. One pull re-pulls a
+// screen's several endpoints, not one, and on a slow link they do not all
+// leave within a few hundred ms — so the window has to outlast the request
+// fan-out. It is bounded because a stuck flag would turn every later boot
+// into a cold one.
+const REFRESH_INTENT_WINDOW_MS = 10_000;
+
+// Does this request get the fast lane?
+//
+// The rule is already stated where `correcting` is declared: THE FAST LANE
+// ANSWERS A BOOT, NOT A REFRESH. `correcting` enforces it reactively — one
+// URL at a time, and only after a stale answer has already been served and
+// noticed. That is enough for the case it was written for, a body that
+// changes every call.
+//
+// It is not enough for a PULL. A pull is the same rule known in advance:
+// somebody has asked for the current state with their thumb, on the one
+// gesture people reach for when they suspect a screen is stale. Serving it
+// from cache is exactly backwards, and the correction that undoes it cannot
+// fire until the network answer it compares against arrives — so the defect
+// hides on a fast link and shows on a slow one, which is the wrong way round.
+// A phone on mobile data is both the slowest case and where pulls happen.
+//
+// So an announced refresh shuts the lane outright for a short window, and
+// every read in it pays the ordinary deadline. Offline is unaffected: that
+// deadline still falls back to the cache when the network fails.
+function bootLaneApplies(url, selfOrigin, now, refreshUntil) {
+  if (refreshUntil && now < refreshUntil) return false;
+  return apiTimeoutFor(url, selfOrigin) === BOOT_API_TIMEOUT_MS;
+}
+
 // Same-origin shell assets precached on install so the very next offline
 // load works even for screens the session never touched. Must list every
 // local script/stylesheet index.html references — the precache-list sync
@@ -461,9 +614,22 @@ const SHELL_ASSETS = [
   // too, and moved in the same chunk. Only the shared event RULES they read
   // (topochain-events.js, above) are still a classic script.
   '/manifest.webmanifest',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
-  '/icons/icon-maskable-512.png',
+  '/icons/v3/icon-192.png',
+  '/icons/v3/icon-512.png',
+  '/icons/v3/icon-maskable-512.png',
+  // The signed-out landing's illustration. Unlike the challenge artwork that
+  // deliberately stays on the network (see the classify tests), this one has no
+  // fallback to draw in its place, and it is the first thing a visitor who has
+  // never signed in sees — on a document that is itself precached. An offline
+  // first run would otherwise render the new landing around a broken image.
+  // Provenance and export settings in public/brand/README.md.
+  '/brand/people.png',
+  // #2718: the Homeroom mark, drawn in the header on EVERY route — the
+  // button that opens the platform's menu. The landing's illustration above
+  // is precached because the signed-out screen has nothing to put in its
+  // place; this one because a missing header logo is a hole at the top of
+  // every screen, offline and on a cold cache alike.
+  '/brand/homeroom-mark.png',
 ];
 
 // Server-rendered standalone pages that stay online-only: never serve the
@@ -541,6 +707,9 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // Slot availability and pending requests must reflect the current account,
   // including immediately after an admin edit. Never replay an offline count.
   if (p === '/api/me/app-allowance' || p.startsWith('/api/me/app-allowance/')) return 'bypass';
+  // Network/receiver configuration must be live. Completed epoch responses
+  // have their own device cache keyed by chain, wallet and epoch.
+  if (p === '/api/me/staking' || p.startsWith('/api/me/staking/')) return 'bypass';
   // Hosted MCP connector and social-account OAuth: endpoints, OAuth
   // surfaces and identity status. Same hard bypass as the CLI's, for the
   // same reason — none of this may ever be answered from a cache.
@@ -554,6 +723,20 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   }
   if (p === '/api/me/github' || p.startsWith('/api/me/github/')) return 'bypass';
   if (p === '/api/me/x' || p.startsWith('/api/me/x/')) return 'bypass';
+  // App creation status rechecks are an explicit freshness request. Ordinary
+  // GET /api/apps/:slug stays in the zero-deadline boot lane so a warm screen
+  // paints immediately, but a recovery loop cannot clear a stale `creating`
+  // placeholder if the worker is allowed to hand that same cached snapshot
+  // straight back. The query tag is scoped to exactly the app-detail route;
+  // the server ignores it and answers the normal representation.
+  if (/^\/api\/apps\/[^/]+$/.test(p)
+      && u.searchParams.get('status_recheck') === '1') return 'bypass';
+  // Waitlist social connect (routes/waitlist-connect.js): the start route
+  // redirects to the provider and the callback is a standalone status page.
+  // As ordinary navigations both fell into the 200ms shell race, so a
+  // returning visitor saw the cached SPA home page in place of the provider
+  // redirect, and again in place of the status page on the way back.
+  if (p.startsWith('/waitlist/connect/')) return 'bypass';
   // The OpenRouter catalog is private, key-filtered, and has its own short
   // server cache plus an explicit refresh control. Replaying the PWA's much
   // longer offline copy can hide newly released models and account-policy
@@ -602,6 +785,9 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // The shell's own static assets (incl. /usernode-bridge/v1/... versions).
   if (/\.(?:html|js|css|webmanifest)$/i.test(p)) return 'shell';
   if (p.startsWith('/icons/')) return 'shell';
+  // The brand assets the shell itself draws, precached above. Without this rule
+  // the SHELL_ASSETS entry would fill the cache on install and never be read.
+  if (p.startsWith('/brand/')) return 'shell';
 
   // Everything else (e.g. the /health connectivity probe) goes straight
   // to the network so it always reflects real reachability.
@@ -825,6 +1011,8 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     classifyRequest,
     apiTimeoutFor,
+    bootLaneApplies,
+    REFRESH_INTENT_WINDOW_MS,
     isBootReadRequest,
     BOOT_READ_PATHS,
     BOOT_READ_PATTERNS,
@@ -1213,11 +1401,26 @@ if (typeof module !== 'undefined' && module.exports) {
   // request per correction and nothing after — a second tab booting later
   // pays for one request, not for the lane.
   const correcting = new Set();
+  // Set by the page's `refresh-intent` message; see bootLaneApplies.
+  let refreshIntentUntil = 0;
   // A URL corrected and then never requested again would sit here forever.
   // The live set is one entry per boot read per app visited; this only ever
   // trips on a pathological session, and dropping it wholesale is harmless —
   // the worst an empty set costs is one extra correction lap.
   const CORRECTING_MAX = 200;
+  // The same loop on the ORDINARY deadline. The lane guard above covers only
+  // a lane serve, but an endpoint that is BOTH slow and never the same twice
+  // loops there too: the Workshop's /promoted list carries every running
+  // check's live progress (ran, passed, updatedAt), so under load it lost the
+  // 1s race and differed on every lap, and each correction re-pulled the
+  // whole board — about nine requests a second per visible tab, until Chrome
+  // refused new requests (net::ERR_INSUFFICIENT_RESOURCES). A re-pull after
+  // such a correction is asking for the current state, so it WAITS for the
+  // network (up to CORRECTION_WAIT_MS) instead of racing the cache it was
+  // just told is wrong. Consumed on read like `correcting`; a boot in another
+  // tab keeps its zero-deadline lane and its own correction.
+  const awaitingNetwork = new Set();
+  const CORRECTION_WAIT_MS = 10000;
 
   async function networkFirstApi(event) {
     const cache = await caches.open(API_CACHE);
@@ -1235,9 +1438,11 @@ if (typeof module !== 'undefined' && module.exports) {
 
     // Consume the correction mark, if any: this request pays the ordinary
     // deadline once and the next one is back in the lane.
-    const laned = !correcting.delete(event.request.url)
-      && apiTimeoutFor(event.request.url, ORIGIN) === BOOT_API_TIMEOUT_MS;
-    const timeoutMs = laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
+    const settling = awaitingNetwork.delete(event.request.url);
+    const laned = !correcting.delete(event.request.url) && !settling
+      && bootLaneApplies(event.request.url, ORIGIN, Date.now(), refreshIntentUntil);
+    const timeoutMs = settling ? CORRECTION_WAIT_MS
+      : laned ? BOOT_API_TIMEOUT_MS : API_TIMEOUT_MS;
 
     const { response, pending } = await raceNetworkAndCache({
       startFetch: () => fetch(event.request).then((res) => {
@@ -1258,6 +1463,9 @@ if (typeof module !== 'undefined' && module.exports) {
               if (laned) {
                 if (correcting.size >= CORRECTING_MAX) correcting.clear();
                 correcting.add(event.request.url);
+              } else {
+                if (awaitingNetwork.size >= CORRECTING_MAX) awaitingNetwork.clear();
+                awaitingNetwork.add(event.request.url);
               }
               await notifyClients({ type: 'api-updated', url: event.request.url });
             }
@@ -1304,6 +1512,18 @@ if (typeof module !== 'undefined' && module.exports) {
   // promotes /index.html only AFTER every asset it names was stored. A failed
   // or rollout-crossed prefetch therefore leaves the previous complete shell
   // active instead of advertising a partially downloaded new one.
+  //
+  // The rollout-crossed case is named (`code: 'build-mismatch'`), because it
+  // is the one failure that is not a failure of the update: the request landed
+  // on the build being retired in the seconds a rollout has both serving. The
+  // page asks again on its next cue instead of giving up on the build — see
+  // _ensureShellPrefetch in public/js/app.js.
+  function buildMismatch(message) {
+    const err = new Error(message);
+    err.code = 'build-mismatch';
+    return err;
+  }
+
   async function precacheShell(cache, {
     reload = false, expectedBuild = null, documentLast = false,
   } = {}) {
@@ -1317,7 +1537,7 @@ if (typeof module !== 'undefined' && module.exports) {
       if (!doc || !doc.ok) throw new Error(`HTTP ${doc && doc.status}`);
       build = buildIdOf(doc);
       if (expectedBuild && build !== expectedBuild) {
-        throw new Error(`expected build ${expectedBuild}, served ${build || 'unstamped'}`);
+        throw buildMismatch(`expected build ${expectedBuild}, served ${build || 'unstamped'}`);
       }
       document = doc.clone();
       // '/index.html' is stored under exactly the key networkFirstNavigate
@@ -1342,7 +1562,7 @@ if (typeof module !== 'undefined' && module.exports) {
       if (!res || !res.ok) throw new Error(`HTTP ${res && res.status}`);
       // A scoped URL is stored only as the build it names — the rule
       // networkFirstShell applies, for the same rollout reason.
-      if (url !== path && buildIdOf(res) !== build) throw new Error('served by a different build');
+      if (url !== path && buildIdOf(res) !== build) throw buildMismatch('served by a different build');
       await cache.put(url, res.clone());
       return url;
     }));
@@ -1465,8 +1685,14 @@ if (typeof module !== 'undefined' && module.exports) {
   // would report success having stored nothing new.
   const shellPrefetches = new Map();
 
+  // Resolves `{ ok, mismatch }`: `ok` when the whole build is in the cache,
+  // `mismatch` when it is not because a response came from a different build
+  // — the rollout-crossed case precacheShell names, which the page retries
+  // rather than settles.
   async function prefetchShellAssets(expectedBuild) {
-    if (!/^[0-9a-f]{7,40}$/.test(String(expectedBuild || ''))) return false;
+    if (!/^[0-9a-f]{7,40}$/.test(String(expectedBuild || ''))) {
+      return { ok: false, mismatch: false };
+    }
     const cache = await caches.open(SHELL_CACHE);
     // The new document first, then its assets at the URLs IT loads them
     // from: a new build's scripts live under a new /b/<sha>/ prefix, so
@@ -1480,7 +1706,11 @@ if (typeof module !== 'undefined' && module.exports) {
     // ALL of them, deliberately. A partial refresh is the split-build state
     // shellFromCacheThisLoad exists to prevent, and reporting success for one
     // would put the page's reload button on top of it.
-    return results.every((r) => r.status === 'fulfilled');
+    return {
+      ok: results.every((r) => r.status === 'fulfilled'),
+      mismatch: results.some((r) => r.status === 'rejected'
+        && r.reason && r.reason.code === 'build-mismatch'),
+    };
   }
 
   self.addEventListener('message', (event) => {
@@ -1491,6 +1721,13 @@ if (typeof module !== 'undefined' && module.exports) {
         const port = event.ports && event.ports[0];
         if (port) port.postMessage({ done: true });
       })());
+    }
+    // A pull-to-refresh, or the drawer's reload button, announcing itself
+    // before the screen's loader runs. Deliberately fire-and-forget: a
+    // refresh must never wait on the worker, and a message that arrives
+    // late only costs one lane-served request.
+    if (type === 'refresh-intent') {
+      refreshIntentUntil = Date.now() + REFRESH_INTENT_WINDOW_MS;
     }
     if (type === 'prefetch-shell') {
       event.waitUntil((async () => {
@@ -1508,9 +1745,12 @@ if (typeof module !== 'undefined' && module.exports) {
           shellPrefetches.set(expectedBuild, run);
         }
         let ok = false;
-        try { ok = await shellPrefetches.get(expectedBuild); } catch { ok = false; }
+        let mismatch = false;
+        try {
+          ({ ok, mismatch } = await shellPrefetches.get(expectedBuild));
+        } catch { ok = false; mismatch = false; }
         const port = event.ports && event.ports[0];
-        if (port) port.postMessage({ ok, sha: expectedBuild || null });
+        if (port) port.postMessage({ ok, sha: expectedBuild || null, mismatch });
       })());
     }
   });

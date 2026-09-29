@@ -181,6 +181,9 @@ test('#dev-body tap opens the proposal topic on a bare merged-row click', async 
   AppView._getFeedScroll = () => 0;
   const opened = [];
   AppView.openTopic = (kind, id) => opened.push([kind, id]);
+  // The open app's record is here, as it is whenever the board draws cards;
+  // a missing one takes the recovery path (tests/dev-board-missing-app-record).
+  AppView.appData = { slug: 'demo', name: 'Demo' };
 
   await AppView.renderDevView(undefined, null);
 

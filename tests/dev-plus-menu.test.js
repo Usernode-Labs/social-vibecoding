@@ -151,7 +151,7 @@ test('the members item is gated on the predicate, and only on the predicate', ()
   const block = membersBlock();
   assert.ok(block.includes('data-plus="members"'), 'members item lives inside the gate');
   // The gate is the prop, not a re-derivation of the rule inside the component.
-  assert.ok(!FRAME_SRC.includes('can_manage'), 'component does not re-derive the manage rule');
+  assert.ok(!block.includes('can_manage'), 'members row does not re-derive the manage rule');
   assert.ok(!FRAME_SRC.includes('collab_visibility'), 'component does not re-derive visibility');
   assert.ok(!FRAME_SRC.includes('approver_policy'), 'component does not re-derive the policy');
   // …and renderDevView is what evaluates it and hands the answer over.
@@ -169,10 +169,11 @@ test('the members item keeps both label pairs, branched on self_hosted', () => {
     whenSelfHosted.includes('Who approves proposals and how many approvals are needed'),
     'self-app sublabel unchanged'
   );
-  assert.ok(!whenSelfHosted.includes('Members &amp; visibility'),
+  assert.ok(!whenSelfHosted.includes('Members &amp; approvals'),
     'self-app does not use the Members label');
-  assert.ok(otherwise.includes('Members &amp; visibility'), 'other apps keep the Members label');
-  assert.ok(otherwise.includes('Who can build and see this app'), 'sublabel unchanged');
+  assert.ok(otherwise.includes('Members &amp; approvals'), 'other apps keep the Members label');
+  assert.ok(otherwise.includes('Manage collaborators, app admins and proposal approvals'),
+    'other apps describe the remaining member and approval controls');
   // The prop feeding that branch is appData.self_hosted, read in the module.
   assert.match(
     VIEW_SRC,
@@ -255,13 +256,15 @@ test('read-only viewers get only Fork in the "+" menu', () => {
   // Read-only also swaps the "+" button's tooltip and, on the self-app,
   // hides the button outright.
   assert.ok(FRAME_SRC.includes("? 'Fork this app'"), 'read-only tooltip preserved');
-  // Tolerant of layout classes between 'relative' and the gate: #1440 added
-  // `ml-auto` here and broke a version of this that pinned the exact string.
-  // What this test protects is the readOnly && selfHosted gate, not the
-  // flex utilities beside it.
+  // Tolerant of layout classes before the gate: #1440 added `ml-auto` here
+  // and broke a version of this that pinned the exact string, and the "+"
+  // moving to the end of the Workshop's tab strip swapped the Tailwind
+  // `relative ml-auto` for `.dev-ws-plus` (app.css positions it). What this
+  // test protects is the readOnly && selfHosted gate on the "+"'s wrapper,
+  // not the classes beside it.
   assert.match(
     FRAME_SRC,
-    /relative[^`$]*\$\{readOnly && selfHosted \? 'hidden' : ''\}/,
+    /className=\{`dev-ws-plus[^`$]*\$\{readOnly && selfHosted \? 'hidden' : ''\}`\}/,
     'the "+" button is hidden for a read-only viewer of the self-app'
   );
   assert.match(

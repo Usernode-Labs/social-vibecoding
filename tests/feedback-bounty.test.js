@@ -1,5 +1,5 @@
 // Tests for the `bounty` flag on POST /api/feedback (#964) — the Send
-// Feedback dialog's "Put a kudos bounty on this" checkbox.
+// Feedback dialog's "Put a kudos on this" checkbox.
 //
 // The governing rule this file exists to protect: THE ISSUE IS ALWAYS FILED.
 // A bounty that can't be placed — allowance spent, repo isn't an app, the
@@ -131,6 +131,7 @@ global.fetch = async (url, opts) => {
 };
 
 const { feedbackRoutes } = require('../src/routes/feedback');
+const { feedbackSubmitLimiter } = require('../src/middleware/rate-limits');
 const { WEEKLY_KUDOS_LIMIT } = require('../src/services/bounties');
 const { weekStartUtc } = require('../src/services/leaderboard-users');
 const express = require('express');
@@ -146,6 +147,10 @@ function startServer() {
 }
 
 function reset() {
+  // #2520: POST /api/feedback is limited to 10 submissions per hour per
+  // user and this suite files more than that as user 7, so each test
+  // starts from a fresh bucket rather than inheriting the last one's.
+  feedbackSubmitLimiter.resetKey('user:7');
   poolQueries = [];
   bountyRows = [];
   systemMessages = [];
@@ -188,10 +193,10 @@ test('bounty:true on an app submit writes one row for the created issue', async 
     assert.equal(json.bounty.limit, WEEKLY_KUDOS_LIMIT);
     assert.equal(json.bounty.remaining, WEEKLY_KUDOS_LIMIT - 1);
 
-    // The pledge announces itself in chat + the issue thread, exactly as a
+    // The pledge announces itself in the issue thread, exactly as a
     // Dev-screen pledge does. (The feedback route posts no issue-created
     // message of its own, so there is nothing to de-duplicate against.)
-    assert.equal(systemMessages.length, 2);
+    assert.equal(systemMessages.length, 1);
     assert.match(systemMessages[0].text, /tester placed a bounty \(kudos\) on issue #9/);
   } finally {
     server.close();

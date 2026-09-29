@@ -888,7 +888,7 @@ test('the aggregate report normalizes OpenRouter per-attempt deltas and preserve
       }
       return { rows: [{
         provider: 'openrouter', backend: 'coding_agent', component: 'coding_agent_build',
-        requested_model: 'openai/model', served_model: 'openai/model', billing_path: 'openrouter_byok',
+        requested_model: 'z-ai/glm-5.3-flash', served_model: null, billing_path: 'openrouter_byok',
         invocation_count: '2', logical_run_count: '1', retry_invocation_count: '1', fallback_served_count: '0',
         success_count: '1', error_count: '1', cancelled_count: '0', refusal_count: '0',
         input_tokens: null, cache_read_input_tokens: '0', cache_write_input_tokens: null,
@@ -931,6 +931,10 @@ test('the aggregate report normalizes OpenRouter per-attempt deltas and preserve
     assert.match(query.sql, /e\.app_id AS app_id/);
     assert.match(query.sql, /s\.app_id AS app_id/);
     assert.match(query.sql, /provider_input_tokens_total IS NULL THEN NULL ELSE a\.input_tokens/);
+    assert.match(query.sql, /a\.routed_model AS served_model/,
+      'served model is reported only when it was actually observed');
+    assert.doesNotMatch(query.sql, /COALESCE\(a\.routed_model, a\.requested_model\)/,
+      'the requested slug is not presented as provider-observed routing');
     assert.match(query.sql, /a\.metadata \? 'telemetry_component'/);
     assert.match(query.sql, /jsonb_each_text/);
     assert.doesNotMatch(query.sql, /prompt|messages|error_detail|user_id/);
@@ -948,6 +952,9 @@ test('the aggregate report normalizes OpenRouter per-attempt deltas and preserve
   assert.equal(report.groups[0].costSourceCounts.providerReported, 0);
   assert.equal(report.groups[0].logicalRunCount, 1);
   assert.equal(report.groups[0].retryInvocationCount, 1);
+  assert.equal(report.groups[0].requestedModel, 'z-ai/glm-5.3-flash');
+  assert.equal(report.groups[0].servedModel, null,
+    'the report does not invent a provider-served model from the request');
   assert.deepEqual(report.groups[0].knownCostUsd, {
     average: 0.12, median: 0.12, p95: 0.12,
   });
@@ -1027,7 +1034,9 @@ test('OpenRouter telemetry excludes a durable intent that never physically dispa
 });
 
 test('Mayor/headless call sites carry every required phase label', () => {
-  const src = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
+  // #2779: the dev-chat turn moved from routes/sessions.js to services/mayor/turn.js.
+  const src = ['../src/services/mayor/turn.js', '../src/routes/sessions.js']
+    .map((rel) => fs.readFileSync(path.join(__dirname, rel), 'utf8')).join('\n');
   for (const component of [
     'mayor_phase_1', 'mayor_data_iteration', 'mayor_phase_2',
     'headless_decision', 'headless_wrapup',
@@ -1112,4 +1121,71 @@ test('admin report is protected, defaults to 14 days, and bounds the timeframe',
     poolModule.getPool = originalGetPool;
     delete require.cache[require.resolve('../src/routes/admin')];
   }
+});
+
+test('a Codex provider refusal is classified as billing rather than a shapeless provider error', async () => {
+  // #2676: the OpenRouter refusal arrived wrapped by the stream layer, so
+  // nothing set an error code and every failed Codex turn landed in the
+  // aggregate as error_class 'provider'. The classifier now names it.
+  await withTelemetrySink(async (rows) => {
+    const state = worker.newWatchState();
+    state.agentBackend = 'codex_openrouter';
+    worker.parseLine(JSON.stringify({
+      type: 'usernode.openrouter.request', diagnostic: {
+        model: 'z-ai/glm-5.3-flash', maxOutputTokens: 32000, httpStatus: 402,
+        inputBytes: 5000, inputItems: 12, requestId: 'req-glm-123',
+      },
+    }), () => {}, state);
+    worker.parseLine(JSON.stringify({
+      type: 'error',
+      message: 'stream disconnected before completion: This request requires more '
+        + 'credits, or fewer max_tokens. You requested up to 131072 tokens, but can '
+        + 'only afford 21605. To increase, visit https://openrouter.ai/settings/credits '
+        + 'and upgrade to a paid account',
+    }), () => {}, state);
+    assert.equal(state.agentErrorCode, 'insufficient_credits_max_tokens');
+    assert.equal(state.requestedOutputTokens, 131072);
+    assert.equal(state.affordableOutputTokens, 21605);
+    assert.equal(state.providerRequest.maxOutputTokens, 32000);
+    assert.equal(state.providerRequest.requestId, 'req-glm-123');
+
+    worker._recordClaudeCodingRunForTests({
+      sessionId: 42,
+      turnId: '76767676-7676-4676-8676-767676767676',
+      result: state,
+      requestedModel: 'z-ai/glm-5.3-flash',
+      component: 'coding_agent_build',
+      startedAt: new Date(),
+      durationMs: 120,
+    });
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].outcome, 'error');
+    assert.equal(rows[0].error_class, 'billing');
+    assert.equal(JSON.stringify(rows[0]).includes('openrouter.ai'), false,
+      'the provider sentence stays out of telemetry');
+  });
+});
+
+test('a Codex credential failure and a genuine disconnect stay distinguishable', async () => {
+  await withTelemetrySink(async (rows) => {
+    for (const [i, message] of [
+      '401 Unauthorized: invalid API key',
+      'stream disconnected before completion',
+    ].entries()) {
+      const state = worker.newWatchState();
+      state.agentBackend = 'codex_openrouter';
+      worker.parseLine(JSON.stringify({ type: 'error', message }), () => {}, state);
+      worker._recordClaudeCodingRunForTests({
+        sessionId: 42,
+        turnId: `8787878${i}-8787-4787-8787-878787878787`,
+        result: state,
+        requestedModel: 'z-ai/glm-5.3-flash',
+        component: 'coding_agent_build',
+        startedAt: new Date(),
+        durationMs: 120,
+      });
+    }
+    assert.deepEqual(rows.map((r) => r.error_class), ['authentication', 'network']);
+  });
 });

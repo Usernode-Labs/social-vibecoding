@@ -63,6 +63,7 @@ function makePool(state) {
     if (sql.startsWith('INSERT INTO waitlist_signups')) {
       const [email, , answers, moreToken, invitedBy] = params;
       if (state.signups.has(email)) return { rowCount: 0, rows: [] };
+      const submittedAt = new Date(Date.now() + state.nextSignupId);
       state.signups.set(email, {
         id: state.nextSignupId++,
         email,
@@ -70,12 +71,14 @@ function makePool(state) {
         more_token: moreToken || null,
         invite_code: null,
         invited_by: invitedBy ?? null,
-        submitted_at: new Date(Date.now() + state.nextSignupId),
+        submitted_at: submittedAt,
         confirmed_at: null,
         released_at: null,
         linked_user_id: null,
       });
-      return { rowCount: 1, rows: [] };
+      // The insert ends RETURNING submitted_at, and joinWaitlist reads a
+      // first join off the returned row (ON CONFLICT DO NOTHING returns none).
+      return { rowCount: 1, rows: [{ submitted_at: submittedAt }] };
     }
 
     if (sql.includes('SELECT invite_code FROM waitlist_signups WHERE id = $1')) {
@@ -212,4 +215,153 @@ test('maskEmail keeps the domain and a hint, never the whole local part', () => 
   // Garbage in the column cannot produce something that looks like an address.
   assert.equal(maskEmail('not-an-email'), '***');
   assert.equal(maskEmail(''), '***');
+});
+
+// ─── 5. Where the shared link points ──────────────────────────────────
+//
+// The link used to be `<app origin>/#waitlist?ref=<code>`, which opened the
+// SPA shell for somebody who had never heard of the product. It points at
+// the public marketing site's /waitlist page now. Three things are load
+// bearing and each has a way of quietly regressing: the host comes from
+// configuration rather than a literal, the `ref` code is passed through
+// untouched (a re-encoded or truncated code attributes the join to nobody),
+// and a signup with no code yet renders no link at all rather than a URL
+// with an empty `ref=`.
+
+const {
+  DEFAULT_MARKETING_BASE_URL,
+  inviteUrl,
+  normalizeBaseUrl,
+  siteUrl,
+  waitlistUrl,
+} = require('../src/services/marketing-links');
+
+test('the shared link is the marketing waitlist page, not the in-app route', () => {
+  const url = inviteUrl({ marketingBaseUrl: 'https://onhomeroom.com' }, 'a1b2c3d4e5');
+  assert.equal(url, 'https://onhomeroom.com/waitlist?ref=a1b2c3d4e5');
+  // The in-app hash route is left alone, but it is not what gets shared.
+  assert.doesNotMatch(url, /#waitlist/);
+  assert.doesNotMatch(url, /my\.onhomeroom\.com/);
+});
+
+test('a real minted code survives the trip into the link unchanged', async () => {
+  const { pool, state } = fixture();
+  await joinWaitlist(pool, { email: 'a@example.com' });
+  const code = await inviteCodeFor(pool, idOf(state, 'a@example.com'));
+  const url = inviteUrl({ marketingBaseUrl: DEFAULT_MARKETING_BASE_URL }, code);
+  assert.equal(url, `${DEFAULT_MARKETING_BASE_URL}/waitlist?ref=${code}`);
+  // And the code in the URL is the one the join endpoint accepts back.
+  assert.equal(new URL(url).searchParams.get('ref'), code);
+});
+
+test('the marketing origin is configurable, and a trailing slash is not doubled', () => {
+  assert.equal(
+    inviteUrl({ marketingBaseUrl: 'https://example.test' }, 'abc'),
+    'https://example.test/waitlist?ref=abc'
+  );
+  assert.equal(
+    inviteUrl({ marketingBaseUrl: 'https://example.test/' }, 'abc'),
+    'https://example.test/waitlist?ref=abc'
+  );
+  assert.equal(
+    inviteUrl({ marketingBaseUrl: '  https://example.test//  ' }, 'abc'),
+    'https://example.test/waitlist?ref=abc'
+  );
+});
+
+test('an unset marketing origin falls back to the committed default', () => {
+  assert.equal(DEFAULT_MARKETING_BASE_URL, 'https://onhomeroom.com');
+  for (const cfg of [{}, null, { marketingBaseUrl: '' }, { marketingBaseUrl: '   ' }]) {
+    assert.equal(
+      inviteUrl(cfg, 'abc'),
+      'https://onhomeroom.com/waitlist?ref=abc',
+      `fell back wrongly for ${JSON.stringify(cfg)}`
+    );
+  }
+  assert.equal(normalizeBaseUrl(undefined), 'https://onhomeroom.com');
+});
+
+test('a signup with no code yet renders no link, never an empty ref', () => {
+  assert.equal(inviteUrl({ marketingBaseUrl: 'https://onhomeroom.com' }, null), null);
+  assert.equal(inviteUrl({ marketingBaseUrl: 'https://onhomeroom.com' }, ''), null);
+  assert.equal(inviteUrl({ marketingBaseUrl: 'https://onhomeroom.com' }, undefined), null);
+});
+
+// ─── 6. The same page with nobody to credit ───────────────────────────
+//
+// The logged-out landing's primary pill points at the marketing waitlist
+// page too, but a visitor who typed the app host has no referral to carry.
+// That is a SECOND composer rather than `inviteUrl(config, null)` because
+// the two answers differ on purpose: no code means no link for a share, and
+// means the bare page for the landing. The client is served this URL (GET
+// /api/public/waitlist/options) so no frontend hardcodes the host.
+
+test('the bare waitlist URL is the marketing page with no referral attached', () => {
+  const url = waitlistUrl({ marketingBaseUrl: 'https://onhomeroom.com' });
+  assert.equal(url, 'https://onhomeroom.com/waitlist');
+  // No empty `ref=` to attribute the join to nobody, and not the in-app route.
+  assert.doesNotMatch(url, /[?&]ref=/);
+  assert.doesNotMatch(url, /#waitlist/);
+  assert.doesNotMatch(url, /my\.onhomeroom\.com/);
+});
+
+test('the bare waitlist URL takes the configured origin, trailing slash and all', () => {
+  assert.equal(
+    waitlistUrl({ marketingBaseUrl: 'https://example.test' }),
+    'https://example.test/waitlist'
+  );
+  assert.equal(
+    waitlistUrl({ marketingBaseUrl: 'https://example.test/' }),
+    'https://example.test/waitlist'
+  );
+  assert.equal(
+    waitlistUrl({ marketingBaseUrl: '  https://example.test//  ' }),
+    'https://example.test/waitlist'
+  );
+});
+
+test('the bare waitlist URL is never null — an unset origin still resolves', () => {
+  // Unlike inviteUrl, which answers null for a signup with no code. The
+  // landing pill has no such case, so the client may rely on a usable string.
+  for (const cfg of [{}, null, undefined, { marketingBaseUrl: '' }, { marketingBaseUrl: '   ' }]) {
+    assert.equal(
+      waitlistUrl(cfg),
+      'https://onhomeroom.com/waitlist',
+      `fell back wrongly for ${JSON.stringify(cfg)}`
+    );
+  }
+});
+
+test('the invite link is exactly the bare waitlist URL plus its ref', () => {
+  // inviteUrl is built ON TOP of waitlistUrl so the host and path are decided
+  // once. This pins that the refactor did not shift the invite string by a
+  // character: two declared checks in dapp.json select on it by prefix.
+  for (const cfg of [
+    {},
+    { marketingBaseUrl: 'https://onhomeroom.com' },
+    { marketingBaseUrl: 'https://example.test/' },
+  ]) {
+    assert.equal(inviteUrl(cfg, 'abc'), `${waitlistUrl(cfg)}?ref=abc`);
+  }
+});
+
+// The landing's "Learn more" line needs the site's FRONT DOOR, not its form:
+// one sentence is all a first screen should carry, and the long version lives
+// on the marketing site. Same normalisation as waitlistUrl, same never-null
+// contract, and deliberately no path of its own.
+test('siteUrl is the marketing origin, bare and never null', () => {
+  assert.equal(siteUrl({ marketingBaseUrl: 'https://example.test' }), 'https://example.test');
+  // A trailing slash, or several, or surrounding whitespace, all normalise:
+  // the value comes from a platform variable somebody typed.
+  assert.equal(siteUrl({ marketingBaseUrl: 'https://example.test/' }), 'https://example.test');
+  assert.equal(siteUrl({ marketingBaseUrl: '  https://example.test//  ' }), 'https://example.test');
+  // Unset, empty or absent all fall back rather than yielding "undefined".
+  for (const cfg of [{}, null, { marketingBaseUrl: '' }, { marketingBaseUrl: '   ' }]) {
+    assert.equal(siteUrl(cfg), 'https://onhomeroom.com');
+  }
+  // The two links agree on the host, because one normaliser decides it.
+  const cfg = { marketingBaseUrl: 'https://example.test' };
+  assert.equal(waitlistUrl(cfg), `${siteUrl(cfg)}/waitlist`);
+  // And it carries no path, so a caller that wants the home page is done.
+  assert.doesNotMatch(siteUrl(cfg), /\/waitlist|\?|#/);
 });

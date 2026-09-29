@@ -66,11 +66,16 @@ const externalAgentPatch = require('./external-agent-patch');
 // itself lives behind the loopback route, not in this file.
 const proposalUpdate = require('./proposal-update');
 const { EXTERNAL_TASK_SUBMIT_LOCK } = require('./advisory-locks');
+const { changeWebPath } = require('./change-destination');
 
 const GITHUB_API = 'https://api.github.com';
 const BRANCH_PREFIX = 'usernode';
 const DEFAULT_BASE_BRANCH = 'main';
 const MAX_BRIEF_CHARS = 6000;
+// How many requests one work order may implement. A proposal that closes more
+// than a handful is too big to review as one change, and every request's text
+// shares the one MAX_BRIEF_CHARS brief.
+const MAX_TASK_ISSUES = 5;
 // A proposal's own heading, clipped where it is printed into a work order.
 const MAX_TITLE_CHARS = 200;
 // Suffix for the fork name we suggest when the user already owns a
@@ -153,6 +158,23 @@ function normalizeSource(value) {
 
 function fail(code, message, extra = {}) {
   return { ok: false, code, message, ...extra };
+}
+
+function retryableImportFailure(result) {
+  const status = Number(result?.status) || 0;
+  return !result
+    || result.networkError === true
+    || status === 0
+    || status >= 500
+    || result.body?.retryable === true;
+}
+
+function importFailureContext(result) {
+  const body = result?.body && typeof result.body === 'object' ? result.body : {};
+  return {
+    stage: typeof body.stage === 'string' ? body.stage.slice(0, 80) : null,
+    field: typeof body.field === 'string' ? body.field.slice(0, 80) : null,
+  };
 }
 
 // ── The untrusted envelope ─────────────────────────────────────────────
@@ -283,11 +305,37 @@ function branchNameFor(slug, issueNumber, nonce, label) {
 // exact brief text, so asking twice for the same thing returns the job that
 // already exists instead of minting a third.
 //
-// Must stay byte-identical to the backfill in src/db/schema.sql.
-function requestKeyFor(issueNumber, brief) {
-  if (Number.isInteger(issueNumber) && issueNumber > 0) return `issue:${issueNumber}`;
+// Must stay byte-identical to the backfill in src/db/schema.sql for the two
+// shapes it backfills. A job for SEVERAL requests is keyed on the whole set,
+// sorted, so asking again for the same requests in another order returns the
+// same job, and it never collides with a one-request `issue:N` job.
+function requestKeyFor(issueNumber, brief, issueNumbers) {
+  const issues = normalizeIssueNumbers(issueNumbers, issueNumber);
+  if (issues.length > 1) return `issues:${[...issues].sort((a, b) => a - b).join(',')}`;
+  if (issues.length === 1) return `issue:${issues[0]}`;
   const digest = crypto.createHash('sha256').update(String(brief || ''), 'utf8').digest('hex');
   return `brief:${digest.slice(0, 32)}`;
+}
+
+// The requests a job implements, primary first: `single` (the old one-request
+// parameter, and the row's issue_number) and then `list`, deduplicated, junk
+// dropped, capped at MAX_TASK_ISSUES. The primary is what names the branch and
+// what the Improve panel's row is keyed on; every one of them is linked.
+function normalizeIssueNumbers(list, single) {
+  const out = [];
+  for (const value of [single, ...(Array.isArray(list) ? list : [])]) {
+    if (typeof value !== 'number' && typeof value !== 'string') continue;
+    const n = Number(value);
+    if (Number.isInteger(n) && n > 0 && n <= 2147483647 && !out.includes(n)) out.push(n);
+  }
+  return out.slice(0, MAX_TASK_ISSUES);
+}
+
+// "request #12", "requests #12 and #14", "requests #12, #14 and #19".
+function requestPhrase(issues) {
+  const refs = issues.map((n) => `#${n}`);
+  if (refs.length <= 1) return `request ${refs[0] || ''}`.trim();
+  return `requests ${refs.slice(0, -1).join(', ')} and ${refs[refs.length - 1]}`;
 }
 
 // An UPDATE job is identified by the PROPOSAL it revises (#1054), not by the
@@ -336,15 +384,26 @@ function displayHandle(raw) {
 // continue, by calling prepare_work again with `proposalId`. Titles are left
 // out on purpose — they are other people's writing, they are already in the
 // structured result, and the line has a 320-character budget to keep.
-function buildDuplicateNotice({ issueNumber, openProposals }) {
+function buildDuplicateNotice({ issueNumber, issueNumbers, openProposals }) {
   const list = Array.isArray(openProposals) ? openProposals : [];
-  if (!list.length || !(Number.isInteger(issueNumber) && issueNumber > 0)) return null;
+  const issues = normalizeIssueNumbers(issueNumbers, issueNumber);
+  if (!list.length || !issues.length) return null;
 
   const lead = list.find((p) => p.mine) || list[0];
+  // On a job for several requests, the one THIS proposal is for — the lookup
+  // reports which of them each proposal matched.
+  const matched = normalizeIssueNumbers(lead.requests).filter((n) => issues.includes(n));
+  const request = matched[0] || issues[0];
   const who = displayHandle(lead.author) ? ` by ${displayHandle(lead.author)}` : '';
+  // The pull request number leads when there is one (#2136): it is the number
+  // the person can find on GitHub, and the proposal id stays beside it because
+  // it is what the continuation is asked for by.
+  const named = Number(lead.prNumber) > 0
+    ? `PR #${Number(lead.prNumber)} (proposal ${lead.proposalId})`
+    : `proposal ${lead.proposalId}`;
   const head = lead.mine
-    ? `Heads-up: request #${issueNumber} already has a proposal of yours up for a vote — proposal ${lead.proposalId}.`
-    : `Heads-up: request #${issueNumber} already has a proposal up for a vote — proposal ${lead.proposalId}, opened${who}.`;
+    ? `Heads-up: request #${request} already has a proposal of yours up for a vote — ${named}.`
+    : `Heads-up: request #${request} already has a proposal up for a vote — ${named}, opened${who}.`;
   const tail = lead.mine
     ? ' Say so if this change belongs on that one and I\'ll prepare an update to it, instead of a second proposal.'
     : ' Worth a read first — you can only update your own, so the other option is a deliberate rival approach.';
@@ -385,7 +444,7 @@ function buildDuplicateNotice({ issueNumber, openProposals }) {
 // really is the likely setting.
 function buildGuidance({
   agent, forkOwner, forkRepo, repo, forkPageUrl, forkStatus, issueNumber,
-  openProposals,
+  issueNumbers, openProposals,
 }) {
   const forkRef = `${forkOwner}/${forkRepo}`;
   const justCreated = forkStatus !== 'ready';
@@ -397,7 +456,7 @@ function buildGuidance({
   // FIRST, when there is one: this request is already being voted on (#1216).
   // Before the fork step, deliberately — every step below it is work, and the
   // decision this raises is whether that work should happen at all.
-  const duplicate = buildDuplicateNotice({ issueNumber, openProposals });
+  const duplicate = buildDuplicateNotice({ issueNumber, issueNumbers, openProposals });
   if (duplicate) steps.push(duplicate);
 
   if (forkStatus === 'name_conflict') {
@@ -440,10 +499,28 @@ function buildGuidance({
   // attached to the user's ACCOUNT, not to this conversation, so a Claude
   // Code session has it too. The human is no longer the courier; they are
   // told what to expect and what to do if it doesn't happen.
-  steps.push(
-    'It\'ll submit the change to Homeroom itself when it\'s done — ask me any time and I\'ll check. '
-    + 'If it says it can\'t submit, come back and tell me.'
-  );
+  //
+  // #1892: what to do when it says it has no Homeroom tools differs by
+  // product, and "go to Settings → Connectors" alone was not an answer. A
+  // Claude account adds the connector on claude.ai and a NEW Claude Code
+  // session picks it up. Codex cannot add it today: Codex on the web has no
+  // custom MCP setting, and the Codex CLI's sign-in uses a localhost callback
+  // the hosted connector refuses (see the Codex block on Settings →
+  // Connectors), so the branch comes back by hand. Folded into this step
+  // rather than added as one, because the host numbers the steps and the
+  // tests pin this one as last.
+  if (agent === 'codex') {
+    steps.push(
+      'It\'ll submit the change to Homeroom itself when it\'s done if it has the connector, and you can ask me any time to check. '
+      + 'Codex can\'t add the Homeroom connector today, so if it says it can\'t submit, paste back the branch name it prints and I\'ll submit it.'
+    );
+  } else {
+    steps.push(
+      'It\'ll submit the change to Homeroom itself when it\'s done, and you can ask me any time to check. '
+      + 'If it says it has no Homeroom tools, add the connector on claude.ai (Settings → Connectors on Homeroom shows how) and start a new session. '
+      + 'If it says it can\'t submit, come back and tell me.'
+    );
+  }
   return steps;
 }
 
@@ -474,7 +551,7 @@ const CMD = '    ';
 
 function buildWorkOrder({
   appName, appSlug, upstreamUrl, upstreamSlug, forkUrl, forkCloneUrl, forkRepo,
-  forkPageUrl, forkStatus, branch, baseSha, issueNumber, brief, webPath,
+  forkPageUrl, forkStatus, branch, baseSha, issueNumber, issueNumbers, brief, webPath,
   taskId, agentLabelText, platformRules, targetProposal, startedFromWalkthrough,
 }) {
   // Where the connector is added, for the agent that finds it has none. The
@@ -486,6 +563,32 @@ function buildWorkOrder({
   // Rendered as its own indented line, like a command, so a host that
   // re-wraps prose still leaves the URL intact and copyable.
   const connectorsPage = settingsUrl ? [`${CMD}${settingsUrl}`] : [];
+  // #1892: the connector URL itself, `${origin}/mcp`, derived from the same
+  // origin, so the agent can tell the user the one value the claude.ai
+  // dialog asks for without a round trip to the settings page.
+  const connectorUrl = (() => {
+    try { return webPath ? `${new URL(webPath).origin}/mcp` : null; } catch { return null; }
+  })();
+  const connectorUrlLine = connectorUrl ? [`${CMD}${connectorUrl}`] : [];
+  // What a session with no Homeroom tools tells the user, per product
+  // (#1892). Claude Code on the web: the connector lives on the claude.ai
+  // account and a NEW session picks it up. Codex: nothing to add today,
+  // Codex on the web has no custom MCP setting and the Codex CLI's sign-in
+  // uses a localhost callback the hosted connector refuses, which is what
+  // the Codex block on Settings → Connectors says. Shared by both work-order
+  // variants below so the two cannot drift.
+  const noToolsRemedy = [
+    '   How the user adds it depends on the product you are:',
+    '   - Claude Code on the web: on claude.ai, add a custom connector named',
+    '     `homeroom` with the URL below, then start a NEW Claude Code session;',
+    '     this one will not pick it up.',
+    ...connectorUrlLine,
+    '   - Codex: there is no way to add it today. Codex on the web has no custom',
+    '     MCP setting, and the Codex CLI\'s sign-in uses a localhost callback the',
+    '     hosted connector refuses, so hand the branch back as below.',
+    '   Settings → Connectors on Homeroom has the click-by-click steps:',
+    ...connectorsPage,
+  ];
 
   // The fork step, and only when there is a fork to make. The one-click
   // GitHub page comes FIRST: an agent with no `gh` is exactly the reader who
@@ -545,6 +648,13 @@ function buildWorkOrder({
   // work order's "exactly as named above" made the agent rewrite a finished
   // commit onto a differently-named branch for no benefit. Check first.
   setup.push(
+    'Before editing, make sure this agent context is rooted in this app repository',
+    '(or its fork) and has loaded this repository\'s own instructions. Some coding',
+    'agents retain instructions from the project where a task started, so cloning',
+    'this repository or changing directory from an unrelated project may not',
+    'replace them. If unrelated repository instructions are still active, start a',
+    'fresh task rooted in this repository and use this same work order there.',
+    '',
     'If your harness has already put you in a clone of the fork, do not re-clone.',
     'Check where you are and keep the branch you are on if it starts at the right',
     'commit:',
@@ -583,6 +693,28 @@ function buildWorkOrder({
     'and a test run without them fails with module-not-found errors that look',
     'like a broken change rather than a missing install:',
     `${CMD}npm ci`
+  );
+
+  // What to run before submitting, and how much of it. Homeroom runs the
+  // whole unit suite and every declared check against the commit once it is
+  // submitted, in a clean container; a local run of everything duplicates
+  // that, minutes at a time, and one hung test used to hold it open for
+  // good. The local run is for the files the change touched. The platform's
+  // own repository maps a diff to the suites that read its files
+  // (scripts/test-changed.js, with the base commit this order already names);
+  // an app without that script picks the tests by hand.
+  setup.push(
+    '',
+    'Before you submit, run the tests that cover the files you changed, not the',
+    'whole suite: Homeroom runs every unit test and every declared check against',
+    'your commit when you submit, so the local run is for catching what your',
+    'change touches, quickly. If the repository has a `test:changed` script',
+    '(the platform\'s own does), it maps your diff against the base commit to',
+    'the suites that read those files and runs only them:',
+    `${CMD}npm run test:changed -- --base ${baseSha}`,
+    'Run the whole suite only when shared code moved and you cannot tell what',
+    'depends on it. After a check fails on the platform, re-run the failing',
+    'suites and the ones for your fix, not everything.'
   );
 
   // The base commit is the single most-mangled part of this text: it reaches
@@ -814,9 +946,14 @@ function buildWorkOrder({
     '  the Claude or ChatGPT account you are running in (it is per account, so a',
     '  second account does not inherit the first one\'s). That is not a reason to',
     '  stop: the excerpt below is enough to build with, and step 6 under WHEN',
-    '  YOU ARE DONE says how to finish. The user adds it on Homeroom at',
-    '  Settings → Connectors, which has the connector URL and the click-by-click',
-    '  steps for Claude and for ChatGPT:',
+    '  YOU ARE DONE says how to finish. For Claude Code on the web, the user',
+    '  adds it on claude.ai as a custom connector named `homeroom` with the URL',
+    '  below, and a NEW Claude Code session picks it up (this one will not).',
+    '  Codex cannot add it today: Codex on the web has no custom MCP setting,',
+    '  and the Codex CLI\'s sign-in uses a localhost callback the hosted',
+    '  connector refuses. Settings → Connectors on Homeroom has the',
+    '  click-by-click steps:',
+    ...connectorUrlLine,
     ...connectorsPage
   );
 
@@ -931,9 +1068,30 @@ function buildWorkOrder({
       '   proposal\'s current commit, then moves the proposal onto it. Nothing is',
       '   force-pushed past anybody else\'s work: if the proposal moved in the',
       '   meantime the call is refused rather than overwriting it.',
-      '   The proposal keeps the testing routes it was submitted with, and its',
-      '   before/after screenshots are reshot for your new commit against those',
-      '   same routes.',
+      '   The proposal keeps its manual testing routes unless you replace them.',
+      '   Pass `visualEvidence` for this revision. If available, call',
+      '   `record_visual_evidence_intent` and pass its version-1 object unchanged.',
+      '   If that helper is not exposed in this connector session, constructing the',
+      '   documented version-1 object directly is supported too.',
+      '   Visible work uses impact "ui" or "motion" with one to three claims and',
+      '   their real user flows. Text, counts, loading, error and status changes',
+      '   are visible even when existing markup and styles are reused. An absent',
+      '   fixture or a hard-to-reach error state is a blocker to report, not a',
+      '   reason to call a visible change non-visual. For an error state reached',
+      '   only by a failed request, declare the exact GET /api/ path as',
+      '   intent.controlledFailurePath; Homeroom blocks it on both revisions',
+      '   when the first intent.steps entry is exactly "Controlled test:',
+      '   deliberately block the declared API GET on both revisions." This',
+      '   labels the evidence clearly. Genuinely non-visual work',
+      '   uses impact "none", no',
+      '   stories, and a specific rationale. Homeroom produces new exact-base/head',
+      '   evidence instead of reusing old captures.',
+      '   On an UPDATE, submit_work does not accept visualEvidencePlan. Locally',
+      '   verify a revised executable flow before this call when your app has a',
+      '   paired local replay runner, then use the separate plan action below.',
+      '   After submit_work, use get_proposal and submit_visual_evidence_plan',
+      '   to send your UI flow for exact-head replay and PNG/WebM capture.',
+      '   If that tool is absent, the hosted evidence agent remains available.',
       '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through your chat product\'s own',
       '   infrastructure, not through your container.',
@@ -956,7 +1114,9 @@ function buildWorkOrder({
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
-      '   "Propose changes". `github_not_linked` — give them the settings link the',
+      '   "Propose changes". `join_required` — the user has not joined that',
+      '   project; ask them to open its page, tap Join, and then retry.',
+      '   `github_not_linked` — give them the settings link the',
       '   tool returns. `not_your_proposal` — your connector is signed in as',
       '   somebody else; say so rather than rewriting the change. Anything',
       '   transient, or one authentication failure: retry once.',
@@ -964,10 +1124,8 @@ function buildWorkOrder({
       '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
       '   connector was never added to the Claude or ChatGPT account this session',
       '   runs in — it is per account, so a second account does not inherit the',
-      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
-      '   user they can add the connector on Homeroom at Settings → Connectors,',
-      '   which has the connector URL and the click-by-click steps:',
-      ...connectorsPage,
+      '   first one\'s. Push the branch anyway; the work is not lost.',
+      ...noToolsRemedy,
       '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
       '   if the tools still do not appear in this one.',
       ...(startedFromWalkthrough
@@ -1053,30 +1211,60 @@ function buildWorkOrder({
       '   implementation, trade-offs and testing detail belong there and are not',
       '   lost. Write the summary from what the person voting would NOTICE, not',
       '   from what you edited. Not every member of the group is a developer.',
-      // Without these two, an imported proposal has no testing metadata at
-      // all: the capture step falls back to the app's home page, and the
-      // people voting get a before/after pair of a screen the change never
-      // touched. The in-platform build turn supplies the same thing through
-      // its "==== TESTING ====" block; this is that block's connector shape.
+      // testingPaths remain the human/manual test entry point. Reviewer-facing
+      // visual evidence carries the interaction that reaches the relevant
+      // state instead of pretending every state is URL-addressable.
       '   ALSO PASS `testingPaths` AND `testingSteps`. `testingPaths` is the list',
       '   of in-app routes your change is actually visible on, most important',
       '   first — e.g. ["/board?demo=1", "/settings"] — and `testingSteps` is a',
       '   few short numbered lines telling a person what to click to see it.',
-      '   Homeroom shoots a before/after screenshot pair of each route for the',
-      '   people voting and shows the steps beside the staging preview. Leave',
-      '   them out and it can only shoot the app\'s home page, which usually shows',
-      '   nothing of what you changed. Point each route at THE SCREEN YOU',
-      '   CHANGED, not the home page; if that screen is only reachable by',
-      '   interacting, add a deep link (a query param handled at boot) in this',
-      '   same change so a URL can reach it.',
+      '   These fields drive the manual "Test this change" link and durable checks;',
+      '   they are not visual proof. Point them at THE SCREEN YOU CHANGED, not the',
+      '   home page, but do not add a screenshot-only route to expose interactive',
+      '   state.',
+      '   ALSO PASS `visualEvidence` for this exact revision. If available, call',
+      '   `record_visual_evidence_intent` and pass its version-1 object unchanged.',
+      '   If that helper is not exposed in this connector session, construct the',
+      '   documented version-1 object directly; submit_work validates the same shape.',
+      '   For a visible change use impact "ui" or "motion" and one to three stories.',
+      '   Text, counts, loading, error and status changes are visible even when',
+      '   existing markup and styles are reused. If the required fixture or',
+      '   failure state is unavailable, report that blocker; do not label a',
+      '   visible change "none" just because the current replay cannot reach it.',
+      '   For an error state that needs a failed request, declare its exact GET',
+      '   /api/ path as intent.controlledFailurePath. The replay blocks that',
+      '   request on both revisions. Set the first intent.steps entry exactly',
+      '   to "Controlled test: deliberately block the declared API GET on both',
+      '   revisions." so the captures carry a clear label.',
+      '   Each story names the user-visible claim and its persona: member,',
+      '   read_only_admin, or (for Homeroom controls hidden from view-only admins)',
+      '   full_admin. The full-admin identity exists only in disposable evidence runs.',
+      '   viewport, starting path, real interaction steps, final checkpoint, focus,',
+      '   whether the UI existed on the base revision, and animation "none", "steps",',
+      '   or "motion". For a genuinely non-visual change use impact "none", an empty',
+      '   stories array, and a specific rationale. Never include secrets or personal',
+      '   data. Without a submitted plan, Homeroom lets an evidence agent perform',
+      '   the flow, turns its interaction trace into a bounded plan, and replays',
+      '   it twice against exact base and head revisions before publishing evidence.',
+      '   If this is the Homeroom platform repository with a running local',
+      '   Compose stack, follow AGENTS.md: write a typed plan, replay it on',
+      '   exact local base/head builds, inspect the PNG/WebM, and refine the',
+      '   actions and assertions until the plan actually proves the claim.',
+      '   Pass both fields from the successful submission.json in this SAME',
+      '   submit_work call. The import rejects a moved PR head or mismatched',
+      '   plan, then the platform replays the stored plan independently.',
+      '   For apps without a local paired runner, omit visualEvidencePlan;',
+      '   the hosted evidence agent authors a plan from visualEvidence.',
       // #1214: the answer now says which routes it took and which it could
       // not use, so a malformed route is caught while the agent is still
       // holding the branch rather than from a boolean minutes later.
-      '   READ THE ANSWER: `testingPaths` is what the screenshots will actually',
-      '   be shot on and `testingPathsRejected` names anything Homeroom could not',
-      '   use. If a route you meant was rejected, submit once more with the',
-      '   proposal id and corrected routes — on the SAME commit that is not a',
-      '   second proposal, it only re-shoots the screenshots and clears no votes.',
+      '   READ THE ANSWER: `testingPaths` is what the manual test link will use and',
+      '   `testingPathsRejected` names anything Homeroom could not use. Correct a',
+      '   rejected route only when that manual entry point needs it. Separately,',
+      '   `visualEvidenceAccepted`, `visualEvidenceState`, and',
+      '   `visualEvidenceNextStep` report whether the interaction proof was accepted',
+      '   and what happens next. A same-commit route correction is not a second',
+      '   proposal and clears no votes.',
       '   Your sandbox cannot reach the Homeroom website, and it does not need to:',
       '   connector traffic goes out through Claude\'s own infrastructure, not',
       '   through your container.',
@@ -1098,17 +1286,17 @@ function buildWorkOrder({
       '',
       '5. ON A CONNECTOR ERROR, relay it plainly rather than giving up:',
       '   `insufficient_scope` — ask the user to reconnect Homeroom and approve',
-      '   "Propose changes". `github_not_linked` — give them the settings link the',
+      '   "Propose changes". `join_required` — the user has not joined that',
+      '   project; ask them to open its page, tap Join, and then retry.',
+      '   `github_not_linked` — give them the settings link the',
       '   tool returns. Anything transient, or one authentication failure: retry',
       '   once (access tokens are short-lived and your client refreshes them).',
       '',
       '6. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom',
       '   connector was never added to the Claude or ChatGPT account this session',
       '   runs in — it is per account, so a second account does not inherit the',
-      '   first one\'s. Push the branch anyway; the work is not lost. Then tell the',
-      '   user they can add the connector on Homeroom at Settings → Connectors,',
-      '   which has the connector URL and the click-by-click steps:',
-      ...connectorsPage,
+      '   first one\'s. Push the branch anyway; the work is not lost.',
+      ...noToolsRemedy,
       '   Once they have, retry `submit_work` as in step 2 — in a fresh session',
       '   if the tools still do not appear in this one.',
       // How the hand-off started decides who finishes it without a
@@ -1144,11 +1332,12 @@ function buildWorkOrder({
       '   fix them and push again to the SAME branch: the proposal follows your',
       '   branch, so a new commit re-runs the checks by itself. Do not call',
       '   `submit_work` again and do not call `prepare_work` — the pull request',
-      '   already exists, and a second submission would duplicate it. If',
-      '   `get_proposal` reports `captureDefaultedToRoot`, your `testingPaths` did',
-      '   not arrive: the voters are looking at screenshots of the home page.',
-      '   `capturePaths` names what it did shoot, which is how you tell that apart',
-      '   from a change whose own first route is "/".',
+      '   already exists, and a second submission would duplicate it.',
+      '   `get_proposal` also reports `visualEvidence`. For a user-visible',
+      '   change, verify that your structured claim and flow were accepted and',
+      '   wait for `verified`; `failed` includes a specific recovery reason.',
+      '   Homeroom does not substitute a home-page screenshot when the declared',
+      '   UI state cannot be reached.',
       '',
       'Do not open the pull request yourself in the normal path: Homeroom opens it,',
       'and the change becomes a proposal with a staging preview, automated checks',
@@ -1163,8 +1352,15 @@ function buildWorkOrder({
     );
   }
 
-  if (Number.isInteger(issueNumber) && issueNumber > 0) {
-    lines.splice(2, 0, `This implements request #${issueNumber}.`, '');
+  const requests = normalizeIssueNumbers(issueNumbers, issueNumber);
+  if (requests.length === 1) {
+    lines.splice(2, 0, `This implements request #${requests[0]}.`, '');
+  } else if (requests.length > 1) {
+    // Each is quoted under WHAT TO BUILD, and the pull request Homeroom opens
+    // carries a `Closes #N` line for every one, so none of them is left open
+    // after the merge for somebody to close by hand.
+    lines.splice(2, 0, `This implements ${requestPhrase(requests)}: build all of them. The proposal `
+      + 'closes each one when it merges.', '');
   }
   if (webPath) {
     lines.push('', `The app on Homeroom: ${webPath}`);
@@ -1187,13 +1383,15 @@ function buildWorkOrder({
 // change. Written out rather than pulled from the conventions doc because
 // the diagnosis ("this is your container, not your code") is specific to an
 // agent working offline and belongs nowhere else.
-// PATHS, not URLs. This list used to hold three ABSOLUTE URLs on whatever
-// the platform's hostname was when it was written — and once the platform
-// moved, that host stopped answering, so every work order was handing
-// coding agents three dead links and inviting them to write the same dead
-// host into the app they were building. The origin is resolved per
-// deployment instead, the way services/template.js already does it, so a
-// self-hosted fork and a domain move both carry through by themselves.
+// PATHS, not URLs, and the work order shows them as paths too (#2319). This
+// list used to hold three ABSOLUTE URLs on whatever the platform's hostname
+// was when it was written; once the platform moved, that host stopped
+// answering, and every work order had been inviting agents to write it into
+// the app they were building. Resolving the origin per deployment fixed the
+// dead links but not the habit: apps built from those orders hard-coded
+// my.onhomeroom.com instead, which breaks on the next move the same way. The
+// platform serves these paths on every app's own address, so the only
+// spelling that survives a domain move is the relative one.
 const HOSTED_ASSET_PATHS = Object.freeze([
   '/usernode-bridge/v1/bridge.js',
   '/usernode-native/v1/native.css',
@@ -1209,25 +1407,25 @@ function platformOriginFrom(webPath) {
   return domain ? `https://${domain}` : null;
 }
 
-function hostedAssetUrls(origin) {
-  return HOSTED_ASSET_PATHS.map((assetPath) => (origin ? `${origin}${assetPath}` : assetPath));
-}
-
 function hostedAssetWarning(webPath) {
   const origin = platformOriginFrom(webPath);
   const lines = [
     'ABOUT THE APP\'S HOSTED ASSETS (read before you "fix" the styling)',
-    'Every Homeroom app loads three files from the platform, centrally hosted:',
-    ...hostedAssetUrls(origin).map((u) => `${CMD}${u}`),
-    'Your container may not be able to reach that host. When it cannot, the app',
-    'renders unstyled in a local browser and any native-kit assertion fails. That',
+    'Every Homeroom app loads three files from the platform, centrally hosted.',
+    'The platform serves them on the app\'s OWN address, so reference them by',
+    'these RELATIVE paths, exactly as written — never with a hostname in front:',
+    ...HOSTED_ASSET_PATHS.map((p) => `${CMD}${p}`),
+    'A hostname written into the app breaks the next time the platform\'s domain',
+    'moves; that is how apps lost their styling and bridge after the last move.',
+    'Your local container does not serve these paths, so there the app renders',
+    'unstyled in a browser and any native-kit assertion fails. That',
     'is your SANDBOX, not the change — do not "fix" it.',
     'Vendoring those files into the repository is forbidden: the copy freezes the',
     'day you make it, and the fleet-wide fixes and rollbacks central hosting buys',
     'stop reaching this app. No automated check catches that. A cdn.tailwindcss.com',
     'tag is a different thing — a legacy state many apps are still in, whose checks',
     'pass: do not add one, do not "fix" one as a drive-by, and when migrating IS the',
-    'task swap it to the Tailwind URL above (including any copy of that hostname in',
+    'task swap it to the Tailwind path above (including any copy of that hostname in',
     'the app\'s sw.js precache list). The staging preview Homeroom builds — not a',
     'local screenshot — is the authority on how this change looks.',
   ];
@@ -1344,7 +1542,7 @@ function describeTargetProposal(session, user, app, origin) {
     // so its own title is the honest fallback. Advisory either way: the work
     // order prints it only when there is one.
     title: proposalTitle(session),
-    webPath: origin ? `${origin}/#app/${app.slug}/dev/sessions/${id}` : '',
+    webPath: origin ? changeWebPath(origin, app.slug, id) : '',
     branchHome,
     branchName,
     trackedHead,
@@ -1354,8 +1552,13 @@ function describeTargetProposal(session, user, app, origin) {
 // ── prepare_work ───────────────────────────────────────────────────────
 //
 // deps: { pool, config, gh, githubLink, limits, prompts }
-// params: { user, app, issueNumber, brief, clientId, clientName, origin,
-//           restart, agent, targetProposal }
+// params: { user, app, issueNumber, issueNumbers, brief, clientId, clientName,
+//           origin, restart, agent, targetProposal }
+//
+// `issueNumbers` names SEVERAL requests one piece of work implements, with
+// `issueNumber` still accepted for one (the browser's flow picker sends it).
+// The first is the row's issue_number; every one is recorded in its
+// linked_issues, which is what the submission links and closes.
 //
 // `targetProposal` is the session row of a proposal ALREADY up for a vote
 // (#1054). With it, the work order revises that proposal — based at its head
@@ -1377,9 +1580,11 @@ function describeTargetProposal(session, user, app, origin) {
 async function prepareWork(deps, params) {
   const { pool, config, gh, githubLink, limits, prompts } = deps;
   const {
-    user, app, issueNumber, brief, clientId, clientName, origin, restart, originSessionId,
+    user, app, brief, clientId, clientName, origin, restart, originSessionId,
     agent, targetProposal,
   } = params;
+  const issues = normalizeIssueNumbers(params.issueNumbers, params.issueNumber);
+  const issueNumber = issues[0] || null;
 
   const parsed = gh.parseGithubUrl(app.repo_url);
   if (!parsed) {
@@ -1423,7 +1628,7 @@ async function prepareWork(deps, params) {
 
   const requestKey = update
     ? proposalRequestKeyFor(update.proposalId)
-    : requestKeyFor(issueNumber, trimmedBrief);
+    : requestKeyFor(issueNumber, trimmedBrief, issues);
 
   // ── Is the group already voting on this request? (#1216) ─────────────
   //
@@ -1433,7 +1638,7 @@ async function prepareWork(deps, params) {
   // Skipped in UPDATE mode, where the proposal in question is the target.
   const openProposals = update
     ? []
-    : await findOpenProposalsForRequest(pool, app.id, issueNumber, user.id);
+    : await findOpenProposalsForRequest(pool, app.id, issues, user.id);
 
   // ── Look before minting ──────────────────────────────────────────────
   //
@@ -1563,13 +1768,13 @@ async function prepareWork(deps, params) {
       `INSERT INTO external_agent_tasks
          (user_id, app_id, issue_number, fork_owner, fork_repo, branch_name,
           base_sha, brief, client_id, request_key, target_session_id,
-          origin_session_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          origin_session_id, linked_issues)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT DO NOTHING
        RETURNING *`,
       [
         user.id, app.id,
-        Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null,
+        issueNumber,
         link.login, forkRepo, branch, baseSha, trimmedBrief, clientId || null,
         requestKey,
         // Which proposal this job revises, when it revises one. Recorded so a
@@ -1580,6 +1785,9 @@ async function prepareWork(deps, params) {
         // has no session — see the column comment in schema.sql for how those
         // rows are adopted rather than stranded.
         sessionRef(originSessionId),
+        // Every request it implements, the first included, so the submission
+        // links and closes all of them rather than only issue_number's.
+        issues,
       ]
     );
     return rows[0] || null;
@@ -1638,7 +1846,8 @@ async function prepareWork(deps, params) {
       branch_name: branch,
       base_sha: baseSha,
       brief: trimmedBrief,
-      issue_number: Number.isInteger(issueNumber) && issueNumber > 0 ? issueNumber : null,
+      issue_number: issueNumber,
+      linked_issues: issues,
       target_session_id: update ? update.proposalId : null,
       client_id: clientId || row.client_id || null,
     },
@@ -1757,20 +1966,28 @@ async function closeTaskForSession(pool, userId, sessionId, fields = {}) {
 // ADVISORY, like every other read on this path: a lookup that fails costs the
 // warning and nothing else. Refusing to prepare work because a duplicate CHECK
 // broke would be a worse failure than the duplicate it is guarding against.
-async function findOpenProposalsForRequest(pool, appId, issueNumber, viewerId) {
-  if (!(Number.isInteger(issueNumber) && issueNumber > 0)) return [];
+//
+// `issueNumbers` is one request or the list a job implements; a proposal for
+// ANY of them counts, and `requests` says which of them it is for, in the
+// order the job lists them, so the notice can name the right one.
+async function findOpenProposalsForRequest(pool, appId, issueNumbers, viewerId) {
+  const issues = normalizeIssueNumbers([].concat(issueNumbers == null ? [] : issueNumbers));
+  if (!issues.length) return [];
   try {
     const { rows } = await pool.query(
       `SELECT cs.id, cs.status, cs.pr_number, cs.pr_title, cs.session_title,
-              cs.user_id, u.username
+              cs.user_id, u.username,
+              ARRAY(SELECT asked.n FROM unnest($2::int[]) WITH ORDINALITY AS asked(n, ord)
+                     WHERE asked.n = ANY(cs.linked_issues) OR asked.n = cs.created_from_issue_number
+                     ORDER BY asked.ord) AS requests
          FROM chat_sessions cs
          LEFT JOIN users u ON u.id = cs.user_id
         WHERE cs.app_id = $1
           AND cs.status IN ('promoted', 'merging')
-          AND ($2 = ANY(cs.linked_issues) OR cs.created_from_issue_number = $2)
+          AND (cs.linked_issues && $2::int[] OR cs.created_from_issue_number = ANY($2::int[]))
         ORDER BY cs.id DESC
         LIMIT $3`,
-      [appId, issueNumber, MAX_OPEN_PROPOSALS]
+      [appId, issues, MAX_OPEN_PROPOSALS]
     );
     return (rows || []).map((r) => ({
       proposalId: Number(r.id),
@@ -1783,10 +2000,13 @@ async function findOpenProposalsForRequest(pool, appId, issueNumber, viewerId) {
       // the notice offers a continuation or a second opinion.
       mine: Number(r.user_id) === Number(viewerId),
       author: r.username ? String(r.username).slice(0, 64) : null,
+      requests: Array.isArray(r.requests) && r.requests.length
+        ? normalizeIssueNumbers(r.requests)
+        : issues.slice(0, 1),
     }));
   } catch (err) {
     log.warn('external-agent-tasks', 'open-proposal lookup failed', {
-      appId, issueNumber, err: err.message,
+      appId, issues, err: err.message,
     });
     return [];
   }
@@ -1808,7 +2028,7 @@ function renderPreparedTask({
   // `webPath` is, so a caller can open one without composing a URL.
   const duplicates = (Array.isArray(openProposals) ? openProposals : []).map((p) => ({
     ...p,
-    webPath: origin ? `${origin}/#app/${app.slug}/dev/sessions/${p.proposalId}` : null,
+    webPath: origin ? changeWebPath(origin, app.slug, p.proposalId) : null,
   }));
   const forkPageUrl = `https://github.com/${owner}/${repo}/fork`;
   // A reused task did not re-read GitHub, so its fork state is genuinely
@@ -1827,6 +2047,7 @@ function renderPreparedTask({
     forkPageUrl,
     forkStatus: status,
     issueNumber: task.issue_number,
+    issueNumbers: linkedIssuesFor(task),
     openProposals: duplicates,
   });
   const workOrder = buildWorkOrder({
@@ -1842,6 +2063,7 @@ function renderPreparedTask({
     branch: task.branch_name,
     baseSha: task.base_sha,
     issueNumber: task.issue_number,
+    issueNumbers: linkedIssuesFor(task),
     brief: task.brief,
     webPath,
     taskId: Number(task.id),
@@ -1869,6 +2091,9 @@ function renderPreparedTask({
     // duplicate — submit_work with a proposalId advances that proposal and
     // clears its votes — look like the documented next step.
     openProposals: duplicates,
+    // Every request this work order implements — what its pull request will
+    // carry a `Closes #N` line for, and what the proposal will be linked to.
+    requestNumbers: linkedIssuesFor(task),
     forkOwner,
     forkRepo,
     forkUrl: `https://github.com/${forkOwner}/${forkRepo}`,
@@ -2569,6 +2794,7 @@ async function submitUpdate(deps, params, proposalId) {
     expectedHeadSha,
     ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
     ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+    ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
     // The agent's own name for the change. On a session it is stored and
     // names the pull request created at propose time; on a target with a PR
     // it renames it — including a fork-tracked one, which is how an agent's
@@ -2684,6 +2910,11 @@ async function submitUpdate(deps, params, proposalId) {
       ? result.testingPathsRejected.map((p) => String(p))
       : null,
     captureRerun: result.captureRerun === true,
+    visualEvidenceState: result.visualEvidenceState || null,
+    visualEvidenceAccepted: result.visualEvidenceAccepted === true,
+    visualEvidenceRejected: result.visualEvidenceRejected === true,
+    visualEvidenceRequired: result.visualEvidenceRequired === true,
+    visualEvidenceNextStep: result.visualEvidenceNextStep || 'none',
     // Whether the submitted title landed — stored as the session's proposed
     // PR name, or applied as a rename of the proposal that already has one
     // (false on a repeat of the value already stored).
@@ -2733,7 +2964,7 @@ async function submitUpdate(deps, params, proposalId) {
 // deps: { pool, config, gh, githubLink, limits }
 // params: { user, clientName, clientId, taskId, prNumber, proposalId, slug,
 //           branch, forkRepo, expectedHeadSha, patch, source, agent, title,
-//           body, testing, importProposal, updateProposal }
+//           body, testing, visualEvidence, importProposal, updateProposal }
 //
 // `importProposal(slug, prNumber)` is supplied by the caller and performs
 // the loopback POST to /api/apps/:slug/pr-import carrying the caller's own
@@ -2965,6 +3196,7 @@ async function submitWorkLocked(deps, params) {
       ...(params.expectedHeadSha ? { expectedHeadSha: String(params.expectedHeadSha).trim().toLowerCase() } : {}),
       ...(testing.testingPaths ? { testingPaths: testing.testingPaths } : {}),
       ...(testing.testingSteps ? { testingSteps: testing.testingSteps } : {}),
+      ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
       ...(title ? { title: stripEnvelope(title) } : {}),
       ...(params.body ? { description: stripEnvelope(params.body) } : {}),
       ...(linkedIssuesFor(task).length ? { linkedIssues: linkedIssuesFor(task) } : {}),
@@ -3012,6 +3244,11 @@ async function submitWorkLocked(deps, params) {
         previewRebuilding: !!(advanced.body && advanced.body.previewRebuilding),
         testingPaths: (advanced.body && advanced.body.testingPaths) || null,
         testingPathsRejected: (advanced.body && advanced.body.testingPathsRejected) || null,
+        visualEvidenceState: (advanced.body && advanced.body.visualEvidenceState) || null,
+        visualEvidenceAccepted: !!(advanced.body && advanced.body.visualEvidenceAccepted),
+        visualEvidenceRejected: !!(advanced.body && advanced.body.visualEvidenceRejected),
+        visualEvidenceRequired: !!(advanced.body && advanced.body.visualEvidenceRequired),
+        visualEvidenceNextStep: (advanced.body && advanced.body.visualEvidenceNextStep) || 'none',
       };
     }
 
@@ -3084,6 +3321,11 @@ async function submitWorkLocked(deps, params) {
       previewRebuilding: !!(shared.body && shared.body.previewRebuilding),
       testingPaths: (shared.body && shared.body.testingPaths) || null,
       testingPathsRejected: (shared.body && shared.body.testingPathsRejected) || null,
+      visualEvidenceState: (shared.body && shared.body.visualEvidenceState) || null,
+      visualEvidenceAccepted: !!(shared.body && shared.body.visualEvidenceAccepted),
+      visualEvidenceRejected: !!(shared.body && shared.body.visualEvidenceRejected),
+      visualEvidenceRequired: !!(shared.body && shared.body.visualEvidenceRequired),
+      visualEvidenceNextStep: (shared.body && shared.body.visualEvidenceNextStep) || 'none',
     };
   }
 
@@ -3295,16 +3537,33 @@ async function submitWorkLocked(deps, params) {
   // path and the close watcher that read it. Empty for a submission that
   // names no request — a plain `slug` + `prNumber` — which stays exactly as
   // it was.
-  const imported = await importProposal(slug, pr.number, { linkedIssues: linkedIssuesFor(task) });
+  const imported = await importProposal(slug, pr.number, {
+    linkedIssues: linkedIssuesFor(task),
+    ...(params.visualEvidence ? { visualEvidence: params.visualEvidence } : {}),
+    ...(params.visualEvidencePlan ? { visualEvidencePlan: params.visualEvidencePlan } : {}),
+  });
   if (!imported || !imported.ok) {
-    // A head the platform wrote and then could not import is litter on
-    // somebody's app repository. Remove it.
-    if (platformOwnedHead) await platformOwnedHead.cleanup();
+    const retryable = retryableImportFailure(imported);
+    const context = importFailureContext(imported);
+    // A deterministic refusal means the platform-created head has no future
+    // owner and is litter. A transport error or 5xx is different: the open PR
+    // is the recovery handle the work order already documents. Keep it so the
+    // caller can retry with slug + prNumber without consuming another branch
+    // or pull-request number.
+    if (platformOwnedHead && !retryable) await platformOwnedHead.cleanup();
+    const platformMessage = (imported && imported.body
+      && (imported.body.error || imported.body.message))
+      || 'Homeroom could not turn that pull request into a proposal.';
     return {
       ok: false,
       code: 'import_failed',
-      message: (imported && imported.body && imported.body.error)
-        || 'Homeroom could not turn that pull request into a proposal.',
+      message: retryable
+        ? `${platformMessage} PR #${pr.number} remains open; retry with slug "${slug}" and prNumber ${pr.number}.`
+        : platformMessage,
+      retryable,
+      stage: context.stage,
+      field: context.field,
+      recovery: retryable ? 'retry_existing_pr' : null,
       status: imported ? imported.status : 0,
       prNumber: pr.number,
       prUrl: pr.html_url || null,
@@ -3359,7 +3618,30 @@ async function submitWorkLocked(deps, params) {
     appSlug: slug,
     externalAgent: label,
     submittedVia: via,
+    visualEvidenceState: (imported.body && imported.body.visualEvidenceState) || null,
+    visualEvidenceAccepted: !!(imported.body && imported.body.visualEvidenceAccepted),
+    visualEvidenceRejected: !!(imported.body && imported.body.visualEvidenceRejected),
+    visualEvidenceRequired: !!(imported.body && imported.body.visualEvidenceRequired),
+    visualEvidenceNextStep: (imported.body && imported.body.visualEvidenceNextStep) || 'none',
+    // What the proposal was linked to, and — only when that is nothing — the
+    // request numbers its brief mentions. A number in free text is never
+    // linked by itself (it may name a request the work only touches, or one it
+    // deliberately leaves alone); the connector turns these into a pointer at
+    // update_proposal_issues instead.
+    linkedIssues: linkedIssuesFor(task),
+    mentionedIssues: linkedIssuesFor(task).length ? [] : mentionedIssueNumbers(task && task.brief),
   };
+}
+
+// `#123` references in a brief, in order, deduplicated. The brief is the
+// caller's own text on a job that names no request; this only ever feeds a
+// suggestion, so a number that turns out to be a pull request or a closed
+// request costs nothing — the connector checks them against the open list.
+function mentionedIssueNumbers(brief) {
+  const text = stripEnvelope(brief);
+  const found = [];
+  for (const m of text.matchAll(/(?:^|[^\w&#/])#(\d{1,9})\b/g)) found.push(m[1]);
+  return normalizeIssueNumbers(found);
 }
 
 // PR-facing text. The <untrusted-content> envelope is stripped HERE: it is a
@@ -3495,9 +3777,12 @@ async function withoutClosedRequests(rows, fetchOpenIssues) {
   });
 }
 
+// Every request the job implements: its issue_number and, since one job can
+// implement several, its linked_issues. A row from before that column held
+// the empty array, which leaves exactly the one issue_number it always had.
 function linkedIssuesFor(task) {
-  const n = task && Number(task.issue_number);
-  return Number.isInteger(n) && n > 0 ? [n] : [];
+  if (!task) return [];
+  return normalizeIssueNumbers(task.linked_issues, task.issue_number);
 }
 
 // Two things close a request when the work lands, and a connector submission
@@ -3533,10 +3818,11 @@ module.exports = {
   SUBMIT_VIA,
   SUBMIT_SOURCES,
   HOSTED_ASSET_PATHS,
-  hostedAssetUrls,
   platformOriginFrom,
   normalizeAgent,
   normalizeSource,
+  retryableImportFailure,
+  importFailureContext,
   agentLabel,
   stripEnvelope,
   listOpenWorkOrders,
@@ -3544,6 +3830,10 @@ module.exports = {
   // The request-linking pair (#1217), unit-tested directly.
   linkedIssuesFor,
   prBodyFor,
+  // One job, several requests.
+  MAX_TASK_ISSUES,
+  normalizeIssueNumbers,
+  mentionedIssueNumbers,
   requestKeyFor,
   proposalRequestKeyFor,
   describeTargetProposal,

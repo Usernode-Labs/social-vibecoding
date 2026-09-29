@@ -107,12 +107,60 @@ async function isApprover(pool, appId, userId) {
 
 // Pure "at least N" gate, shaped exactly like mergeGate's return so
 // every consumer (merge routes, sweeper, countdown pill) reads one
-// object regardless of mode. All clocks off by design: no visibility
-// window, no lazy consensus, no contested state, no auto-rejection.
-function atLeastGate(n, yesCount) {
+// object regardless of mode. Every MERGE clock is off by design: no
+// visibility window, no lazy consensus, no contested state — N approvals
+// and nothing else opens the merge.
+//
+// #2494: the REJECTION clock is no longer off with them. It was, and the
+// consequence was that a promoted proposal on an at-least-N app could
+// never close itself however it was voted: `server.js` archives on
+// `gate.rejectable`, and this gate could not produce a true one. A
+// proposal reported eighteen days promoted at 2 yes / 2 no, still being
+// prebuilt, re-checked and re-synced with main on every sweep.
+//
+// The rule is the default mode's, unchanged — same `REJECT_MIN_NO` floor,
+// same dominance curve, same window (active-users.js oppositionWindowMs).
+// Only the KEEP-ALIVE differs, because the two modes measure support
+// differently: the default mode protects a proposal whose Yes share of
+// active users clears a fraction; at-least-N has no active denominator,
+// and its own measure of support is the threshold itself. A proposal with
+// its approvals is mergeable, so it must never auto-close.
+//
+// WHAT THIS DOES NOT DO, because it is the group's decision and not
+// this function's: expire a proposal for AGE. A tie is still a stalemate
+// in both modes — `no <= yes` never arms — so a 2-2 proposal still sits
+// there. "N approvals, no clock" has no notion of losing, so the real
+// failure state is never-approved, and the only honest remedy is time:
+// how long, whether the author is warned, whether a vote resets it.
+function atLeastGate(n, yesCount, noCount = 0, openedAt = null, now = Date.now()) {
   const yes = Math.max(parseInt(yesCount, 10) || 0, 0);
   const required = Math.max(parseInt(n, 10) || 1, 1);
   const thresholdMet = yes >= required;
+  // Keep-alive: a proposal that already has its approvals is mergeable,
+  // and must not be auto-rejected out from under them.
+  const rejWindowMs = thresholdMet
+    ? null
+    : activeUsers().oppositionWindowMs(yes, noCount);
+  const rejectionArmed = rejWindowMs !== null;
+  const openedMs = openedAt ? new Date(openedAt).getTime() : NaN;
+  // A NULLISH `now` means "now", not the epoch. The default parameter only
+  // covers `undefined`, and routes/votes.js passes an explicit `null` here
+  // to reach the options argument — `new Date(null).getTime()` is 0, which
+  // would put every proposal's clock fifty-six years in the future and
+  // report `rejectable: false` forever. That is the same shape as the bug
+  // this change exists to fix, so it is normalised the way mergeGate's own
+  // `toMs(now, Date.now())` does.
+  const nowMs = now == null
+    ? Date.now()
+    : (typeof now === 'number' ? now : new Date(now).getTime());
+  // An unknown open time cannot be elapsed. `NaN >= window` is already
+  // false, so this guard is explicit rather than load-bearing here — it
+  // says the intent out loud, because the reading that matters is the one
+  // below: `rejectionEndsAt` must not become `new Date(NaN)`. The
+  // behaviour either way is to stay ARMED but not yet rejectable, which
+  // is the safe direction for a proposal whose age we cannot establish.
+  const rejectionElapsed = rejectionArmed
+    && Number.isFinite(openedMs) && nowMs - openedMs >= rejWindowMs;
   return {
     required,
     windowMs: 0,
@@ -123,10 +171,12 @@ function atLeastGate(n, yesCount) {
     lazyArmed: false,
     lazyWindowMs: null,
     mergeable: thresholdMet,
-    rejectionWindowMs: null,
-    rejectionArmed: false,
-    rejectionEndsAt: null,
-    rejectable: false,
+    rejectionWindowMs: rejWindowMs,
+    rejectionArmed,
+    rejectionEndsAt: rejectionArmed && Number.isFinite(openedMs)
+      ? new Date(openedMs + rejWindowMs).toISOString()
+      : null,
+    rejectable: rejectionArmed && rejectionElapsed,
   };
 }
 
@@ -175,7 +225,7 @@ function applyNoTimerMerge(gate) {
 // still decide the threshold.
 function computeGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
   const base = gov.approvalsRequired != null
-    ? atLeastGate(gov.approvalsRequired, yesCount)
+    ? atLeastGate(gov.approvalsRequired, yesCount, noCount, openedAt, now)
     : activeUsers().mergeGate(active, yesCount, noCount, openedAt, now);
   const explicitApproval = !!opts.explicitApproval;
   const gated = explicitApproval ? applyNoTimerMerge(base) : base;

@@ -1,4 +1,4 @@
-// UI contract for the #800 model selector in frontend/src/features/dev-chat/dev-chat.js.
+// UI contract for the grouped model/key selector in the dev-chat composer.
 //
 // Same approach as openSession-streaming-reset.test.js: dev-chat.js is a
 // plain browser script (`const DevChat = {…}`), so we load its source
@@ -7,19 +7,14 @@
 // rather than on tokens in the source.
 //
 // What must hold:
-//   1. No price text ($ / MTok) survives anywhere in the picker — that
-//      was the whole point of the issue. Nor any measured figure: the
-//      picker is entirely static editorial copy now.
-//   2. Each option reads "<label>: <what kind of work it is for>", and
-//      the copy positions Opus and Fable as peers (heavy coding vs.
-//      design/taste) rather than a size ladder.
-//   3. The composer paints NO caption under the dropdown (#1353 removed
-//      it — the option the user picked already carries the guidance), while
-//      the sentence itself survives for app-view's Generate-proposal popup,
-//      where the list is met once.
-//   4. Missing guidance degrades to bare labels — never a crash.
-//   5. The guidance copy in dev-chat.js's seed map has not drifted from
-//      src/services/models.js, which is authoritative.
+//   1. OpenRouter is the first native optgroup, Anthropic is the second, and
+//      every option repeats its key source in the closed control.
+//   2. The OpenRouter shortlist prefers the saved model, otherwise the
+//      server-recommended GLM, while preserving the current session model.
+//   3. "Add more OpenRouter models…" opens the existing catalog dialog.
+//   4. Provider changes route through reset-agent-context; direct Anthropic
+//      model changes remain a lightweight local preference.
+//   5. The existing no-price/no-caption and allowlist drift contracts hold.
 //
 // Run with: node --test tests/model-selector-ui.test.js
 
@@ -31,6 +26,7 @@ const vm = require('node:vm');
 
 const { makeComposerBridge } = require('./lib/dev-composer-html');
 const { loadTsx, renderComponent } = require('./lib/render-tsx');
+const { SW_VERSION } = require('../public/sw.js');
 
 const SRC = fs.readFileSync(
   path.join(__dirname, '..', 'frontend', 'src', 'features', 'dev-chat', 'dev-chat.js'),
@@ -232,8 +228,8 @@ function guidanceMap() {
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
       },
     },
-    'claude-opus-5': {
-      label: 'Opus 5',
+    'claude-opus-5-5': {
+      label: 'Opus 5.5',
       changeSize: {
         short: 'general coding work',
         long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
@@ -249,11 +245,40 @@ function guidanceMap() {
   };
 }
 
+function pickerData(overrides = {}) {
+  return {
+    defaultBackend: 'codex_openrouter',
+    backends: { codex_openrouter: { model: null, reasoningEffort: 'high' } },
+    codexAvailable: true,
+    credentialConfigured: true,
+    recommendedModelId: 'z-ai/glm-5.3-flash',
+    models: [
+      {
+        id: 'z-ai/glm-5.3-flash', name: 'GLM 5.3 Flash',
+        isFavorite: true, isRecommended: true, compatibility: 'verified',
+        supportsReasoning: true,
+      },
+      {
+        id: 'anthropic/claude-sonnet-4.5', name: 'Claude Sonnet 4.5',
+        isFavorite: true, compatibility: 'verified', supportsReasoning: true,
+      },
+      {
+        id: 'deepseek/deepseek-v4-flash', name: 'DeepSeek V4 Flash',
+        isFavorite: false, compatibility: 'verified', supportsReasoning: false,
+      },
+    ],
+    ...overrides,
+  };
+}
+
 function render(overrides) {
   const h = makeHarness();
   h.DevChat.MODELS = (overrides && overrides.models) || guidanceMap();
-  h.DevChat.selectedModel = (overrides && overrides.selected) || 'claude-opus-5';
+  h.DevChat.selectedModel = (overrides && overrides.selected) || 'claude-opus-5-5';
   if (overrides && overrides.session) h.DevChat.currentSession = overrides.session;
+  h.DevChat._modelPickerData = overrides && 'pickerData' in overrides
+    ? overrides.pickerData
+    : pickerData();
   // build-venues.js is outside this focused harness. Mirror its ordinary
   // in-chat result so provider-specific composer controls are exercised.
   h.DevChat._currentVenueId = () => h.DevChat._isOpenRouterSession()
@@ -287,108 +312,152 @@ test('the seed MODELS map carries no price and no measured figures', () => {
   assert.ok(!('claude-haiku-4-5' in DevChat.MODELS));
 });
 
-// ── 2. option text: what kind of work, not how big ──────────────────
+// ── 2. ONE FLAT LIST (#2569) ────────────────────────────────────────
+//
+// The picker used to be two optgroups, "OpenRouter key" and "Anthropic
+// key", with every label repeating its key source — so the first question
+// it asked was whose key pays, rather than which model. It is one list
+// now, and the key survives as a `title` on each option.
 
-test('the composer\'s picker is a sheet button naming the model (#1589)', () => {
-  // #1589's finding was about a CLOSED <select>: it shows the selected
-  // option's own text, so the guidance set its width — 276px of a 344px
-  // strip on a phone, which put the label above the control and the credit
-  // meter below it. Names brought it to 89px and the row to one line.
-  //
-  // The control is a button opening the kit's menu now, so there are no
-  // options in the markup at all — but the closed control is still exactly
-  // the name, which is what that measurement was about.
-  const { html } = render();
-  assert.ok(!/<option/.test(html), `no native dropdown survives; got: ${html}`);
-  assert.match(html, /<button[^>]*id="dc-model-select"[^>]*aria-haspopup="menu"/);
-  assert.match(html, /<span class="dc-model-name">Opus 5<\/span>/);
+test('the composer renders one flat list with no provider headings', () => {
+  const { html, view } = render();
+  assert.match(html, /<select[^>]*id="dc-model-select"[^>]*aria-label="Chat model and API key"/);
+  assert.ok(!html.includes('<optgroup'), 'no headings at all');
+  assert.equal(view().models.groups, undefined, 'the grouped shape is gone');
+  assert.ok(Array.isArray(view().models.options));
+});
+
+test('no label names a provider; the key is a title instead', () => {
+  const { html, view } = render();
+  for (const option of view().models.options) {
+    assert.ok(!/^OpenRouter key ·|^Anthropic key ·/.test(option.label),
+      `"${option.label}" still carries a key prefix`);
+  }
+  // An Anthropic-authored model reached through OpenRouter reads as its own
+  // name, and its title is what says which key pays.
+  const sonnet = view().models.options.find(
+    (o) => o.value === 'openrouter:anthropic/claude-sonnet-4.5');
+  assert.equal(sonnet.label, 'Claude Sonnet 4.5');
+  assert.equal(sonnet.title, 'Runs on your OpenRouter key');
+  const opus = view().models.options.find((o) => o.value === 'anthropic:claude-opus-5-5');
+  assert.equal(opus.label, 'Opus 5.5');
+  assert.match(opus.title, /platform Claude allowance/);
+  assert.match(html, /title="Runs on your OpenRouter key"/);
   assert.ok(!html.includes('general coding work'),
-    'the guidance belongs to the OPEN sheet — in the closed control it is '
-    + 'the width problem #1589 measured.');
-  assert.ok(!html.includes('simple, small changes'),
-    'and the unselected models are not in the composer\'s markup at all.');
+    '#1589: verbose guidance must not widen the closed native control');
 });
 
-test('…and the sheet\'s rows carry the guidance the button cannot (2B)', () => {
-  // The blurb comes back where there is room for it: one row, one line. It
-  // is `changeSize.short` rather than `modelOptionText`, because the row
-  // already opens with the name and the helper would repeat it.
+test('the five starting models come first, in the documented order', () => {
   const { view } = render();
-  assert.deepEqual(view().models.options, [
-    { id: 'claude-sonnet-5', label: 'Sonnet 5', blurb: 'simple, small changes' },
-    { id: 'claude-opus-5', label: 'Opus 5', blurb: 'general coding work' },
-    {
-      id: 'claude-fable-5-1',
-      label: 'Fable 5.1',
-      blurb: 'design, taste, and difficult coding',
-    },
-  ]);
-  assert.equal(view().models.selectedLabel, 'Opus 5');
+  // The curated OpenRouter pair (the server's recommendation first), then
+  // the three Anthropic models. Whatever else the account uses follows.
+  assert.deepEqual(view().models.options.slice(0, 5).map((o) => o.value), [
+    'openrouter:z-ai/glm-5.3-flash',
+    'anthropic:claude-sonnet-5',
+    'anthropic:claude-opus-5-5',
+    'anthropic:claude-fable-5-1',
+    'openrouter:anthropic/claude-sonnet-4.5',
+  ].slice(0, 5));
+  assert.equal(view().models.options[0].value, 'openrouter:z-ai/glm-5.3-flash',
+    'the server-recommended GLM leads');
+  // The catalog door is last, always.
+  const last = view().models.options[view().models.options.length - 1];
+  assert.equal(last.value, 'openrouter:__add_more__');
 });
 
-test('openModelSheet asks the kit, marks the current row, and picks (2B)', () => {
-  // The mirror of openVenueSheet: the kit sets row labels with textContent,
-  // so the blurb and the tick ride IN the label, and the tick trails the
-  // row exactly as build-venues.js puts it.
-  const h = makeHarness();
-  h.DevChat.MODELS = guidanceMap();
-  h.DevChat.selectedModel = 'claude-opus-5';
-  h.DevChat._currentVenueId = () => 'usernode-claude';
-  let opened = null;
-  h.sandbox.PlatformUI = {
-    hasKit: () => true,
-    menu: (opts) => { opened = opts; return Promise.resolve(null); },
+test('a saved OpenRouter model is offered even when it is not a starter', () => {
+  const saved = render({
+    pickerData: pickerData({
+      backends: {
+        codex_openrouter: {
+          model: 'anthropic/claude-sonnet-4.5', reasoningEffort: 'medium',
+        },
+      },
+    }),
+  });
+  const values = saved.view().models.options.map((o) => o.value);
+  assert.ok(values.includes('openrouter:anthropic/claude-sonnet-4.5'),
+    'a saved model the picker would otherwise not list is still selectable');
+  assert.equal(values[0], 'openrouter:z-ai/glm-5.3-flash',
+    'the starting pair still leads — a saved choice does not reorder the list');
+});
+
+test('an unsent change displays the saved OpenRouter default before creation', () => {
+  const pending = {
+    pending: true,
+    id: null,
+    app_slug: 'demo',
+    pending_agent_choice: null,
   };
-  h.DevChat.openModelSheet(null);
-  assert.ok(opened, 'the kit menu was never opened');
-  assert.match(opened.title, /model/i);
-  // `Array.from` rather than `.map`: `items` was built inside the vm
-  // context, so its Array prototype is that realm's and deepEqual compares
-  // prototypes.
-  assert.deepEqual(Array.from(opened.items, (i) => i.label), [
-    'Sonnet 5 \u2014 simple, small changes',
-    'Opus 5 \u2014 general coding work \u2713',
-    'Fable 5.1 \u2014 design, taste, and difficult coding',
-  ]);
-  opened.items[2].handler();
-  assert.equal(h.DevChat.selectedModel, 'claude-fable-5-1');
+  const saved = render({
+    session: pending,
+    pickerData: pickerData({
+      backends: {
+        codex_openrouter: {
+          model: 'anthropic/claude-sonnet-4.5', reasoningEffort: 'medium',
+        },
+      },
+    }),
+  });
+
+  assert.equal(
+    saved.view().models.selected,
+    'openrouter:anthropic/claude-sonnet-4.5',
+    'the client-only placeholder must reflect the provider the server will resolve on first send',
+  );
+  assert.equal(saved.DevChat.currentSession.pending_agent_choice, null,
+    'displaying the saved default must not turn it into an explicit per-session override');
 });
 
-test('openModelSheet is a no-op without the kit, exactly as the venue sheet is', () => {
-  const h = makeHarness();
-  h.DevChat.MODELS = guidanceMap();
-  h.DevChat.selectedModel = 'claude-opus-5';
-  h.DevChat._currentVenueId = () => 'usernode-claude';
-  h.sandbox.PlatformUI = { hasKit: () => false, menu: () => {
-    throw new Error('menu must not be reached without a kit');
-  } };
-  h.DevChat.openModelSheet(null);
-  assert.equal(h.DevChat.selectedModel, 'claude-opus-5');
+test('an explicit pending Anthropic pick overrides a saved OpenRouter default', () => {
+  const pending = {
+    pending: true,
+    id: null,
+    app_slug: 'demo',
+    pending_agent_choice: {
+      backend: 'claude_code', model: null, reasoningEffort: null,
+    },
+    agent_backend: 'claude_code',
+  };
+  const selected = render({ session: pending });
+
+  assert.equal(selected.view().models.selected, 'anthropic:claude-opus-5-5');
 });
 
-test('the declared checks follow the control they guard (#1589, 2B)', () => {
-  // These two used to select `#dc-model-select option[value=…]`, one per
-  // model. A sheet has no options in the document — only the SELECTED model
-  // is on screen — so the pair became what a browser can still see: the
-  // closed control is a menu button naming the model, and no native
-  // dropdown is left in the composer. The guidance positioning they once
-  // guarded is asserted on the shared helper below, and still rendered by
-  // the Generate-proposal picker.
+test('the saved OpenRouter default ships through a fresh shell cache', () => {
+  const version = Number(String(SW_VERSION).replace(/^v/, ''));
+  assert.ok(version >= 29,
+    `expected the OpenRouter-default shell cache, got ${SW_VERSION}`);
+});
+
+test('the declared checks follow the flat native selector', () => {
   const dapp = JSON.parse(fs.readFileSync(
     path.join(__dirname, '..', 'dapp.json'), 'utf8'));
   const picker = dapp.tests.filter(
-    (t) => (t.expectSelector || '').includes('dc-model-select')
-      || (t.expectSelector || '').includes('#dc-composer-controls:not(:has(select))'));
-  assert.equal(picker.length, 2, 'both picker checks are still declared');
-  assert.ok(picker.some((t) => /aria-haspopup="menu"/.test(t.expectSelector)
-    && t.expectText === 'Opus 5'), 'the closed control is still guarded');
-  assert.ok(picker.some((t) => /:not\(:has\(select\)\)/.test(t.expectSelector)),
-    'and so is the absence of the <select> this replaced');
+    (t) => (t.expectSelector || '').includes('dc-model-select'));
+  assert.equal(picker.length, 5,
+    'direct selection, catalog door, OpenRouter selection, no caption (#2807) '
+      + 'and mid-turn availability (#2812) are guarded');
+  assert.ok(picker.some((t) => /:not\(:has\(#dc-model-note\)\)/.test(t.expectSelector)),
+    '#2807: the caption stays gone');
+  assert.ok(picker.some((t) => /busy/.test(t.path)
+    && /dc-btn-stop/.test(t.expectSelector)
+    && /select#dc-model-select:not\(:disabled\)/.test(t.expectSelector)),
+    '#2812: the picker is usable while the Stop button shows');
+  // #2569: no check may depend on an optgroup, and one of them asserts
+  // there is none.
   for (const t of picker) {
-    assert.ok(!/coding work|design, taste/.test(t.expectText || ''),
-      'a check asking for the guidance in the CLOSED control would fail on '
-      + 'every build — it lives in the open sheet now');
+    assert.ok(!/optgroup\[label=/.test(t.expectSelector),
+      `${t.name} still selects inside a provider heading`);
+    assert.ok(!/(?:OpenRouter|Anthropic) key ·/.test(t.expectText || ''),
+      `${t.name} still expects a key prefix in an option label`);
   }
+  assert.ok(picker.some((t) => /:not\(:has\(optgroup\)\)/.test(t.expectSelector)
+    && /Opus 5\.5/.test(t.expectText || '')), 'the flat shape and a direct model are guarded');
+  assert.ok(picker.some((t) => /__add_more__/.test(t.expectSelector)
+    && /Add more OpenRouter/.test(t.expectText || '')), 'the catalog action is guarded');
+  assert.ok(picker.some((t) => /openai\/gpt-5\.3-codex/.test(t.expectSelector)
+    && /Runs on your OpenRouter key/.test(t.expectSelector)), 'the key hint is guarded');
 });
 
 test('the guidance copy survives on the helper and proposal summaries stay concise', () => {
@@ -399,7 +468,7 @@ test('the guidance copy survives on the helper and proposal summaries stay conci
   const { DevChat } = makeHarness();
   const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
   assert.equal(text('claude-sonnet-5'), 'Sonnet 5: simple, small changes');
-  assert.equal(text('claude-opus-5'), 'Opus 5: general coding work');
+  assert.equal(text('claude-opus-5-5'), 'Opus 5.5: general coding work');
   assert.equal(text('claude-fable-5-1'), 'Fable 5.1: design, taste, and difficult coding');
   const APP_VIEW = fs.readFileSync(
     path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8'
@@ -410,8 +479,8 @@ test('the guidance copy survives on the helper and proposal summaries stay conci
     'the dialog no longer builds a verbose select label');
 });
 
-test('OpenRouter sessions show their pinned model and never show the Claude model picker', () => {
-  const { html } = render({
+test('OpenRouter sessions select their pinned model in the same flat control', () => {
+  const { html, view } = render({
     session: {
       id: 7,
       branch_name: 'dev/openrouter',
@@ -421,22 +490,19 @@ test('OpenRouter sessions show their pinned model and never show the Claude mode
     },
   });
 
-  assert.match(html, /OpenRouter model:/);
-  assert.match(html, /id="dc-openrouter-model"/);
-  assert.match(html, /anthropic\/claude-sonnet-4\.5/);
-  assert.match(html, /id="dc-openrouter-model-change"/);
-  assert.match(html, /Browse models/);
-  assert.match(html, /aria-label="Browse and filter OpenRouter models"/);
-  assert.match(html, /All chat and coding in this session use anthropic\/claude-sonnet-4\.5 through OpenRouter and bill your OpenRouter key\./);
-
-  assert.doesNotMatch(html, /Chat model:/);
-  assert.doesNotMatch(html, /id="dc-model-select"/);
+  assert.match(html, /id="dc-model-select"/);
+  assert.match(html, />Claude Sonnet 4\.5</);
+  assert.equal(view().models.selected, 'openrouter:anthropic/claude-sonnet-4.5');
+  assert.ok(!html.includes('<optgroup'));
+  assert.doesNotMatch(html, /id="dc-openrouter-model"/,
+    'the separate row above the composer is retired');
+  assert.doesNotMatch(html, /id="dc-openrouter-model-change"/);
   assert.doesNotMatch(html, /Sonnet 5: simple, small changes/);
-  assert.doesNotMatch(html, /Opus 5: general coding work/);
+  assert.doesNotMatch(html, /Opus 5.5: general coding work/);
   assert.doesNotMatch(html, /Fable 5.1: design, taste, and difficult coding/);
 });
 
-test('the OpenRouter model button opens the provider-locked catalog', () => {
+test('the Add more option opens the provider-locked catalog', async () => {
   const h = makeHarness();
   h.DevChat.currentSession = {
     id: 7,
@@ -445,19 +511,78 @@ test('the OpenRouter model button opens the provider-locked catalog', () => {
     agent_model: 'deepseek/deepseek-v4-flash',
   };
   h.DevChat._currentVenueId = () => 'usernode-openrouter';
+  h.DevChat._modelPickerData = pickerData();
   let calledWith = null;
-  h.DevChat._switchCurrentCodingAgent = (...args) => { calledWith = args; };
+  h.DevChat._switchCurrentCodingAgent = async (...args) => { calledWith = args; };
+  h.DevChat._ensureModelPickerData = async () => h.DevChat._modelPickerData;
 
   h.DevChat.renderChatView();
-  // #1078: the button is the composer component's, so its click dispatches
-  // into DevChat by NAME rather than through a listener bound per render.
-  assert.match(h.composer.html(), /id="dc-openrouter-model-change"/,
-    'the button renders');
-  h.DevChat._onOpenRouterModelChange();
+  assert.match(h.composer.html(), /value="openrouter:__add_more__"/,
+    'the action renders as the final OpenRouter option');
+  await h.DevChat._onModelPicked('openrouter:__add_more__');
 
-  assert.ok(calledWith, 'the Browse models button was not wired');
+  assert.ok(calledWith, 'the catalog option was not wired');
   assert.equal(calledWith[0], null);
   assert.equal(calledWith[1].fixedBackend, 'codex_openrouter');
+});
+
+test('an OpenRouter session without a pinned model falls back to saved choice, then GLM', () => {
+  const session = { id: 7, agent_backend: 'codex_openrouter', agent_model: null };
+  const glm = render({ session });
+  assert.equal(glm.view().models.selected, 'openrouter:z-ai/glm-5.3-flash');
+
+  const saved = render({
+    session,
+    pickerData: pickerData({
+      backends: { codex_openrouter: { model: 'anthropic/claude-sonnet-4.5' } },
+    }),
+  });
+  assert.equal(saved.view().models.selected, 'openrouter:anthropic/claude-sonnet-4.5');
+});
+
+test('provider picks reset context with the matching backend and saved effort', async () => {
+  const h = makeHarness();
+  h.DevChat.MODELS = guidanceMap();
+  h.DevChat._modelPickerData = pickerData();
+  h.DevChat._currentVenueId = () => h.DevChat._isOpenRouterSession()
+    ? 'usernode-openrouter'
+    : 'usernode-claude';
+  const calls = [];
+  h.DevChat._switchCurrentCodingAgent = async (choice) => { calls.push(choice); };
+
+  await h.DevChat._onModelPicked('openrouter:z-ai/glm-5.3-flash');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())), {
+    backend: 'codex_openrouter',
+    model: 'z-ai/glm-5.3-flash',
+    reasoningEffort: 'high',
+  });
+
+  h.DevChat.currentSession.agent_backend = 'codex_openrouter';
+  h.DevChat.currentSession.agent_model = 'z-ai/glm-5.3-flash';
+  await h.DevChat._onModelPicked('anthropic:claude-fable-5-1');
+  assert.equal(h.DevChat.selectedModel, 'claude-fable-5-1');
+  assert.deepEqual(JSON.parse(JSON.stringify(calls.pop())), {
+    backend: 'claude_code', model: null, reasoningEffort: null,
+  });
+});
+
+test('a provider switch disables the selector and collapses rapid duplicate picks', async () => {
+  const h = render();
+  let release;
+  let calls = 0;
+  h.DevChat._switchCurrentCodingAgent = async () => {
+    calls += 1;
+    await new Promise((resolve) => { release = resolve; });
+  };
+
+  const first = h.DevChat._onModelPicked('openrouter:z-ai/glm-5.3-flash');
+  await Promise.resolve();
+  assert.equal(h.view().models.changeDisabled, true);
+  await h.DevChat._onModelPicked('openrouter:anthropic/claude-sonnet-4.5');
+  assert.equal(calls, 1, 'the second pick must not race the first reset');
+  release();
+  await first;
+  assert.equal(h.view().models.changeDisabled, false);
 });
 
 test('no option implies a size ladder between Opus and Fable', () => {
@@ -472,15 +597,15 @@ test('no option implies a size ladder between Opus and Fable', () => {
   // #809: Opus is the general-purpose coding model, not one reserved for
   // big or tricky changes — the old restrictive wording must not return.
   assert.ok(
-    !all.includes('Opus 5: big or tricky coding'),
+    !all.includes('Opus 5.5: big or tricky coding'),
     'Opus option reverted to the superseded "big or tricky" framing'
   );
 });
 
 test('modelOptionText degrades to the bare label without guidance', () => {
   const { DevChat } = makeHarness();
-  assert.equal(DevChat.modelOptionText({ label: 'Opus 5' }), 'Opus 5');
-  assert.equal(DevChat.modelOptionText({ label: 'Opus 5', changeSize: {} }), 'Opus 5');
+  assert.equal(DevChat.modelOptionText({ label: 'Opus 5.5' }), 'Opus 5.5');
+  assert.equal(DevChat.modelOptionText({ label: 'Opus 5.5', changeSize: {} }), 'Opus 5.5');
   assert.equal(DevChat.modelOptionText(null), '');
 });
 
@@ -492,7 +617,7 @@ test('the composer paints no model caption at all (#1353)', () => {
   // under an <option> reading "Opus 5: general coding work", on every
   // render of every session. Two sentences of the same advice, and the
   // longer one was between the picker and the text box.
-  const { html, getEl, DevChat } = render({ selected: 'claude-opus-5' });
+  const { html, getEl, DevChat } = render({ selected: 'claude-opus-5-5' });
   assert.ok(!html.includes('dc-model-note'), 'no caption element is rendered');
   assert.ok(!html.includes('best for'), 'and none of its copy either');
   assert.equal(getEl('dc-model-note').textContent, '', 'nothing fills one after render');
@@ -503,15 +628,15 @@ test('the composer paints no model caption at all (#1353)', () => {
 test('the retired long-caption helper stays safe but Generate proposal no longer uses it', () => {
   const { DevChat } = makeHarness();
   assert.equal(
-    DevChat.modelNoteText(DevChat.MODELS['claude-opus-5']),
-    'Opus 5: best for anything from a quick fix to a multi-file feature, '
+    DevChat.modelNoteText(DevChat.MODELS['claude-opus-5-5']),
+    'Opus 5.5: best for anything from a quick fix to a multi-file feature, '
       + 'a refactor, or debugging that needs real digging.'
   );
   assert.equal(
     DevChat.modelNoteText(DevChat.MODELS['claude-sonnet-5']),
     'Sonnet 5: best for one small thing at a time: a text tweak, a colour, a single file.'
   );
-  assert.equal(DevChat.modelNoteText({ label: 'Opus 5' }), '', 'no guidance, no sentence');
+  assert.equal(DevChat.modelNoteText({ label: 'Opus 5.5' }), '', 'no guidance, no sentence');
   assert.match(DevChat.MODEL_GUIDANCE_TOOLTIP, /general coding pick/);
   assert.match(DevChat.MODEL_GUIDANCE_TOOLTIP, /genuinely difficult/);
   assert.ok(
@@ -525,17 +650,12 @@ test('the retired long-caption helper stays safe but Generate proposal no longer
     'the simplified dialog does not render the redundant long caption');
 });
 
-test('the picker still follows the selection without a caption to update', () => {
-  // The sheet's handler dispatches into `_onModelPicked` — which also
-  // republishes, so the model carries the new selection AND the closed
-  // control's label, rather than an element keeping either.
-  const { DevChat, view } = render({ selected: 'claude-opus-5' });
-  assert.equal(view().models.selected, 'claude-opus-5');
-  assert.equal(view().models.selectedLabel, 'Opus 5');
-  DevChat._onModelPicked('claude-fable-5-1');
+test('the direct picker still follows the selection without a caption to update', async () => {
+  const { DevChat, view } = render({ selected: 'claude-opus-5-5' });
+  assert.equal(view().models.selected, 'anthropic:claude-opus-5-5');
+  await DevChat._onModelPicked('anthropic:claude-fable-5-1');
   assert.equal(DevChat.selectedModel, 'claude-fable-5-1');
-  assert.equal(view().models.selected, 'claude-fable-5-1');
-  assert.equal(view().models.selectedLabel, 'Fable 5.1');
+  assert.equal(view().models.selected, 'anthropic:claude-fable-5-1');
 });
 
 test('the Fable option owns difficult coding without displacing Opus as the general pick', () => {
@@ -547,38 +667,215 @@ test('the Fable option owns difficult coding without displacing Opus as the gene
   const { DevChat } = makeHarness();
   const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
   assert.equal(text('claude-fable-5-1'), 'Fable 5.1: design, taste, and difficult coding');
-  assert.notEqual(text('claude-opus-5'), 'Opus 5: big or tricky coding');
-  assert.equal(text('claude-opus-5'), 'Opus 5: general coding work');
+  assert.notEqual(text('claude-opus-5-5'), 'Opus 5.5: big or tricky coding');
+  assert.equal(text('claude-opus-5-5'), 'Opus 5.5: general coding work');
 });
 
 // ── 4. missing guidance degrades, never crashes ─────────────────────
 
 test('a model with no guidance renders a bare label', () => {
-  // Since #1589 every composer option is a bare label; what this still pins
-  // is that a meta with no `changeSize` reaches the picker at all rather
-  // than rendering an empty option, and that no caption comes back with it.
-  const models = { 'claude-opus-5': { label: 'Opus 5' } };
+  // Missing editorial guidance must still leave a useful model name rather
+  // than an empty option. #2569: the label is the name alone.
+  const models = { 'claude-opus-5-5': { label: 'Opus 5.5' } };
   const { html, view } = render({ models });
 
-  assert.ok(html.includes('<span class="dc-model-name">Opus 5</span>'),
-    'expected the bare label on the closed control');
-  assert.deepEqual(view().models.options, [
-    { id: 'claude-opus-5', label: 'Opus 5', blurb: '' }]);
+  assert.ok(html.includes('>Opus 5.5<'), 'expected the model name in the control');
+  const direct = view().models.options.filter((o) => o.value.startsWith('anthropic:'));
+  assert.deepEqual(direct, [{
+    value: 'anthropic:claude-opus-5-5',
+    label: 'Opus 5.5',
+    title: 'Runs on the platform Claude allowance, or your own Anthropic key',
+  }]);
   assert.ok(!html.includes('best for'));
 });
 
 test('an option with no label at all falls back to the model id', () => {
   // The composer reads `meta.label` directly now instead of going through
   // modelOptionText, so its own empty case has to be its own.
-  const { html } = render({ models: { 'claude-opus-5': {} } });
-  assert.ok(html.includes('<span class="dc-model-name">claude-opus-5</span>'),
-    'an id is a worse name than "Opus 5" and a much better one than nothing');
+  const { html } = render({ models: { 'claude-opus-5-5': {} } });
+  assert.ok(html.includes('>claude-opus-5-5<'),
+    'an id is a worse name than "Opus 5.5" and a much better one than nothing');
 });
 
 test('a garbage MODELS entry does not throw the whole chat view', () => {
   assert.doesNotThrow(() => {
-    render({ models: { 'claude-opus-5': { label: 'Opus 5', changeSize: null } } });
+    render({ models: { 'claude-opus-5-5': { label: 'Opus 5.5', changeSize: null } } });
   });
+});
+
+// ── #2807: no caption under the picker, even once the notes land ────
+
+test('no caption renders under the picker when the model notes have loaded (#2807)', () => {
+  const h = makeHarness();
+  h.DevChat.MODELS = guidanceMap();
+  h.DevChat.selectedModel = 'claude-opus-5-5';
+  h.DevChat._modelPickerData = pickerData();
+  h.DevChat._currentVenueId = () => 'usernode-claude';
+  // The state #2570 painted a caption from: the notes table has landed.
+  h.DevChat._modelNotes = {
+    typicalChange: { inputTokens: 2_500_000, outputTokens: 120_000 },
+    models: {
+      'claude-opus-5-5': { note: 'general coding work', estimateCents: 1240 },
+      'z-ai/glm-5.3-flash': { note: 'fast, inexpensive everyday coding', estimateCents: 30 },
+    },
+  };
+  h.DevChat.renderChatView();
+  const html = h.composer.html();
+  assert.ok(!html.includes('dc-model-note'), 'the caption element is gone');
+  assert.ok(!html.includes('(estimate)'), 'and so is its labelled sentence');
+  assert.equal(h.composer.state().models.note, undefined, 'the view no longer carries one');
+  // The options keep their short note and price.
+  const opus = h.composer.state().models.options
+    .find((o) => o.value === 'anthropic:claude-opus-5-5');
+  assert.equal(opus.label, 'Opus 5.5 · general coding work · about $12.40 for a typical change');
+});
+
+// ── #2812: the picker stays live during a turn ──────────────────────
+
+function midTurn(session) {
+  const h = render({ session });
+  h.DevChat.isStreaming = true;
+  h.DevChat._setStreamingUI(true);
+  const posts = [];
+  h.sandbox.fetch = async (url, init) => {
+    posts.push({ url, body: JSON.parse(init.body) });
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ session: { ...h.DevChat.currentSession, ...posts.at(-1).body.session } }),
+    };
+  };
+  return { ...h, posts };
+}
+
+test('mid-turn, the picker is enabled (#2812)', () => {
+  const h = midTurn({ id: 7, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' });
+  assert.equal(h.view().models.changeDisabled, false);
+  assert.match(h.composer.html(), /<select[^>]*id="dc-model-select"(?![^>]*disabled)/);
+});
+
+test('an OpenRouter pick mid-turn is staged, hinted, and applied when the turn ends (#2812)', async () => {
+  const h = midTurn({ id: 7, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' });
+  await h.DevChat._onModelPicked('openrouter:anthropic/claude-sonnet-4.5');
+
+  assert.equal(h.posts.length, 0, 'nothing reaches reset-agent-context while the turn runs');
+  assert.equal(h.DevChat.currentSession.agent_model, 'z-ai/glm-5.3-flash',
+    'the running turn keeps its model');
+  assert.equal(h.view().models.selected, 'openrouter:anthropic/claude-sonnet-4.5',
+    'the picker shows what the next turn will use');
+  assert.equal(h.view().models.pendingNextTurn, true);
+  assert.match(h.composer.html(), /id="dc-model-pending"[^>]*>applies next turn</);
+
+  // The turn ends.
+  h.DevChat.isStreaming = false;
+  assert.equal(await h.DevChat._applyStagedPick(), true);
+  assert.equal(h.posts.length, 1);
+  assert.match(h.posts[0].url, /\/api\/sessions\/7\/reset-agent-context$/);
+  assert.deepEqual(h.posts[0].body, {
+    backend: 'codex_openrouter', model: 'anthropic/claude-sonnet-4.5', reasoningEffort: 'high',
+  });
+  assert.equal(h.view().models.pendingNextTurn, false, 'the hint clears once applied');
+  assert.doesNotMatch(h.composer.html(), /dc-model-pending/);
+});
+
+test('picking the running model again mid-turn un-stages the change (#2812)', async () => {
+  const h = midTurn({ id: 7, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' });
+  await h.DevChat._onModelPicked('openrouter:anthropic/claude-sonnet-4.5');
+  await h.DevChat._onModelPicked('openrouter:z-ai/glm-5.3-flash');
+  assert.equal(h.view().models.pendingNextTurn, false);
+  assert.equal(h.view().models.selected, 'openrouter:z-ai/glm-5.3-flash');
+  h.DevChat.isStreaming = false;
+  await h.DevChat._applyStagedPick();
+  assert.equal(h.posts.length, 0, 'no switch is sent for a no-op');
+});
+
+test('an Anthropic pick mid-turn on a Claude session needs no server call (#2812)', async () => {
+  const h = midTurn({ id: 7, branch_name: 'dev/x' });
+  await h.DevChat._onModelPicked('anthropic:claude-fable-5-1');
+  assert.equal(h.DevChat.selectedModel, 'claude-fable-5-1', 'the next send carries it');
+  assert.equal(h.view().models.pendingNextTurn, true, 'but the running turn does not');
+  h.DevChat.isStreaming = false;
+  assert.equal(await h.DevChat._applyStagedPick(), true);
+  assert.equal(h.posts.length, 0);
+  assert.equal(h.view().models.pendingNextTurn, false);
+});
+
+test('an Anthropic pick mid-turn on an OpenRouter session switches the backend after the turn (#2812)', async () => {
+  const h = midTurn({ id: 7, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' });
+  await h.DevChat._onModelPicked('anthropic:claude-opus-5-5');
+  assert.equal(h.view().models.selected, 'anthropic:claude-opus-5-5');
+  assert.equal(h.posts.length, 0);
+  h.DevChat.isStreaming = false;
+  await h.DevChat._applyStagedPick();
+  assert.deepEqual(h.posts.map((p) => p.body), [
+    { backend: 'claude_code', model: null, reasoningEffort: null },
+  ]);
+});
+
+test('a staged pick survives a busy server and stays hinted (#2812)', async () => {
+  const h = midTurn({ id: 7, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' });
+  await h.DevChat._onModelPicked('openrouter:anthropic/claude-sonnet-4.5');
+  let calls = 0;
+  const toasts = [];
+  h.kit.toast = (msg) => toasts.push(msg);
+  h.sandbox.fetch = async () => {
+    calls += 1;
+    return {
+      ok: false, status: 409,
+      json: async () => ({ error: 'Session is busy; stop the current turn first.' }),
+    };
+  };
+  // The harness's timers never fire; this one has to, for the retry.
+  h.sandbox.setTimeout = (fn) => { Promise.resolve().then(fn); return 0; };
+  h.DevChat.isStreaming = false;
+  assert.equal(await h.DevChat._applyStagedPick({ attempts: 2, delayMs: 0 }), false);
+  assert.equal(calls, 2, 'retried');
+  assert.deepEqual(toasts, [], 'a busy answer is not an error to show');
+  assert.equal(h.view().models.pendingNextTurn, true, 'the next send tries again');
+});
+
+test('a staged pick belongs to its session (#2812)', async () => {
+  const h = midTurn({ id: 7, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' });
+  await h.DevChat._onModelPicked('openrouter:anthropic/claude-sonnet-4.5');
+  h.DevChat.currentSession = { id: 8, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' };
+  h.DevChat._publishComposer();
+  assert.equal(h.view().models.pendingNextTurn, false, 'another session shows no hint');
+  h.DevChat.isStreaming = false;
+  await h.DevChat._applyStagedPick();
+  assert.equal(h.posts.length, 0, 'and is never switched by it');
+});
+
+test('the catalog opens mid-turn and its pick is staged (#2812)', async () => {
+  const h = midTurn({ id: 7, agent_backend: 'codex_openrouter', agent_model: 'z-ai/glm-5.3-flash' });
+  h.DevChat._chooseCodingAgent = async () => ({
+    backend: 'codex_openrouter', model: 'deepseek/deepseek-v4-flash', reasoningEffort: null,
+  });
+  h.DevChat._ensureModelPickerData = async () => h.DevChat._modelPickerData;
+  await h.DevChat._onModelPicked('openrouter:__add_more__');
+  assert.equal(h.posts.length, 0);
+  assert.equal(h.view().models.selected, 'openrouter:deepseek/deepseek-v4-flash');
+  assert.ok(h.view().models.options.some((o) => o.value === 'openrouter:deepseek/deepseek-v4-flash'),
+    'the staged value is a real option, so the closed control can show it');
+  h.DevChat.isStreaming = false;
+  await h.DevChat._applyStagedPick();
+  assert.deepEqual(h.posts.map((p) => p.body.model), ['deepseek/deepseek-v4-flash']);
+});
+
+// ── #2818: a stored Opus 5 pick lands on Opus 5.5 ───────────────────
+
+test('a stored Opus 5 preference resolves to Opus 5.5 and is rewritten (#2818)', () => {
+  const h = makeHarness();
+  h.DevChat.MODELS = guidanceMap();
+  h.sandbox.localStorage.setItem('usernode:dc:model', 'claude-opus-5');
+  h.DevChat.selectedModel = 'claude-opus-5';
+  h.DevChat._defaultModel = 'claude-sonnet-5';
+  h.DevChat._sanitizeStoredModel();
+  assert.equal(h.DevChat.selectedModel, 'claude-opus-5-5',
+    'by name, not by falling through to whatever the default is');
+  assert.equal(h.sandbox.localStorage.getItem('usernode:dc:model'), 'claude-opus-5-5');
+  const server = require('../src/services/models');
+  assert.deepEqual({ ...h.DevChat.RETIRED_MODELS }, { ...server.RETIRED_MODELS },
+    'the client and server retirement maps agree');
 });
 
 // ── 5. copy-drift guard ─────────────────────────────────────────────

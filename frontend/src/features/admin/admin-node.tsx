@@ -387,17 +387,17 @@ function NodeSection() {
 
       <div className={`${AdminUI.card} p-6 mb-4`}>
         <h3 className={`${AdminUI.cardTitle} mb-3`}>Node</h3>
-        {snap ? <NodeCard n={snap.node} /> : <div id="admin-node-body" className={NodeUI.empty}>Loading…</div>}
+        {snap ? <NodeCard n={snap.node} /> : <div id="admin-node-body" className={AdminUI.loading}>Loading…</div>}
       </div>
 
       <div className={`${AdminUI.card} p-6 mb-4`}>
         <h3 className={`${AdminUI.cardTitle} mb-3`}>Explorer</h3>
-        {snap ? <ExplorerCard ex={snap.explorer} /> : <div id="admin-node-explorer-body" className={NodeUI.empty}>Loading…</div>}
+        {snap ? <ExplorerCard ex={snap.explorer} /> : <div id="admin-node-explorer-body" className={AdminUI.loading}>Loading…</div>}
       </div>
 
       <div className={`${AdminUI.card} p-6 mb-4`}>
         <h3 className={`${AdminUI.cardTitle} mb-3`}>Chain-dependent services</h3>
-        {snap ? <ServicesCard svc={snap.services || {}} /> : <div id="admin-node-services-body" className={NodeUI.empty}>Loading…</div>}
+        {snap ? <ServicesCard svc={snap.services || {}} /> : <div id="admin-node-services-body" className={AdminUI.loading}>Loading…</div>}
       </div>
 
       <div className={`${NodeUI.small} mt-[18px] text-center`}>

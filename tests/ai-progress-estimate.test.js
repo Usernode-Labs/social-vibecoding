@@ -290,8 +290,9 @@ test('/status response carries the estimate for the polling fallback', () => {
   // invariant is that `estimate` ships alongside the polling basics, not
   // the order they're written in. The window was 200 until #907 added
   // runner/runnerLabel/localAgent and pushed the object past it; widened
-  // rather than trimmed, since the length was never the point.
-  const payload = sessions.match(/res\.json\(\{\s*\n?\s*busy,[\s\S]{0,400}?\}\);/);
+  // rather than trimmed, since the length was never the point. Widened
+  // again for #3177's optional `delivery` key.
+  const payload = sessions.match(/res\.json\(\{\s*\n?\s*busy,[\s\S]{0,600}?\}\);/);
   assert.ok(payload, 'found the /status res.json payload');
   for (const key of ['busy', 'progress', 'phase', 'estimate']) {
     assert.match(payload[0], new RegExp(`\\b${key}\\b`), `/status payload must include ${key}`);
@@ -585,7 +586,9 @@ test('#323: _applyEstimate stashes a pending estimate instead of dropping it', (
   const body = devChat.slice(at, devChat.indexOf('\n  },', at));
   assert.match(body, /target\._estimate = /, 'the guess is set on the row that owns it');
   assert.match(body, /target\._countdownTo = nextTarget;/, 'and so is its anchor');
-  assert.match(body, /DevChat\._publishTranscript\(\);/, 'and the row is republished');
+  // Coalesced to one publish per frame with the progress lines it rides
+  // beside (tests/dev-chat-smoothness.test.js pins the coalescing).
+  assert.match(body, /DevChat\._publishTranscriptSoon\(\);/, 'and the row is republished');
   assert.doesNotMatch(devChat, /\.dc-cc-estimate['"]\)/,
     'no path may resolve an estimate span by selector any more');
 });

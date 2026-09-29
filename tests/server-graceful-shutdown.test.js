@@ -192,6 +192,98 @@ test('cleanup is idempotent — SIGTERM then SIGINT must not tear down twice', a
   }
 });
 
+test('shutdown marks an unfinished visual replay with its actual interruption reason before closing the pool', async () => {
+  const { server, restore } = loadServer();
+  const orchestrator = require('../src/services/visual-evidence-orchestrator');
+  const evidenceState = require('../src/services/visual-evidence-state');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = {
+    keys: orchestrator.inFlightSnapshot, ids: orchestrator.inFlightRunSnapshot,
+    transition: evidenceState.transitionRun, waitFor: lifecycle.waitFor,
+  };
+  const runId = 'a'.repeat(32);
+  const order = [];
+  orchestrator.inFlightSnapshot = () => ['42:head'];
+  orchestrator.inFlightRunSnapshot = () => [runId];
+  lifecycle.waitFor = async () => false;
+  evidenceState.transitionRun = async (_pool, id, next, patch) => {
+    order.push('marked');
+    assert.equal(id, runId);
+    assert.equal(next, 'failed');
+    assert.equal(patch.failureCode, 'evidence_run_interrupted');
+    assert.match(patch.failureReason, /platform process shut down/);
+  };
+  try {
+    const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
+    await runCleanup(server, { listener: fakeListener(), pool });
+    assert.deepEqual(order, ['marked', 'poolEnd']);
+  } finally {
+    orchestrator.inFlightSnapshot = saved.keys;
+    orchestrator.inFlightRunSnapshot = saved.ids;
+    evidenceState.transitionRun = saved.transition;
+    lifecycle.waitFor = saved.waitFor;
+    restore();
+  }
+});
+
+test('shutdown marks the staging builds it is killing, before closing the pool', async () => {
+  // A deploy's SIGTERM kills the staging builds this process runs, and
+  // nothing on the cluster outlives a build (proposal 5125, 2026-09-26). The
+  // mark is what lets the next leader re-drive the run as it takes over.
+  const { server, restore } = loadServer();
+  const staging = require('../src/services/staging');
+  const recovery = require('../src/services/staging-recovery');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = { ids: staging.inFlightBuildSessionIds, mark: recovery.markInterruptedBuilds, waitFor: lifecycle.waitFor };
+  const order = [];
+  staging.inFlightBuildSessionIds = () => [5125, 5126];
+  lifecycle.waitFor = async () => true;
+  recovery.markInterruptedBuilds = async (pool, ids) => {
+    order.push('marked');
+    assert.ok(pool, 'marked through the shutdown pool');
+    assert.deepEqual(ids, [5125, 5126]);
+    return [5125];
+  };
+  try {
+    const pool = fakePool({ endImpl: async () => { order.push('poolEnd'); } });
+    await runCleanup(server, { listener: fakeListener(), pool });
+    assert.deepEqual(order, ['marked', 'poolEnd']);
+    const line = logs.find((l) => l.msg === 'Marked interrupted staging builds for re-drive on shutdown');
+    assert.deepEqual(line.data, { building: [5125, 5126], marked: 1, timedOut: false });
+  } finally {
+    staging.inFlightBuildSessionIds = saved.ids;
+    recovery.markInterruptedBuilds = saved.mark;
+    lifecycle.waitFor = saved.waitFor;
+    restore();
+  }
+});
+
+test('a failing build mark is logged and never holds the exit; no build, no write', async () => {
+  const { server, restore } = loadServer();
+  const staging = require('../src/services/staging');
+  const recovery = require('../src/services/staging-recovery');
+  const lifecycle = require('../src/services/lifecycle');
+  const saved = { ids: staging.inFlightBuildSessionIds, mark: recovery.markInterruptedBuilds, waitFor: lifecycle.waitFor };
+  lifecycle.waitFor = async () => true;
+  let calls = 0;
+  try {
+    staging.inFlightBuildSessionIds = () => [5125];
+    recovery.markInterruptedBuilds = async () => { calls += 1; throw new Error('database gone'); };
+    const order = await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+    assert.ok(order.includes('exit:0'));
+    assert.ok(logs.some((l) => l.level === 'warn' && l.msg === 'Could not mark interrupted staging builds'));
+
+    staging.inFlightBuildSessionIds = () => [];
+    await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+    assert.equal(calls, 1, 'nothing building, nothing marked');
+  } finally {
+    staging.inFlightBuildSessionIds = saved.ids;
+    recovery.markInterruptedBuilds = saved.mark;
+    lifecycle.waitFor = saved.waitFor;
+    restore();
+  }
+});
+
 test('cleanup survives a listener that throws on close', async () => {
   const { server, logs, restore } = loadServer();
   try {
@@ -223,6 +315,132 @@ test('SIGTERM and SIGINT are both wired to cleanup', () => {
     assert.ok(process.listeners('SIGTERM').length > 0, 'SIGTERM must have a handler');
     assert.ok(process.listeners('SIGINT').length > 0, 'SIGINT must have a handler');
     assert.equal(typeof server.cleanup, 'function');
+  } finally {
+    restore();
+  }
+});
+
+// ── #2545: the process being replaced tells its tabs where traffic went ──
+//
+// At SIGTERM during a rollout, the build this deployment is moving to is
+// already on record (deploy-status reads it for the version row), and the
+// listener has just closed — so nothing a tab fetches on hearing this can be
+// answered by the build being retired. cleanup() reads the target and, if it
+// is another build, pushes `platform_version` to every open events socket.
+// Modelled through the same seam as the rest of this file: deploy-status
+// and ws are the shared module instances server.js holds, stubbed in place.
+
+const deployStatus = require('../src/services/deploy-status');
+const wsService = require('../src/services/ws');
+const OWN = 'a'.repeat(40);
+const NEXT = 'b'.repeat(40);
+
+/** `gitSha: null` runs with GIT_SHA unset. */
+function withRollout({ gitSha = OWN, read } = {}, run) {
+  const savedSha = process.env.GIT_SHA;
+  const savedRead = deployStatus.read;
+  const savedPush = wsService.pushPlatformVersion;
+  const pushes = [];
+  if (gitSha === null) delete process.env.GIT_SHA;
+  else process.env.GIT_SHA = gitSha;
+  deployStatus.read = read;
+  wsService.pushPlatformVersion = (payload) => { pushes.push(payload); return 2; };
+  return Promise.resolve()
+    .then(() => run(pushes))
+    .finally(() => {
+      if (savedSha === undefined) delete process.env.GIT_SHA;
+      else process.env.GIT_SHA = savedSha;
+      deployStatus.read = savedRead;
+      wsService.pushPlatformVersion = savedPush;
+    });
+}
+
+test('a rollout SIGTERM announces the successor build to open sockets, after the listener closes', async () => {
+  const { server, logs, restore } = loadServer();
+  try {
+    const seq = [];
+    const listener = {
+      close(cb) { seq.push('listenerClose'); if (cb) cb(); },
+      closeIdleConnections() {},
+      closeAllConnections() {},
+    };
+    await withRollout({ read: async () => ({ deploying: true, sha: NEXT }) }, async (pushes) => {
+      wsService.pushPlatformVersion = (payload) => { seq.push('push'); pushes.push(payload); return 2; };
+      const order = await runCleanup(server, { listener, pool: fakePool() });
+      assert.deepEqual(order, ['exit:0']);
+      assert.deepEqual(pushes, [{ sha: NEXT, reason: 'rollout' }],
+        'the tabs are told the build their requests land on now');
+      assert.deepEqual(seq, ['listenerClose', 'push'],
+        'told only once nothing they fetch next can reach this process');
+      assert.ok(logs.some((l) => l.msg === 'Announced successor build to open sockets'
+        && l.data.sha === NEXT && l.data.sockets === 2));
+    });
+  } finally {
+    restore();
+  }
+});
+
+test('a SIGTERM that is not a rollout says nothing', async () => {
+  // Node drain, eviction, crash restart: the deployment still targets the
+  // build this process is. Announcing it would only make every tab re-ask
+  // for a build it already has.
+  const { server, restore } = loadServer();
+  try {
+    await withRollout({ read: async () => ({ deploying: false, sha: OWN }) }, async (pushes) => {
+      await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+      assert.deepEqual(pushes, []);
+    });
+  } finally {
+    restore();
+  }
+});
+
+test('a process with no build of its own does not look', async () => {
+  // Local dev, and the staging previews: GIT_SHA unset or `dev`. There is
+  // no successor to name, and nothing must be read on the way out.
+  const { server, restore } = loadServer();
+  try {
+    for (const gitSha of [null, 'dev']) {
+      let reads = 0;
+      await withRollout({ gitSha, read: async () => { reads += 1; return { sha: NEXT }; } }, async (pushes) => {
+        await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+        assert.deepEqual(pushes, []);
+        assert.equal(reads, 0);
+      });
+    }
+  } finally {
+    restore();
+  }
+});
+
+test('a target that cannot be read — unreachable, hung or failed — costs nothing but a log line', async () => {
+  const { server, logs, restore } = loadServer();
+  try {
+    // No answer: the docker path with no marker, or a staging preview.
+    await withRollout({ read: async () => null }, async (pushes) => {
+      await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+      assert.deepEqual(pushes, []);
+    });
+    // A rejection.
+    await withRollout({ read: async () => { throw new Error('apiserver away'); } }, async (pushes) => {
+      const order = await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+      assert.deepEqual(order, ['exit:0']);
+      assert.deepEqual(pushes, []);
+      assert.ok(logs.some((l) => l.msg === 'Successor build announcement failed' && /apiserver away/.test(l.data.err)));
+    });
+    // A read that never settles is raced against SUCCESSOR_ANNOUNCE_TIMEOUT_MS,
+    // which sits inside the drain window: the announcement is awaited
+    // alongside the drain, so it can never push exit past the budget the
+    // grace test pins.
+    assert.ok(server.SUCCESSOR_ANNOUNCE_TIMEOUT_MS <= server.DRAIN_TIMEOUT_MS);
+    await withRollout({ read: () => new Promise(() => {}) }, async (pushes) => {
+      const startedAt = Date.now();
+      const order = await runCleanup(server, { listener: fakeListener(), pool: fakePool() });
+      assert.deepEqual(order, ['exit:0']);
+      assert.deepEqual(pushes, []);
+      assert.ok(Date.now() - startedAt < server.DRAIN_TIMEOUT_MS,
+        'a hung read is abandoned inside the drain window, not waited on');
+    });
   } finally {
     restore();
   }

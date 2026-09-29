@@ -1,17 +1,6 @@
-// Regression test for the staging-clone scrub path (src/services/db-manager.js
-// scrubPrivateColumns). Production incident: onchain_accounts.registration_code
-// is NOT NULL UNIQUE, and the old code wrote the same literal
-// '__staging_redacted__' constant into every row, so the second row's UPDATE
-// violated the UNIQUE constraint and the whole staging clone failed closed.
-//
-// The fix derives a per-row-unique placeholder from ctid, sized to the
-// column's max length. This test doesn't touch real docker/postgres — it
-// stubs child_process (same seam/pattern as tests/docker-init-flag.test.js)
-// and asserts the exact UPDATE SQL scrubPrivateColumns generates for a
-// NOT NULL UNIQUE VARCHAR(64) column and for an unbounded TEXT column.
-//
-// The SQL itself (ctid-uniqueness, left()-truncation to fit) was additionally
-// verified by hand against a real Postgres instance during development.
+// The template and its clones are scrubbed independently. A ctid-only
+// placeholder can collide with an existing placeholder on a second scrub,
+// so every pass reserves a new namespace before updating NOT NULL columns.
 //
 // Run with: node --test tests/db-manager-scrub.test.js
 
@@ -25,7 +14,7 @@ function stub(id, exports) {
 // scrubPrivateColumns issues one discovery SELECT, then one UPDATE per
 // discovered column. `discoveryRows` is the canned psql -At output (one
 // line per column) for the discovery query.
-function loadDbManager(discoveryRows) {
+function loadDbManager(discoveryRows, occupiedAnswers = []) {
   const originalDatabaseUrl = process.env.DATABASE_URL;
   process.env.DATABASE_URL = 'postgres://usernode:test@db.example.test:5432/usernode';
   const ids = {
@@ -37,10 +26,15 @@ function loadDbManager(discoveryRows) {
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const updateCalls = [];
+  const reservationCalls = [];
   const fakeExecFile = (cmd, args) => {
     const sql = args[args.indexOf('-c') + 1];
     if (/col_description/.test(sql)) {
       return Promise.resolve({ stdout: discoveryRows.join('\n') + '\n', stderr: '' });
+    }
+    if (/SELECT EXISTS/.test(sql)) {
+      reservationCalls.push(sql);
+      return Promise.resolve({ stdout: `${occupiedAnswers.shift() || 'f'}\n`, stderr: '' });
     }
     if (/^UPDATE/.test(sql)) {
       updateCalls.push(sql);
@@ -62,21 +56,21 @@ function loadDbManager(discoveryRows) {
     if (originalDatabaseUrl === undefined) delete process.env.DATABASE_URL;
     else process.env.DATABASE_URL = originalDatabaseUrl;
   };
-  return { dbManager, updateCalls, restore };
+  return { dbManager, updateCalls, reservationCalls, restore };
 }
 
-test('scrubPrivateColumns writes a per-row-unique, length-capped placeholder for a NOT NULL UNIQUE column', async () => {
+test('scrubPrivateColumns reserves a fresh namespace and keeps the entire per-row suffix', async () => {
   // Mirrors public.onchain_accounts.registration_code: VARCHAR(64) NOT NULL UNIQUE.
-  const { dbManager, updateCalls, restore } = loadDbManager([
+  const { dbManager, updateCalls, reservationCalls, restore } = loadDbManager([
     'public.onchain_accounts|registration_code|t|64',
   ]);
   try {
     const result = await dbManager.scrubPrivateColumns('app_demo_staging_x_abc123');
     assert.equal(updateCalls.length, 1);
-    assert.equal(
-      updateCalls[0],
-      "UPDATE public.onchain_accounts SET registration_code = left('__staging_redacted__' || ctid::text, 64)"
-    );
+    const match = /^UPDATE public\.onchain_accounts SET registration_code = '(__staging_redacted__[0-9a-f]{16}:)' \|\| ctid::text$/.exec(updateCalls[0]);
+    assert.ok(match, 'the unique ctid suffix is never truncated');
+    assert.ok(match[1].length + 18 <= 64);
+    assert.match(reservationCalls[0], /SELECT EXISTS \(SELECT 1 FROM public\.onchain_accounts WHERE left\(registration_code::text, 37\) = '__staging_redacted__[0-9a-f]{16}:'\)/);
     assert.deepEqual(result.scrubbed, ['public.onchain_accounts.registration_code']);
   } finally {
     restore();
@@ -90,10 +84,49 @@ test('scrubPrivateColumns omits the length cap for an unbounded NOT NULL column'
   try {
     await dbManager.scrubPrivateColumns('app_demo_staging_x_abc123');
     assert.equal(updateCalls.length, 1);
-    assert.equal(
-      updateCalls[0],
-      "UPDATE public.some_table SET some_col = '__staging_redacted__' || ctid::text"
-    );
+    assert.match(updateCalls[0], /^UPDATE public\.some_table SET some_col = '__staging_redacted__[0-9a-f]{16}:' \|\| ctid::text$/);
+  } finally {
+    restore();
+  }
+});
+
+test('an occupied namespace is rejected before updating the column', async () => {
+  const { dbManager, updateCalls, reservationCalls, restore } = loadDbManager([
+    'public.onchain_accounts|registration_code|t|64',
+  ], ['t', 'f']);
+  try {
+    await dbManager.scrubPrivateColumns('app_demo_staging_x_abc123');
+    assert.equal(reservationCalls.length, 2);
+    assert.equal(updateCalls.length, 1);
+    const firstPrefix = reservationCalls[0].match(/= '([^']+)'/)[1];
+    const secondPrefix = reservationCalls[1].match(/= '([^']+)'/)[1];
+    assert.notEqual(firstPrefix, secondPrefix);
+    assert.ok(updateCalls[0].includes(`'${secondPrefix}'`));
+  } finally {
+    restore();
+  }
+});
+
+test('a VARCHAR(32) private code uses a compact, still unique namespace', async () => {
+  const { dbManager, updateCalls, restore } = loadDbManager([
+    'public.short_codes|code|t|32',
+  ]);
+  try {
+    await dbManager.scrubPrivateColumns('app_demo_staging_x_abc123');
+    assert.match(updateCalls[0], /^UPDATE public\.short_codes SET code = '~[0-9a-f]{8}:' \|\| ctid::text$/);
+  } finally {
+    restore();
+  }
+});
+
+test('a short NOT NULL column fails closed before a truncated value could collide', async () => {
+  const { dbManager, updateCalls, restore } = loadDbManager([
+    'public.short_codes|code|t|20',
+  ]);
+  try {
+    await assert.rejects(dbManager.scrubPrivateColumns('app_demo_staging_x_abc123'),
+      /max length 20 cannot hold unique redaction values/);
+    assert.deepEqual(updateCalls, []);
   } finally {
     restore();
   }

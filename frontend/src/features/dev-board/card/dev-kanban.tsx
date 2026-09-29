@@ -29,14 +29,17 @@
  * is the COLUMN's state — one per column, so a board with four open cards
  * is still four columns of rows — and it lives in the component, so the
  * WS-driven republishes that repaint the board leave it alone. The open card
- * is the card the column always drew, with the Workshop's "Open card" toggle
- * as the last pill of its action band (the facts-line seat moves the actions
- * up beside it, which a column cannot hold) and the item's own page one link
- * below. `?cards=open` draws every card unfolded: the board as it was, and
- * the state the declared checks that read a card's anatomy run in.
+ * is the card the column always drew, with the "Open card" pill as the last
+ * pill of its action band (the facts-line seat moves the actions up beside
+ * it, which a column cannot hold), leading to the item's own page — the
+ * same link with the same label the Workshop's card carries since #1884
+ * round two. `?cards=open` draws every card unfolded: the board as it was,
+ * and the state the declared checks that read a card's anatomy run in.
  */
 
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+
+import { SECTION_TAB_ACTIVE, SECTION_TAB_INACTIVE } from '@/components/ui/tabs';
 
 import { useNarrowViewport } from '../../../lib/use-narrow';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -52,14 +55,37 @@ function selectTab(key: string): void {
   if (av && typeof av._onKanbanTabSelect === 'function') av._onKanbanTabSelect(key);
 }
 
+/*
+ * One tab — the language's segmented control since #2441, not the underline
+ * row it shipped as.
+ *
+ * ── Why the classes and not <TabsTrigger> ─────────────────────────────
+ *
+ * The SELECTED TREATMENT comes from @/components/ui/tabs.tsx, so this strip
+ * and the Leaderboard's section strip invert the same way. The COMPONENT does
+ * not, for two reasons that both point the same direction:
+ *
+ * - `SECTION_TAB_BASE`'s geometry is a single line of text 32px tall. These
+ *   tabs are two lines (title over count) at a 44px minimum, four of them
+ *   sharing a phone's width — a shape that primitive does not spell.
+ * - `<TabsTrigger>` renders `aria-current` and cannot be talked out of it.
+ *   This strip is a real `role="tablist"` whose tabs say `aria-selected` and
+ *   point at their panel with `aria-controls`; tabs.tsx's own header notes
+ *   that `aria-current` is the OTHER convention, and a button wearing both
+ *   states its selection twice in two vocabularies. dapp.json's
+ *   `#dev-kanban-tabs [data-kanban-tab="…"]` checks and three suites here
+ *   read these attributes, so every one of them is byte-identical to what it
+ *   was: only the class strings changed.
+ */
 function Tab({ col, active, loading }: { col: KanbanColView; active: boolean; loading: boolean }): ReactNode {
   const cls = 'dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 flex flex-col items-center justify-center '
-    + 'border-b-2 transition-colors '
-    + (active
-      ? 'border-violet-500 text-violet-700 font-semibold dark:text-violet-400'
-      : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200');
+    + 'rounded-full font-semibold transition-colors '
+    + (active ? SECTION_TAB_ACTIVE : SECTION_TAB_INACTIVE);
+  // The count rides the tab's own ground: page-coloured ink on the selected
+  // fill, the zinc ladder off it (a zero column stays the lightest of the
+  // three, which is how an empty column reads as empty at a glance).
   const countCls = 'font-mono text-[11px] leading-tight '
-    + (active ? 'text-violet-700 dark:text-violet-400' : (col.count ? 'text-zinc-500 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
+    + (active ? 'text-white dark:text-zinc-900' : (col.count ? 'text-zinc-500 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-500'));
   return (
     <button
       type="button"
@@ -89,6 +115,13 @@ function Column(
   // not in the view model.
   const [openKey, setOpenKey] = useState<string | null>(null);
   const hostRef = useRef<HTMLDivElement>(null);
+  const statusTone = col.status?.tone === 'blocked'
+    ? 'text-red-700 dark:text-red-300'
+    : col.status?.tone === 'progress'
+      ? 'text-violet-700 dark:text-violet-300'
+      : col.status?.tone === 'ok'
+        ? 'text-emerald-700 dark:text-emerald-300'
+        : 'text-zinc-500 dark:text-zinc-400';
   // A merged card's kudos slot is a legacy-filled host (`_fillKudosHosts`,
   // run by app-view.js after every publish). A fold happens BETWEEN
   // publishes, so the slot a card just unfolded with would stay empty until
@@ -101,8 +134,18 @@ function Column(
   // whole on its first frame, and the band's fold measurement (which
   // watches its own subtree) re-folds around the filled slot in the same
   // frame.
+  //
+  // The unfolded card's GitHub-comment slot is the same kind of host and is
+  // filled the same way (#1884, `_wireFeedComments`) — but wired from the
+  // BOARD, not from this column. That filler keeps ONE observer and replaces
+  // it on every call, so four columns wiring their own would leave only the
+  // last one watched; one call from `#dev-kanban` covers all four, and a
+  // fold only ever happens in one column at a time.
   useLayoutEffect(() => {
-    if (hostRef.current) callAppView('_fillKudosHosts', hostRef.current);
+    const host = hostRef.current;
+    if (!host) return;
+    callAppView('_fillKudosHosts', host);
+    callAppView('_wireFeedComments', host.closest('#dev-kanban') || host);
   }, [openKey, unfolded]);
   let cards: ReactNode;
   // Below 640px this column is `display:none` unless it is the active one
@@ -140,12 +183,14 @@ function Column(
               onToggle: () => setOpenKey((k) => (k === row.key ? null : row.key)),
               // "Open card" rides in the action band here, not on the facts
               // line: a column is too narrow for the actions that seat moves
-              // up beside it (fold.tsx).
+              // up beside it (fold.tsx). Where it LEADS is no longer a
+              // per-surface choice — the item's own page, on both — so there
+              // is nothing left to pass for that.
               detail: 'actions',
-              // And it is a link to the item's page, not the sections in
-              // place: a column is the wrong width for a ledger and a
-              // transcript, and the page is one tap away from here.
-              expand: 'page',
+              // No "Open session ›" line under a board card: app.css has no
+              // rule for `.dev-ws-sheet-actions` inside `#dev-kanban`, and a
+              // column is not where somebody goes looking for their session.
+              sessionLink: false,
             }}
           />
         ))}
@@ -168,6 +213,15 @@ function Column(
           ? <span className="text-zinc-500 dark:text-zinc-500 font-mono">{'· '}<CountSkeleton /></span>
           : <span className="text-zinc-500 dark:text-zinc-500 font-mono">{`· ${col.count}`}</span>}
       </div>
+      {!loading && col.status ? (
+        <div
+          data-kanban-col-status={col.key}
+          className={`text-[11px] leading-snug font-medium mb-2 px-0.5 ${statusTone}`}
+          title={col.status.title}
+        >
+          {col.status.text}
+        </div>
+      ) : null}
       {cards}
       {(!deferred && col.footer) ? <div className="mt-2"><FooterView f={col.footer} /></div> : null}
     </div>
@@ -182,11 +236,17 @@ export function DevKanban(): ReactNode {
   if (!v.cols.length) return null;
   return (
     <>
+      {/*
+          The raised white track of SECTION_TABS_LIST, laid out to SPAN the
+          phone rather than to hug its labels: four columns share this width
+          and each tab is `flex-1 basis-0`, so `flex` and not `inline-flex`.
+          The `border-b` rule it replaces is gone with the underline (#2441).
+      */}
       <div
         id="dev-kanban-tabs"
         role="tablist"
         aria-label="Board columns"
-        className="sm:hidden flex items-stretch gap-1 mb-2 border-b border-zinc-200 dark:border-zinc-800"
+        className="sm:hidden flex items-stretch gap-0.5 mb-2 rounded-full bg-white dark:bg-zinc-900 p-0.5"
       >
         {v.cols.map((col) => (
           <Tab key={col.key} col={col} active={col.key === v.activeTab} loading={!!v.loading} />

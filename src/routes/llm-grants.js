@@ -5,6 +5,7 @@ const { getPool } = require('../db/pool');
 const limits = require('../services/limits');
 const { invalidateGrant } = require('../middleware/app-llm-auth');
 const log = require('../services/logger');
+const appAccess = require('../services/app-access');
 
 // Grant management for app LLM access (issue #34). Mounted AFTER
 // authMiddleware — every route here is the signed-in user managing
@@ -22,15 +23,17 @@ async function grantCapacity(pool, userId) {
     [userId]
   );
   const hasApiKey = !!rows[0]?.anthropic_key_enc;
-  // #1788: the allowance is two caps now, and a user whose DAILY cap an
-  // admin switched off may still have a weekly one. Ask resolveCaps which
-  // apply rather than reading entitlement.limitCents alone, or that user
-  // could not grant an app any cap at all despite having credits.
+  // #1788 made the allowance two caps; #2571 leaves one, the weekly one,
+  // so that is the ceiling a per-app cap is carved out of. An account
+  // identity verification has granted nothing still gets nothing here —
+  // a weekly figure resolved from the tier default must not unlock what
+  // that gate exists to withhold (limits.isIdentityGated is the same
+  // question checkBudget asks before any window arithmetic).
   // This is only the validation ceiling — the weekly gate in checkBudget
   // is still what refuses the spend.
   const caps = limits.resolveCaps(entitlement);
-  const allowanceCents = caps.dailyApplies
-    ? caps.dailyLimitCents
+  const allowanceCents = limits.isIdentityGated(entitlement)
+    ? 0
     : (caps.weeklyApplies ? caps.weeklyLimitCents : 0);
   // An unverified user can still opt an app into their own key. Give that
   // path a conservative $10/day per-app ceiling even though their shared
@@ -43,8 +46,8 @@ async function grantCapacity(pool, userId) {
 }
 
 // Cap validation shared by create + update: a positive integer no
-// larger than the user's own effective daily limit (there is
-// deliberately no separate "app cap ceiling" — the user's daily
+// larger than the user's own effective allowance (there is
+// deliberately no separate "app cap ceiling" — the user's own
 // budget is the sane upper bound).
 async function validateCap(pool, userId, raw, capacity = null) {
   if (raw == null) return { capCents: null };
@@ -143,11 +146,13 @@ function llmGrantsRoutes(config) {
     }
 
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id, name, slug FROM apps WHERE slug = $1',
-        [appSlug]
+      // #2510: this route WRITES an LLM spend grant. Ungated, a signed-in
+      // stranger could create one against a private app they cannot see.
+      // `getAppForUser` returns null on denial, so it 404s like a slug that
+      // was never taken.
+      const app = await appAccess.getAppForUser(
+        pool, appSlug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, name`
       );
-      const app = appRows[0];
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       const capacity = await grantCapacity(pool, req.user.id);
@@ -303,11 +308,13 @@ function llmGrantsRoutes(config) {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
 
     try {
-      const { rows: appRows } = await pool.query(
-        'SELECT id, name, slug, manifest_snapshot FROM apps WHERE slug = $1',
-        [req.params.slug]
+      // #2510: ungated, this handed any signed-in stranger a private app's
+      // id and name plus its manifest `llm` block — the purpose string it
+      // shows in the consent dialog and its suggested daily cap.
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view',
+        `${appAccess.ACCESS_COLUMNS}, name, manifest_snapshot`
       );
-      const app = appRows[0];
       if (!app) return res.status(404).json({ error: 'App not found' });
 
       // Today's spend rides along (issue #655) so the shell can answer

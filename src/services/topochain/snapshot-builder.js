@@ -22,8 +22,39 @@
 //      ledger activity_type, weighted like any other.
 //   3. Canonical-only: there is no client-reported metrics leg yet, so
 //      the canonical_*/vrf_* column pairs carry the same figures.
-//   4. Events without an epoch range are skipped (no timestamp-mode
-//      scoring), reported as `missing_epoch_range`.
+//   4. An event without an epoch range cannot score blocks (there is no
+//      timestamp-mode scoring), so it is scored from the LEDGER ALONE —
+//      see "Points-only events" below. It used to be skipped outright,
+//      reported as `missing_epoch_range`.
+//
+// ── Points-only events ─────────────────────────────────────────────────
+//
+// The engine above assumes a board's points come from producing blocks,
+// with ledger points weighted in beside them. Season 2 broke that
+// assumption: all nine of its challenges hang off the SEASON-type event,
+// which has no chain and no epoch range, so every point on it comes from
+// `user_activities` and nothing else. The builder refused that event
+// twice over — `not_regular`, and then `missing_epoch_range` — so the
+// points existed in the ledger, showed on each challenge card, and never
+// reached a leaderboard. Season 1 never hit this because it hung its
+// challenges on its regular events, whose snapshots carried them.
+//
+// So an event WITHOUT an epoch range now takes a second, much shorter
+// path: sum its ledger, write those snapshots, leave every block column
+// at zero. Two consequences worth stating plainly, because both are
+// deliberate:
+//
+//   - It applies to any event TYPE. `not_regular` still guards the
+//     block-scoring path, where a season-type event spanning the same
+//     epochs as its season's regular events would count their blocks
+//     twice. With no epoch range there is nothing to double-count.
+//   - Ledger points enter at FACE VALUE, ignoring `offchain_weight`.
+//     That weight exists to balance ledger points against block points;
+//     with no block points there is nothing to balance, and any other
+//     multiplier would make the board disagree with the figure printed
+//     on the member's own challenge card. Production's Season 2 events
+//     carry `offchain_weight: 0`, which under the weighted rule would
+//     have produced a board of zeros — a silent, inexplicable failure.
 //
 // Triggering is admin-only (POST /api/v4/admin/leaderboard/aggregate):
 // each run writes a NEW shared snapshot_at — it never REWRITES rows an
@@ -54,17 +85,27 @@ const KEEP_SNAPSHOTS = 10; // distinct snapshot_at values kept per event
 // process. Epochs are ~daily: 100k epochs is centuries of headroom.
 const MAX_EPOCH_RANGE = 100_000;
 
-// Candidate events. With $1 NULL this is the default sweep (active
-// regular events on active seasons — never a hardcoded id, the smell the
-// source scheduler had); with $1 set it returns exactly that row so the
-// caller can report a precise skip reason instead of silence.
+// Candidate events. With $1 NULL this is the default sweep (never a
+// hardcoded id, the smell the source scheduler had); with $1 set it
+// returns exactly that row so the caller can report a precise skip
+// reason instead of silence.
+//
+// The sweep takes active events on active seasons that EITHER score
+// blocks (`type = 'regular'`) or score no blocks at all (no epoch
+// range). The second arm is what brings a season-type event carrying
+// challenges into the automatic aggregate — without it the fix would
+// need an admin to press Run by hand, which is the state this whole
+// service exists to end. A season-type event WITH an epoch range is
+// still left out: it spans the same epochs as its season's regular
+// events, so scoring it would count their blocks twice.
 const EVENTS_SQL = `
   SELECT se.id, se.name, se.season_id, se.start_epoch, se.end_epoch, se.chain_id,
          se.scoring_formula, se.is_active, se.internal, se.type,
          COALESCE(s.is_active, FALSE) AS season_is_active
     FROM season_events se
     LEFT JOIN seasons s ON s.id = se.season_id
-   WHERE ($1::bigint IS NULL AND se.type = 'regular' AND se.is_active = TRUE AND s.is_active = TRUE)
+   WHERE ($1::bigint IS NULL AND se.is_active = TRUE AND s.is_active = TRUE
+          AND (se.type = 'regular' OR se.start_epoch IS NULL OR se.end_epoch IS NULL))
       OR se.id = $1
    ORDER BY se.id ASC
 `;
@@ -211,17 +252,31 @@ const PRUNE_SQL = `
      )
 `;
 
+// Does this event score block production at all? An epoch range is the
+// one thing the block path cannot work without, and its absence is what
+// marks an event as points-only.
+function scoresBlocks(event) {
+  return event.start_epoch !== null && event.start_epoch !== undefined
+    && event.end_epoch !== null && event.end_epoch !== undefined;
+}
+
 // Guard an event and return a skip reason, or null to aggregate. `force`
 // bypasses the two ACTIVITY guards only (a final pass over a just-ended
 // or paused event) — never the structural ones.
+//
+// The activity guards come first now, so a paused event reports that it
+// is paused whatever else is wrong with it. Everything after them guards
+// the BLOCK path only; a points-only event has no structural
+// requirements left to check, because summing a ledger needs nothing but
+// the ledger.
 function skipReason(event, force) {
-  if (event.type !== 'regular') return 'not_regular';
   if (!force && !event.is_active) return 'inactive_event';
   // A NULL season_id reports as season_is_active FALSE (LEFT JOIN +
   // COALESCE above) and lands here too — force can still address it.
   if (!force && !event.season_is_active) return 'inactive_season';
-  if (event.start_epoch === null || event.end_epoch === null
-    || Number(event.end_epoch) < Number(event.start_epoch)) return 'missing_epoch_range';
+  if (!scoresBlocks(event)) return null;
+  if (event.type !== 'regular') return 'not_regular';
+  if (Number(event.end_epoch) < Number(event.start_epoch)) return 'inverted_epoch_range';
   if (Number(event.end_epoch) - Number(event.start_epoch) + 1 > MAX_EPOCH_RANGE) return 'epoch_range_too_large';
   if (!event.chain_id || !String(event.chain_id).trim()) return 'missing_chain_id';
   return null;
@@ -230,6 +285,8 @@ function skipReason(event, force) {
 const toMs = (v) => (v === null || v === undefined ? null : new Date(v).getTime());
 
 async function aggregateEvent(pool, event, now) {
+  if (!scoresBlocks(event)) return aggregatePointsOnly(pool, event, now);
+
   const startEpoch = Number(event.start_epoch);
   const endEpoch = Number(event.end_epoch);
   // season_events.chain_id is a comma-separated list per the ingest
@@ -397,6 +454,14 @@ async function aggregateEvent(pool, event, now) {
       };
     });
 
+  return writeSnapshots(pool, event, rows, now);
+}
+
+// Rank and persist one event's rows. Shared by both scoring paths so a
+// points-only board is written, pruned and ranked exactly like any other
+// — the two paths differ in how the numbers are worked out, never in
+// what a snapshot row means.
+async function writeSnapshots(pool, event, rows, now) {
   rows.sort((a, b) => b.total_points - a.total_points
     || b.event_total_produced_blocks - a.event_total_produced_blocks
     || a.user_id - b.user_id);
@@ -429,6 +494,67 @@ async function aggregateEvent(pool, event, now) {
   return { season_event_id: event.id, name: event.name, users: ranked.length, snapshot_at: now };
 }
 
+// Every block column a points-only row reports, in one place: an event
+// that produced no blocks reports zero blocks, not null and not absent.
+// `event_success_rate` and `epoch_success_rate` stay NULL on purpose —
+// they are ratios over slots nobody was assigned, and 0% would read as
+// "missed every block" on a board where no block was ever due.
+const NO_BLOCKS = {
+  produced_half_blocks_points: 0,
+  event_total_produced_blocks: 0,
+  last_epoch_total_produced_blocks: 0,
+  vrf_total_won_slots: 0,
+  canonical_total_won_slots: 0,
+  canonical_total_produced_blocks: 0,
+  canonical_won_slots_up_to_current: 0,
+  canonical_produced_blocks_up_to_current: 0,
+  event_success_rate: null,
+  epoch_success_rate: null,
+  max_bp_success_rate_up_to_current: 0,
+  challenge_details: [],
+};
+
+// The points-only path: an event whose whole board is its ledger.
+//
+// Two queries against the eight the block path runs, and no arithmetic
+// beyond the per-type sums — there are no epochs to weight, no slots to
+// reconstruct and no delegation to resolve, because none of those exist
+// for an event that never produced a block.
+async function aggregatePointsOnly(pool, event, now) {
+  const { rows: activityRows } = await pool.query(ACTIVITY_SUMS_SQL, [event.id]);
+
+  const activityByUser = new Map();
+  for (const r of activityRows) {
+    const userId = Number(r.user_id);
+    if (!activityByUser.has(userId)) activityByUser.set(userId, {});
+    activityByUser.get(userId)[r.activity_type] = Number(r.total_points) || 0;
+  }
+
+  const userIds = [...activityByUser.keys()];
+  if (!userIds.length) return { season_event_id: event.id, name: event.name, users: 0, snapshot_at: now };
+
+  const { rows: podiumRows } = await pool.query(PODIUM_FLAGS_SQL, [userIds]);
+  const excludedByUser = new Map(podiumRows.map((r) => [Number(r.id), !!r.exclude_podium]));
+
+  const rows = userIds
+    // Same rule as the block path: history stays in the raw tables, but a
+    // user deleted from `users` no longer boards.
+    .filter((userId) => excludedByUser.has(userId))
+    .map((userId) => {
+      // Face value — see "Points-only events" at the top of this file.
+      const offchain = computeOffchainColumns(activityByUser.get(userId) || {}, 1);
+      return {
+        user_id: userId,
+        is_non_podium: excludedByUser.get(userId),
+        total_points: offchain.extra_points,
+        ...offchain,
+        ...NO_BLOCKS,
+      };
+    });
+
+  return writeSnapshots(pool, event, rows, now);
+}
+
 // buildSnapshots(pool, { seasonEventId, force, now }) → { events: [...] }
 // where each entry is either an aggregation summary
 // ({ season_event_id, name, users, snapshot_at }) or a skip record
@@ -456,4 +582,4 @@ async function buildSnapshots(pool, { seasonEventId = null, force = false, now =
   return { events: results };
 }
 
-module.exports = { buildSnapshots, SNAPSHOT_COLUMNS, KEEP_SNAPSHOTS };
+module.exports = { buildSnapshots, SNAPSHOT_COLUMNS, KEEP_SNAPSHOTS, scoresBlocks };

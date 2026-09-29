@@ -1,6 +1,7 @@
 'use strict';
 
 const { spawn } = require('child_process');
+const net = require('node:net');
 const log = require('./logger');
 const platformJwt = require('./platform-jwt');
 const docker = require('./docker');
@@ -23,6 +24,8 @@ const WORKER_IMAGE = 'usernode-worker:latest';
 const WORKER_MEMORY = process.env.WORKER_MEMORY || '2g';
 const WORKER_CPUS = process.env.WORKER_CPUS || '2';
 const WARM_READY_TIMEOUT_MS = 5 * 60 * 1000;
+let accountDeletionGuard = async () => {};
+function setAccountDeletionGuard(guard) { accountDeletionGuard = guard; }
 
 function usesKubernetesWorkers() {
   const mode = process.env.WORKER_RUNTIME || process.env.APP_RUNTIME || 'docker';
@@ -68,6 +71,22 @@ async function execWorkerCommand(runtimeName, command, stdinText = null, { timeo
 // hostname / port.
 const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usernode:3000';
 
+// Evidence controls are intentionally process-local: the run's paired
+// environments and callbacks live in the Pod that scheduled it. During a
+// rolling update the shared Service also points at the other color, so an
+// evidence worker must call this Pod directly or half its tools see an empty
+// control registry. Ordinary worker traffic remains on the shared Service.
+function evidenceControlUrl({ podIp = process.env.POD_IP, port = process.env.PORT,
+  fallback = PLATFORM_INTERNAL_URL } = {}) {
+  const family = net.isIP(String(podIp || ''));
+  const selectedPort = Number(port || 3000);
+  if (!family || !Number.isInteger(selectedPort) || selectedPort < 1 || selectedPort > 65535) {
+    return fallback;
+  }
+  const host = family === 6 ? `[${podIp}]` : podIp;
+  return `http://${host}:${selectedPort}`;
+}
+
 // Worker JWTs are short-lived but cover the entire chat session; 24h is
 // the cap any single session is allowed to run before re-auth becomes
 // the chat handler's problem. Re-minted on every warm bootstrap and on
@@ -94,7 +113,16 @@ const WORKER_JWT_TTL_MS = platformJwt.WORKER_TTL_S * 1000;
 // no scout history, so every older warm container must be replaced first.
 // v9: refresh warm workers so run-cc.sh emits partial usage events (#1600).
 // v10 publishes bootstrap readiness and fences turns after container restarts.
-const WORKER_BOOTSTRAP_ENV_VERSION = 'v10';
+// v11 refreshes warm workers so synthetic OpenRouter models use a
+// provider-neutral identity instead of claiming to be GPT (#2120).
+// v12 is the bootstrap generation before the Codex provider retry budget.
+// v13 refreshes warm workers so the generated Codex config bounds the CLI's
+// own reconnect budget instead of retrying a refused request five times
+// (#2676).
+// v14 installs the OpenRouter request adapter so output limits reach the wire.
+// v15 refreshes warm workers so the Codex model catalog compacts a thread at
+// 200k tokens instead of 90% of a long model window.
+const WORKER_BOOTSTRAP_ENV_VERSION = 'v15';
 
 // Mint the auth token the worker container uses to call back into the
 // platform's internal API. Scoped to a single session id; the
@@ -134,16 +162,38 @@ function mintProdDebugJwt(sessionId) {
   return platformJwt.signProdDebugToken({ sessionId });
 }
 
+function mintEvidenceJwt(sessionId, runId) {
+  return platformJwt.signEvidenceToken({ sessionId, runId });
+}
+
 // One backend decision, used everywhere in a turn's dispatch so the
 // runner, tokens, env, and active-turn record can never disagree (review
 // Commit 1 / plan 3.1). Rejects unknown backends instead of silently
 // falling through to Claude.
-function resolveTurnBackend(agentBackend) {
+//
+// #3296 split the OpenRouter backend by harness. The flags below keep their
+// historical meaning and add the new case alongside them:
+//   isClaude            claude_code: Claude Code on Anthropic (proxy or BYOK)
+//   isCodex             codex_openrouter run by the Codex CLI
+//   isClaudeOpenRouter  codex_openrouter run by Claude Code, through the
+//                       worker-local Messages adapter (worker/claude-
+//                       openrouter-request.js) that holds the user's key
+//   isOpenRouter        either OpenRouter case: the user's key, the
+//                       agent_turns ledger, narrow capability tokens only
+//   runsClaude          the runner is run-cc.sh and the journal is Claude
+//                       stream-json, whoever the provider is
+function resolveTurnBackend(agentBackend, agentHarness = null) {
   const backend = registry.resolveBackend(agentBackend || 'claude_code');
+  const isOpenRouter = backend === 'codex_openrouter';
+  const harness = isOpenRouter ? registry.resolveOpenRouterHarness(agentHarness) : null;
   return {
     backend,
-    isCodex: backend === 'codex_openrouter',
+    harness,
+    isOpenRouter,
+    isCodex: isOpenRouter && harness === 'codex',
+    isClaudeOpenRouter: isOpenRouter && harness === 'claude',
     isClaude: backend === 'claude_code',
+    runsClaude: !isOpenRouter || harness === 'claude',
   };
 }
 
@@ -160,31 +210,59 @@ function requireNonEmptySecret(value, name) {
 // PROD_DEBUG_JWT rides along on build + scout turns only — never sync
 // (bookkeeping, no free-form agent).
 function buildTurnSecretEnv({
-  mode, agentBackend, workerSessionJwt, workerPushJwt, issuesReadJwt,
+  mode, agentBackend, agentHarness = null, workerSessionJwt, workerPushJwt, issuesReadJwt,
   anthropicProxyJwt, anthropicApiKey, prodDebugJwt, openrouterApiKey,
+  evidenceJwt, evidenceMemberToken, evidenceAdminToken, evidenceFullAdminToken,
+  homeroomMcpToken = null,
 }) {
-  const { backend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
-  if (!isClaude && !isCodex) {
+  const {
+    backend, isCodex, isClaude, isClaudeOpenRouter,
+  } = resolveTurnBackend(agentBackend, agentHarness);
+  if (!isClaude && !isCodex && !isClaudeOpenRouter) {
     throw new Error(`buildTurnSecretEnv: unsupported backend ${agentBackend}`);
   }
-  if (mode !== 'scout' && mode !== 'build' && mode !== 'sync') {
+  if (!['scout', 'build', 'sync', 'evidence'].includes(mode)) {
     throw new Error(`buildTurnSecretEnv: unsupported mode ${mode}`);
   }
   if (isCodex && mode === 'sync') {
     throw new Error('buildTurnSecretEnv: Codex sync mode is not supported');
+  }
+  if (isClaudeOpenRouter && (mode === 'sync' || mode === 'evidence')) {
+    throw new Error(`buildTurnSecretEnv: Claude over OpenRouter ${mode} mode is not supported`);
+  }
+
+  if (isClaudeOpenRouter) {
+    // #3296: the same capability set as a Codex turn — the model provider is
+    // the user's OpenRouter key either way, and that is what decides trust,
+    // not which CLI drives it. The key reaches only the worker-local adapter;
+    // run-cc.sh hands it to that one process and Claude Code itself gets a
+    // per-invocation local token. No Anthropic key, proxy base or general
+    // worker:session token, and no production-debug grant.
+    const env = { OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey') };
+    env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
+    if (mode === 'build') {
+      env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
+    }
+    if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
+    return env;
   }
 
   if (isCodex) {
     // Codex receives ONLY its own credential plus narrow capability tokens
     // (review Commit 1 / plan 3.3). It must never receive a general
     // worker:session token, an Anthropic key/base, or a relay token.
-    const env = {
-      OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey'),
-      ISSUES_JWT: requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt'),
-    };
+    const env = { OPENROUTER_API_KEY: requireNonEmptySecret(openrouterApiKey, 'openrouterApiKey') };
+    if (mode !== 'evidence') env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
     if (mode === 'build') {
       env.WORKER_JWT = requireNonEmptySecret(workerPushJwt, 'workerPushJwt');
     }
+    if (mode === 'evidence') {
+      env.EVIDENCE_JWT = requireNonEmptySecret(evidenceJwt, 'evidenceJwt');
+      env.EVIDENCE_MEMBER_TOKEN = requireNonEmptySecret(evidenceMemberToken, 'evidenceMemberToken');
+      env.EVIDENCE_ADMIN_TOKEN = requireNonEmptySecret(evidenceAdminToken, 'evidenceAdminToken');
+      env.EVIDENCE_FULL_ADMIN_TOKEN = requireNonEmptySecret(evidenceFullAdminToken, 'evidenceFullAdminToken');
+    }
+    if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
     return env;
   }
 
@@ -197,15 +275,70 @@ function buildTurnSecretEnv({
     ANTHROPIC_API_KEY: useProxy
       ? requireNonEmptySecret(anthropicProxyJwt, 'anthropicProxyJwt')
       : requireNonEmptySecret(anthropicApiKey, 'anthropicApiKey'),
-    ISSUES_JWT: requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt'),
   };
-  if (mode !== 'scout') {
+  if (mode !== 'evidence') env.ISSUES_JWT = requireNonEmptySecret(issuesReadJwt, 'issuesReadJwt');
+  if (mode !== 'scout' && mode !== 'evidence') {
     env.WORKER_JWT = requireNonEmptySecret(workerSessionJwt, 'workerSessionJwt');
   }
   if (prodDebugJwt && mode !== 'sync') {
     env.PROD_DEBUG_JWT = prodDebugJwt;
   }
+  if (mode === 'evidence') {
+    env.EVIDENCE_JWT = requireNonEmptySecret(evidenceJwt, 'evidenceJwt');
+    env.EVIDENCE_MEMBER_TOKEN = requireNonEmptySecret(evidenceMemberToken, 'evidenceMemberToken');
+    env.EVIDENCE_ADMIN_TOKEN = requireNonEmptySecret(evidenceAdminToken, 'evidenceAdminToken');
+    env.EVIDENCE_FULL_ADMIN_TOKEN = requireNonEmptySecret(evidenceFullAdminToken, 'evidenceFullAdminToken');
+  }
+  if (homeroomMcpToken && HOMEROOM_READ_MODES.has(mode)) env.HOMEROOM_MCP_TOKEN = homeroomMcpToken;
   return env;
+}
+
+// ── The coding agent's read-only platform MCP (#2779) ──────────────────
+//
+// A build or scout turn gets a `worker_read` delegation (services/mcp-oauth):
+// six read tools on the platform's own MCP, bound to this change and its
+// app, as the change's owner. worker/homeroom-read-mcp.js bridges them into
+// Claude Code and Codex. The agent runs the repository's own code with a
+// shell, so assume it can read the token: it reads only what the owner can
+// already see on that one app, and only until the turn ends — it is revoked
+// in execInWorker's `finally`, and the grant's liveness check refuses it as
+// soon as the change is paused or closed. Minting is best effort: a turn
+// never fails because the platform could not give it this.
+const HOMEROOM_READ_MODES = new Set(['build', 'scout']);
+// Bounded by the turn's own length; revocation normally ends it far sooner.
+const HOMEROOM_READ_TTL_SECONDS = 2 * 60 * 60;
+
+async function mintHomeroomReadGrant(sessionId, mode) {
+  if (!HOMEROOM_READ_MODES.has(mode)) return null;
+  const pool = _getPoolSafe();
+  if (!pool) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT user_id, app_id FROM chat_sessions
+        WHERE id = $1 AND status IN ('active', 'promoted')`,
+      [sessionId]
+    );
+    if (!rows.length) return null;
+    const grant = await require('./mcp-oauth').issueDelegatedAccess(pool, {
+      userId: rows[0].user_id,
+      kind: 'worker_read',
+      changeId: Number(sessionId),
+      appId: rows[0].app_id,
+      ttlSeconds: HOMEROOM_READ_TTL_SECONDS,
+    });
+    return { token: grant.accessToken, grantId: grant.grantId };
+  } catch (err) {
+    log.warn('worker', 'Read-only platform MCP not issued for this turn', { sessionId, err: err.message });
+    return null;
+  }
+}
+
+async function revokeHomeroomReadGrant(sessionId, grant) {
+  if (!grant) return;
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  await require('./mcp-oauth').revokeDelegation(pool, { grantId: grant.grantId, reason: 'turn_finished' })
+    .catch((err) => log.warn('worker', 'Read-only platform MCP revoke failed', { sessionId, err: err.message }));
 }
 // ──────────────────────────────────────────────────────────────────────
 // Stream-json / marker parsing
@@ -290,6 +423,43 @@ function usageToken(value) {
   return Number.isFinite(number) && number >= 0 ? Math.round(number) : null;
 }
 
+/**
+ * #2737, corrected in #2870: tell a watching caller what the turn has spent.
+ *
+ * This is the ONLY seam a caller has for watching usage while a turn is
+ * still running — everything else about usage is terminal, written to the
+ * ledger once the turn ends. It must therefore be reachable from EVERY path
+ * that learns a token count, not just one: the hook first shipped called
+ * only from `applyClaudeResultUsage`, on the Claude `result` event, and the
+ * Codex/OpenRouter agent reports usage through a different branch entirely.
+ * A budget built on it was silently inert on that agent for its whole first
+ * day in production.
+ *
+ * Note what this does NOT buy (#3035). Both paths are terminal: Claude's
+ * usage arrives on its `result` event and `codex-openrouter`'s on
+ * `turn.completed`, each the last thing a turn emits. A caller can REPORT
+ * that a finished turn breached a token budget; it cannot stop a turn with
+ * this, and must never treat a breach seen here as a reason to discard a
+ * finished result — the Homeroom bot did exactly that for a day. On Codex
+ * the figure is also the THREAD's running total, not the turn's. Giving an
+ * agent a mid-turn signal is an upstream change this seam cannot fake.
+ *
+ * Optional and best-effort by construction: a throwing hook must never take
+ * down the parse of a provider event.
+ */
+function notifyUsage(state) {
+  if (!state || typeof state.onUsage !== 'function') return;
+  try {
+    state.onUsage({
+      inputTokens: state.inputTokens,
+      cachedInputTokens: state.cachedInputTokens,
+      outputTokens: state.outputTokens,
+    });
+  } catch (err) {
+    log.warn('worker', 'onUsage hook threw (ignored)', { err: err.message });
+  }
+}
+
 function applyClaudeResultUsage(usage, state) {
   if (!usage || typeof usage !== 'object') return;
   const values = {
@@ -318,6 +488,7 @@ function applyClaudeResultUsage(usage, state) {
   for (const [key, value] of Object.entries(values)) {
     if (value != null) state[key] = value;
   }
+  notifyUsage(state);
   if (typeof usage.service_tier === 'string') state.serviceTier = usage.service_tier;
   if (typeof usage.inference_geo === 'string') state.inferenceRegion = usage.inference_geo;
 }
@@ -326,6 +497,111 @@ function safeResultSubtype(value) {
   if (typeof value !== 'string') return null;
   const subtype = value.trim();
   return /^[a-z][a-z0-9_]{0,63}$/.test(subtype) ? subtype : null;
+}
+
+// Evidence diagnostics deliberately record only a fixed vocabulary. Page
+// text, tool arguments/results, URLs, provider messages and journal lines can
+// contain private app data or credentials and must never enter a run trace.
+const EVIDENCE_DIAGNOSTIC_TOOLS = new Set([
+  'evidence_get_context', 'evidence_reset_pair', 'evidence_reset_side',
+  'evidence_set_request_failure', 'evidence_run_plan', 'evidence_report_blocker',
+  'browser_navigate', 'browser_navigate_back', 'browser_snapshot',
+  'browser_take_screenshot', 'browser_click', 'browser_type',
+  'browser_fill_form', 'browser_press_key', 'browser_select_option',
+  'browser_hover', 'browser_mouse_move_xy', 'browser_drag', 'browser_resize', 'browser_wait_for',
+  'browser_console_messages', 'browser_network_requests', 'browser_tabs',
+  'browser_close',
+]);
+const EVIDENCE_DIAGNOSTIC_PHASES = new Set([
+  'refresh', 'evidence_proxy', 'evidence_browser_bootstrap',
+  'evidence_mcp_ready', 'claude', 'agent', 'done',
+]);
+
+function evidenceDiagnosticTool(name) {
+  const parts = String(name || '').split(/__|[./]/);
+  const tool = parts.at(-1);
+  if (!EVIDENCE_DIAGNOSTIC_TOOLS.has(tool)) return { tool: 'other' };
+  const server = parts.includes('browser_member') ? 'member'
+    : parts.includes('browser_full_admin') ? 'full_admin'
+      : parts.includes('browser_admin') ? 'admin' : null;
+  return { tool, ...(server ? { persona: server } : {}) };
+}
+
+function evidenceNavigationTarget(state, input) {
+  if (!state.evidenceOrigins) return {};
+  let args = input;
+  if (typeof args === 'string' && args.length <= 8192) {
+    try { args = JSON.parse(args); } catch { return {}; }
+  }
+  if (!args || typeof args.url !== 'string') return {};
+  let destination;
+  try { destination = new URL(args.url); } catch { return {}; }
+  let side = null;
+  for (const candidate of ['base', 'head']) {
+    try {
+      if (destination.origin === new URL(state.evidenceOrigins?.[candidate]).origin) {
+        side = candidate;
+        break;
+      }
+    } catch { /* No paired origin is available in a non-evidence turn. */ }
+  }
+  if (!side) return { side: 'outside' };
+  // Only an ordinal leaves the worker. It distinguishes repeated routes and
+  // base/head navigation without storing private paths, queries, or tokens.
+  const routes = state.evidenceRouteOrdinals || (state.evidenceRouteOrdinals = new Map());
+  const key = `${destination.pathname}${destination.search}${destination.hash}`;
+  if (!routes.has(key) && routes.size < 1000) routes.set(key, routes.size + 1);
+  const hints = state.evidenceNavigationHints || {};
+  const checkRank = Array.isArray(hints.declaredPaths) ? hints.declaredPaths.indexOf(key) + 1 : 0;
+  const intentStart = Array.isArray(hints.intentPaths) && hints.intentPaths.includes(key);
+  return {
+    side,
+    ...(routes.has(key) ? { routeOrdinal: routes.get(key) } : {}),
+    routeHint: checkRank > 0 ? 'declared_check' : intentStart ? 'intent_start' : 'other',
+    ...(checkRank > 0 ? { checkRank } : {}),
+  };
+}
+
+function emitEvidenceDiagnostic(state, event) {
+  if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
+  try { state.evidenceDiagnosticObserver(event); }
+  catch { /* Diagnostics must never affect the worker turn. */ }
+}
+
+function observeEvidenceTool(state, { phase, id, name, input = null, failed = false }) {
+  if (typeof state?.evidenceDiagnosticObserver !== 'function') return;
+  const key = id == null ? null : String(id);
+  const starts = state.evidenceDiagnosticStarts || (state.evidenceDiagnosticStarts = new Map());
+  const completed = state.evidenceDiagnosticCompleted || (state.evidenceDiagnosticCompleted = new Set());
+  if (phase === 'start') {
+    if (key && starts.has(key)) return;
+    const sequence = (state.evidenceDiagnosticSequence || 0) + 1;
+    state.evidenceDiagnosticSequence = sequence;
+    const tool = evidenceDiagnosticTool(name);
+    const safeTool = {
+      ...tool,
+      ...(tool.tool === 'browser_navigate'
+        ? evidenceNavigationTarget(state, input) : {}),
+    };
+    if (key) starts.set(key, { sequence, ...safeTool });
+    emitEvidenceDiagnostic(state, { kind: 'tool_start', sequence, ...safeTool });
+    return;
+  }
+  if (key && completed.has(key)) return;
+  if (key) completed.add(key);
+  const prior = key ? starts.get(key) : null;
+  if (key) starts.delete(key);
+  emitEvidenceDiagnostic(state, {
+    kind: 'tool_end',
+    sequence: prior?.sequence || null,
+    ...(prior ? { tool: prior.tool, ...(prior.persona ? { persona: prior.persona } : {}),
+      ...(prior.side ? { side: prior.side } : {}),
+      ...(prior.routeOrdinal ? { routeOrdinal: prior.routeOrdinal } : {}),
+      ...(prior.routeHint ? { routeHint: prior.routeHint } : {}),
+      ...(prior.checkRank ? { checkRank: prior.checkRank } : {}) }
+      : evidenceDiagnosticTool(name)),
+    outcome: failed ? 'error' : 'ok',
+  });
 }
 
 function noteFirstAgentOutput(state) {
@@ -344,6 +620,40 @@ function collectionCount(value) {
   if (Array.isArray(value)) return value.length;
   if (value && typeof value === 'object') return Object.keys(value).length;
   return null;
+}
+
+function evidenceToolAvailable(tools, toolName) {
+  if (collectionCount(tools) == null) return null;
+  const names = Array.isArray(tools)
+    ? tools.map((item) => typeof item === 'string' ? item : item?.name)
+    : Object.keys(tools);
+  return names.some((name) => name === toolName || name === `mcp__evidence__${toolName}`);
+}
+
+function mcpToolCount(tools, serverName) {
+  if (collectionCount(tools) == null) return null;
+  const names = Array.isArray(tools)
+    ? tools.map((item) => typeof item === 'string' ? item : item?.name)
+    : Object.keys(tools);
+  return names.filter((name) => typeof name === 'string'
+    && name.startsWith(`mcp__${serverName}__`)).length;
+}
+
+function evidenceContextResultShape(content) {
+  const text = typeof content === 'string' ? content
+    : Array.isArray(content) ? content.find((item) => item?.type === 'text')?.text : null;
+  const responseCharacters = typeof text === 'string' ? text.length : 0;
+  let value = null;
+  try { value = JSON.parse(text); } catch { /* A malformed response is diagnostic data. */ }
+  const object = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  return {
+    responseCharacters,
+    jsonValid: !!object,
+    acceptedIntentPresent: !!object?.acceptedIntent,
+    originsPresent: !!(object?.origins?.base && object?.origins?.head),
+    revisionsPresent: !!(object?.revisions?.baseSha && object?.revisions?.headSha),
+    storyCount: Array.isArray(object?.acceptedIntent?.stories) ? object.acceptedIntent.stories.length : null,
+  };
 }
 
 function addObservedValue(set, value) {
@@ -426,8 +736,31 @@ function noteCodexToolCompletion(state, event) {
   return true;
 }
 
+// An OpenRouter turn that Claude Code ran (#3296): Claude stream-json in the
+// journal, OpenRouter's key and ledger behind it.
+function isClaudeOnOpenRouter(state) {
+  return state?.agentBackend === 'codex_openrouter' && state?.agentHarness === 'claude';
+}
+
+// Give a Claude-harness OpenRouter result the shape every OpenRouter caller
+// already reads (#3296): the thread to resume lives in agentThreadId, as a
+// Codex thread does, and nothing is written into cc_session_id, which belongs
+// to Anthropic Claude Code sessions. Idempotent; a no-op for other turns.
+function finalizeHarnessResult(state) {
+  if (!isClaudeOnOpenRouter(state)) return state;
+  const claudeSessionId = state.sessionId || state.initSessionId || null;
+  if (claudeSessionId) state.agentThreadId = claudeSessionId;
+  state.sessionId = null;
+  state.initSessionId = null;
+  return state;
+}
+
 function applyStreamEvent(event, onProgress, state) {
   liveAgentSpend.observe(state.liveSpend, event);
+  if (event?.type === 'stream_event' && !state.evidenceFirstStreamSeen) {
+    state.evidenceFirstStreamSeen = true;
+    emitEvidenceDiagnostic(state, { kind: 'first_stream' });
+  }
   if (state.hostSessionId && state.liveSpendEnabled) {
     workerProgress.setSpend(state.hostSessionId, liveAgentSpend.snapshot(state.liveSpend));
   }
@@ -470,7 +803,26 @@ function applyStreamEvent(event, onProgress, state) {
     state.initSessionId = event.session_id;
     state.sessionId = state.sessionId || event.session_id;
   }
+  if (systemEvent?.type === 'system' && systemEvent.subtype === 'init'
+      && !state.evidenceProviderInitSeen) {
+    state.evidenceProviderInitSeen = true;
+    emitEvidenceDiagnostic(state, {
+      kind: 'provider_init',
+      mcpServerCount: collectionCount(systemEvent.mcp_servers ?? systemEvent.mcpServers),
+      toolDefinitionCount: collectionCount(systemEvent.tools),
+      evidenceGetContextAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_get_context'),
+      evidenceRunPlanAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_run_plan'),
+      evidenceReportBlockerAvailable: evidenceToolAvailable(systemEvent.tools, 'evidence_report_blocker'),
+      browserMemberToolCount: mcpToolCount(systemEvent.tools, 'browser_member'),
+      browserAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_admin'),
+      browserFullAdminToolCount: mcpToolCount(systemEvent.tools, 'browser_full_admin'),
+    });
+  }
   if (event.type === 'assistant' && event.message?.content) {
+    if (!state.evidenceFirstOutputSeen) {
+      state.evidenceFirstOutputSeen = true;
+      emitEvidenceDiagnostic(state, { kind: 'first_output' });
+    }
     if (observeDiagnostics) {
       noteFirstAgentOutput(state);
       state.providerTurnCount = (state.providerTurnCount || 0) + 1;
@@ -504,8 +856,10 @@ function applyStreamEvent(event, onProgress, state) {
         if (observeDiagnostics) state.responseRedactedThinkingBlockCount += 1;
       } else if (block.type === 'server_tool_use' || block.type === 'mcp_tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
       } else if (block.type === 'tool_use') {
         if (observeDiagnostics) noteClaudeToolCall(state, block);
+        observeEvidenceTool(state, { phase: 'start', id: block.id, name: block.name, input: block.input });
         const input = block.input || {};
         // Track id → label mapping so the matching tool_result can
         // display "⎿ <label>: <summary>" instead of just "⎿ done".
@@ -533,6 +887,20 @@ function applyStreamEvent(event, onProgress, state) {
     // the user see CC is progressing through its plan.
     for (const block of event.message.content) {
       if (block.type !== 'tool_result') continue;
+      const diagnosticStart = block.tool_use_id == null ? null
+        : state.evidenceDiagnosticStarts?.get(String(block.tool_use_id));
+      if (diagnosticStart?.tool === 'evidence_get_context') {
+        emitEvidenceDiagnostic(state, {
+          kind: 'context_result',
+          outcome: block.is_error === true ? 'error' : 'ok',
+          ...evidenceContextResultShape(block.content),
+        });
+      }
+      observeEvidenceTool(state, {
+        phase: 'end', id: block.tool_use_id,
+        name: state.toolUses.get(block.tool_use_id)?.name,
+        failed: block.is_error === true,
+      });
       if (observeDiagnostics) {
         const resultKey = block.tool_use_id ? `claude:${block.tool_use_id}` : null;
         const firstResult = !resultKey || !state.telemetryCompletedItemIds.has(resultKey);
@@ -556,6 +924,11 @@ function applyStreamEvent(event, onProgress, state) {
     applyClaudeResultUsage(event.usage, state);
     state.resultSubtype = safeResultSubtype(event.subtype) || state.resultSubtype;
     state.providerStopReason = safeResultSubtype(event.stop_reason) || state.providerStopReason;
+    emitEvidenceDiagnostic(state, {
+      kind: 'provider_result', outcome: event.is_error ? 'error' : 'ok',
+      resultSubtype: state.resultSubtype,
+      providerStopReason: state.providerStopReason,
+    });
     const reportedDuration = observeDiagnostics ? resultMetric(event.duration_ms) : null;
     const providerDuration = observeDiagnostics ? resultMetric(event.duration_api_ms) : null;
     const turns = observeDiagnostics ? usageToken(event.num_turns) : null;
@@ -585,22 +958,159 @@ function applyStreamEvent(event, onProgress, state) {
     if (observeDiagnostics && Array.isArray(event.permission_denials)) {
       state.permissionDenialCount = event.permission_denials.length;
     }
-    if (event.cost_usd != null || event.total_cost_usd != null) {
-      state.providerCostSeen = true;
+    // #3296: Claude Code prices a run from its own Anthropic price list, which
+    // says nothing about an OpenRouter model. An OpenRouter turn is priced by
+    // the agent_turns ledger from the catalog snapshot instead, exactly like
+    // a Codex turn, so its costUsd stays the unknown zero Codex leaves it at.
+    if (!isClaudeOnOpenRouter(state)) {
+      if (event.cost_usd != null || event.total_cost_usd != null) {
+        state.providerCostSeen = true;
+      }
+      // Keep the pre-telemetry billing precedence exactly unchanged. The
+      // separate flag above is enough to distinguish an explicitly reported
+      // zero from this state's legacy zero default.
+      state.costUsd = event.cost_usd || event.total_cost_usd || state.costUsd;
     }
-    // Keep the pre-telemetry billing precedence exactly unchanged. The
-    // separate flag above is enough to distinguish an explicitly reported
-    // zero from this state's legacy zero default.
-    state.costUsd = event.cost_usd || event.total_cost_usd || state.costUsd;
     state.sessionId = event.session_id || state.sessionId;
     if (event.is_error) state.ccIsError = true;
   }
 }
 
+// Keep OpenRouter calls visible in the owner's coding transcript. The adapter
+// emits only timing/counts, but still accept an explicit allowlist here:
+// runner output is untrusted and must never echo a prompt, key, URL, or
+// provider body into progress.
+const CODING_PROVIDER_STAGES = new Set(['await_headers', 'await_first_byte', 'streaming']);
+const CODING_PROVIDER_OUTCOMES = new Set(['ok', 'http_error', 'cancelled', 'network_error', 'stream_error']);
+function codingProviderCount(value, maximum) {
+  return Number.isSafeInteger(value) && value >= 0 && value <= maximum ? value : null;
+}
+function observeCodingProviderTiming(event, onProgress, state) {
+  if (event?.kind === 'codex_output_idle') {
+    const durationMs = event.durationMs;
+    if (!Number.isSafeInteger(durationMs) || durationMs > 86_400_000) return;
+    if (durationMs < 60_000 || !Number.isSafeInteger(event.activeRequests)
+        || event.activeRequests < 0 || event.activeRequests > 1000) return;
+    const seconds = Math.round(durationMs / 1000);
+    // Codex prints nothing while a command or tool runs, so a quiet stretch
+    // is only suspicious when nothing is open. A slow model request already
+    // reports itself on its own lines.
+    const open = [...(state.codexOpenTools?.values() || [])];
+    if (open.length) {
+      const latest = open[open.length - 1];
+      const more = open.length > 1 ? ` (and ${open.length - 1} more)` : '';
+      onProgress(latest.kind === 'command'
+        ? `Waiting on a command for ${seconds}s${latest.label ? `: ${latest.label}` : ''}${more}`
+        : `Waiting on ${latest.label} for ${seconds}s${more}`);
+    } else if (event.activeRequests === 0) {
+      onProgress(`Codex has been silent for ${seconds}s with no command or model request open`);
+    }
+    return;
+  }
+  const ordinal = event?.requestOrdinal;
+  if (!Number.isSafeInteger(ordinal) || ordinal < 1 || ordinal > 1_000_000) return;
+  const requests = state.codingProviderRequests || (state.codingProviderRequests = new Map());
+  if (event.kind === 'provider_request_start') {
+    const request = { lastReportedMs: null, lastReportedStage: null, contextReported: false };
+    requests.set(ordinal, request);
+    const payloadBytes = codingProviderCount(event.payloadBytes, 64 * 1024 * 1024);
+    const inputBytes = codingProviderCount(event.inputBytes, 64 * 1024 * 1024);
+    const instructionBytes = codingProviderCount(event.instructionBytes, 64 * 1024 * 1024);
+    const inputItems = codingProviderCount(event.inputItems, 1_000_000);
+    const maxOutputTokens = codingProviderCount(event.maxOutputTokens, 10_000_000);
+    const linked = event.previousResponseLinked;
+    if (payloadBytes != null && inputBytes != null && instructionBytes != null && maxOutputTokens != null
+        && typeof linked === 'boolean') {
+      const itemCount = inputItems == null ? '' : ` in ${inputItems} items`;
+      onProgress(`OpenRouter request #${ordinal}: payload ${payloadBytes} bytes, context ${inputBytes} bytes${itemCount}, `
+        + `instructions ${instructionBytes} bytes, previous response ${linked ? 'linked' : 'absent'}, `
+        + `reply limit ${maxOutputTokens} tokens`);
+      request.contextReported = true;
+    }
+    return;
+  }
+  const durationMs = event.durationMs;
+  if (!Number.isSafeInteger(durationMs) || durationMs < 0 || durationMs > 86_400_000) return;
+  const prior = requests.get(ordinal);
+  if (event.kind === 'provider_request_pending') {
+    if (!CODING_PROVIDER_STAGES.has(event.stage) || durationMs < 30_000) return;
+    const request = prior || { lastReportedMs: null, lastReportedStage: null };
+    if (request.lastReportedStage === event.stage
+        && durationMs - request.lastReportedMs < 60_000) return;
+    request.lastReportedMs = durationMs;
+    request.lastReportedStage = event.stage;
+    requests.set(ordinal, request);
+    const seconds = Math.round(durationMs / 1000);
+    const stage = {
+      await_headers: 'no response headers',
+      await_first_byte: 'headers received, no response bytes',
+      streaming: 'still responding',
+    }[event.stage];
+    const bytes = Number.isSafeInteger(event.responseBytes) && event.responseBytes >= 0
+      && event.responseBytes <= 10_000_000 ? event.responseBytes : null;
+    const transfer = event.stage === 'streaming' && bytes != null ? `, ${bytes} bytes so far` : '';
+    onProgress(`OpenRouter request #${ordinal}: ${stage} after ${seconds}s${transfer}`);
+    return;
+  }
+  if (event.kind === 'provider_response_headers' || event.kind === 'provider_response_first_byte') {
+    if (!prior || prior.lastReportedMs == null) return;
+    if (event.kind === 'provider_response_headers') {
+      const status = event.httpStatus;
+      if (!Number.isSafeInteger(status) || status < 100 || status > 599) return;
+      onProgress(`OpenRouter request #${ordinal}: HTTP ${status} headers after ${Math.round(durationMs / 1000)}s`);
+    } else {
+      onProgress(`OpenRouter request #${ordinal}: first response byte after ${Math.round(durationMs / 1000)}s`);
+    }
+    return;
+  }
+  if (event.kind === 'provider_request_end') {
+    requests.delete(ordinal);
+    if (!prior || (!prior.contextReported && prior.lastReportedMs == null)
+        || !CODING_PROVIDER_OUTCOMES.has(event.outcome)) return;
+    const status = Number.isSafeInteger(event.httpStatus) && event.httpStatus >= 100 && event.httpStatus <= 599
+      ? `, HTTP ${event.httpStatus}` : '';
+    const responseBytes = codingProviderCount(event.responseBytes, 10_000_000);
+    const chunkCount = codingProviderCount(event.chunkCount, 1000);
+    const transfer = prior.contextReported && responseBytes != null && chunkCount != null
+      ? `, ${responseBytes} response bytes in ${chunkCount} chunks` : '';
+    onProgress(`OpenRouter request #${ordinal}: ${event.outcome} after ${Math.round(durationMs / 1000)}s${status}${transfer}`);
+  }
+}
+
 function parseLine(line, onProgress, state) {
   if (!line || !line.trim()) return;
+  if (line.startsWith('__USERNODE_CODING_PROVIDER__ ')) {
+    try {
+      if (state.agentBackend === 'codex_openrouter' && !state.evidenceDiagnosticObserver) {
+        observeCodingProviderTiming(JSON.parse(line.slice('__USERNODE_CODING_PROVIDER__ '.length)), onProgress, state);
+      }
+    } catch { /* Malformed diagnostics must not change the agent turn. */ }
+    return;
+  }
+  if (line.startsWith('__USERNODE_EVIDENCE_PROVIDER__ ')) {
+    try {
+      const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_PROVIDER__ '.length));
+      if (event && typeof event === 'object' && !Array.isArray(event)) {
+        emitEvidenceDiagnostic(state, event);
+      }
+    } catch { /* A malformed diagnostic must not change the agent turn. */ }
+    return;
+  }
+  if (line.startsWith('__USERNODE_EVIDENCE_BROWSER__ ')) {
+    try {
+      const event = JSON.parse(line.slice('__USERNODE_EVIDENCE_BROWSER__ '.length));
+      if (event && typeof event === 'object' && !Array.isArray(event)) {
+        emitEvidenceDiagnostic(state, event);
+      }
+    } catch { /* A malformed diagnostic must not change the agent turn. */ }
+    return;
+  }
   if (line.startsWith('__USERNODE_PHASE__')) {
     state.phase = line.replace('__USERNODE_PHASE__', '').trim();
+    const phase = state.phase.split(/[\s(]/, 1)[0];
+    if (EVIDENCE_DIAGNOSTIC_PHASES.has(phase)) {
+      emitEvidenceDiagnostic(state, { kind: 'runner_phase', phase });
+    }
     onProgress(`[${state.phase}]`);
     return;
   }
@@ -634,6 +1144,10 @@ function parseLine(line, onProgress, state) {
       else if (k === 'conflict_files') state.conflictFiles = v ? v.split(',').filter(Boolean) : [];
     }
     state.resultSeen = true;
+    const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
+    emitEvidenceDiagnostic(state, {
+      kind: 'runner_result', outcome: terminalExit === 0 ? 'ok' : 'error',
+    });
     return;
   }
   if (line.startsWith('__USERNODE_ERROR__')) {
@@ -647,6 +1161,7 @@ function parseLine(line, onProgress, state) {
     const code = parseInt(line.replace('__USERNODE_EXIT__', '').trim(), 10);
     state.exitCode = Number.isFinite(code) ? code : -1;
     state.execExitSeen = true;
+    emitEvidenceDiagnostic(state, { kind: 'runner_exit', outcome: code === 0 ? 'ok' : 'error' });
     return;
   }
   if (line.startsWith('__USERNODE_WARN__')) {
@@ -662,6 +1177,7 @@ function parseLine(line, onProgress, state) {
     if (state.telemetryDiagnosticsEnabled === true
         && /^resume failed \(exit -?\d+\); retrying fresh$/.test(msg)) {
       state.providerRetryCount = (state.providerRetryCount || 0) + 1;
+      emitEvidenceDiagnostic(state, { kind: 'resume_retry' });
     }
     // Surface runner warnings ("resume failed (exit N); retrying fresh",
     // "push failed", …) in the session's progress log too — both the
@@ -677,7 +1193,9 @@ function parseLine(line, onProgress, state) {
     // JSONL with a different event schema than Claude's stream-json. The
     // Codex adapter (src/agents/codex-openrouter.js) normalizes them to
     // the same progress vocabulary. Claude turns keep the legacy parser.
-    if (state.agentBackend === 'codex_openrouter') {
+    // #3296: an OpenRouter turn run by Claude Code writes Claude stream-json,
+    // so only the Codex harness takes this branch.
+    if (state.agentBackend === 'codex_openrouter' && state.agentHarness !== 'claude') {
       const codex = require('../agents/codex-openrouter');
       // The normalizer returns an ARRAY of normalized events (a single
       // file_change can emit several changed paths), and it now uses the
@@ -692,6 +1210,41 @@ function parseLine(line, onProgress, state) {
           || (ev.kind === 'file_changed' && ev.lifecycle === 'started');
         const isToolCompletion = ['command_completed', 'file_read_completed', 'mcp_completed'].includes(ev.kind)
           || (ev.kind === 'file_changed' && ev.lifecycle === 'completed');
+        if (ev.kind === 'phase' && ev.lifecycle === 'turn_started') {
+          const completionReminder = state.evidenceCompletionReminder === true;
+          emitEvidenceDiagnostic(state, {
+            kind: 'provider_init',
+            completionReminder,
+          });
+        }
+        if ((ev.kind === 'agent_message' || isToolStart) && !state.evidenceFirstOutputSeen) {
+          state.evidenceFirstOutputSeen = true;
+          emitEvidenceDiagnostic(state, { kind: 'first_output' });
+        }
+        if (isToolStart) {
+          observeEvidenceTool(state, { phase: 'start', id: ev.itemId, name: ev.toolName,
+            input: event?.item?.arguments });
+        }
+        if (isToolCompletion) {
+          observeEvidenceTool(state, {
+            phase: 'end', id: ev.itemId, name: ev.toolName,
+            failed: (ev.exitCode != null && Number(ev.exitCode) !== 0)
+              || ['failed', 'error', 'cancelled'].includes(String(ev.status || '').toLowerCase()),
+          });
+        }
+        if (ev.itemId && (ev.kind === 'command_started' || ev.kind === 'mcp_started')) {
+          const open = state.codexOpenTools || (state.codexOpenTools = new Map());
+          open.set(ev.itemId, ev.kind === 'command_started'
+            ? { kind: 'command', label: ev.text && ev.text.startsWith('$ ') ? ev.text.slice(2) : null }
+            : { kind: 'mcp', label: ev.toolName });
+        }
+        if (ev.itemId && isToolCompletion) state.codexOpenTools?.delete(ev.itemId);
+        if (ev.kind === 'error') {
+          emitEvidenceDiagnostic(state, { kind: 'provider_notice' });
+        }
+        if (ev.kind === 'usage') {
+          emitEvidenceDiagnostic(state, { kind: 'provider_usage' });
+        }
         if (observeDiagnostics && isToolStart) noteCodexToolStart(state, ev);
         if (observeDiagnostics && isToolCompletion) {
           // A future CLI may omit item.started for a completed item. Infer the
@@ -727,10 +1280,23 @@ function parseLine(line, onProgress, state) {
           if (u.cacheWriteInputTokens != null) state.cacheWriteInputTokens = u.cacheWriteInputTokens;
           if (u.outputTokens != null) state.outputTokens = u.outputTokens;
           if (u.reasoningOutputTokens != null) state.reasoningOutputTokens = u.reasoningOutputTokens;
+          // #2870: the Codex/OpenRouter half of the usage seam. Without
+          // this the watcher above never hears from this agent at all.
+          notifyUsage(state);
         }
         if (ev.kind === 'error' && ev.errorMessage != null) {
           state.ccIsError = true;
           state.agentError = ev.errorMessage;
+          // The normalizer already decided what kind of provider failure
+          // this is. Carrying its verdict beats re-deriving one from the
+          // message text further downstream, where less is known.
+          if (ev.errorCode) state.agentErrorCode = ev.errorCode;
+          if (ev.requestedOutputTokens != null) {
+            state.requestedOutputTokens = ev.requestedOutputTokens;
+          }
+          if (ev.affordableOutputTokens != null) {
+            state.affordableOutputTokens = ev.affordableOutputTokens;
+          }
         }
         // Progress line: use the short display form (or any event text).
         if (ev.text) onProgress(ev.text);
@@ -779,6 +1345,21 @@ function newWatchState() {
     hostContainerName: null,
     ccIsError: false,
     agentError: null,
+    // Set from the Codex normalizer's classification of a provider failure
+    // (see src/agents/codex-openrouter.js). Null for every other backend and
+    // for a turn that never failed.
+    agentErrorCode: null,
+    requestedOutputTokens: null,
+    // Last HTTP request observed by the worker-local OpenRouter adapter.
+    // Only content-free fields are accepted by the Codex normalizer.
+    providerRequest: null,
+    // #3038: the per-turn sum of each model request's usage as the adapter
+    // saw it finish. Survives a stop, unlike the agent's own totals, which
+    // arrive only at turn.completed. A floor: an in-flight request is missing.
+    relayUsage: null,
+    // The output-token budget OpenRouter said the key could afford, when it
+    // said so. Drives the one clamped retry in the sessions attempt loop.
+    affordableOutputTokens: null,
     usageSeen: false,
     resultSubtype: null,
     providerStopReason: null,
@@ -935,10 +1516,24 @@ function codingRunOutcome(state) {
   return { outcome: 'error', stopReason: 'agent_error' };
 }
 
+// A provider failure the Codex normalizer already classified reports that
+// classification. The substring table below is the fallback for backends and
+// failures that carry no code, and it guesses: an OpenRouter credit refusal
+// mentioning "connection" used to land on 'network' rather than 'billing'.
+const CODEX_ERROR_CLASSES = {
+  insufficient_credits: 'billing',
+  insufficient_credits_max_tokens: 'billing',
+  rate_limited: 'rate_limited',
+  credential_failure: 'authentication',
+  stream_disconnected: 'network',
+};
+
 function codingErrorClass(state, outcome) {
   if (outcome === 'cancelled') return 'cancelled';
   if (outcome !== 'error') return null;
   if (state && state.markerlessCause) return 'worker';
+  const classified = state && CODEX_ERROR_CLASSES[state.agentErrorCode];
+  if (classified) return classified;
   const text = String([
     state && state.resultSubtype,
     state && state.agentError,
@@ -1751,7 +2346,7 @@ async function _harvestBootstrapLog(containerName) {
 // callers should use `ensureWorker` which handles the "already warm"
 // case and concurrency.
 async function _bootstrapWarmContainer(sessionId, {
-  repoOwner, repoName, branchName, onProgress,
+  repoOwner, repoName, branchName, onProgress, temporary = false,
 }) {
   let containerName = workerContainerName(sessionId);
 
@@ -1808,7 +2403,15 @@ async function _bootstrapWarmContainer(sessionId, {
   if (usesKubernetesWorkers()) {
     try {
       const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-        sessionId, env: safeEnv, onProgress,
+        sessionId, env: safeEnv, onProgress, temporary,
+        reclaimVolumes: async () => {
+          const pool = _getPoolSafe();
+          if (!pool) return 0;
+          const freed = await require('./worker-volume-reclaim').reclaimWorkerVolumes({
+            pool, excludeSessionId: sessionId,
+          });
+          return freed.length;
+        },
       });
       containerName = result.runtimeName;
       log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
@@ -2026,21 +2629,25 @@ async function _awaitWarmReady(containerName, { onProgress, timeoutMs = WARM_REA
 // the registry entry is cleared so the next caller retries from scratch.
 async function ensureWorker(sessionId, {
   repoOwner, repoName, branchName,
-  onProgress,
+  onProgress, temporary = false,
 } = {}) {
+  await accountDeletionGuard(sessionId);
   const containerName = workerRuntimeName(sessionId);
 
   // Coalesce concurrent ensures — if one's already racing, await it.
   const existing = _registryGet(sessionId);
   if (existing?.bootstrap) {
     await existing.bootstrap;
+    await accountDeletionGuard(sessionId);
     return containerName;
   }
 
   // Already warm? Confirm with Docker before trusting the registry —
   // an external `docker rm` would otherwise leave stale state.
-  const status = usesKubernetesWorkers()
-    ? await kubernetes.getWorkerStatus(kubernetesWorkerConfig(), containerName)
+  const kubernetesWorkers = usesKubernetesWorkers();
+  const workerConfig = kubernetesWorkers ? kubernetesWorkerConfig() : null;
+  const status = kubernetesWorkers
+    ? await kubernetes.getWorkerStatus(workerConfig, containerName)
     : await docker.getContainerStatus(containerName);
   if (status === 'running') {
     // Runtime-contract migration gate: earlier warm containers may have
@@ -2048,18 +2655,49 @@ async function ensureWorker(sessionId, {
     // that the current host no longer supports. Detect them via the persisted
     // usernode.proxy label and force a re-bootstrap. Cheap — one Docker
     // inspect on the warm-path hot path.
-    const labels = usesKubernetesWorkers()
-      ? { 'usernode.proxy': await kubernetes.getWorkerContractVersion(
-          kubernetesWorkerConfig(), containerName
-        ) }
+    const runtime = kubernetesWorkers
+      ? await kubernetes.getWorkerRuntimeMetadata(workerConfig, containerName)
+      : null;
+    const labels = kubernetesWorkers
+      ? { 'usernode.proxy': runtime.contractVersion }
       : await docker.getContainerLabels(containerName);
-    if (labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION) {
-      log.info('worker', 'Evicting stale-label warm container', { containerName });
-      await evictWorker(sessionId).catch((err) => {
-        log.warn('worker', 'Eviction failed; falling through to bootstrap', {
-          containerName, err: err.message,
+    const staleReason = labels['usernode.proxy'] !== WORKER_BOOTSTRAP_ENV_VERSION
+      ? 'runtime-contract'
+      : (kubernetesWorkers && runtime.imageRef !== workerConfig.kubernetes.workerImage
+        ? 'worker-image'
+        : (kubernetesWorkers && runtime.storageMode !== (temporary ? 'temporary' : 'persistent')
+          ? 'storage-mode' : null));
+    if (staleReason) {
+      // A recovered/in-flight turn owns this worker until it settles. Normal
+      // dispatch serialization means this is defensive, but keep the image
+      // rollout from ever becoming a reason to interrupt paid work.
+      if (existing?.inFlight) {
+        if (staleReason === 'storage-mode') {
+          throw new Error('Cannot change worker storage while a turn is running');
+        }
+        log.info('worker', 'Deferring stale warm worker replacement until turn completion', {
+          containerName, staleReason,
         });
+        return containerName;
+      }
+      log.info('worker', kubernetesWorkers
+        ? 'Reconciling stale warm worker'
+        : 'Evicting stale warm worker', {
+        containerName,
+        staleReason,
+        currentImage: runtime?.imageRef || null,
+        expectedImage: workerConfig?.kubernetes.workerImage || null,
       });
+      if (!kubernetesWorkers) {
+        await evictWorker(sessionId).catch((err) => {
+          log.warn('worker', 'Eviction failed; falling through to bootstrap', {
+            containerName, err: err.message,
+          });
+        });
+      }
+      // Kubernetes falls through without deleting the Deployment. Its
+      // Recreate strategy updates the immutable image and stops the old Pod
+      // before starting the replacement, while the retained PVC stays put.
       // fall through to the bootstrap branch below
     } else {
       if (!existing) {
@@ -2074,8 +2712,9 @@ async function ensureWorker(sessionId, {
   const bootstrap = (async () => {
     try {
       const runtimeName = await _bootstrapWarmContainer(sessionId, {
-        repoOwner, repoName, branchName, onProgress,
+        repoOwner, repoName, branchName, onProgress, temporary,
       });
+      await accountDeletionGuard(sessionId);
       _registryUpsert(sessionId, {
         containerName: runtimeName,
         bootstrap: null,
@@ -2106,15 +2745,20 @@ async function ensureWorker(sessionId, {
 // touching the post-processing logic (PR creation, staging build, etc.).
 async function execInWorker(sessionId, {
   mode = 'build',
+  // #2737: called with { inputTokens, cachedInputTokens, outputTokens }
+  // each time the provider reports usage, so a caller can end a turn on its
+  // token spend rather than only on the clock. Optional; see the call in
+  // applyClaudeResultUsage for the best-effort contract.
+  onUsage = null,
   prompt,
   // Complete task prompt for the one fresh retry run-cc.sh performs when a
   // hosted Claude --resume id is stale. Null for ordinary builds and every
   // non-Claude backend. This remains user-level input; it is never promoted
   // into the authoritative system-context transport below.
   resumeFallbackPrompt = null,
-  // Hosted Claude build-only appended system context. The caller keeps this
-  // null for Codex, scouts, sync and local turns. Materialized separately so
-  // it is a stable system layer rather than another conversation message.
+  // Hosted Claude system context; Codex evidence turns receive the same
+  // purpose-bound contract as developer instructions. Materialized separately
+  // so it is a stable instruction layer, not another conversation message.
   systemPrompt = null,
   // Restart recovery can reuse the prompt file deliberately retained by a
   // runner that emitted agent_retry_fresh=1. Live calls keep writing the
@@ -2130,6 +2774,10 @@ async function execInWorker(sessionId, {
   // (direct transport) instead of the Claude runner + Anthropic proxy.
   // Defaults to claude_code (unchanged behavior).
   agentBackend = 'claude_code',
+  // #3296: which CLI runs an OpenRouter turn — 'codex' (the default, and the
+  // only runner before harnesses existed) or 'claude'. Ignored for
+  // claude_code, which is always Claude Code on Anthropic.
+  agentHarness = null,
   // Codex/OpenRouter-specific turn context (direct transport, review P0):
   // the user's OpenRouter key is passed in ONLY for this specific docker
   // exec (injected as OPENROUTER_API_KEY into the per-turn environment),
@@ -2139,6 +2787,11 @@ async function execInWorker(sessionId, {
   agentModelMetadata = null,
   openrouterApiKey = null,
   openrouterApiBase = null,
+  evidenceRunId = null,
+  evidenceOrigins = null,
+  evidenceAuthTokens = null,
+  evidenceNavigationHints = null,
+  evidenceCompletionReminder = false,
   turnUuid = null,
   logicalTurnId = null,
   attemptNumber = null,
@@ -2152,6 +2805,9 @@ async function execInWorker(sessionId, {
   // transaction; ordinary callers leave it null.
   journalPath = null,
   onProgress,
+  // Content-free lifecycle events for the owner-only visual-evidence trace.
+  // Never pass journal text, tool arguments/results, URLs or model output.
+  onEvidenceDiagnostic = null,
   // #616: when true (admin-owned session on the self-edit app — the
   // caller checks via debug-access.isEligible), the turn env gains
   // PROD_DEBUG_JWT so the usernode-debug CLI can call the platform's
@@ -2234,6 +2890,7 @@ async function execInWorker(sessionId, {
     // the attempt and release the dispatch_pending record immediately.
     stopped.turnId = preRegisteredTurnId;
     stopped.agentBackend = agentBackend;
+    stopped.agentHarness = resolveTurnBackend(agentBackend, agentHarness).harness;
     stopped.execExitSeen = true;
     stopped.exitCode = 143;
     return stopped;
@@ -2246,9 +2903,15 @@ async function execInWorker(sessionId, {
   // shorter later) and the next push fails with 401 from the proxy.
   // One backend decision for this whole dispatch (review Commit 1 /
   // plan 3.1): all runner/token/env/active-turn choices derive from it.
-  const { backend: resolvedBackend, isCodex, isClaude } = resolveTurnBackend(agentBackend);
-  if (systemPrompt && !isClaude) {
-    throw new Error('execInWorker: systemPrompt is only supported for Claude turns');
+  const {
+    backend: resolvedBackend, harness: resolvedHarness, isCodex, isClaude,
+    isClaudeOpenRouter, isOpenRouter, runsClaude,
+  } = resolveTurnBackend(agentBackend, agentHarness);
+  if (isClaudeOpenRouter && !['scout', 'build'].includes(mode)) {
+    throw new Error(`execInWorker: Claude over OpenRouter supports scout and build turns, not ${mode}`);
+  }
+  if (systemPrompt && !runsClaude && !(isCodex && mode === 'evidence')) {
+    throw new Error('execInWorker: systemPrompt is only supported for Claude or Codex evidence turns');
   }
   if (resumeFallbackPrompt && !isClaude) {
     throw new Error('execInWorker: resumeFallbackPrompt is only supported for Claude turns');
@@ -2259,8 +2922,27 @@ async function execInWorker(sessionId, {
   if (resumeFallbackPrompt && !resumeSessionId) {
     throw new Error('execInWorker: resumeFallbackPrompt requires resumeSessionId');
   }
-  if (isClaude && mode === 'build' && !systemPrompt) {
-    throw new Error('execInWorker: hosted Claude build requires systemPrompt');
+  if (isClaude && ['build', 'evidence'].includes(mode) && !systemPrompt) {
+    throw new Error(`execInWorker: hosted Claude ${mode} requires systemPrompt`);
+  }
+  if (isCodex && mode === 'evidence' && !systemPrompt) {
+    throw new Error('execInWorker: hosted Codex evidence requires systemPrompt');
+  }
+  if (mode === 'evidence') {
+    if (!/^[0-9a-f]{32}$/.test(String(evidenceRunId || ''))
+        || !evidenceOrigins || !evidenceAuthTokens) {
+      throw new Error('execInWorker: evidence mode requires a run id, paired origins, and auth tokens');
+    }
+    for (const side of ['base', 'head']) {
+      let parsed;
+      try { parsed = new URL(evidenceOrigins[side]); } catch {}
+      if (!parsed || !['http:', 'https:'].includes(parsed.protocol) || parsed.pathname !== '/') {
+        throw new Error(`execInWorker: invalid ${side} evidence origin`);
+      }
+    }
+    if (typeof evidenceCompletionReminder !== 'boolean') {
+      throw new Error('execInWorker: evidence completion reminder must be boolean');
+    }
   }
   const useAnthropicProxy = isClaude && !anthropicApiKey;
   const measuredTelemetryComponent = llmTelemetry.collectionComponent(telemetryComponent);
@@ -2279,8 +2961,10 @@ async function execInWorker(sessionId, {
   let issuesReadJwt = null;
   let anthropicProxyJwt = null;
   let prodDebugJwt = null;
-  issuesReadJwt = mintIssuesReadJwt(sessionId);
-  if (isCodex) {
+  let evidenceJwt = null;
+  if (mode !== 'evidence') issuesReadJwt = mintIssuesReadJwt(sessionId);
+  else evidenceJwt = mintEvidenceJwt(sessionId, evidenceRunId);
+  if (isOpenRouter) {
     if (mode === 'build') {
       workerPushJwt = mintWorkerPushJwt(sessionId);
     }
@@ -2288,14 +2972,14 @@ async function execInWorker(sessionId, {
     // A scout must never mint a general token at all. Hiding WORKER_JWT while
     // placing the same capability in ISSUES_JWT/ANTHROPIC_API_KEY is not an
     // isolation boundary when the agent has Bash.
-    if (mode !== 'scout') workerSessionJwt = mintWorkerJwt(sessionId);
+    if (mode !== 'scout' && mode !== 'evidence') workerSessionJwt = mintWorkerJwt(sessionId);
     if (useAnthropicProxy) anthropicProxyJwt = mintAnthropicProxyJwt(sessionId);
-    if (prodDebug && mode !== 'sync') {
+    if (prodDebug && mode !== 'sync' && mode !== 'evidence') {
       prodDebugJwt = mintProdDebugJwt(sessionId);
     }
   }
 
-  const persistedModel = isCodex ? (agentModel || '') : models.resolve(model);
+  const persistedModel = isOpenRouter ? (agentModel || '') : models.resolve(model);
 
   // The prompt travels as a file, never as exec argv/env — a single
   // argv/env string is capped at 128 KiB on Linux, and build prompts
@@ -2325,17 +3009,32 @@ async function execInWorker(sessionId, {
   // container, so a malicious prompt like "echo $ANTHROPIC_API_KEY"
   // exfiltrates only a short-lived JWT that's useless against
   // api.anthropic.com directly.
-  const secretEnv = buildTurnSecretEnv({
-    mode,
-    agentBackend: resolvedBackend,
-    workerSessionJwt,
-    workerPushJwt,
-    issuesReadJwt,
-    anthropicProxyJwt,
-    anthropicApiKey,
-    prodDebugJwt,
-    openrouterApiKey,
-  });
+  // #2779: minted after the prompt files are written (a failure there has
+  // nothing to revoke), and revoked on every exit from here on.
+  const homeroomGrant = await mintHomeroomReadGrant(sessionId, mode);
+  let secretEnv;
+  try {
+    secretEnv = buildTurnSecretEnv({
+      mode,
+      agentBackend: resolvedBackend,
+      agentHarness: resolvedHarness,
+      workerSessionJwt,
+      workerPushJwt,
+      issuesReadJwt,
+      anthropicProxyJwt,
+      anthropicApiKey,
+      prodDebugJwt,
+      openrouterApiKey,
+      evidenceJwt,
+      evidenceMemberToken: evidenceAuthTokens?.member,
+      evidenceAdminToken: evidenceAuthTokens?.read_only_admin,
+      evidenceFullAdminToken: evidenceAuthTokens?.full_admin,
+      homeroomMcpToken: homeroomGrant ? homeroomGrant.token : null,
+    });
+  } catch (err) {
+    await revokeHomeroomReadGrant(sessionId, homeroomGrant);
+    throw err;
+  }
   const safeEnv = {
     PROMPT_FILE: TURN_PROMPT_PATH,
     SYSTEM_PROMPT_FILE: systemPrompt ? TURN_SYSTEM_PROMPT_PATH : '',
@@ -2343,7 +3042,14 @@ async function execInWorker(sessionId, {
     BRANCH: branchName || '',
     COMMIT_MSG: commitMsg || 'Changes via Homeroom',
     SESSION_ID: String(sessionId),
-    PLATFORM_URL: PLATFORM_INTERNAL_URL,
+    PLATFORM_URL: mode === 'evidence' ? evidenceControlUrl() : PLATFORM_INTERNAL_URL,
+    ...(mode === 'evidence' ? {
+      EVIDENCE_RUN_ID: evidenceRunId,
+      EVIDENCE_BASE_ORIGIN: new URL(evidenceOrigins.base).origin,
+      EVIDENCE_HEAD_ORIGIN: new URL(evidenceOrigins.head).origin,
+      EVIDENCE_NAVIGATION_HINTS: JSON.stringify(evidenceNavigationHints || {}),
+      EVIDENCE_COMPLETION_REMINDER: evidenceCompletionReminder ? '1' : '0',
+    } : {}),
     ...(isClaude ? {
       MODEL: models.resolve(model),
       CLAUDE_RESUME_SESSION_ID: resumeSessionId || '',
@@ -2362,6 +3068,26 @@ async function execInWorker(sessionId, {
     // scout/sync.
    ...inLoopBrowser.browserEnvForMode(mode),
  };
+  if (isClaudeOpenRouter) {
+    // #3296: run-cc.sh drives Claude Code through the worker-local Messages
+    // adapter (worker/claude-openrouter-request.js) instead of Anthropic. The
+    // model is the session-pinned OpenRouter slug; the adapter pins every
+    // request to it, caps the reply at the catalog's output limit and sets
+    // the reasoning effort. The resume id is the Claude session this
+    // OpenRouter thread recorded.
+    safeEnv.AGENT_PROVIDER = 'openrouter';
+    safeEnv.MODEL = agentModel || '';
+    safeEnv.AGENT_MODEL = agentModel || '';
+    safeEnv.AGENT_MODEL_MAX_OUTPUT_TOKENS = agentModelMetadata?.maxOutputTokens != null
+      ? String(agentModelMetadata.maxOutputTokens)
+      : '';
+    // The thinking level, which the adapter sends as output_config.effort.
+    safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
+    safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
+    safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
+    safeEnv.TURN_UUID = turnUuid || '';
+    safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
+  }
   if (isCodex) {
     safeEnv.AGENT_BACKEND = 'codex_openrouter';
     safeEnv.AGENT_MODEL = agentModel || '';
@@ -2388,7 +3114,7 @@ async function execInWorker(sessionId, {
     // the (already-validated) base so generation and catalog agree.
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
   }
-  const runner = isCodex ? '/usr/local/bin/run-codex-agent.sh' : '/usr/local/bin/run-cc.sh';
+  const runner = registry.runnerFor(resolvedBackend, resolvedHarness);
  // Journal transport: the turn runs DETACHED from this process. The
   // wrapper below redirects run-cc.sh's combined output to a journal
   // file in the CC volume and appends __USERNODE_EXIT__ <code> when it
@@ -2445,6 +3171,8 @@ async function execInWorker(sessionId, {
     mode,
     journal,
     backend: resolvedBackend,
+    // Restart recovery replays the journal with this harness's parser.
+    harness: resolvedHarness || undefined,
     turnUuid: turnUuid || undefined,
     // plan 7.4: persist the attempt identity so interactive/headless
     // recovery can terminalize the correct agent_turns row idempotently.
@@ -2475,6 +3203,7 @@ async function execInWorker(sessionId, {
       inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
       journal: null, activeTurnId: null,
     });
+    await revokeHomeroomReadGrant(sessionId, homeroomGrant);
     const err = new Error('execInWorker: durable active turn could not be persisted');
     err.code = requireActiveTurnPersistence
       ? 'durable_retry_persist_failed'
@@ -2541,6 +3270,10 @@ async function execInWorker(sessionId, {
 
     const state = newWatchState();
     state.turnId = durableTurnId;
+    // #2737: forwarded to applyClaudeResultUsage, which calls it on every
+    // usage event the provider reports. Undefined for every caller but the
+    // Homeroom bot's budget guard.
+    state.onUsage = typeof onUsage === 'function' ? onUsage : null;
     state.liveSpendEnabled = isClaude && mode !== 'sync';
     workerProgress.setSpend(sessionId, null);
     state.hostSessionId = sessionId;
@@ -2552,12 +3285,27 @@ async function execInWorker(sessionId, {
     // agent_backend in __USERNODE_RESULT__ (too late for the events), so
     // we seed it from the dispatch param up front.
     state.agentBackend = agentBackend;
+    // #3296: and the harness, which decides that parser for OpenRouter.
+    state.agentHarness = resolvedHarness;
+    if (mode === 'evidence') {
+      state.evidenceOrigins = evidenceOrigins;
+      state.evidenceNavigationHints = evidenceNavigationHints;
+      state.evidenceCompletionReminder = evidenceCompletionReminder === true;
+    }
+    if (mode === 'evidence' && typeof onEvidenceDiagnostic === 'function') {
+      state.evidenceDiagnosticObserver = onEvidenceDiagnostic;
+      emitEvidenceDiagnostic(state, {
+        kind: 'provider_dispatched',
+        backend: isCodex ? 'codex_openrouter' : 'claude_code',
+        requestMode: resumeSessionId ? 'agent_resume' : 'agent_new',
+      });
+    }
     state.telemetryDiagnosticsEnabled = !!measuredTelemetryComponent;
-    if (isClaude) {
+    if (runsClaude) {
       state.providerRateLimitEventCount = 0;
       state.contextCompactionCount = 0;
     }
-    if (isCodex) state.providerRetryCount = 0;
+    if (isOpenRouter) state.providerRetryCount = 0;
     state.providerStartedMs = providerStartedMs;
     state.dispatchSetupDurationMs = providerStartedMs == null
       ? null
@@ -2590,8 +3338,11 @@ async function execInWorker(sessionId, {
     if (!holdTurnRecord && state.execExitSeen && !state.fatalError) {
       execWorkerCommand(containerName, ['rm', '-f', journal]).catch(() => {});
     }
-    return state;
+    return finalizeHarnessResult(state);
   } finally {
+    // The agent process is done with the platform once its journal has
+    // ended: the tail (PR, staging, the wrap-up) never uses this token.
+    await revokeHomeroomReadGrant(sessionId, homeroomGrant);
     if (providerDispatched && providerTerminalObserved && isClaude && measuredTelemetryComponent) {
       recordClaudeCodingRun({
         sessionId,
@@ -2792,7 +3543,7 @@ async function inspectContainerState(containerName) {
 async function _consumeJournal(containerName, journal, progress, state, { sessionId = null, startedAt = null } = {}) {
   if (usesKubernetesWorkers()) {
     const since = startedAt || new Date().toISOString();
-    let charsConsumed = 0;
+    let linesConsumed = 0;
     const counters = newWatchdogCounters();
     let lastProbeAt = Date.now();
     // WORKER_JWT_TTL is the jsonwebtoken duration string "24h". Use its
@@ -2801,15 +3552,23 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
     const deadline = Date.now() + WORKER_JWT_TTL_MS;
     const readJournal = async () => {
       try {
-        const { stdout } = await execWorkerCommand(containerName, ['cat', journal]);
-        // cat may race a writer halfway through a JSON record or marker.
+        // Only the lines written since the last poll. Reading the whole
+        // journal every second made each poll a fresh journal-sized string,
+        // and a line sliced from it keeps that whole string alive inside
+        // state.rawStdout: a long turn pinned one full copy per second of
+        // output, and the platform ran out of heap (2026-09-25). Counting
+        // lines rather than bytes cannot drift on multi-byte text.
+        const { stdout } = await execWorkerCommand(containerName, ['tail', '-n', `+${linesConsumed + 1}`, journal]);
+        // tail may race a writer halfway through a JSON record or marker.
         // Advance only past complete lines, including blank lines. The next
-        // cumulative read supplies the remainder without losing or replaying
-        // records (and therefore provider usage) at a polling boundary.
+        // read starts at the first line not yet consumed, so no record (and
+        // therefore no provider usage) is lost or replayed at a boundary.
+        let start = 0;
         let newline;
-        while ((newline = stdout.indexOf('\n', charsConsumed)) !== -1) {
-          const line = stdout.slice(charsConsumed, newline);
-          charsConsumed = newline + 1;
+        while ((newline = stdout.indexOf('\n', start)) !== -1) {
+          const line = stdout.slice(start, newline);
+          start = newline + 1;
+          linesConsumed += 1;
           state.rawStdout += `${line}\n`;
           parseLine(line, progress, state);
           if (state.execExitSeen) return;
@@ -3116,6 +3875,9 @@ async function resumeTurnFromJournal(sessionId, {
   onProgress,
   byokCentsSoFar = 0,
   agentBackend = 'claude_code',
+  // The persisted active_turn.harness (#3296). Absent on a record written
+  // before harnesses existed, which was always a Codex OpenRouter turn.
+  agentHarness = null,
   telemetryComponent = null,
   telemetryCorrelationId = null,
   telemetryAttemptNumber = null,
@@ -3161,13 +3923,14 @@ async function resumeTurnFromJournal(sessionId, {
   // recovery too (review P4). The caller passes the persisted
   // session.agent_backend.
   state.agentBackend = agentBackend;
+  const recoveredBackend = resolveTurnBackend(agentBackend, agentHarness);
+  state.agentHarness = recoveredBackend.harness;
   state.telemetryDiagnosticsEnabled = !!llmTelemetry.collectionComponent(telemetryComponent);
-  const recoveredBackend = resolveTurnBackend(agentBackend);
-  if (recoveredBackend.isClaude) {
+  if (recoveredBackend.runsClaude) {
     state.providerRateLimitEventCount = 0;
     state.contextCompactionCount = 0;
   }
-  if (recoveredBackend.isCodex) state.providerRetryCount = 0;
+  if (recoveredBackend.isOpenRouter) state.providerRetryCount = 0;
   const physicalStartedAt = new Date(startedAt || Date.now());
   const safeStartedAt = Number.isFinite(physicalStartedAt.getTime())
     ? physicalStartedAt
@@ -3199,7 +3962,7 @@ async function resumeTurnFromJournal(sessionId, {
     // The recovery caller owns required persistence (thread id + ledger)
     // and calls finishTurn only after it succeeds. Deleting here used to
     // destroy the sole replay source before those writes had landed.
-    return state;
+    return finalizeHarnessResult(state);
   } finally {
     if (providerTerminalObserved && state.providerDispatched
         && resolveTurnBackend(agentBackend).isClaude && telemetryComponent && turnId) {
@@ -3346,10 +4109,11 @@ async function listOrphanWorkers() {
 // pgrep/pkill exit 127 in there. The old `pgrep ... && busy || idle`
 // one-liner silently reported "idle" for every container, busy or not.
 // Match a turn process for EITHER backend (review F4): the Claude runner
-// (run-cc.sh + claude) or the Codex runner (run-codex-agent.sh + codex).
+// (run-cc.sh + claude) or the Codex runner, its request adapter, and codex.
 // Without the codex terms, long Codex turns look idle (watchdog abandons)
 // and Stop appends a fake marker without killing the process.
-const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh)( |$)';
+// #3296 adds the Claude-over-OpenRouter request adapter that wraps claude.
+const TURN_PROC_RE = '(^|[ /])(claude|run-cc\\.sh|codex|run-codex-agent\\.sh|codex-openrouter-request\\.js|claude-openrouter-request\\.js)( |$)';
 const TURN_PROC_PROBE_SCRIPT =
   'busy=0; for d in /proc/[0-9]*; do '
   + '[ "$d" = "/proc/$$" ] && continue; '
@@ -3475,6 +4239,24 @@ async function destroyWorker(containerName) {
   log.info('worker', 'Worker destroyed', { containerName });
 }
 
+// Account erasure must not use the best-effort archive helpers: a failed
+// runtime/volume removal remains a durable retry task.
+async function eraseAccountWorkspace(sessionId) {
+  if (!Number.isSafeInteger(sessionId) || sessionId <= 0) throw new Error('invalid_session');
+  if (usesKubernetesWorkers()) {
+    await kubernetes.eraseWorker(kubernetesWorkerConfig(), sessionId);
+  } else {
+    const result = await docker.stopAndRemove(workerContainerName(sessionId));
+    if (!result.removed) throw new Error('worker_removal_failed');
+    try {
+      await docker.execFileAsync('docker', ['volume', 'rm', '-f', ccVolumeName(sessionId)], { timeout: 10000 });
+    } catch (err) {
+      if (!/no such volume/i.test(String(err.stderr || err.message))) throw new Error('volume_removal_failed');
+    }
+  }
+  _warmRegistry.delete(sessionId);
+}
+
 // Remove the named CC volume for a given chat session. Called when the
 // session is archived (permanent teardown). Safe to call even if the
 // volume was never created.
@@ -3484,6 +4266,14 @@ async function destroyCcVolume(sessionId) {
   } else {
     await docker.removeVolume(ccVolumeName(sessionId));
   }
+  _warmRegistry.delete(sessionId);
+}
+
+// Kubernetes worker state volumes, one per change (see
+// worker-volume-reclaim.js). A Docker host has no volume quota to manage.
+async function listWorkerVolumes() {
+  if (!usesKubernetesWorkers()) return [];
+  return kubernetes.listWorkerVolumes(kubernetesWorkerConfig());
 }
 
 // #155: copy one session's CC memory volume (~/.claude) into another
@@ -3721,6 +4511,9 @@ module.exports = {
   listOrphanWorkers,
   destroyWorker,
   destroyCcVolume,
+  listWorkerVolumes,
+  eraseAccountWorkspace,
+  setAccountDeletionGuard,
   cloneCcVolume,
   parseClaudeResponse,
   // exposed for unit tests (watchdog strike policy + line parsing)
@@ -3741,7 +4534,12 @@ module.exports = {
   mintAnthropicProxyJwt,
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
   mintProdDebugJwt,
+  mintEvidenceJwt,
+  evidenceControlUrl,
   buildTurnSecretEnv,
+  // #3296: harness-aware backend resolution and result shape (for tests)
+  resolveTurnBackend,
+  finalizeHarnessResult,
   // file-based dispatch-prompt transport (E2BIG fix; exported for tests)
   TURN_PROMPT_PATH,
   TURN_SYSTEM_PROMPT_PATH,

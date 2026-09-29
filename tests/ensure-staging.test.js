@@ -174,7 +174,10 @@ function makePool(sessionRow) {
 // "did this preview answer just now?" check. `throws` models a docker
 // daemon hiccup; the helper itself never throws in production, but the
 // route must survive it either way.
-function loadSessions({ pool, needsRebuild, rebuild, probeHealth = async () => true }) {
+function loadSessions({
+  pool, needsRebuild, rebuild, probeHealth = async () => true,
+  verifyEdge = async () => ({ ok: true, code: 200 }),
+}) {
   const paths = {
     pool: require.resolve('../src/db/pool'),
     ws: require.resolve('../src/services/ws'),
@@ -182,11 +185,14 @@ function loadSessions({ pool, needsRebuild, rebuild, probeHealth = async () => t
     stagingRecovery: require.resolve('../src/services/staging-recovery'),
     docker: require.resolve('../src/services/docker'),
     runtime: require.resolve('../src/services/application-runtime'),
+    staging: require.resolve('../src/services/staging'),
     sessions: require.resolve('../src/routes/sessions'),
   };
 
   const broadcasts = [];
   const healthProbes = [];
+  const edgeProbes = [];
+  const rebuildChecks = [];
   let rebuildCalls = 0;
 
   const originals = [
@@ -196,6 +202,13 @@ function loadSessions({ pool, needsRebuild, rebuild, probeHealth = async () => t
       probeHealthOnce: async (name, port, path_, opts) => {
         healthProbes.push({ name, port, path: path_, opts });
         return probeHealth();
+      },
+    })],
+    [paths.staging, stubModule(paths.staging, {
+      ...require('../src/services/staging'),
+      verifyStagingEdge: async (...args) => {
+        edgeProbes.push(args);
+        return verifyEdge(...args);
       },
     })],
     [paths.ws, stubModule(paths.ws, {
@@ -208,7 +221,11 @@ function loadSessions({ pool, needsRebuild, rebuild, probeHealth = async () => t
       sessionCollabGuard: () => (_req, _res, next) => next(),
     })],
     [paths.stagingRecovery, stubModule(paths.stagingRecovery, {
-      stagingNeedsRebuild: async () => needsRebuild,
+      stagingNeedsRebuild: async (...args) => {
+        rebuildChecks.push(args);
+        return typeof needsRebuild === 'function' ? needsRebuild(...args) : needsRebuild;
+      },
+      recheckHeadSha: (session) => session.checks_commit_sha || session.handoff_head_sha || null,
       rebuildSessionStaging: async (args) => { rebuildCalls += 1; return rebuild(args); },
     })],
   ];
@@ -226,7 +243,10 @@ function loadSessions({ pool, needsRebuild, rebuild, probeHealth = async () => t
     }
     delete require.cache[paths.sessions];
   };
-  return { subject, broadcasts, healthProbes, getRebuildCalls: () => rebuildCalls, restore };
+  return {
+    subject, broadcasts, healthProbes, edgeProbes, rebuildChecks,
+    getRebuildCalls: () => rebuildCalls, restore,
+  };
 }
 
 async function startServer(loaded, user = { id: 1, username: 'alice' }) {
@@ -246,6 +266,7 @@ const OWNED_ACTIVE = {
   id: 42, user_id: 1, status: 'active', branch_name: 'feat/x',
   app_slug: 'my-app', app_name: 'My App', repo_url: 'https://github.com/owner/repo',
   staging_url: 'https://stg.example', staging_container_id: 'c1',
+  staging_commit_sha: 'submitted-head', checks_commit_sha: 'submitted-head',
 };
 
 async function waitFor(pred, timeoutMs = 3000) {
@@ -265,11 +286,65 @@ test('ensure-staging returns {ready,url} when the preview is live', async () => 
       status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
     });
     assert.equal(loaded.getRebuildCalls(), 0, 'no rebuild when already live');
+    assert.equal(loaded.edgeProbes.length, 1, 'public edge verified before ready');
+    assert.equal(loaded.rebuildChecks[0][1].headSha, 'submitted-head',
+      'the stored runtime is checked against the submitted revision');
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+test('#2328 preview-status gives read-only reviewers the same verified readiness answer', async () => {
+  const promoted = { ...OWNED_ACTIVE, status: 'promoted' };
+  const loaded = loadSessions({
+    pool: makePool(promoted), needsRebuild: false, rebuild: async () => 'must not rebuild',
+  });
+  const srv = await startServer(loaded, { id: 2, username: 'bob' });
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/preview-status`);
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), {
+      status: 'ready', url: 'https://stg.example', verified: true, checksRunning: false,
+    });
+    assert.equal(loaded.getRebuildCalls(), 0, 'the GET route never changes preview state');
+    assert.equal(loaded.healthProbes.length, 1);
+    assert.equal(loaded.edgeProbes.length, 1);
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+test('#2328 preview-status reports a reclaimed preview as missing without rebuilding it', async () => {
+  const promoted = {
+    ...OWNED_ACTIVE, status: 'promoted', staging_url: null, staging_container_id: null,
+  };
+  const loaded = loadSessions({
+    pool: makePool(promoted), needsRebuild: true, rebuild: async () => 'must not rebuild',
+  });
+  const srv = await startServer(loaded, { id: 2, username: 'bob' });
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/preview-status`);
+    assert.deepEqual(await res.json(), { status: 'unavailable', reason: 'missing' });
+    assert.equal(loaded.getRebuildCalls(), 0);
+    assert.equal(loaded.healthProbes.length, 0);
+    assert.equal(loaded.edgeProbes.length, 0);
+  } finally { await srv.close(); loaded.restore(); }
+});
+
+test('#2328 a public-edge 5xx is unavailable even when the runtime healthcheck passes', async () => {
+  const loaded = loadSessions({
+    pool: makePool(OWNED_ACTIVE), needsRebuild: false, rebuild: async () => 'must not rebuild',
+    verifyEdge: async () => ({ ok: false, code: 502, error: new Error('bad gateway') }),
+  });
+  const srv = await startServer(loaded);
+  try {
+    const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
+    assert.deepEqual(await res.json(), { status: 'unavailable', reason: 'edge' });
+    assert.equal(loaded.healthProbes.length, 1);
+    assert.equal(loaded.edgeProbes.length, 1);
+    assert.equal(loaded.getRebuildCalls(), 0,
+      'an edge outage is not evidence that rebuilding the app is safe or useful');
   } finally { await srv.close(); loaded.restore(); }
 });
 
 for (const healthy of [true, false]) {
-  test(`Kubernetes preview readiness reports verified=${healthy} without Docker calls`, async (t) => {
+  test(`Kubernetes preview readiness reports ${healthy ? 'ready' : 'unavailable'} without Docker calls`, async (t) => {
     const loaded = loadSessions({
       pool: makePool({ ...OWNED_ACTIVE, staging_container_id: null,
         staging_runtime_kind: 'kubernetes', staging_runtime_name: 'sv-preview-my-app-s42' }),
@@ -288,8 +363,9 @@ for (const healthy of [true, false]) {
     });
     try {
       const body = await (await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' })).json();
-      assert.equal(body.status, 'ready');
-      assert.equal(body.verified, healthy);
+      assert.equal(body.status, healthy ? 'ready' : 'unavailable');
+      if (healthy) assert.equal(body.verified, true);
+      else assert.equal(body.reason, 'unhealthy');
       assert.equal(loaded.healthProbes.length, 0);
       assert.equal(loaded.getRebuildCalls(), 0);
       assert.equal(probes.length, 1);
@@ -320,7 +396,7 @@ test('#816 ready probes the preview container by name and reports {verified}', a
   } finally { await srv.close(); loaded.restore(); }
 });
 
-test('#816 a failed probe still answers {ready} — just unverified, never a rebuild', async () => {
+test('#2328 a failed probe answers {unavailable,unhealthy}, never ready or rebuilding', async () => {
   const loaded = loadSessions({
     pool: makePool(OWNED_ACTIVE), needsRebuild: false, rebuild: async () => 'built',
     probeHealth: async () => false,
@@ -330,17 +406,12 @@ test('#816 a failed probe still answers {ready} — just unverified, never a reb
     const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
     assert.equal(res.status, 200);
     const body = await res.json();
-    // A preview busy under the post-build checks run can miss a 3s probe.
-    // Answering anything but `ready` here would turn that into a needless
-    // rebuild — the exact churn the liveness check exists to avoid.
-    assert.equal(body.status, 'ready');
-    assert.equal(body.url, 'https://stg.example');
-    assert.equal(body.verified, false, 'the client falls back to its own poll');
+    assert.deepEqual(body, { status: 'unavailable', reason: 'unhealthy' });
     assert.equal(loaded.getRebuildCalls(), 0, 'an unverified preview is NOT rebuilt');
   } finally { await srv.close(); loaded.restore(); }
 });
 
-test('#816 a throwing probe degrades to unverified rather than 500ing', async () => {
+test('#2328 a throwing probe degrades to unavailable rather than 500ing', async () => {
   const loaded = loadSessions({
     pool: makePool(OWNED_ACTIVE), needsRebuild: false, rebuild: async () => 'built',
     probeHealth: async () => { throw new Error('docker daemon unreachable'); },
@@ -348,10 +419,9 @@ test('#816 a throwing probe degrades to unverified rather than 500ing', async ()
   const srv = await startServer(loaded);
   try {
     const res = await fetch(`${srv.baseUrl}/api/sessions/42/ensure-staging`, { method: 'POST' });
-    assert.equal(res.status, 200, 'a docker hiccup must not break opening a preview');
+    assert.equal(res.status, 200, 'a docker hiccup must not break the status request');
     const body = await res.json();
-    assert.equal(body.status, 'ready');
-    assert.equal(body.verified, false);
+    assert.deepEqual(body, { status: 'unavailable', reason: 'unhealthy' });
   } finally { await srv.close(); loaded.restore(); }
 });
 

@@ -67,6 +67,7 @@ test('a signed-in address resolves to the root it lands on', () => {
     ['#settings/notifications', 'settings-screen'],
     ['#admin', 'admin-screen'],
     ['#messages', 'messages-screen'],
+    ['#chat/95df0790-4873-43cc-9608-728f3349da50', 'global-chat-screen'],
     ['#leaderboard', 'leaderboard-screen'],
   ]) {
     assert.equal(f(hash, '/', true), expected, `${hash} → ${expected}`);

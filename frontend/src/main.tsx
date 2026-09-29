@@ -60,10 +60,12 @@ import { flushSync } from 'react-dom';
 import { hydrateRoot } from 'react-dom/client';
 
 import { Shell } from './Shell';
+import './lib/overlay-scrim-bridge';
 import { bootStep } from './lib/boot-guard';
 import { initOffline } from './lib/offline';
 import { registerServiceWorker } from './lib/service-worker';
 import { applyShellSnapshot } from './lib/shell-snapshot-apply';
+import { installJoinRequired } from './lib/join-required';
 // Publishes window.UsernodeReact.devBoard at module scope. Imported for the
 // side effect, and imported HERE (rather than reached from a Shell island)
 // because the Dev surfaces are runtime-injected into an empty #app-content and
@@ -97,6 +99,19 @@ import './features/app-frame/mount';
 // must exist before DOMContentLoaded (the earliest App.init() can navigate) —
 // module scope here, not first render of the header island.
 import './features/header/mount';
+// The platform tab bar's bridge: publishes window.UsernodeReact.nav. Same
+// window as the header's — App._syncPlatformTabs() runs inside
+// PlatformUI.transition's reveal callback on every screen swap, the earliest
+// of which is App.init()'s first restoreFromHash on DOMContentLoaded.
+import './features/nav/mount';
+// The side panel beside a running app (desktop): publishes
+// window.UsernodeReact.sidePanel, which App._syncPlatformTabs reports to from
+// inside the same transition callbacks as the bar's bridge above, and which
+// App.openAppTab consults on App.init's first navigation. In the panel's OWN
+// document (`?panel=1`) it installs that document's runtime instead —
+// window.UsernodeReact.sidePanelEmbed, which App.restoreFromHash asks before
+// it routes — so it has to be in place before DOMContentLoaded too.
+import './features/side-panel/mount';
 
 // The wallpaper's star follows the visible screen's scroll offset (the
 // washes stay put). A side effect on a custom property, not an island:
@@ -104,6 +119,15 @@ import './features/header/mount';
 // screens share, so it hangs off the document and the visibility store.
 import './lib/browser-scroll';
 import './lib/wallpaper-scroll';
+// …and where the on-screen keyboard has panned the screen to, so a centred
+// dialog stays inside what is visible above the keys (#2765).
+import './lib/visual-viewport';
+// …and a sheet, dialog or menu opened over a dark app takes the app's tone
+// rather than the viewer's light mode (#2803).
+import './lib/surface-tone';
+// …and the same wallpaper is copied under a screen's view transition, so the
+// pinned, translucent header and rail keep their ground mid-fade (#2758).
+import './lib/transition-ground';
 // #1084 chunk G: the retired public/js/dev-chat.js, moved into the bundle
 // verbatim. Imported HERE rather than from a Shell island for the same reason
 // as the dev board above — #dc-view is written into an empty #app-content at
@@ -113,6 +137,17 @@ import './lib/wallpaper-scroll';
 // visibility/focus/pagehide listeners are guarded anyway.
 import './features/dev-chat/mount';
 import './features/dev-chat/dev-chat.js';
+
+// #2563: the first-run "Choose your username" gate. Imported at the BROWSER
+// entry rather than from a Shell island for two reasons — it renders nothing
+// into the prerendered document (it lifts a kit modal, like the terms gate
+// it is sequenced with), and it must be listening for `sv:authed` on every
+// route, not only on one screen's first reveal. Its listener is guarded, so
+// an anonymous document costs it nothing.
+import './features/auth/username-first-run.js';
+// Communities, stage 5: "What communities do you want to join?", the step
+// after the username and the terms, imported here for the same two reasons.
+import './features/auth/communities-first-run.js';
 
 // ── Every step below is wrapped, and hydration is the one that matters ──
 //
@@ -128,6 +163,10 @@ import './features/dev-chat/dev-chat.js';
 // why it records rather than console.error-ing.
 bootStep('registerServiceWorker', registerServiceWorker);
 bootStep('initOffline', initOffline);
+// Before hydration, so no island's first write can slip past it: a write
+// refused with `join_required` becomes a Join prompt and a retry
+// (./lib/join-required.ts), for every caller in both bundles.
+bootStep('installJoinRequired', () => installJoinRequired());
 
 // document.body is the hydration container, not a wrapper <div>, because the
 // body element itself is the flex column the layout depends on

@@ -1,6 +1,6 @@
 // Topochain public standings (Task 14, public screens). Was a screen of
 // its own (#topochain-leaderboard-screen) until the header slim-down made
-// it the SECOND TAB of the Leaderboard screen: it renders into
+// it a TAB of the Leaderboard screen: it renders into
 // #topochain-leaderboard-root inside #leaderboard-screen, and open() /
 // close() are called by the Leaderboard module (./leaderboard.js)
 // when its section flips, not by a navigate* pair in app.js. The legacy
@@ -86,7 +86,7 @@ const TopochainLeaderboard = {
   // pane's own personalization pass: a failed/absent count renders NO line
   // and NEVER touches _error — a standings table must not paint a red banner
   // because a decoration alongside it couldn't load.
-  _challengeCounts: { total: 0, completed: 0 },
+  _challengeCounts: { total: 0, done: null },
 
   // Drill-down panel state. `_drillRow` is the clicked row (or null); the
   // three sections load independently so one failing/being unavailable
@@ -141,7 +141,7 @@ const TopochainLeaderboard = {
         if (!TopochainLeaderboard._open) return;
         TopochainLeaderboard._page = 1;
         TopochainLeaderboard._drillRow = null;
-        TopochainLeaderboard._challengeCounts = { total: 0, completed: 0 };
+        TopochainLeaderboard._challengeCounts = { total: 0, done: null };
         TopochainLeaderboard.loadLeaderboard();
       });
     }
@@ -151,7 +151,7 @@ const TopochainLeaderboard = {
   close() {
     TopochainLeaderboard._open = false;
     TopochainLeaderboard._drillRow = null;
-    TopochainLeaderboard._challengeCounts = { total: 0, completed: 0 };
+    TopochainLeaderboard._challengeCounts = { total: 0, done: null };
     if (TopochainLeaderboard._unsub) {
       TopochainLeaderboard._unsub();
       TopochainLeaderboard._unsub = null;
@@ -253,9 +253,23 @@ const TopochainLeaderboard = {
     if (!TopochainLeaderboard._open
         || TopochainLeaderboard._eventId() !== eventId) return;
     if (!ok || !data?.success || !Array.isArray(data.data)) return;
+    // `completed` on a challenge row is the ORGANISER's "this challenge is
+    // over" flag. Counting it and calling the result "challenges completed"
+    // put a number beside the standings that meant something else entirely:
+    // Home said "4/9 done" for the viewer's own progress while this line said
+    // "0 of 9 completed" for the organiser's, at the same moment, in the same
+    // word. Nothing was wrong with either number.
+    //
+    // So count the thing the word claims. `progress` is attached per row for
+    // a signed-in viewer only, which also settles the anonymous case: with no
+    // progress anywhere there is no viewer to have any, and the tally is left
+    // off rather than reported as a zero somebody would read as their own.
+    const signedIn = data.data.some((c) => c && c.progress);
     TopochainLeaderboard._challengeCounts = {
       total: data.data.length,
-      completed: data.data.filter((c) => c && c.completed === true).length,
+      done: signedIn
+        ? data.data.filter((c) => c && c.progress && c.progress.done === true).length
+        : null,
     };
     TopochainLeaderboard._renderBody();
   },
@@ -295,13 +309,12 @@ const TopochainLeaderboard = {
     // exists on THIS endpoint's event object.
     const disclaimer = event.disclaimer ? str(event.disclaimer) : null;
 
-    // The challenge tally + cross-link (#981) — the mirror of the challenges
-    // pane's "See where the season stands →". Omitted entirely when the event
+    // The challenge tally + cross-link (#981) to the Challenges tab. Omitted entirely when the event
     // has no challenges or the count hasn't (or couldn't) load, so an empty
     // or failed tally is invisible rather than a "0 of 0" line.
-    const counts = TopochainLeaderboard._challengeCounts || { total: 0, completed: 0 };
+    const counts = TopochainLeaderboard._challengeCounts || { total: 0, done: null };
     const challengeLine = counts.total > 0
-      ? { completed: str(counts.completed), total: str(counts.total) }
+      ? { done: counts.done == null ? null : str(counts.done), total: str(counts.total) }
       : null;
 
     if (!event.display_leaderboard) {
@@ -344,7 +357,9 @@ const TopochainLeaderboard = {
       index: i,
       rank: r.is_non_podium ? '—' : String(r.rank),
       nonPodium: !!r.is_non_podium,
-      user: str(r.display_name),
+      // The server resolves a name for every account it can (#2394); a row
+      // it still cannot name says so rather than showing only its points.
+      user: str(r.display_name) || 'Anonymous',
       points: str(r.total_points),
       extra: str(r.extra_points),
       blocks: str(r.event_total_produced_blocks),
@@ -394,8 +409,7 @@ const TopochainLeaderboard = {
   },
 
   // Real hash navigation, so the section switch goes through the router and
-  // the shared event selection survives it — same reasoning as the challenges
-  // pane's `#tc-se-to-standings` link in the opposite direction.
+  // the shared event selection survives it — the section switch goes through the router.
   _goToChallenges() {
     window.location.hash = '#leaderboard/challenges';
   },
@@ -558,7 +572,7 @@ const TopochainLeaderboard = {
     };
 
     return {
-      displayName: str(row.display_name),
+      displayName: str(row.display_name) || 'Anonymous',
       walletAddress: row.wallet_address ? str(row.wallet_address) : null,
       profile,
       activities,

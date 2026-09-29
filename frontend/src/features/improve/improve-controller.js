@@ -1,50 +1,48 @@
 /**
- * The Improve panel's controller: the seam between the classic scripts and the
- * React island, and the owner of the panel's presentation.
+ * The Improve feature's controller: the seam between the classic scripts and
+ * the React islands that draw what Improve offers.
  *
  * ── What replaced what ─────────────────────────────────────────────────
  *
- * The header used to carry an App/Dev segmented switch, a feedback button and a
- * work cog. All three are gone. An app now renders as an app, and the second
- * mode — everything you do *to* the app rather than *with* it — is this panel.
- * That means this file absorbed responsibilities from three retired places:
+ * The header used to carry an App/Dev segmented switch, a feedback button and
+ * a work cog. All three are gone. An app renders as an app, and the second
+ * mode — everything you do *to* the app rather than *with* it — became a
+ * panel this file presented, which is why it absorbed three retired places:
  *
  *   * `App.ImproveStatus.setAppOpen()`'s show/hide of `#app-mode-switch`
- *     becomes `Improve.setTarget()`, which publishes what the panel is about
- *     (and therefore whether the header button exists at all);
+ *     becomes `Improve.setTarget()`, which publishes what Improve is ABOUT
+ *     (and therefore whether its controls have a subject at all);
  *   * the drawer's `#drawer-row-github` / `#drawer-row-share` / version rows
- *     become fields on the store, rendered inside the panel;
- *   * `WorkDrawer`'s cross-app session list becomes the panel's two session
- *     sections — this app's, and everything else in an overflow area.
+ *     become fields on the store;
+ *   * `WorkDrawer`'s cross-app session list becomes the two session sections,
+ *     this app's and everything else.
  *
- * ── Presentation: bottom sheet on touch, slide-over on desktop ─────────
+ * ── And then the panel itself went (#2718 review) ──────────────────────
  *
- * The two idioms are the product requirement, not an implementation detail, and
- * they fall out of one `adoptKitSurface` call. On touch the kit presents the
- * panel element as a bottom `sheet` with its own drag-to-dismiss; on desktop
- * `gate: 'touch'` refuses and we fall through to the CSS slide-over the panel's
- * own class string draws from the right edge. This is the INVERSE of the
- * hamburger, which is a kit side `panel` on touch — deliberately: the hamburger
- * is navigation (an edge drawer at both widths reads as navigation) and this is
- * an action surface over the thing you are looking at.
- *
- * `hidden` stays ours on both paths, exactly as it does for the work drawer:
- * the kit knows nothing about it, and it is what the desktop slide-over means
- * by closed.
+ * Each of those three found a surface of its own, which is what left the
+ * panel holding two buttons: the sessions are the Workshop's and the
+ * notifications sheet's Agents tab, the reference rows are the app menu's
+ * About pane, and the two actions plus the build notice are rows of that same
+ * menu (../app-context/, ./actions.tsx). A drawer you open to press a button
+ * is a tap to reach a tap, so it retired and this file stopped owning a
+ * presentation: `open`, `close`, `toggle` and `dismissForNav` are names every
+ * caller already says, forwarded to the controller that owns the surface.
  *
  * ── Why the store and not the DOM ──────────────────────────────────────
  *
- * Everything below writes `improveStore` and never a node inside the panel.
- * The panel's whole subtree is React-owned, so a `getElementById` write in here
- * would be exactly the two-owners conflict the migration exists to prevent. The
- * one node this file does touch by id is `#improve-panel` itself — its `hidden`
- * class and its adoption — which is the same sanctioned pair every other
- * kit-adopted root uses.
+ * Everything below writes `improveStore` and never a node in anyone's markup.
+ * Those subtrees are React-owned, so a `getElementById` write in here would be
+ * exactly the two-owners conflict the migration exists to prevent — and with
+ * the panel gone there is no root left for this file to adopt either, which is
+ * why the kit-surface call its header used to describe is no longer here.
  */
 
 import { iconViewFor } from '../apps/app-card.js';
-import { adoptKitSurface } from '../../lib/kit-surface';
-import { dismissRegisteredSheets } from '../../lib/sheet-controller.js';
+// Presentation state for the ONE surface that still lists these sessions —
+// the notifications sheet's Agents tab. A leaf module holding a single
+// boolean, so reading it here adds no cycle; ../notifications/ already
+// imports improveStore the other way for the rows themselves.
+import { notificationsSheetStore } from '../notifications/notifications-sheet-store.js';
 import { boardHref, improveStore } from './improve-store.js';
 import { saveShellSnapshot } from '../../lib/shell-snapshot';
 
@@ -58,16 +56,55 @@ function isBusy(session) {
 }
 
 /**
- * A PARKED session (owner review).
+ * Whether an AI turn is in flight for this session RIGHT NOW (#1958).
  *
- * "Changes in progress" and "Changes in other apps" are lists of what is
- * MOVING. A paused session is not in progress — it is set down — and listing
- * it under that heading both overstates the list and pushes the rows that are
- * actually running further from the thumb. Paused work stays reachable where
- * parked work belongs: the Board, and the session's own screen.
+ * `isBusy` above reads the flag the server wrote into the last
+ * /api/me/active-sessions answer, which is true for exactly as long as that
+ * answer is. `SessionState` (public/js/session-state.js) is what the server
+ * has said SINCE: it pushes a `session_state` event on every real turn
+ * boundary, so a turn that ended after the payload was issued is already
+ * idle there — and every other surface that draws this fact (the dev
+ * screen's session list, the board's cards) reads it through the store.
+ * This row was the one that did not, so its pill went Working → Ready one
+ * refetch round trip after the turn ended, and a panel opened later painted
+ * the flag a fetch during the turn had left behind until the open-time
+ * refetch landed. A live entry wins; the payload's flag is the fallback for
+ * a session the store has never heard of.
  */
-function isParked(session) {
-  return String((session && session.status) || '').toLowerCase() === 'paused';
+function liveBusy(session) {
+  const fallback = isBusy(session);
+  const live = typeof window !== 'undefined' ? window.SessionState : null;
+  if (!live || typeof live.isBusy !== 'function') return fallback;
+  return !!live.isBusy(session.id, fallback);
+}
+
+/**
+ * Whether the session is WAITING ON THE USER (#1959) — the one fact behind
+ * both the caption's "Needs you" and the pill's "Needs you" (QA 2026-09-24
+ * Q29; it read "Ready for your input" until then), so the two cannot say
+ * different things.
+ *
+ * `awaiting_input` is the verdict GET /api/me/active-sessions reaches from
+ * the transcript (sessionAwaitsInput in routes/sessions.js): the last
+ * conversational row is the assistant's, and it either asked with answer
+ * chips or closed a spec whose Questions section is still open. A finished
+ * spec with nothing to answer, or a finished build, is plain Ready — the
+ * pill says "for your input" only when something in the session is asking.
+ *
+ * The two status values are the seam #1417 left for a connector agent's
+ * notify_awaiting_input. Nothing publishes them into this payload yet; they
+ * stay so a row that does arrive in that state reads right.
+ *
+ * A turn in flight is never waiting on anyone. The live store wins here for
+ * the same reason it wins for `busy` (#1958): the payload is a snapshot, and
+ * a push that starts a turn must take "Needs you" down in the same frame it
+ * puts the spinner up.
+ */
+function awaitsInput(session) {
+  if (!session || liveBusy(session)) return false;
+  if (session.awaiting_input === true) return true;
+  const state = String(session.status || '').toLowerCase();
+  return state === 'awaiting_input' || state === 'needs_input';
 }
 
 /**
@@ -78,9 +115,11 @@ function isParked(session) {
  */
 function statusLabel(session) {
   if (isBusy(session)) return 'Working…';
-  const state = String(session.status || '').toLowerCase();
-  if (state === 'paused') return 'Paused';
-  if (state === 'awaiting_input' || state === 'needs_input') return 'Needs you';
+  // No 'Paused' (#2779 follow-up): a paused session is the platform's
+  // bookkeeping, not a state of the work. It pauses by itself when idle and
+  // resumes by itself when opened or messaged, so it reads like any other
+  // session that is waiting for its owner.
+  if (awaitsInput(session)) return 'Needs you';
   return null;
 }
 
@@ -121,13 +160,22 @@ function toRow(session, appNameFallback) {
     // all, so every row in the panel read "Untitled session".
     title: session.session_title || session.pr_title || session.branch_name
       || `Session #${session.id}`,
-    href: `#app/${session.app_slug}/dev/sessions/${session.id}`,
+    // A row represents the change, not just its chat. The lifecycle-aware
+    // page keeps the context around the workspace and still embeds it. A
+    // change an agent session started is worked on in that conversation
+    // (#2779), so its row opens the conversation.
+    href: session.agent_session_id
+      ? `#messages/agent/${session.agent_session_id}`
+      : `#app/${session.app_slug}/dev/proposals/${session.id}`,
     status: statusLabel(session),
-    busy: isBusy(session),
+    busy: liveBusy(session),
+    awaitingInput: awaitsInput(session),
     sortAt: timeOf(session.last_activity_at) || timeOf(session.created_at),
     // Streamlined Concept: the app-context sheet's change rows show a
     // relative time, the way the Figma board draws them.
     lastActivityAt: session.last_activity_at || session.created_at || null,
+    // #2779: the agent session this change was started from, if any.
+    agentSessionId: session.agent_session_id || null,
   };
 }
 
@@ -160,6 +208,9 @@ function taskToRow(task, appNameFallback) {
       : `#app/${task.app_slug}/dev`,
     status: agentLabel(task.agent),
     busy: false,
+    // Same reasoning as `busy`: whether the agent on the user's machine is
+    // waiting on them is not something this side can see per work order.
+    awaitingInput: false,
     sortAt: timeOf(task.created_at),
   };
 }
@@ -195,17 +246,22 @@ const Improve = {
   // they fire differs.
   setTarget(target) {
     if (!target || !target.slug) {
-      if (improveStore.get().open) Improve.close();
+      // Was `if (improveStore.get().open) Improve.close()`, on a flag the
+      // retired panel wrote. dismissForNav asks the surface's own owner,
+      // which is the only one that knows.
+      Improve.dismissForNav();
       improveStore.set({
         target: null,
         slug: null,
         name: '',
         selfHosted: false,
+        restricted: false,
         repoUrl: null,
         iconUrl: null,
         iconEmoji: null,
         version: null,
         deploying: false,
+        appUpdateReady: false,
         readOnly: false,
         showTerminal: false,
         canShare: false,
@@ -229,11 +285,16 @@ const Improve = {
       slug: target.slug,
       name: target.name || '',
       selfHosted: !!target.selfHosted,
+      // Homeroom for a viewer not served its row (../app-context/
+      // platform-target.js): the menu hides the rows that would 404.
+      restricted: target.kind === 'platform' && !!target.restricted,
       repoUrl: target.repoUrl || null,
       iconUrl: target.iconUrl || null,
       iconEmoji: target.iconEmoji || null,
       version: target.version || null,
       deploying: !!target.deploying,
+      // A build that landed for the PREVIOUS app is not this one's news.
+      appUpdateReady: slugChanged ? false : !!prev.appUpdateReady,
       readOnly: !!target.readOnly,
       canShare: !!target.canShare,
       // The terminal is only meaningful while an iframe is on screen, and
@@ -246,29 +307,30 @@ const Improve = {
   },
 
   /**
-   * Fill the session lists BEFORE the panel is opened.
+   * Fill the session lists BEFORE the surface that shows them is opened.
    *
+   * That surface was the Improve panel and is the notifications sheet's
+   * Agents tab now (#2718 review); the reasoning is the same either way.
    * `loadSessions()` used to run only from `open()`, so the panel presented
    * with `sessionsLoaded` false — its placeholder — and the real rows arrived
    * a round trip later, on top of a sheet that had already finished animating
    * in. The list visibly snapped in under the viewer's thumb.
    *
-   * The request does not depend on the panel at all: GET /api/me/active-sessions
-   * is per-USER, not per-app, and `_rebucket()` is what splits its answer into
-   * "this app" and "everything else". So it can be made as soon as there is a
-   * target — which is also the moment the button that opens the panel appears —
-   * and `open()`'s own call then refreshes a list that is already on screen
-   * instead of drawing one.
+   * The request does not depend on the surface at all: GET
+   * /api/me/active-sessions is per-USER, not per-app, and `_rebucket()` is
+   * what splits its answer into "this app" and "everything else". So it can
+   * be made as soon as there is a target, and the sheet then opens on a list
+   * that is already there instead of drawing one.
    *
    * ONCE, not per target change. A viewer moving between apps re-buckets the
    * same payload (setTarget does that above), and re-fetching per hop would
    * turn a navigation into a request for a surface nobody has opened. Later
-   * freshness is `onSessionStateChanged`'s, which already reloads while the
-   * panel is open and is driven by SessionState's own tick.
+   * freshness is `onSessionStateChanged`'s, which already reloads while that
+   * sheet is open and is driven by SessionState's own tick.
    *
    * Fire-and-forget, and silent: `loadSessions` swallows its own failures and
    * only raises `loadingSessions` when nothing has ever loaded, so a preload
-   * that fails leaves the panel exactly as it was before this existed.
+   * that fails leaves the list exactly as it was before this existed.
    */
   prefetchSessions() {
     if (Improve._prefetched) return;
@@ -310,6 +372,7 @@ const Improve = {
       // no longer change under it.
       boardView: Improve._boardView(),
       sessionOrigin: Improve._sessionOriginFor(prev, next, nextSubTab),
+      topicOrigin: Improve._topicOriginFor(prev, next, nextSubTab),
     });
   },
 
@@ -369,6 +432,15 @@ const Improve = {
     const first = !Improve._routed;
     Improve._routed = true;
     if (!entering) return null;
+    // A DOOR THAT NAMED ITS OWN ORIGIN (#2770). A change is an agent
+    // conversation, and Messages is where those live: New change and the
+    // inbox's own session rows say so before they navigate, because the
+    // store's `prev` cannot — it describes the last APP route, and Messages
+    // is not one. Taken once, on the way in, so it cannot outlive the entry
+    // it was set for.
+    const named = Improve._nextSessionOrigin;
+    Improve._nextSessionOrigin = null;
+    if (named) return named;
     const wasSession = prev.tab === 'dev' && prev.subTab === 'sessions';
     if (wasSession) return prev.sessionOrigin;
     // A COLD DEEP LINK HAS NO PREVIOUS SCREEN, and the store cannot say so by
@@ -384,6 +456,53 @@ const Improve = {
 
   /** Whether setTab has run at all in this page load. See above. */
   _routed: false,
+
+  /**
+   * The origin the NEXT session entry should record, set by a door that
+   * knows it (see `_sessionOriginFor`). Null when the door said nothing.
+   */
+  _nextSessionOrigin: null,
+
+  /** Called by a session row in Messages just before its anchor navigates. */
+  enterSessionFrom(href) {
+    Improve._nextSessionOrigin = typeof href === 'string' && href.startsWith('#') ? href : null;
+  },
+
+  /**
+   * Where a TOPIC's back chip should point, when not its board (#3103).
+   *
+   * The session rule's shape, narrower: only a door that names its origin
+   * yields one. A card shared into a Messages conversation opens the topic
+   * route, and the Improve store's `prev` cannot say it came from Messages —
+   * it describes the last APP route. Taken once on the way in; kept while
+   * the route stays a topic (navigateToApp re-publishes it once the app's
+   * record loads); dropped by every other route.
+   */
+  _topicOriginFor(prev, next, nextSubTab) {
+    if (!(next === 'dev' && nextSubTab === 'topic')) return null;
+    const named = Improve._nextTopicOrigin;
+    Improve._nextTopicOrigin = null;
+    if (named) return named;
+    return prev.tab === 'dev' && prev.subTab === 'topic' ? (prev.topicOrigin || null) : null;
+  },
+
+  /** The origin the NEXT topic entry should record. See `_topicOriginFor`. */
+  _nextTopicOrigin: null,
+
+  /** Called by a shared card in Messages just before its anchor navigates. */
+  enterTopicFrom(href) {
+    Improve._nextTopicOrigin = typeof href === 'string' && href.startsWith('#') ? href : null;
+  },
+
+  /**
+   * The captured topic origin ends with the app-view visit it belonged to.
+   * App._showOnlyScreen calls this on every reveal of another screen, so a
+   * topic later reached some other way (the bell, a link) does not inherit a
+   * conversation it was not opened from.
+   */
+  clearTopicOrigin() {
+    if (improveStore.get().topicOrigin) improveStore.set({ topicOrigin: null });
+  },
 
   /**
    * An app route as an href, or null when it does not name one.
@@ -414,7 +533,8 @@ const Improve = {
    * The open session's staging preview, or null.
    *
    * Called by DevChat._publishPreview() whenever the open session or its
-   * `staging_url` changes. Gates the header's eye — see improve-button.tsx.
+   * `staging_url` changes. Gated the header's eye, back when the header had
+   * a contextual slot; ../dev-chat/session-header.tsx carries that loop now.
    */
   setSessionPreview(preview) {
     improveStore.set({
@@ -489,7 +609,7 @@ const Improve = {
   update(patch) {
     if (!patch || !improveStore.get().slug) return;
     const allowed = {};
-    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'readOnly', 'canShare', 'selfHosted']) {
+    for (const key of ['name', 'repoUrl', 'iconUrl', 'iconEmoji', 'version', 'deploying', 'appUpdateReady', 'readOnly', 'canShare', 'selfHosted']) {
       if (key in patch) allowed[key] = patch[key];
     }
     improveStore.set(allowed);
@@ -507,134 +627,78 @@ const Improve = {
   },
 
   // ── Presentation ─────────────────────────────────────────────────
+  //
+  // THERE IS NO IMPROVE PANEL ANY MORE (#2718 review). It was a drawer you
+  // opened from a row in the mark's menu to reach two buttons, a session list
+  // the Workshop took earlier in this issue, and a build notice — one tap to
+  // open, one to press. All three are in the menu now (../app-context/), so
+  // "open Improve" and "open the menu" name the same act.
+  //
+  // THESE FOUR ARE NAMES, NOT STATE. Four call sites in public/js/app.js say
+  // `window.Improve?.open()`, the tour drives open and close, and every row
+  // that navigates dismisses its host through `dismissForNav` — so the names
+  // stay and each forwards to the controller that actually owns the surface,
+  // its registry entry and its dismissal promise.
+  //
+  // WHAT WENT WITH THE PANEL IS THE SECOND COPY OF `open`. `toggle` and
+  // `dismissForNav` used to read `improveStore.open`, which nothing writes
+  // any more: toggle would only ever have opened, and dismissForNav would
+  // never have fired. A controller that tracks a surface it no longer
+  // presents answers from a field nobody sets, which is worse than not
+  // answering — so it asks the owner instead. `LEGACY_CLOSE_MS` and
+  // `DISMISS_SAFETY_MS` went the same way: the transition they were timed
+  // against was #improve-panel's, and that rule is gone from app.css.
+
+  /** @returns {object|undefined} the app-context controller, where mounted. */
+  _surface() {
+    return (typeof window !== 'undefined' && window.AppContext) || undefined;
+  },
+
+  /**
+   * Whether Improve has a subject yet.
+   *
+   * THE SURFACE NO LONGER ANSWERS THIS. The Improve panel refused to open
+   * without a target, so "did it open" was also "is there something to act
+   * on" — which is what `?shot=app-update-ready` and the rest waited on. The
+   * menu opens on every route (it is the app menu, and Home needs it too), so
+   * the two questions came apart and the second one needs asking directly.
+   * Without it those shots fired into a surface whose rows had no app, and
+   * `update()` — which no-ops without a slug — did nothing at all.
+   */
+  hasTarget() {
+    return !!improveStore.get().slug;
+  },
 
   toggle() {
-    if (improveStore.get().open) Improve.close();
-    else Improve.open();
+    Improve._surface()?.toggle();
   },
 
   open() {
-    const state = improveStore.get();
-    if (!state.slug) return;
-    const panel = document.getElementById('improve-panel');
-    if (!panel) return;
-    // ONE SURFACE AT A TIME, and this end of it had gone missing. The line
-    // here used to close the hamburger and retired with it, leaving the
-    // comment and a gap: every sheet built on lib/sheet-controller.js closes
-    // this panel when it opens (its `_closeSiblings` names window.Improve
-    // directly), and this panel closed none of them back.
-    //
-    // Nothing could see that while the backdrop covered the header — with a
-    // panel already open there was no way to press the chip or the bell, so
-    // two surfaces could not both be up. The backdrop starts below the bar
-    // now, so the bar is live and the gap is one click wide: open the app
-    // menu, press Improve, and both panels are on screen.
-    dismissRegisteredSheets();
-
-    if (!Improve._sheet) {
-      // Publish `open` BEFORE presenting: the kit sheet measures the content's
-      // height once at present time to seed its slide-up spring, so the panel
-      // has to be rendered at full height by then. The store write is flushed
-      // synchronously (lib/plain-store.js's injected flushSync), so React has
-      // painted the rows by the time adoptKitSurface reads the element.
-      improveStore.set({ open: true });
-      const sheet = adoptKitSurface({
-        kind: 'sheet',
-        contentEl: panel,
-        home: 'body',
-        gate: 'touch',
-        onDismiss: () => {
-          Improve._sheet = null;
-          improveStore.set({ open: false, adopted: false });
-          // The kit's exit spring has run: anything chained on close() (the
-          // Share dialog) may present now.
-          Improve._resolveDismissWaiters();
-        },
-      });
-      if (sheet) {
-        Improve._sheet = sheet;
-        // Adopted: the kit's own backdrop dims the scene and fades with the
-        // exit spring, so the web overlay stays down (see the same publish in
-        // lib/sheet-controller.js). Left up, it held the dim at full strength
-        // through the whole exit and only faded after the teardown, which
-        // read as the background snapping clear. Published AFTER the present:
-        // the store flush is synchronous, so the overlay's `data-open` never
-        // reaches a paint.
-        improveStore.set({ adopted: true });
-        Improve.loadSessions();
-        return;
-      }
-      // The kit refused (desktop, or no kit): adoptKitSurface has already
-      // rolled its own bookkeeping back and the slide-over below is the
-      // presentation. `open` is already published, so nothing more to do
-      // than fall through.
-    }
-    improveStore.set({ open: true });
-    Improve.loadSessions();
+    return Improve._surface()?.open();
   },
-
-  // The panel's own slide-out, matching #improve-panel's transition in
-  // app.css. A close that resolves BEFORE the panel is gone is the whole
-  // defect this pairs against — see close().
-  LEGACY_CLOSE_MS: 200,
-
-  // A hard cap on the completion promise, so a kit teardown that never fires
-  // cannot hang a chained presentation forever.
-  DISMISS_SAFETY_MS: 500,
-
-  _dismissWaiters: [],
 
   /**
-   * Returns a promise that resolves once the panel is actually GONE — the kit
-   * teardown on the touch path, the CSS slide's end on the desktop one,
-   * immediately when nothing was open.
+   * Resolves once the surface is actually GONE — the kit teardown on the
+   * touch path, the CSS slide's end on the desktop one, immediately when
+   * nothing was open.
    *
-   * This is HeaderMenu.close()'s contract (#977), and it is here for the same
-   * reason: the "Share app" row presents a DIALOG of its own, and a dialog
-   * that fades in while its host surface is still sliding out reads as two
-   * things moving at once. The row was the hamburger's until THE UI OVERHAUL
-   * moved the drawer's reference footer into this panel, so the rule had to
-   * travel with it — every other caller can keep ignoring the return value.
+   * That contract is why this returns a promise at all: "Share app" presents
+   * a DIALOG of its own, and a dialog that fades in while its host surface is
+   * still sliding out reads as two things moving at once. Every other caller
+   * can keep ignoring the return value.
    */
   close() {
-    if (Improve._sheet) {
-      // The kit runs its exit spring and calls onDismiss, which is what
-      // publishes `open: false` — publishing it here as well would empty the
-      // sheet a frame before it started animating out.
-      const done = Improve._afterDismiss();
-      Improve._sheet.dismiss();
-      return done;
-    }
-    if (!improveStore.get().open) return Promise.resolve();
-    improveStore.set({ open: false });
-    const done = Improve._afterDismiss();
-    setTimeout(() => Improve._resolveDismissWaiters(), Improve.LEGACY_CLOSE_MS);
-    return done;
-  },
-
-  _afterDismiss() {
-    return new Promise((resolve) => {
-      Improve._dismissWaiters.push(resolve);
-      setTimeout(resolve, Improve.DISMISS_SAFETY_MS);
-    });
-  },
-
-  _resolveDismissWaiters() {
-    const waiters = Improve._dismissWaiters;
-    Improve._dismissWaiters = [];
-    for (const resolve of waiters) resolve();
+    return Improve._surface()?.close() ?? Promise.resolve();
   },
 
   /**
    * Close before a row navigates.
    *
-   * Same contract as `WorkDrawer._dismissSheetForNav`: on touch the panel is
-   * modal over the destination screen, so a row that navigates has to take it
-   * down first. On desktop the slide-over closes too — unlike the anchored
-   * dropdowns it covers the surface you are navigating to.
+   * On touch the surface is modal over the destination screen, so a row that
+   * navigates has to take it down first. On desktop the dropdown closes too.
    */
   dismissForNav() {
-    if (improveStore.get().open) Improve.close();
+    return Improve._surface()?.dismissForNav() ?? Promise.resolve();
   },
 
   // ── Sessions ─────────────────────────────────────────────────────
@@ -696,10 +760,10 @@ const Improve = {
       else others.push(row);
     };
     for (const session of Improve._all) {
-      // Active only — see isParked. (statusLabel keeps its 'Paused' branch:
-      // it is the shared vocabulary, and a caller that does not filter still
-      // gets the right word.)
-      if (isParked(session)) continue;
+      // Paused sessions included (#2779 follow-up): the platform pauses a
+      // session five idle minutes after it was last used and resumes it when
+      // it is opened, so "paused" is not "set down". Leaving them out made
+      // work vanish from Messages and the bell minutes after it was touched.
       place(toRow(session, session.app_slug === slug ? name : null), session.app_slug);
     }
     // #1417: open connector work orders go in the SAME two buckets, by the
@@ -726,6 +790,13 @@ const Improve = {
 
   async loadSessions() {
     const token = ++Improve._loadToken;
+    // #1958: stamped BEFORE the request goes out — see SessionState.seed.
+    // This used to hand the seed `data.issuedAt`, a field the endpoint has
+    // never sent, so every payload was stamped at ARRIVAL and an answer that
+    // was in flight while a turn ended put the spinner straight back — the
+    // inversion the store's own comment warns about. DevChat.loadActiveSessions
+    // stamps the same call the same way.
+    const issuedAt = Date.now();
     if (!improveStore.get().sessionsLoaded) improveStore.set({ loadingSessions: true });
     let sessions = [];
     let tasks = [];
@@ -736,10 +807,10 @@ const Improve = {
         sessions = Array.isArray(data.sessions) ? data.sessions : [];
         tasks = Array.isArray(data.externalTasks) ? data.externalTasks : [];
         // Seed the shared live-state store exactly as the cog drawer did, so a
-        // session that finishes while the panel is open updates in place
+        // session that finishes while the sheet is open updates in place
         // instead of going stale until the next open.
         if (window.SessionState) {
-          window.SessionState.seed(sessions, data.issuedAt);
+          window.SessionState.seed(sessions, issuedAt);
         }
       }
     } catch {
@@ -774,21 +845,59 @@ const Improve = {
   /**
    * Session state changed underneath us.
    *
-   * Two jobs, and the second is the one that matters with the panel SHUT: an
-   * open panel reloads its list, and the button's glyph tracks whether
-   * anything is running at all. `SessionState` is synced from app.js's boot
+   * Three jobs. The rows re-derive from the last payload, so their pills
+   * follow the push (#1958); an open panel then reloads its list; and the
+   * button's glyph tracks whether anything is running at all — the one that
+   * matters with the panel SHUT. `SessionState` is synced from app.js's boot
    * path and re-ticks on its own (faster while something is in flight), so
    * this is live without the panel ever being opened — which is the whole
    * point of putting the cue on the button.
    */
   onSessionStateChanged() {
     Improve.refreshWorking();
-    if (improveStore.get().open) Improve.loadSessions();
+    // #1958: the rows are re-derived from the last payload FIRST, so the
+    // Working → Ready flip IS the push — one frame, no round trip — and it
+    // happens with the sheet shut too, so opening it after a turn ended
+    // paints Ready rather than the flag a fetch during the turn left behind.
+    // The reload below (while it is open only) still refreshes what the store
+    // cannot know: a title that landed at turn end, the status line, the
+    // activity stamp.
+    if (improveStore.get().sessionsLoaded) Improve._rebucket();
+    // Only while a surface is showing them. That used to be the Improve
+    // panel's own flag; the panel retired (#2718 review) and the list it held
+    // is the notifications sheet's Agents tab, so this asks that sheet.
+    // Without the change the gate read a field nobody writes, and the
+    // reload below simply stopped happening.
+    //
+    // …AND WHILE MESSAGES IS (#2770). A change is an agent conversation now,
+    // and Messages → Agents lists these same rows; without this their titles
+    // and status lines would freeze at whatever the last load said for as
+    // long as the inbox stayed open. Asked through the island's window seam
+    // rather than an import, so this module keeps its three dependencies.
+    if (notificationsSheetStore.get().open || Improve._messagesOnScreen()) {
+      Improve.loadSessions();
+    }
   },
 
-  /** `SessionState.anyActive()`, as store state. Safe before it exists. */
+  /** Whether the Messages screen is the one on screen. Safe before it exists. */
+  _messagesOnScreen() {
+    try {
+      return !!window.UsernodeReact?.messages?.isOpen?.();
+    } catch {
+      return false;
+    }
+  },
+
+  /**
+   * `SessionState.anyActiveFor(<viewer>)`, as store state: one of the
+   * viewer's OWN sessions is mid-turn. Not anyActive(), which also counts
+   * every shared session and auto-run on the apps the viewer can see, so the
+   * mark lit up for other people's builds (#2779 follow-up). Safe before
+   * either exists.
+   */
   refreshWorking() {
-    const working = !!window.SessionState?.anyActive?.();
+    const me = window.App?.user?.id;
+    const working = me != null && !!window.SessionState?.anyActiveFor?.(me);
     if (improveStore.get().working !== working) improveStore.set({ working });
   },
 
@@ -844,10 +953,11 @@ const Improve = {
     const { slug } = improveStore.get();
     if (!slug || !window.App) return;
     const subTab = opts?.subTab || 'forum';
+    const ref = opts?.ref ?? null;
     if (window.App.currentApp === slug) {
-      await window.App.switchTab('dev', null, subTab);
+      await window.App.switchTab('dev', ref, subTab);
     } else {
-      await window.App.navigateToApp(slug, 'dev', null, subTab);
+      await window.App.navigateToApp(slug, 'dev', ref, subTab);
     }
     // The viewer can navigate away while the fetch above is in flight; the
     // router guards its own tail on exactly this condition, so this does too.
@@ -878,10 +988,88 @@ const Improve = {
     window.App.openFeedbackModal();
   },
 
-  /** New change: the entry point for starting a session on desktop and touch. */
+  /**
+   * New change: the entry point for starting a session on desktop and touch.
+   *
+   * ── A NEW CHANGE IS AN AGENT CONVERSATION (#2770, #2772) ──────────────
+   *
+   * It went through the app's Workshop — `_withApp` opened the board, then
+   * `AppView.createProposal()` hopped to the unsent-change screen — so the
+   * first thing a phone showed after New change was the Workshop tab, and
+   * back from the change led to the board. A change is a conversation with
+   * the agent that builds, and Messages is where those are listed now, so:
+   *
+   *   - it goes STRAIGHT to /dev/sessions/new, the screen createProposal's
+   *     plain path always ended on, with no board painted on the way;
+   *   - that screen lights the Messages tab (App._syncPlatformTabs), and
+   *   - its back arrow goes up to Messages, recorded here as the origin.
+   *
+   * Nothing is created by the click (#2241): the row appears on the first
+   * send, when DevChat.createSession publishes it through
+   * `onSessionCreated` — which is what puts it in Messages → Agents at once.
+   * The one-shot hint is the one createProposal set on the same path.
+   */
   startSession() {
     Improve.close();
-    Improve._withApp(() => window.AppView?.createProposal?.());
+    // #2779: with agent sessions on, new work starts in a conversation with
+    // the Mayor, focused on the app Improve is pointed at (Improve's "New
+    // change" and the Workshop's "Start here" both come through here).
+    if (Improve._startAgentSession({ slug: improveStore.get().slug, entry: 'improve' })) return;
+    const ref = window.DevChat?.NEW_SESSION_REF || 'new';
+    // THE SIDE PANEL (desktop): New change on a running app opens the unsent
+    // change in a panel BESIDE the app, which keeps running
+    // (frontend/src/features/side-panel/). The one-shot hint rides along to
+    // the panel's own document, where the screen is drawn. Declined whenever
+    // that is not the moment, and the change opens here as before.
+    const { slug } = improveStore.get();
+    const panel = window.UsernodeReact?.sidePanel;
+    if (slug && panel?.take?.(`app/${encodeURIComponent(slug)}/dev/sessions/${ref}`,
+      { proposalHint: true })) return;
+    Improve._nextSessionOrigin = '#messages';
+    if (window.AppView) window.AppView._proposalHint = true;
+    Improve._withApp(null, { subTab: 'sessions', ref });
+  },
+
+  /**
+   * #2779: start an agent session instead of a classic one, when the viewer
+   * has them on. True when it took the start; false leaves the caller to go
+   * on as before. The hint carries whatever the entry point knows, and the
+   * server drops an app the viewer cannot see rather than refusing.
+   */
+  _startAgentSession(hint) {
+    const agent = window.UsernodeReact?.agentSession;
+    if (window.App?.user?.agentSessionsEnabled !== true || !agent) return false;
+    const clean = {};
+    if (hint && typeof hint.slug === 'string' && hint.slug) clean.slug = hint.slug;
+    if (hint && Number.isInteger(hint.issueNumber)) clean.issueNumber = hint.issueNumber;
+    if (hint && Number.isInteger(hint.proposalId)) clean.proposalId = hint.proposalId;
+    if (hint && typeof hint.entry === 'string') clean.entry = hint.entry;
+    void agent.start(clean);
+    return true;
+  },
+
+  /**
+   * New change on a NAMED app (#2778): Messages' "+" → Agent chat, once the
+   * viewer has picked which app. The same destination startSession reaches —
+   * `/dev/sessions/new`, lighting the Messages tab, back arrow up to
+   * Messages — for an app that need not be the one Improve is pointed at.
+   * Nothing is created until the first send, exactly as there.
+   *
+   * A later change will point this at a platform-wide agent session instead;
+   * the caller does not need to know which.
+   */
+  async startSessionFor(slug) {
+    if (!slug || !window.App) return;
+    Improve.close();
+    if (Improve._startAgentSession({ slug, entry: 'messages' })) return;
+    Improve._nextSessionOrigin = '#messages';
+    if (window.AppView) window.AppView._proposalHint = true;
+    const ref = window.DevChat?.NEW_SESSION_REF || 'new';
+    if (window.App.currentApp === slug) {
+      await window.App.switchTab('dev', ref, 'sessions');
+    } else {
+      await window.App.navigateToApp(slug, 'dev', ref, 'sessions');
+    }
   },
 
   /**
@@ -909,6 +1097,49 @@ const Improve = {
     Promise.resolve(Improve.close()).then(() => {
       window.DevConsole?.show?.();
     });
+  },
+
+  /**
+   * Load the build that just landed. The panel's reload row and the button's
+   * arrow glyph both mean this. The offer is withdrawn as it is taken up, so
+   * a reload that is slow to show the new build does not re-offer itself
+   * midway: a second tap is a second reload, not a repeat of the first.
+   *
+   * The frame, not the tab: what is stale is the app's document, and
+   * AppView.reloadAppFrame knows the two loads it takes to get past an app's
+   * own shell cache.
+   */
+  reloadApp() {
+    improveStore.set({ appUpdateReady: false });
+    Promise.resolve(Improve.close())
+      .then(() => Improve._showAppTab())
+      .then(() => { window.AppView?.reloadAppFrame?.(); });
+  },
+
+  /**
+   * Put the app itself on screen, if it is not already.
+   *
+   * The offer is made from every screen the panel opens over, the Dev ones
+   * included — the Workshop, the board, a topic. On those the app's frame is
+   * behind another surface or not mounted at all, so a reload there reloads
+   * nothing the viewer can see: the panel closed, the offer was withdrawn,
+   * and as far as the screen was concerned the click did nothing. Taking the
+   * offer means "show me the new version", so go to the app first.
+   *
+   * Answers switchTab's promise so the reload waits for the destination to
+   * render — renderAppTab mounts the frame and sets its src synchronously,
+   * so by then reloadAppFrame has a frame to work on. A render that mounted
+   * the frame fresh has already started one load and the reload adds its
+   * usual two; a third load of a document the app's own cache is serving is
+   * cheap, and cutting it would mean this function knowing which branch
+   * renderAppTab took.
+   *
+   * On the app tab already: nothing, rather than a re-render.
+   */
+  _showAppTab() {
+    const app = window.App;
+    if (!app || app.currentTab === 'app' || typeof app.switchTab !== 'function') return null;
+    return app.switchTab('app');
   },
 
   /** The retired `#drawer-row-share`, as a row. */

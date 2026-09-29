@@ -37,6 +37,11 @@ export interface KanbanFiltersState {
   chips: FilterChip[];
   /** Bumped when the Search chip is dismissed; the search field's `key`. */
   seq: number;
+  /**
+   * #1935: the "Assigned to you" / "Created by you" quick toggles' state, or
+   * null when signed out (there is no "you", so they do not render).
+   */
+  quick?: { assignedToMe: boolean; createdByMe: boolean } | null;
 }
 
 export const EMPTY_KANBAN_FILTERS: KanbanFiltersState = {
@@ -45,6 +50,7 @@ export const EMPTY_KANBAN_FILTERS: KanbanFiltersState = {
   count: 0,
   chips: [],
   seq: 0,
+  quick: null,
 };
 
 export const kanbanFiltersStore = createStore<KanbanFiltersState>(EMPTY_KANBAN_FILTERS);

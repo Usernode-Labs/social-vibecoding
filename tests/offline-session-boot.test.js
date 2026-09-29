@@ -514,9 +514,15 @@ test('the landing screen explains the offline state too', () => {
   const copy = decodeEntities(screen);
   assert.match(screen, /class="offline-only/);
   assert.match(copy, /You're offline/);
-  // Joining the waitlist is a POST; it cannot work offline either.
-  const cta = screen.slice(screen.indexOf('id="landing-waitlist-cta"'));
+  // Joining the waitlist is a POST on the marketing site's end; it cannot
+  // work offline either. The header CTA this used to read
+  // (#landing-waitlist-cta) went with the bar's CTA row — the pill in the
+  // body is the one way in now, and it carries the same gate.
+  const cta = screen.slice(screen.indexOf('id="landing-waitlist-link"'));
   assert.match(cta.slice(0, 200), /data-offline-disabled/);
+  // …and so does the "Check your status" line beside it, for the same reason.
+  const status = screen.slice(screen.indexOf('id="landing-status-link"'));
+  assert.match(status.slice(0, 200), /data-offline-disabled/);
 });
 
 test('"Try again" is wired once, globally, and re-probes', () => {

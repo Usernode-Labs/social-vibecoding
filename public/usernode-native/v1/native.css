@@ -321,6 +321,13 @@ html.un-android .un-switch:checked:active::before {
   left: 100%;
   display: flex;
   align-items: stretch;
+}
+/* A layer only while a finger drags the row. A permanent `will-change`
+   kept one composited layer per swipeable row alive for the life of the
+   list (every notification row, every conversation), almost all of them
+   parked out of sight; `.un-dragging` is on the wrap from the drag's axis
+   lock to the finger lifting. */
+.un-swipe.un-dragging .un-swipe-tray {
   will-change: transform;
 }
 .un-swipe-action {
@@ -554,6 +561,10 @@ html.un-android .un-switch:checked:active::before {
   background: var(--un-backdrop);
   opacity: 0;
   will-change: opacity;
+  /* A drag that starts on the dim is not a scroll of the page behind it.
+     Taps are untouched: `touch-action` only withholds panning and zooming
+     from the browser, so the click that dismisses still arrives. */
+  touch-action: none;
 }
 .un-backdrop.un-backdrop-fade {
   transition: opacity var(--un-dialog-fade-duration) ease;
@@ -622,6 +633,11 @@ html.un-kb .un-sheet {
   margin: 8px auto;
   border-radius: var(--un-radius-full);
   background: var(--un-hairline);
+  /* A drag from the grabber is always the sheet's own. `.un-sheet` says
+     `none` too, but a host that lets a sheet with a scroller pan (the
+     platform's `pan-y` sheets) hands that to every child; `touch-action`
+     intersects down the tree, so `none` here takes the grabber back. */
+  touch-action: none;
 }
 .un-sheet-body {
   padding: 4px 16px 20px;
@@ -966,6 +982,18 @@ html.un-kb .un-action-sheet {
 .un-alert-btn.un-destructive {
   color: var(--un-action-danger);
 }
+/* The alert takes focus now (an initial button, a Tab trap). Its card
+   clips (`overflow: hidden`) and the buttons run edge to edge, so the
+   browser's own ring would be cut off: draw it inside the button. The card
+   itself only takes focus as the trap's last resort and draws nothing. */
+.un-alert-btn:focus-visible {
+  outline: 2px solid var(--un-accent);
+  outline-offset: -3px;
+  border-radius: 10px;
+}
+.un-alert:focus {
+  outline: none;
+}
 
 /* ── Centered modal ────────────────────────────────────────────────────
    unNative.presentModal(): arbitrary content in a centered card over the
@@ -978,22 +1006,28 @@ html.un-kb .un-action-sheet {
   left: 50%;
   /* Centered in the strip above the on-screen keyboard; on iOS 100dvh
      ignores the (overlaying) keyboard, so the inset is subtracted from
-     the max-height too. Both are 0 on resize-mode Android / desktop. */
+     the max-height too. Both are 0 on resize-mode Android / desktop.
+     `top` and the height ease TOGETHER, on one clock. The card is centred
+     on `top`, so a height that snapped while `top` eased shrank it around
+     its middle for a frame: a card taller than the strip dropped its top
+     edge by half the keyboard, then slid back up. Moving as one, the top
+     edge holds still and only the bottom follows the keyboard. */
   top: calc(50% - var(--un-kb-inset, 0px) / 2);
   z-index: 9992;
-  width: min(480px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px - var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) - var(--un-kb-inset, 0px));
+  width: var(--un-modal-width, min(480px, calc(100vw - 32px)));
+  height: var(--un-modal-height, auto);
+  max-height: var(--un-modal-max-height, calc(100vh - 32px));
+  max-height: var(--un-modal-max-height, calc(100dvh - 32px - var(--un-safe-inset-top, env(safe-area-inset-top, 0px)) - var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)) - var(--un-kb-inset, 0px)));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
-  padding: 20px 16px;
-  border-radius: 14px;
+  padding: var(--un-modal-padding, 20px 16px);
+  border-radius: var(--un-modal-radius, 14px);
   background: var(--un-sheet-bg);
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
   transform: translate(-50%, -50%) scale(1.04);
   opacity: 0;
-  transition: transform 260ms var(--un-ease-spring), opacity var(--un-dialog-fade-duration) ease, top 250ms ease-out;
+  transition: transform 260ms var(--un-ease-spring), opacity var(--un-dialog-fade-duration) ease, top 250ms ease-out, max-height 250ms ease-out, height 250ms ease-out;
   will-change: transform, opacity;
   outline: none;
 }
@@ -1024,19 +1058,33 @@ html.un-kb .un-kb-avoid {
 /* ── Toast ─────────────────────────────────────────────────────────────
    unNative.toast(): bottom capsule HUD on iOS/desktop, Material snackbar
    on Android. Safe-area aware; pointer-events stay off except on the
-   optional action button so it never steals taps from content below. */
+   optional action button so it never steals taps from content below —
+   and on a toast long enough to linger, which `.un-dismissible` lets the
+   reader tap away (toastTapDismisses in native.js).
+
+   `--un-toast-inset-bottom` (default 0) is what the host's own bottom
+   chrome takes up — a tab bar, a composer. The toast rests 16px above the
+   larger of that and the safe-area strip, so it never sits on them.
+
+   The corner radius is HALF A ONE-LINE TOAST'S HEIGHT (10px padding plus
+   half of 0.875rem x 1.4), not a full radius: a one-line toast is the same
+   capsule it always was, and one that wraps becomes a rounded rectangle
+   rather than a round blob. `width: max-content` because `left: 50%` alone
+   capped an absolutely placed box at the right half of the screen, which
+   is what wrapped long messages four words to a line. */
 
 .un-toast {
   position: fixed;
   left: 50%;
-  bottom: calc(16px + var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  bottom: calc(16px + max(var(--un-toast-inset-bottom, 0px), var(--un-safe-inset-bottom, env(safe-area-inset-bottom, 0px))));
   z-index: 9995; /* above sheets/alerts: feedback fired from overlays shows */
   display: flex;
   align-items: center;
   gap: 14px;
+  width: max-content;
   max-width: min(85vw, 480px);
   padding: 10px 18px;
-  border-radius: var(--un-radius-full);
+  border-radius: calc(10px + 0.6125rem);
   background: var(--un-toast-bg);
   color: var(--un-toast-text);
   font-size: 0.875rem;
@@ -1053,6 +1101,10 @@ html.un-kb .un-kb-avoid {
 .un-toast.un-in {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+.un-toast.un-dismissible.un-in {
+  pointer-events: auto;
+  cursor: pointer;
 }
 .un-toast-msg {
   min-width: 0;
@@ -1076,6 +1128,7 @@ html.un-kb .un-kb-avoid {
 html.un-android .un-toast {
   left: 16px;
   right: 16px;
+  width: auto;
   max-width: none;
   justify-content: space-between;
   border-radius: var(--un-radius);
@@ -1246,20 +1299,49 @@ html.un-desktop[data-un-vt="pop"]::view-transition-new(root) {
   animation-name: un-vt-fade-in;
 }
 
+/* THE TWO HALVES ARE SEQUENCED, AND THAT IS WHAT MAKES IT A FADE-THROUGH
+   RATHER THAN A CROSS-FADE (#1920).
+
+   Both keyframe pairs used to run opacity across the WHOLE duration — old
+   1 -> 0 and new 0 -> 1, simultaneously. The iOS lane gets away with the
+   equivalent because its outgoing screen is opaque, z-index 2 and slides
+   off over the incoming one. Here nothing is stacked and nothing is
+   opaque, so at the midpoint both snapshots sat at ~0.5 and painted on top
+   of each other. Measured with a red outgoing screen over a blue incoming
+   one, sampled mid-animation: t=40ms #f8232a, t=120ms #bf3f7f, t=200ms
+   #4d22d4 — a continuous blend, i.e. both screens visible the whole way.
+   On the app directory that reads as two grids of app chips ghosting
+   through one another, which is what #1920 reports on the back
+   navigation.
+
+   Material's shared-axis fade-through — which the block above already
+   names — does NOT cross-fade. The outgoing surface leaves over roughly
+   the first third, and only then does the incoming one arrive, so the
+   handoff passes through the container's own ground instead of through a
+   mixture of the two surfaces. Same measurement after sequencing:
+   t=40ms #ff7979, t=80ms #fff3f3, t=120ms #c4c4ff — red, then the ground,
+   then blue, and never a red/blue mix.
+
+   35% is the crossover for both directions. The translateY halves keep
+   their full duration: motion may overlap, only OPACITY may not, and
+   moving a surface that is already transparent costs nothing. */
+
 @keyframes un-vt-fade-out {
   from { opacity: 1; }
-  to { opacity: 0; }
+  35%, to { opacity: 0; }
 }
 @keyframes un-vt-fade-in {
-  from { opacity: 0; }
+  from, 35% { opacity: 0; }
   to { opacity: 1; }
 }
 @keyframes un-vt-fade-up-in {
   from { opacity: 0; transform: translateY(10px); }
+  35% { opacity: 0; }
   to { opacity: 1; transform: translateY(0); }
 }
 @keyframes un-vt-fade-down-out {
   from { opacity: 1; transform: translateY(0); }
+  35% { opacity: 0; }
   to { opacity: 0; transform: translateY(10px); }
 }
 

@@ -4,13 +4,14 @@
  * host generates no box.
  */
 
-import { useCallback, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
   CheckLongIcon,
   ClockIcon,
   PlusThinIcon,
+  SparklesIcon,
   SpinnerArcIcon,
   UserCircleIcon,
   WarningTriangleIcon,
@@ -19,6 +20,7 @@ import {
 import { useStoreState } from '../../lib/use-store-state';
 import {
   bannersStore,
+  type AgentSessionBannerView,
   type CreditsBannerView,
   type NewChangeBannerView,
   type SyncBannerView,
@@ -44,7 +46,11 @@ const SYNC_BTN
 const SHELL = {
   amber: 'flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs',
   emerald: 'flex items-center gap-2 px-3 py-2 bg-emerald-50 dark:bg-emerald-950/30 border-b border-emerald-200 dark:border-emerald-900/50 text-xs',
-  violet: 'flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs',
+  // On a phone this is two rows: icon + readable copy, then the action
+  // aligned under the copy. Keeping the three children in one flex row made
+  // the paragraph surrender almost half of a 320px screen to the button.
+  // `sm:flex` restores the compact strip byte-for-byte at desktop widths.
+  violet: 'grid grid-cols-[auto_minmax(0,1fr)] items-start gap-x-2 gap-y-3 px-3 py-3 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs sm:flex sm:items-center sm:gap-2 sm:py-2',
   creditsAmber: 'flex flex-wrap items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 text-xs',
   creditsRed: 'flex flex-wrap items-center gap-2 px-3 py-2 bg-red-50 dark:bg-red-950/30 border-b border-red-200 dark:border-red-900/50 text-xs',
 } as const;
@@ -112,6 +118,19 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
       <span className="text-violet-800 dark:text-violet-200 flex-1">
         {`This change has been ${b.stateLabel}. New work in this chat is added to the same PR, so start a new change to keep PRs focused.`}
       </span>
+      {/* #2602: the way to the card this session became. An ANCHOR, not a
+          button: it is a hash navigation, so it middle-clicks and copies
+          like any other link, and it deliberately stays out of the
+          `<button>` the byte-for-byte tag assertion in
+          tests/dev-chat-banners.test.js reads. Quiet next to the filled
+          primary — leaving is the secondary act here, starting a new change
+          is the one the banner is arguing for. */}
+      {b.cardHref ? (
+        <a
+          id="dc-open-card-link" href={b.cardHref}
+          className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 text-xs font-medium text-violet-800 underline underline-offset-2 hover:text-violet-700 dark:text-violet-200 dark:hover:text-violet-100"
+        >Open proposal card</a>
+      ) : null}
       {/* The one primary-filled button on these four strips, so it routes
           through the shell's <Button> — `pill` + `dim60` + `xsText` + `solid`
           spells the hand-written string it replaces, in that order, with
@@ -119,7 +138,7 @@ function NewChangeBanner({ b }: { b: NewChangeBannerView }): ReactNode {
       <Button
         id="dc-new-change-btn" type="button"
         variant="pill" disabledStyle="dim60" size="xsText" ink="solid"
-        className="shrink-0"
+        className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0"
         disabled={b.pending}
         onClick={() => controller()?.startNewChange?.()}
       >
@@ -137,6 +156,12 @@ const ICON_CLASS = {
 const TEXT_CLASS = {
   amber: 'text-amber-900 dark:text-amber-200 flex-1 min-w-[14rem]',
   red: 'text-red-800 dark:text-red-200 flex-1 min-w-[14rem]',
+} as const;
+
+/** The phone's "Details" toggle, in the banner's own ink. See CreditsBanner. */
+const TOGGLE_CLASS = {
+  amber: 'dc-credits-banner-toggle text-amber-900 dark:text-amber-200',
+  red: 'dc-credits-banner-toggle text-red-800 dark:text-red-200',
 } as const;
 
 function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
@@ -159,19 +184,45 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
     });
   }, [b.blockedVenue]);
 
+  // QA 2026-09-24 Q27: ON A PHONE THE BANNER IS ONE LINE UNTIL ASKED. The
+  // whole strip (the lead, when credits come back, the ways to keep going and
+  // both buttons) took about 130px under the session header, which at
+  // 360x740 left roughly 70px of conversation, and its "Check API key"
+  // doubled the one on the out-of-credits card in the transcript right
+  // below it. Below 640px (app.css) it shows the lead and a Details toggle;
+  // the rest is still rendered, so the declared checks' hooks stay, and is
+  // shown on request. Desktop is unchanged: the toggle never shows there.
+  const [open, setOpen] = useState(false);
+  const moreId = `${b.id}-more`;
   const Icon = b.icon ? CREDITS_ICON[b.icon] : null;
   return (
-    <div id={b.id} className={b.tone === 'red' ? SHELL.creditsRed : SHELL.creditsAmber} ref={wireRef}>
+    <div
+      id={b.id}
+      className={b.tone === 'red' ? SHELL.creditsRed : SHELL.creditsAmber}
+      ref={wireRef}
+      {...(open ? { 'data-credits-open': '1' } : null)}
+    >
       {Icon ? <Icon className={ICON_CLASS[b.tone]} /> : null}
       <span className={TEXT_CLASS[b.tone]}>
         <span className="font-semibold" {...(b.leadTagged ? { 'data-credits-low-lead': '1' } : null)}>{b.lead}</span>
-        {b.reset === null ? b.tail : (
-          <>
-            <span data-credits-reset="1">{` ${b.reset}`}</span>
-            {b.tail}
-          </>
-        )}
+        <span id={moreId} className="dc-credits-banner-more">
+          {b.reset === null ? b.tail : (
+            <>
+              <span data-credits-reset="1">{` ${b.reset}`}</span>
+              {b.tail}
+            </>
+          )}
+        </span>
       </span>
+      <button
+        type="button"
+        className={TOGGLE_CLASS[b.tone]}
+        aria-expanded={open}
+        aria-controls={moreId}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? 'Hide' : 'Details'}
+      </button>
       {/* Another module's markup, and a declared check selects into it — so it
           arrives whole, through a host that generates no box so the actions
           block stays the banner's own flex child. */}
@@ -180,10 +231,30 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
   );
 }
 
+// #2779: the owner of a change started from an agent session revises it in
+// that conversation. An anchor: it is a hash navigation.
+function AgentSessionBanner({ b }: { b: AgentSessionBannerView }): ReactNode {
+  return (
+    <div id="dc-agent-session-banner" className={SHELL.violet}>
+      <SparklesIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
+      <span className="text-violet-800 dark:text-violet-200 flex-1">
+        This change belongs to one of your agent sessions. Continue there to revise it.
+      </span>
+      <a
+        href={b.href}
+        className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-500"
+      >
+        Continue
+      </a>
+    </div>
+  );
+}
+
 export function DevChatBanners(): ReactNode {
   const s = useStoreState(bannersStore);
   return (
     <>
+      {s.agentSession ? <AgentSessionBanner b={s.agentSession} /> : null}
       {s.sync ? <SyncBanner b={s.sync} /> : null}
       {s.newChange ? <NewChangeBanner b={s.newChange} /> : null}
       {s.credits ? <CreditsBanner b={s.credits} /> : null}

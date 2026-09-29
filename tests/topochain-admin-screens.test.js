@@ -34,7 +34,7 @@ const topoTokens = fs.readFileSync(
 // key; the programme Users screen is the deliberate exception — it has no
 // section of its own, the console's Users section embeds renderUsers.
 const BUILT_SUBS = [
-  'seasons', 'season-events', 'challenge-templates', 'waitlist',
+  'seasons', 'season-events', 'challenge-templates', 'challenge-scoring', 'waitlist',
   'onchain-accounts', 'user-activities', 'delegations',
   'settings', 'app-version', 'sql-console', 'api-tester',
 ];
@@ -100,7 +100,7 @@ test('the console Users section embeds the programme users screen (merged, #1179
     path.join(__dirname, '..', 'frontend/src/features/admin/admin-users.tsx'), 'utf8');
   assert.match(fn, /id="admin-users-programme"/,
     'the section still renders the programme card, under its own id');
-  assert.match(fn, /<ProgrammeUsers \/>/, 'as a child component');
+  assert.match(fn, /<ProgrammeUsers\b[^>]*\/>/, 'as a child component');
   assert.match(fn, /^import \{ ProgrammeUsers \} from '\.\/topochain\/programme-users\.tsx';$/m,
     'imported rather than read off the AdminTopochain global');
   // The `_sub = 'users'` guard and the renderUsers() call are gone with the
@@ -245,7 +245,7 @@ test('every built screen has a render function reachable from _renderSub', () =>
   const registry = fs.readFileSync(path.join(REACT_DIR, 'screens.tsx'), 'utf8');
   const subsBlock = topoJs.slice(topoJs.indexOf('  SUBS: ['), topoJs.indexOf('  // ── Shared helpers'));
   const subKeys = [...subsBlock.matchAll(/key: '([^']+)'/g)].map((m) => m[1]);
-  assert.equal(subKeys.length, 11, 'all eleven screens are still listed');
+  assert.equal(subKeys.length, 12, 'all twelve screens are still listed');
   for (const key of subKeys) {
     assert.ok(new RegExp(`(^|\\s)'?${key}'?: \\{ mount`, 'm').test(registry),
       `SUBS key '${key}' has a screen in the React registry`);
@@ -503,7 +503,7 @@ test('every screen renders its API fields as text children', () => {
   // pass by the column quietly disappearing.
   for (const [file, cell] of [
     ['season-events.tsx', /cell: \(ev\) => ev\.name/],
-    ['programme-users.tsx', /cell: \(u\) => u\.email \|\| '—'/],
+    ['programme-users.tsx', /cell: \(u\) => u\.telegram \|\| '—'/],
     ['onchain-accounts.tsx', /\{a\.public_key\}/],
     ['onchain-accounts.tsx', /cell: \(a\) => a\.tier/],
     ['challenge-templates.tsx', /cell: \(t\) => t\.category/],
@@ -1178,4 +1178,20 @@ test('the SQL result and API response areas use the shared empty/panel treatment
   // where that matters most.
   assert.ok(!/dangerouslySetInnerHTML|innerHTML/.test(stripComments(apiTesterTsx)),
     'the screen renders no raw HTML — the response body is a text child');
+});
+
+// ─── Waitlist Export CSV ───────────────────────────────────────────────────
+
+// The export endpoint sits behind the WRITE gate (a whole-list download is a
+// different exposure class from reading pages), so the button renders only
+// for an admin the server will actually serve — a view-only admin would
+// otherwise click through to a 403 body. It carries the screen's own filters,
+// so the file holds the rows the selects describe.
+test('waitlist Export CSV renders only for a write admin and carries the active filters', () => {
+  const waitlist = stripAllComments(fs.readFileSync(path.join(REACT_DIR, 'waitlist.tsx'), 'utf8'));
+  assert.match(waitlist,
+    /exportCsv=\{write\s*\?\s*\{ id: 'admin-topo-wl-export', path: '\/api\/v4\/admin\/waitlist\/export-csv' \}\s*:\s*undefined\}/,
+    'the button is wired only when canWrite() allowed it');
+  assert.match(waitlist, /const query = filterParams\(\)\.toString\(\);/,
+    'the download reuses the same status/only params as the page fetch');
 });

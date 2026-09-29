@@ -8,9 +8,12 @@
 // build/scout turn (worker.syncUserAgentFiles):
 //
 //   - instruction files → concatenated into ~/.claude/CLAUDE.md, which
-//     Claude Code loads natively as user-level memory;
-//   - skill files       → ~/.claude/skills/<slug>/SKILL.md, which Claude
-//     Code discovers natively as personal skills.
+//     Claude Code loads natively as user-level memory, AND into
+//     $CODEX_HOME/AGENTS.md, which is where the Codex CLI looks for the
+//     same thing (#2654);
+//   - skill files       → ~/.claude/skills/<slug>/SKILL.md and
+//     $CODEX_HOME/skills/<slug>/SKILL.md — both agents discover a personal
+//     skill the same way, as a directory they load on demand (#2654).
 //
 // Both paths live OUTSIDE /home/node/workspace, so run-cc.sh's
 // `git add -A` can never commit them, and the CC volume is per-session
@@ -31,6 +34,42 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 // run and stale state can't accumulate.
 const USER_CLAUDE_MD_PATH = '/home/node/.claude/CLAUDE.md';
 const USER_SKILLS_DIR = '/home/node/.claude/skills';
+
+// #2654: "check if the openrouter/codex agent is getting all of the
+// platform context, like the claude/claude code models are". It was not.
+//
+// Both paths above are Claude Code's OWN discovery paths. The sync that
+// writes them is not gated on the backend — it runs on every dispatch,
+// including a `codex_openrouter` turn — so a user's personal instructions
+// were being written into the container for an agent that never reads
+// them. Codex reads its global instructions from $CODEX_HOME/AGENTS.md,
+// and worker/run-codex-agent.sh sets
+// `CODEX_HOME=/home/node/.claude/codex-home`.
+//
+// Same bytes, second path: one assembly function, so the two agents
+// cannot be told different things about the same user.
+//
+// Still outside /home/node/workspace, so run-cc.sh's `git add -A` cannot
+// commit it — the property the original paths were chosen for. It is also
+// deliberately NOT the repo's own AGENTS.md, which is the app's
+// instructions and belongs to the repository, not to whoever dispatched.
+// Resolved IN THE CONTAINER, with the same expression
+// worker/run-codex-agent.sh uses, rather than as a literal here. The
+// runner honours a `CODEX_HOME` override; a second hard-coded copy of the
+// default would write the files somewhere Codex does not look the moment
+// anyone sets it. Deriving it the same way makes the two agree by
+// construction instead of by matching literals.
+const USER_CODEX_HOME_DEFAULT = '/home/node/.claude/codex-home';
+const USER_CODEX_HOME_EXPR = `\${CODEX_HOME:-${USER_CODEX_HOME_DEFAULT}}`;
+const USER_CODEX_AGENTS_MD_PATH = '"$CODEX_HOME_RESOLVED/AGENTS.md"';
+// Codex discovers personal skills the same way Claude Code does — a
+// directory of <slug>/SKILL.md that it loads on demand, reading the
+// frontmatter name and description into the prompt. Verified against the
+// bundled CLI: with a skill written here, `codex debug prompt-input`
+// renders its name and description. An earlier revision of this change
+// asserted Codex had no equivalent and skipped skills entirely; that was
+// simply wrong, and review caught it.
+const USER_CODEX_SKILLS_DIR = '"$CODEX_HOME_RESOLVED/skills"';
 
 // Normalize an arbitrary uploaded filename / typed name into a slug the
 // NAME_RE accepts, or null when nothing usable survives. Strips a
@@ -143,21 +182,44 @@ function buildUserClaudeMd(files) {
 function buildSyncShellScript(files) {
   const lines = [
     'set -e',
+    // Same expression as worker/run-codex-agent.sh, evaluated in the same
+    // container. `:-` guarantees a non-empty value, so the `rm -rf` below
+    // can never degrade to a bare `/skills`.
+    `CODEX_HOME_RESOLVED="${USER_CODEX_HOME_EXPR}"`,
     `rm -f ${USER_CLAUDE_MD_PATH}`,
+    `rm -f ${USER_CODEX_AGENTS_MD_PATH}`,
     `rm -rf ${USER_SKILLS_DIR}`,
+    `rm -rf ${USER_CODEX_SKILLS_DIR}`,
   ];
   const claudeMd = buildUserClaudeMd(files);
   if (claudeMd) {
+    const payload = Buffer.from(claudeMd, 'utf8').toString('base64');
     lines.push(`mkdir -p /home/node/.claude`);
-    lines.push(`printf '%s' '${Buffer.from(claudeMd, 'utf8').toString('base64')}' | base64 -d > ${USER_CLAUDE_MD_PATH}`);
+    lines.push(`printf '%s' '${payload}' | base64 -d > ${USER_CLAUDE_MD_PATH}`);
+    // #2654: the same bytes where Codex looks. Written unconditionally
+    // rather than only for an OpenRouter turn — the volume is per session
+    // and the backend can change between turns, so the cheap thing to do
+    // is keep both paths true and let each agent read its own.
+    lines.push(`mkdir -p "$CODEX_HOME_RESOLVED"`);
+    lines.push(`printf '%s' '${payload}' | base64 -d > ${USER_CODEX_AGENTS_MD_PATH}`);
   }
   for (const f of (files || []).filter((x) => x.kind === 'skill')) {
     // Slugs are validated against NAME_RE before they ever reach the DB,
     // so interpolating them into the path is safe; assert anyway.
     if (!NAME_RE.test(f.name)) continue;
     const skillMd = ensureSkillFrontmatter(f.content, f.name, f.description);
-    lines.push(`mkdir -p ${USER_SKILLS_DIR}/${f.name}`);
-    lines.push(`printf '%s' '${Buffer.from(skillMd, 'utf8').toString('base64')}' | base64 -d > ${USER_SKILLS_DIR}/${f.name}/SKILL.md`);
+    const payload = Buffer.from(skillMd, 'utf8').toString('base64');
+    // Same file, both discovery directories (#2654). Not inlined into
+    // AGENTS.md: a skill is loaded ON DEMAND by both agents, and pasting
+    // ten bodies into the global instructions is the opposite of that.
+    for (const dir of [USER_SKILLS_DIR, USER_CODEX_SKILLS_DIR]) {
+      // The Codex dir is a quoted shell expansion, so the slug is
+      // appended inside the quotes; NAME_RE already bounds it to
+      // [a-z0-9-], asserted above.
+      const base = dir.endsWith('"') ? `${dir.slice(0, -1)}/${f.name}"` : `${dir}/${f.name}`;
+      lines.push(`mkdir -p ${base}`);
+      lines.push(`printf '%s' '${payload}' | base64 -d > ${base.endsWith('"') ? `${base.slice(0, -1)}/SKILL.md"` : `${base}/SKILL.md`}`);
+    }
   }
   return lines.join('\n') + '\n';
 }

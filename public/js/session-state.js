@@ -91,6 +91,21 @@ const SessionState = {
     return false;
   },
 
+  // Is anything of THIS user's in flight? The Homeroom mark's working
+  // indicator reads this, not anyActive(): the store also holds every shared
+  // session and auto-run on the apps the viewer can see, so anyActive() made
+  // the mark pulse for other people's builds and read as random (#2779
+  // follow-up). An entry whose owner is not known yet does not count.
+  anyActiveFor(userId) {
+    const me = Number(userId);
+    if (!Number.isFinite(me)) return false;
+    for (const e of SessionState.entries.values()) {
+      if (e.userId !== me) continue;
+      if (!SessionState._isIdleEntry(e)) return true;
+    }
+    return false;
+  },
+
   // ----- writes -----
 
   _put(sessionId, next) {
@@ -106,6 +121,7 @@ const SessionState = {
       && (prev.status || null) === (next.status || null)
       && SessionState._sameHeadless(prev.headless, next.headless)) {
       prev.at = next.at;
+      if (next.userId != null) prev.userId = next.userId;
       return false;
     }
     SessionState.entries.set(id, next);
@@ -118,6 +134,15 @@ const SessionState = {
     return (a.status || null) === (b.status || null)
       && (a.outcome || null) === (b.outcome || null)
       && (a.issueNumber || null) === (b.issueNumber || null);
+  },
+
+  // The session's owner, as the payload or row names it, else as already
+  // known. Every writer carries it so anyActiveFor() can tell whose work an
+  // entry describes.
+  _ownerOf(value, prev) {
+    const id = value == null ? NaN : Number(value);
+    if (Number.isFinite(id)) return id;
+    return prev && prev.userId != null ? prev.userId : null;
   },
 
   _isIdleEntry(e) {
@@ -145,12 +170,14 @@ const SessionState = {
   applyEvent(payload) {
     if (!payload || payload.sessionId == null) return;
     const at = Date.now();
+    const prev = SessionState.entries.get(Number(payload.sessionId));
     const changed = SessionState._put(payload.sessionId, {
       busy: !!payload.busy,
       phase: payload.phase || null,
       stopping: !!payload.stopping,
       status: payload.status || null,
       headless: payload.headless || null,
+      userId: SessionState._ownerOf(payload.userId, prev),
       at,
     });
     SessionState._prune();
@@ -188,6 +215,7 @@ const SessionState = {
         stopping: existing ? !!existing.stopping : false,
         status: row.status || (existing ? existing.status : null) || null,
         headless: existing ? existing.headless : null,
+        userId: SessionState._ownerOf(row.user_id != null ? row.user_id : row.userId, existing),
         at,
       })) changed = true;
     }
@@ -222,6 +250,7 @@ const SessionState = {
         stopping: !!row.stopping,
         status: row.status || null,
         headless: row.headless || null,
+        userId: SessionState._ownerOf(row.userId, SessionState.entries.get(Number(row.id))),
         at,
       })) changed = true;
     }
@@ -231,6 +260,7 @@ const SessionState = {
       if (SessionState._put(id, {
         busy: false, phase: null, stopping: false,
         status: e.status || null,
+        userId: e.userId != null ? e.userId : null,
         // Keep a terminal auto-run outcome if we have one; only the
         // "generating" liveness is being cleared here.
         headless: e.headless && e.headless.status === 'generating'

@@ -4,24 +4,40 @@ const log = require('../services/logger');
 const github = require('../services/github');
 const { sendSystemMessage, pushAppUpdate, pushIssueUpdate } = require('../services/ws');
 const { getActiveUserStats } = require('../services/active-users');
+const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminUpVote } = require('../services/admin-approval');
 const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
 const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
-const { issueKindLimiter } = require('../middleware/rate-limits');
+const { issueKindLimiter, governanceVoteLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
-const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
+const { weekStartUtc, countWeeklyBountiesUsed, WEEKLY_BOUNTY_LIMIT } = require('./kudos');
 const { placeBounty } = require('../services/bounties');
+const { claimIssueForUser } = require('../services/issue-claims');
 const appAccess = require('../services/app-access');
+const communities = require('../services/communities');
 const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
+// #2086: the featured-illustration governance kind. Its proposals are
+// opened by src/routes/app-illustrations.js (the bytes travel with the
+// save, which the generic create route below cannot carry, so the kind is
+// deliberately absent from VALID_KINDS); the apply lives here beside the
+// other governance kinds so the vote, sweeper and force-apply paths share
+// one gate.
+const illustrationProposals = require('../services/illustration-proposals');
 // #1112: the same in-process "a turn is running" predicate /api/sessions
 // reports as `busy`, so an issue's work-state chip and the session card it
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
+
+// #2089: the board search's server half. Shorter queries are not asked
+// (the browser applies the same floor); the hit list is capped because the
+// browser only ever intersects it with the cards it already holds.
+const BOARD_SEARCH_MIN_CHARS = 2;
+const BOARD_SEARCH_MAX_HITS = 200;
 
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
@@ -35,16 +51,37 @@ function parseOwnerRepo(repoUrl) {
 // (written by routes/feedback.js): "usernode user (name)" for regular
 // users, "usernode admin (name)" for admins (#140; older issues used a
 // bare "usernode admin" with no name). Returns the creator's display name
-// or null when no Source line can be parsed.
+// or null when no Source line can be parsed. #3132: new issues say
+// "Homeroom user (name)" / "Homeroom admin (name)"; the older "usernode"
+// spelling is still accepted for issues filed before the rename.
 function creatorFromSourceLine(body) {
   if (typeof body !== 'string') return null;
   const m = body.match(/\*\*Source:\*\*\s*([^\n]+)/);
   if (!m) return null;
   const source = m[1].trim();
-  const named = source.match(/^usernode (?:user|admin) \(([^)]+)\)/);
+  const named = source.match(/^(?:usernode|Homeroom) (?:user|admin) \(([^)]+)\)/);
   if (named) return named[1];
-  if (/^usernode admin\b/.test(source)) return 'admin';
+  if (/^(?:usernode|Homeroom) admin\b/.test(source)) return 'admin';
   return null;
+}
+
+// Durable authorship for issue edits. Platform-created issue rows are the
+// strongest record; feedback reports are the equivalent record for issues
+// filed directly into GitHub by routes/feedback.js. The Source line remains
+// the compatibility fallback for older reports. Keeping the feedback row in
+// the check means an author who deliberately clears the whole body can still
+// add a new description later.
+async function isIssueAuthor(pool, appId, parsed, issueNumber, user, currentBody) {
+  const { rows } = await pool.query(
+    `SELECT 1 FROM issues
+      WHERE app_id = $1 AND github_issue_number = $2 AND created_by = $3
+     UNION ALL
+     SELECT 1 FROM feedback_reports
+      WHERE issue_owner = $4 AND issue_repo = $5 AND issue_number = $2 AND user_id = $3
+     LIMIT 1`,
+    [appId, issueNumber, user.id, parsed.owner, parsed.repo]
+  );
+  return rows.length > 0 || creatorFromSourceLine(currentBody) === user.username;
 }
 
 // Renames are no longer an issue kind — they open a dapp.json `name` PR
@@ -60,23 +97,31 @@ const MAX_SECRET_VALUE_LENGTH = 4096;
 // with embedded code snippets are legitimate, so the cap is generous.
 const MAX_CAMPAIGN_INSTRUCTIONS_LENGTH = 20000;
 const MAX_CAMPAIGN_TITLE_LENGTH = 200;
-// "In progress" status windows. Two separate 7-day constants on purpose —
-// they protect different things and may be tuned independently:
-//  - IN_PROGRESS_PAUSED_WINDOW_DAYS: how long a PAUSED (never-promoted,
-//    never-archived) session keeps counting toward an issue's derived
-//    in-progress status. Active/promoted/merging sessions always count;
-//    archived/merged never do; paused ones age out on last_activity_at
-//    because nothing ever archives them automatically.
-//  - ISSUE_CLAIM_TTL_DAYS: how long a manual issue_claims row stays live
-//    without activity. Activity = the claim's own claimed_at (renewed by
-//    re-POSTing) OR any message in the issue's discussion thread, so an
-//    issue under active discussion keeps its claims alive with no writes.
-const IN_PROGRESS_PAUSED_WINDOW_DAYS = 7;
-const ISSUE_CLAIM_TTL_DAYS = 7;
+// "In progress" status windows, and what keeps a claim live.
+//
+// #1903: both constants and the claim-liveness predicates now live in
+// services/issue-progress.js, because the Workshop's lane assignment needs
+// exactly the same rules and a second copy of them is a second copy to
+// drift. The bulk read below stays here: it needs per-issue DETAIL for the
+// chip and already holds the thread timestamps, so calling the Set helper
+// would be a redundant query on a hot path.
+const {
+  IN_PROGRESS_PAUSED_WINDOW_DAYS,
+  ISSUE_CLAIM_TTL_DAYS,
+  claimExpiresAt,
+  claimIsLive,
+} = require('../services/issue-progress');
+// #2431: which proposal closed an issue, or is working on it. One query for
+// the whole list, so the board pays for it once and not per card.
+const { resolveIssueProposalRefs } = require('../services/issue-proposal-ref');
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
 const MAX_ISSUE_TITLE_LENGTH = 200;
+// Matches the issue-draft service and feedback form. Empty is valid: GitHub
+// issues may deliberately have no description, but an accidental novel must
+// not ride through the app's JSON limit or make the topic unusable.
+const MAX_ISSUE_BODY_LENGTH = 10000;
 
 // #132: should this issue kind get a GitHub twin on the app's repo?
 // Env-var change proposals (kind='secret_change') are in-app governance —
@@ -93,7 +138,8 @@ const MAX_ISSUE_TITLE_LENGTH = 200;
 // PRs the engine opens are the repo-visible artifact; a twin issue on
 // the PLATFORM repo would be noise.
 function shouldCreateGithubTwin(kind) {
-  return kind !== 'secret_change' && kind !== 'close_issue' && kind !== 'maintenance_campaign';
+  return kind !== 'secret_change' && kind !== 'close_issue' && kind !== 'maintenance_campaign'
+    && kind !== 'featured_illustration';
 }
 
 // Staging-only mock issues for GET /api/apps/:slug/github-issues. A
@@ -210,7 +256,7 @@ function stagingMockIssues(repoUrl) {
       + 'the image below should render inline in the topic view, the '
       + 'same way a reporter-captured screenshot attached from the '
       + 'feedback modal does.\n\n'
-      + '**Screenshot:**\n![Screenshot](/icons/icon-192.png)', 4),
+      + '**Screenshot:**\n![Screenshot](/icons/v3/icon-192.png)', 4),
     // #1010: the two targets of the applying / retry-pending mock close
     // proposals below (stagingMockGovernance 9100005 / 9100006), so the
     // ?demo=1 preview shows the governance card's spinner state AND the
@@ -304,6 +350,17 @@ function stagingMockGovernance() {
     mk(9100001, 'rename', '[Mock] Rename app to "Staging Demo App"',
       { newName: 'Staging Demo App' }, 6, 2, 0,
       { required: 2, windowEndsAt: hoursAhead(36) }),
+    // #2086: an open featured-illustration proposal, so the card's preview
+    // (proposed image beside the current one) is reviewable via ?demo=1 on
+    // an empty staging DB. The image is a shipped static asset rather than
+    // an app-illustrations id, which the empty DB could not serve.
+    mk(9100008, 'featured_illustration', '[Mock] Change the featured illustration',
+      {
+        proposed: { url: '/icons/v3/icon-512.png', darkUrl: null, zoom: 1.2, x: 10, y: -5, tint: 'teal' },
+        current: { url: '/icons/v3/icon-192.png', darkUrl: null, zoom: 1, x: 0, y: 0 },
+        remove: false,
+      }, 5, 1, 0,
+      { required: 2, windowEndsAt: hoursAhead(30) }),
     // Contested secret change (down >= 1/3) → no countdown, full count gate.
     mk(9100002, 'secret_change', '[Mock] Set FEATURE_FLAG to "on"',
       { key: 'FEATURE_FLAG', action: 'set', hasValue: true }, 8, 4, 3,
@@ -400,6 +457,35 @@ function stagingMockGovernance() {
 // The generic thread is deterministic in the issue number, so a preview and
 // a declared check see the same two rows on every run; only the ages are
 // clock-relative, which is the thing those rows exist to exercise.
+
+// #2603: the voters behind a mock governance row's tally, so a ?demo=1 deep
+// link into a close proposal shows the same roster — names and lines — a real
+// one does. Obviously synthetic names; the counts are the row's own, so the
+// roster can never disagree with the tally the card drew.
+function stagingMockGovernanceVotes(id) {
+  const row = stagingMockGovernance().find((m) => m.id === id);
+  if (!row) return [];
+  const LINES = {
+    up: ['Checked it myself, nothing left to fix.', 'Happy for this one to go.'],
+    down: ['It still happens on my phone.', 'I would rather leave this one open a while.'],
+  };
+  const out = [];
+  const add = (vote, n) => {
+    for (let i = 0; i < n; i += 1) {
+      out.push({
+        vote,
+        username: `staging-voter-${vote}-${i + 1}`,
+        // A No always carries its line; a Yes may go without one, and the
+        // later mock voters do, so both readings are reviewable.
+        reason: (vote === 'down' || i === 0) ? LINES[vote][i % LINES[vote].length] : null,
+      });
+    }
+  };
+  add('up', parseInt(row.up_count, 10) || 0);
+  add('down', parseInt(row.down_count, 10) || 0);
+  return out;
+}
+
 // Is `number` one of stagingMockIssues' own rows? The repo URL only shapes
 // each row's htmlUrl, so any base answers the membership question.
 function isStagingMockIssueNumber(number) {
@@ -434,21 +520,48 @@ function stagingMockIssueComments(number) {
       createdAt: daysAgo(3),
     },
   ]);
+  // #2556: one deliberately LONG reply per thread, so the "Show more" a
+  // comment grows past four lines actually has something to hide in a
+  // preview. Staging only, like every row in this function, and marked
+  // "[Mock]" like every row in this function. It is last in each thread on
+  // purpose: the Workshop's inline slot renders only the last two comments,
+  // so a long row further up would be invisible on the surface that most
+  // needed the clamp.
+  const longReply = () => ({
+    author: 'staging-tester',
+    body: '[Mock] Writing this one out at length on purpose, because a short '
+      + 'reply cannot show what a long one does to a card. Steps to reproduce: '
+      + 'open the board on a narrow window, scroll to any row that has a '
+      + 'conversation under it, and watch the row below it get pushed off the '
+      + 'bottom of the screen by a single pasted stack trace. It happens on '
+      + 'the topic page too, where three replies of this size turn the '
+      + 'discussion into a page of scrolling before you reach the box to '
+      + 'answer in. What I expected was the first few lines and a way to ask '
+      + 'for the rest, the way the app list already offers one. What I got '
+      + 'was the whole thing, every time, on every surface that renders a '
+      + 'comment. Adding a few more sentences here so this stays longer than '
+      + 'four lines at a desktop width as well as on a phone, since that is '
+      + 'the case the control has to be measured against.',
+    createdAt: hoursAgo(1),
+  });
   const threads = {
     900001: [
       ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] I can reproduce this every time on Firefox — the toggle flips back to light as soon as I reload.', createdAt: hoursAgo(40) },
       { author: 'usernode-bot', body: '[Mock] Thanks for the report. Is the preference meant to persist per-device or per-account? Defaulting to per-device unless you say otherwise.', createdAt: hoursAgo(36) },
       { author: 'staging-tester', body: '[Mock] Per-device is fine — just make it survive a refresh.', createdAt: hoursAgo(30) },
+      longReply(),
     ],
     900002: [
       ...stampLadder(),
       { author: 'another-tester', body: '[Mock] +1, Y/N shortcuts would be a huge time-saver during a voting spree.', createdAt: hoursAgo(20) },
       { author: 'usernode-bot', body: '[Mock] Should the shortcut act on the focused card only, or the top card in the list? Going with the focused card.', createdAt: hoursAgo(18) },
+      longReply(),
     ],
     900003: [
       ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] Happens on my iPhone SE in portrait — the Vote and Preview buttons spill off the right edge.', createdAt: hoursAgo(28) },
+      longReply(),
     ],
   };
   if (threads[n]) return threads[n];
@@ -470,6 +583,7 @@ function stagingMockIssueComments(number) {
         + 'Staging only, and never served in production.',
       createdAt: hoursAgo(5),
     },
+    longReply(),
   ];
 }
 
@@ -710,7 +824,8 @@ function issueRoutes(config) {
          FROM issues i
          LEFT JOIN users u ON i.created_by = u.id
          WHERE i.app_id = $1 AND i.id = $2
-           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign')
+           AND i.kind IN ('secret_change', 'rename', 'close_issue', 'maintenance_campaign',
+                          'featured_illustration')
          LIMIT 1`,
         [appId, id, userId]
       );
@@ -791,10 +906,58 @@ function issueRoutes(config) {
     }
   });
 
+  // #2603: who voted which way on a governance proposal, and the line each
+  // vote carries — the issue-side mirror of GET /api/sessions/:id/votes, and
+  // the source the close-issue card's roster reads. View-level like the by-id
+  // handler above it, and keyed by slug for the same reason: a ?demo=1 mock
+  // id is not a row, so it never reaches the id-addressed collab guard.
+  router.get('/api/apps/:slug/governance/:id/votes', async (req, res) => {
+    try {
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(404).json({ error: 'Proposal not found' });
+
+      const { rows } = await pool.query(
+        `SELECT iv.vote, iv.reason, u.username
+           FROM issue_votes iv
+           JOIN users u ON u.id = iv.user_id
+           JOIN issues i ON i.id = iv.issue_id
+          WHERE iv.issue_id = $1 AND i.app_id = $2
+          ORDER BY iv.created_at ASC, iv.id ASC`,
+        [id, gatedApp.id]
+      );
+
+      // The mock governance rows aren't in the DB, so a ?demo=1 deep link
+      // reads its roster from the same generators the card came from.
+      const votes = (!rows.length && IS_STAGING && req.query.demo === '1')
+        ? stagingMockGovernanceVotes(id)
+        : rows;
+
+      // 'up'/'down' is the issue vocabulary; 'yes'/'no' is what a roster
+      // says, and what the shared roster component renders.
+      res.json({
+        yes: votes.filter((r) => r.vote === 'up').map((r) => r.username),
+        no: votes.filter((r) => r.vote === 'down').map((r) => r.username),
+        reasons: votes.filter((r) => r.reason).map((r) => ({
+          username: r.username,
+          vote: r.vote === 'down' ? 'no' : 'yes',
+          reason: r.reason,
+        })),
+      });
+    } catch (err) {
+      log.error('issues', 'Failed to list governance votes', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Create an issue / proposal — kinds per VALID_KINDS above (general is
   // the default). Rate-limited per kind: close_issue proposals draw from
   // their own bucket, everything else from issue-create.
-  router.post('/api/apps/:slug/issues', issueKindLimiter, async (req, res) => {
+  router.post('/api/apps/:slug/issues', issueKindLimiter, communities.requireAppMembership(pool), async (req, res) => {
     let { title, description, kind = 'general', payload = {} } = req.body || {};
 
     if (!VALID_KINDS.includes(kind)) {
@@ -1079,15 +1242,38 @@ function issueRoutes(config) {
         chatPrefix = `${req.user.username} created issue: "${title}"`;
       }
       const createdMsg = `${chatPrefix}${githubIssueNumber ? ` (#${githubIssueNumber})` : ''}`;
-      await sendSystemMessage(pool, app.id, createdMsg, 'system');
-      // Dual-post the creation into the topic's own thread so the
+
+      // #1374: a new issue notified nobody before this. Fanned out to the
+      // app's stakeholders and gated on the `new_issues` category, which
+      // DEFAULTS OFF — so on a platform with no stored preferences this
+      // sends nothing at all, and it is opt-in per app from the tile menu.
+      //
+      // Best-effort and never awaited into the response: filing an issue
+      // must not fail because a notification insert did. The issue is on
+      // the board either way, which is the whole reason suppressing a
+      // notification here is not destructive.
+      // Wrapped: a `.catch()` covers a rejected promise, not a synchronous
+      // throw, and filing an issue must not fail because of a notification.
+      try {
+        notifications.createIssueOpenedNotifications?.(pool, {
+          appId: app.id,
+          issueNumber: githubIssueNumber || rows[0].id,
+          authorId: req.user.id,
+        })?.then((created) => Promise.all(
+          created.map((row) => notifications.hydrateAndPush(pool, row))
+        ))?.catch((err) => log.error('issues',
+          'Issue-opened notification failed', { appId: app.id, err: err.message }));
+      } catch (err) {
+        log.error('issues', 'Issue-opened notification threw', { appId: app.id, err: err.message });
+      }
+      // Post the creation into the topic's own thread so the
       // discussion opens with its origin in context: governance proposals
       // (secret_change / rename / close_issue) thread on the local issue
       // id; general issues thread on the GitHub twin number (no twin → no
       // thread yet). A close_issue proposal ALSO posts into its target
       // issue's thread so followers of the issue see the vote start.
       if (kind === 'secret_change' || kind === 'rename' || kind === 'close_issue'
-          || kind === 'maintenance_campaign') {
+          || kind === 'maintenance_campaign' || kind === 'featured_illustration') {
         await sendSystemMessage(pool, app.id, createdMsg, 'system',
           null, { type: 'governance', ref: rows[0].id }).catch(() => {});
         if (kind === 'close_issue' && payload.issueNumber) {
@@ -1100,6 +1286,15 @@ function issueRoutes(config) {
       }
 
       pushIssueUpdate({ action: 'created', appSlug: app.slug, appId: app.id, issueId: rows[0].id, kind });
+      // The Homeroom bot triages a new request as soon as it exists — the
+      // create carries the local row's id, so the twin's number goes here.
+      if (githubIssueNumber) {
+        try {
+          require('../services/homeroom-bot').noteIssueActivity({ appId: app.id, issueNumber: githubIssueNumber, reason: 'created' });
+        } catch (botErr) {
+          log.warn('issues', 'Homeroom bot wake failed', { err: botErr.message });
+        }
+      }
 
       log.info('issues', 'Issue created', { issueId: rows[0].id, kind, title });
       res.status(201).json({ issue: rows[0] });
@@ -1110,11 +1305,23 @@ function issueRoutes(config) {
   });
 
   // Vote on an issue — for rename proposals, a passing up-vote auto-applies.
-  router.post('/api/issues/:id/vote', async (req, res) => {
+  // #2525: same bucket as proposal votes — a changed issue vote posts a
+  // system line into the issue's thread, so flipping is the spam shape.
+  //
+  // #2603: a governance vote carries the same one line a proposal vote does.
+  // The rules are votes.js's, reused rather than restated: the same
+  // normaliser, the same 280-character cap, required on a No and optional on
+  // a Yes. Lazily required, matching the direction this module already uses
+  // for './votes' (see the demo close rows in the by-id handler above).
+  router.post('/api/issues/:id/vote', governanceVoteLimiter, communities.requireIssueMembership(pool), async (req, res) => {
     const { vote } = req.body;
     if (!['up', 'down'].includes(vote)) {
       return res.status(400).json({ error: 'Vote must be "up" or "down"' });
     }
+    const votesModule = require('./votes');
+    const normalized = votesModule.normalizeVoteReason(req.body?.reason);
+    if (normalized.error) return res.status(400).json({ error: normalized.error });
+    const reason = normalized.reason;
 
     try {
       // Join to apps so we have the slug for the WS broadcast below;
@@ -1155,10 +1362,28 @@ function issueRoutes(config) {
         return res.json({ ok: true, toggled: true });
       }
 
+      // #2603: a No comes with a line, so the proposer learns what is wrong
+      // rather than only that somebody minded — votes.js's rule, and its
+      // wording. Checked AFTER the toggle branch above: retracting a No is
+      // not casting one, and asking for a sentence to take a vote back would
+      // be a trap. The same-side re-cast votes.js exempts cannot arrive here
+      // at all, because on an issue that click is the retraction.
+      if (vote === 'down' && !reason) {
+        return res.status(400).json({
+          error: 'reason_required',
+          message: votesModule.VOTE_REASON_REQUIRED,
+          maxLength: votesModule.VOTE_REASON_MAX,
+        });
+      }
+
+      // A flip REPLACES the line rather than keeping it: the old sentence
+      // argued for the side this vote just left. (votes.js keeps an earlier
+      // line on a same-side re-cast; here that click is the toggle above.)
       await pool.query(
-        `INSERT INTO issue_votes (issue_id, user_id, vote) VALUES ($1, $2, $3)
-         ON CONFLICT (issue_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, created_at = NOW()`,
-        [issue.id, req.user.id, vote]
+        `INSERT INTO issue_votes (issue_id, user_id, vote, reason) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (issue_id, user_id) DO UPDATE
+           SET vote = EXCLUDED.vote, reason = EXCLUDED.reason, created_at = NOW()`,
+        [issue.id, req.user.id, vote, reason]
       );
 
       let voteSubject;
@@ -1171,11 +1396,19 @@ function issueRoutes(config) {
         voteSubject = `close proposal for issue #${issue.payload?.issueNumber || '?'}`;
       } else if (issue.kind === 'maintenance_campaign') {
         voteSubject = `maintenance campaign "${issue.payload?.title || issue.title}"`;
+      } else if (issue.kind === 'featured_illustration') {
+        voteSubject = issue.payload?.remove
+          ? 'the proposal to remove the featured illustration'
+          : 'the proposed featured illustration';
       } else {
         voteSubject = `issue: "${issue.title}"`;
       }
+      // #2603: with a line, the row is the person's sentence as well as their
+      // tally — the same shape votes.js gives a proposal vote's thread line.
       await sendSystemMessage(pool, issue.app_id,
-        `${req.user.username} voted ${vote} on ${voteSubject}`,
+        reason
+          ? `${req.user.username} voted ${vote} on ${voteSubject}: “${reason}”`
+          : `${req.user.username} voted ${vote} on ${voteSubject}`,
         'vote',
         null,
         // #194: per-vote activity lands in the proposal's own thread
@@ -1196,6 +1429,7 @@ function issueRoutes(config) {
       let secretChanged = null;
       let issueClosed = null;
       let campaignStarted = null;
+      let illustrationChanged = null;
       if (vote === 'up' && issue.kind === 'rename') {
         renamed = await maybeApplyRenameProposal(pool, issue);
       } else if (vote === 'up' && issue.kind === 'secret_change') {
@@ -1204,9 +1438,11 @@ function issueRoutes(config) {
         issueClosed = await maybeApplyCloseIssueProposal(pool, issue);
       } else if (vote === 'up' && issue.kind === 'maintenance_campaign') {
         campaignStarted = await maybeApplyMaintenanceCampaignProposal(config, pool, issue);
+      } else if (vote === 'up' && issue.kind === 'featured_illustration') {
+        illustrationChanged = await maybeApplyFeaturedIllustrationProposal(pool, issue);
       }
 
-      res.json({ ok: true, renamed, secretChanged, issueClosed, campaignStarted });
+      res.json({ ok: true, renamed, secretChanged, issueClosed, campaignStarted, illustrationChanged });
     } catch (err) {
       log.error('issues', 'Vote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1233,6 +1469,56 @@ function issueRoutes(config) {
   // `refreshed` and `refreshRetryMs` so the FE can disable its button for
   // the cooldown window; the normal payload shape is unchanged.
   // ----------------------------------------------------------------
+  // #2089: the board search reads past the title. Titles, authors, numbers
+  // and the bodies the board payload already carries filter in the browser;
+  // the discussion under a card does not travel with it (a thread loads when
+  // its card opens), so this answers "which threads on this app mention the
+  // query" and the browser folds the keys in. One thread type per card
+  // family, mirroring the thread_type / thread_ref pairs chat.js writes:
+  //   issue      -> GitHub issue number   (issue cards)
+  //   session    -> chat_sessions.id      (proposal, merged and session cards)
+  //   governance -> issues.id             (governance cards)
+  // Human messages only (msg_type = 'message'), so a vote or lifecycle row
+  // quoting the query does not surface a card. View-gated like the board.
+  router.get('/api/apps/:slug/board-search', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const q = String(req.query.q || '').trim().slice(0, 200);
+      const out = { q, issues: [], sessions: [], gov: [] };
+      if (q.length < BOARD_SEARCH_MIN_CHARS) return res.json(out);
+      // A substring match: the query is data, so its LIKE metacharacters
+      // are escaped rather than interpreted.
+      const pattern = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+      const { rows } = await pool.query(
+        `SELECT thread_type, thread_ref
+           FROM chat_messages
+          WHERE app_id = $1
+            AND msg_type = 'message'
+            AND thread_type IN ('issue', 'session', 'governance')
+            AND thread_ref IS NOT NULL
+            AND content ILIKE $2 ESCAPE '\\'
+          GROUP BY thread_type, thread_ref
+          ORDER BY MAX(created_at) DESC
+          LIMIT $3`,
+        [app.id, pattern, BOARD_SEARCH_MAX_HITS]
+      );
+      for (const r of rows) {
+        const ref = r.thread_ref == null ? NaN : Number(r.thread_ref);
+        if (!Number.isInteger(ref) || ref <= 0) continue;
+        if (r.thread_type === 'issue') out.issues.push(ref);
+        else if (r.thread_type === 'session') out.sessions.push(ref);
+        else out.gov.push(ref);
+      }
+      return res.json(out);
+    } catch (err) {
+      log.error('issues', 'Failed to search the board', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.get('/api/apps/:slug/github-issues', async (req, res) => {
     try {
       // View-level (#621): the GitHub issue list is read-only.
@@ -1300,20 +1586,30 @@ function issueRoutes(config) {
       );
       const byNumber = new Map(bountyRows.map((r) => [r.n, r]));
 
-      // #133/#136: resolve each issue's creating user so the panel can show
+      // #133/#136/#2427: resolve each issue's creating user so the panel can show
       // it next to the title the way PR rows show their author. Platform-
       // filed issues record created_by in the local issues table; feedback-
-      // filed ones carry the creator in the body's "**Source:**" line
-      // (the "usernode user (name)" / "usernode admin (name)" forms, plus
-      // the legacy bare "usernode admin" written before #140);
+      // filed ones use feedback_reports, with the body's "**Source:**" line
+      // as the compatibility fallback for older rows (the "usernode user
+      // (name)" / "usernode admin (name)" forms, plus the legacy bare
+      // "usernode admin" written before #140);
       // issues opened directly on GitHub fall back to the GitHub login —
       // but never the platform bot account itself, which would just name
       // "usernode-bot" on every platform-filed row.
       const { rows: creatorRows } = await pool.query(
-        `SELECT i.github_issue_number AS n, u.username
-           FROM issues i JOIN users u ON u.id = i.created_by
-          WHERE i.app_id = $1 AND i.github_issue_number IS NOT NULL`,
-        [app.id]
+        `SELECT DISTINCT ON (n) n, username
+           FROM (
+             SELECT i.github_issue_number AS n, u.username, 0 AS source_rank
+               FROM issues i JOIN users u ON u.id = i.created_by
+              WHERE i.app_id = $1 AND i.github_issue_number IS NOT NULL
+             UNION ALL
+             SELECT fr.issue_number AS n, u.username, 1 AS source_rank
+               FROM feedback_reports fr JOIN users u ON u.id = fr.user_id
+              WHERE fr.issue_owner = $2 AND fr.issue_repo = $3
+                AND fr.issue_number IS NOT NULL
+           ) creators
+          ORDER BY n, source_rank`,
+        [app.id, parsed?.owner || null, parsed?.repo || null]
       );
       const creatorByNumber = new Map(creatorRows.map((r) => [r.n, r.username]));
 
@@ -1344,6 +1640,9 @@ function issueRoutes(config) {
       // changes-ready label + Preview button for auto runs that pushed code
       // and built a preview. staging_url is nulled on teardown, so a GC'd
       // preview degrades the label back to the plain outcome wording.
+      // #2684: a synthetic user's sessions (the Homeroom bot's shadow-mode
+      // triage turns) are never work on an issue that a card should show,
+      // here or in the in_progress derivation below.
       const { rows: headlessRows } = await pool.query(
         `SELECT DISTINCT ON (cs.headless_issue_number)
                 cs.headless_issue_number AS n, cs.id, cs.headless_status,
@@ -1352,6 +1651,7 @@ function issueRoutes(config) {
            FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.is_headless = TRUE
             AND cs.headless_status IN ('generating', 'ready')
+            AND u.is_synthetic IS NOT TRUE
           ORDER BY cs.headless_issue_number, cs.created_at DESC`,
         [app.id]
       );
@@ -1431,6 +1731,7 @@ function issueRoutes(config) {
            FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
           WHERE cs.app_id = $1 AND cs.is_headless = FALSE
             AND cardinality(cs.linked_issues) > 0
+            AND u.is_synthetic IS NOT TRUE
             AND (cs.status IN ('active','promoted','merging')
                  OR (cs.status = 'paused'
                      AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,
@@ -1455,17 +1756,22 @@ function issueRoutes(config) {
           ORDER BY ic.claimed_at ASC`,
         [app.id]
       );
-      const claimTtlMs = ISSUE_CLAIM_TTL_DAYS * 24 * 3600 * 1000;
       const claimsByNumber = new Map();
+      const claimNow = Date.now();
       for (const c of claimRows) {
-        const lastAt = Date.parse(chatByNumber.get(c.n)?.last_at || '') || 0;
-        const claimedAt = Date.parse(c.claimed_at) || 0;
-        const freshest = Math.max(claimedAt, lastAt);
-        if (freshest <= Date.now() - claimTtlMs) continue; // expired — inert row
+        const lastAt = chatByNumber.get(c.n)?.last_at;
+        if (!claimIsLive(c.claimed_at, lastAt, claimNow)) continue; // expired — inert row
         const list = claimsByNumber.get(c.n) || [];
-        list.push({ ...c, expires_at: new Date(freshest + claimTtlMs).toISOString() });
+        list.push({ ...c, expires_at: claimExpiresAt(c.claimed_at, lastAt).toISOString() });
         claimsByNumber.set(c.n, list);
       }
+
+      // #2431: the proposal addressing each issue, resolved for every listed
+      // number in ONE query — the topic page of an OPEN issue renders from
+      // this payload, so the reference has to travel with the list.
+      const addressedBy = await resolveIssueProposalRefs(
+        pool, app.id, (result.issues || []).map((i) => i.number), req.user.id
+      );
 
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
@@ -1491,6 +1797,8 @@ function issueRoutes(config) {
           // #287: per-viewer proposal session id, or null. Drives the
           // "Create proposal" → "Create new proposal" swap on the issue row.
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
+          // #2431: the change addressing this issue, or null.
+          addressed_by: addressedBy.get(issue.number) || null,
           chatCount: chatByNumber.get(issue.number)?.cnt || 0,
           lastMessageAt: chatByNumber.get(issue.number)?.last_at || null,
           // The Haiku title call failed when this feedback issue was
@@ -1722,7 +2030,7 @@ function issueRoutes(config) {
           [900007, {
             priority: { top: 'high', count: 1, myValue: null },
             assignee: { top: 'staging-demo-user', count: 1, myValue: null },
-            category: { top: 'staging demo perf', count: 2, myValue: null },
+            category: { top: 'staging-demo-perf', count: 2, myValue: null },
           }],
           // 900002 deliberately left untouched → muted "Set priority" /
           // "Unassigned" / "Set category"; opening its assignee dropdown
@@ -1738,21 +2046,144 @@ function issueRoutes(config) {
         }
       }
 
-      const used = await countWeeklyAllowanceUsed(pool, req.user.id, weekStartUtc());
-      const myRemaining = Math.max(0, WEEKLY_KUDOS_LIMIT - used);
+      // #1688: what the board shows beside the bounty button is the BOUNTY
+      // allowance, which has its own count now (services/bounties.js).
+      const used = await countWeeklyBountiesUsed(pool, req.user.id, weekStartUtc());
+      const myRemaining = Math.max(0, WEEKLY_BOUNTY_LIMIT - used);
 
       res.json({
         issues,
         truncatedList: !!result.truncatedList,
         ...(result.note ? { note: result.note } : {}),
+        // #2261: the list is the last one GitHub gave, not a fresh read —
+        // the board keeps what it has rather than repainting on it.
+        ...(result.stale ? { stale: true } : {}),
         ...(wantRefresh
           ? { refreshed: !!result.refreshed, refreshRetryMs: result.retryInMs || 0 }
           : {}),
         myRemaining,
-        limit: WEEKLY_KUDOS_LIMIT,
+        limit: WEEKLY_BOUNTY_LIMIT,
       });
     } catch (err) {
       log.error('issues', 'Failed to list GitHub issues', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // GET /api/apps/:slug/github-issues/:number
+  //
+  // #2365: ONE GitHub issue, open or CLOSED, for the topic view. The list
+  // route above carries open issues only, so a proposal's link to the issue
+  // it closed opened a page that could not find it and silently bounced to
+  // the board. github.fetchPublicIssue is cache-first, never throws, resolves
+  // closed issues through the single-issue endpoint and refuses pull
+  // requests — anything it cannot return is a 404 here. View-gated like the
+  // list. Returns `{ issue }` in the list's row shape: creator, bounty tally,
+  // discussion count and attributes are resolved the same way; the
+  // per-viewer work fields (headless run, in-progress, own session) are left
+  // empty, because a closed issue's page offers no work on it. `addressed_by`
+  // (#2431) is the exception the closed page needs most: the change that
+  // closed it is a record, not an offer of work.
+  // ----------------------------------------------------------------
+  router.get('/api/apps/:slug/github-issues/:number', async (req, res) => {
+    try {
+      // View-level (#621): reading an issue is read-only.
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', `${appAccess.ACCESS_COLUMNS}, repo_url`
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const number = /^\d+$/.test(req.params.number) ? Number(req.params.number) : NaN;
+      if (!Number.isSafeInteger(number) || number <= 0) {
+        return res.status(400).json({ error: 'Invalid issue number' });
+      }
+      const parsed = parseOwnerRepo(app.repo_url);
+
+      // Staging: the list route's mock rows resolve here too, so a mock
+      // issue's page opened by URL behaves like one opened from the board.
+      // With ?demo=1 the mock is served without the live round trip, for the
+      // reason the comments route below gives; without it the live fetch
+      // goes first and the mock is only the fallback. No-op in production.
+      const mock = IS_STAGING
+        ? stagingMockIssues(app.repo_url).find((i) => i.number === number) || null
+        : null;
+      let issue = null;
+      if (mock && req.query.demo === '1') {
+        issue = mock;
+      } else if (github.isEnabled() && parsed) {
+        ({ issue } = await github.fetchPublicIssue(parsed.owner, parsed.repo, number));
+      }
+      if (!issue) issue = mock;
+      if (!issue) return res.status(404).json({ error: 'Issue not found' });
+
+      const { rows: bountyRows } = await pool.query(
+        `SELECT COUNT(*)::int AS cnt, BOOL_OR(giver_user_id = $3) AS mine
+           FROM issue_bounties
+          WHERE app_id = $1 AND github_issue_number = $2 AND status = 'open'`,
+        [app.id, number, req.user.id]
+      );
+      const { rows: creatorRows } = await pool.query(
+        `SELECT username
+           FROM (
+             SELECT u.username, 0 AS source_rank, i.id AS source_id
+               FROM issues i JOIN users u ON u.id = i.created_by
+              WHERE i.app_id = $1 AND i.github_issue_number = $2
+             UNION ALL
+             SELECT u.username, 1 AS source_rank, fr.id AS source_id
+               FROM feedback_reports fr JOIN users u ON u.id = fr.user_id
+              WHERE fr.issue_owner = $3 AND fr.issue_repo = $4 AND fr.issue_number = $2
+           ) creators
+          ORDER BY source_rank, source_id DESC
+          LIMIT 1`,
+        [app.id, number, parsed?.owner || null, parsed?.repo || null]
+      );
+      const { rows: chatRows } = await pool.query(
+        `SELECT (COUNT(*) FILTER (WHERE msg_type = 'message'))::int AS cnt,
+                MAX(created_at) AS last_at
+           FROM chat_messages
+          WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2`,
+        [app.id, number]
+      );
+      const b = bountyRows[0];
+      const chat = chatRows[0];
+      const ghLogin = issue.user && !issue.user.endsWith('[bot]') && issue.user !== 'usernode-bot'
+        ? issue.user
+        : null;
+      const attrs = (await topicAttrs.summarizeForTargets(
+        pool, app.id, 'issue', [number], req.user.id
+      )).get(number) || topicAttrs.emptySummary();
+      // #2431: for a CLOSED issue this is the whole answer to "what closed
+      // this?" — the merged change that linked it. Same resolver the list
+      // uses, so both pages name the same proposal.
+      const addressedBy = await resolveIssueProposalRefs(
+        pool, app.id, [number], req.user.id
+      );
+
+      return res.json({
+        issue: {
+          state: 'open',
+          closedAt: null,
+          ...issue,
+          bounty_count: b ? b.cnt : 0,
+          my_bounty: b ? !!b.mine : false,
+          created_by_username: (creatorRows[0] && creatorRows[0].username)
+            || creatorFromSourceLine(issue.body)
+            || ghLogin,
+          headless: null,
+          in_progress: null,
+          myPrSessionId: null,
+          addressed_by: addressedBy.get(number) || null,
+          chatCount: (chat && chat.cnt) || 0,
+          lastMessageAt: (chat && chat.last_at) || null,
+          title_fallback: issue.title === FEEDBACK_FALLBACK_TITLE,
+          priority: attrs.priority,
+          assignee: attrs.assignee,
+          category: attrs.category,
+        },
+      });
+    } catch (err) {
+      log.error('issues', 'Failed to fetch GitHub issue', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1841,10 +2272,11 @@ function issueRoutes(config) {
   // the cache-bust + issue_update broadcast that live-refreshes open
   // panels (same pair title-heal uses).
   //
-  // Authorship: platform-filed issues record created_by in the local
-  // issues table; feedback-filed ones carry the creator in the body's
-  // "**Source:**" line. GitHub-native issues match neither and stay
-  // read-only — author-only by design, no admin override.
+  // Authorship: platform-filed issues record created_by in the local issues
+  // table; feedback-filed ones record user_id in feedback_reports, with the
+  // body's "**Source:**" line as a compatibility fallback. GitHub-native
+  // issues match neither and stay read-only — author-only by design, no admin
+  // override.
   // ----------------------------------------------------------------
   router.patch('/api/apps/:slug/github-issues/:number/title', async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
@@ -1889,13 +2321,9 @@ function issueRoutes(config) {
         });
       }
 
-      const { rows: authorRows } = await pool.query(
-        `SELECT 1 FROM issues
-          WHERE app_id = $1 AND github_issue_number = $2 AND created_by = $3`,
-        [app.id, issueNumber, req.user.id]
+      const isAuthor = await isIssueAuthor(
+        pool, app.id, parsed, issueNumber, req.user, target.body
       );
-      const isAuthor = authorRows.length > 0
-        || creatorFromSourceLine(target.body) === req.user.username;
       if (!isAuthor) {
         return res.status(403).json({ error: "Only the issue's author can edit its title" });
       }
@@ -1944,6 +2372,101 @@ function issueRoutes(config) {
       res.json({ ok: true, title: newTitle });
     } catch (err) {
       log.error('issues', 'Issue title edit failed', { issueNumber, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // PATCH /api/apps/:slug/github-issues/:number/body
+  //
+  // #2427: author-only editing of an open GitHub issue's Markdown body from
+  // its Homeroom topic. This deliberately mirrors the title route's access,
+  // open-issue verification and authorship rules. GitHub remains the source
+  // of truth: it is written first, then the optional local mirror, thread
+  // audit note, cache and live viewers are updated best-effort.
+  // ----------------------------------------------------------------
+  router.patch('/api/apps/:slug/github-issues/:number/body', async (req, res) => {
+    const issueNumber = parseInt(req.params.number, 10);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid issue number' });
+    }
+    const rawBody = req.body?.body;
+    if (typeof rawBody !== 'string') {
+      return res.status(400).json({ error: 'Body must be a string' });
+    }
+    if (rawBody.length > MAX_ISSUE_BODY_LENGTH) {
+      return res.status(400).json({
+        error: `Body too long (max ${MAX_ISSUE_BODY_LENGTH} chars)`,
+      });
+    }
+    const newBody = github.safeMention(rawBody);
+
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const parsed = parseOwnerRepo(app.repo_url);
+      if (!github.isEnabled() || !parsed) {
+        return res.status(422).json({
+          error: 'Cannot verify the issue right now: GitHub is unavailable for this app.',
+        });
+      }
+      const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+      if (ghResult.note) {
+        return res.status(422).json({
+          error: "Couldn't confirm this issue is open right now. Try again in a moment.",
+        });
+      }
+      const target = (ghResult.issues || []).find((i) => i.number === issueNumber);
+      if (!target) {
+        return res.status(404).json({
+          error: `Issue #${issueNumber} isn't an open issue on this repo.`,
+        });
+      }
+
+      const isAuthor = await isIssueAuthor(
+        pool, app.id, parsed, issueNumber, req.user, target.body
+      );
+      if (!isAuthor) {
+        return res.status(403).json({ error: "Only the issue's author can edit its body" });
+      }
+
+      const oldBody = String(target.body || '');
+      if (newBody === oldBody) {
+        return res.json({ ok: true, unchanged: true, body: oldBody });
+      }
+
+      try {
+        await github.patchIssueBody(parsed.owner, parsed.repo, issueNumber, newBody);
+      } catch (err) {
+        log.warn('issues', 'GitHub issue body PATCH failed', { issueNumber, message: err.message });
+        return res.status(502).json({
+          error: "Couldn't update the body on GitHub. Try again in a moment.",
+        });
+      }
+
+      await pool.query(
+        `UPDATE issues SET description = $3 WHERE app_id = $1 AND github_issue_number = $2`,
+        [app.id, issueNumber, newBody]
+      ).catch((err) => log.warn('issues', 'Local issue body update failed', { issueNumber, err: err.message }));
+
+      await sendSystemMessage(pool, app.id,
+        `${req.user.username} edited the issue description`,
+        'system', null, { type: 'issue', ref: issueNumber }
+      ).catch((err) => log.warn('issues', 'Issue body chat message failed', { err: err.message }));
+
+      github.invalidateIssuesCache(parsed.owner, parsed.repo);
+      pushIssueUpdate({
+        action: 'updated', source: 'github',
+        appSlug: app.slug, appId: app.id, issueNumber,
+      });
+
+      log.info('issues', 'Issue body edited', { appId: app.id, issueNumber, by: req.user.username });
+      res.json({ ok: true, body: newBody });
+    } catch (err) {
+      log.error('issues', 'Issue body edit failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2090,49 +2613,17 @@ function issueRoutes(config) {
         });
       }
 
-      // Upsert the caller's own claim. `xmax = 0` distinguishes a fresh
-      // INSERT (announce in the thread) from a renewal (silent — the
-      // claimer just restarted their clock).
-      const { rows } = await pool.query(
-        `INSERT INTO issue_claims (app_id, github_issue_number, user_id)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (app_id, github_issue_number, user_id)
-           DO UPDATE SET claimed_at = NOW()
-         RETURNING claimed_at, (xmax = 0) AS created`,
-        [app.id, issueNumber, req.user.id]
-      );
-      const created = !!rows[0]?.created;
-
-      // #1648: claiming is an explicit statement that the caller is taking
-      // the issue, so mirror it into the existing community-voted assignee
-      // field. Do this on renewals too: re-claiming repairs a missing or
-      // independently changed self-assignment. Releasing remains separate —
-      // it must not erase metadata that the user may have edited afterward.
-      await topicAttrs.castVote(
-        pool, app.id, 'issue', issueNumber, 'assignee', req.user.username, req.user.id
-      );
-
-      if (created) {
-        // On-the-record note in the issue's own discussion thread (which
-        // also freshens the thread clock every claim keys off).
-        await sendSystemMessage(pool, app.id,
-          // #1112: "claimed" rather than "marked this issue in progress" —
-          // a claim is one of seven things the board used to call "In
-          // progress", and it is the only one this route creates. Rows
-          // already written keep their old wording; not worth a migration.
-          `${req.user.username} claimed this issue`,
-          'system', null, { type: 'issue', ref: issueNumber }
-        ).catch((err) => log.warn('issues', 'Claim chat message failed', { err: err.message }));
-      }
-
-      pushIssueUpdate({
-        action: 'claimed', appSlug: app.slug, appId: app.id, issueNumber,
+      // #2364: the upsert, the #1648 assignee vote, the thread note and the
+      // push live in services/issue-claims.js, shared with the two routes
+      // that start work on an issue.
+      const { created, claimedAt } = await claimIssueForUser(pool, {
+        app, issueNumber, user: req.user,
       });
 
       log.info('issues', created ? 'Issue claimed' : 'Issue claim renewed', {
         appId: app.id, issueNumber, by: req.user.username,
       });
-      res.json({ ok: true, created, claimedAt: rows[0]?.claimed_at || null });
+      res.json({ ok: true, created, claimedAt });
     } catch (err) {
       log.error('issues', 'Issue claim failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -2247,8 +2738,8 @@ function issueRoutes(config) {
         return res.status(409).json({ error: 'Issue is not open' });
       }
       if (issue.kind !== 'secret_change' && issue.kind !== 'close_issue'
-          && issue.kind !== 'maintenance_campaign') {
-        return res.status(400).json({ error: 'Only secret-change, close-issue, and maintenance-campaign proposals can be admin-applied' });
+          && issue.kind !== 'maintenance_campaign' && issue.kind !== 'featured_illustration') {
+        return res.status(400).json({ error: 'Only secret-change, close-issue, maintenance-campaign, and featured-illustration proposals can be admin-applied' });
       }
       // Campaigns are self-app governance with fleet-wide blast radius:
       // only a FULL platform admin may force one, never an app admin.
@@ -2264,7 +2755,9 @@ function issueRoutes(config) {
         ? await maybeApplyCloseIssueProposal(pool, issue, { force: true, forceBy: req.user })
         : issue.kind === 'maintenance_campaign'
           ? await maybeApplyMaintenanceCampaignProposal(config, pool, issue, { force: true, forceBy: req.user })
-          : await maybeApplySecretChangeProposal(config, pool, issue, { force: true, forceBy: req.user });
+          : issue.kind === 'featured_illustration'
+            ? await maybeApplyFeaturedIllustrationProposal(pool, issue, { force: true, forceBy: req.user })
+            : await maybeApplySecretChangeProposal(config, pool, issue, { force: true, forceBy: req.user });
 
       pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id });
 
@@ -2325,11 +2818,9 @@ function issueRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Proposal not open' });
 
-      // Announce the withdrawal in group chat, and dual-post into the
-      // proposal's governance thread (mirrors the create path).
+      // Say the withdrawal in the proposal's governance thread (mirrors the
+      // create path).
       const withdrewMsg = `${req.user.username} withdrew their proposal: "${issue.title}"`;
-      await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system')
-        .catch((err) => log.warn('issues', 'Withdraw chat message failed', { err: err.message }));
       await sendSystemMessage(pool, issue.app_id, withdrewMsg, 'system',
         null, { type: 'governance', ref: issue.id }).catch(() => {});
 
@@ -2452,9 +2943,7 @@ async function maybeApplyRenameProposal(pool, issue) {
 
     // Side effects (chat + GitHub + WS) are best-effort and live outside the txn.
     const renamedMsg = `App renamed from "${oldName}" to "${newName}" by group vote (${upCount}/${required})`;
-    await sendSystemMessage(pool, app.id, renamedMsg, 'system')
-      .catch((err) => log.warn('issues', 'Rename chat message failed', { err: err.message }));
-    // Dual-post the outcome into the governance proposal's thread.
+    // The outcome, in the governance proposal's thread.
     await sendSystemMessage(pool, app.id, renamedMsg, 'system',
       null, { type: 'governance', ref: locked.id }).catch(() => {});
 
@@ -2508,6 +2997,114 @@ async function maybeApplyRenameProposal(pool, issue) {
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch {}
     log.error('issues', 'Rename apply failed', { issueId: issue.id, err: err.message });
+    return { applied: false, error: err.message };
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Vote-apply path for `kind='featured_illustration'` issues (#2086). Same
+ * shape as maybeApplyRenameProposal, the card it is modelled on: gate
+ * check, lock the issue row, write the proposed record onto the app
+ * (services/illustration-proposals.js applyProposal) and stamp the audit
+ * payload, all in one transaction; then chat + WS outside it.
+ *
+ * `options.force` (admin force-apply, POST /api/issues/:id/admin-apply)
+ * skips the majority and locked-app gates, like the other kinds.
+ */
+async function maybeApplyFeaturedIllustrationProposal(pool, issue, options = {}) {
+  const force = !!options.force;
+  const { majority } = await getActiveUserStats(pool, issue.app_id);
+
+  const governanceSvc = require('../services/governance');
+  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
+    kind: 'issue', id: issue.id, openedAt: issue.created_at,
+  });
+  const upCount = gate.qualifiedYes;
+  const active = gate.activeCount;
+  const required = force ? upCount : gate.required;
+  if (!force && !gate.mergeable) {
+    return {
+      applied: false, upCount, majority, active,
+      required: gate.required, windowEndsAt: gate.windowEndsAt,
+      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
+    };
+  }
+
+  // Locked apps additionally require at least one admin up vote, the same
+  // rule as the rename path. An admin force-apply trivially satisfies it.
+  if (!force && await isAppLocked(pool, issue.app_id)) {
+    const adminUp = await hasAdminUpVote(pool, issue.id);
+    if (!adminUp) {
+      log.info('issues', 'Illustration majority reached but app is locked; awaiting admin up', {
+        issueId: issue.id, upCount, majority,
+      });
+      return { applied: false, upCount, majority, active, awaitingAdmin: true };
+    }
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: lockRows } = await client.query(
+      'SELECT * FROM issues WHERE id = $1 FOR UPDATE',
+      [issue.id]
+    );
+    if (!lockRows.length || lockRows[0].status !== 'open') {
+      await client.query('ROLLBACK');
+      return { applied: false, upCount, majority, active };
+    }
+    const locked = lockRows[0];
+
+    const { rows: appRows } = await client.query(
+      'SELECT id, slug, name FROM apps WHERE id = $1 FOR UPDATE',
+      [locked.app_id]
+    );
+    if (!appRows.length) {
+      await client.query('ROLLBACK');
+      return { applied: false, upCount, majority, active };
+    }
+    const app = appRows[0];
+
+    const illustration = await illustrationProposals.applyProposal(
+      client, app.id, locked.payload || {}, locked.id
+    );
+
+    const auditPayload = {
+      ...locked.payload,
+      appliedAt: new Date().toISOString(),
+      appliedBy: force ? `admin:${options.forceBy?.username || 'unknown'}` : 'group-vote',
+      upCount, required, active,
+    };
+    await client.query(
+      `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
+      [JSON.stringify(auditPayload), locked.id]
+    );
+
+    await client.query('COMMIT');
+
+    // Side effects (chat + WS) are best-effort and live outside the txn.
+    const appliedHow = force
+      ? `by admin override (${options.forceBy?.username || 'admin'})`
+      : `by group vote (${upCount}/${required})`;
+    const msg = illustration
+      ? `Featured illustration changed ${appliedHow}`
+      : `Featured illustration removed ${appliedHow}`;
+    await sendSystemMessage(pool, app.id, msg, 'system',
+      null, { type: 'governance', ref: locked.id }).catch(() => {});
+
+    pushAppUpdate({ action: 'illustration_changed', appId: app.id, slug: app.slug, illustration });
+    pushIssueUpdate({ action: 'closed', appSlug: app.slug, appId: app.id, issueId: locked.id });
+
+    log.info('issues', 'Featured illustration proposal applied', {
+      appId: app.id, issueId: locked.id, removed: !illustration, force, upCount, active,
+    });
+    return { applied: true, illustration, upCount, majority, active };
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch {}
+    log.error('issues', 'Illustration apply failed', { issueId: issue.id, err: err.message });
     return { applied: false, error: err.message };
   } finally {
     client.release();
@@ -2630,7 +3227,6 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       });
       const refusedMsg = `Proposal for "${key}" was closed without applying: that variable is `
         + 'now set by the deploy from a GitHub secret and cannot be written here.';
-      await sendSystemMessage(pool, issue.app_id, refusedMsg, 'system').catch(() => {});
       await sendSystemMessage(pool, issue.app_id, refusedMsg, 'system',
         null, { type: 'governance', ref: locked.id }).catch(() => {});
       return { applied: false, refused: true, upCount, majority, active };
@@ -2712,9 +3308,7 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
     const secretMsg = selfHosted
       ? `Platform variable "${key}" ${verb} ${appliedHow}; takes effect on the platform's next deploy.`
       : `Secret "${key}" ${verb} ${appliedHow}; redeploying…`;
-    await sendSystemMessage(pool, issue.app_id, secretMsg, 'system')
-      .catch((err) => log.warn('issues', 'Secret-change chat msg failed', { err: err.message }));
-    // Dual-post the outcome into the governance proposal's thread.
+    // The outcome, in the governance proposal's thread.
     await sendSystemMessage(pool, issue.app_id, secretMsg, 'system',
       null, { type: 'governance', ref: locked.id }).catch(() => {});
 
@@ -2852,8 +3446,6 @@ async function resolveSupersededCloseProposals(pool, { appId, appSlug, numbers, 
       const msg = cause?.kind === 'pr-merge'
         ? `Close proposal for issue #${n} resolved automatically: PR #${cause.prNumber} closed the issue`
         : `Close proposal for issue #${n} resolved automatically: the issue was closed on GitHub`;
-      await sendSystemMessage(pool, row.app_id, msg, 'system')
-        .catch((err) => log.warn('issues', 'Superseded chat message failed', { err: err.message }));
       await sendSystemMessage(pool, row.app_id, msg, 'system',
         null, { type: 'governance', ref: row.id }).catch(() => {});
       // Same event the withdraw path emits — open clients drop the card and
@@ -3040,10 +3632,8 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
     ? `by admin override (${options.forceBy?.username || 'admin'})`
     : `by group vote (${upCount}/${required})`;
   const closedMsg = `Issue #${issueNumber} closed ${appliedHow}`;
-  await sendSystemMessage(pool, issue.app_id, closedMsg, 'system')
-    .catch((err) => log.warn('issues', 'Close-issue chat msg failed', { err: err.message }));
-  // Dual-post the outcome into the proposal's governance thread AND the
-  // target issue's thread (mirrors the create path's dual-post).
+  // The outcome, in the proposal's governance thread AND the target
+  // issue's thread (mirrors the create path).
   await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
     null, { type: 'governance', ref: locked.id }).catch(() => {});
   await sendSystemMessage(pool, issue.app_id, closedMsg, 'system',
@@ -3205,8 +3795,6 @@ async function maybeApplyMaintenanceCampaignProposal(config, pool, issue, option
     : `by group vote (${upCount}/${required})`;
   const startedMsg = `Maintenance campaign "${issue.payload?.title || issue.title}" approved ${appliedHow}. `
     + 'The platform is now opening one PR per app. Progress is on the campaign dashboard.';
-  await sendSystemMessage(pool, issue.app_id, startedMsg, 'system')
-    .catch((err) => log.warn('issues', 'Campaign chat msg failed', { err: err.message }));
   await sendSystemMessage(pool, issue.app_id, startedMsg, 'system',
     null, { type: 'governance', ref: issue.id }).catch(() => {});
 
@@ -3231,6 +3819,7 @@ module.exports = {
   maybeApplySecretChangeProposal,
   maybeApplyCloseIssueProposal,
   maybeApplyMaintenanceCampaignProposal,
+  maybeApplyFeaturedIllustrationProposal,
   // Exported for the merge path and the issue-close watcher (auto-resolve
   // of close proposals whose target was closed by other means).
   resolveSupersededCloseProposals,

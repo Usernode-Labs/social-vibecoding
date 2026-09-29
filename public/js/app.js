@@ -24,6 +24,23 @@ function documentPlatformSha() {
   } catch { return null; }
 }
 
+// ── Is this document the SIDE PANEL beside a running app? ─────────────
+//
+// On a desktop-width window the pages about a running app — its Workshop, its
+// discussion, a proposal, a conversation — open in a panel beside it, and that
+// panel is this same platform loaded a second time in a same-origin frame at
+// `/?panel=1#<route>` (frontend/src/features/side-panel/). head.html decides,
+// before anything paints, and marks <html> with `in-side-panel` only when the
+// document really is framed by a same-origin top window; this reads that one
+// decision. Guarded for the vm harnesses that load this file with a stub
+// document.
+function isSidePanelDocument() {
+  try {
+    const root = document.documentElement;
+    return !!(root && root.classList && root.classList.contains('in-side-panel'));
+  } catch { return false; }
+}
+
 // Top-level `const` doesn't auto-write to `window` in non-module
 // scripts, so other modules that read `window.App.…` instead of the
 // bare `App.…` identifier silently see `undefined`. Mirror onto
@@ -70,6 +87,12 @@ const App = {
   _inBrowse: false,
   // Platform-wide direct and group conversations (#488). The screen itself
   // is React-owned; this flag only coordinates the classic shell router.
+  _inMessages: false,
+  // Experimental Global Chat (#2543), now a normal routed screen with one
+  // stable address per durable session.
+  _inGlobalChat: false,
+  // Agent sessions (#2779): one conversation with the Mayor at #agent/<id>.
+  _inAgentSession: false,
 
   // Chromeless full-screen mode (/app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -81,6 +104,15 @@ const App = {
   // the regular /app/<slug> view. Driven purely by the route via
   // restoreFromHash/setChromeless.
   chromeless: false,
+
+  // The side panel's OWN document (`?panel=1`, framed beside a running app on
+  // a desktop window — see isSidePanelDocument above). It routes only the
+  // panel's pages and hands everything else to the top window (restoreFromHash,
+  // navigateToApp, switchTab, openAppTab, navigateHome), never runs an app,
+  // never parks one, and leaves the version poll and the one-shot reload
+  // latch to the top window, which owns them. (The feedback outbox needs no
+  // gate: it already takes turns across documents — feedback-queue.js.)
+  embeddedPanel: isSidePanelDocument(),
 
   // Set to true while restoreFromHash() is applying a URL (e.g. on
   // popstate/hashchange) so that the navigation helpers it calls
@@ -202,6 +234,17 @@ const App = {
     try {
       if (typeof Home !== 'undefined') localStorage.removeItem(Home.IMPROVE_TARGET_KEY);
     } catch (err) { /* nothing stored, or no storage at all */ }
+    // …and the parked app (#2762), the same residue once more: the app this
+    // account last left, drawn by name above the tab bar and kept in storage
+    // across reloads. Offering it to the next account on this device would
+    // be the previous one's app name on their first screen. Cleared through
+    // the bridge, which forgets it in the store and in storage together.
+    try {
+      window.UsernodeReact?.nav?.park?.(null);
+    } catch (err) { /* nothing parked, or no bridge */ }
+    // …and the Workshop view the tab returns to (#2776), which names the
+    // previous account's app and card in the same way.
+    App._forgetWorkshopView();
     try {
       navigator.serviceWorker?.controller?.postMessage({ type: 'clear-api-cache' });
     } catch (err) { /* no SW — nothing cached to drop */ }
@@ -291,6 +334,12 @@ const App = {
     // needs the popstate/hashchange wiring too (auth screens are
     // hash-routed).
     App.bindEvents();
+
+    // The side panel's document draws no chrome. head.html's class hid the
+    // header and the bar before the first paint (public/css/app.css); this
+    // makes the state agree — the header island takes `hidden` the way
+    // chromeless gives it, and _syncPlatformTabs keeps the bar down.
+    if (App.embeddedPanel) App.Visibility.publish('platform-header', false);
 
     // Screenshot-state deep links for the ANONYMOUS shell (`?shot=anon`,
     // `?shot=waitlist-joined`, `?shot=anon-back`). Captures and proposal checks carry a
@@ -530,6 +579,7 @@ const App = {
       NativeChrome.prepareIdentityPublication(user);
     }
     App.user = user;
+    App._syncViewer();
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
     // than reading /api/auth/me for themselves. Published HERE on an
@@ -551,6 +601,14 @@ const App = {
     // (features/settings/terms-first-run.js), so it has to be re-offered
     // once there is a verified one.
     try { window.TermsFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
+    // And the communities join screen, which skips an unverified session for
+    // the same reason. Without this, a browser that has signed in before
+    // (every boot there starts from the snapshot) never showed it: that is
+    // how an account an admin reset (Admin → Users → Reset first run) missed
+    // its first run until it signed out and in again. It waits for the terms
+    // ask above, so the two never stack
+    // (frontend/src/features/auth/communities-first-run.js).
+    try { window.CommunitiesFirstRun?.maybePrompt?.(); } catch (e) { /* ignore */ }
     // resyncCurrentView is the DISCONNECT-RECOVERY sweep: reload home,
     // re-pull notifications, resync session state, re-read the version. It
     // belongs to the reconnect path, where the screen has been sitting on
@@ -589,9 +647,22 @@ const App = {
       nativeBoundary = NativeChrome.enterAnonymous();
     }
     App.user = null;
+    App._syncViewer();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
+    // #2902: the apps kept loaded were the signed-out viewer's.
+    if (typeof AppView !== 'undefined') AppView.evictAllAppFrames?.();
+    // THE SIDE PANEL'S DOCUMENT HAS NO SESSION: the cookie it shares with the
+    // top window is gone or refused. The top window is the one that shows the
+    // sign-in screen, so it reloads — onto that screen if the session really
+    // ended, or back into the app if it did not — and this frame goes with
+    // it. Painting a second sign-in form inside the panel would leave the two
+    // documents disagreeing about who is signed in.
+    if (App.embeddedPanel) {
+      try { window.top.location.reload(); } catch (err) { /* no top to ask */ }
+      return;
+    }
     // Capture the platform SHA this document booted with. The anonymous
     // shell has no drawer (so no stale-version pill), which makes
     // pull-to-refresh its only recovery path after a deploy — and
@@ -637,6 +708,9 @@ const App = {
     // anonymous boot so the capture session can't strip #login to the feed.
     // `password-recovery-sent` is the same view with the post-submit
     // confirmation painted (the green "link is on its way" success box).
+    // `password-reset-complete` is the terminal step after that link is
+    // redeemed: the reset form is gone and the login form carries the durable
+    // success notice. It sends nothing and consumes no token.
     // `email-code-password-account` (#1586) is the login screen carrying the
     // explanation an email code hands back when the account it matches can
     // only be signed in with its password. Same anonymous boot, same reason.
@@ -673,6 +747,18 @@ const App = {
     // between them is the whole point of the panel — the celebration is the
     // join's and the state pill is the status read's — and one shot cannot
     // photograph both.
+    // `waitlist-not-found` (#2201) is the third answer that address step can
+    // get: the address is not on the list at all. It carries the note saying
+    // so and the control that turns the dead end into a join, and like the
+    // two above it needs the anonymous boot. Nothing is sent to paint it —
+    // waitlist.tsx sets the note from a literal.
+    // `waitlist-rejoined` (#2201) is that same settled panel reached a
+    // fourth way: an address already on the list AND already confirmed
+    // submits the join form again, and the server answers with its status
+    // instead of a code, so the client skips the code step entirely. No URL
+    // reaches it without the POST behind it, so a capture cannot get there
+    // on its own — and it is the state this change exists to produce, so a
+    // before/after that photographed the home screen would show none of it.
     // `signup-code-sent` (#1548) is the signup screen a second after a
     // waitlist-release link opens it: the code step, the confirmation, and
     // the resend held for its cooldown. The address rides in the fragment
@@ -682,19 +768,22 @@ const App = {
     // proposal check runs as. login.tsx paints it and sends nothing.
     if (shot !== 'anon' && shot !== 'waitlist-joined' && shot !== 'waitlist-confirmed' &&
         shot !== 'waitlist-step1' && shot !== 'waitlist-code-entry' &&
-        shot !== 'waitlist-code-step' &&
+        shot !== 'waitlist-code-step' && shot !== 'waitlist-not-found' &&
         shot !== 'waitlist-admitted' && shot !== 'waitlist-status' &&
+        shot !== 'waitlist-rejoined' &&
         shot !== 'waitlist-more' &&
         shot !== 'anon-back' &&
         shot !== 'signup-code-sent' &&
         shot !== 'password-recovery' && shot !== 'password-recovery-sent' &&
+        shot !== 'password-reset-complete' &&
         shot !== 'email-code-password-account') {
       return false;
     }
     if ((shot === 'waitlist-joined' || shot === 'waitlist-confirmed'
          || shot === 'waitlist-step1' || shot === 'waitlist-code-entry'
-         || shot === 'waitlist-code-step'
-         || shot === 'waitlist-admitted' || shot === 'waitlist-status') &&
+         || shot === 'waitlist-code-step' || shot === 'waitlist-not-found'
+         || shot === 'waitlist-admitted' || shot === 'waitlist-status'
+         || shot === 'waitlist-rejoined') &&
         (!location.hash || location.hash === '#')) {
       try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
     }
@@ -754,6 +843,7 @@ const App = {
       NativeChrome.prepareIdentityPublication(user);
     }
     App.user = user;
+    App._syncViewer();
     // A snapshot is display-only and unverified. _reconcileSession publishes
     // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
@@ -859,11 +949,12 @@ const App = {
     // once-per-document: _applyMenuNavShot clicks a drawer row and
     // _applySettingsBackShot assigns a hash and traverses back out of it, so
     // re-running either on the hashchange it just caused would loop, and
-    // _applyNotifPermissionsShot / _applyTermsConsentShot present overlays
-    // that would stack.
+    // _applyNotifPermissionsShot / _applyTermsConsentShot /
+    // _applyAppPermissionShot present overlays that would stack.
     App._applySettingsBackShot();
     App._applyNotifPermissionsShot();
     App._applyTermsConsentShot();
+    App._applyAppPermissionShot();
     // #1054: a verified session is the first moment a queued submit can
     // actually be filed — /api/feedback is session-gated, so flushing any
     // earlier would only burn 401s. Everything after this is event- and
@@ -884,7 +975,10 @@ const App = {
     // row flips to its "deploying" state within seconds of a deploy
     // signaling start, and to "stale" (a tappable reload) once a new
     // build is live and this tab is behind it. Cheap endpoint — just
-    // reads one tiny file off disk on the server.
+    // reads one tiny file off disk on the server. The live SHA also
+    // arrives pushed on /ws/events (`platform_version`, #2545), which is
+    // what usually gets there first; this poll is what carries a tab whose
+    // socket is down, and everything the message does not say.
     setInterval(App.loadVersion, 10_000);
   },
 
@@ -928,41 +1022,73 @@ const App = {
     App._applyImproveShot();
     App._applyDevTerminalShot();
     App._applyPlatformUpdateShot();
+    App._applyAppUpdateShot();
     App._applyLaunchShot();
+    App._applyKeptAppsShot();
     App._applyOfflineAppShot();
     App._applyFeedbackShot();
     App._applyAppContextShot();
   },
 
-  // Screenshot-state deep link `?shot=improve`: open the Improve panel at
-  // boot, so the surface THE UI OVERHAUL built — sessions, the dev links, the
-  // repo and version rows — is reachable by URL for the before/after
-  // screenshots, the "Test this change" button and the dapp.json checks. It is
-  // only reachable by TAPPING the header button otherwise, which no still
-  // frame and no plain route can do.
+  // Screenshot-state deep links `?shot=improve` and `?shot=app-context`: open
+  // the surface Improve's controls sit on at boot, so it is reachable by URL
+  // for the before/after screenshots, the "Test this change" button and the
+  // dapp.json checks. It is only reachable by TAPPING the mark otherwise,
+  // which no still frame and no plain route can do.
   //
-  // Deliberately NOT env-gated, for exactly the reason ?shot=improve is not: pure
-  // UI state with no writes, and an IS_STAGING-only link would starve the
-  // production "before" shot forever while an ungated one starts working the
-  // moment it ships. Pair it with ?demo=1 in staging so the session sections
-  // have mock rows to render.
+  // THE TWO NAME ONE SURFACE NOW (#2718 review). `?shot=improve` opened the
+  // Improve panel and `?shot=app-context` the mark's menu; the panel retired
+  // and its contents moved into that menu, so both links open it and the
+  // older name is kept because checks and captures already say it.
   //
-  // It WAITS FOR A TARGET rather than firing on a fixed delay. Without one the
-  // panel refuses to open — correct behaviour, not something to work around —
-  // and on an /app/<slug> route the target is published by
-  // App.ImproveStatus.setAppOpen(), which runs after openApp()'s fetch has
-  // landed. A single 50ms tick (what ?shot=improve can afford, because the panel
-  // needs nothing but a settled shell) fired long before that, so the panel
-  // stayed shut and both of its declared checks failed on an empty surface.
+  // Deliberately NOT env-gated: pure UI state with no writes, and an
+  // IS_STAGING-only link would starve the production "before" shot forever
+  // while an ungated one starts working the moment it ships. Pair it with
+  // ?demo=1 in staging so the session sections have mock rows to render.
   //
-  // Polls instead, on the checks runner's own budget: an app route gets as
-  // long as its fetch needs. Bounded, so a route with no target at all — home
-  // included, which publishes none since the Improve button left that screen —
-  // stops trying rather than spinning for the life of the page. (A bare
-  // `/?shot=improve` therefore never opens the panel; its remaining dapp.json
-  // check asserts panel MARKUP that renders closed, not an open surface.)
+  // ONE THING CHANGED WITH THE SURFACE, and it is worth saying rather than
+  // discovering: the panel refused to open without a target, so a bare
+  // `/?shot=improve` never opened anything. The menu opens on Home too — the
+  // one screen you most need it from — so these links now reach a real
+  // surface on every route, and what differs between them is which rows have
+  // a subject.
   IMPROVE_SHOT_TRIES: 40,
   IMPROVE_SHOT_INTERVAL_MS: 100,
+
+  /**
+   * Open the surface Improve's controls sit on, then run `ready` once.
+   *
+   * ONE LOOP, WHERE THERE WERE FIVE COPIES. Each applier below polled for
+   * `#improve-panel[data-open]`; the Improve panel retired (#2718 review) and
+   * `Improve.open()` forwards to the app-context sheet, so there is one
+   * surface to wait for and one place that knows its id.
+   *
+   * It POLLS rather than firing on a fixed delay because what these shots
+   * need is not just a settled shell: on an /app/<slug> route the target is
+   * published by App.ImproveStatus.setAppOpen(), after openApp()'s fetch has
+   * landed, and a row gated on that target is not in the document until it
+   * does. A single 50ms tick fired long before that, which is how two
+   * declared checks once ran against an empty surface. Bounded, so a route
+   * that never publishes one stops trying rather than spinning for the life
+   * of the page.
+   *
+   * `ready` returns false to keep waiting — for a row that needs more than
+   * the surface itself — and anything else to stop.
+   */
+  _openImproveShot(ready) {
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      try {
+        window.Improve?.open();
+        const surface = document.getElementById('apps-switcher-sheet');
+        if (surface && surface.hasAttribute('data-open')) {
+          if (!ready || ready() !== false) return;
+        }
+      } catch (err) { /* ignore */ }
+      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+    };
+    setTimeout(attempt, 50);
+  },
 
   // `?shot=app-context`: open the APPS SWITCHER sheet at boot — the surface
   // behind the header's "app name ⌄" tab (Streamlined Concept). Same
@@ -973,16 +1099,7 @@ const App = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'app-context') return;
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.AppContext?.open();
-        const panel = document.getElementById('apps-switcher-sheet');
-        if (panel && panel.hasAttribute('data-open')) return;
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot();
   },
 
   // Screenshot-state deep links `?shot=platform-updating` and
@@ -1004,49 +1121,48 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'platform-updating' && shot !== 'platform-update-ready') return;
     const ready = shot === 'platform-update-ready';
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.Improve?.open();
-        const panel = document.getElementById('improve-panel');
-        if (panel && panel.hasAttribute('data-open')) {
-          // A boot baseline that differs from what the row is handed is the
-          // whole of `isStale`; the prefetch state is what picks the shape.
-          App.loadedPlatformSha = '0000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-          const sha = '1111111bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-          App.shellUpdate = { sha, state: ready ? 'ready' : 'fetching' };
-          const info = { sha, repoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
-          App._lastVersionInfo = info;
-          // The 10s poll would repaint this row out from under the shot with
-          // the real answer, which for a local or staging build is `dev` — an
-          // entirely different branch. Pin the row for as long as the shot is
-          // on screen; nothing else reads this flag.
-          App._platformUpdateShot = true;
-          App.renderPlatformVersionPill(info);
-          return;
-        }
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot(() => {
+      // A boot baseline that differs from what the row is handed is the
+      // whole of `isStale`; the prefetch state is what picks the shape.
+      App.loadedPlatformSha = '0000000aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const sha = '1111111bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+      App.shellUpdate = { sha, state: ready ? 'ready' : 'fetching' };
+      const info = { sha, repoUrl: 'https://github.com/Usernode-Labs/social-vibecoding' };
+      App._lastVersionInfo = info;
+      // The 10s poll would repaint this row out from under the shot with
+      // the real answer, which for a local or staging build is `dev` — an
+      // entirely different branch. Pin the row for as long as the shot is
+      // on screen; nothing else reads this flag.
+      App._platformUpdateShot = true;
+      App.renderPlatformVersionPill(info);
+    });
+  },
+
+  // Screenshot-state deep links `?shot=app-updating` and
+  // `?shot=app-update-ready`: the Improve button and panel as they look while
+  // the open app's own build rolls out, and once it has landed. Store writes
+  // only, the same two publishes handleAppRedeployStatus makes on the real
+  // broadcasts, so nothing is fetched and nothing is rebuilt. Same open loop
+  // as ?shot=improve, because the row lives inside the panel.
+  _applyAppUpdateShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'app-updating' && shot !== 'app-update-ready') return;
+    const ready = shot === 'app-update-ready';
+    App._openImproveShot(() => {
+      // `update()` no-ops without a slug, and the menu opens before the app
+      // fetch lands — see Improve.hasTarget()'s note. Keep waiting.
+      if (!window.Improve?.hasTarget?.()) return false;
+      window.Improve.update({ deploying: !ready, appUpdateReady: ready });
+      return true;
+    });
   },
 
   _applyImproveShot() {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'improve') return;
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        window.Improve?.open();
-        // open() is a no-op without a target, so the panel's own state is
-        // what says whether it took.
-        const panel = document.getElementById('improve-panel');
-        if (panel && panel.hasAttribute('data-open')) return;
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    App._openImproveShot();
   },
 
   // Screenshot-state deep links `?shot=dev-terminal` and
@@ -1074,35 +1190,28 @@ const App = {
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'dev-terminal' && shot !== 'dev-terminal-open') return;
     const openIt = shot === 'dev-terminal-open';
-    let tries = App.IMPROVE_SHOT_TRIES;
-    const attempt = () => {
-      try {
-        // Stand in for the app frame that normally publishes this. All three
-        // calls are needed: _refreshButtonVisibility() shows the row only when
-        // there is an app slug AND an iframe on screen AND one of
-        // always-mode / a logged error / an already-open panel. A fresh
-        // browser has no localStorage and no errors, so without the mode call
-        // the row is correctly absent and the link would capture a panel with
-        // nothing in it to press.
-        const slug = App.currentApp;
-        if (slug && window.DevConsole) {
-          window.DevConsole.setCurrentApp(slug);
-          window.DevConsole.setButtonVisible(true);
-          window.DevConsole.setMode(window.DevConsole.MODE_ALWAYS);
-        }
-        window.Improve?.open();
-        const panel = document.getElementById('improve-panel');
-        const row = document.getElementById('improve-row-terminal');
-        if (panel && panel.hasAttribute('data-open') && row) {
-          // The panel closes on the way, so the row has to be pressed once
-          // and only once — a repeat would reopen nothing and re-hide this.
-          if (openIt) row.click();
-          return;
-        }
-      } catch (err) { /* ignore */ }
-      if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
-    };
-    setTimeout(attempt, 50);
+    // Stand in for the app frame that normally publishes this. All three
+    // calls are needed: _refreshButtonVisibility() shows the row only when
+    // there is an app slug AND an iframe on screen AND one of always-mode /
+    // a logged error / an already-open surface. A fresh browser has no
+    // localStorage and no errors, so without the mode call the row is
+    // correctly absent and the link would capture a menu with nothing in it
+    // to press. Re-run on every attempt, because `App.currentApp` is not set
+    // until the route resolves.
+    App._openImproveShot(() => {
+      const slug = App.currentApp;
+      if (slug && window.DevConsole) {
+        window.DevConsole.setCurrentApp(slug);
+        window.DevConsole.setButtonVisible(true);
+        window.DevConsole.setMode(window.DevConsole.MODE_ALWAYS);
+      }
+      const row = document.getElementById('improve-row-terminal');
+      if (!row) return false;
+      // The surface closes on the way, so the row has to be pressed once and
+      // only once — a repeat would reopen nothing and re-hide this.
+      if (openIt) row.click();
+      return true;
+    });
   },
 
 
@@ -1249,6 +1358,48 @@ const App = {
     setTimeout(attempt, 50);
   },
 
+  // Screenshot-state deep link `?shot=app-permission` (#2219): present the
+  // platform's app-permission prompt — the dialog an embedded app opens by
+  // calling usernode.requestPermission().
+  //
+  // It needs a link because there is no other way to reach it. The real
+  // prompt appears only when a running app in the frame asks for a gated
+  // capability it has declared and this user has not answered for yet: three
+  // conditions no URL can arrange, and the first of them needs a deployed app
+  // that actually calls the bridge. So the before/after captures would show
+  // the app screen instead of the thing the change is about.
+  //
+  // Renders from a fixed snapshot, calls no bridge method and writes nothing
+  // (the POST that stores a grant happens on Allow, which nothing here
+  // presses), so it is pure UI state — ungated for the same reason as
+  // ?shot=notif-permissions above, and on the same retry budget, because
+  // `AppView._reactDevBoard()` may not have wired up on the first tick.
+  _applyAppPermissionShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'app-permission') return;
+    let tries = App.IMPROVE_SHOT_TRIES;
+    const attempt = () => {
+      if (!window.AppView || typeof AppView.showPermissionConsentModal !== 'function'
+          || !AppView._reactDevBoard()) {
+        if (--tries > 0) setTimeout(attempt, App.IMPROVE_SHOT_INTERVAL_MS);
+        return;
+      }
+      // Not awaited: the shot leaves the dialog standing for the camera. It
+      // resolves if somebody dismisses it, and its answer goes nowhere.
+      AppView.showPermissionConsentModal({
+        appName: 'Staging demo app',
+        capability: 'microphone',
+        label: 'Microphone',
+        blurb: 'record audio from your microphone',
+        reason: 'Records your voice notes',
+        needsReload: true,
+        surfaced: false,
+      });
+    };
+    setTimeout(attempt, 50);
+  },
+
   // Screenshot-state deep links `?shot=terms-consent` (issue #1297) and
   // `?shot=terms-consent-blocking` (issue #1328): present the first-run
   // terms UI — Accept / Decline framing included — from a fixed inline
@@ -1287,6 +1438,31 @@ const App = {
     }, 50);
   },
 
+  // Screenshot-state deep link `?shot=apps-kept` (#2902): Home with the first
+  // two apps on the launcher marked as still loaded — the green dot on their
+  // tiles, and their hidden, inert frames behind the (hidden) app view. A real
+  // kept app exists only after opening apps and coming back, which neither a
+  // still frame nor a declared check can do. The frames are the fully
+  // restricted pending frame with no document at all (the same synthetic
+  // frame the app-tone shots use), so nothing loads and nothing can resume:
+  // tapping a tile launches the app the ordinary way. Pure UI state.
+  _applyKeptAppsShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'apps-kept') return;
+    let tries = 0;
+    const attempt = () => {
+      const slugs = Array.from(document.querySelectorAll('#app-list .app-card[data-slug]'))
+        .map((el) => el.getAttribute('data-slug'))
+        .filter(Boolean)
+        .slice(0, 2);
+      // The launcher's list is still loading; bounded, like the launch shot.
+      if (!slugs.length && tries++ < 50) { setTimeout(attempt, 100); return; }
+      try { AppView.showKeptAppsShot(slugs); } catch (err) { /* ignore */ }
+    };
+    setTimeout(attempt, 50);
+  },
+
   // Screenshot-state deep link `?shot=app-launching` (#931): paint the app
   // launch surface — icon, name and spinner over the theme background —
   // which otherwise exists only for the few hundred milliseconds between a
@@ -1295,8 +1471,35 @@ const App = {
   // behind it, not env-gated (same reasoning as ?shot=improve above).
   _applyLaunchShot() {
     let shot = null;
-    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    let settled = false;
+    try {
+      const params = new URLSearchParams(location.search);
+      shot = params.get('shot');
+      settled = params.get('settle') === '1';
+    } catch (err) { /* ignore */ }
+    // #1945: `?shot=app-tone-dark` / `?shot=app-tone-light` — a running app
+    // whose page is that tone, so the bar above it can be seen taking it.
+    // Same synthetic frame as the settled launch below (no document loads),
+    // with the page colour the app's bridge would have reported set by hand.
+    if (shot === 'app-tone-dark' || shot === 'app-tone-light') {
+      const tone = shot === 'app-tone-dark' ? 'dark' : 'light';
+      setTimeout(() => {
+        try { AppView.showAppToneShot(tone); } catch (err) { /* ignore */ }
+      }, 50);
+      return;
+    }
     if (shot !== 'app-launching') return;
+    // #2154: the paired settled state deliberately uses the SAME route as
+    // the old loading fixture. On the base commit `settle=1` is ignored and
+    // the spinner stays up; on this commit it synthesises the race (terminal
+    // event first, stale detail response second) and shows the resulting live
+    // frame. That makes the before/after capture observe the actual fix.
+    if (settled) {
+      setTimeout(() => {
+        try { AppView.showSettledLaunchShot(); } catch (err) { /* ignore */ }
+      }, 50);
+      return;
+    }
     // Wait (briefly, and bounded) for the home feed's app list to land, so
     // the cover shows a REAL app's icon and name rather than the stub —
     // Home.load's fetch is in flight while boot finishes. Paints regardless
@@ -1335,7 +1538,9 @@ const App = {
     if (shot !== 'feedback' && shot !== 'feedback-spent'
         && shot !== 'feedback-offline' && shot !== 'feedback-queued'
         && shot !== 'feedback-capture-failed'
-        && shot !== 'feedback-required' && shot !== 'feedback-first') return;
+        && shot !== 'feedback-required' && shot !== 'feedback-choose'
+        && shot !== 'feedback-choose-missed'
+        && shot !== 'feedback-first' && shot !== 'feedback-sent') return;
     const spent = shot === 'feedback-spent';
     // #1054: the two offline variants. `feedback-offline` is the dialog as a
     // disconnected user meets it (the hint, and Submit reading "Save for
@@ -1359,6 +1564,20 @@ const App = {
     // real Submit and photographs the real refusal; the controller returns
     // before any fetch, so this posts nothing either.
     const requiredError = shot === 'feedback-required';
+    // #2707: the dialog as somebody with an app open meets it — two real
+    // destinations, neither chosen, and the row asking which. The
+    // shot routes cannot reach that state on their own: `/` has no app open,
+    // and this app's own dev screen is self-hosted, which is the one case
+    // that forces the Platform target. So it pins the label the way
+    // ?shot=feedback-spent pins the kudos budget, and drives the shipped
+    // branch through the controller's own hook. Files nothing.
+    const chooseTarget = shot === 'feedback-choose';
+    // #2888: that same dialog after Submit was pressed with neither
+    // destination chosen — the row red, the hint red, focus on the row. A
+    // description is assigned first (not typed: no live title call) so the
+    // only refusal on screen is the one this state is about. The hook presses
+    // the real Submit, whose refusal returns before any fetch. Files nothing.
+    const missedTarget = shot === 'feedback-choose-missed';
     // ONCE PER DOCUMENT. _applyRouteShots dedupes on the hash, not on the
     // applier, so a fragment that changes after boot re-runs this one — and
     // this shot is not idempotent the way the others are. Its
@@ -1384,7 +1603,11 @@ const App = {
         },
       }]);
     }
-    if (shot === 'feedback-first') window.FeedbackQueue?.seedDisplayOnly?.([]);
+    // #3186: `feedback-sent` is every other filed report's confirmation, with
+    // its "See your feedback". Filing needs GitHub, which a preview does not
+    // have, so like `feedback-first` it is posed through the controller's own
+    // hook and writes nothing.
+    if (shot === 'feedback-first' || shot === 'feedback-sent') window.FeedbackQueue?.seedDisplayOnly?.([]);
     if (offline) {
       try { window.Offline?.forceOffline(); } catch (err) { /* ignore */ }
     }
@@ -1438,6 +1661,16 @@ const App = {
           };
           setTimeout(showFirst, 50);
         }
+        if (shot === 'feedback-sent') {
+          let sentTries = App.IMPROVE_SHOT_TRIES;
+          const showSent = () => {
+            const sent = document.getElementById('feedback-sent');
+            if (sent && !sent.classList.contains('hidden')) return;
+            App._simulateFeedbackSent?.();
+            if (--sentTries > 0) setTimeout(showSent, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(showSent, 50);
+        }
         if (captureFailed) {
           const text = document.getElementById('feedback-text');
           // Assigned, not typed: dispatching `input` would start the live
@@ -1460,6 +1693,32 @@ const App = {
             if (--capTries > 0) setTimeout(runFailure, App.IMPROVE_SHOT_INTERVAL_MS);
           };
           setTimeout(runFailure, 50);
+        }
+        if (chooseTarget) {
+          // Same retry shape, and for the same reason, as the two above: the
+          // dialog's own open-time reset decides the destination row, so a
+          // pose that lands before it is wiped. What the check asserts is
+          // the hint being VISIBLE, so that is what this waits for.
+          let chooseTries = App.IMPROVE_SHOT_TRIES;
+          const poseChoice = () => {
+            const hint = document.getElementById('feedback-target-hint');
+            if (hint && !hint.classList.contains('hidden')) return;
+            try { App._simulateFeedbackTargetChoice?.('Example App'); } catch (e) { /* ignore */ }
+            if (--chooseTries > 0) setTimeout(poseChoice, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(poseChoice, 50);
+        }
+        if (missedTarget) {
+          let missTries = App.IMPROVE_SHOT_TRIES;
+          const pressWithoutChoice = () => {
+            const row = document.getElementById('feedback-target');
+            if (row && row.getAttribute('aria-invalid') === 'true') return;
+            const text = document.getElementById('feedback-text');
+            if (text && !text.value) text.value = 'Dragging a card scrolls the board back to the top.';
+            try { App._simulateFeedbackTargetMissed?.('Example App'); } catch (e) { /* ignore */ }
+            if (--missTries > 0) setTimeout(pressWithoutChoice, App.IMPROVE_SHOT_INTERVAL_MS);
+          };
+          setTimeout(pressWithoutChoice, 50);
         }
         if (requiredError) {
           // Same retry shape, and for the same reason, as captureFailed
@@ -1530,7 +1789,10 @@ const App = {
 
   // ── The update the reload button is offering ──────────────────────────
   //
-  // `{ sha, state }`, where state is 'fetching' | 'ready' | 'failed'.
+  // `{ sha, state }`, where state is 'fetching' | 'ready' | 'failed' —
+  // or 'retry', a fetch answered by the build being replaced (the seconds of
+  // a rollout in which both serve), which the next poll or push asks again
+  // rather than treats as the update having failed.
   //
   // The button used to appear the instant /api/version reported a new SHA,
   // and clicking it ran `location.reload()` — an ordinary navigation, which
@@ -1567,6 +1829,19 @@ const App = {
   SHELL_AUTO_RELOAD_KEY: 'usernode-shell-auto-reload',
 
   _hasUnsavedShellInput() {
+    // A welcome tour in progress is input too (#2584, features/home/tour):
+    // the viewer is part-way through a walk the overlay is narrating, and a
+    // reload under it -- it lands in the first seconds on Home, which is
+    // exactly when the tour is up -- was the "looping between the first and
+    // second step" people reported. The overlay now resumes at its step, but
+    // being pulled out mid-sentence is still the wrong moment; the visible
+    // reload offer stays, as it does for a draft. `#home-tour` is the shell's
+    // own island and `hidden` is how it is off (lib/legacy-dom.ts), so this
+    // reads the same truth the overlay writes.
+    try {
+      const tour = document.getElementById('home-tour');
+      if (tour && !tour.classList.contains('hidden')) return true;
+    } catch { return true; }
     let controls = [];
     try {
       controls = document.querySelectorAll('input, textarea, select, [contenteditable="true"]');
@@ -1601,7 +1876,7 @@ const App = {
   },
 
   _reloadPrefetchedShellIfSafe(sha, { force = false } = {}) {
-    if (!sha || App._shellReloadStarted) return false;
+    if (!sha || App._shellReloadStarted || App.embeddedPanel) return false;
     if (!force && App._shellAutoReloadSha !== sha) return false;
     if (!force && App._hasUnsavedShellInput()) {
       App._shellAutoReloadSha = null;
@@ -1642,24 +1917,35 @@ const App = {
    */
   _ensureShellPrefetch(sha) {
     if (!sha) return Promise.resolve('failed');
-    if (App.shellUpdate && App.shellUpdate.sha === sha) {
+    if (App.shellUpdate && App.shellUpdate.sha === sha && App.shellUpdate.state !== 'retry') {
       // Already asked for this build. Hand back the in-flight promise so a
       // second caller waits on the same download rather than starting one.
       return App._shellPrefetchSettled && App._shellPrefetchSettled.sha === sha
         ? App._shellPrefetchSettled.promise
         : Promise.resolve(App.shellUpdate.state);
     }
-    App.shellUpdate = { sha, state: 'fetching' };
+    // This attempt, by identity: a settle belongs to the ask that made it, and
+    // is one-way because settling replaces the object. Two asks for one build
+    // can be alive at once — a 'retry' re-ask under the previous attempt's
+    // still-pending bail-out timer — and that timer must not fail the new
+    // download when it fires.
+    const attempt = { sha, state: 'fetching' };
+    App.shellUpdate = attempt;
 
     let resolveSettled;
     const promise = new Promise((resolve) => { resolveSettled = resolve; });
     App._shellPrefetchSettled = { sha, promise };
 
     const settle = (state) => {
-      if (!App.shellUpdate || App.shellUpdate.sha !== sha) return;
-      if (App.shellUpdate.state !== 'fetching') return;
+      if (App.shellUpdate !== attempt) return;
       App.shellUpdate = { sha, state };
-      resolveSettled(state);
+      // 'retry' is 'failed' to anyone awaiting this download — a pull reloads
+      // either way — and an open question only to the next poll or push,
+      // which asks again. That cadence bounds the retries; nothing here does:
+      // the row already says "updating…", and repainting it would run the
+      // stale branch, which re-asks, which is the loop this must not be.
+      resolveSettled(state === 'retry' ? 'failed' : state);
+      if (state === 'retry') return;
       // Repaint from the last answer rather than re-polling: the pill is the
       // only thing this changes, and /api/version is already on a 10s timer.
       if (App._lastVersionInfo) App.renderPlatformVersionPill(App._lastVersionInfo);
@@ -1681,7 +1967,15 @@ const App = {
     try {
       const channel = new MessageChannel();
       channel.port1.onmessage = (event) => {
-        settle(event.data && event.data.ok && event.data.sha === sha ? 'ready' : 'failed');
+        const reply = event.data || {};
+        if (reply.sha !== sha) return settle('failed');
+        if (reply.ok) return settle('ready');
+        // Answered by the build being replaced, not the one asked for: the
+        // request landed on the old pod in the seconds a rollout has both
+        // serving (the worker gives up on the document, one request, before
+        // touching an asset). The update has not failed; it has not arrived
+        // where this request went. Ask again on the next cue.
+        settle(reply.mismatch ? 'retry' : 'failed');
       };
       controller.postMessage({ type: 'prefetch-shell', sha }, [channel.port2]);
     } catch {
@@ -1708,6 +2002,13 @@ const App = {
   _lastVersionInfo: null,
 
   async loadVersion() {
+    // The side panel's document leaves the build to the top window: that is
+    // the document that offers the reload, and the one-shot reload latch
+    // below lives in sessionStorage, which a same-origin frame SHARES with
+    // it — a panel that took the latch would cost the top window its reload.
+    // With no poll here, handlePlatformVersion never has a baseline to
+    // compare a pushed SHA with, and stands down too.
+    if (App.embeddedPanel) return;
     try {
       const res = await fetch('/api/version');
       if (!res.ok) return;
@@ -1727,6 +2028,34 @@ const App = {
       // answer can produce on demand; a poll landing on top would erase it.
       if (!App._platformUpdateShot) App.renderPlatformVersionPill(info);
     } catch {}
+  },
+
+  /**
+   * The server said which build is live — `platform_version` on /ws/events,
+   * sent on connect and pushed by a pod leaving a rollout (#2545). Same
+   * conclusion the 10s poll reaches, up to 10s sooner: start the download
+   * now, so the reload button is up — with the build already cached behind
+   * it — by the time the user goes looking for it. Nothing here reloads;
+   * the button is the only way forward, as it is for the poll.
+   *
+   * A word, not an answer: /api/version is trusted for everything else
+   * (env, deployProgress, the boot latch). Before the first poll there is
+   * nothing to compare against, so the message is left to the poll; a SHA
+   * that is not news, or is 'dev', is nothing to do.
+   */
+  handlePlatformVersion(data) {
+    const sha = data && data.sha;
+    if (!sha || sha === 'dev') return;
+    if (!App.loadedPlatformSha || !App._lastVersionInfo) return;
+    if (sha === App.loadedPlatformSha) return;
+    if (App._lastVersionInfo.sha === sha) return;
+    // The poll's shape, with the pushed SHA: a pod announcing its successor
+    // knows it as live, whatever /api/version last said about a rollout in
+    // progress (the row shows "updating…" for a deploying answer without
+    // asking for the build, and this is the one moment that deferral is
+    // wrong: the download is exactly what should start).
+    App._lastVersionInfo = { ...App._lastVersionInfo, sha, deployProgress: null };
+    if (!App._platformUpdateShot) App.renderPlatformVersionPill(App._lastVersionInfo);
   },
 
   // The SHA /api/version reports when it differs from the one this document
@@ -1774,6 +2103,7 @@ const App = {
   // be worse. The spinner stays up throughout, which is honest: the download
   // is what the pull is now waiting on.
   _refreshOrReload(refresh) {
+    App._announceRefreshIntent();
     return Promise.all([
       Promise.resolve().then(refresh).catch(() => {}),
       App.platformMovedOn(),
@@ -1784,6 +2114,26 @@ const App = {
         return new Promise(() => {});
       });
     });
+  },
+
+  // Tell the worker this is a REFRESH, not a boot, before the screen's
+  // loader runs.
+  //
+  // public/sw.js answers `/api/home-panels` and the other boot reads from
+  // cache on a zero deadline, which is right for a first paint and wrong
+  // here: a pull is somebody asking for the current state, and handing them
+  // last visit's numbers is the one answer it must not give. The worker
+  // already undoes it via `api-updated`, but that correction cannot fire
+  // until the network answer arrives — so on a slow link, which is where
+  // people pull, the stale frame is what they sit looking at.
+  //
+  // Fire-and-forget on purpose. A refresh must never wait on the worker, and
+  // a message that lands late costs one lane-served request and nothing
+  // else. Silent when there is no worker at all.
+  _announceRefreshIntent() {
+    try {
+      navigator.serviceWorker?.controller?.postMessage({ type: 'refresh-intent' });
+    } catch { /* no worker, or a browser that refuses the post */ }
   },
 
   // ── Late-arrival correction ─────────────────────────────────────────
@@ -1815,11 +2165,30 @@ const App = {
   refreshActiveScreen() {
     try {
       if (document.hidden) return;
+      // A correction's re-pull is a REFRESH, not a boot. Without this the
+      // worker answered it from the zero-deadline boot lane again, found the
+      // late answer different again, and corrected again: on a board whose
+      // /promoted list carries live check progress that never settled, and
+      // every visible Workshop re-pulled its whole board about once a second
+      // until Chrome refused new requests (net::ERR_INSUFFICIENT_RESOURCES).
+      App._announceRefreshIntent();
 
       const visible = (id) => {
         const el = document.getElementById(id);
         return !!el && !el.classList.contains('hidden');
       };
+
+      // The app record itself is in the service worker's zero-deadline boot
+      // lane. If its cached `creating` snapshot is corrected after first
+      // paint, revalidate the open App tab just as the branches below refresh
+      // the Dev board and Home. WebSocket remains the fast path; this closes
+      // the missed-event hole that otherwise leaves the placeholder forever.
+      if (App.currentApp && App.currentTab === 'app'
+          && window.AppView && AppView.appData?.status === 'creating'
+          && AppView._watchCreatingStatus) {
+        AppView._watchCreatingStatus(AppView.appData, { immediate: true });
+        return;
+      }
 
       if (App.currentApp && App.currentTab === 'dev'
           && window.AppView && AppView.refreshDevData) {
@@ -1946,12 +2315,13 @@ const App = {
       const oldShort = App.loadedPlatformSha.slice(0, 7);
       const newShort = runningSha.slice(0, 7);
       // Pull the new build down before offering to switch to it. Idempotent
-      // per SHA, and this branch runs on every 10s poll while the tab is
-      // behind — see _ensureShellPrefetch for why the reload was a lie
-      // without it.
+      // per SHA (a 'retry' excepted: this is the re-ask), and this branch
+      // runs on every 10s poll and every push while the tab is behind — see
+      // _ensureShellPrefetch for why the reload was a lie without it.
       App._ensureShellPrefetch(runningSha);
       const update = App.shellUpdate;
-      if (update && update.sha === runningSha && update.state === 'fetching') {
+      if (update && update.sha === runningSha
+          && (update.state === 'fetching' || update.state === 'retry')) {
         // Downloading. NOT a button: a reload right now is the exact thing
         // that used to serve the old document back. The row still says the
         // platform has moved on, and still lights the Improve dot (the
@@ -2027,6 +2397,28 @@ const App = {
         Home.load();
       }
     }
+
+    // #2902: an app kept loaded in the background is running the build before
+    // this one. Let it go, so the next open loads what just landed. The app in
+    // view keeps its frame — the Improve panel below offers that reload.
+    if (!data.deploying && !data.failed && slug !== App.currentApp
+        && typeof AppView !== 'undefined') {
+      AppView.evictKeptApp?.(slug);
+    }
+
+    // The app tab, for the app in view. Its Improve button spins while the
+    // build rolls out and offers the reload once it has landed. Nothing here
+    // touches the frame: it keeps showing the build before this one on
+    // purpose, and AppView.reloadAppFrame is what moves it. Another app's
+    // build is that app's news.
+    if (slug === App.currentApp && window.Improve) {
+      if (data.deploying) {
+        window.Improve.update({ deploying: true, appUpdateReady: false });
+      } else {
+        // A failed build leaves nothing new to load onto.
+        window.Improve.update({ deploying: false, appUpdateReady: !data.failed });
+      }
+    }
   },
 
   eventsWs: null,
@@ -2080,6 +2472,11 @@ const App = {
           case 'resync_hint':
             App.resyncCurrentView();
             break;
+          // Which platform build is live, from the server rather than the
+          // next /api/version poll (#2545) — see handlePlatformVersion.
+          case 'platform_version':
+            App.handlePlatformVersion(data);
+            break;
           case 'app_status':
             window.UsernodeReact?.appAllowance?.invalidate?.();
             App.handleAppStatusUpdate(data);
@@ -2118,9 +2515,7 @@ const App = {
             // #613: someone reordered a Dev-board column. refreshDevData
             // re-pulls the board (including the manual order fetched by
             // _loadDevData) and repaints, so every open board converges.
-            if (typeof AppView !== 'undefined' && AppView.refreshDevData) {
-              AppView.refreshDevData('board-order');
-            }
+            App._liveRefresh('board-order', null, { appSlug: data.appSlug || App.currentApp });
             break;
           case 'session_drafts_changed':
             // #940: another device of THIS user saved or trashed a draft.
@@ -2133,6 +2528,19 @@ const App = {
             break;
           case 'app_allowance_changed':
             window.UsernodeReact?.appAllowance?.invalidate?.();
+            break;
+          case 'budget_updated':
+            // #2598: a model call's cost just landed against this user's
+            // weekly pool (services/budget-live.js). Both meters repaint from
+            // the figures the event carries — the composer's and the header
+            // drawer's AI-credit row — so "$x left this week" ticks while the
+            // agent works instead of only once the turn ends. No refetch:
+            // the payload IS the snapshot both surfaces read, which is why
+            // this can fire every few seconds during a build.
+            if (typeof DevChat !== 'undefined' && DevChat.applyBudgetUpdate) {
+              DevChat.applyBudgetUpdate(data.budget);
+            }
+            window.AiCredit?.Budget?.applyPush?.(data.budget);
             break;
           case 'notification_new':
             if (window.Notifications) Notifications.handleIncoming(data.notification);
@@ -2154,6 +2562,19 @@ const App = {
                 window.GroupChat?.reconcileDotsFromNotifications?.();
               }
             }
+            break;
+          case 'user_blocks_changed':
+            window.UsernodeReact?.messages?.refreshBlockedView?.(data.userId, data.blocked);
+            break;
+          case 'agent_session_changed':
+            // #2779: an agent session changed (with its new `version`). The
+            // lists redraw their marks; the open one re-reads if behind.
+            window.UsernodeReact?.agentSession?.listChanged?.(data);
+            break;
+          case 'agent_session_drafts_changed':
+            // A draft saved, sent or deleted on another device: the open
+            // conversation re-reads its saved drafts.
+            window.UsernodeReact?.agentSession?.draftsChanged?.(data);
             break;
           case 'conversation_message_created':
           case 'conversation_message_updated':
@@ -2231,12 +2652,20 @@ const App = {
       Home.load();
     }
     if (window.Notifications) Notifications.refresh?.();
+    // The fifth tab's name (#2760): both username writers change
+    // `App.user.username` and then run this sweep, so this is where the tab
+    // hears about a rename.
+    App._syncViewer();
     // The cog drawer used to be refreshed here. It is retired; its session
     // list is the Improve panel's, which reloads only while it is open.
     if (window.Improve) Improve.onSessionStateChanged?.();
     // Messages owns a global drawer unread badge even while its screen is
     // closed, so reconcile its summary after a disconnect in every view.
     window.UsernodeReact?.messages?.refresh?.();
+    // An open agent session learns about its changes from this socket's
+    // notices: whatever it missed while the socket was down, it reads now.
+    window.UsernodeReact?.agentSession?.resync?.();
+    window.UsernodeReact?.agentSession?.refreshList?.();
     // #1038: `session_state` is fire-and-forget like every other broadcast,
     // so anything that transitioned during the disconnect window was lost.
     // The reconcile endpoint is the authority — it also clears overrides for
@@ -2252,6 +2681,9 @@ const App = {
     // is the mounted one, so calling both is free.
     if (window.AdminConsole?.isOpen?.()) AdminConsole.loadStagingReap?.();
     App.loadVersion();
+    // A change's page re-reads its row on events, not on a timer, so a
+    // dropped socket is its cue too (topic-head.tsx's ChangeDetail).
+    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: 'all' }));
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       // Re-fetch tab-specific state. We don't blow away the DOM —
       // these helpers update in place — so scroll positions, drafts,
@@ -2307,6 +2739,20 @@ const App = {
     // message arriving in that window has no store to publish into yet.
     window.UsernodeReact?.appCreationProgress?.publish?.(data);
 
+    // A creation commonly finishes while its progress dialog is still open,
+    // BEFORE this slug is the current app. The terminal event is newer than
+    // any app-detail snapshot already sitting in the service-worker cache, so
+    // retain it for AppView.open() regardless of which screen is visible.
+    // `_rememberPendingAppStatus` also treats a later `creating` phase as a
+    // retry boundary and clears an older terminal fact for the same slug.
+    AppView._rememberPendingAppStatus?.(data);
+
+    // #2902: an app that stopped running has nothing worth keeping loaded.
+    if (data.status && data.status !== 'running' && data.slug !== App.currentApp
+        && typeof AppView !== 'undefined') {
+      AppView.evictKeptApp?.(data.slug);
+    }
+
     // Update home screen card if visible
     const card = document.querySelector(`.app-card[data-slug="${data.slug}"]`);
     if (card) {
@@ -2329,7 +2775,11 @@ const App = {
 
     // Update app view if we're looking at this app
     if (App.currentApp === data.slug && App.currentTab === 'app') {
-      if (data.status === 'running' && AppView.appData) {
+      // On the first open, the terminal event can beat the detail request.
+      // There is no record to mutate yet. The event was preserved above, so
+      // open() will reconcile it with the fetched snapshot when that settles.
+      if (AppView.appData && AppView.appData.slug === data.slug
+          && data.status === 'running') {
         AppView.appData.status = 'running';
         AppView.appData.url = data.url;
         // Share lives in the Improve panel now, and the panel reads
@@ -2346,12 +2796,23 @@ const App = {
           AppView.renderAppTab();
           if (window.DevConsole) DevConsole.setButtonVisible(true);
         });
-      } else if (data.status === 'error' && AppView.appData) {
+      } else if (AppView.appData && AppView.appData.slug === data.slug
+          && data.status === 'error') {
         // #416: a watched spin-up just failed — flip the App tab to the
         // error state immediately, carrying the broadcast one-line
         // reason so the user isn't left with a bare "Error".
         AppView.appData.status = 'error';
         if (data.errorReason) AppView.appData.errorReason = data.errorReason;
+        AppView.renderAppTab();
+      } else if (AppView.appData && AppView.appData.slug === data.slug
+          && data.status === 'awaiting_secrets') {
+        // This is terminal for the initial deploy too. Leaving appData at
+        // `creating` would strand the same spinner as a missed running event;
+        // render the actionable blocked state immediately.
+        AppView.appData.status = 'awaiting_secrets';
+        if (Array.isArray(data.missingSecrets)) {
+          AppView.appData.missingSecrets = data.missingSecrets;
+        }
         AppView.renderAppTab();
       }
     }
@@ -2373,14 +2834,9 @@ const App = {
     App._sessionStatusSeen[key] = nextStatus;
     SessionState.applyEvent(data);
     if (prevStatus === undefined || prevStatus === nextStatus) return;
-    if (App._sessionRowsTimer) return;
-    App._sessionRowsTimer = setTimeout(() => {
-      App._sessionRowsTimer = null;
-      App.refreshHomeProposals();
-      if (typeof AppView !== 'undefined' && AppView.refreshDevData) {
-        AppView.refreshDevData('session');
-      }
-    }, 500);
+    // One refresh per burst, shared with the vote and session events that
+    // travel with a lifecycle change (see _liveRefresh).
+    App._liveRefresh('session', data.sessionId, { appSlug: data.appSlug || null, home: true });
   },
 
   handleSessionUpdate(data) {
@@ -2432,13 +2888,9 @@ const App = {
         });
       }
     }
-    // Refresh proposals / inline chat vote state on the other dev sub-tabs
-    if (App.currentApp === data.appSlug && App.currentTab === 'dev'
-        && App.currentSubTab !== 'sessions') {
-      AppView.refreshDevData('session');
-    }
-    // The header cog's drawer tracks session status changes.
-    App.refreshHomeProposals();
+    // Refresh proposals / inline chat vote state on the other dev sub-tabs,
+    // and the drawer and Home, once for the whole burst (see _liveRefresh).
+    App._liveRefresh('session', data.sessionId, { appSlug: data.appSlug, home: true });
   },
 
   handleSessionEvent(data) {
@@ -2447,29 +2899,27 @@ const App = {
     // dev session the viewer happens to have focused — refresh the vote
     // panel + home strip globally before the currentSession early-return.
     if (data.event === 'checks_ready') {
-      // A run in flight reports once a second, to everyone, for as long as
-      // it runs (`progress` on a 'pending' event). Those ticks are for the
-      // row that is showing: they patch it in place and touch no fetch. The
-      // start-of-run and verdict events (no `progress`) keep the refreshes
-      // below, which is what the board and the home strip advance on.
+      // Every page hears every run on the platform: the event names no app.
+      // A run in flight reports once a second (`progress` on a 'pending'
+      // event); those ticks patch the row wherever it is showing and fetch
+      // nothing. A run starting patches too. A verdict carries no test list,
+      // so it asks for one targeted refresh, and only a page that holds the
+      // row does any work for it (AppView.applyChecksEvent, _liveRefresh).
       const progressTick = data.checkState === 'pending' && data.progress && typeof data.progress === 'object';
-      if (App.currentTab === 'dev' && App.currentSubTab !== 'sessions') {
-        // The event carries checkState / checkPhase / checkTrigger and, for
-        // a run in flight, `progress`. Patch the cached row and repaint from
-        // it; a final verdict (which needs test_results the event does not
-        // carry) refetches — through a kind that keeps the vote roster.
-        if (typeof AppView !== 'undefined' && AppView.applyChecksEvent) AppView.applyChecksEvent(data);
-        else if (!progressTick) AppView.refreshDevData('session');
-      }
+      if (typeof AppView !== 'undefined' && AppView.applyChecksEvent) AppView.applyChecksEvent(data);
       if (!progressTick) {
-        // The Underway board refresh above is intentionally skipped while the
-        // owner is inside a session. Refresh that focused row directly so its
-        // header advances Draft -> Checks running -> Checks passed/failed
-        // without waiting for a vote/version event or a manual reload.
+        // The owner's own session page: its header advances Draft -> Checks
+        // running -> Checks passed/failed. A no-op for any other session.
         if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
           DevChat.refreshCurrentSessionStatus(data.sessionId);
         }
-        App.refreshHomeProposals();
+        if (data.checkState !== 'pending') {
+          App._liveRefresh('checks', data.sessionId, { home: App._sessionIsMine(data.sessionId) });
+        } else if (App._sessionIsMine(data.sessionId)) {
+          // A run starting on your own work: the drawer's row says so. The
+          // row itself was patched above.
+          App._liveRefresh('checks', null, { home: true, dev: false });
+        }
       }
     }
     // #439: an on-demand preview rebuild (Preview-click → ensure-staging)
@@ -2495,6 +2945,16 @@ const App = {
       // quick_replies, tokens) that were never actually delivered. Replay
       // overlap is harmless (_seenSeqs dedups it); cursor over-advancement
       // loses events until refresh. Only the SSE channels move the cursor.
+    }
+
+    // #2599: live evidence outranks any snapshot that declared the turn over.
+    // A running-agent status, a progress line, a phase or a stop request on
+    // an idle transcript re-arms the turn (Stop button, live stream, poll)
+    // before the row paints — the report's spinning "OpenRouter is running…"
+    // row beside an enabled Send button was exactly this event landing after
+    // a stale not-busy /status answer. The helper is a no-op mid-turn.
+    if (typeof DevChat._noteLiveTurnEvent === 'function') {
+      DevChat._noteLiveTurnEvent({ ...data, type: data.event }, data.sessionId);
     }
 
     switch (data.event) {
@@ -2593,8 +3053,8 @@ const App = {
         // staging_ready, often after the turn's POST SSE is gone) —
         // stash the artifact ids and re-render so the staging card
         // upgrades in place with the media tiles.
-        if (DevChat.currentSession && data.visuals) {
-          DevChat.currentSession.visuals = data.visuals;
+        if (DevChat.currentSession && Object.prototype.hasOwnProperty.call(data, 'visuals')) {
+          DevChat.currentSession.visuals = data.visuals || null;
           DevChat.renderMessages();
         }
         break;
@@ -2703,15 +3163,25 @@ const App = {
         break;
       }
       case 'done':
-        DevChat._deactivateLastStatus();
-        DevChat._finishStreaming();
-        DevChat.renderMessages();
         // A 'done' arriving on the WS means the primary POST SSE never
         // finished this turn (its own 'done' would have been seq-deduped
         // first) — reconcile the timeline from the DB so anything that rode
         // only the dead stream (chips, pills, a late wrap-up) shows without
         // a manual refresh. See issue #446.
-        DevChat._reconcileAfterFallbackDone(data.sessionId);
+        // #2599: the WS carries every request's events for this session —
+        // a second send refused with "already running" ends in a `done`
+        // too — so the teardown asks /status first and stays up while the
+        // session is still busy.
+        if (typeof DevChat._endTurnFromSharedChannel === 'function') {
+          DevChat._endTurnFromSharedChannel(data.sessionId).then((idle) => {
+            if (idle) DevChat._reconcileAfterFallbackDone(data.sessionId);
+          });
+        } else {
+          DevChat._deactivateLastStatus();
+          DevChat._finishStreaming();
+          DevChat.renderMessages();
+          DevChat._reconcileAfterFallbackDone(data.sessionId);
+        }
         break;
       case 'spec_updated':
         // Mayor's dispatch_scout updated the live draft.
@@ -2743,10 +3213,15 @@ const App = {
         break;
       case 'stopped':
         // The "Stopped by @user." status row was already persisted + emitted
-        // server-side via sendStatus, so just tear down the streaming UI.
-        DevChat._removeSpinner();
-        DevChat._deactivateLastStatus();
-        DevChat._finishStreaming();
+        // server-side via sendStatus, so just tear down the streaming UI —
+        // once /status confirms the session is idle (#2599, as for 'done').
+        if (typeof DevChat._endTurnFromSharedChannel === 'function') {
+          DevChat._endTurnFromSharedChannel(data.sessionId);
+        } else {
+          DevChat._removeSpinner();
+          DevChat._deactivateLastStatus();
+          DevChat._finishStreaming();
+        }
         break;
       case 'cc_estimate':
         // Experimental AI progress estimate (opt-in, server-gated).
@@ -2759,8 +3234,12 @@ const App = {
         DevChat.messages.push({
           role: 'system',
           ccLog: data.log,
-          content: data.agentBackend === 'codex_openrouter' ? 'Codex log' : 'Claude Code log',
+          // #3296: an OpenRouter model can run in Claude Code as well.
+          content: data.agentBackend === 'codex_openrouter' && data.agentHarness !== 'claude'
+            ? 'Codex log'
+            : 'Claude Code log',
           agentBackend: data.agentBackend,
+          agentHarness: data.agentHarness,
           agentModel: data.agentModel,
           created_at: new Date().toISOString(),
         });
@@ -2793,6 +3272,19 @@ const App = {
           AppView.applyRename(data.newName);
         }
       }
+    } else if (data.action === 'illustration_changed') {
+      // #2086: a featured-illustration proposal was voted in (or admin
+      // applied). The editor used to patch these caches itself the moment
+      // it saved; the vote apply is what changes the app now, so every
+      // open client patches them from the broadcast instead.
+      if (typeof Home !== 'undefined' && Array.isArray(Home._apps)) {
+        const cached = Home._apps.find((a) => a.slug === data.slug);
+        if (cached) cached.featured_illustration = data.illustration || null;
+        if (Home.render) Home.render();
+      }
+      if (App.currentApp === data.slug && typeof AppView !== 'undefined' && AppView.appData) {
+        AppView.appData.featured_illustration = data.illustration || null;
+      }
     } else if (data.action === 'icon_changed') {
       // A deploy reconciled this app's dapp.json icon block (emoji /
       // image / cleared back to the letter). Patch the mounted home
@@ -2818,9 +3310,9 @@ const App = {
       // Visibility flipped (a merged visibility PR's deploy-time
       // reconcile — see services/app-manifest.js). Reload the home grid
       // so badges update and newly-private apps drop out for outsiders;
-      // patch the open app's in-memory row so the Members modal and tab
-      // gating see the fresh values, and re-render the modal's pills if
-      // it's open right now.
+      // patch the open app's in-memory row so member-list and tab gating see
+      // the fresh values. App settings re-fetches the authoritative row each
+      // time it opens, so it never needs a legacy DOM repaint here.
       const homeScreen = document.getElementById('home-screen');
       if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
         Home.load();
@@ -2829,12 +3321,6 @@ const App = {
           && typeof AppView !== 'undefined' && AppView.appData) {
         AppView.appData.collab_visibility = data.collabVisibility;
         AppView.appData.view_visibility = data.viewVisibility;
-        const membersModal = document.getElementById('members-modal');
-        if (membersModal && !membersModal.classList.contains('hidden')
-            && AppView._renderMembersVisPills) {
-          AppView._membersVis = { collab: data.collabVisibility, view: data.viewVisibility };
-          AppView._renderMembersVisPills();
-        }
       }
     } else if (data.action === 'governance_changed') {
       // Proposal-approval settings applied (a merged governance PR's
@@ -2884,9 +3370,7 @@ const App = {
   // Refresh the relevant dev sub-tab when another user creates, votes on,
   // or closes an issue / governance proposal so everyone sees it live.
   handleIssueUpdate(data) {
-    if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
-      AppView.refreshDevData('issue');
-    }
+    App._liveRefresh('issue', null, { appSlug: data.appSlug });
   },
 
   // The Workshop's grouping for the open app moved server-side (cards
@@ -2914,6 +3398,111 @@ const App = {
     }
   },
 
+  // ── Live refreshes: one per burst ────────────────────────────────────
+  //
+  // A single vote used to reload the whole Workshop four times in two
+  // seconds: the voter's POST, the vote_update it broadcasts, the
+  // session_update beside it and a checks event each started their own nine
+  // requests, and each repaint moved the rows under the reader. Every
+  // socket-driven refresh now asks HERE. The first event of a burst opens a
+  // short window, everything that lands inside it joins, and one refresh runs
+  // at the end carrying every session the burst named, so the Workshop can
+  // fetch just the part of the board those rows live in (or, on a proposal's
+  // page, just that proposal). A vote anywhere in the burst makes it a vote
+  // refresh: the one that must read past the write.
+  //
+  //   kind        'vote' | 'checks' | 'session' | 'issue' | 'board-order'
+  //   sessionIds  the rows the event is about; null when it names none
+  //   opts.appSlug  the app it is about; null when the event does not say
+  //                 (checks events), in which case only a page that holds
+  //                 the row does anything
+  //   opts.merged   a merge: the row moves to Completed
+  //   opts.home     the work drawer and Home track this event
+  //   opts.dev      false: nothing for the Workshop in it
+  //
+  // Returns a promise for the refresh (castVote holds its optimistic vote
+  // until the read after it lands).
+  LIVE_REFRESH_MS: 150,
+  _liveBurst: null,
+  _liveRefresh(kind, sessionIds, opts = {}) {
+    let b = App._liveBurst;
+    if (!b) {
+      b = { kinds: new Set(), ids: new Set(), unscoped: false, merged: false, home: false, dev: false, resolve: null };
+      b.promise = new Promise((resolve) => { b.resolve = resolve; });
+      App._liveBurst = b;
+      setTimeout(() => App._flushLiveRefresh(b), App.LIVE_REFRESH_MS);
+    }
+    const ids = sessionIds == null ? [] : [].concat(sessionIds);
+    const forThisApp = opts.appSlug == null || opts.appSlug === App.currentApp;
+    if (opts.dev !== false && forThisApp) {
+      b.dev = true;
+      b.kinds.add(kind);
+      if (!ids.length) b.unscoped = true;
+    }
+    for (const id of ids) {
+      const n = Number(id);
+      if (Number.isFinite(n)) b.ids.add(n);
+    }
+    if (opts.merged && forThisApp) b.merged = true;
+    if (opts.home) b.home = true;
+    return b.promise;
+  },
+  _flushLiveRefresh(b) {
+    if (App._liveBurst === b) App._liveBurst = null;
+    let out;
+    if (b.dev && typeof AppView !== 'undefined' && AppView.refreshDevData) {
+      const kind = b.kinds.has('vote') ? 'vote' : [...b.kinds][0];
+      try {
+        out = AppView.refreshDevData(kind, {
+          kinds: b.kinds, ids: b.unscoped ? null : b.ids, merged: b.merged,
+        });
+      } catch { out = undefined; }
+    }
+    // A change's page (topic-head.tsx's ChangeDetail) re-reads its row when
+    // told to, rather than every ten seconds. The Workshop's own refresh
+    // hands the open topic its row directly; every other mounted page for
+    // one of these rows (the owner's session, Messages) re-reads.
+    const handed = (typeof AppView !== 'undefined' && AppView._liveHandedOff) || null;
+    for (const id of b.ids) {
+      if (handed && handed.has(id)) continue;
+      window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: id }));
+    }
+    if (typeof AppView !== 'undefined' && AppView._liveHandedOff) AppView._liveHandedOff = null;
+    if (b.home) App._refreshHomeLive();
+    Promise.resolve(out).then(b.resolve, () => b.resolve(undefined));
+  },
+  // The drawer and Home for a live burst. Home's grid is one request for
+  // every app the viewer can see (670 KB on production), so a stream of
+  // bursts reloads it at most every few seconds, with the last one kept.
+  HOME_LIVE_MIN_GAP_MS: 4000,
+  _homeLiveAt: 0,
+  _homeLiveTimer: null,
+  _refreshHomeLive() {
+    if (window.Improve && Improve.onSessionStateChanged) Improve.onSessionStateChanged();
+    const homeScreen = document.getElementById('home-screen');
+    if (typeof Home === 'undefined' || !homeScreen || homeScreen.classList.contains('hidden')) return;
+    if (App._homeLiveTimer) return;
+    const wait = App._homeLiveAt + App.HOME_LIVE_MIN_GAP_MS - Date.now();
+    const run = () => {
+      App._homeLiveTimer = null;
+      App._homeLiveAt = Date.now();
+      const screen = document.getElementById('home-screen');
+      if (screen && !screen.classList.contains('hidden')) Home.load();
+    };
+    if (wait <= 0) run();
+    else App._homeLiveTimer = setTimeout(run, wait);
+  },
+  // Is this one of the viewer's own sessions, or a row on the page they are
+  // looking at? A checks event is broadcast to everyone on the platform, and
+  // only these are worth re-reading anything for.
+  _sessionIsMine(sessionId) {
+    const id = Number(sessionId);
+    if (!Number.isFinite(id)) return false;
+    if (typeof DevChat !== 'undefined' && DevChat.currentSession && Number(DevChat.currentSession.id) === id) return true;
+    if (window.Improve && Array.isArray(Improve._all) && Improve._all.some((s) => s && Number(s.id) === id)) return true;
+    return typeof AppView !== 'undefined' && !!AppView.holdsSession && AppView.holdsSession(id);
+  },
+
   // #1015: a self-app merge no longer latches any platform-wide chrome.
   // The "Platform updating… write actions are paused" banner (and its
   // fetch write-block, 2s version poll, stuck timer and forced reload)
@@ -2928,25 +3517,23 @@ const App = {
   // caught up by the drawer's stale-revision indicator
   // (renderPlatformVersionPill) or by pull-to-refresh (_refreshOrReload).
   handleVoteUpdate(data) {
-    // Refresh the proposals tab / inline chat vote state if we're in
-    // this app's Dev view.
-    if (App.currentApp === data.appSlug && App.currentTab === 'dev') {
-      AppView.refreshDevData('vote');
-    }
+    // Refresh the proposals tab / inline chat vote state if we're in this
+    // app's Dev view, and the work drawer and Home, which track tallies:
+    // once for the burst this event arrives in, which usually also carries
+    // the voter's own POST (see _liveRefresh).
+    App._liveRefresh('vote', data.sessionId, { appSlug: data.appSlug, merged: !!data.merged, home: true });
     // #405: advance the OPEN dev session's header pill + change card live
     // (e.g. promoted → merging → merged) when this update is for the session
     // the user is currently looking at. No-op otherwise.
     if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
       DevChat.refreshCurrentSessionStatus(data.sessionId);
     }
-    // The header cog's drawer tracks tallies live.
-    App.refreshHomeProposals();
-    // If merged, refresh the app view
-    if (data.merged && App.currentApp === data.appSlug) {
-      if (App.currentTab === 'app') {
-        AppView.renderAppTab();
-      }
-      Home.load();
+    // If merged, refresh the app view. Home re-reads its grid only while it
+    // is showing (the burst's home refresh): an unconditional Home.load()
+    // here pulled the whole app list, 670 KB, onto a Workshop nobody had
+    // left.
+    if (data.merged && App.currentApp === data.appSlug && App.currentTab === 'app') {
+      AppView.renderAppTab();
     }
   },
 
@@ -3065,6 +3652,10 @@ const App = {
       // Browse's detail level (#apps/<slug>) claims the button as "up to
       // the list"; on the list itself it declines and we leave the screen.
       if (App._inBrowse && window.Browse?.handleBack?.()) return;
+      // A challenge's detail page claims it as "up to the grid".
+      if (App._inLeaderboard && window.TopochainChallenges?.handleBack?.()) return;
+      // A running app's ✕: back to the page it was opened from (closeApp).
+      if (App.currentApp && App.currentTab === 'app' && App.closeApp()) return;
       // A dev SESSION claims it as "back to the Board" (Streamlined
       // Concept); declines when no session is open.
       if (App.currentApp && window.DevChat?.handleBack?.()) return;
@@ -3214,6 +3805,65 @@ const App = {
     )}`;
   },
 
+  // The token of an invite link's path, or null. Same shape the server's
+  // isSpaDocumentPath lets through (src/middleware/auth.js).
+  _inviteTokenFromPath(pathname) {
+    const m = /^\/invite\/([A-Za-z0-9_-]{22})$/.exec(String(pathname || ''));
+    return m ? m[1] : null;
+  },
+
+  // Follow an invite link as a signed-in account with platform access
+  // (services/community-invites.js). Home first, with the invite address
+  // replaced so Back or a reload does not ask again; then, if the link is
+  // live and the viewer is not in the project yet, one confirm naming it and
+  // who invited them. In it — just now, or already — opens its hub. A dead
+  // link says why, once.
+  async _followInvite(token) {
+    try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
+    App.restoreFromHash();
+    const toast = (msg, error) => {
+      if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
+    };
+    const DEAD = {
+      expired: 'That invite link has expired.',
+      revoked: 'That invite link was turned off.',
+      used_up: 'That invite link has been used as many times as it allows.',
+      unknown: 'That invite link does not work.',
+    };
+    const openHub = (slug) => {
+      if (!slug) return;
+      if (typeof AppView !== 'undefined' && AppView._landOnHub) AppView._landOnHub(slug);
+      App.navigateToApp(slug, 'dev');
+    };
+    try {
+      const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
+      const standing = await res.json().catch(() => ({}));
+      if (standing.mine === 'joined' && standing.slug) { openHub(standing.slug); return; }
+      if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
+      const name = standing.project && standing.project.name ? standing.project.name : 'this project';
+      const count = standing.memberCount || 0;
+      const ok = window.ConfirmModal ? await ConfirmModal.show({
+        title: `Join ${name}?`,
+        message: `${standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.'}`
+          + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
+        confirmLabel: 'Join',
+        cancelLabel: 'Not now',
+      }) : true;
+      if (!ok) return;
+      const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const result = await joined.json().catch(() => ({}));
+      if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
+      if (result.slug) {
+        toast(`You joined ${result.name || name}.`);
+        openHub(result.slug);
+      }
+    } catch (_) {
+      toast('Could not open that invite link. Try again.', true);
+    }
+  },
+
   _deepLinkTarget() {
     if (location.hash) return location.hash;
     const appPath = App._appRouteFromPath(location.pathname);
@@ -3242,6 +3892,28 @@ const App = {
         ? (qIdx === -1 ? rawHash : rawHash.slice(0, qIdx))
         : pathRoute;
       const fragQuery = qIdx === -1 ? '' : rawHash.slice(qIdx + 1);
+
+      // ── An invite link (/invite/<token>) ───────────────────────────
+      // Signed out, it is the landing, whose invite card
+      // (features/auth/landing.tsx) names the project and offers sign-up;
+      // the path is remembered so signing in comes back here. Signed in, it
+      // is followed after a confirm (App._followInvite). A waiting account
+      // never reaches this: enterAuthed hands it to the waiting room, which
+      // follows the link itself (features/auth/waiting.tsx). A fragment
+      // outranks it, as it does a clean app path: #signup and #login are
+      // where the landing sends a visitor next.
+      const inviteToken = rawHash ? null : App._inviteTokenFromPath(location.pathname);
+      if (inviteToken && window.AuthScreens) {
+        if (!App.user) {
+          AuthScreens.rememberDeepLink(location.pathname);
+          AuthScreens.show('landing');
+          return;
+        }
+        if (App.user.hasPlatformAccess !== false) {
+          App._followInvite(inviteToken);
+          return;
+        }
+      }
 
       // ── Anonymous-shell routing (fold-auth-pages-into-SPA) ─────────
       // #landing / #login / #signup / #register[/<code>] / #waiting are
@@ -3326,14 +3998,38 @@ const App = {
         }
       }
 
+      // THE SIDE PANEL'S DOCUMENT shows only the panel's own pages — an app's
+      // Workshop, a proposal, an issue, a change, a discussion, a
+      // conversation, an agent chat, and the inbox a thread climbs back to.
+      // Anything else a link inside it names belongs to the TOP window: an
+      // app's App tab goes to the running app beside the panel, and a tab, a
+      // profile or Settings is somewhere the top window goes, leaving the app
+      // exactly as the same link would from the app's own menu. The runtime
+      // (frontend/src/features/side-panel/embedded.ts) puts this document's
+      // address back on the page it is still showing.
+      if (App.embeddedPanel
+          && window.UsernodeReact?.sidePanelEmbed?.forward?.(hash)) {
+        return;
+      }
+
       if (!hash) {
         App.setChromeless(false);
+        // Every screen that sets an `_inX` flag on entry is listed here: one
+        // left out takes the "already on home" branch below, which reveals
+        // home without hiding the screen it was on. Messages and the Workshop
+        // were left out (QA 2026-09-24 Q1), so Back from either to "/" drew
+        // Home over the list or the panel, with that tab still lit and the
+        // phone's bar floating mid-page.
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
         else if (App._inBrowse) App.navigateHome();
+        else if (App._inGlobalChat) App.navigateHome();
+        else if (App._inAgentSession) App.navigateHome();
+        else if (App._inMessages) App.navigateHome();
+        else if (App._inWorkshop) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -3357,8 +4053,11 @@ const App = {
         // home feed. Doubles as the addressable route the dapp.json
         // regression test for the mode toggle uses (#748).
         App.setChromeless(false);
+        // The same list as the `!hash` branch above (QA 2026-09-24 Q1).
         if (App.currentApp || App._inLeaderboard || App._inProfile
-          || App._inAdmin || App._inSettings || App._inBrowse) {
+          || App._inAdmin || App._inSettings || App._inBrowse
+          || App._inGlobalChat || App._inAgentSession
+          || App._inMessages || App._inWorkshop) {
           App.navigateHome();
         } else {
           App._ensureHomeVisible();
@@ -3372,15 +4071,15 @@ const App = {
         App.setChromeless(false);
         // Optional sub-view segment (#leaderboard/history etc.) — pass
         // it through so deep links land on the right tab. Bare
-        // #leaderboard is the standings' own canonical address, so it
+        // #leaderboard opens the default Challenges tab (#2374), so it
         // RESETS to that tab rather than keeping whatever was last active
         // (see _routeLeaderboard). A third segment
         // on the users tab (#leaderboard/users/<username>) deep-links a
         // user profile (#60). #leaderboard/kudos, #leaderboard/topochain
         // and #leaderboard/challenges select a SECTION rather than a
-        // Kudos sub-tab; the first two then self-heal their hash
-        // (#leaderboard/topochain -> #leaderboard, #leaderboard/kudos ->
-        // #leaderboard/prs) through Leaderboard._syncHash.
+        // Kudos sub-tab; #leaderboard/kudos then self-heals its hash to
+        // #leaderboard/prs (and a bare #leaderboard to
+        // #leaderboard/challenges) through Leaderboard._syncHash.
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
@@ -3417,6 +4116,17 @@ const App = {
       if (parts[0] === 'profile') {
         App.setChromeless(false);
         App.navigateToProfile(parts[1] ? decodeURIComponent(parts[1]) : null);
+        return;
+      }
+      if (parts[0] === 'communities' || parts[0] === 'workshop') {
+        // The Communities screen (#communities; #workshop is its old name and
+        // still lands here): the viewer's communities with their two
+        // Workshop numbers. No gate beyond the anonymous-shell branch above —
+        // the counts endpoint is me-scoped server-side and answers 401 to a
+        // caller with no session. No second segment: the drill-in is the
+        // app's own /app/<slug>/workshop route, not a level of this screen.
+        App.setChromeless(false);
+        App.navigateToWorkshop();
         return;
       }
       if (parts[0] === 'apps') {
@@ -3499,11 +4209,97 @@ const App = {
         // ids, so keep their signed-int32 bound local to this route;
         // _numericSegment also serves BIGSERIAL-backed Topochain routes.
         App.setChromeless(false);
+        // AN APP'S DISCUSSION IS A THREAD IN THIS INBOX (#2718 review), so it
+        // has an address in this inbox: `#messages/app/<slug>`. It used to be
+        // listed here and addressed as `#app/<slug>/dev/chat`, which is a
+        // different SCREEN ROOT — so the row promised a pane beside the list
+        // and delivered a full-window takeover with the app view's own back
+        // slot. A row in a list opens beside that list.
+        if (parts[1] === 'app' && parts[2]) {
+          // The raw segment, like the #app route's own slug a few blocks
+          // below: the store validates it and the server is the authority on
+          // whether it names anything. #2387: `/thread/<id>` opens a reply
+          // thread beside the channel, `/m/<id>` a message link into it.
+          App.navigateToMessages(null, parts[2], null, App._messagesExtras(parts.slice(3)));
+          return;
+        }
+        // #2813: AN AGENT THREAD OPENS BESIDE THE LIST TOO, on a desktop —
+        // a global agent chat at `#messages/agent/<id>`, an app's dev
+        // session at `#messages/session/<slug>/<id>`. A PHONE has one pane,
+        // and there these have always been screens of their own, so the
+        // address is swapped in place for that screen's (`#chat/<id>`,
+        // `#app/<slug>/dev/sessions/<id>`): no history entry of its own, so
+        // Back from the chat still lands on the inbox it was opened from.
+        const agent = App._messagesAgentThread(parts);
+        if (agent) {
+          if (!window.matchMedia('(min-width: 768px)').matches) {
+            if (agent.kind === 'session' && typeof Improve !== 'undefined') {
+              Improve.enterSessionFrom?.('#messages');
+            }
+            // replaceState and route the new address in this same pass, the
+            // way the #topochain aliases heal: a `location.replace` from
+            // inside the router lost the app route to the pass it raced.
+            try {
+              history.replaceState(null, '', App._rootUrl(agent.kind === 'chat'
+                ? `#chat/${encodeURIComponent(agent.id)}`
+                : agent.kind === 'agent'
+                  ? `#agent/${agent.id}`
+                  : `#app/${encodeURIComponent(agent.slug)}/dev/sessions/${agent.id}`));
+            } catch (_) { return; }
+            App.restoreFromHash();
+            return;
+          }
+          App.navigateToMessages(null, null, agent);
+          return;
+        }
+        // #2783: `#messages/channel/<handle>` is where a `#name` channel
+        // reference in any chat links. It names the handle, not the place:
+        // the inbox opens, and the store swaps this address for the
+        // channel's own (#general's conversation, or an app's discussion)
+        // once it knows which one the handle means.
+        if (parts[1] === 'channel') {
+          App.navigateToMessages(null);
+          window.UsernodeReact?.messages?.openChannel?.(parts[2] || '');
+          return;
+        }
+        // Conversations use SERIAL ids, so keep their signed-int32 bound
+        // local to this route.
         const conversationId = App._numericSegment(parts[1]);
+        const validConversation = conversationId != null && conversationId <= 2147483647;
         App.navigateToMessages(
-          conversationId != null && conversationId <= 2147483647
-            ? conversationId : null
+          validConversation ? conversationId : null,
+          null,
+          null,
+          validConversation ? App._messagesExtras(parts.slice(2)) : {},
         );
+        return;
+      }
+      if (parts[0] === 'chat') {
+        // #2543: Global Chat is an ordinary, resumable platform screen. Its
+        // UUID names the exact session selected from Improve; a bare #chat
+        // resumes the most recent one (and creates the first when needed).
+        App.setChromeless(false);
+        App.navigateToGlobalChat(parts[1] || null);
+        return;
+      }
+      if (parts[0] === 'agent') {
+        // #2779: an agent session, one conversation with the Mayor that works
+        // on any app. Its own screen at #agent/<id> (a phone's surface; a
+        // desktop can also draw it beside the inbox at #messages/agent/<id>).
+        // A serial id, so the same signed-int32 bound as a conversation's;
+        // `#agent/new` is one not sent yet, created by its first message.
+        App.setChromeless(false);
+        if (parts[1] === 'new') {
+          App.navigateToAgentSession('new');
+          return;
+        }
+        const agentSessionId = App._numericSegment(parts[1]);
+        if (agentSessionId == null || agentSessionId > 2147483647) {
+          App.navigateToMessages(null);
+          return;
+        }
+        // `#agent/<id>/changes` opens it with the changes drawer up.
+        App.navigateToAgentSession(agentSessionId, { drawer: parts[2] === 'changes' });
         return;
       }
       if (parts[0] === 'topochain') {
@@ -3516,16 +4312,17 @@ const App = {
         // to the canonical form, then hand off. 'seasons' -> the
         // challenges tab (its challenge grid; its event hero became that
         // screen's shared event bar); anything else, including a bare
-        // #topochain, -> the standings tab, whose canonical address is the
-        // BARE #leaderboard now that it is the primary tab (so this is one
-        // replaceState, not one here and a second from _syncHash). The
+        // #topochain, -> the standings tab. Each is rewritten straight to
+        // its canonical #leaderboard/<section> — never the bare
+        // #leaderboard, which opens Challenges since #2374 — so this is one
+        // replaceState, not one here and a second from _syncHash. The
         // replaceState fires BEFORE the navigate so Leaderboard._syncHash
         // sees a #leaderboard hash and doesn't skip its own sync.
         App.setChromeless(false);
         const _tcSection = parts[1] === 'seasons' ? 'challenges' : 'topochain';
         try {
           history.replaceState(null, '',
-            _tcSection === 'challenges' ? '#leaderboard/challenges' : '#leaderboard');
+            _tcSection === 'challenges' ? '#leaderboard/challenges' : '#leaderboard/topochain');
         } catch (err) { /* non-fatal: navigation below still works */ }
         App.navigateToLeaderboard(_tcSection, null);
         return;
@@ -3606,7 +4403,8 @@ const App = {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
             subTab = 'sessions';
-            ref = parseInt(parts[4]) || null;
+            // #2241: `new` is the unsent change (see _normalizeTab).
+            ref = parts[4] === 'new' ? 'new' : (parseInt(parts[4]) || null);
           } else if (sec === 'chat') {
             // Full-screen general chat (also where legacy group-chat
             // links land — the old Chat sub-tab's original meaning).
@@ -3703,6 +4501,7 @@ const App = {
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
             if (App._inBrowse) App._exitBrowse();
+            if (App._inWorkshop) App._exitWorkshop();
         App._showOnlyScreen('home-screen');
         App.setHeaderTitle('Homeroom');
         // Home has no Improve target: clear whatever screen published one, or
@@ -3776,6 +4575,11 @@ const App = {
     App.chromeless = enable;
     App.Visibility.publish('platform-header', !enable);
     App.Visibility.publish('chromeless-pill', enable);
+    // The tab bar goes with the header, but through _syncPlatformTabs rather
+    // than a publish of its own: chromeless is only ONE of the three things
+    // that hide it (an app view and the signed-out shell are the others), so
+    // the bar has one place that decides and this tells it to decide again.
+    App._syncPlatformTabs();
     if (typeof AppView !== 'undefined' && AppView.scheduleSafeAreaBroadcast) {
       AppView.scheduleSafeAreaBroadcast();
     }
@@ -3807,9 +4611,102 @@ const App = {
   // so there is nothing to suppress and every screen simply gets the type its
   // caller asked for. The STAMP stays — dapp.json asserts `data-entered`,
   // which is the only way a mid-animation state is testable at all.
-  _entryTransition(preferred, screenEl) {
+  //
+  // …AND ONE RULE AGAIN (#2797): A PRESS ON THE RAIL IS A TAB SWITCH, and a
+  // tab switch is the kit's "high-frequency UI" that must use type:'none'. On
+  // the desktop layout every swap between the rail's five places ran the
+  // kit's fade-through, a View Transition over the whole document — and for
+  // its length the header and the rail are not themselves: each is a pinned
+  // SNAPSHOT image over a substitute ground (--un-vt-ground), composited above
+  // two root snapshots that fade out and back in. Every difference between
+  // those pictures and the live bars — the frost, the wallpaper star behind
+  // the bell, the page tucked under the header's notch — reads as the bars
+  // popping at the start or the end of the fade. Messages was the one tab
+  // reported as never doing it, and it is the one tab whose transition never
+  // ran: its hashchange re-entry skipped it every time. So all five now swap
+  // the way Messages already did. The page changes in place and the bars
+  // never stop being the live elements they are at rest.
+  //
+  // On the desktop, where the rail is the navigation beside the page, every
+  // other entry — a drill-in, an app's zoom — keeps its motion, because there
+  // the page really does go somewhere.
+  //
+  // …AND ON THE PHONE NOTHING SLIDES AT ALL (#2896, #2775). Its bottom bar
+  // kept the push/pop, and which way a tab or a page slid was never
+  // consistent — the same press came in from the right one time and the left
+  // the next, depending on which caller asked and what it guessed about
+  // depth. So below the breakpoint every push and pop is a cut: tabs AND
+  // pages swap in place, as the desktop rail does. The rule itself is
+  // PlatformUI.phoneMotion, which every transition goes through; it is
+  // applied here too only so that `data-entered` names what actually runs.
+  // The zooms stay — an app growing out of its tile is not a page sliding.
+  //
+  // …AND A TAB PRESS INTO OR OUT OF AN APP'S WORKSHOP IS A TAB SWITCH TOO
+  // (#2880, #2881). The Workshop tab returns to the app Workshop you left
+  // (#2776), which is #app-view, not #workshop-screen — so the press went
+  // through navigateToApp and asked for 'zoom-in'. From Home that expanded
+  // the app's tile when it had one (the animation #2881 reports); from every
+  // other tab, and for the platform's own row, which has no tile anywhere,
+  // the kit fell back to its 'push' — the very fade-through #2797 took off
+  // the five roots, with the header and the rail swapped for snapshot images
+  // for its length. That is the flicker #2880 reports going to the Workshop
+  // from any tab. Home pressed from an app's Workshop ran navigateHome's
+  // zoom-out, shrinking the page into its tile. A press is marked `viaTab`
+  // by the one caller that knows it is one (the tab bar's Home click, and
+  // resumeWorkshopView for the Workshop's), and resolves exactly as a press
+  // on any other tab does: a cut, on the rail and on the phone's bar alike.
+  _entryTransition(preferred, screenEl, viaTab) {
+    if (viaTab || App._isRailSwitch(preferred, screenEl)) preferred = 'none';
+    else if ((preferred === 'push' || preferred === 'pop') && App._isPhoneLayout()) preferred = 'none';
     if (screenEl && screenEl.setAttribute) screenEl.setAttribute('data-entered', preferred);
     return preferred;
+  },
+
+  // Below the 768px breakpoint — PlatformUI.isPhoneLayout's question, asked
+  // here directly so the gate reads the same answer wherever PlatformUI is
+  // stubbed. Unreadable answers false: the desktop's motion.
+  _isPhoneLayout() {
+    try {
+      return !!(window.matchMedia && !window.matchMedia('(min-width: 768px)').matches);
+    } catch (_) {
+      return false;
+    }
+  },
+
+  // Set for the length of one tab press's synchronous navigation (see
+  // resumeWorkshopView). Never left set: a later navigation into the same
+  // app — its tile on Home, a notification — is not a press and keeps its zoom.
+  _tabPress: false,
+
+  // How long a tab press into an app's Workshop holds the outgoing screen
+  // for the app's record before revealing the view anyway (navigateToApp).
+  _TAB_REVEAL_WAIT_MS: 250,
+
+  // The rail's own places: the roots its five tabs navigate to.
+  _RAIL_ROOTS: ['home-screen', 'browse-screen', 'messages-screen',
+    'workshop-screen', 'profile-screen'],
+
+  // Whether entering `screenEl` with `preferred` is a switch between places
+  // on the desktop rail. The rail has to be on screen now (not hidden inside
+  // a running app) and the layout has to be the desktop one — the same
+  // 768px breakpoint app.css turns the bar into a rail at. A push into one of
+  // the five roots is a switch; so is navigateHome's zoom-out when there is
+  // no app view on screen to shrink, because the kit then falls back to a
+  // plain full-page transition. Anything unreadable answers false, which is
+  // the old behaviour.
+  _isRailSwitch(preferred, screenEl) {
+    if (!screenEl || (preferred !== 'push' && preferred !== 'zoom-out')) return false;
+    try {
+      if (!window.matchMedia || !window.matchMedia('(min-width: 768px)').matches) return false;
+      const rail = document.getElementById('platform-tabs');
+      if (!rail || rail.classList.contains('hidden')) return false;
+      if (preferred === 'zoom-out') {
+        return screenEl.id === 'app-view' && screenEl.classList.contains('hidden');
+      }
+      return App._RAIL_ROOTS.includes(screenEl.id);
+    } catch (_) {
+      return false;
+    }
   },
 
   // ── Screen swap — THE ORDERING RULE (issue #979) ────────────────────
@@ -3818,8 +4715,9 @@ const App = {
   // two visible roots split the viewport 50/50 — see the #764 note on
   // the zoom transition).
   SCREEN_IDS: ['app-view', 'home-screen', 'browse-screen',
-    'leaderboard-screen', 'profile-screen', 'admin-screen',
-    'settings-screen', 'messages-screen'],
+    'workshop-screen', 'leaderboard-screen', 'profile-screen', 'admin-screen',
+    'settings-screen', 'messages-screen', 'global-chat-screen',
+    'agent-session-screen'],
 
   // Reveal `revealId`, hide every other screen root (except any id in
   // `keepAlso`), and publish the incoming screen's default back slot.
@@ -3856,9 +4754,418 @@ const App = {
     // show and the router says home is, and the router is the one that is
     // right. See Home.publishImproveTarget, whose gate reads both.
     App._revealedScreen = revealId;
+    if (revealId !== 'global-chat-screen' && App._inGlobalChat) {
+      App._exitGlobalChat();
+    }
+    if (revealId !== 'agent-session-screen' && App._inAgentSession) {
+      App._exitAgentSession();
+    }
+    // The ✕'s remembered origin (App._appReturn) ends with the app visit it
+    // was about: every reveal of a screen that is not the app view. `app-view`
+    // is excluded because navigateToApp does not come through here to reveal
+    // it — it reveals #app-view itself — but a `keepAlso` reveal during a
+    // zoom-out would, and clearing on the way OUT of an app is right anyway.
+    if (revealId !== 'app-view') App._appReturn = null;
+    // …and so does a topic's Messages origin (#3103): a card opened from a
+    // conversation returns to it, but only for that visit.
+    if (revealId !== 'app-view') window.Improve?.clearTopicOrigin?.();
+    // AND THE INBOX VISIT ENDS THE SAME WAY (#2718 review), for the same
+    // reason and at the same single choke point.
+    //
+    // `_inMessages` says a visit to the inbox is in progress, and
+    // navigateToMessages returns EARLY when it is — routing the island and
+    // revealing nothing, because the screen is supposed to be up already.
+    // Only navigateToWorkshop and the global-chat route were clearing it, so
+    // Messages -> Home -> Messages found the flag still true, took that early
+    // return and did nothing at all. That is the whole of "sometimes I am
+    // unable to click the messages tab": not sometimes, but always, after any
+    // of the six routes that did not know to clear it.
+    //
+    // Here rather than in those six: a flag that says "this screen is the one
+    // showing" belongs to the function that decides which screen is showing.
+    if (revealId !== 'messages-screen' && App._inMessages) App._exitMessages();
     // Publish the final root state directly. Showing a house and then hiding
     // it in a per-screen callback shifts the shared title slot unnecessarily.
-    App.setBackIcon(revealId === 'home-screen' || revealId === 'browse-screen' ? 'none' : 'home');
+    //
+    // WHAT IT PUBLISHES IS A TABLE now, not a ternary — App._BACK_SLOT, one
+    // row per screen, read through App._backSlotFor. The ternary it replaced
+    // had accumulated three answers over #1569, #2639 and #2718 and still
+    // disagreed with the screens that wrote their own slot a moment later
+    // (Browse, Settings, Admin, the Challenges pane), so the bar's corner
+    // depended on which writer ran last. A table can be read against
+    // features/nav/nav-store.js's TAB_FOR_SCREEN, and
+    // tests/header-back-home.test.js derives each from the other.
+    //
+    // The rule it encodes, from #2718's review: A TAB ROOT SHOWS NOTHING,
+    // because the bar beneath it already answers "how do I get out of here",
+    // and a house on a root is either the Home tab twice or a jump past the
+    // tab that is still lit. A sub-page shows an ARROW to the root it hangs
+    // off. An APP shows a close button, because leaving an app is not going
+    // up a level — you are stepping out of somebody's program back to the
+    // platform, and every mini-app host in the study draws that as an ✕
+    // rather than a chevron. WHERE the ✕ lands is the page the app was opened
+    // from (App.closeApp), which is what _backSlotFor resolves as its href.
+    App.setBackIcon(...App._backSlotFor(revealId));
+    // ...and the tab bar, in the same callback and for the same reason the
+    // comment above gives for the title and the back slot: they are all part
+    // of the swap, and the kit captures the outgoing page from whatever this
+    // callback did before it returned. The parked app is decided inside it,
+    // from the same answer (see _syncParkedApp).
+    App._syncPlatformTabs(revealId);
+  },
+
+  // ── #platform-parked — the app you left ─────────────────────────────
+  //
+  // The bar makes the platform's five places one tap each, and in doing so it
+  // makes the app you were IN the one thing that is not: it has no tab, the
+  // header's app strip goes with it, and Home's grid is every app rather than
+  // the one you were halfway through. So leaving an app leaves a handle to
+  // it, above the bar (at the foot of the rail on a desktop), until it is
+  // resumed or dismissed.
+  //
+  // "LEAVING" MEANS THE RUNNING APP GOING OFF SCREEN, which is precisely the
+  // `inApp` _syncPlatformTabs decides — #app-view on its `app` tab — and that
+  // is why this is called from there and nowhere else. Every path that can
+  // change that answer already goes through it: every screen swap
+  // (_showOnlyScreen), the reveal that opens an app (navigateToApp), the hop
+  // between an app and its own Workshop that never swaps a screen
+  // (switchTab), chromeless and the signed-out shell. The strip is the bar's
+  // complement — drawn wherever the bar is, never over the running app — so
+  // one decision serves both, and a rule spelled once cannot be half-applied.
+  // Stepping from the running app out to that same app's Workshop, its
+  // discussion or a change of it is leaving it too: those are platform
+  // screens with the bar up, and since #2761 took the App segment out of the
+  // mark's menu this handle is the way back from them.
+  //
+  // THE APP IS CAPTURED WHILE IT IS ON SCREEN, NOT LOOKED UP ON THE WAY OUT
+  // (#2762). This used to read `App.currentApp` at the moment of leaving, and
+  // that was the whole bug: every way out of an app — the ✕, each tab, the
+  // peeked rail, Back — nulls `App.currentApp` before its transition starts
+  // and runs AppView.close() (which nulls AppView.appData) before the screen
+  // swap that called this, so the handle was never once written. So the
+  // running app is recorded in `_runningApp` each time the answer is "in the
+  // app", and parked from there when it stops being. Each re-assertion
+  // replaces the capture, which is how a cold deep link that entered with only
+  // a slug gets its name and icon: navigateToApp ends in switchTab once the
+  // record has loaded, and switchTab asks again.
+  //
+  // THE DISPLAY DATA IS CAPTURED, not fetched later. The strip's promise is to
+  // be instant, and a handle that has to fetch a name and an icon before it
+  // can draw is a handle that appears after you have stopped looking for it.
+  _runningApp: null,
+
+  _syncParkedApp(inApp) {
+    // The side panel's document never parks or unparks anything: it never runs
+    // an app, and the handle is the TOP window's, in storage it shares.
+    if (App.embeddedPanel) return;
+    const bridge = window.UsernodeReact?.nav;
+    if (!bridge || typeof bridge.park !== 'function') return;
+    if (inApp) {
+      // In the app: remember it, and clear its own handle — resuming the app
+      // you are in is a shortcut to where you already are. The platform's own
+      // row has no capture (see _parkRecord) and leaves the handle alone: its
+      // App tab is Home, so it is never the running app for long enough to be
+      // the one you left.
+      const running = App._parkRecord(App.currentApp);
+      App._runningApp = running;
+      if (running) bridge.park(null);
+      return;
+    }
+    const left = App._runningApp;
+    App._runningApp = null;
+    if (!left) return;
+    // The platform's own row is never parked. Its App tab is Home, and a cold
+    // link to it holds `app` for as long as its record takes to say
+    // `self_hosted` — switchTab then turns it to the Workshop, which reaches
+    // here as a leave.
+    try {
+      if (typeof AppView !== 'undefined' && AppView.appData?.slug === left.slug
+          && AppView.appData.self_hosted) return;
+    } catch (_) { /* no record to ask */ }
+    bridge.park(left);
+  },
+
+  // The handle's display data for `slug`, or null for no app (or the platform
+  // itself, which is never parked). AppView.appData is the record the app
+  // view loaded and is the fresher of the two; `launchRecordFor` is the
+  // launcher's own cached row, the same one navigateToApp reads to choose an
+  // app's default tab, and it is what answers before the load lands. A slug
+  // on its own is enough to offer the app by name-as-slug if neither does.
+  _parkRecord(slug) {
+    if (!slug) return null;
+    let rec = null;
+    try {
+      rec = (typeof AppView !== 'undefined'
+        && ((AppView.appData?.slug === slug ? AppView.appData : null)
+          || AppView.launchRecordFor?.(slug))) || null;
+    } catch (_) { /* a record we cannot read is a name we do without */ }
+    if (rec?.self_hosted) return null;
+    return {
+      slug,
+      name: rec?.name || slug,
+      iconUrl: rec?.icon_url || null,
+      iconEmoji: rec?.icon_emoji || null,
+    };
+  },
+
+  // ── #workshop — the app Workshop you left (#2776) ───────────────────
+  //
+  // The Workshop tab is a stack, like every tab in an iOS tab bar: the
+  // selector at its root, one app's Workshop (a card, a topic, the board)
+  // above it. Leaving for Messages and tapping Workshop again used to throw
+  // that stack away and land on the selector, so getting back to the card you
+  // were reading took a second tap and a scroll. Now the tab returns to the
+  // view you left, and tapping it while you are already IN an app's Workshop
+  // pops to the selector, which is what it always did from there.
+  //
+  // WHAT IS REMEMBERED IS THE ROUTE, the address updateHash has just
+  // serialised, because that is the one spelling of "where in the Workshop"
+  // the router already restores exactly, for Back/Forward and cold links
+  // alike. Only the app's Workshop routes count: the running app is the
+  // parked strip's business (#2762), and the discussion and a change are
+  // Messages threads (_isMessagesThread) that light the other tab.
+  //
+  // PERSISTED LIKE THE PARKED APP: localStorage, one small entry, forgotten by
+  // the same session sweep (_dropCachedSession) so the next account on this
+  // device is not taken into the previous one's app. Showing the selector
+  // forgets it too — the selector is then the view you left.
+  _WORKSHOP_VIEW_KEY: 'usernode_workshop_view_v1',
+
+  // `url`'s path when it is one of an app's Workshop routes, else null.
+  _workshopViewPath(url) {
+    let path;
+    try { path = new URL(String(url || ''), location.origin).pathname; } catch (_) { return null; }
+    const m = /^\/app\/[a-z0-9][a-z0-9-]{0,254}\/(workshop|board|dev(?:\/.*)?)$/.exec(path);
+    if (!m || /^dev\/(chat|sessions)(\/|$)/.test(m[1])) return null;
+    return path;
+  },
+
+  // Called by updateHash with the address it computed for the app on screen.
+  _noteWorkshopView(url) {
+    // Never from the side panel's document (?panel=1, beside a running app):
+    // the tab this memory answers is the TOP window's, and a page opened
+    // beside an app is not a view anyone left that tab from. The entry is in
+    // localStorage, which the panel's same-origin frame shares — writing it
+    // from in there would send the Workshop tab to the panel's last page.
+    if (App.embeddedPanel) return;
+    // Somewhere else now, so a resume that was in flight has landed or been
+    // left: a later miss on that card is an ordinary one.
+    if (App._resumingWorkshop && App._workshopViewPath(url) !== App._resumingWorkshop) {
+      App._resumingWorkshop = null;
+    }
+    if (!App.currentApp || App.currentTab !== 'dev' || App.chromeless) return;
+    if (App._isMessagesThread()) return;
+    const path = App._workshopViewPath(url);
+    if (!path || !path.startsWith(`/app/${encodeURIComponent(App.currentApp)}/`)) return;
+    try {
+      localStorage.setItem(App._WORKSHOP_VIEW_KEY,
+        JSON.stringify({ slug: App.currentApp, path }));
+    } catch (_) { /* a view that does not survive is the old behaviour */ }
+  },
+
+  _readWorkshopView() {
+    try {
+      const v = JSON.parse(localStorage.getItem(App._WORKSHOP_VIEW_KEY) || 'null');
+      const path = v && typeof v.slug === 'string' ? App._workshopViewPath(v.path) : null;
+      return path && path.startsWith(`/app/${encodeURIComponent(v.slug)}/`)
+        ? { slug: v.slug, path } : null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  _forgetWorkshopView() {
+    App._resumingWorkshop = null;
+    try { localStorage.removeItem(App._WORKSHOP_VIEW_KEY); } catch (_) { /* nothing stored */ }
+  },
+
+  // The Workshop tab's click (features/nav/tab-bar.tsx). True when it has
+  // taken the viewer back to the remembered view — the tab then stops its own
+  // `#workshop` navigation; false leaves that navigation to happen as before.
+  //
+  // AN APP THAT IS GONE FALLS BACK QUIETLY. When the launcher's catalog has
+  // loaded and no longer lists the app (deleted, or no longer visible to this
+  // account — the catalog and GET /api/apps/:slug share one visibility rule),
+  // the view is forgotten and the tab goes to the selector, with no request
+  // that could 404 into the console. A remembered card that has since gone is
+  // caught where the topic view resolves it (_abandonWorkshopResume).
+  resumeWorkshopView() {
+    if (App._revealedScreen === 'app-view' && App.currentApp
+        && App.currentTab === 'dev' && !App._isMessagesThread()) return false;
+    const view = App._readWorkshopView();
+    if (!view) return false;
+    try {
+      if (typeof Home !== 'undefined' && Home._appsLoaded && Array.isArray(Home._apps)
+          && !Home._apps.some((a) => a && a.slug === view.slug)) {
+        App._forgetWorkshopView();
+        return false;
+      }
+    } catch (_) { /* no catalog to ask; the route answers for itself */ }
+    App._resumingWorkshop = view.path;
+    try {
+      history.pushState(null, '', `${view.path}${App._routeSearch(null)}`);
+    } catch (_) {
+      App._resumingWorkshop = null;
+      return false;
+    }
+    // A PRESS ON THE WORKSHOP TAB, and it swaps like one (#2880, #2881).
+    // navigateToApp reads the flag before its first await, which is where it
+    // starts its transition; restoreFromHash reaches it synchronously.
+    App._tabPress = true;
+    try { App.restoreFromHash(); } finally { App._tabPress = false; }
+    return true;
+  },
+
+  // The topic view found no such card. When it is the card this tab was
+  // resuming, the fallback is the selector rather than the app's board, and
+  // silent. True when it has taken over.
+  _abandonWorkshopResume() {
+    if (!App._resumingWorkshop || App._resumingWorkshop !== location.pathname) return false;
+    App._forgetWorkshopView();
+    try { history.replaceState(null, '', App._rootUrl('#communities')); } catch (_) { return false; }
+    App.restoreFromHash();
+    return true;
+  },
+
+  _resumingWorkshop: null,
+
+  // ── The fifth tab says who you are (#2760) ──────────────────────────
+  //
+  // "Me" became the signed-in user's username, on the phone's bar and the
+  // desktop rail alike. The bar is React's, so the name is PUBLISHED over the
+  // nav bridge like the lit tab, never written into the node.
+  //
+  // Called wherever `App.user` is assigned — enterAuthed (every boot and
+  // login, snapshot or verified), _reconcileSession (the verified answer
+  // replacing the snapshot's) and enterAnonymous — and from
+  // resyncCurrentView, the sweep both username writers run right after
+  // changing `App.user.username` (Settings → Change username, and the
+  // first-run "Choose your username" step), so a rename shows at once rather
+  // than on the next load. All of those run after hydration: the tab's first
+  // render is the prerender's "Me", and the name arrives as an update.
+  _syncViewer() {
+    window.UsernodeReact?.nav?.setViewer?.(App.user?.username || null);
+  },
+
+  // ── #platform-tabs — one place decides ──────────────────────────────
+  //
+  // The bar is up on the platform's own screens and down on three routes:
+  // inside a running app (the header becomes that app's strip and the way
+  // out is its close button), in chromeless mode (the whole shell is gone),
+  // and on the signed-out screens (there is nothing behind them to tab to).
+  // Each of those is published from a different place — the router here,
+  // setChromeless above, AuthScreens.show/hideAll in auth-screens.js — so
+  // the DECISION lives here and those three only say "look again".
+  //
+  // `revealId` is what the caller is in the middle of revealing, passed
+  // because `_revealedScreen` is assigned inside the same callback and a
+  // caller may want the answer for a root it has not committed to yet
+  // (navigateToApp hides the bar as it reveals #app-view, one transition
+  // callback before _showOnlyScreen records it).
+  //
+  // THE FALLBACK IS HOME, not "nothing". `_revealedScreen` is null until the
+  // first screen swap of the session, and a plain "/" boot never swaps — the
+  // no-hash branch of restoreFromHash is already-on-home and calls
+  // Home.load() without one. Reading null as "no section" would leave the
+  // bar hidden on the single most-visited route in the product. Home is what
+  // the shipped markup shows, which is the same reading _isScreenVisible's
+  // DOM fallback takes for the same state.
+  _syncPlatformTabs(revealId) {
+    const onAuth = !!(window.AuthScreens && AuthScreens._current);
+    // null on the signed-out screens, and the RAW id everywhere else —
+    // `app-view` included. The bar has no tab for the app view and goes away
+    // there, but the HEADER needs to know it is in one (its left slot becomes
+    // a close button and the app's tile appears beside its name), so what is
+    // published is the screen and what is derived from it is the tab. See
+    // features/nav/nav-store.js.
+    const screen = onAuth ? null : (revealId || App._revealedScreen || 'home-screen');
+    // AN APP COVERS THE RAIL. THE PLATFORM'S WORKSHOP FOR IT DOES NOT (#2718
+    // review).
+    //
+    // `#app-view` hosts two unlike things behind one id: the running app on
+    // the `app` tab, and on `dev` the platform's own surface ABOUT that app —
+    // its Workshop, its board, its sessions, its discussion. The first is
+    // somebody's program and takes the whole window, which is what makes it
+    // feel like a program rather than a page. The second is a platform screen
+    // that happens to be scoped to one app, and hiding the rail there left it
+    // as the one such screen with no navigation, reachable only by a back
+    // arrow to the screen it was opened from.
+    //
+    // App.currentTab is assigned before every call that can reach here:
+    // navigateToApp commits the destination while the click is still
+    // synchronous (see its note), and switchTab re-syncs after assigning it.
+    const inApp = screen === 'app-view' && App.currentTab === 'app';
+    App.Visibility.publish(
+      'platform-tabs',
+      // …and never in the side panel's document, which draws no chrome at
+      // all: the top window's bar and rail are the navigation.
+      App.embeddedPanel ? false : !!screen && !App.chromeless && !inApp,
+    );
+    // Published even when the bar is down: the store keeps the last screen
+    // otherwise, and the bar coming back for a tab that has since changed
+    // would light the wrong one for a frame.
+    //
+    // AND THE APP'S WORKSHOP LIGHTS THE WORKSHOP TAB, which is the other half
+    // of the rail being there: a rail with nothing lit says you are somewhere
+    // it does not know about. You are on the Workshop section seen through
+    // one app — the row you pressed to get here is on that very screen — so
+    // the tab you came through stays lit and takes you back to all of them.
+    // Passed explicitly rather than mapped, for the reason the bridge's own
+    // note gives.
+    //
+    // …EXCEPT THE DISCUSSION, WHICH IS A MESSAGE THREAD (#2718 review).
+    // `dev/chat` is the app's general chat, and it is a ROW IN THE MESSAGES
+    // INBOX — that is the whole reason it stopped being offered from the
+    // Workshop's Current status pane. Lighting Workshop there put the reader
+    // in a section they had not been in, and the way back it offered led to
+    // the Workshop rather than to the list they opened the thread from.
+    //
+    // …AND A CHANGE, WHICH IS AN AGENT CONVERSATION (#2770). A dev session is
+    // listed under Messages → Agents beside the agent chats, and New change
+    // lands on one — so its screen lights Messages, not the Workshop it used
+    // to be reached through.
+    window.UsernodeReact?.nav?.setScreen?.(
+      screen,
+      screen === 'app-view' && !inApp
+        ? (App._isMessagesThread() ? 'messages' : 'workshop')
+        : null,
+    );
+    // …AND THE SIDE PANEL BESIDE THE APP (desktop, features/side-panel/),
+    // from the same answer. It stands beside the running app and goes when
+    // the app goes, by any route: the header's close, a tab, the peeked rail,
+    // Back, Expand — and chromeless, which has no layout to stand beside.
+    // Switching straight to another app keeps `inApp` true, and the panel.
+    if (!App.embeddedPanel) {
+      window.UsernodeReact?.sidePanel?.appPresence?.(inApp && !App.chromeless);
+    }
+    // …AND THE PARKED APP, from the same answer (#2762). The running app
+    // going off screen is what parks it, and this is the one place that says
+    // whether it is on screen. Last, so the handle lands in the same callback
+    // as the bar it rides on.
+    App._syncParkedApp(inApp);
+  },
+
+  // The two `#app-view` routes that are THREADS OF MESSAGES rather than the
+  // app's Workshop: its discussion (#2718 review) and a dev session (#2770).
+  // One predicate, because the tab that lights and the back slot's glyph are
+  // two answers to the same question and have to agree.
+  _isMessagesThread() {
+    return App.currentTab === 'dev' && App.currentSubTab === 'sessions';
+  },
+
+  // The project's CHANNEL at `/app/<slug>/dev/chat`: a level inside the
+  // project's hub, not a thread of Messages. It was one (#2718 review) while
+  // the channels were listed in Messages; they live on each community's hub
+  // now, so it lights Communities and its chevron goes back up to the hub.
+  _isChannelThread() {
+    return App.currentTab === 'dev' && App.currentSubTab === 'chat';
+  },
+
+  // The address of a project's hub, the page its channel hangs off. A HASH,
+  // because the back button follows its href only when it is one (the
+  // #back-btn listener below); `#app/<slug>/workshop` is the same route.
+  _hubHref(slug) {
+    return slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
   },
 
   // The screen root _showOnlyScreen last revealed, or null before the first
@@ -3905,6 +5212,16 @@ const App = {
     // one owner. tests/react-screen-ids-consistency.test.js pins the rule
     // for every screen root at once.
     'messages-screen',
+    // Global Chat (#2543). It is a normal hash-routed screen now, so the
+    // router publishes visibility through the same single-owner seam.
+    'global-chat-screen',
+    // Agent sessions (#2779): features/agent-session/index.tsx takes
+    // useVisibilityHiddenClass from its first commit, same seam.
+    'agent-session-screen',
+    // Workshop (#workshop). React-owned end to end from the day it shipped —
+    // features/workshop/index.tsx takes useVisibilityHiddenClass, so it has to
+    // be listed here or the class gets the two owners the note above describes.
+    'workshop-screen',
   ],
 
   // The publish/read half of that seam. The state is a plain object on
@@ -4030,7 +5347,7 @@ const App = {
   //
   // `sub` is the hash's second segment: 'prs' | 'users' | 'history'
   // select a Kudos sub-tab, and the SECTION values 'topochain' (the
-  // primary standings tab), 'kudos' and 'challenges' select a whole
+  // standings tab), 'kudos' and 'challenges' (the default) select a whole
   // section instead. `profileUser` (#60) opens the per-user PR profile
   // drill-in instead of a plain tab.
   // A hash segment that must be a positive integer id, or nothing. Returns
@@ -4073,6 +5390,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     // Screen reveal + chrome, all inside the transition callback so the
     // outgoing page is snapshotted as it actually looked (#979).
     const screen = document.getElementById('leaderboard-screen');
@@ -4080,18 +5398,16 @@ const App = {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('leaderboard-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Leaderboard');
+      App.setHeaderTitle(App._leaderboardTitle(sub, profileUser));
       // NO DEAD ENDS: every screen the viewer can reach shows a way back.
       // The hamburger used to be that way — it was on every bar, and it held
       // the nav rows — so these screens shipped with the back slot hidden.
       //
-      // This was `arrow` with no href, which RESOLVED to home: the right
-      // destination drawn as the wrong glyph, a chevron promising a level
-      // above where there is none. The house says the same thing honestly,
-      // and it is the default, so the explicit call goes entirely — see the
-      // 'home' publish in _showOnlyScreen. Left here as a comment because
-      // "why does this screen not set its own back state" is a fair question
-      // to have an answer to.
+      // It is an ARROW TO ME now, published from App._BACK_SLOT by
+      // _showOnlyScreen. This screen's three sections are reached from the
+      // Profile screen's rows, so there genuinely is a level above and the
+      // chevron is honest about it — which was the objection when the arrow
+      // resolved to home and the house replaced it.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
     App._inLeaderboard = true;
     App._routeLeaderboard(sub, profileUser, challengeTarget);
@@ -4106,22 +5422,72 @@ const App = {
   // open() each caller runs afterwards dedupes the in-flight load.
   //
   // #1146: the address is the source of truth on ENTRY, including the
-  // absence of a segment. A bare #leaderboard means the standings — that is
-  // the tab's canonical address, and the declared check "Bare #leaderboard
-  // renders all three tabs and opens on the standings (#962)" says so — but
-  // the module remembers its last section for the session, so arriving here
-  // from #leaderboard/challenges used to leave the challenges tab up. Cold
-  // loading hid it (a fresh module starts on 'topochain'); a sibling-fragment
+  // absence of a segment. A bare #leaderboard means Challenges, the default
+  // tab (#2374) — the declared check "Bare #leaderboard renders all three
+  // tabs and opens on Challenges (#962, #2374)" says so — but the module
+  // remembers its last section for the session, so arriving here from
+  // #leaderboard/topochain would leave the standings up. Cold loading hides
+  // it (a fresh module starts on 'challenges'); a sibling-fragment
   // hash switch, which is how the grouped capture runner reaches every
   // cohort of a document, does not. Reset explicitly so both arrivals render
   // the same screen. _setSection early-returns when the section is already
   // current, so the common case costs nothing.
+  /*
+      WHAT THE BAR SAYS ON THIS SCREEN, per section.
+
+      It said "Leaderboard" for all of them, which is the name of the SCREEN
+      that hosts the three rather than the name of the one you asked for — so
+      tapping "Challenges" on the Me screen landed on a page titled
+      Leaderboard, and the Me tab stayed lit beside it. Two different things
+      claiming to be where you are.
+
+      The sections are the three `_setSection` validates against
+      (frontend/src/features/leaderboard/leaderboard.js), and the default with
+      no sub is `challenges`, which _routeLeaderboard picks.
+
+      A USER DRILL-IN OUTRANKS THE SECTION, because a profile is a page about
+      somebody rather than a tab of this screen — it is what the address
+      `#leaderboard/<section>/<user>` is carrying, and the name is the
+      answer to "where am I".
+
+      THE WORDS ARE THE TAB'S OWN LABELS (bug f of the navigation audit).
+      This table said "Topochain" for the tab labelled Leaderboard, so a cold
+      #leaderboard/topochain named a tab the strip did not have, and the three
+      Kudos sub-views (#leaderboard/prs, /users, /history) fell through to
+      "Leaderboard". It is one entry per ADDRESS now, each the label of the
+      tab that address shows (frontend/src/features/leaderboard/index.tsx's
+      SECTION_TABS); `seasons` is the History tab. And it is no longer only
+      the ENTRY's title: a tab press rewrites the address with replaceState
+      and never comes back through here, so Leaderboard._syncTitle asks this
+      same method on every section change. One table, both paths.
+  */
+  LEADERBOARD_TITLES: {
+    challenges: 'Challenges',
+    kudos: 'Kudos',
+    prs: 'Kudos',
+    users: 'Kudos',
+    history: 'Kudos',
+    topochain: 'Standings',
+    seasons: 'History',
+  },
+
+  _leaderboardTitle(sub, profileUser) {
+    if (profileUser) return `@${profileUser}`;
+    return App.LEADERBOARD_TITLES[sub || 'challenges'] || 'Challenges';
+  },
+
   _routeLeaderboard(sub, profileUser, challengeTarget) {
+    // The title follows an in-screen section change too: this method is the
+    // one both entries funnel through — the cold navigation above and the tab
+    // taps that never re-enter it — so naming the screen here is what keeps
+    // the bar honest on the second tap.
+    App.setHeaderTitle(App._leaderboardTitle(sub, profileUser));
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
     } else if (!sub && window.Leaderboard?._setSection) {
-      Leaderboard._setSection('topochain');
-    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges')
+      Leaderboard._setSection('challenges');
+    } else if ((sub === 'topochain' || sub === 'kudos' || sub === 'challenges'
+                || sub === 'seasons')
                && window.Leaderboard?._setSection) {
       // Register the challenge deep link BEFORE the section mounts (#982).
       // Selecting the event first means the pane's very first fetch is
@@ -4176,30 +5542,36 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('profile-screen');
+    App._inProfile = true;
+    // Loads into the still-hidden root BEFORE the transition, as the Workshop
+    // does (#2777): the requests are in flight while the transition runs, and
+    // a return visit paints the cached profile into the root before it is
+    // revealed, so the incoming frame already has content instead of the
+    // skeleton.
+    if (window.Profile?.open) Profile.open(username);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-screen');
       App._enterScreenChrome();
       App.setHeaderTitle(username ? `@${username}` : 'Profile');
-      // A HOUSE ON THE ACCOUNT SCREENS, not nothing and not a chevron.
+      // NOTHING IN THE LEFT SLOT. Me is a tab root: the bar is on screen
+      // beside it, so a control in the corner that goes home is a second way
+      // to press a button already in view.
       //
-      // Profile, Settings and Admin & moderation lost the arrow once, on the
-      // reasoning that they form a stack of their own (Home → Profile →
-      // Settings/Admin) whose own rows are the way back up. What that left
-      // was three screens with nothing in the bar at all — and "every page
-      // should have a back or a home button, except Home" is the rule now.
+      // It was the house, and the house was right at the time — Profile,
+      // Settings and Admin lost the arrow in #1569 on the reasoning that they
+      // are their own stack, which left three screens with nothing in the bar
+      // at all, and "every page should have a back or a home button, except
+      // Home" was the rule that fixed it. The bar answers that rule for all
+      // five roots now. Settings and Admin keep a glyph and it is an ARROW,
+      // because they are reached from here — see App._BACK_SLOT.
       //
-      // The arrow does not come back: these screens have no level above them
-      // that is not home, and a chevron would promise one. The house is the
-      // honest glyph, and it is what `'home'` DRAWS now rather than a synonym
-      // for hidden (see features/header/back-button-store.js). The call is
-      // kept explicit even though _showOnlyScreen publishes the same default
-      // a moment earlier: this is the screen where the question was asked.
-      App.setBackIcon('home');
+      // _showOnlyScreen has already published this from the table; the call
+      // is not repeated, because a second writer of one fact is how the two
+      // disagree.
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
-    App._inProfile = true;
-    if (window.Profile?.open) Profile.open(username);
   },
 
   // A hash change between the signed-in profile editor and a public
@@ -4244,6 +5616,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('browse-screen');
     App._inBrowse = true;
     // Renders into the still-hidden screen; `chrome: false` holds back its
@@ -4266,6 +5639,249 @@ const App = {
   _exitBrowse() {
     App._inBrowse = false;
     if (window.Browse?.close) Browse.close();
+  },
+
+  // The Workshop screen (#workshop): every app you have, with how much of its
+  // own Workshop page is addressed to you.
+  //
+  // A SCREEN, not a sheet, on the same reasoning #1443 gave Messages: it is
+  // a row in the chip's menu, and the rule for that menu is that everything
+  // in it has its own page. It is also what the surface IS — a place you
+  // start from and drill into, which is the shape a screen has and an overlay
+  // does not.
+  //
+  // The re-entry guard exists because popstate AND hashchange both reach
+  // restoreFromHash, so a second run would replay the entry animation on what
+  // is already on screen (#979). There is no level below #workshop — the
+  // drill-in is the app's OWN route — so it has nothing to route and simply
+  // returns.
+  //
+  // `_inWorkshop` IS NOT ENOUGH ON ITS OWN, and neither is the controller's
+  // `isOpen()`. Both stay true while the viewer is inside an app they opened
+  // from here: nothing on the way into an app clears either, because
+  // navigateToApp reveals #app-view through the kit's `after` callback rather
+  // than through an exit chain. A guard built on one of them alone would
+  // refuse to come BACK — the one navigation this screen exists to support.
+  //
+  // `App.currentApp` is what separates the two. It is the slug while an app
+  // is on screen and this method nulls it synchronously, so "on the Workshop"
+  // is the pair: the flag set, and no app open. Both halves are written
+  // BEFORE the transition, which is what the double-run needs — popstate and
+  // hashchange land in the same tick, and `_revealedScreen` is not assigned
+  // until the callback runs, so it would let the second run straight through.
+  navigateToWorkshop() {
+    if (App._inWorkshop && !App.currentApp) return;
+    // The selector is now the view the tab returns to (#2776).
+    App._forgetWorkshopView();
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inMessages) App._exitMessages();
+    const screen = document.getElementById('workshop-screen');
+    App._inWorkshop = true;
+    // Loads into the still-hidden root: the island renders nothing remote
+    // until these fetches land, so the screen is revealed empty and fills,
+    // exactly as Home and Browse do.
+    window.UsernodeReact?.workshop?.open?.();
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('workshop-screen');
+      App._enterScreenChrome();
+      App.setHeaderTitle('Communities');
+      // Nothing in the left slot: the Workshop is a tab root, and its tab is
+      // on screen beside it. _showOnlyScreen publishes that from App._BACK_SLOT
+      // — see the table for why a root shows no glyph at all.
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // State-only (#979) — see _exitLeaderboard.
+  _exitWorkshop() {
+    App._inWorkshop = false;
+    window.UsernodeReact?.workshop?.close?.();
+  },
+
+  // ── The ✕: back to the page the app was opened from ─────────────────
+  //
+  // The prototype keeps the platform drawn UNDER a running app, and its close
+  // button takes the app away to reveal that page exactly as it was (leaveApp
+  // and renderDesktop in the nav prototype; spec §9: "the platform stays as it
+  // was underneath, and closing dissolves the layer"). The ✕ here went Home
+  // instead — or to #workshop when that screen was the origin — so a reader
+  // who opened an app from a message thread through Recents or the parked
+  // strip was dropped on Home, and the thread they were in was a tab and a
+  // row away.
+  //
+  // HERE, THE PAGE UNDERNEATH IS A HISTORY ENTRY. Opening an app pushes its
+  // address (navigateToApp, or switchTab from the app's own Workshop), so the
+  // page it was opened from is the entry below it, and the ✕ TRAVERSES back to
+  // it. That is what makes the return exact: the router restores the address
+  // the viewer was on — a thread, Discover's app page, the app's Workshop or
+  // one of its cards, Me, a Settings section — through the same path Back
+  // takes, onto screens that are kept-alive singletons, so the page comes
+  // back as it was, scroll included wherever the shell keeps it. The app's
+  // entry is left as a FORWARD entry, which is the other half of the point:
+  // Back from the page you returned to goes where it went before you opened
+  // the app, rather than straight back into the app you just closed. (The ✕
+  // used to PUSH home, stranding the app's entry under it, so Back from Home
+  // reopened the app.)
+  //
+  // THE ENTRY BELOW IS FOUND, NOT ASSUMED. An app's frame writes history of
+  // its own — a framed document's navigations are joint-session-history
+  // entries of this window — so `history.back()` can rewind the FRAME instead
+  // of closing the app. The Navigation API lists this document's own entries
+  // only, and traverseTo() crosses whatever the frame added. Entries that are
+  // an app's App tab are passed over: an app opened from inside another app
+  // closes to the page under both, as the prototype's layer does. With no
+  // such entry — a cold deep link, which has nowhere to return — the ✕ goes
+  // Home IN PLACE of the app's entry.
+  //
+  // WITHOUT THE NAVIGATION API (older Safari and WebViews) `_appReturn` is
+  // what knows the way: the address the app was opened from, captured before
+  // the app's entry was pushed, and how long history was once it had been.
+  // Back is taken only while nothing has been added since; otherwise the ✕
+  // goes to that address directly.
+  //
+  // Where the ✕ lands decides its ANIMATION too, without a second rule: the
+  // app zooms back into its tile only when the page it returns to is Home,
+  // the one screen with a tile for it (navigateHome); every other page takes
+  // the ordinary way back that Back takes there.
+  _appReturn: null,
+
+  // Whether `url` is an app's App tab — the running app itself, chromeless
+  // included — rather than a platform page (its Workshop, a card, a thread).
+  // A legacy `#app/…` hash outranks the pathname, as it does in the router.
+  _isRunningAppUrl(url) {
+    let parsed;
+    try { parsed = new URL(String(url || ''), location.origin); } catch (_) { return false; }
+    if (parsed.origin !== location.origin) return false;
+    const route = parsed.hash
+      ? parsed.hash.replace(/^#/, '').split('?')[0]
+      : App._appRouteFromPath(parsed.pathname);
+    const segs = String(route || '').split('/');
+    return segs[0] === 'app' && !!segs[1]
+      && (!segs[2] || segs[2] === 'app' || segs[2] === 'full');
+  },
+
+  // Called as an app's App tab is about to come on screen from somewhere
+  // else, BEFORE its entry is pushed. Nothing is captured while the router is
+  // restoring an address (Back, Forward, a cold link — the entry below is
+  // whatever history holds) or from an address that is itself an app's App
+  // tab (an app opened from inside another closes to the page under both).
+  _noteAppReturn(slug) {
+    const here = `${location.pathname}${location.search}${location.hash}`;
+    const fromApp = App._isRunningAppUrl(here);
+    if (App._isRestoring || App.embeddedPanel || fromApp) {
+      App._appReturn = !App._isRestoring && fromApp && App._appReturn
+        ? { ...App._appReturn, slug, depth: null, pushes: null }
+        : null;
+      return;
+    }
+    App._appReturn = { slug, url: here, depth: null, pushes: App._historyPushes };
+  },
+
+  // …and right after updateHash has written it: the history length that
+  // makes "the entry below is the origin" checkable later. Only a PUSH counts
+  // — a replace left nothing of ours below.
+  _pinAppReturn() {
+    const noted = App._appReturn;
+    if (!noted || noted.depth != null) return;
+    if (noted.pushes != null && App._historyPushes === noted.pushes + 1) {
+      noted.depth = history.length;
+    }
+    noted.pushes = null;
+  },
+
+  // Pushes made by updateHash, counted so _pinAppReturn can tell a push from
+  // a replace.
+  _historyPushes: 0,
+
+  // The Navigation API, when this browser has the parts the ✕ uses.
+  _navigationApi() {
+    try {
+      const nav = typeof window !== 'undefined' ? window.navigation : null;
+      return nav && typeof nav.entries === 'function' && nav.currentEntry
+        && typeof nav.traverseTo === 'function' ? nav : null;
+    } catch (_) { return null; }
+  },
+
+  // Where the ✕ goes, and how: { how, url, key }.
+  //   'traverse'  back to this document's own entry `key` (the Navigation API)
+  //   'route'     the address on screen already names the page underneath —
+  //               switchTab publishes the ✕ a moment before its updateHash
+  //               writes the app's own — so going there is routing it
+  //   'back'      history.back() — the entry below is the origin, nothing since
+  //   'push'      a new entry at `url`, the origin we know but cannot go back to
+  //   'home'      nowhere to return: Home, replacing the app's entry
+  _closeAppTarget() {
+    const nav = App._navigationApi();
+    if (nav) {
+      const entries = nav.entries();
+      const at = nav.currentEntry.index;
+      for (let i = at; i >= 0; i -= 1) {
+        const entry = entries[i];
+        // THIS DOCUMENT'S entries only: one from a previous load is a full
+        // navigation away, and a cold deep link has nowhere to return.
+        if (!entry || entry.sameDocument === false || !entry.url) continue;
+        if (App._isRunningAppUrl(entry.url)) continue;
+        return i === at
+          ? { how: 'route', url: entry.url, key: null }
+          : { how: 'traverse', key: entry.key, url: entry.url };
+      }
+      return { how: 'home', url: null, key: null };
+    }
+    const noted = App._appReturn;
+    if (noted && noted.slug === App.currentApp && noted.url) {
+      return noted.depth != null && noted.depth === history.length
+        ? { how: 'back', url: noted.url, key: null }
+        : { how: 'push', url: noted.url, key: null };
+    }
+    return { how: 'home', url: null, key: null };
+  },
+
+  // The ✕'s href: the same place a plain click goes, so a modified click
+  // opens that page in a new tab. Home when there is nowhere to return.
+  _closeAppHref() {
+    const target = App._closeAppTarget();
+    if (target.url) {
+      try {
+        const parsed = new URL(target.url, location.origin);
+        return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+      } catch (_) { /* fall through to home */ }
+    }
+    return window.NavLink ? NavLink.homeHref() : App._rootUrl();
+  },
+
+  // The ✕ in a running app's strip (#back-btn's click handler).
+  closeApp() {
+    if (App.embeddedPanel || !App.currentApp) return false;
+    const target = App._closeAppTarget();
+    if (target.how === 'traverse') {
+      try {
+        const result = App._navigationApi().traverseTo(target.key);
+        // A traversal the browser gives up on (another navigation overtook
+        // it) rejects both promises; unobserved, that is a console error.
+        result?.committed?.catch?.(() => {});
+        result?.finished?.catch?.(() => {});
+        return true;
+      } catch (_) { /* go there directly, below */ }
+    } else if (target.how === 'back') {
+      history.back();
+      return true;
+    } else if (target.how === 'route') {
+      App._routeFromHash();
+      return true;
+    }
+    try {
+      if (target.url) history.pushState(null, '', target.url);
+      else history.replaceState(null, '', App._rootUrl());
+    } catch (_) { /* the router still routes whatever the address says */ }
+    App._routeFromHash();
+    return true;
   },
 
   // Sections of the admin console that were PUBLIC pages before #860
@@ -4316,6 +5932,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('admin-screen');
     App._inAdmin = true;
     // Renders into the still-hidden screen; `chrome: false` holds its
@@ -4364,6 +5981,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('settings-screen');
     App._inSettings = true;
     // Renders every section into the still-hidden screen — invisible, so
@@ -4403,10 +6021,17 @@ const App = {
   //
   // The `navigateToMessages` name is kept below because push handling and
   // notifications.js's conversation rows still say it.
-  navigateToMessages(conversationId) {
+  navigateToMessages(conversationId, appSlug, agent, extras) {
     const messages = window.UsernodeReact?.messages;
-    if (App._inMessages && messages?.isOpen?.()) {
-      messages.route?.(conversationId || null);
+    const more = extras || {};
+    // ALREADY HERE: route the island in place rather than replaying a screen
+    // swap onto the screen you are on. The screen ITSELF is asked, not just
+    // the flag — a stale `_inMessages` used to make this return early with
+    // nothing revealed, which is a tab press that does nothing. The clearer
+    // in _showOnlyScreen is what keeps the flag honest; this is the belt to
+    // its braces, and costs one condition.
+    if (App._inMessages && App._isScreenVisible('messages-screen') && messages?.isOpen?.()) {
+      messages.route?.(conversationId || null, appSlug || null, agent || null, more);
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -4417,11 +6042,12 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('messages-screen');
     App._inMessages = true;
     // Route the still-hidden island first. It renders no remote data until its
     // effects resolve, and chrome remains suspended until the callback below.
-    messages?.route?.(conversationId || null);
+    messages?.route?.(conversationId || null, appSlug || null, agent || null, more);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('messages-screen');
@@ -4431,10 +6057,128 @@ const App = {
     }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
   },
 
+  // #2387: what follows a conversation or an app channel in a Messages
+  // address — `thread/<root>` opens a reply thread beside it, `m/<id>` is a
+  // message link, and the two combine (`thread/<root>/m/<id>`). Serial ids
+  // under the same int32 bound as the conversation's; anything else is
+  // ignored and the conversation opens as it would have.
+  _messagesExtras(rest) {
+    const out = {};
+    for (let i = 0; i + 1 < rest.length; i += 2) {
+      const id = App._numericSegment(rest[i + 1]);
+      if (id == null || id > 2147483647) continue;
+      if (rest[i] === 'thread') out.threadRootId = id;
+      else if (rest[i] === 'm') out.focusMessageId = id;
+    }
+    return out;
+  },
+
+  // #2813: the agent thread a `#messages/agent/…` or `#messages/session/…`
+  // address names, or null. Raw segments, like the discussion's slug: the
+  // store validates the shape and the server decides whether it exists.
+  _messagesAgentThread(parts) {
+    if (parts[1] === 'agent' && parts[2]) {
+      let id = null;
+      try { id = decodeURIComponent(parts[2]); } catch (_) { return null; }
+      // #2779: an agent session's id is a serial; a Global Chat thread's is
+      // a UUID, never all digits. So a number names an agent session, and so
+      // does `new`: the one New change opens, unsent until its first message.
+      if (id === 'new') return { kind: 'agent', id: 'new' };
+      const agentSessionId = App._numericSegment(id);
+      if (agentSessionId != null && agentSessionId <= 2147483647) {
+        return { kind: 'agent', id: agentSessionId };
+      }
+      return { kind: 'chat', id };
+    }
+    if (parts[1] === 'session' && parts[2] && parts[3]) {
+      let slug = null;
+      try { slug = decodeURIComponent(parts[2]); } catch (_) { return null; }
+      const id = App._numericSegment(parts[3]);
+      return id != null && id <= 2147483647 ? { kind: 'session', slug, id } : null;
+    }
+    return null;
+  },
+
   // State-only teardown; the incoming transition hides the root.
   _exitMessages() {
     App._inMessages = false;
     window.UsernodeReact?.messages?.close?.();
+  },
+
+  // Global Chat is a first-class screen whose individual sessions have
+  // stable #chat/<uuid> addresses. The React store owns transcript loading;
+  // this classic router owns the same screen swap and chrome as every other
+  // platform page.
+  navigateToGlobalChat(threadId) {
+    const globalChat = window.UsernodeReact?.globalChat;
+    if (App._inGlobalChat && globalChat?.isOpen?.()) {
+      globalChat.route?.(threadId || null);
+      return;
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
+    if (App._inMessages) App._exitMessages();
+    const screen = document.getElementById('global-chat-screen');
+    App._inGlobalChat = true;
+    globalChat?.route?.(threadId || null);
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('global-chat-screen');
+      App._enterScreenChrome();
+      if (typeof Home !== 'undefined') Home.publishImproveTarget();
+      App.setHeaderTitle('Chat');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  // State-only teardown. _showOnlyScreen has already hidden the React root
+  // in the incoming transition callback before this clears its live request.
+  _exitGlobalChat() {
+    App._inGlobalChat = false;
+    window.UsernodeReact?.globalChat?.deactivate?.();
+  },
+
+  // #2779: an agent session's own screen. The same pair as Global Chat's:
+  // the React store (features/agent-session) loads the conversation, and
+  // this router owns the screen swap and chrome. The store retitles the bar
+  // with the conversation's title once it has it.
+  navigateToAgentSession(id, options = {}) {
+    const agentSession = window.UsernodeReact?.agentSession;
+    if (App._inAgentSession && agentSession?.isOpen?.() && agentSession?.currentId?.() === id) {
+      agentSession?.route?.(id, options);
+      return;
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    const leavingApp = !!App.currentApp;
+    App.currentApp = null;
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
+    if (App._inMessages) App._exitMessages();
+    const screen = document.getElementById('agent-session-screen');
+    App._inAgentSession = true;
+    agentSession?.route?.(id, options);
+    PlatformUI.transition(() => {
+      if (leavingApp) AppView.close();
+      App._showOnlyScreen('agent-session-screen');
+      App._enterScreenChrome();
+      if (typeof Home !== 'undefined') Home.publishImproveTarget();
+      App.setHeaderTitle('Agent session');
+    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+  },
+
+  _exitAgentSession() {
+    App._inAgentSession = false;
+    window.UsernodeReact?.agentSession?.deactivate?.();
   },
 
   // The Notifications SHEET's deep-link resolver (Streamlined Concept).
@@ -4470,20 +6214,37 @@ const App = {
   // cannot fight the address it is currently reading. The flag clears in that
   // function's `finally`, so a task scheduled here is the first moment the
   // rewrite is allowed to land.
-  _restoreAddressUnderSheet() {
+  //
+  // THE ADDRESS IS PUT BACK FIRST, AND REPLACED (QA 2026-09-24 Q16). The
+  // sheet claims the back button when it presents (lib/sheet-controller.js),
+  // which pushes a record at whatever address is in the bar at that moment.
+  // Presented first, that was `#notifications`, and the rewrite then PUSHED
+  // the screen's address on top of it, so Back closed the sheet onto an
+  // address that reopened it. So `present` runs after the rewrite, in the same
+  // task, and the rewrite replaces: `#notifications` names nothing a Back
+  // press should return to.
+  //
+  // AND HOME UNDERNEATH IS SETTLED THE WAY THE `!hash` BRANCH SETTLES IT (Q30a).
+  // A cold boot straight to #notifications finds the PRERENDERED home already
+  // showing, so it never calls navigateHome, and the header kept whatever
+  // title the boot snapshot carried: open an app, then load /#notifications,
+  // and Home sat under the sheet titled with the app's name.
+  _restoreAddressUnderSheet(present) {
     const onAScreen = App.currentApp || App.SCREEN_IDS.some(App._isScreenVisible);
     if (!onAScreen) {
       App.navigateHome();
-      return;
+    } else if (!App.currentApp && App._isScreenVisible('home-screen')) {
+      App._ensureHomeVisible();
+      App.setHeaderTitle('Homeroom');
     }
     setTimeout(() => {
-      try { App.updateHash(); } catch (err) { /* opaque origin — the sheet still opens */ }
+      try { App.updateHash({ replace: true }); } catch (err) { /* opaque origin — the sheet still opens */ }
+      if (typeof present === 'function') present();
     }, 0);
   },
 
   openNotificationsSheet() {
-    App._restoreAddressUnderSheet();
-    App.openNotifications();
+    App._restoreAddressUnderSheet(() => App.openNotifications());
   },
 
   /** Present the sheet. The one call every entry point funnels through. */
@@ -4527,7 +6288,11 @@ const App = {
       if (App.currentTab === 'dev') {
         if (ref == null && App.currentSubTab === 'sessions'
             && typeof DevChat !== 'undefined' && DevChat.currentSession) {
-          ref = DevChat.currentSession.id;
+          // #2241: an unsent change has no id, and `null` here would
+          // normalize the whole route back to the board — so it serializes
+          // as the word the router reserves for it.
+          ref = DevChat.currentSession.id
+            || (DevChat.currentSession.pending ? DevChat.NEW_SESSION_REF : null);
         } else if (ref == null && App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           ref = AppView._devTopic;
@@ -4550,6 +6315,9 @@ const App = {
       // GroupChat._openSocket).
       newUrl = App._rootUrl();
     }
+
+    // The Workshop tab's memory (#2776) is this address, when it is one.
+    App._noteWorkshopView(newUrl);
 
     const currentFull = `${location.pathname}${location.search}${location.hash}`;
     if (currentFull === newUrl) return;
@@ -4590,6 +6358,7 @@ const App = {
       history.replaceState(null, '', newUrl);
     } else {
       history.pushState(null, '', newUrl);
+      App._historyPushes += 1;
     }
   },
 
@@ -4723,6 +6492,9 @@ const App = {
   _appLoad: null,
 
   async navigateToApp(slug, tab, ref, subTab) {
+    // The side panel never runs an app — not even to warm its frame. An App
+    // tab asked for in there is the running app's job, beside it.
+    if (App.embeddedPanel && App._forwardAppTab(slug, tab, ref, subTab)) return false;
     const generation = ++App._appNavigationGeneration;
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
@@ -4753,7 +6525,14 @@ const App = {
     App.currentTab = initialRoute.tab;
     App.currentSubTab = initialRoute.tab === 'dev'
       ? (initialRoute.subTab || 'forum') : null;
+    // THE PAGE THIS APP IS OPENED FROM, captured before the app's own entry
+    // is pushed over it: that page is where the ✕ returns (App.closeApp).
+    // Only the App tab has a ✕ — an app's Workshop and its cards are
+    // platform screens with the rail beside them (#2740 review).
+    if (initialRoute.tab === 'app') App._noteAppReturn(slug);
+    else App._appReturn = null;
     App.updateHash({ ref: initialRoute.ref });
+    App._pinAppReturn();
     // Resolved BEFORE the _exitX flags are cleared — _departingScreen
     // reads them to name whichever screen root is actually on screen.
     const departing = App._departingScreen();
@@ -4761,6 +6540,11 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    // Retire the directory's detail/back state as we leave. Otherwise its
+    // hidden detail page intercepts the app's Home button, and returning to
+    // #apps takes the in-screen shortcut without revealing the directory.
+    // This exit is state-only; `departing` stays painted for the transition.
+    if (App._inBrowse) App._exitBrowse();
     // Real screen navigation. From a launcher grid (home's "Your apps" /
     // featured row, or the #apps browse screen) the app view expands out
     // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,
@@ -4782,14 +6566,43 @@ const App = {
     // link opens the source app), so the zoom goes through the same
     // single-motion gate — 'none' still runs fn + after as one mutation.
     const appViewEl = document.getElementById('app-view');
-    PlatformUI.transition(() => {
+    // The Workshop tab returning to this app's Workshop (resumeWorkshopView)
+    // is a tab switch, not an app opening: no tile to grow out of (#2881),
+    // and no full-page fallback over the rail and header (#2880).
+    const viaTab = App._tabPress === true;
+    // THE LAST VISIT'S BOARD IS NOT THIS ONE'S FIRST FRAME (#2880). Leaving
+    // an app's Workshop for another tab hides #app-view with its Dev surfaces
+    // still mounted, and AppView.close() marks their data stale. Revealed
+    // as-is, coming back painted that old board for a frame, then the
+    // Workshop's loading skeleton once the stale data was noticed, then the
+    // board again: the page blinking out and back in. Retiring those roots as
+    // the view is revealed makes the skeleton the first frame, and
+    // renderDevView mounts the frame afresh. Only onto a Dev route and only
+    // from another screen: the App tab owns its own surface, and a view that
+    // is on screen is not stale.
+    //
+    // BEFORE the transition, not inside its callback: a View Transition (the
+    // phone's push) runs the callback frames later, by when switchTab may
+    // already have mounted this visit's board — which the callback would then
+    // tear down. The view is still hidden here, so nothing painted changes.
+    const staleDev = initialRoute.tab === 'dev' && !App._isScreenVisible('app-view');
+    const enter = () => PlatformUI.transition(() => {
       App._setScreenVisible('app-view', true);
+      // The bar leaves WITH the app arriving, not after it. `after` below
+      // runs _showOnlyScreen, which would sync it a transition later — and
+      // the kit captures the incoming page from what this callback did, so
+      // a bar still painted here rides the zoom in and then vanishes. The
+      // parked handle goes with it, for the same reason and the same frame:
+      // _syncPlatformTabs decides it too. On a route that lands on the app's
+      // own Workshop (`App.currentTab` is committed above) the bar stays up
+      // and so does the handle — that is a platform screen, not the app.
+      App._syncPlatformTabs('app-view');
       // Best-effort: returns false (and changes nothing) for anything whose
       // App tab wouldn't be a plain production iframe — self-hosted apps,
       // demo cards, non-running apps, an explicit non-app tab, offline.
       try { AppView.beginLaunch(slug, tab); } catch (err) { /* fall back to the plain path */ }
     }, {
-      type: App._entryTransition('zoom-in', appViewEl),
+      type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
       fromEl: () => App._tileFor(slug),
       // The outgoing screen: the kit hides it while measuring the
@@ -4802,6 +6615,11 @@ const App = {
       // this app would otherwise stay painted behind it.
       after: () => { App._showOnlyScreen('app-view'); },
     });
+    const reveal = () => {
+      if (staleDev) AppView._teardownDevRoots();
+      enter();
+    };
+    if (!viaTab) reveal();
     // Intentionally NOT setting the header to `slug` here. Slugs are
     // generated as `${name}-${randomHex}` (see routes/apps.js), so a
     // slug-as-placeholder shows up to users as something like
@@ -4826,6 +6644,27 @@ const App = {
     };
     App._appLoad = load;
     try {
+      // A TAB PRESS REVEALS A PAINTED PAGE (#2880). Revealed at once, as an
+      // app launch is, #app-view went on screen EMPTY: nothing draws into
+      // #app-content until this record lands and switchTab mounts the Dev
+      // frame, so the press cut from the tab you were on to a bare page and
+      // only then to the Workshop. The outgoing screen stays up instead while
+      // the record loads — a service-worker hit on the boot fast lane, a few
+      // milliseconds — and the reveal runs in the same task as the mount
+      // below (the awaits between them are microtasks, and the frame mounts
+      // under flushSync), so no frame is painted between them. Bounded: a
+      // record that is slow to come is not a reason for the press to seem
+      // ignored, and past the bound the view is revealed as it always was.
+      if (viaTab) {
+        await Promise.race([
+          load.promise,
+          new Promise((resolve) => setTimeout(resolve, App._TAB_REVEAL_WAIT_MS)),
+        ]);
+        // Somewhere else was asked for while this waited; that navigation
+        // owns the screen, and this one never showed.
+        if (App.currentApp !== slug || generation !== App._appNavigationGeneration) return false;
+        reveal();
+      }
       await load.promise;
     } finally {
       if (App._appLoad === load) App._appLoad = null;
@@ -4860,7 +6699,7 @@ const App = {
     // lineage. A particular dApp's SHA is intentionally not shown in the
     // platform-information footer.
     App.ImproveStatus.setAppOpen(true);
-    // Members & visibility moved from the drawer into the Dev tab's "+"
+    // Members & approvals moved from the drawer into the Dev tab's "+"
     // menu (#645) — AppView._plusMenuShowsMembers() is the single gate.
     // The App tab iframes appData.url, which doesn't resolve for the self-
     // hosted platform row (no per-slug subdomain). Land on the Dev forum
@@ -4882,7 +6721,16 @@ const App = {
     });
   },
 
-  navigateHome() {
+  // `opts.viaTab`: the Home TAB was pressed (features/nav/tab-bar.tsx), which
+  // swaps like any other tab press (#2881) — see _entryTransition. Every
+  // other caller (Back, an app's ✕, the logo) passes nothing and keeps the
+  // zoom back into the app's tile. Read strictly, because some callers are
+  // event listeners and hand an Event through.
+  navigateHome(opts) {
+    const viaTab = !!(opts && opts.viaTab === true);
+    // Home is never shown in the side panel: it is the top window's, and
+    // going there leaves the app.
+    if (App.embeddedPanel && window.UsernodeReact?.sidePanelEmbed?.forward?.('')) return;
     App.setChromeless(false);
     const leavingSlug = App.currentApp;
     // Iframe caveat (spec): View Transitions snapshot the outgoing
@@ -4897,6 +6745,7 @@ const App = {
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
     if (App._inBrowse) App._exitBrowse();
+    if (App._inWorkshop) App._exitWorkshop();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
     // hides the app view and clears its content — exactly once on
@@ -4929,7 +6778,7 @@ const App = {
       if (typeof Home !== 'undefined') Home.publishImproveTarget();
       App.setHeaderTitle('Homeroom');
     }, {
-      type: App._entryTransition('zoom-out', av),
+      type: App._entryTransition('zoom-out', av, viaTab),
       el: av,
       fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
       fallback: fallbackType,
@@ -4939,12 +6788,14 @@ const App = {
         // root on #app-content, so clear that root before blanking the node —
         // otherwise its store subscription and effects outlive the screen.
         AppView._teardownDevRoots();
-        // #1085 chunk H: and drop the React-owned app frame, for the same
-        // reason and at the same moment. It is unmounted HERE rather than in
+        // #1085 chunk H: and retire the React-owned app frame, for the same
+        // reason and at the same moment. It is retired HERE rather than in
         // AppView.close() (which runs in `fn`, at the START of the zoom)
         // precisely so the shrinking card keeps showing the app until it
         // lands — the same reason #app-content is blanked here and not there.
-        AppView._unmountAppFrame();
+        // Retired, not dropped (#2902): the app stays loaded, hidden, so
+        // opening it again shows it exactly as it was left.
+        AppView._retireAppFrame();
         const content = document.getElementById('app-content');
         if (content) content.innerHTML = '';
       },
@@ -4971,14 +6822,133 @@ const App = {
   // a message thread, a dev session) pass their own up-level hash. Because App._showOnlyScreen calls this
   // on EVERY screen change, there is no state in which the href can go
   // stale — same reasoning that makes the icon itself reliable.
+  // WHAT THE HEADER'S LEFT SLOT SHOWS, per screen — as a table, because the
+  // answer stopped being a two-way question when the tab bar landed (#2718).
+  //
+  // A TAB ROOT SHOWS NOTHING. Discover, Messages, Workshop and Me are reached
+  // by their own tab and the bar is on screen beside them, so a control in the
+  // corner that goes home is a second way to press a button already in view.
+  // It used to be the house, and the house used to be right: before the bar
+  // there was no other way out of these screens, which is what "every page
+  // should have a back or a home button, except Home" was about. Home has
+  // answered that for all five of them since the bar shipped.
+  //
+  // A SUB-PAGE SHOWS AN ARROW TO ITS TAB'S ROOT. Settings, Admin and the
+  // Leaderboard's three sections are reached FROM Me, and the app's own chat
+  // from Messages — so there is a level above, the chevron is honest about it,
+  // and it lands on the screen you came from rather than on Home.
+  //
+  // AN APP SHOWS THE ✕. Leaving an app is stepping out of somebody's program,
+  // not going up a level (see _showOnlyScreen).
+  //
+  // THIS TABLE HAS TO AGREE WITH TAB_FOR_SCREEN in
+  // frontend/src/features/nav/nav-store.js, which decides which tab lights up
+  // for the same screen. Two tables saying one thing is a thing that rots, so
+  // tests/header-back-home.test.js pins them against each other: every screen
+  // the map calls a root is listed here as a root, and every screen it maps to
+  // a tab it is not the root of is listed here with that tab's address.
+  _BACK_SLOT: {
+    'home-screen': ['none'],
+    'browse-screen': ['none'],
+    'messages-screen': ['none'],
+    'workshop-screen': ['none'],
+    'profile-screen': ['none'],
+    'app-view': ['close'],
+    'global-chat-screen': ['arrow', '#messages'],
+    'agent-session-screen': ['arrow', '#messages'],
+    'leaderboard-screen': ['arrow', '#profile'],
+    'settings-screen': ['arrow', '#profile'],
+    'admin-screen': ['arrow', '#profile'],
+  },
+
+  // The slot for a screen, as setBackIcon's own arguments. Anything off the
+  // table keeps the house: the auth screens are outside the tab bar entirely,
+  // and a screen nobody has classified is better off offering a way out than
+  // nothing at all.
+  _backSlotFor(revealId) {
+    const slot = App._BACK_SLOT[revealId];
+    if (!slot) return ['home'];
+    if (revealId === 'app-view') {
+      // THE DISCUSSION IS A LEVEL INSIDE MESSAGES, not a program to step out
+      // of (#2718 review, twice). `/app/<slug>/dev/chat` is a ROW IN THE
+      // INBOX — that is why the Workshop stopped offering it — so its slot is
+      // a chevron up to Messages.
+      //
+      // _repaintDevBody's chat branch already published exactly that, and it
+      // was not enough: navigateToApp reveals #app-view through
+      // PlatformUI.transition, whose `after` callback runs _showOnlyScreen,
+      // which runs this. So two writers RACED for the slot, and the ✕ to the
+      // Workshop won often enough to be reported as "clicking back goes to
+      // the workshop" — "for some reason", because the reason was which
+      // callback the transition happened to run last. (The note in
+      // _showOnlyScreen saying navigateToApp never comes through it is about
+      // the reveal, not about `after`.) The fix is the one this file
+      // already states for setBackIcon's two writers: THE TWO HAVE TO AGREE. Both now say
+      // the same thing, so the order stopped mattering.
+      //
+      // A DEV SESSION IS ONE TOO (#2770): a change is an agent conversation,
+      // a row under Messages → Agents, so it gets the same chevron. The
+      // header resolves its destination from the session's captured origin
+      // first (features/header/platform-header.tsx), and Messages otherwise.
+      if (App._isMessagesThread()) return ['arrow', '#messages'];
+      // THE CHANNEL hangs off its project's hub (see _isChannelThread).
+      if (App._isChannelThread()) return ['arrow', App._hubHref(App.currentApp)];
+      // AN APP'S WORKSHOP IS NOT AN APP TO STEP OUT OF — any app's (#2740
+      // review), not only the platform's own (#2799). The ✕ is the RUNNING
+      // app's control; on the `dev` tab #app-view is the platform's Workshop
+      // for the app, a platform screen with the rail beside it and the
+      // Workshop tab lit, and its corner is empty like the Workshop screen's.
+      // The way back into the app from there is the parked strip and the
+      // rail's Recents (#2761). This used to publish the ✕ for every
+      // non-thread route, so the Workshop reached from the Workshop tab wore
+      // a "Close app" ✕ that OPENED the app, and the same Workshop reached
+      // from the mark's menu wore a ‹ to it (the header's up-link). A card
+      // opened in the Workshop still has its way back to the Workshop, and
+      // since #2916 that is the "‹ Workshop" chip at the top of the page
+      // (features/dev-board/topic/topic-back.tsx), not an arrow in this slot:
+      // the header derives 'none' for a topic route itself
+      // (features/header/platform-header.tsx).
+      //
+      // Homeroom's own row has no App tab at all — switchTab coerces one to
+      // the Workshop — so it is never the running app. _repaintDevBody
+      // publishes the same 'none', and the two writers have to agree (see
+      // above).
+      if (App.currentTab !== 'app' || App._selfHostedRoute()) return ['none'];
+      // The ✕'s DESTINATION is the page the app was opened from (App.closeApp
+      // traverses back to it; this is the href a modified click follows), and
+      // Home when there is none. The table holds the glyph; this holds the
+      // address.
+      return ['close', App._closeAppHref()];
+    }
+    return slot;
+  },
+
+  // Whether the app on screen is the platform itself (a self-hosted row).
+  // AppView.appData answers once the app's record has loaded; before that —
+  // navigateToApp's transition runs _showOnlyScreen before AppView.open
+  // resolves — the launcher's cached row does, the same record navigateToApp
+  // reads to send this app to its Workshop in the first place.
+  _selfHostedRoute() {
+    const slug = App.currentApp;
+    if (!slug) return false;
+    try {
+      const rec = (typeof AppView !== 'undefined'
+        && ((AppView.appData?.slug === slug ? AppView.appData : null)
+          || AppView.launchRecordFor?.(slug))) || null;
+      return !!rec?.self_hosted;
+    } catch (_) { return false; }
+  },
+
   setBackIcon(mode, href) {
     const arrow = mode === 'arrow';
-    // THREE modes now (features/header/back-button-store.js): 'arrow' is a
-    // level up, 'home' is the house, and 'none' hides the slot outright.
-    // Home and the top-level Browse list use 'none' for their shared root
-    // header (#1569). Other screens keep the default Home button, or an arrow
-    // when they have a level above them.
-    const slot = arrow ? 'arrow' : (mode === 'none' ? 'none' : 'home');
+    // FOUR modes now (features/header/back-button-store.js): 'arrow' is a
+    // level up, 'home' is the house, 'close' is the ✕ that steps out of an
+    // app, and 'none' hides the slot outright. Home and the top-level Browse
+    // list use 'none' for their shared root header (#1569). Other screens keep
+    // the default Home button, or an arrow when they have a level above them.
+    const slot = arrow ? 'arrow'
+      : mode === 'close' ? 'close'
+        : (mode === 'none' ? 'none' : 'home');
     const target = href || (window.NavLink ? NavLink.homeHref() : '/');
     // The slot is React's (features/header/platform-header.tsx), so its
     // appearance is PUBLISHED, not written: a rendered className belongs to
@@ -5010,8 +6980,13 @@ const App = {
       // group collapses with it.
       btn.classList.toggle('hidden', slot === 'none');
       btn.setAttribute('href', target);
-      document.getElementById('back-icon-arrow')?.classList.toggle('hidden', !arrow);
-      document.getElementById('back-icon-home')?.classList.toggle('hidden', arrow);
+      // FOUR slots, three glyphs. Exactly one is shown and the other two are
+      // hidden — spelled as a comparison per glyph rather than as `!arrow`,
+      // which was right while there were two of them and silently draws the
+      // house for 'close'.
+      document.getElementById('back-icon-arrow')?.classList.toggle('hidden', slot !== 'arrow');
+      document.getElementById('back-icon-home')?.classList.toggle('hidden', slot !== 'home');
+      document.getElementById('back-icon-close')?.classList.toggle('hidden', slot !== 'close');
     }
   },
 
@@ -5054,7 +7029,7 @@ const App = {
   // file already joins title fragments with elsewhere.
   setHeaderTitle(text, subtitle) {
     // Streamlined Concept: #header-title is React-owned now
-    // (frontend/src/features/header/app-switcher-chip.tsx renders it as the
+    // (frontend/src/features/header/header-title.tsx renders it as the
     // tappable app-context tab), so the text goes through the bridge into
     // header-title-store — never a direct textContent write, which React
     // would reconcile away.
@@ -5098,6 +7073,14 @@ const App = {
     if (tab !== 'dev') return { tab: 'app', subTab: null, ref: null };
 
     if (subTab === 'sessions') {
+      // #2241: `new` is the one session ref that is a WORD rather than an
+      // id — /app/<slug>/dev/sessions/new is the change you have not sent
+      // yet, which has no row and therefore no id to be addressed by. It
+      // needs a route of its own precisely because of the line below: a
+      // session sub-tab with no ref normalizes to the card list, so a
+      // screen with nothing to name could not be navigated to at all.
+      // DevChat.NEW_SESSION_REF holds the only other copy of this literal.
+      if (ref === 'new') return { tab: 'dev', subTab: 'sessions', ref: 'new' };
       const id = (ref && typeof ref === 'object') ? ref.id : parseInt(ref, 10);
       // No session id → the card list (there is no session-list screen).
       return Number.isInteger(id) && id > 0
@@ -5145,6 +7128,11 @@ const App = {
       subTab = 'forum';
       ref = null;
     }
+    // The side panel never runs an app: the App tab is the one beside it.
+    if (tab === 'app' && App.embeddedPanel) {
+      App._forwardAppTab(App.currentApp, 'app');
+      return false;
+    }
     // #771: a docked staging preview is pinned to the dev-chat session
     // layout, which every tab switch re-renders or unmounts — close it.
     // (A fullscreen preview keeps floating above the tabs, as before.)
@@ -5155,16 +7143,36 @@ const App = {
       if (typeof DevChat !== 'undefined' && DevChat.stagingPanel) DevChat.stagingPanel.open = false;
       AppView.closeStagingOverlay();
     }
+    // THE APP'S WORKSHOP HANDING OVER TO THE RUNNING APP — the parked strip's
+    // Resume, a Recents row, About's Open. The Workshop page on screen (the
+    // board, a card, a thread) is what the ✕ returns to, so it is noted before
+    // this switch writes the app's own address. navigateToApp's tail
+    // (`replaceRoute`) is the same arrival it already noted.
+    if (tab === 'app' && App.currentTab !== 'app' && !options?.replaceRoute) {
+      App._noteAppReturn(App.currentApp);
+    }
     // #621: the Dev mode is visible to non-collaborators too, read-only
     // (see AppView.readOnly).
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
+    if (tab !== 'app') AppView._stopStatusPolling?.();
     // The `.app-mode-seg` repaint that used to sit here went with the switch
     // itself. There IS a control reflecting the active tab again — the
     // App/Feed/Kanban toggle (#1367) — but it is React-rendered from the
     // Improve store, so this publishes the fact instead of repainting a node:
     // one owner for the attribute, which is the whole ownership rule.
     window.Improve?.setTab(tab, App.currentSubTab);
+    // AND THE RAIL, which is up on the app's Workshop and down on the app
+    // itself (see _syncPlatformTabs). This hop is the only way to cross that
+    // line without a screen reveal, so it is the only other place that has to
+    // say so — and the parked handle crosses it with the rail: the app to its
+    // Workshop parks the app, the way back clears it (#2762). It is also the
+    // re-assertion that gives a cold deep link's capture its name and icon,
+    // since navigateToApp calls this once the app's record has loaded.
+    // Guarded on the app view actually being on screen: switchTab is
+    // app-scoped, and publishing `app-view` as the current screen from
+    // anywhere else would light no tab and lose the one that is lit.
+    if (App._isScreenVisible?.('app-view')) App._syncPlatformTabs('app-view');
 
     // Leaving the Sessions sub-tab. The cross-app active-sessions POLL used
     // to be torn down here; it and the panel it drove are retired (#1367),
@@ -5187,7 +7195,13 @@ const App = {
       // The session screen's ← is renderDevView's; leaving Dev for the app
       // itself must take it back down (sub-view hops never pass
       // _showOnlyScreen, the usual owner of this reset).
-      App.setBackIcon('home');
+      //
+      // THE ✕, not the house: this is still inside the app, and the slot an
+      // app shows is the close button (#2718). It said 'home' because that was
+      // the default for everything that was not Home, and the reset was
+      // written before an app had a slot of its own. Its href is where
+      // App.closeApp goes: the page the app was opened from.
+      App.setBackIcon('close', App._closeAppHref());
       AppView.renderAppTab();
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);
@@ -5206,6 +7220,65 @@ const App = {
     if (AppView.scheduleSafeAreaBroadcast) AppView.scheduleSafeAreaBroadcast();
 
     App.updateHash({ replace: !!options?.replaceRoute, ref });
+    if (tab === 'app') App._pinAppReturn();
+  },
+
+  // The side-panel route for an app-tab request, or null for the App tab
+  // itself: the same serializer the address bar uses (_appUrl), less the
+  // query and the leading slash — `app/<slug>/dev/proposals/12`,
+  // `app/<slug>/workshop`, `app/<slug>/dev/sessions/new`.
+  _panelRouteFor(slug, tab, ref, subTab) {
+    const norm = App._normalizeTab(tab, ref, subTab);
+    if (norm.tab !== 'dev') return null;
+    const url = App._appUrl(slug, 'dev', norm.ref, norm.subTab, { boardView: 'workshop' });
+    return String(url || '').split('?')[0].replace(/^\/+/, '') || null;
+  },
+
+  // THE SIDE PANEL'S DOCUMENT NEVER RUNS AN APP. An App tab requested in
+  // there — a Workshop's "open the app", a link to /app/<slug> — goes to the
+  // top window, where the app beside the panel runs: nothing to do when it is
+  // that app, and another app REPLACES it there, keeping the panel. Returns
+  // true when the request was an App tab (and so is not this document's to
+  // run, whether or not the top window could be reached), false for a Workshop
+  // page this document shows itself.
+  _forwardAppTab(slug, tab, ref, subTab) {
+    if (!App.embeddedPanel || !slug) return false;
+    let wanted = tab;
+    if (!wanted) {
+      let rec = null;
+      try { rec = AppView.launchRecordFor?.(slug) || null; } catch (_) { rec = null; }
+      wanted = rec?.self_hosted ? 'dev' : 'app';
+    }
+    if (App._normalizeTab(wanted, ref, subTab).tab !== 'app') return false;
+    try {
+      window.UsernodeReact?.sidePanelEmbed?.openApp?.(slug);
+    } catch (_) { /* a top window we cannot reach: still not ours to run */ }
+    return true;
+  },
+
+  // THE SIDE PANEL, asked by openAppTab before it navigates
+  // (frontend/src/features/side-panel/). Undefined lets openAppTab go on
+  // exactly as before; anything else is what openAppTab returns.
+  //   - In the TOP document, while an app runs on its App tab, a Workshop
+  //     page — a proposal, an issue, a change, the discussion — that a
+  //     notification, a desktop alert or any other caller opens goes to a
+  //     panel BESIDE the app instead of replacing it (true). `take` says no
+  //     whenever that is not the moment: a phone-width window, no app on
+  //     screen, chromeless.
+  //   - In the panel's OWN document a Workshop page opens right here, and an
+  //     App tab is the running app's, beside the panel (false).
+  _openAppTabInPanel(slug, tab, opts) {
+    const ref = opts && opts.sessionId != null ? opts.sessionId
+      : (opts && opts.ref != null ? opts.ref : null);
+    const subTab = (opts && opts.subTab) || null;
+    if (App.embeddedPanel) {
+      if (App._normalizeTab(tab, ref, subTab).tab !== 'app') return undefined;
+      App._forwardAppTab(slug, 'app');
+      return false;
+    }
+    const panelRoute = App._panelRouteFor(slug, tab, ref, subTab);
+    if (panelRoute && window.UsernodeReact?.sidePanel?.take?.(panelRoute)) return true;
+    return undefined;
   },
 
   // Explicit navigation entry point for in-app deep links (e.g. clicking
@@ -5217,6 +7290,9 @@ const App = {
   // app/tab dispatch, plus a force-rerender branch for same app+tab.
   openAppTab(slug, tab, opts) {
     if (!slug) return;
+    // The side panel beside a running app, or the panel's own document, first.
+    const inPanel = App._openAppTabInPanel(slug, tab, opts);
+    if (inPanel !== undefined) return inPanel;
     // This entry point always means the ordinary platform view. In particular,
     // the chromeless pill calls it while App.chromeless is still true; clear
     // that flag before switchTab serializes the destination or it would write
@@ -5308,6 +7384,20 @@ App._applyBootScreen = function _applyBootScreen() {
   if (!target || target === 'home-screen') return;
   App._revealBootScreen('home-screen', false);
   App._revealBootScreen(target, true);
+  // The tab bar's cold-boot answer, published for the same reason the screen
+  // roots' is: a bar that paints on a deep link into an app and is taken away
+  // by the router a moment later is a flash on the route people arrive on
+  // most. VISIBILITY ONLY — the store, not the class, because unlike the
+  // roots above this element is new markup that no prerendered document
+  // carries a `hidden` on, so React's first render and the document agree by
+  // construction and the island's layout effect applies the class before the
+  // first paint. Which TAB is lit is deliberately NOT set here: the bridge
+  // that carries it is installed by the bundle, which has not evaluated yet,
+  // and lighting a tab before hydration would be a first render that
+  // disagrees with the prerender.
+  if (target === 'app-view' || target.startsWith('auth-')) {
+    App.Visibility.publish('platform-tabs', false);
+  }
 };
 
 /**
@@ -5375,6 +7465,8 @@ App._bootScreenFor = function _bootScreenFor(hash, pathname, signedIn) {
     case 'settings': return 'settings-screen';
     case 'admin': return 'admin-screen';
     case 'messages': return 'messages-screen';
+    case 'chat': return 'global-chat-screen';
+    case 'agent': return 'agent-session-screen';
     case 'leaderboard': return 'leaderboard-screen';
     default: return null;                    // #notifications is a sheet over home
   }

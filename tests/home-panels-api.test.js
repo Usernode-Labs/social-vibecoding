@@ -45,9 +45,10 @@ function makeMockPool(state) {
   const pool = {
     async query(rawSql, params = []) {
       const sql = collapse(rawSql);
-      // These pre-onboarding fixtures contain no introductory definitions.
-      // Progression with a real catalog is exercised in challenge-onboarding.
-      if (sql.startsWith('/* challenge onboarding */')) return { rows: [] };
+      // Most fixtures contain no introductory definitions. Progression with a
+      // real catalog is exercised in challenge-onboarding; `onboardingRows`
+      // (loadOnboarding's rows) is here for the locked count's contract.
+      if (sql.startsWith('/* challenge onboarding */')) return { rows: state.onboardingRows || [] };
       calls.push({ sql, params });
 
       // Model legacy stored preferences to catch accidental reads or writes.
@@ -72,7 +73,13 @@ function makeMockPool(state) {
         // may declare `allRows` (what the season really has) separately
         // from `rows` (the capped page the row query returns). Defaults to
         // `rows` when a test doesn't care about the difference.
-        const all = state.allRows || state.rows || [];
+        //
+        // While setup gates the season the gate rides in the FILTERs ($3,
+        // the onboarding ids) over the unrestricted set, and `hidden_count`
+        // is the open rows outside it. Only the locked statement has it.
+        const gate = sql.includes('AS hidden_count') ? params[2].map(Number) : null;
+        const every = state.allRows || state.rows || [];
+        const all = gate ? every.filter((r) => gate.includes(Number(r.id))) : every;
         const isDone = (r) => Number(r.my_activity_count) > 0;
         const total = state.total != null ? state.total : all.length;
         return {
@@ -86,6 +93,7 @@ function makeMockPool(state) {
             // array_agg(COALESCE(c.reward, ct.reward)) FILTER (NOT done)
             open_rewards: all.filter((r) => !isDone(r))
               .map((r) => (r.reward != null ? r.reward : r.t_reward)),
+            ...(gate ? { hidden_count: every.length - all.length } : {}),
           }],
         };
       }
@@ -147,7 +155,7 @@ function row(over = {}) {
     t_goal: 'Template goal', t_task: 'Template task', t_reward: '250 pts',
     t_cta_label: null, t_cta_link: null,
     t_metric_type: null, t_metric_target: null, t_metric_label: null,
-    t_schedule_start: null, t_schedule_end: null,
+    t_schedule_start: null, t_schedule_end: null, t_illustration: null, t_illustration_tone: null,
     my_activity_count: 0, my_points: 0, my_blocks: null,
     ...over,
   };
@@ -269,6 +277,12 @@ test("resolveProgress: 'blocks_produced' reads the snapshot, not the ledger", ()
   );
 });
 
+test('buildChallengeRow: carries the event id a Home card deep-links with', () => {
+  assert.equal(buildChallengeRow(row({ season_event_id: '42' })).season_event_id, 42,
+    'with the challenge id it addresses #leaderboard/challenges/<event>/<challenge>');
+  assert.equal(buildChallengeRow(row({ season_event_id: null })).season_event_id, null);
+});
+
 test('buildChallengeRow: the challenge row overrides the template per field', () => {
   const built = buildChallengeRow(row({
     goal: 'Challenge goal',
@@ -302,6 +316,24 @@ test('buildChallengeRow: no cta_link means no cta, and a missing category is OTH
   const built = buildChallengeRow(row({ t_category: null }));
   assert.equal(built.cta, null);
   assert.equal(built.label, 'OTHER');
+});
+
+test('buildChallengeRow: passes the template\'s illustration slug through, null when it has none', () => {
+  assert.equal(buildChallengeRow(row({ t_illustration: 'block-production' })).illustration, 'block-production');
+  assert.equal(buildChallengeRow(row()).illustration, null);
+  assert.equal(buildChallengeRow(row({ t_illustration: undefined })).illustration, null,
+    'a row without the column still carries the key, so the client sees one shape');
+});
+
+test('buildChallengeRow: carries an uploaded illustration\'s tone, null for a built-in slug or none', () => {
+  const slug = `u-${'d'.repeat(32)}`;
+  const built = buildChallengeRow(row({ t_illustration: slug, t_illustration_tone: 'coral' }));
+  assert.equal(built.illustration, slug);
+  assert.equal(built.illustration_tone, 'coral');
+  assert.equal(buildChallengeRow(row({ t_illustration: 'block-production' })).illustration_tone, null);
+  assert.equal(buildChallengeRow(row()).illustration_tone, null);
+  assert.equal(buildChallengeRow(row({ t_illustration_tone: undefined })).illustration_tone, null,
+    'a row without the column still carries the key');
 });
 
 test('the registry is ordered and carries the challenges panel', () => {
@@ -361,14 +393,21 @@ test('GET /api/home-panels: the open-challenge filter is in the SQL, both querie
   assert.match(rowQuery.sql, /\(\s*c\.completed = FALSE[\s\S]*?\) AS is_open/, 'and whether it is open now');
 });
 
-test('GET /api/home-panels: rows are capped and totals report the real count', async () => {
-  const rows = Array.from({ length: 8 }, (_, i) => row({ id: i + 1, display_order: i + 1 }));
+// S10: THE ROW CAP IS THE CLIENT'S. A challenge's group is only settled after
+// the query, so the server cannot pick the four the block draws: it sends the
+// collapsed scope whole (up to CHALLENGE_EXPANDED_LIMIT) and HomePanels orders,
+// groups and slices it the Challenges tab's way.
+test('GET /api/home-panels: the collapsed rows come back whole, and totals report the real count', async () => {
+  const rows = Array.from({ length: 8 }, (_, i) => row({ id: i + 1, display_order: i + 1, featured: i === 5 }));
   const { app } = makeApp({ season: SEASON, rows }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   const panel = body.panels[0];
-  assert.equal(panel.challenges.length, 4,
-    'four 44px rows is what fits under the two-app-row height cap');
+  assert.equal(panel.challenges.length, 8, 'every row: the client draws four of them');
   assert.equal(panel.total, 8, 'so the client can say "See all 8 challenges"');
+  // The tab's in-group sort keys after done-ness, additive on the row.
+  assert.deepEqual(panel.challenges.map((c) => c.display_order), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual(panel.challenges.map((c) => c.featured),
+    [false, false, false, false, false, true, false, false]);
 });
 
 test('GET /api/home-panels: done/earned come from the viewer\'s own ledger rows', async () => {
@@ -388,6 +427,8 @@ test('GET /api/home-panels: done/earned come from the viewer\'s own ledger rows'
 });
 
 test('GET /api/home-panels: ordering is not-done-first, then featured, then display order', async () => {
+  // The client re-sorts the rows the Challenges tab's way (HomePanels.orderRows,
+  // S10); this ORDER BY only decides which rows survive the 40-row ceiling.
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   await get(app, '/api/home-panels');
   const rowQuery = calls.find((c) => c.sql.includes('FROM challenges c')
@@ -435,6 +476,24 @@ test('GET /api/home-panels: the query\'s done verdict wins over recomputation', 
   const ch = body.panels[0].challenges[0];
   assert.equal(ch.progress.done, false, 'a 3-of-8 row is not done');
   assert.deepEqual(ch.progress, { done: false, current: 3, target: 8 });
+});
+
+test('GET /api/home-panels: a row carries the organiser completed flag beside the viewer done', async () => {
+  // HomePanels.orderDone sorts cards outside Get started on `completed`, as
+  // the tab does; the check mark stays the viewer's `progress.done`.
+  const rows = [
+    row({ id: 1, completed: true, my_done: false }),
+    row({ id: 2, completed: false, my_activity_count: 1, my_done: true }),
+    row({ id: 3, completed: null }),
+  ];
+  const { app } = makeApp({ season: SEASON, rows }, { user: USER });
+  const { body } = await get(app, '/api/home-panels');
+  const byId = new Map(body.panels[0].challenges.map((c) => [c.id, c]));
+  assert.equal(byId.get(1).completed, true);
+  assert.equal(byId.get(1).progress.done, false);
+  assert.equal(byId.get(2).completed, false);
+  assert.equal(byId.get(2).progress.done, true);
+  assert.equal(byId.get(3).completed, false, 'only a real true');
 });
 
 test('GET /api/home-panels: a challenge whose template vanished is skipped, not fatal', async () => {
@@ -500,7 +559,7 @@ test('GET /api/home-panels: prose in an OFF-page open reward still withholds the
   assert.equal(body.panels[0].points_remaining, null);
 });
 
-test('the totals query asks for the open rewards, and the row query is capped at 4', async () => {
+test('the totals query asks for the open rewards, and the row query asks for up to 40 rows', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   await get(app, '/api/home-panels');
   const totals = calls.find((c) => c.sql.includes('AS all_total'));
@@ -514,14 +573,15 @@ test('the totals query asks for the open rewards, and the row query is capped at
   assert.doesNotMatch(outerWhere, /c\.completed = FALSE/,
     'the outer WHERE is the expanded scope; open-only lives in the FILTERs');
   const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
-  // Four 40px rows is what fits the DESKTOP tile under --home-panel-max-h;
-  // the footer reads "See all N" when total exceeds it. The phone shape draws
-  // only two of them (#968) but the server still sends four: it has no idea
-  // what viewport is asking, and sending the desktop budget is what lets a
-  // window dragged across 640px repaint from cache with no refetch.
-  assert.equal(rowQuery.params[2], 4);
+  // The block still draws four rows (HomePanels.ROW_SLOTS), but WHICH four is
+  // the Challenges tab's order, which the client settles after the query
+  // (S10). So the collapsed query asks for the expanded list's ceiling, and
+  // the four-row CHALLENGE_ROW_LIMIT is gone.
+  assert.equal(rowQuery.params[2], 40);
   const route = read('src/routes/home-panels.js');
-  assert.match(route, /const CHALLENGE_ROW_LIMIT = 4;/);
+  assert.match(route, /const CHALLENGE_EXPANDED_LIMIT = 40;/);
+  assert.match(route, /const rowLimit = CHALLENGE_EXPANDED_LIMIT;/);
+  assert.doesNotMatch(route, /const CHALLENGE_ROW_LIMIT\b/);
 });
 
 test('GET /api/home-panels: legacy hidden preferences never suppress fixed sections', async () => {
@@ -551,11 +611,43 @@ test('GET /api/home-panels: ?demo=1 is a no-op outside staging', async () => {
   assert.equal(body.panels[0].demo, undefined);
 });
 
+// HomePanels as the browser runs it, for the demo payload's drawn rows: the
+// four-row cap and the tab's order are the client's (S10), so what the demo
+// route shows is only readable through it.
+function loadHomePanels() {
+  const vm = require('node:vm');
+  const { PANELS_SRC } = require('./helpers/home-modules');
+  const { installPanelsStore } = require('./helpers/home-grid-store');
+  const sandbox = {
+    console,
+    App: { user: { id: 1, isAdmin: false } },
+    document: {
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener: () => {},
+    },
+    fetch: async () => ({ ok: false, json: async () => ({}) }),
+    setTimeout, clearTimeout,
+    URLSearchParams,
+    location: { search: '', hash: '' },
+    Date,
+    addEventListener: () => {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  installPanelsStore(sandbox);
+  vm.runInContext(`${PANELS_SRC}\n;globalThis.__HP = HomePanels;`, sandbox);
+  return sandbox.__HP;
+}
+
 // The demo payload is what the before/after screenshots and the dapp.json
 // check actually render (/?demo=1), so the states a reviewer is meant to
 // compare have to survive the four-slot budget — not merely exist in the
-// fixture and fall off the bottom.
-test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async () => {
+// fixture and fall off the bottom. The budget is the client's (S10), so the
+// payload goes through HomePanels to see the four it draws.
+test('GET ?demo=1 in staging draws its unfinished rows first, then one finished row (#2490)', async () => {
   const prev = process.env.USERNODE_ENV;
   process.env.USERNODE_ENV = 'staging';
   let body;
@@ -567,27 +659,27 @@ test('GET ?demo=1 in staging spends its four slots on both kinds of DONE', async
   }
   const p = body.panels[0];
   assert.equal(p.demo, true);
-  assert.equal(p.challenges.length, 4, 'the collapsed block draws four rows');
+  assert.equal(p.challenges.length, 5, 'every open row, as the real builder sends them');
+  const out = loadHomePanels().visibleSlots({ key: 'challenges', ...p });
+  const drawn = [...out.rows];
+  assert.equal(drawn.length, 4, 'the collapsed block draws four rows');
 
-  // Not-done first (the client mirrors this order), then the two finished
-  // ones ADJACENT: a ✓ with no bar, and a ✓ over a bar filled end to end.
-  // Seeing the two kinds of "done" side by side is the point.
-  const done = p.challenges.filter((c) => c.progress.done);
-  assert.equal(done.length, 2);
-  assert.deepEqual(p.challenges.map((c) => !!c.progress.done),
-    [false, false, true, true], 'the done pair sits at the bottom, together');
-  const binaryDone = done.find((c) => !c.metric);
-  const numericDone = done.find((c) => c.metric);
-  assert.ok(binaryDone, 'a finished BINARY challenge (✓, no bar)');
-  assert.ok(numericDone, 'a finished NUMERIC challenge (✓ over a full bar)');
-  assert.equal(numericDone.progress.current, numericDone.progress.target,
-    'full target, or the bar is not full and the state is not the one being shown');
+  // #2490: This week, Always open and Season challenges each give their
+  // unfinished row, and the one slot left goes to a finished row, which the
+  // block draws last, under its Done header.
+  assert.deepEqual(drawn.map((c) => c.id), [900512, 900510, 900513, 900511]);
+  assert.deepEqual(drawn.map((c) => !!c.progress.done), [false, false, false, true],
+    'no finished row above an unfinished one');
+  assert.equal(out.doneFrom, 3, 'the finished fill starts at the fourth row');
 
-  // And a part-filled numeric is still up top, so "in progress" and
-  // "finished" are both readable in one shot.
-  const partial = p.challenges.find((c) => c.metric && !c.progress.done
+  // Every state the rail draws is still on screen in one shot: part-filled,
+  // not started, the empty counted track, and finished.
+  const partial = drawn.find((c) => c.metric && !c.progress.done
     && c.progress.current > 0);
   assert.ok(partial, 'the part-filled bar keeps its slot');
+  assert.ok(drawn.some((c) => !c.metric && !c.progress.done), 'a yes-or-no challenge not started');
+  assert.ok(drawn.some((c) => c.metric && c.progress.current === 0), 'the empty 0-of-5 track');
+  assert.ok(!drawn.some((c) => c.id === 900516), 'the finished numeric is the row past the cap');
   assert.equal(p.done, 2, 'the header counter agrees with the glyphs');
 });
 
@@ -603,6 +695,76 @@ test('POST visibility is retired and never mutates saved preferences', async () 
   }
   assert.deepEqual(state.hidden, hidden);
   assert.equal(calls.length, 0);
+});
+
+// ─── Onboarding gate: the locked count ───────────────────────────────
+//
+// While the season's three setup steps are unfinished, Home shows only those
+// steps and a dashed "N challenges locked" placeholder. N is the additive
+// `onboarding.hidden_count`: the season's OPEN challenges the gate hides,
+// counted by the totals statement, never by the capped row page.
+
+// loadOnboarding's rows for setup steps 1-3; one activity each finishes them.
+const onboardingRows = (activityCount) => [1, 2, 3].map((id) => ({
+  id, season_event_id: 100, challenge_template_id: id + 100, display_order: id,
+  enabled: true, completed: false, schedule_start: null, schedule_end: null,
+  metric_type: null, metric_target: null, activity_count: activityCount,
+  completion_recorded: false, blocks: null,
+}));
+
+test('GET /api/home-panels: while setup gates the season, onboarding carries hidden_count', async () => {
+  // Ten open challenges, three of them the setup steps: seven are hidden,
+  // more than the setup rows the page carries, so a count taken from the rows would lie.
+  const allRows = Array.from({ length: 10 }, (_, i) => row({ id: i + 1, display_order: i + 1 }));
+  for (const url of ['/api/home-panels', '/api/home-panels?expand=challenges']) {
+    const { app, calls } = makeApp(
+      { season: SEASON, rows: allRows.slice(0, 3), allRows, onboardingRows: onboardingRows(0) },
+      { user: USER }
+    );
+    const { body } = await get(app, url);
+    const panel = body.panels[0];
+    assert.deepEqual(panel.onboarding,
+      { total: 3, completed: 0, unlocked: false, event_id: 100, hidden_count: 7 },
+      `${url}: the summary is unchanged apart from the additive count`);
+    assert.equal(panel.total, 3, `${url}: total still counts only the setup steps`);
+    assert.deepEqual(panel.challenges.map((c) => c.id), [1, 2, 3]);
+
+    const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
+    const totals = calls.find((c) => c.sql.includes('AS all_total'));
+    assert.match(rowQuery.sql.slice(rowQuery.sql.lastIndexOf('WHERE se.season_id')),
+      /AND c\.id = ANY\(\$4::bigint\[\]\)/, `${url}: the rows stay gated`);
+    assert.deepEqual(totals.params, [USER.id, SEASON.id, [1, 2, 3], []]);
+    // The totals statement reads the unrestricted season and gates each
+    // aggregate, which is what lets it see the challenges it hides.
+    const outerWhere = totals.sql.slice(totals.sql.lastIndexOf('WHERE se.season_id'));
+    assert.doesNotMatch(outerWhere, /c\.id = ANY/, `${url}: the outer WHERE is unrestricted`);
+    assert.match(totals.sql, /COUNT\(\*\) FILTER \(WHERE c\.id = ANY\(\$3::bigint\[\]\)\)::int AS all_total/);
+    // Hidden means open and not a setup step, in the collapsed scope even
+    // when the block is expanded.
+    const end = totals.sql.indexOf('AS hidden_count');
+    const hidden = totals.sql.slice(totals.sql.lastIndexOf('COUNT(*) FILTER', end), end);
+    assert.match(hidden, /c\.completed = FALSE/, `${url}: hidden counts open challenges`);
+    assert.match(hidden, /COALESCE\(c\.schedule_end, ct\.schedule_end/);
+    assert.match(hidden, /AND NOT \(c\.id = ANY\(\$3::bigint\[\]\)\)\)::int $/);
+  }
+});
+
+test('GET /api/home-panels: unlocked or without setup steps, there is no hidden_count', async () => {
+  const allRows = Array.from({ length: 10 }, (_, i) => row({ id: i + 1, display_order: i + 1 }));
+  const { app, calls } = makeApp(
+    { season: SEASON, rows: allRows, allRows, onboardingRows: onboardingRows(1) },
+    { user: USER }
+  );
+  const { body } = await get(app, '/api/home-panels');
+  assert.deepEqual(body.panels[0].onboarding,
+    { total: 3, completed: 3, unlocked: true, event_id: 100 });
+  const totals = calls.find((c) => c.sql.includes('AS all_total'));
+  assert.doesNotMatch(totals.sql, /hidden_count/, 'unlocked, the totals statement is what it was');
+  assert.match(totals.sql, /COUNT\(\*\)::int AS all_total/);
+
+  const { app: plain } = makeApp({ season: SEASON, rows: allRows, allRows }, { user: USER });
+  const { body: plainBody } = await get(plain, '/api/home-panels');
+  assert.equal(plainBody.panels[0].onboarding, undefined);
 });
 
 // ─── Expand mode ──────────────────────────────────────────────────────
@@ -646,11 +808,11 @@ const openNarrowing = (calls) => {
   ];
 };
 
-test('GET without expand keeps the strict open filter and the 4-row cap', async () => {
+test('GET without expand keeps the strict open filter, and leaves the four-row cap to the client', async () => {
   const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   for (const sql of openNarrowing(calls)) assert.match(sql, /c\.completed = FALSE/);
-  assert.equal(calls.find((c) => c.sql.includes('LIMIT $3')).params[2], 4);
+  assert.equal(calls.find((c) => c.sql.includes('LIMIT $3')).params[2], 40);
   assert.equal(body.panels[0].expanded, false);
 });
 
@@ -792,18 +954,77 @@ test('demoChallengesPanel: the few / none variants, and no standings preview', (
   assert.equal(none.season, null);
   assert.equal(none.leaderboard, undefined);
 
-  // No variant → the four-row default.
+  // No variant → the default: every open row (five), of which the client
+  // draws four.
   const base = demoChallengesPanel({ username: 'tester' });
-  assert.equal(base.challenges.length, 4);
+  assert.equal(base.challenges.length, 5);
+  const HP = loadHomePanels();
+  assert.equal(HP.challengesView({ key: 'challenges', ...base }).rows.length, 4);
   assert.equal(base.total, 7);
   // Four drawn of seven, so the default demo route KEEPS the toggle — the
   // other half of the #1824 pair the checks navigate to.
   assert.equal(base.all_total, 7);
   assert.equal(demoChallengesPanel({ expanded: true, username: 'tester' }).all_total, 7);
   assert.equal(base.leaderboard, undefined);
+  // The two #1824 checks, as the client decides them: the default route draws
+  // the toggle, the `few` route does not.
+  assert.equal(HP.challengesView({ key: 'challenges', ...base }).expandable, true);
+  assert.equal(HP.challengesView({ key: 'challenges', ...few }).expandable, false);
 
   // An unknown value falls through to that default rather than erroring.
-  assert.equal(demoChallengesPanel({ variant: 'wat' }).challenges.length, 4);
+  assert.equal(demoChallengesPanel({ variant: 'wat' }).challenges.length, 5);
+});
+
+// /?demo=1 is where the card artwork is reviewed (and dapp.json's check looks
+// for it), so the demo rows carry slugs the client registry actually draws —
+// and one of the four collapsed rows carries none, so the kind-icon fallback
+// is on the same screen.
+test('demoChallengesPanel: registry artwork on the rows, with one fallback in the collapsed four', () => {
+  const { demoChallengesPanel } = require('../src/routes/home-panels');
+  const registry = read('frontend/src/lib/challenge-illustrations.ts');
+  const members = new Set([...registry.matchAll(/^\s*'([a-z0-9-]+)': \{ label:/gm)].map((m) => m[1]));
+  assert.ok(members.size >= 9, 'the registry keys parse out of the source');
+
+  const all = demoChallengesPanel({ expanded: true, username: 'tester' }).challenges;
+  for (const c of all) {
+    assert.ok('illustration' in c, `demo row ${c.id} carries the key, like buildChallengeRow`);
+    if (c.illustration !== null) {
+      assert.ok(members.has(c.illustration), `demo row ${c.id}: ${c.illustration} is a registry slug`);
+    }
+  }
+  // The four the client DRAWS, not the payload: the collapsed payload also
+  // carries the finished numeric row, which has artwork of its own and is cut
+  // (#2490: unfinished rows take the slots first).
+  const drawn = [...loadHomePanels().visibleSlots({
+    key: 'challenges', ...demoChallengesPanel({ username: 'tester' }),
+  }).rows];
+  assert.equal(drawn.length, 4, 'the collapsed block draws four');
+  assert.ok(drawn.some((c) => c.illustration), 'the collapsed route draws artwork');
+  assert.ok(drawn.some((c) => c.illustration === null), 'and keeps one fallback in view');
+});
+
+// The preview is where Home's group headers are reviewed. Every group is
+// headed (S10). The four the collapsed block draws are one unfinished row from
+// each of This week, Always open and Season challenges, then a finished one
+// under Done (#2490); the short list spans the first two.
+test('demoChallengesPanel: the drawn four sit under three group headers and Done, the short list under two', () => {
+  const { demoChallengesPanel } = require('../src/routes/home-panels');
+  const HP = loadHomePanels();
+  const labels = (opts) => [...new Set(demoChallengesPanel({ username: 'tester', ...opts })
+    .challenges.map((c) => c.label))].sort();
+  assert.deepEqual(labels({}), ['COMMUNITY', 'PERSISTENT', 'WEEKLY'], 'what the server sends');
+  assert.deepEqual(labels({ variant: 'few' }), ['PERSISTENT', 'WEEKLY']);
+  const headings = (opts) => [...HP.challengesView({
+    key: 'challenges', ...demoChallengesPanel({ username: 'tester', ...opts }),
+  }).groups].map((g) => g.heading);
+  assert.deepEqual(headings({}), ['This week', 'Always open', 'Season challenges', 'Done'],
+    'what the collapsed block draws');
+  assert.deepEqual(headings({ variant: 'few' }), ['This week', 'Always open']);
+  // Expanded, the binary and the numeric DONE rows sit side by side, so a
+  // group header must not fall between them.
+  const rows = demoChallengesPanel({ username: 'tester' }).challenges;
+  const labelOf = (id) => rows.find((c) => c.id === id).label;
+  assert.equal(labelOf(900511), labelOf(900516), 'the two done rows share a group');
 });
 
 test('the demo variants are staging-only, like ?demo=1 itself', async () => {
@@ -849,15 +1070,35 @@ test('dapp.json checks the new state, and the reader keeps it', () => {
     'the existing challenges-widget check still runs');
 
   // #1824, both directions. The `few` route shows every challenge it has, so
-  // its footer must carry the way out and NO expand toggle; the default route
-  // is truncated, so it must still carry one. A check on only the first would
-  // pass just as well if the toggle were deleted outright.
+  // its block must draw its cards and NO expand toggle; the default route is
+  // truncated, so it must still carry one. A check on only the first would
+  // pass just as well if the toggle were deleted outright. (The all-shown
+  // check used to select the footer's "Open challenges" door; that copy is
+  // gone, and so is the footer when the toggle is.)
   const allShown = kept.find((t) => t.path === '/?demo=1&challenges=few');
   assert.ok(allShown, 'the all-shown check must survive the manifest reader');
-  assert.match(allShown.expectSelector, /home-panel-footer/);
+  assert.match(allShown.expectSelector, /home-challenge-card/);
+  assert.doesNotMatch(allShown.expectSelector, /home-panel-open/);
   assert.match(allShown.expectSelector, /:not\(:has\(\.home-panel-expand\)\)/,
     'it asserts the ABSENCE of the toggle, which is the whole fix');
   assert.ok(kept.some((t) => t.path === '/?demo=1'
     && /home-panel-expand/.test(t.expectSelector)),
     'and a truncated list still declares the toggle it keeps');
+});
+
+// QA 2026-09-24 Q17: Home's season progress counts every challenge in the
+// season, finished ones included (the profile's rule), so the totals
+// statement also counts `done` over the EXPANDED set. Not a new round trip:
+// one more aggregate on the statement that already counts `all_total`.
+test('QA 2026-09-24 Q17: the totals statement counts all_done over the whole season', async () => {
+  const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+  const { body } = await get(app, '/api/home-panels');
+  const totals = calls.find((c) => c.sql.includes('AS all_total'));
+  const end = totals.sql.indexOf('AS all_done');
+  assert.ok(end > 0, 'the totals statement carries all_done');
+  const allDone = totals.sql.slice(totals.sql.lastIndexOf('COUNT(*) FILTER', end), end);
+  assert.doesNotMatch(allDone, /c\.completed = FALSE/, 'not narrowed to the open challenges');
+  assert.equal(calls.filter((c) => c.sql.includes('AS all_total')).length, 1, 'one statement, as before');
+  // A totals row without the column (this stub's) falls back to `done`.
+  assert.equal(body.panels[0].all_done, body.panels[0].done);
 });

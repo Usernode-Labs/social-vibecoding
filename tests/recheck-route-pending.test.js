@@ -64,51 +64,59 @@ async function postRecheck(server, id = 42) {
   return { res, body: await res.json() };
 }
 
-test('recheck stamps pending + broadcasts before responding', async () => {
-  const calls = [];
-  poolQueryHandler = async (sql) => {
-    if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
-      return { rows: [sessionRow()] };
+for (const status of ['active', 'paused', 'promoted']) {
+  test(`recheck ${status} stamps pending and keeps coding status unchanged`, async () => {
+    const calls = [];
+    const row = sessionRow({ status });
+    poolQueryHandler = async (sql) => {
+      if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
+        return { rows: [row] };
+      }
+      assert.doesNotMatch(String(sql), /UPDATE chat_sessions|INSERT INTO/);
+      return { rows: [] };
+    };
+    const origSet = visuals.setChecksPending;
+    const origNotify = visuals.notifyChecksPending;
+    const origRecheck = stagingRecovery.recheckSessionChecks;
+    visuals.setChecksPending = async (_pool, sessionId, commitSha) => {
+      calls.push(['setChecksPending', sessionId, commitSha]);
+    };
+    visuals.notifyChecksPending = (sessionId, commitSha) => {
+      calls.push(['notifyChecksPending', sessionId, commitSha]);
+    };
+    stagingRecovery.recheckSessionChecks = async ({ session, reason }) => {
+      assert.equal(session.status, status);
+      assert.equal(reason, 'manual-recheck');
+      calls.push(['recheckSessionChecks']);
+      return 'rechecked';
+    };
+    const server = await startServer();
+    try {
+      const { res, body } = await postRecheck(server);
+      assert.strictEqual(res.status, 200);
+      assert.strictEqual(body.status, 'running');
+      assert.equal(row.status, status, 'rechecking must not resume coding');
+      // #607: the response tells the client the row is already 'pending'.
+      assert.strictEqual(body.checkState, 'pending');
+      // The stamp + broadcast happened before the response settled (the
+      // fire-and-forget recheck may or may not have run yet — order of the
+      // first two entries is the contract).
+      assert.deepStrictEqual(calls[0], ['setChecksPending', 42, 'abc123']);
+      assert.deepStrictEqual(calls[1], ['notifyChecksPending', 42, 'abc123']);
+      assert.deepStrictEqual(calls[2], ['recheckSessionChecks']);
+    } finally {
+      visuals.setChecksPending = origSet;
+      visuals.notifyChecksPending = origNotify;
+      stagingRecovery.recheckSessionChecks = origRecheck;
+      server.close();
     }
-    return { rows: [] };
-  };
-  const origSet = visuals.setChecksPending;
-  const origNotify = visuals.notifyChecksPending;
-  const origRecheck = stagingRecovery.recheckSessionChecks;
-  visuals.setChecksPending = async (_pool, sessionId, commitSha) => {
-    calls.push(['setChecksPending', sessionId, commitSha]);
-  };
-  visuals.notifyChecksPending = (sessionId, commitSha) => {
-    calls.push(['notifyChecksPending', sessionId, commitSha]);
-  };
-  stagingRecovery.recheckSessionChecks = async () => {
-    calls.push(['recheckSessionChecks']);
-    return 'rechecked';
-  };
-  const server = await startServer();
-  try {
-    const { res, body } = await postRecheck(server);
-    assert.strictEqual(res.status, 200);
-    assert.strictEqual(body.status, 'running');
-    // #607: the response tells the client the row is already 'pending'.
-    assert.strictEqual(body.checkState, 'pending');
-    // The stamp + broadcast happened before the response settled (the
-    // fire-and-forget recheck may or may not have run yet — order of the
-    // first two entries is the contract).
-    assert.deepStrictEqual(calls[0], ['setChecksPending', 42, 'abc123']);
-    assert.deepStrictEqual(calls[1], ['notifyChecksPending', 42, 'abc123']);
-  } finally {
-    visuals.setChecksPending = origSet;
-    visuals.notifyChecksPending = origNotify;
-    stagingRecovery.recheckSessionChecks = origRecheck;
-    server.close();
-  }
-});
+  });
+}
 
 test('recheck refuses to queue behind an existing capture pipeline', async () => {
   poolQueryHandler = async (sql) => {
     if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
-      return { rows: [sessionRow()] };
+      return { rows: [sessionRow({ status: 'paused' })] };
     }
     return { rows: [] };
   };
@@ -154,7 +162,7 @@ test('recheck never revives checks on an archived proposal', async () => {
 test('a write-capable admin can recheck a session they do not own', async () => {
   poolQueryHandler = async (sql) => {
     if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
-      return { rows: [sessionRow({ user_id: 999 })] };
+      return { rows: [sessionRow({ status: 'paused', user_id: 999 })] };
     }
     return { rows: [] };
   };
@@ -180,7 +188,7 @@ test('a write-capable admin can recheck a session they do not own', async () => 
 test('a read-only admin is rejected — rechecks mutate state and cost a build', async () => {
   poolQueryHandler = async (sql) => {
     if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
-      return { rows: [sessionRow({ user_id: 999 })] };
+      return { rows: [sessionRow({ status: 'paused', user_id: 999 })] };
     }
     return { rows: [] };
   };
@@ -197,7 +205,7 @@ test('a non-owner non-admin is rejected before any pending stamp', async () => {
   const calls = [];
   poolQueryHandler = async (sql) => {
     if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
-      return { rows: [sessionRow({ user_id: 999 })] };
+      return { rows: [sessionRow({ status: 'paused', user_id: 999 })] };
     }
     return { rows: [] };
   };

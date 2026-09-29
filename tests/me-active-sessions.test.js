@@ -284,6 +284,81 @@ test('busy runtime identity does not overwrite the session-pinned backend', asyn
   }
 });
 
+// ── #1959: awaiting_input — the Improve panel's "Ready for your input" ──
+//
+// The panel's idle pill used to read "Ready" for every session; the feedback
+// wanted "Ready for your input" — but only when true. The payload carried
+// nothing that could tell a finished spec with open questions from one with
+// nothing to ask, so the endpoint now ships the verdict as ONE boolean,
+// computed here from what it already reads: the newest user/assistant row
+// (whose turn is it, and did the assistant leave answer chips) and the spec
+// body (does its Questions section still have content — the same parser the
+// headless path refuses a build on). The inputs stay off the wire.
+test('awaiting_input: the query reads the last conversational row and the spec body', async () => {
+  capturedQueries = [];
+  poolQueryHandler = async () => ({ rows: [] });
+  const server = await startServer();
+  try {
+    await fetchActiveSessions(server);
+    const q = capturedQueries.find((c) => /FROM chat_sessions cs/.test(c.sql));
+    assert.match(q.sql, /cs\.spec_md/);
+    assert.match(q.sql, /lt\.role AS last_turn_role, lt\.asks AS last_turn_asks/);
+    // The newest user/assistant row: system rows (scout cards, status lines)
+    // are not turns and must not decide whose turn it is.
+    assert.match(q.sql,
+      /WHERE session_id = cs\.id AND role IN \('user', 'assistant'\)\s+ORDER BY id DESC\s+LIMIT 1/);
+    // The same key, read the same way, as the clone path that forwards chips.
+    assert.match(q.sql,
+      /jsonb_array_length\(COALESCE\(metadata->'suggestions', '\[\]'::jsonb\)\) > 0 AS asks/);
+  } finally {
+    server.close();
+  }
+});
+
+test('awaiting_input: true only when the assistant is the one waiting', async () => {
+  const QUESTIONS = '# Goal\n\n## Questions\n\n1. Soft or hard delete?';
+  const NOTHING_TO_ASK = '# Goal\n\n## Questions\n\nNone';
+  poolQueryHandler = async () => ({
+    rows: [
+      // The assistant asked with answer chips, still up.
+      sessionRow({ id: 41, last_turn_role: 'assistant', last_turn_asks: true }),
+      // A finished spec whose Questions section is open, nothing built yet.
+      sessionRow({ id: 42, last_turn_role: 'assistant', last_turn_asks: false, spec_md: QUESTIONS }),
+      // A finished spec with nothing to ask.
+      sessionRow({ id: 43, last_turn_role: 'assistant', last_turn_asks: false, spec_md: NOTHING_TO_ASK }),
+      // Built despite the questions: a session with a PR is past its spec.
+      sessionRow({ id: 44, last_turn_role: 'assistant', last_turn_asks: false, spec_md: QUESTIONS, pr_number: 44 }),
+      // The owner replied: it is their turn that is pending, not a question.
+      sessionRow({ id: 45, last_turn_role: 'user', last_turn_asks: true, spec_md: QUESTIONS }),
+      // No conversation yet.
+      sessionRow({ id: 46, last_turn_role: null, last_turn_asks: null, spec_md: QUESTIONS }),
+    ],
+  });
+  activeWorkers.clear();
+  const realIsInFlight = worker.isInFlight;
+  worker.isInFlight = () => false;
+  const server = await startServer();
+  try {
+    const { body } = await fetchActiveSessions(server);
+    const byId = Object.fromEntries(body.sessions.map((s) => [s.id, s]));
+    assert.strictEqual(byId[41].awaiting_input, true, 'answer chips up');
+    assert.strictEqual(byId[42].awaiting_input, true, 'a spec with open questions');
+    assert.strictEqual(byId[43].awaiting_input, false, 'a spec with nothing to ask');
+    assert.strictEqual(byId[44].awaiting_input, false, 'a PR outranks the spec');
+    assert.strictEqual(byId[45].awaiting_input, false, 'the owner has the floor');
+    assert.strictEqual(byId[46].awaiting_input, false, 'nothing has been said');
+    for (const s of body.sessions) {
+      assert.strictEqual('spec_md' in s, false, 'the spec body never reaches a list payload (#894)');
+      assert.strictEqual('last_turn_role' in s, false);
+      assert.strictEqual('last_turn_asks' in s, false);
+      assert.ok(s.app_slug && s.last_activity_at, 'everything else still passes through');
+    }
+  } finally {
+    worker.isInFlight = realIsInFlight;
+    server.close();
+  }
+});
+
 // ── caps: the per-viewer "(N/M)" denominators ───────────────────────────
 //
 // The dev drawer used to hardcode "/3", which lied the moment an operator
@@ -396,13 +471,25 @@ test('database failure surfaces as a 500, not a hang or leak', async () => {
 // metadata-only /shared-sessions payload must include linked_issues.
 // Issue numbers are group-visible data — the issue list itself is
 // view-level — so this widens nothing sensitive.
+// The shared-sessions list is the only query whose WHERE clause is
+// `cs.app_id = $1 AND cs.shared_at IS NOT NULL`. That is what the predicate
+// below matches — NOT the bare `shared_at IS NOT NULL`, which is also a
+// projected column (`(cs.shared_at IS NOT NULL) AS shared`) in
+// session-state.loadRow and the active-sessions list. Any background query
+// that reaches the shared pool handler while this test runs (a sweeper on a
+// timer, a websocket reconnect from the previous test's server) would take
+// the canned row and this test would then find THAT query first and fail its
+// column assertions. It did, on main, under CI load: a red main-watch verdict
+// paused the platform's merges for an afternoon over it.
+const SHARED_SESSIONS_SQL = /WHERE cs\.app_id = \$1 AND cs\.shared_at IS NOT NULL/;
+
 test('shared-sessions returns linked_issues per row', async () => {
   const appAccess = require('../src/services/app-access');
   const prevGet = appAccess.getAppForUser;
   appAccess.getAppForUser = async () => ({ id: 1, slug: 'demo' });
   capturedQueries = [];
   poolQueryHandler = async (sql) => {
-    if (/shared_at IS NOT NULL/.test(String(sql))) {
+    if (SHARED_SESSIONS_SQL.test(String(sql))) {
       return {
         rows: [{
           id: 9, session_title: 'Shared work', pr_title: null,
@@ -427,7 +514,7 @@ test('shared-sessions returns linked_issues per row', async () => {
     assert.strictEqual(body.sessions.length, 1);
     assert.deepStrictEqual(body.sessions[0].linked_issues, [12, 34]);
 
-    const q = capturedQueries.find((c) => /shared_at IS NOT NULL/.test(c.sql));
+    const q = capturedQueries.find((c) => SHARED_SESSIONS_SQL.test(c.sql));
     assert.ok(q, 'shared-sessions query was issued');
     assert.match(q.sql, /cs\.linked_issues/);
     assert.match(q.sql, /cs\.source/);

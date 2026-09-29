@@ -283,9 +283,14 @@ test('_renderTopicSubView toasts and falls back when the gov row is truly missin
 
 test('a missing ISSUE topic stays silent (unchanged behaviour)', async () => {
   const thread = makeEl('dev-topic-thread');
+  const fetched = [];
   const { AppView, switchTabCalls, toasts } = makeAppView({
     thread,
-    fetchImpl: async () => ({ ok: true, json: async () => ({}) }),
+    fetchImpl: async (url) => {
+      fetched.push(url);
+      if (/\/github-issues\/1069/.test(url)) return { ok: false, status: 404, json: async () => ({ error: 'Issue not found' }) };
+      return { ok: true, json: async () => ({}) };
+    },
   });
   AppView._loadDevData = async () => { AppView._ghIssues = []; return true; };
   AppView._mountTopicThread = () => {};
@@ -294,8 +299,36 @@ test('a missing ISSUE topic stays silent (unchanged behaviour)', async () => {
   const content = makeEl('content');
   await AppView._renderTopicSubView(content, { kind: 'issue', id: 1069 });
 
+  // #2365: the single-issue fetch is tried first — a closed issue resolves
+  // through it (closed-issue-topic.test.js) — and only its miss falls back.
+  assert.ok(fetched.some((u) => /\/api\/apps\/demo\/github-issues\/1069/.test(u)), 'asked for the one issue');
   assert.deepEqual(switchTabCalls, [['dev']], 'fell back to the dev board');
-  assert.deepEqual(toasts, [], 'a closed GitHub issue legitimately misses — no toast');
+  assert.deepEqual(toasts, [], 'an issue GitHub does not serve misses silently — no toast');
+});
+
+test('an ISSUE the open list lacks renders from the single-issue fetch (#2365)', async () => {
+  const thread = makeEl('dev-topic-thread');
+  const { AppView, switchTabCalls } = makeAppView({
+    thread,
+    fetchImpl: async (url) => {
+      if (/\/github-issues\/1069/.test(url)) {
+        return { ok: true, json: async () => ({ issue: { number: 1069, title: 'Closed one', state: 'closed' } }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    },
+  });
+  AppView._loadDevData = async () => { AppView._ghIssues = []; return true; };
+  let mounted = 0; let headed = 0;
+  AppView._mountTopicThread = () => { mounted++; };
+  AppView._renderTopicHead = () => { headed++; };
+
+  const content = makeEl('content');
+  await AppView._renderTopicSubView(content, { kind: 'issue', id: 1069 });
+
+  assert.equal(AppView._topicIssue.number, 1069, 'fetched on demand');
+  assert.equal(mounted, 1, 'thread mounted');
+  assert.equal(headed, 1, 'head painted');
+  assert.deepEqual(switchTabCalls, [], 'did NOT bounce back to the board');
 });
 
 // ── The governance cache went stale for the same reason ───────────────

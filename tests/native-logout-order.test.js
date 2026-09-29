@@ -276,3 +276,27 @@ test('failed local cleanup after network failure does not claim logout or reload
   assert.equal(loaded.order.includes('notice'), false);
   assert.equal(loaded.logoutButton.disabled, false);
 });
+
+// #2078: the capable-phone path above has been bounded since it was written,
+// because native owns the cookie and giving up early is safe there. The
+// ORDINARY web path had no bound at all: it awaited the logout POST bare,
+// with the button already disabled, so a request that never settles left the
+// screen looking frozen with no way back. It still has to reach the server —
+// only the server can revoke a web session — so its budget is generous
+// rather than the phone's 2s, and running out is a FAILURE that restores the
+// button, not a quiet local sign-out.
+test('a hung API cannot hold a plain web logout indefinitely', async () => {
+  const loaded = loadSettings({ nativeTerminal: false, webPending: true });
+  const pending = loaded.sandbox.Settings.logout();
+  await new Promise(setImmediate);
+
+  const deadline = loaded.timers.find((timer) => timer.ms === 15000);
+  assert.ok(deadline, 'the web sign-out arms a deadline of its own');
+  deadline.fn();
+
+  assert.equal(await pending, false, 'it reports failure rather than hanging');
+  assert.equal(loaded.logoutButton.disabled, false, 'and hands the button back');
+  // Nothing was revoked, so the document stays put and keeps its session.
+  assert.equal(loaded.order.includes('navigate'), false);
+  assert.equal(loaded.order.includes('sw-cache'), false);
+});

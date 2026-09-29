@@ -97,10 +97,11 @@ test('claude_code scout env contains no worker:session capability under any alia
 });
 
 // ── Runner config (direct transport proof) ──────────────────────────────
-test('runner script points Codex directly at OpenRouter, never a relay', () => {
+test('runner uses a worker-local adapter with the user key and no platform relay', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const script = fs.readFileSync(path.join(__dirname, '..', 'worker', 'run-codex-agent.sh'), 'utf8');
+  const adapter = fs.readFileSync(path.join(__dirname, '..', 'worker', 'codex-openrouter-request.js'), 'utf8');
   // Codex is configured with OpenRouter as base_url and OPENROUTER_API_KEY
   // as the provider env key (direct transport).
   assert.match(script, /printf 'base_url = "%s"\\n' "\$ESCAPED_BASE"/);
@@ -109,6 +110,8 @@ test('runner script points Codex directly at OpenRouter, never a relay', () => {
   assert.match(script, /SANDBOX_MODE=danger-full-access/);
   assert.match(script, /--dangerously-bypass-approvals-and-sandbox/);
   assert.match(script, /OPENROUTER_API_KEY/);
+  assert.match(script, /start_codex node "\$CODEX_REQUEST_WRAPPER" exec/);
+  assert.match(adapter, /server\.listen\(0, '127\.0\.0\.1'/);
   assert.match(script, /grep -Fq -- "\$OPENROUTER_API_KEY" "\$CONFIG_TMP"/,
     'runner refuses to launch if the generated config ever persists the key');
   // No platform relay / proxy token wiring remains.

@@ -159,7 +159,14 @@ export function stepStates({ phase, status }) {
 export async function fetchCreationProgress(slug, fetchImpl) {
   if (!slug) return;
   try {
-    const res = await fetchImpl(`/api/apps/${encodeURIComponent(slug)}`);
+    // This interval is explicitly asking whether provisioning moved on; it
+    // must not consume the zero-deadline cached snapshot used for first paint.
+    // public/sw.js bypasses this tagged request, and no-store keeps the browser
+    // HTTP cache from supplying the same stale `creating` record.
+    const res = await fetchImpl(
+      `/api/apps/${encodeURIComponent(slug)}?status_recheck=1`,
+      { cache: 'no-store' },
+    );
     if (!res || !res.ok) return;
     const body = await res.json();
     const app = body && body.app;

@@ -37,6 +37,15 @@ function providerAdapter(provider) {
   return PROVIDER_ADAPTERS[provider] || null;
 }
 
+function socialIdentityErrorResponse(res, err) {
+  if (!(err instanceof socialIdentity.SocialIdentityError)) {
+    return res.status(503).json({ error: 'temporarily_unavailable' });
+  }
+  const status = err.code === 'not_linked' ? 404
+    : (err.code === 'invalid_visibility' || err.code === 'invalid_intent' ? 400 : 409);
+  return res.status(status).json({ error: err.code, message: err.message });
+}
+
 function callbackUri(config, provider) {
   const path = provider === 'github'
     ? '/api/me/github/callback'
@@ -49,19 +58,41 @@ function settingsUrl(config, status, provider) {
   return `${config.cliAuthOrigin}/#settings/connectors?${params.toString()}`;
 }
 
+// The provider's `error` parameter on a callback that carries no code. The
+// value is provider-controlled, so only a short snake_case token survives.
+function providerCallbackError(rawError) {
+  if (rawError === undefined) return '';
+  return typeof rawError === 'string' && /^[a-z_]{1,64}$/.test(rawError)
+    ? rawError
+    : 'unrecognized';
+}
+
+// The settings status for a callback without a usable code. Only an explicit
+// `access_denied` (or no error at all) is the user cancelling; a
+// provider-reported configuration error such as `redirect_uri_mismatch` must
+// not be dressed up as a cancellation (#3044).
+function callbackFailureStatus(code, providerError) {
+  if (code) return 'error';
+  if (!providerError || providerError === 'access_denied') return 'denied';
+  if (providerError === 'redirect_uri_mismatch') return 'callback_mismatch';
+  return 'error';
+}
+
 // A connect attempt younger than this is a flow still in flight in another
 // tab, not a stranded one worth flagging.
 const PENDING_ATTEMPT_MIN_AGE_MS = 60 * 1000;
 
 async function statusPayload(pool, config, user) {
   const userId = user.id;
-  const [providers, entitlement, pending] = await Promise.all([
+  const [providers, entitlement, pending, pendingReplacements] = await Promise.all([
     socialIdentity.identityStatus(pool, userId),
     limits.getUserCreditEntitlement(pool, userId),
     socialIdentity.pendingStateInfo(pool, userId),
+    socialIdentity.pendingReplacementInfo(pool, userId),
   ]);
   for (const provider of socialIdentity.PROVIDERS) {
     providers[provider].available = providerAdapter(provider).isEnabled(config);
+    providers[provider].pendingReplacement = pendingReplacements[provider] || null;
     // A provider that rejects our redirect_uri errors on its own page and
     // never calls back, so a stale unconsumed state row is the only trace
     // a user's stranded attempt leaves (#1291).
@@ -93,7 +124,8 @@ function demoPayload(mode) {
   const base = (provider) => ({
     provider, linked: false, handle: null, linkedAt: null,
     lastVerifiedAt: null, creditEligible: false, reconnectRequired: false,
-    access: 'identity', available: true,
+    access: 'identity', available: true, publicVisible: false,
+    pendingReplacement: null,
   });
   const providers = { github: base('github'), x: base('x') };
   let entitlement = {
@@ -123,6 +155,26 @@ function demoPayload(mode) {
       },
     };
     providers.github.credentialSource = 'dedicated';
+  } else if (mode === 'identity-replacement') {
+    providers.github = {
+      ...providers.github,
+      linked: true,
+      handle: 'octo-contributor',
+      linkedAt,
+      lastVerifiedAt: linkedAt,
+      creditEligible: true,
+      publicVisible: true,
+      pendingReplacement: {
+        handle: 'octo-successor',
+        createdAt: new Date(Date.now() - 60 * 1000).toISOString(),
+        expiresAt: new Date(Date.now() + 9 * 60 * 1000).toISOString(),
+      },
+    };
+    entitlement = {
+      policy: 'tiered', tier: 'social', source: 'identity',
+      limitCents: limits.TIER_ONE_LIMIT_CENTS,
+      verificationRequired: false, entitlementAvailable: true,
+    };
   } else if (mode !== 'identity-unverified') {
     providers.github = {
       ...providers.github,
@@ -131,6 +183,7 @@ function demoPayload(mode) {
       linkedAt,
       lastVerifiedAt: linkedAt,
       creditEligible: true,
+      publicVisible: true,
     };
     entitlement = {
       policy: 'tiered', tier: 'social', source: 'identity',
@@ -178,7 +231,7 @@ function socialIdentityRoutes(config) {
     if (IS_STAGING) {
       if (demo === '1' || demo === 'identity-connected'
           || demo === 'identity-unverified' || demo === 'identity-legacy'
-          || demo === 'identity-x-misconfigured') {
+          || demo === 'identity-x-misconfigured' || demo === 'identity-replacement') {
         return res.json(demoPayload(demo));
       }
       const payload = demoPayload('identity-unverified');
@@ -247,10 +300,15 @@ function socialIdentityRoutes(config) {
     if (req.query.account !== undefined && req.query.account !== String(req.user.id)) {
       return res.redirect(302, settingsUrl(config, 'account_mismatch', provider));
     }
+    const intent = typeof req.query.intent === 'string' ? req.query.intent : 'connect';
+    if (!socialIdentity.OAUTH_INTENTS.includes(intent)) {
+      return res.status(400).json({ error: 'invalid_intent' });
+    }
     try {
       const pending = await socialIdentity.createOauthState(pool, {
         userId: req.user.id,
         provider,
+        intent,
       });
       const url = adapter.authorizeUrl(config, {
         redirectUri: callbackUri(config, provider),
@@ -263,6 +321,7 @@ function socialIdentityRoutes(config) {
       // a stranded attempt with the credential pair that made it (#1291).
       log.info('social-identity', 'link start', {
         provider,
+        intent,
         userId: req.user.id,
         credentialSource: provider === 'x'
           ? xLink.credentialSource(config)
@@ -308,7 +367,27 @@ function socialIdentityRoutes(config) {
       ? req.query.code
       : '';
     if (!pending || !code) {
-      return res.redirect(302, settingsUrl(config, code ? 'error' : 'denied', provider));
+      const providerError = code ? '' : providerCallbackError(req.query.error);
+      if (providerError) {
+        // #3044: GitHub does not stop on its own page when the redirect_uri
+        // is not the one registered on the OAuth app. It redirects straight
+        // back to the REGISTERED callback with error=redirect_uri_mismatch
+        // and the state, so a platform whose origin moved (my. -> app.)
+        // bounced every Connect/Reconnect without showing any GitHub page,
+        // and this route reported it as the user cancelling. Log what the
+        // provider said and the address we sent, so an admin can fix the
+        // registration from the log ring.
+        log.warn('social-identity', 'provider returned an authorization error', {
+          provider,
+          userId: req.user.id,
+          providerError,
+          stateMatched: !!pending,
+          callbackUrl: callbackUri(config, provider),
+        });
+      }
+      return res.redirect(302, settingsUrl(
+        config, callbackFailureStatus(code, providerError), provider
+      ));
     }
 
     try {
@@ -318,13 +397,22 @@ function socialIdentityRoutes(config) {
         verifier: pending.verifier,
       });
       if (!identity) return res.redirect(302, settingsUrl(config, 'error', provider));
-      await socialIdentity.saveIdentity(pool, req.user.id, identity);
-      log.info('social-identity', 'account linked', { provider, userId: req.user.id });
-      return res.redirect(302, settingsUrl(config, 'linked', provider));
+      const result = await socialIdentity.finishIdentityVerification(
+        pool, req.user.id, identity, pending.intent
+      );
+      const status = result.outcome === 'pending_replacement'
+        ? 'confirm'
+        : result.outcome;
+      log.info('social-identity', 'account verification completed', {
+        provider, intent: pending.intent, outcome: result.outcome, userId: req.user.id,
+      });
+      return res.redirect(302, settingsUrl(config, status, provider));
     } catch (err) {
-      const status = err instanceof socialIdentity.SocialIdentityError
-        ? 'conflict'
-        : 'error';
+      let status = 'error';
+      if (err instanceof socialIdentity.SocialIdentityError) {
+        if (err.code === 'identity_in_use') status = 'in_use';
+        else if (err.code === 'different_account') status = 'different_account';
+      }
       log.warn('social-identity', 'link callback failed', {
         provider, userId: req.user.id, code: err.code || 'exchange_failed',
       });
@@ -336,6 +424,77 @@ function socialIdentityRoutes(config) {
     (req, res) => finishLink(req, res, 'github'));
   router.get('/api/me/x/callback', userRate,
     (req, res) => finishLink(req, res, 'x'));
+
+  router.post('/api/me/social-identities/:provider/replacement', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (IS_STAGING) return res.status(404).json({ error: 'not_found' });
+    if (!browserCsrf(config, req, res)) return undefined;
+    const provider = req.params.provider;
+    if (!providerAdapter(provider)) return res.status(404).json({ error: 'not_found' });
+    try {
+      const replacement = await socialIdentity.confirmIdentityReplacement(
+        pool, req.user.id, provider, req.body && req.body.publicVisible
+      );
+      log.info('social-identity', 'account replacement confirmed', {
+        provider, userId: req.user.id,
+      });
+      return res.json({
+        ok: true,
+        provider: replacement.provider,
+        handle: replacement.handle,
+        publicVisible: replacement.public_visible !== false,
+      });
+    } catch (err) {
+      log.warn('social-identity', 'account replacement failed', {
+        provider, userId: req.user.id, code: err.code || 'replace_failed',
+      });
+      return socialIdentityErrorResponse(res, err);
+    }
+  });
+
+  router.delete('/api/me/social-identities/:provider/replacement', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (IS_STAGING) return res.status(404).json({ error: 'not_found' });
+    if (!browserCsrf(config, req, res)) return undefined;
+    const provider = req.params.provider;
+    if (!providerAdapter(provider)) return res.status(404).json({ error: 'not_found' });
+    try {
+      await socialIdentity.discardIdentityReplacement(pool, req.user.id, provider);
+      return res.status(204).end();
+    } catch (err) {
+      log.warn('social-identity', 'account replacement cancel failed', {
+        provider, userId: req.user.id, message: err.message,
+      });
+      return socialIdentityErrorResponse(res, err);
+    }
+  });
+
+  router.patch('/api/me/social-identities/:provider/visibility', userRate, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'not_authenticated' });
+    if (IS_STAGING) return res.status(404).json({ error: 'not_found' });
+    if (!browserCsrf(config, req, res)) return undefined;
+    const provider = req.params.provider;
+    if (!providerAdapter(provider)) return res.status(404).json({ error: 'not_found' });
+    try {
+      const identity = await socialIdentity.setProfileVisibility(
+        pool, req.user.id, provider, req.body && req.body.publicVisible
+      );
+      log.info('social-identity', 'profile visibility changed', {
+        provider, publicVisible: req.body.publicVisible, userId: req.user.id,
+      });
+      return res.json({
+        ok: true,
+        provider: identity.provider,
+        handle: identity.handle,
+        publicVisible: identity.public_visible !== false,
+      });
+    } catch (err) {
+      log.warn('social-identity', 'profile visibility change failed', {
+        provider, userId: req.user.id, code: err.code || 'visibility_failed',
+      });
+      return socialIdentityErrorResponse(res, err);
+    }
+  });
 
   // Admin-only live probe of the configured X pair against X's token
   // endpoint (#1291). X can't be asked which callbacks an app registered,
@@ -371,17 +530,11 @@ function socialIdentityRoutes(config) {
     if (!providerAdapter(provider)) return res.status(404).json({ error: 'not_found' });
     try {
       await socialIdentity.clearIdentity(pool, req.user.id, provider);
-      // When managed-key verification is required, identity loss does not
-      // automatically revoke a paid child key. It creates a deduplicated
-      // admin review notification so a human can decide whether to block or
-      // delete it from the Users console. The default-open policy skips this.
-      await managedOpenRouter.notifyIdentityReview({
-        pool, userId: req.user.id, config,
-      }).catch((err) => {
-        log.warn('social-identity', 'managed OpenRouter review notification failed', {
-          provider, userId: req.user.id, message: err.message,
-        });
-      });
+      // #2568: unlinking an identity no longer touches the included
+      // OpenRouter key. That key is part of creating an account now, not
+      // something a verified identity earned, so losing a proof is not a
+      // reason to ask an admin to review it. Admins can still block or
+      // delete a key from the Users console.
       log.info('social-identity', 'account unlinked', { provider, userId: req.user.id });
       return res.status(204).end();
     } catch (err) {
@@ -403,5 +556,6 @@ function socialIdentityRoutes(config) {
 module.exports = {
   socialIdentityRoutes,
   callbackUri,
+  callbackFailureStatus,
   demoPayload,
 };

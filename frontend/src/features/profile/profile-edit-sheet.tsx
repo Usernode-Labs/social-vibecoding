@@ -39,7 +39,9 @@
  *   mid-presentation.
  * - **The card is restored before React unmounts it.** The kit has physically
  *   reparented it; the layout-effect cleanup runs before React detaches the
- *   node, so `restore()` there is what stops a `NotFoundError` on close.
+ *   node, so bringing it home there is what stops a `NotFoundError` on close.
+ *   `release()` does that and leaves a snapshot in the kit's shell for the
+ *   exit, which otherwise faded out an empty box where the card had been.
  * - **The root is the flagged node, the card is the lifted one.** Exactly the
  *   dialogs' split (lib/static-modal.ts): `.platform-modal-adopted` is
  *   `display: none !important`, so it cannot go on the node the kit is
@@ -74,17 +76,31 @@
  * session user. Everything that decides what a value MEANS — the byte budget,
  * the downscale, the save order, the per-field server messages — is in
  * ./profile.js.
+ *
+ * ── "Public page" is here now ─────────────────────────────────────────
+ *
+ * The opt-in public profile's controls (#582) were a card of their own on the
+ * Me screen, second only to the identity card. The prototype's Me has no room
+ * for them — its card carries one action, Edit — and they are about exactly
+ * what this sheet edits: whether the name, photo and bio above are visible to
+ * people who are not signed in. So they are a group of this sheet, with the
+ * same status line. They act IMMEDIATELY, as they always did (the switch is a
+ * PATCH of its own, not part of Save). #2787 folded them into one switch row —
+ * see PublicPage below.
  */
 
 import { useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { ChevronDownIcon } from '@/components/ui/icons';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { Profile } from './profile.js';
+import { PublicProfileCard } from './public-profile-card';
 
 /**
  * The no-kit card chrome, on the node the kit flags rather than the node it
@@ -103,8 +119,6 @@ const CARD_CLASS = 'flex flex-col px-4 pb-5';
 
 /** A group row's shared geometry. `px-4` is load-bearing — see the note above. */
 const ROW_CLASS = 'un-group-row px-4 py-2 focus-within:bg-violet-50 dark:focus-within:bg-violet-950/40';
-/** The same row, for a label-beside-field line. */
-const ROW_INLINE_CLASS = 'un-group-row flex items-center gap-3 px-4 min-h-[44px] focus-within:bg-violet-50 dark:focus-within:bg-violet-950/40';
 /** A row that is itself the tappable control. */
 const ROW_ACTION_CLASS = 'un-group-row flex items-center w-full px-4 min-h-[44px] text-sm font-medium';
 
@@ -158,12 +172,130 @@ function FieldError({ message }: { message?: string | null }): ReactNode {
   );
 }
 
+/**
+ * The public page's controls (#582), as a group of this sheet. `controls` is
+ * ./profile-store.js's publicControlsView; null while
+ * GET /api/me/public-profile has not answered, and then the group is not drawn
+ * at all rather than drawn wrong.
+ *
+ * ── Why one switch and not five rows (#2787) ──────────────────────────
+ *
+ * This used to be a Visibility row, then Publish / Preview / Open / Copy link
+ * as four tappable rows, then a four-line footnote listing every field the
+ * page does and does not include — the tallest group of the sheet on a phone,
+ * for a setting most people never change, and it never said what "publish"
+ * meant. Now:
+ *
+ *   * ONE switch row, "Public profile", whose second line says in plain words
+ *     what the state means (`id="public-profile-visibility"` keeps carrying
+ *     it). The switch keeps `id="public-profile-publish"` and still calls the
+ *     same immediate PATCH.
+ *   * Open / Copy link only while the page is actually live: on a private
+ *     profile the link leads nowhere for anyone else.
+ *   * "What's on it" is a disclosure row. The field list and the preview card
+ *     live behind it, driven by the store's existing `previewOpen`.
+ */
+function PublicPage({ controls, status, publishing, previewOpen }: {
+  controls: any;
+  status: string;
+  publishing: boolean;
+  previewOpen: boolean;
+}): ReactNode {
+  const published = !!controls.published;
+  return (
+    <section id="public-profile-controls" className="mb-4">
+      <Group title="Public page">
+        <label
+          htmlFor="public-profile-publish"
+          className="un-group-row flex items-center gap-3 px-4 py-2 min-h-[44px] cursor-pointer select-none"
+        >
+          <span className="flex-1 min-w-0">
+            <span className={`block ${ROW_LABEL_CLASS}`}>Public profile</span>
+            <span id="public-profile-visibility" className={`block text-xs ${controls.visibilityClass}`}>
+              {controls.visibility}
+            </span>
+          </span>
+          <Switch
+            id="public-profile-publish"
+            className="shrink-0 disabled:opacity-60"
+            aria-describedby="public-profile-visibility"
+            checked={published}
+            disabled={publishing}
+            onChange={() => { void Profile._setPublished(!published); }}
+          />
+        </label>
+        {published ? (
+          <a
+            href={controls.openHref}
+            className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+            onClick={() => Profile._dismissSheet()}
+          >
+            Open public page
+          </a>
+        ) : null}
+        {published ? (
+          <button
+            type="button"
+            className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+            onClick={() => { void Profile.copyPublicLink(controls.openHref); }}
+          >
+            Copy public link
+          </button>
+        ) : null}
+        <button
+          id="public-profile-preview-toggle"
+          type="button"
+          aria-expanded={previewOpen}
+          aria-controls="public-profile-preview"
+          className={`${ROW_ACTION_CLASS} gap-3 text-zinc-900 dark:text-zinc-100`}
+          onClick={() => Profile.togglePreview()}
+        >
+          <span className="flex-1 text-left font-normal">What&apos;s on it</span>
+          <ChevronDownIcon
+            aria-hidden="true"
+            className={previewOpen
+              ? 'w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400 rotate-180 transition-transform'
+              : 'w-4 h-4 shrink-0 text-zinc-500 dark:text-zinc-400 transition-transform'}
+          />
+        </button>
+      </Group>
+      {controls.moderationDisabled ? (
+        <p className="px-4 mt-1.5 text-xs text-red-700 dark:text-red-400">
+          You can keep editing or turn it off, but the public page stays unavailable.
+        </p>
+      ) : null}
+      <p className={status ? FOOTNOTE_CLASS : 'px-4 text-xs text-zinc-500 dark:text-zinc-400'} role="status" aria-live="polite">{status}</p>
+      <div id="public-profile-preview" className={previewOpen ? 'mt-3' : 'hidden mt-3'}>
+        {previewOpen ? (
+          <>
+            <p className="px-4 mb-3 text-xs text-zinc-500 dark:text-zinc-400">
+              Only your username, display name, bio, Homeroom-hosted photo and
+              verified social accounts. Never your email, wallet, roles,
+              memberships, unverified handles or private activity. Changes take
+              effect at once, and nobody can search for the page.
+            </p>
+            <PublicProfileCard profile={controls.profile} allowReport={false} />
+          </>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 export function ProfileEditSheet({
   avatarUrl,
   initial,
+  publicControls = null,
+  publicStatus = '',
+  publishing = false,
+  previewOpen = false,
 }: {
   avatarUrl: string | null;
   initial: string;
+  publicControls?: any;
+  publicStatus?: string;
+  publishing?: boolean;
+  previewOpen?: boolean;
 }): ReactNode {
   const user = (Profile as unknown as { _user(): Record<string, unknown> })._user();
   const links = (user.links || {}) as Record<string, string>;
@@ -172,10 +304,26 @@ export function ProfileEditSheet({
   const panelRef = useRef<HTMLDivElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
-  const [name, setName] = useState(String(user.displayName || ''));
-  const [bio, setBio] = useState(String(user.bio || ''));
-  const [github, setGithub] = useState(String(links.github || ''));
-  const [x, setX] = useState(String(links.x || ''));
+  // What Back left behind the last time, if anything (QA 2026-09-24 Q16):
+  // see Profile._draft. Taken once, by the opening render.
+  const [draft] = useState(() => (Profile as unknown as {
+    takeDraft?: () => { displayName: string; bio: string } | null;
+  }).takeDraft?.() ?? null);
+  const [name, setName] = useState(draft ? draft.displayName : String(user.displayName || ''));
+  const [bio, setBio] = useState(draft ? draft.bio : String(user.bio || ''));
+
+  // The fields as they stand, for Profile._dismissSheet to keep when the card
+  // closes by Back rather than by a decision.
+  const fields = useRef({ displayName: name, bio });
+  fields.current = { displayName: name, bio };
+  useIsomorphicLayoutEffect(() => {
+    const host = Profile as unknown as { _draftSource: null | (() => { displayName: string; bio: string }) };
+    const read = () => ({ ...fields.current });
+    host._draftSource = read;
+    return () => {
+      if (host._draftSource === read) host._draftSource = null;
+    };
+  }, []);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -195,17 +343,24 @@ export function ProfileEditSheet({
       adoptedOn: flagEl,
       home: 'placeholder',
       gate: 'kit',
+      // The backdrop or Escape: a dismissal, not a decision, so what was
+      // typed is kept for the next open, as Back keeps it.
+      //
+      // The teardown below dismisses the kit as well, and its callback lands
+      // here after the exit fade. That close has already happened (and a
+      // reopen inside the fade must not be closed by it), so it is ignored:
+      // the teardown clears `adoption` before it dismisses.
       onDismiss: () => {
+        if (!adoption) return;
         adoption = null;
-        Profile._dismissSheet();
+        Profile._dismissSheet({ keepDraft: true });
       },
     });
     return () => {
       if (!adoption) return;
       const handle = adoption;
       adoption = null;
-      handle.restore();
-      handle.dismiss();
+      handle.release();
     };
   }, []);
 
@@ -234,7 +389,7 @@ export function ProfileEditSheet({
     setFormError(null);
     setFieldErrors({});
     const result = await Profile._save({
-      displayName: name, bio, github, x,
+      displayName: name, bio,
     });
     if (result.ok) return;
     if (result.fieldErrors) setFieldErrors(result.fieldErrors);
@@ -357,45 +512,58 @@ export function ProfileEditSheet({
           <FieldError message={fieldErrors.bio} />
         </section>
 
+        {publicControls ? (
+          <PublicPage
+            controls={publicControls}
+            status={publicStatus}
+            publishing={publishing}
+            previewOpen={previewOpen}
+          />
+        ) : null}
+
         <section className="mb-4">
-          <Group title="Links">
-            <div className={ROW_INLINE_CLASS}>
-              <Label htmlFor="profile-edit-github" className={`${ROW_LABEL_CLASS} shrink-0`}>
-                GitHub
-              </Label>
-              <Input
-                id="profile-edit-github"
-                type="text"
-                box="groupRow"
-                ring={false}
-                width="flex"
-                className="text-right"
-                value={github}
-                maxLength={39}
-                placeholder="handle, without the @"
-                onChange={(e) => setGithub(e.target.value)}
-              />
+          <Group title="Verified social accounts">
+            <div id="profile-edit-github" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
+              <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>GitHub</span>
+              {links.github ? (
+                <span className="text-right min-w-0">
+                  <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
+                    Verified
+                  </span>
+                  <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                    {String(links.github)}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not shown</span>
+              )}
             </div>
-            <div className={ROW_INLINE_CLASS}>
-              <Label htmlFor="profile-edit-x" className={`${ROW_LABEL_CLASS} shrink-0`}>
-                X
-              </Label>
-              <Input
-                id="profile-edit-x"
-                type="text"
-                box="groupRow"
-                ring={false}
-                width="flex"
-                className="text-right"
-                value={x}
-                maxLength={39}
-                placeholder="handle, without the @"
-                onChange={(e) => setX(e.target.value)}
-              />
+            <div id="profile-edit-x" className="un-group-row flex items-center gap-3 px-4 min-h-[44px]">
+              <span className={`${ROW_LABEL_CLASS} flex-1 min-w-0`}>X</span>
+              {links.x ? (
+                <span className="text-right min-w-0">
+                  <span className="inline-flex rounded-full bg-emerald-500/10 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-700 dark:text-emerald-400">
+                    Verified
+                  </span>
+                  <span className="block text-xs text-zinc-500 dark:text-zinc-400 truncate">
+                    {`@${String(links.x)}`}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">Not shown</span>
+              )}
             </div>
+            <a
+              href="#settings/connectors"
+              className={`${ROW_ACTION_CLASS} text-violet-700 dark:text-violet-400`}
+              onClick={() => Profile._dismissSheet()}
+            >
+              Connect or change social accounts
+            </a>
           </Group>
-          <FieldError message={fieldErrors.github} />
-          <FieldError message={fieldErrors.x} />
+          <p className={FOOTNOTE_CLASS}>
+            Provider verification and public visibility are managed separately in Settings.
+          </p>
         </section>
 
         {/*

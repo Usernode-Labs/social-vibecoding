@@ -16,20 +16,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { ChevronLeftIcon } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
 import { PasswordInput } from '@/components/ui/password-input';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { AuthBackButton, backToLanding } from './back-button';
+import { NativeLoginDetailsLink } from './native-login-details';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
   fetchSessionMint,
   finishLogin,
+  HANDLE_FIELD,
   hiddenLast,
+  NativeLoginPreparationError,
+  type NativeLoginFailureDetails,
+  PASSWORD_RULE,
   sessionMintFailureMessage,
   useAuthScreensPatch,
+  USERNAME_RULE,
 } from './shared';
 
 /**
@@ -46,6 +52,17 @@ const AUTH_ROW = 'px-4 pt-3 pb-2 [&:not(:last-child)]:border-b [&:not(:last-chil
 const AUTH_LABEL = 'block text-[13px] text-zinc-500 dark:text-zinc-400';
 const PILL_LINK = 'flex h-11 w-full items-center justify-center rounded-full bg-white text-[16px] font-semibold text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800 transition-colors';
 
+/**
+ * The line under a field (QA 2026-09-24 Q11): the rule while the field is
+ * fine, and the server's sentence about THAT field when it is not, so the
+ * person reads the rule before submitting and the fix exactly where they
+ * type. Two complete literals, swapped whole.
+ */
+const FIELD_HINT = 'mt-1 text-[13px] leading-snug text-zinc-500 dark:text-zinc-400';
+const FIELD_HINT_ERROR = 'mt-1 text-[13px] leading-snug text-red-600 dark:text-red-400';
+
+type RegisterField = 'username' | 'password';
+
 export function RegisterScreen() {
   const rootRef = useRef<HTMLElement>(null);
   useVisibilityHiddenClass(rootRef, AUTH_SCREEN_IDS.register, false);
@@ -57,6 +74,10 @@ export function RegisterScreen() {
   const mounted = useMountedOnReveal(AUTH_SCREEN_IDS.register);
 
   const [error, setError] = useState<string | null>(null);
+  const [details, setDetails] = useState<NativeLoginFailureDetails | null>(null);
+  // A refusal the server pinned to one field (`field` on the 400/409), shown
+  // under that field instead of in #reg-error.
+  const [fieldError, setFieldError] = useState<{ field: RegisterField; message: string } | null>(null);
 
   const code = useRef<HTMLInputElement>(null);
   const username = useRef<HTMLInputElement>(null);
@@ -69,6 +90,7 @@ export function RegisterScreen() {
    * re-navigation cannot clobber something half-typed.
    */
   const registerOnShow = useCallback((seg?: string) => {
+    setDetails(null);
     if (!seg || !code.current || code.current.value) return;
     code.current.value = decodeURIComponent(seg);
     username.current?.focus();
@@ -77,6 +99,8 @@ export function RegisterScreen() {
   const onSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setError(null);
+    setDetails(null);
+    setFieldError(null);
     if (blockedOffline(setError)) return;
     try {
       const res = await fetchSessionMint('/api/auth/register', {
@@ -90,12 +114,18 @@ export function RegisterScreen() {
       });
       const data = await res.json();
       if (!res.ok) {
+        if ((data.field === 'username' || data.field === 'password') && data.error) {
+          setFieldError({ field: data.field, message: data.error });
+          (data.field === 'username' ? username : password).current?.focus();
+          return;
+        }
         setError(data.error || 'Registration failed');
         return;
       }
       finishLogin();
     } catch (error) {
       setError(sessionMintFailureMessage(error));
+      setDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
   }, []);
 
@@ -129,19 +159,7 @@ export function RegisterScreen() {
     >
       {mounted ? (
         <>
-      <a
-        href="#"
-        data-auth-back=""
-        className="fixed left-4 z-10 flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-900 shadow-sm hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-        style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.75rem)' }}
-        aria-label="Back"
-        onClick={(e) => {
-          e.preventDefault();
-          location.hash = '#landing';
-        }}
-      >
-        <ChevronLeftIcon className="w-6 h-6" aria-hidden="true" />
-      </a>
+      <AuthBackButton href="#" onClick={backToLanding} />
       <div className="min-h-full flex items-center justify-center">
         <div className="w-full max-w-sm px-6 py-16">
           <h1 className="text-[28px] font-extrabold leading-tight tracking-tight text-center mb-1 text-zinc-900 dark:text-zinc-100">
@@ -185,9 +203,20 @@ export function RegisterScreen() {
                 type="text"
                 required={true}
                 autoComplete="username"
+                {...HANDLE_FIELD}
+                maxLength={32}
+                aria-describedby="reg-username-hint"
+                aria-invalid={fieldError?.field === 'username' ? true : undefined}
+                onInput={() => setFieldError((f) => (f?.field === 'username' ? null : f))}
                 {...AUTHFIELD}
                 placeholder="choose a username"
               />
+              <p
+                id="reg-username-hint"
+                className={fieldError?.field === 'username' ? FIELD_HINT_ERROR : FIELD_HINT}
+              >
+                {fieldError?.field === 'username' ? fieldError.message : USERNAME_RULE}
+              </p>
             </div>
             <div className={AUTH_ROW}>
               <label
@@ -202,13 +231,23 @@ export function RegisterScreen() {
                 name="password"
                 required={true}
                 autoComplete="new-password"
+                aria-describedby="reg-password-hint"
+                aria-invalid={fieldError?.field === 'password' ? true : undefined}
+                onInput={() => setFieldError((f) => (f?.field === 'password' ? null : f))}
                 {...AUTHFIELD}
                 placeholder="choose a password"
               />
+              <p
+                id="reg-password-hint"
+                className={fieldError?.field === 'password' ? FIELD_HINT_ERROR : FIELD_HINT}
+              >
+                {fieldError?.field === 'password' ? fieldError.message : PASSWORD_RULE}
+              </p>
             </div>
             </div>
             <div id="reg-error" className={hiddenLast(!error, 'text-red-400 text-sm')}>
               {error}
+              <NativeLoginDetailsLink details={details} />
             </div>
             <Button type="submit" layout="full" variant="pillAccent" size="pillLg" ink="solidLate">
               Register
@@ -217,7 +256,7 @@ export function RegisterScreen() {
           <p className="mt-3">
             <a href="#login" className={PILL_LINK}>
               {'Already have an account? '}
-              <span className="ml-1 text-violet-700 dark:text-violet-400">Log in</span>
+              <span className="ml-1 text-violet-700 dark:text-violet-400">Sign in</span>
             </a>
           </p>
         </div>

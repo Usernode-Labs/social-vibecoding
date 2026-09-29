@@ -25,6 +25,19 @@
     return un && typeof un.toast === 'function' ? un : null;
   }
 
+  function presentFrosted(un, method, opts) {
+    const original = opts || {};
+    const decorate = window.UsernodeReact && window.UsernodeReact.decorateOverlay;
+    if (!decorate) return un[method](original);
+    let cleanup;
+    const handle = un[method]({ ...original, onDismiss() {
+      if (cleanup) cleanup();
+      if (original.onDismiss) original.onDismiss();
+    } });
+    if (handle) cleanup = decorate(handle.el);
+    return handle;
+  }
+
   const PlatformUI = {
     /** True when the kit is present and reports a touch platform
         (un-ios / un-android). Desktop and kit-missing both → false,
@@ -40,14 +53,48 @@
     },
 
     /** Transient, non-blocking feedback ("Copied", "Failed to save").
-        Fire-and-forget; returns the kit handle or null. */
+        Fire-and-forget; returns the kit handle or null.
+
+        QA 2026-09-24 Q28: the toast rests ABOVE the bottom chrome. The kit
+        reads `--un-toast-inset-bottom` for that; app.css gives it the tab
+        bar's height, and this adds a composer when one is on screen, which
+        only a measurement can know. */
     toast(message, opts) {
       const un = kit();
       if (!un) {
         console.log('[toast]', message);
         return null;
       }
-      return un.toast(String(message), opts || {});
+      const handle = un.toast(String(message), opts || {});
+      try {
+        const clear = PlatformUI.toastClearance();
+        if (handle && handle.el && clear > 0) {
+          handle.el.style.setProperty('--un-toast-inset-bottom', `${clear}px`);
+        } else if (handle && handle.el) {
+          handle.el.style.removeProperty('--un-toast-inset-bottom');
+        }
+      } catch (err) { /* a toast never fails over its placement */ }
+      return handle;
+    },
+
+    /** How much of the viewport's foot is bottom chrome a toast must clear:
+        the tab bar and any composer block (`.platform-safe-bar`, which every
+        composer wears) that is pinned to the bottom edge. A tall panel that
+        merely ends at the edge (its top in the upper half) is content, not
+        a bar, and is ignored, as is anything hidden or off-screen. 0 when
+        nothing qualifies. */
+    toastClearance() {
+      const root = document.documentElement;
+      const vh = window.innerHeight || (root && root.clientHeight) || 0;
+      if (!vh || typeof document.querySelectorAll !== 'function') return 0;
+      let clear = 0;
+      for (const el of document.querySelectorAll('#platform-tabs, .platform-safe-bar')) {
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height) continue;
+        if (r.bottom < vh - 2 || r.top < vh / 2 || r.top >= vh) continue;
+        clear = Math.max(clear, vh - r.top);
+      }
+      return Math.round(clear);
     },
 
     /** Copy text to the clipboard. Resolves true on success, false on
@@ -131,7 +178,9 @@
     },
 
     /** Single-field prompt (replaces window.prompt — the kit alert's
-        inset text field). Resolves the string, or null on cancel. */
+        inset text field). Resolves the string, or null on cancel. Enter
+        in the field confirms, as it does in any one-field form, and an
+        optional `maxLength` caps it. */
     prompt(opts) {
       const o = typeof opts === 'string' ? { title: opts } : (opts || {});
       const un = kit();
@@ -144,7 +193,12 @@
         .alert({
           title: o.title || '',
           message: o.message || undefined,
-          field: { placeholder: o.placeholder || '', value: o.value || '' },
+          field: {
+            placeholder: o.placeholder || '',
+            value: o.value || '',
+            submitOnEnter: true,
+            ...(o.maxLength > 0 ? { maxLength: o.maxLength } : {}),
+          },
           buttons: [
             { label: o.cancelLabel || 'Cancel', style: 'cancel' },
             { label: o.confirmLabel || 'OK', style: 'default' },
@@ -190,7 +244,7 @@
     sheet(opts) {
       const un = kit();
       if (!un || typeof un.presentSheet !== 'function') return null;
-      return un.presentSheet(opts || {});
+      return presentFrosted(un, 'presentSheet', opts);
     },
 
     /** Side drawer / panel sliding in from an edge ({ side, contentEl,
@@ -199,14 +253,14 @@
     panel(opts) {
       const un = kit();
       if (!un || typeof un.presentPanel !== 'function') return null;
-      return un.presentPanel(opts || {});
+      return presentFrosted(un, 'presentPanel', opts);
     },
 
     /** Centered modal card. Returns the kit handle or null. */
     modal(opts) {
       const un = kit();
       if (!un || typeof un.presentModal !== 'function') return null;
-      return un.presentModal(opts || {});
+      return presentFrosted(un, 'presentModal', opts);
     },
 
     /** Swipe-to-act row actions (kit ride-along tray). No-op stub on
@@ -308,7 +362,43 @@
         if (opts && typeof opts.after === 'function') opts.after();
         return;
       }
-      un.transition(fn, opts || { type: 'none' });
+      un.transition(fn, PlatformUI.phoneMotion(opts || { type: 'none' }));
+    },
+
+    /** NO PAGE SLIDES ON THE PHONE (#2896, #2775). The kit's push and pop
+        slide the whole page sideways, and on the phone which way a change
+        slid was never consistent: the same tab slid in from the right one
+        time and from the left the next, depending on which caller asked
+        and what it guessed about depth. They are gone rather than fixed —
+        on the phone a page change swaps in place, the way the desktop rail
+        has swapped since #2843/#2900. So every push or pop asked for below
+        the 768px layout breakpoint (the one app.css turns the bar into a
+        rail at) runs as 'none', and so does a zoom's push/pop FALLBACK (a
+        zoom with no tile to grow from). The zooms themselves stay: opening
+        an app from its tile is not a page sliding anywhere. The tab bar's
+        sliding marker (#2849) is the bar's own and is not a page motion.
+
+        One place, so no caller can bring a slide back by asking for one;
+        App._entryTransition applies the same rule first only so that the
+        `data-entered` it stamps names what actually runs. */
+    phoneMotion(opts) {
+      if (!opts || !PlatformUI.isPhoneLayout()) return opts;
+      const slide = (t) => t === 'push' || t === 'pop';
+      if (slide(opts.type)) return { ...opts, type: 'none' };
+      if (opts.type === 'zoom-in' || opts.type === 'zoom-out') {
+        if (!opts.fallback || slide(opts.fallback)) return { ...opts, fallback: 'none' };
+      }
+      return opts;
+    },
+
+    /** Below the 768px breakpoint. Unreadable answers false — the desktop's
+        motion, which is what ran before this existed. */
+    isPhoneLayout() {
+      try {
+        return !!(window.matchMedia && !window.matchMedia('(min-width: 768px)').matches);
+      } catch (_) {
+        return false;
+      }
     },
   };
 

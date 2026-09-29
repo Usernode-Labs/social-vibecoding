@@ -7,7 +7,7 @@ import { fetchJson, send } from './api.ts';
 import { countryLabel } from './countries.ts';
 import { BTN } from './tokens.ts';
 import {
-  Badge, EmptyState, ErrorState, List, Pager, ScreenHeader, Select, Skeleton, fmt,
+  Badge, EmptyState, ErrorState, List, Pager, Panel, ScreenHeader, Select, Skeleton, fmt,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 import { useWaitlistOptions } from '../../auth/waitlist-shared.tsx';
@@ -49,7 +49,8 @@ import type { WaitlistOptions } from '../../auth/waitlist-shared.tsx';
 //
 // Ids are like-for-like — `admin-topo-wl-*` and `admin-topo-bpq-*`, including
 // the two status selects and the `data-release-wl` / `data-release-bp` hooks.
-// The sort select is the one addition, and it follows the same naming.
+// The sort select and the Export CSV button are the additions, and they
+// follow the same naming.
 
 const STATUSES = ['pending', 'released', 'all'] as const;
 type Status = typeof STATUSES[number];
@@ -374,7 +375,8 @@ function WaitlistDetails({ row }: { row: WaitlistRow }) {
 // they differ only in their endpoint, their columns and what admitting means.
 function Queue<T>({
   hostId, title, subtitle, filterId, filterLabel, statusLabels, endpoint, columns,
-  rowKey, empty, errorTitle, actions, extra, onlyFilterId, sortId,
+  rowKey, empty, errorTitle, actions, extra, onlyFilterId, sortId, exportCsv,
+  deleteAction, analytics, panel,
 }: {
   hostId: string;
   title: string;
@@ -400,6 +402,34 @@ function Queue<T>({
   onlyFilterId?: string;
   /** Set to render the order select. Omitted: the server's FIFO order only. */
   sortId?: string;
+  /**
+   * A CSV endpoint that takes the same `?status=` / `?only=` filters, set
+   * only for an admin allowed to download it. Renders "Export CSV", which
+   * downloads EVERY row the filters select rather than the page on screen.
+   */
+  exportCsv?: { id: string; path: string };
+  /**
+   * Turns on a checkbox per row plus a "Delete N selected" header button,
+   * set only for an admin allowed to write. Omitted: no selection column,
+   * same as before this existed.
+   */
+  deleteAction?: {
+    bulkPath: string;
+    itemLabel: (item: T) => string;
+    confirmTitle: (n: number) => string;
+    confirmMessage: (n: number) => string;
+  };
+  /**
+   * Renders "Analytics" immediately before Export CSV, set only where a
+   * dashboard exists for this queue. `onClick` is a toggle, not a route —
+   * the caller owns the boolean that decides whether `panel` renders.
+   */
+  analytics?: { id: string; onClick: () => void };
+  /**
+   * Arbitrary content shown between the header and the table, the same slot
+   * onchain-accounts.tsx's `#admin-topo-oa-form` fills for its import panel.
+   */
+  panel?: ReactNode;
 }) {
   const [status, setStatus] = useState<Status>('pending');
   const [only, setOnly] = useState<Only>('any');
@@ -408,13 +438,26 @@ function Queue<T>({
   const [items, setItems] = useState<T[] | null>(null);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const [selected, setSelected] = useState<Set<string | number>>(new Set());
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+  // A new page or a changed filter is a different set of rows, so a
+  // selection made under the old ones no longer means anything.
+  useEffect(() => { setSelected(new Set()); }, [status, only, sort, page]);
 
-  const load = useCallback(async () => {
-    const params = new URLSearchParams({ page: String(page), per_page: '50' });
+  // The filters alone, shared by the page fetch and the export so the file
+  // always holds the rows the selects describe.
+  const filterParams = useCallback(() => {
+    const params = new URLSearchParams();
     if (status !== 'all') params.set('status', status);
     if (onlyFilterId && only !== 'any') params.set('only', only);
+    return params;
+  }, [only, onlyFilterId, status]);
+
+  const load = useCallback(async () => {
+    const params = filterParams();
+    params.set('page', String(page));
+    params.set('per_page', '50');
     // `waiting` is the absence of a sort param, not a value the server knows.
     if (sortId && sort === 'answered') params.set('sort', 'answered');
     const res = await fetchJson(`${endpoint}?${params}`);
@@ -428,9 +471,27 @@ function Queue<T>({
     setItems([]);
     setMeta(null);
     setError({ status: res.status, message: (res.data && res.data.error) || null });
-  }, [endpoint, only, onlyFilterId, page, sort, sortId, status]);
+  }, [endpoint, filterParams, page, sort, sortId]);
 
   useEffect(() => { load(); }, [load]);
+
+  const runBulkDelete = useCallback(async () => {
+    if (!canWrite() || !deleteAction || !selected.size) return;
+    const n = selected.size;
+    const okd = await topo()._confirm({
+      title: deleteAction.confirmTitle(n),
+      message: deleteAction.confirmMessage(n),
+      confirmLabel: 'Delete',
+    });
+    if (!okd) return;
+    const { ok, data } = await send('POST', deleteAction.bulkPath, { ids: Array.from(selected) });
+    if (!ok || !data?.success) {
+      topo()._alert(data?.error || 'Could not delete the selected entries.');
+      return;
+    }
+    setSelected(new Set());
+    load();
+  }, [deleteAction, load, selected]);
 
   const blank = empty({ status, only });
 
@@ -441,6 +502,16 @@ function Queue<T>({
         subtitle={subtitle}
         actions={(
           <>
+            {deleteAction && selected.size > 0 ? (
+              <button
+                id={`${hostId}-bulk-delete`}
+                type="button"
+                className={BTN.dangerSm}
+                onClick={runBulkDelete}
+              >
+                {`Delete ${selected.size} selected`}
+              </button>
+            ) : null}
             <StatusSelect
               id={filterId}
               label={filterLabel}
@@ -474,9 +545,39 @@ function Queue<T>({
                 ))}
               </Select>
             ) : null}
+            {analytics ? (
+              <button
+                id={analytics.id}
+                type="button"
+                className={BTN.secondarySm}
+                title="See signup totals and trends for this queue"
+                onClick={analytics.onClick}
+              >
+                Analytics
+              </button>
+            ) : null}
+            {exportCsv ? (
+              <button
+                id={exportCsv.id}
+                type="button"
+                className={BTN.secondarySm}
+                title="Download every signup these filters select, not just this page"
+                onClick={() => {
+                  // Navigation, not a Blob: the server streams the file as an
+                  // attachment, the same as the Users screen's export. The
+                  // path is a constant and the query is built from the
+                  // selects' own fixed values.
+                  const query = filterParams().toString();
+                  window.location.href = query ? `${exportCsv.path}?${query}` : exportCsv.path;
+                }}
+              >
+                Export CSV
+              </button>
+            ) : null}
           </>
         )}
       />
+      {panel}
       <div id={hostId}>
         {items === null ? <Skeleton rows={4} /> : null}
         {error ? (
@@ -498,12 +599,226 @@ function Queue<T>({
               columns={columns}
               actions={actions ? (it) => actions(it, load) : undefined}
               extra={extra}
+              selection={deleteAction ? {
+                isSelected: (it) => selected.has(rowKey(it)),
+                onToggle: (it, checked) => {
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (checked) next.add(rowKey(it)); else next.delete(rowKey(it));
+                    return next;
+                  });
+                },
+                allSelected: items.length > 0 && items.every((it) => selected.has(rowKey(it))),
+                onToggleAll: (checked) => {
+                  setSelected(checked ? new Set(items.map(rowKey)) : new Set());
+                },
+                itemLabel: (it) => `Select ${deleteAction.itemLabel(it)}`,
+              } : undefined}
             />
             <Pager meta={meta} onPage={setPage} />
           </>
         ) : null}
       </div>
     </>
+  );
+}
+
+// ── Waitlist analytics dashboard (#2748) ────────────────────────────────
+//
+// A read-only summary layered over the same rows the queue above lists.
+// Every figure comes straight off `/api/v4/admin/waitlist/analytics`,
+// which itself derives everything from columns the queue already renders
+// (`released_at`, `confirmed_at`, `linked_user_id`) — no invented status
+// enum on either side of the wire.
+
+type WaitlistAnalytics = {
+  totalSignups: number;
+  waiting: number;
+  admitted: number;
+  confirmed: number;
+  linked: number;
+  series: { day: string; count: number }[];
+};
+
+// The signup trend is a single series, so it takes one hue with no legend
+// box (the heading above the chart already names what is plotted) — this
+// is the same indigo already shipped for a primary/signup-like metric in
+// the admin analytics screen (`SPEND_PLATFORM`).
+const WL_TREND_COLOR = '#6366f1';
+
+function StatTile({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+      <div className="text-xs uppercase tracking-wide text-zinc-500 dark:text-zinc-400">{label}</div>
+      <div className="mt-1 text-2xl font-semibold text-zinc-900 dark:text-zinc-100">
+        {value.toLocaleString()}
+      </div>
+    </div>
+  );
+}
+
+function WaitlistTrendChart({ series }: { series: { day: string; count: number }[] }) {
+  const W = 640;
+  const H = 160;
+  const padTop = 16;
+  const padBottom = 8;
+  const n = series.length;
+  const counts = series.map((p) => p.count);
+  const max = Math.max(1, ...counts);
+  const step = n > 1 ? W / (n - 1) : W;
+  const x = (i: number) => i * step;
+  const y = (v: number) => padTop + (H - padTop - padBottom) * (1 - v / max);
+  const points = counts.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const lastIndex = n - 1;
+  const lastValue = lastIndex >= 0 ? counts[lastIndex] : 0;
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      className="w-full"
+      style={{ height: '160px' }}
+      role="img"
+      aria-label={`Signups per day over the last ${n} days, most recently ${lastValue}`}
+    >
+      {[0, 0.5, 1].map((f) => {
+        const gy = padTop + (H - padTop - padBottom) * f;
+        return (
+          <line
+            key={f}
+            x1={0}
+            y1={gy}
+            x2={W}
+            y2={gy}
+            stroke="currentColor"
+            strokeOpacity={0.12}
+            strokeWidth={1}
+            className="text-zinc-400 dark:text-zinc-500"
+          />
+        );
+      })}
+      {n > 0 ? (
+        <polyline
+          points={points}
+          fill="none"
+          stroke={WL_TREND_COLOR}
+          strokeWidth={2}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+      ) : null}
+      {series.map((p, i) => (
+        <circle
+          key={p.day}
+          cx={x(i)}
+          cy={y(p.count)}
+          r={i === lastIndex ? 5 : 3}
+          fill={WL_TREND_COLOR}
+          strokeWidth={2}
+          className="stroke-white dark:stroke-zinc-900"
+        >
+          <title>{`${p.day}: ${p.count} signup${p.count === 1 ? '' : 's'}`}</title>
+        </circle>
+      ))}
+    </svg>
+  );
+}
+
+// The waiting/admitted split is a status (a signup's lifecycle state), not
+// an open-ended category, so it reuses the exact reserved tones the queue's
+// own Status column already wears (`Badge tone="amber"` / `tone="green"`)
+// rather than picking a new pair.
+function WaitlistStatusBreakdown({ waiting, admitted }: { waiting: number; admitted: number }) {
+  const total = Math.max(1, waiting + admitted);
+  const waitingPct = Math.round((waiting / total) * 100);
+  const admittedPct = 100 - waitingPct;
+  return (
+    <div>
+      <div
+        className="flex h-3 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800"
+        role="img"
+        aria-label={`${waiting} waiting, ${admitted} admitted`}
+      >
+        {waiting > 0 ? (
+          <div
+            className="h-full bg-amber-400 dark:bg-amber-500"
+            style={{ width: `${waitingPct}%`, marginRight: admitted > 0 ? '2px' : 0 }}
+          />
+        ) : null}
+        {admitted > 0 ? (
+          <div className="h-full bg-green-500 dark:bg-green-600" style={{ width: `${admittedPct}%` }} />
+        ) : null}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600 dark:text-zinc-300">
+        <span className="inline-flex items-center gap-1.5">
+          <Badge tone="amber" label="Waiting" />
+          {`${waiting.toLocaleString()} (${waitingPct}%)`}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <Badge tone="green" label="Admitted" />
+          {`${admitted.toLocaleString()} (${admittedPct}%)`}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function WaitlistAnalyticsPanel({ onClose }: { onClose: () => void }) {
+  const [data, setData] = useState<WaitlistAnalytics | null>(null);
+  const [error, setError] = useState<{ status: number; message: string | null } | null>(null);
+  const alive = useRef(true);
+  useEffect(() => () => { alive.current = false; }, []);
+
+  const load = useCallback(async () => {
+    setError(null);
+    const res = await fetchJson('/api/v4/admin/waitlist/analytics');
+    if (!alive.current) return;
+    if (res.ok && res.data?.success) {
+      setData(res.data.data);
+      return;
+    }
+    setData(null);
+    setError({ status: res.status, message: (res.data && res.data.error) || null });
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  return (
+    <div id="admin-topo-wl-analytics-panel">
+      <Panel
+        title="Waitlist analytics"
+        subtitle="Totals and a 30-day trend for the signups in the queue below."
+        onClose={onClose}
+        closeLabel="Close the waitlist analytics dashboard"
+      >
+        {data === null && !error ? <Skeleton rows={3} /> : null}
+        {error ? (
+          <ErrorState
+            title="Couldn't load waitlist analytics"
+            status={error.status}
+            message={error.message}
+            onRetry={load}
+          />
+        ) : null}
+        {data ? (
+          <div className="flex flex-col gap-5">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+              <StatTile label="Total signups" value={data.totalSignups} />
+              <StatTile label="Waiting" value={data.waiting} />
+              <StatTile label="Admitted" value={data.admitted} />
+              <StatTile label="Confirmed email" value={data.confirmed} />
+              <StatTile label="Linked to an account" value={data.linked} />
+            </div>
+            <div>
+              <div className="mb-1 text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                Signups, last 30 days
+              </div>
+              <WaitlistTrendChart series={data.series} />
+            </div>
+            <WaitlistStatusBreakdown waiting={data.waiting} admitted={data.admitted} />
+          </div>
+        ) : null}
+      </Panel>
+    </div>
   );
 }
 
@@ -539,7 +854,7 @@ const WAITLIST_COLUMNS: Column<WaitlistRow>[] = [
     // pair, and neither named what an admin was looking at.
     label: 'Status',
     cell: (w) => (w.released_at
-      ? <Badge tone="green" label={`Admitted ${fmt(w.released_at)}`} />
+      ? <span title={`Admitted ${fmt(w.released_at)}`}><Badge tone="green" label="Admitted" /></span>
       : <Badge tone="amber" label="Waiting" />),
   },
   {
@@ -673,6 +988,7 @@ function bpEmpty({ status }: { status: Status; only: Only }) {
 
 function WaitlistScreen() {
   const write = canWrite();
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   // "Admit", not "Release". The route, the column and the mail kind keep
   // their names; this is the only place a person reads the word.
@@ -691,6 +1007,20 @@ function WaitlistScreen() {
     if (!okd) return;
     const { ok, data } = await send('POST', `/api/v4/admin/waitlist/${w.id}/release`);
     if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not admit this signup.'); return; }
+    reload();
+  }, []);
+
+  const deleteWaitlistEntry = useCallback(async (w: WaitlistRow, reload: () => void) => {
+    if (!canWrite()) return;
+    const okd = await topo()._confirm({
+      title: `Delete ${w.email} from the waitlist?`,
+      message: 'This removes the signup and its survey answers entirely. Anyone who used its invite '
+        + 'link keeps their own place in line. This cannot be undone.',
+      confirmLabel: 'Delete',
+    });
+    if (!okd) return;
+    const { ok, data } = await send('DELETE', `/api/v4/admin/waitlist/${w.id}`);
+    if (!ok || !data?.success) { topo()._alert(data?.error || 'Could not delete this signup.'); return; }
     reload();
   }, []);
 
@@ -723,22 +1053,49 @@ function WaitlistScreen() {
         onlyFilterId="admin-topo-wl-only"
         sortId="admin-topo-wl-sort"
         endpoint="/api/v4/admin/waitlist"
+        analytics={{ id: 'admin-topo-wl-analytics', onClick: () => setShowAnalytics((s) => !s) }}
+        panel={showAnalytics ? (
+          <WaitlistAnalyticsPanel onClose={() => setShowAnalytics(false)} />
+        ) : null}
+        exportCsv={write
+          ? { id: 'admin-topo-wl-export', path: '/api/v4/admin/waitlist/export-csv' }
+          : undefined}
         columns={WAITLIST_COLUMNS}
         rowKey={(w) => w.id}
         empty={waitlistEmpty}
         errorTitle="Couldn't load the waitlist"
-        actions={write ? (w, reload) => (!w.released_at ? (
-          <button
-            data-release-wl={w.id}
-            data-email={w.email}
-            type="button"
-            className={BTN.rowPrimary}
-            onClick={() => admitWaitlist(w, reload)}
-          >
-            Admit
-          </button>
-        ) : null) : undefined}
+        actions={write ? (w, reload) => (
+          <>
+            {!w.released_at ? (
+              <button
+                data-release-wl={w.id}
+                data-email={w.email}
+                type="button"
+                className={BTN.rowPrimary}
+                onClick={() => admitWaitlist(w, reload)}
+              >
+                Admit
+              </button>
+            ) : null}
+            <button
+              data-delete-wl={w.id}
+              data-email={w.email}
+              type="button"
+              className={BTN.rowDanger}
+              onClick={() => deleteWaitlistEntry(w, reload)}
+            >
+              Delete
+            </button>
+          </>
+        ) : undefined}
         extra={(w) => <WaitlistDetails row={w} />}
+        deleteAction={write ? {
+          bulkPath: '/api/v4/admin/waitlist/bulk-delete',
+          itemLabel: (w) => w.email,
+          confirmTitle: (n) => `Delete ${n} waitlist ${n === 1 ? 'entry' : 'entries'}?`,
+          confirmMessage: (n) => `This removes ${n === 1 ? 'this signup' : 'these signups'} and `
+            + `${n === 1 ? 'its' : 'their'} survey answers entirely. This cannot be undone.`,
+        } : undefined}
       />
       <div className="mt-10">
         <Queue<BpRow>
@@ -775,4 +1132,10 @@ function WaitlistScreen() {
 // of our own writing, so a declared browser check cannot reach a real one — and
 // the rule this enforces (an API-supplied URL is never a clickable href) is
 // exactly the kind that needs executing, not grepping.
-export { SurveyAnswers, WaitlistScreen };
+//
+// WAITLIST_COLUMNS is exported for the same reason, for
+// tests/admin-waitlist-status-column.test.js. The Status cell's admitted
+// shape cannot be reached by a declared browser check either: the queue opens
+// on `status: 'pending'`, whose server filter is `released_at IS NULL`, so an
+// admitted row is never in the table a check at `/#admin/waitlist` sees.
+export { SurveyAnswers, WaitlistScreen, WAITLIST_COLUMNS };

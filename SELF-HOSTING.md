@@ -1310,6 +1310,37 @@ deploys.
 - `TOPOCHAIN_MAIL_API_URL` / `TOPOCHAIN_MAIL_API_KEY` / `TOPOCHAIN_MAIL_FROM`
   — all three or nothing.
 
+**Profile staking observability:** `STAKING_OBSERVABILITY_URL` defaults to
+`https://observability.preseason-testnet.apps.beta.usernodelabs.org`.
+Use the origin only, without `/ui/nodes` or `/v1/observability`; the adapter
+appends `/v1/observability/vrf/producer-stats` and `/v1/observability/vrf/slots`.
+Profile epoch statistics never query the local node.
+
+To change the receiver later, a full admin opens the Homeroom Workshop's
+**+ → Platform variables**, edits `STAKING_OBSERVABILITY_URL`, and saves.
+The value overrides the default on the **next platform deployment**; saving
+does not change the running process and this panel has no platform
+"redeploy now" button. No code change or new code proposal is required.
+GitHub repository variables remain an operator fallback; a value saved in
+Platform variables takes precedence.
+
+Rebuilt previews inherit the explicitly configured receiver origin and
+`NATIVE_SESSION_V2_TESTNET_CHAIN_ID`, both public metadata. Changes to either
+invalidate the preview environment fingerprint. This forwarding starts
+once the platform release containing it is deployed; a proposal's own code
+does not control the parent platform that assembles its environment.
+The receiver must serve the configured chain. Moving its host on the same
+chain preserves completed-epoch device caches; switching networks requires
+the correct new chain ID so those caches stay separate.
+
+Previews created by an older parent that does not yet forward the chain ID
+resolve it from that parent's existing public `/api/node-status/full`
+endpoint, using only a fresh, healthy explorer chain identity. The parent
+URL comes from the already injected `USERNODE_PLATFORM_API_URL`; neither
+the URL nor the identity can be supplied by the browser. Production keeps
+its required native network configuration. No epoch statistics are read
+from this status endpoint or from a local node.
+
 **Mail deserves particular attention**, because it is the one setting
 whose absence is invisible from the outside. Both senders are
 always-success by contract (the OTP endpoint is specified that way so it

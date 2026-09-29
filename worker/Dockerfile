@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # bookworm's frozen PostgreSQL 15. The PostgreSQL project's apt repository
 # supplies 17 (+contrib, for common app extensions like pgcrypto/uuid-ossp).
 # We pre-initialize a node-owned
-# data dir at image-build time; run-cc.sh starts the server lazily on
+# data dir at image-build time; both coding runners start it lazily on
 # build turns and recreates the `inloop` database fresh each turn, so
 # scout/sync-only sessions pay zero runtime cost.
 #
@@ -45,7 +45,7 @@ RUN mkdir -p /etc/postgresql-common/createcluster.conf.d \
   && rm -rf /var/lib/apt/lists/*
 
 # Debian keeps the server binaries (pg_ctl/initdb/postgres) off PATH —
-# only client tools get pg_wrapper shims. Surface them for run-cc.sh and
+# only client tools get pg_wrapper shims. Surface them for both runners and
 # for the agent itself (`pg_ctl status`, direct `psql`).
 ENV PATH=/usr/lib/postgresql/17/bin:$PATH
 
@@ -67,31 +67,35 @@ RUN initdb -U postgres --auth=trust -D /home/node/pgdata \
      } >> /home/node/pgdata/postgresql.conf
 USER root
 
-# Cache-bust the Claude Code install so the worker tracks the latest CLI
-# instead of freezing at whatever version was current when this layer was
-# first built. ensureWorkerImage() passes today's date as
-# CLAUDE_CODE_CACHE_BUST, so the layer is reused within a calendar day and
-# re-pulls `latest` on the first build of each new day. Stale CLIs are the
-# cause of "thinking.type.enabled is not supported for this model" 400s on
-# newer models (Sonnet 5 / Opus 4.8), which require thinking.type.adaptive.
+# Kubernetes resolves the current Claude Code release before it looks up a
+# reusable image, includes that exact version in the reuse key, and passes it
+# here. That makes the published image reproducible while ensuring a new CLI
+# release selects a new worker image. Standalone Docker builds keep `latest`
+# as the default and use CLAUDE_CODE_CACHE_BUST (today's UTC date, supplied by
+# ensureWorkerImage()) to re-pull it once per day. Stale CLIs otherwise fail
+# before doing any work when a model raises its minimum supported version.
+ARG CLAUDE_CODE_VERSION=latest
 ARG CLAUDE_CODE_CACHE_BUST=unset
-RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
-  && npm install -g @anthropic-ai/claude-code
+RUN echo "claude-code ${CLAUDE_CODE_VERSION} cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
+  && npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
+  && claude --version
 
 # ── Codex CLI (codex_openrouter backend; plan.md PR5) ─────────────────
 # PINNED (not day-bumped) — bump deliberately. Codex runs non-interactively
-# (codex exec --json), DIRECTLY against the user's OpenRouter key, which is
-# injected per-turn as OPENROUTER_API_KEY into the specific
+# (codex exec --json), through a worker-local request adapter to OpenRouter.
+# The user's key is injected per-turn as OPENROUTER_API_KEY into the process
 # that needs it. The key is NOT placed in the warm-container bootstrap
 # environment (see worker.js buildTurnSecretEnv). There is NO OpenRouter
 # platform relay. Codex holds only narrow worker capabilities. Keep the pin
 # aligned with the JSONL event shapes src/agents/codex-openrouter.js parses.
 ARG CODEX_VERSION=0.146.0
 RUN npm install -g @openai/codex@${CODEX_VERSION}
-# Preserve the pinned CLI's own full coding-agent instructions as the base for
-# custom OpenRouter model entries. The per-turn builder copies only that text
-# into its one-model catalog; it does not inherit OpenAI-only tool modes or
-# capabilities from the bundled models. Codex requires an explicitly selected
+RUN npm install -g @modelcontextprotocol/sdk@1.30.0 zod@3.25.76
+# Preserve the pinned CLI's full coding-agent/tool instructions as the base for
+# custom OpenRouter model entries. The per-turn builder replaces only the
+# misleading OpenAI-model identity sentence before copying that text into its
+# one-model catalog; it does not inherit OpenAI-only tool modes or capabilities
+# from the bundled models. Codex requires an explicitly selected
 # CODEX_HOME to exist before startup; otherwise `codex debug models` exits 1.
 # (This layer sits after the day-bumped claude-code layer, so it re-runs on
 # every cache-bust rollover — the 2026-08-11 rollover broke every worker
@@ -131,11 +135,33 @@ ARG PLAYWRIGHT_MCP_VERSION=0.0.41
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
 RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
   && cd /usr/local/lib/node_modules/@playwright/mcp \
-  && npx playwright install --with-deps chromium
+  && npx playwright install --with-deps chromium \
+  && command -v mcp-server-playwright \
+  && mcp-server-playwright --version
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
 COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
+COPY start-inloop-db.sh /usr/local/bin/start-inloop-db.sh
+COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
+# #3296: the same per-invocation, worker-local adapter for an OpenRouter turn
+# that Claude Code runs. It holds that turn's key; claude gets a local token.
+COPY claude-openrouter-request.js /usr/local/bin/claude-openrouter-request.js
+COPY evidence-mcp.js /usr/local/bin/evidence-mcp.js
+COPY build-evidence-mcp.js /usr/local/bin/build-evidence-mcp.js
+COPY evidence-origin-proxy.js /usr/local/bin/evidence-origin-proxy.js
+COPY evidence-hosted-origins.js /usr/local/bin/evidence-hosted-origins.js
+COPY evidence-hosted-app-contract.js /usr/local/bin/evidence-hosted-app-contract.js
+COPY evidence-browser-observer.js /usr/local/bin/evidence-browser-observer.js
+COPY evidence-browser-bootstrap.js /usr/local/bin/evidence-browser-bootstrap.js
+COPY session-bootstrap.js /usr/local/bin/session-bootstrap.js
+COPY write-evidence-mcp-config.js /usr/local/bin/write-evidence-mcp-config.js
+# #2779: the coding agent's read-only Homeroom tools. The config carries no
+# secret: the bridge reads its per-turn grant from the environment.
+COPY homeroom-read-mcp.js /usr/local/bin/homeroom-read-mcp.js
+COPY homeroom-mcp.json /usr/local/share/usernode/homeroom-mcp.json
+COPY verify-evidence-browser-mcp.js /usr/local/bin/verify-evidence-browser-mcp.js
+COPY verify-evidence-browser-auth.js /usr/local/bin/verify-evidence-browser-auth.js
 COPY classify-codex-resume.js /usr/local/bin/classify-codex-resume.js
 COPY build-codex-model-catalog.js /usr/local/bin/build-codex-model-catalog.js
 # usernode-push is the worker's only path to writing anything back to
@@ -167,14 +193,12 @@ COPY usernode-attachments /usr/local/bin/usernode-attachments
 # Platform-side dedup + rate limit bound the spam. See
 # src/routes/internal.js + src/routes/sessions.js (confirm route).
 COPY usernode-report-platform-issue /usr/local/bin/usernode-report-platform-issue
-# usernode-run-checks runs the app's declared dapp.json checks against the
-# in-loop app (build turns boot it on $INLOOP_PORT) with the SAME
-# semantics as the capture container — navigate, console errors,
-# wait-based selector/text assertions — so the agent sees its proposal
-# checks fail BEFORE committing instead of after the turn ends. Purely
-# local: drives the image's pinned Playwright chromium against loopback,
-# needs no JWT, writes nothing back.
+# usernode-run-checks runs declared dapp.json assertions against the in-loop
+# app before commit. A manifest can configure a loopback-only fixture login
+# for protected routes. It drives the pinned Chromium and writes nothing
+# back; staging still supplies its own platform-issued capture identity.
 COPY usernode-run-checks /usr/local/bin/usernode-run-checks
+COPY usernode-run-inloop /usr/local/bin/usernode-run-inloop
 # usernode-debug (#616) is read-only production debugging for ADMIN
 # sessions on the self-edit app. It calls the platform's prod-debug
 # internal API (deny-listed read-only SQL role, allowlisted container
@@ -190,11 +214,20 @@ COPY usernode-debug /usr/local/bin/usernode-debug
 RUN chmod +x /usr/local/bin/worker-run.sh \
               /usr/local/bin/run-cc.sh \
               /usr/local/bin/run-codex-agent.sh \
+              /usr/local/bin/start-inloop-db.sh \
+              /usr/local/bin/evidence-mcp.js \
+              /usr/local/bin/build-evidence-mcp.js \
+              /usr/local/bin/evidence-origin-proxy.js \
+              /usr/local/bin/evidence-browser-observer.js \
+              /usr/local/bin/evidence-browser-bootstrap.js \
+              /usr/local/bin/write-evidence-mcp-config.js \
+              /usr/local/bin/homeroom-read-mcp.js \
               /usr/local/bin/usernode-push \
               /usr/local/bin/usernode-issues \
               /usr/local/bin/usernode-attachments \
               /usr/local/bin/usernode-report-platform-issue \
               /usr/local/bin/usernode-run-checks \
+              /usr/local/bin/usernode-run-inloop \
               /usr/local/bin/usernode-debug \
   && mkdir -p /home/node/workspace /home/node/.claude \
   && chown -R node:node /home/node
@@ -202,14 +235,26 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
 USER node
 WORKDIR /home/node/workspace
 
+# The platform repository's session-start freshness check
+# (.agents/hooks/upstream-drift.js) is for agents that pick their own base.
+# The harness fixes a hosted turn's base commit, so the notice would only be
+# noise here, and the ls-remote a delay on every turn.
+ENV SOCIAL_VIBECODING_DRIFT_CHECK=off
+
 # Build-time smoke test: launch the MCP's bundled Chromium headless (as
-# node, same channel + SwiftShader flags worker-run.sh seeds) and close
+# node, same channel + sandbox setting + SwiftShader flags worker-run.sh seeds) and close
 # it. A future MCP pin bump that reintroduces a channel/revision mismatch
 # — the failure mode behind #688 — fails the image build loudly here,
 # instead of silently degrading every build turn to "skipped the
 # screenshot check".
 RUN cd /usr/local/lib/node_modules/@playwright/mcp \
-  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})"
+  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,chromiumSandbox:false,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})"
+
+# Validate the actual evidence MCP config against the installed package.
+# This catches a missing/renamed command, rejected CLI flags, or failed
+# Chromium startup through the actual MCP tool before deploy.
+RUN node /usr/local/bin/verify-evidence-browser-mcp.js
+RUN node /usr/local/bin/verify-evidence-browser-auth.js
 
 # The worker is "warm-by-default": MODE=warm clones the repo + restores
 # CC config + sleeps forever, and the host drives per-turn work via

@@ -1,13 +1,25 @@
 // Admin & moderation entry point (#588 shipped it as a header shield; the
 // header slim-down moved it into the hamburger drawer; the Streamlined
-// Concept retired the drawer and it landed here).
+// Concept retired the drawer and put it in the app chip's menu; #2718 took
+// the platform's destinations out of that menu and it went back to Profile;
+// the prototype's Me moved it into SETTINGS — the spec's retired-chip table,
+// "Me, with Admin and Validator inside Settings").
 //
-// It is a row in the PROFILE screen's account group now, beside Settings, and
-// is visible to platform admins AND view-only admins — never to regular
-// users, and never gated on the environment. Those three properties are the
+// It is a row of Settings' account block (features/settings/account-rows.tsx,
+// inside #settings-footer above Log out), and is visible to platform admins
+// AND view-only admins — never to regular users, and never gated on the
+// environment. Those three properties are the
 // whole contract, and all three are easy to break later by a well-meaning
 // edit (swapping `isAdmin` for the stricter `canAdminWrite`, or "just showing
 // it in staging"), so they are pinned here.
+//
+// ── What the menu's removal did NOT change ───────────────────────────
+//
+// The gate is the same published flag it has been since the drawer went. Its
+// key is still `switcher-row-admin` — a row id from the surface that no
+// longer has the row — because the flag is a CAPABILITY and outlives any one
+// row; renaming it would churn the publisher, both readers and this file to
+// no end.
 //
 // ── What the drawer's removal changed about the gate ──────────────────
 //
@@ -19,7 +31,7 @@
 // sanctioned way to drive a converted region's visibility from outside React.
 //
 // Complements the dapp.json check that asserts the row actually renders at
-// `/#profile` for the admin capture identity — this test guards the
+// `/#settings` for the admin capture identity — this test guards the
 // source-level gate that the rendered check cannot see (a check running as an
 // admin cannot prove a non-admin is excluded).
 //
@@ -32,29 +44,47 @@ const path = require('node:path');
 
 const root = path.join(__dirname, '..');
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
-const panel = read('frontend/src/features/app-context/app-context-sheet.tsx');
+const panel = read('frontend/src/features/settings/account-rows.tsx');
+const settingsChassis = read('frontend/src/features/settings/index.tsx');
+const mePanel = read('frontend/src/features/profile/account-panel.tsx');
+const menu = read('frontend/src/features/app-context/app-context-sheet.tsx');
 const appJs = read('public/js/app.js');
 const dapp = JSON.parse(read('dapp.json'));
 
-test("the row ships in the chip's menu, hidden by default", () => {
-  assert.match(panel, /id="switcher-row-admin"/, 'the row is rendered');
-  assert.match(panel, /id="switcher-row-admin"[\s\S]{0,200}?href="#admin"/,
+test('the row is in Settings, not rendered at all without the flag', () => {
+  assert.match(panel, /id="settings-row-admin"/, 'the row is rendered');
+  assert.match(panel, /id="settings-row-admin"[\s\S]{0,200}?href="#admin"/,
     'navigation rides the anchor hash');
-  // Ships hidden through MenuRow's `shipsHidden` prop, which prefixes the
-  // shared ROW constant. The className stays a constant either way — that is
-  // what keeps the outside `hidden` toggle a sanctioned seam and not a
-  // second owner of the node.
-  assert.match(panel, /shipsHidden/,
-    'it ships hidden — the gate reveals it, never the other way round');
-  assert.match(panel, /className=\{shipsHidden \? `hidden \$\{ROW\}` : ROW\}/,
-    'and the hidden state is a prefix on the constant, not a computed class');
+  // NOT RENDERED rather than rendered-and-hidden. The block renders nothing
+  // until mounted, so none of it is in public/index.html and a conditional
+  // render has no document to disagree with — and a hidden row still leaks
+  // its words to a find-in-page.
+  assert.match(panel, /\{isAdmin \? \(/,
+    'the row is absent for an account without the capability');
+  assert.match(panel, /if \(!mounted\) return null;/,
+    'and the whole block waits for its mount, so hydration sees nothing');
 });
 
-test("it sits below Settings, in the menu's You group", () => {
-  const settings = panel.indexOf('id="switcher-row-settings"');
-  const admin = panel.indexOf('id="switcher-row-admin"');
-  assert.ok(settings !== -1 && admin !== -1, 'both rows are present');
-  assert.ok(settings < admin, 'Settings leads, Admin follows');
+test('it sits in the Settings footer, above Log out, and left the Me screen', () => {
+  const footer = settingsChassis.indexOf('id="settings-footer"');
+  const block = settingsChassis.indexOf('<SettingsAccountRows />');
+  const logout = settingsChassis.indexOf('id="settings-logout"');
+  assert.ok(footer !== -1 && block !== -1 && logout !== -1, 'all three are present');
+  assert.ok(footer < block && block < logout,
+    'inside the footer Settings._syncFooter moves, above the Log out it already had');
+  const meCode = mePanel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  assert.doesNotMatch(meCode, /profile-row-admin|href="#admin"/,
+    'Me\'s "More" list is Challenges & standings, Kudos and Settings only');
+});
+
+test('and it is NOT in the app chip menu any more (#2718)', () => {
+  // The menu holds the app's options now; the platform's destinations are
+  // tabs and Me/Settings rows. A second entrance here would be the
+  // duplication the split exists to remove.
+  assert.doesNotMatch(menu, /id="switcher-row-admin"/,
+    'the menu carries no platform destination');
+  assert.doesNotMatch(menu, /Admin &amp; moderation|Admin & moderation/,
+    'nor its label');
 });
 
 test('the admin entry point is not in the header, and not in a drawer', () => {
@@ -83,7 +113,7 @@ test('the gate is published, not written by id', () => {
     'the row renders inside a React-owned subtree — publish, do not classList');
   assert.doesNotMatch(body, /getElementById/,
     'an id lookup at boot finds nothing, and React would undo it if it did');
-  assert.match(panel, /useVisibilityHiddenClass\(adminRef, 'switcher-row-admin', false\)/,
+  assert.match(panel, /useVisibility\('switcher-row-admin', false\)/,
     'and the component subscribes to exactly that key');
 });
 
@@ -92,21 +122,26 @@ test('the row is not gated on the environment', () => {
   const body = appJs.slice(at, appJs.indexOf('\n  },', at));
   assert.doesNotMatch(body, /IS_STAGING|USERNODE_ENV/,
     'the row must exist identically in staging and production');
-  // Comments stripped first: account-panel.tsx SAYS "never gated on
-  // USERNODE_ENV", and a prose match for the thing being forbidden would
-  // fail on the note explaining that it is forbidden.
+  // Comments stripped first: a component that SAYS "never gated on
+  // USERNODE_ENV" would otherwise fail on the note explaining that it is
+  // forbidden.
   const panelCode = panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   assert.doesNotMatch(panelCode, /IS_STAGING|USERNODE_ENV/);
 });
 
 test('dapp.json locks the rendered row in with a check', () => {
   const hit = dapp.tests.find((t) => String(t.expectSelector || '')
-    .includes('#switcher-row-admin'));
+    .includes('#settings-row-admin'));
   assert.ok(hit, 'a declared check must assert the row actually renders');
-  assert.match(String(hit.expectSelector), /:not\(\.hidden\)/,
-    'and that it is REVEALED for the admin identity, not merely present');
-  // The menu, not a screen: `?shot=app-context` is the capture path that
-  // presents it, the same one the other menu checks use.
-  assert.match(String(hit.path), /shot=app-context/,
+  // NO `:not(.hidden)` on the row, and its absence is the assertion: this
+  // row is not RENDERED at all without the capability, so selecting it IS
+  // proving it was revealed.
+  assert.doesNotMatch(String(hit.expectSelector), /#settings-row-admin:not\(\.hidden\)/,
+    'a conditionally rendered row needs no hidden-class qualifier of its own');
+  // The Settings screen, where the row lives now.
+  assert.match(String(hit.expectSelector), /#settings-screen:not\(\.hidden\)/,
     'on the surface that renders it');
+  assert.match(String(hit.path), /#settings/, 'and at the address that reveals it');
+  assert.ok(!dapp.tests.some((t) => String(t.expectSelector || '').includes('#profile-row-admin')),
+    'and nothing still expects it on Me');
 });

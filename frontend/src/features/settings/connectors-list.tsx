@@ -13,6 +13,8 @@
  * hands it the id and the button and forgets.
  */
 
+import { GroupedList, ListRow } from '@/components/ui/grouped-list';
+
 import { useStoreState } from '../../lib/use-store-state';
 import { connectorsStore } from './connectors-store.js';
 
@@ -33,38 +35,38 @@ export function ConnectorsListView({ phase, connectors }: ConnectorsState) {
   if (phase === 'loading') return <>Loading connections…</>;
   if (!connectors.length) {
     return (
-      <p className="text-xs text-zinc-500 dark:text-zinc-400">
+      <p className="px-4 text-[0.9375rem] text-zinc-500 dark:text-zinc-400">
         No chat products connected yet.
       </p>
     );
   }
+  // #2370: one grouped card, in the language the rest of the pane wears now
+  // — was a bordered 12px card per connection. Disconnect stays its OWN button
+  // and the row is not a control: a destructive action never gets a whole
+  // row's width, where a stray thumb finds it.
   return (
-    <>
+    <GroupedList className="mx-0">
       {connectors.map((connector) => (
-        <div
+        <ListRow
           key={connector.id}
-          className="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2"
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                {connector.title}
-              </div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-                {connector.detail}
-              </div>
-            </div>
+          inset="text"
+          chevron={false}
+          title={connector.title}
+          titleClassName="font-medium"
+          subtitle={connector.detail}
+          subtitleClassName="whitespace-normal"
+          trailing={(
             <button
               type="button"
-              className="shrink-0 rounded-md border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-700 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+              className="inline-flex min-h-[44px] shrink-0 items-center rounded-full bg-red-500/10 px-4 text-[0.9375rem] font-medium text-red-700 dark:text-red-400 hover:bg-red-500/15 transition-colors"
               onClick={(e) => controller()?._disconnectConnector?.(connector.id, e.currentTarget)}
             >
               Disconnect
             </button>
-          </div>
-        </div>
+          )}
+        />
       ))}
-    </>
+    </GroupedList>
   );
 }
 

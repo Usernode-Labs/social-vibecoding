@@ -27,8 +27,8 @@
 //   IN: the platform-owned half of the staging container env, i.e. exactly
 //       what platformStagingEnv() below returns. That is the identity trio
 //       from services/app-identity-env.js (which is the thing that actually
-//       broke), PORT, USERNODE_ENV, and the display-only locators forwarded
-//       to a self-hosted fork. Names AND value digests, so both a changed
+//       broke), PORT, USERNODE_ENV, and the public locators/network binding
+//       forwarded to previews. Names AND value digests, so both a changed
 //       value and a changed SHAPE (a new var, a dropped var) move the
 //       fingerprint with no code change here.
 //
@@ -73,11 +73,15 @@ const LABEL_ENV_FP = 'usernode.env.fp';
 // header: this is what keeps one digest valid for every app.
 const VALUE_EXEMPT = new Set(['USERNODE_APP_ID']);
 
-// Display-only locators forwarded into a preview so a self-hosted fork sees
-// its own domain / GitHub org instead of the canonical Usernode-Labs
-// defaults. Lives here (rather than inline in staging.js) so the fingerprint
-// is computed from the same list that is injected.
-const INHERITED_KEYS = ['USERNODE_DOMAIN', 'USERNODE_APPS_DOMAIN', 'USERNODE_PLATFORM_REPO'];
+// Explicit public locators and network metadata only, never the platform's
+// general environment store. A self-preview's staking adapter needs both
+// the configured receiver and its chain binding for device-cache isolation.
+// Keeping them here makes a change invalidate the existing env fingerprint,
+// so old previews are rebuilt instead of retaining the previous receiver.
+const INHERITED_KEYS = [
+  'USERNODE_DOMAIN', 'USERNODE_APPS_DOMAIN', 'USERNODE_PLATFORM_REPO',
+  'STAKING_OBSERVABILITY_URL', 'NATIVE_SESSION_V2_TESTNET_CHAIN_ID',
+];
 
 /**
  * The platform-owned half of a staging container's environment: everything
@@ -93,8 +97,9 @@ function platformStagingEnv(app, config = null) {
     ...appIdentityEnv(app, config),
     PORT: '3000',
     USERNODE_ENV: 'staging',
-    // #1213: the app-facing platform API's base URL — the URL ONLY, never
-    // a token. A preview's server can reach the user-directory endpoints
+    // #1213/#1908: both the stable v1 and legacy app-facing platform API
+    // base URLs — URLs ONLY, never a token. A preview's server can reach
+    // the user-directory endpoints
     // with just the caller's forwarded iframe token (the middleware's
     // allowUserTokenOnly path); everything token-gated (governance feed,
     // LLM proxy, storage) stays production-only because the credential
@@ -102,6 +107,7 @@ function platformStagingEnv(app, config = null) {
     // fingerprint below, so pre-existing previews are swept as stale and
     // rebuilt with it — no FINGERPRINT_VERSION bump needed.
     USERNODE_PLATFORM_API_URL: platformApiBaseUrl(),
+    USERNODE_PLATFORM_API_V1_URL: `${platformApiBaseUrl()}/v1`,
   };
   for (const key of INHERITED_KEYS) {
     if (process.env[key]) env[key] = process.env[key];

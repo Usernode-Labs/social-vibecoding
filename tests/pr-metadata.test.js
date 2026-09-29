@@ -12,6 +12,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 
 // Install module stubs before requiring the unit under test.
 function loadWithStubs({
@@ -73,12 +74,15 @@ function loadWithStubs({
 function mockPool(rows, {
   specRows = [], liveSpec = '', linkedIssues = [], appliedIssues = [],
   testingMd = null, testingPath = null, appliedTesting = null,
-  appliedSummary = null,
+  appliedSummary = null, summaryStale = false, prBody = null,
 } = {}) {
   return {
     queries: [],
     async query(sql, params) {
       this.queries.push({ sql, params });
+      if (/UPDATE chat_sessions\s+SET pr_summary_source = 'generated'/.test(sql)) {
+        return { rows: [{ pr_summary_md: params[4] }], rowCount: 1 };
+      }
       if (/FROM chat_session_specs/i.test(sql)) return { rows: specRows };
       if (/FROM chat_sessions\b/i.test(sql)) {
         return {
@@ -86,6 +90,7 @@ function mockPool(rows, {
             spec_md: liveSpec, linked_issues: linkedIssues, pr_linked_issues_applied: appliedIssues,
             testing_md: testingMd, testing_path: testingPath, pr_testing_applied: appliedTesting,
             pr_visuals_applied: null, pr_summary_md: appliedSummary,
+            pr_summary_stale: summaryStale, pr_body: prBody,
           }],
         };
       }
@@ -324,6 +329,160 @@ test('OpenRouter PR metadata is deterministic and makes no hidden Anthropic call
       /^Removed Claude billing and model selection from the OpenRouter flow\./,
     );
     assert.equal(result.prTitle, githubCalls[0].opts.title);
+  } finally {
+    restore();
+  }
+});
+
+// ---- #2433: the deterministic draft describes the whole PR ----
+//
+// The model path is pinned above: it is handed every request and every
+// summary, and llm.js tells it to cover ALL of them. The deterministic path
+// (an OpenRouter/GLM session, or a Claude session with no payer) had no such
+// range — it took the latest summary alone, so each follow-up turn overwrote
+// "About this change" with a description of that turn.
+
+test('the model prompt is framed on the whole PR, not the latest update (#2433)', () => {
+  const src = require('node:fs').readFileSync(
+    require.resolve('../src/services/llm'), 'utf8'
+  );
+  const i = src.indexOf('You write concise GitHub pull request titles');
+  assert.ok(i > 0, 'the PR-metadata system prompt is still here');
+  const system = src.slice(i, src.indexOf('Respond with ONLY a JSON object', i));
+  assert.match(system, /FULL history of the user's requests and the coding agent's summaries/);
+  assert.match(system, /reflects ALL the changes in the PR, not just the latest update/);
+  // And the user block labels the range it is handing over, so a multi-turn
+  // branch cannot read as one update.
+  assert.match(src.slice(i), /CODING AGENT SUMMAR\$\{sumList\.length > 1 \? 'IES \(one per update, chronological\)'/);
+});
+
+test('a multi-turn over-budget Claude proposal describes every update, not the last (#2433)', async () => {
+  let generateCalls = 0;
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => { generateCalls += 1; },
+    githubCalls,
+  });
+  try {
+    const pool = mockPool([
+      { role: 'user', content: 'Add a login form', metadata: {} },
+      { role: 'system', content: 'cc', metadata: { ccOutput: 'Added the login form.' } },
+      { role: 'user', content: 'Now add password reset', metadata: {} },
+      { role: 'system', content: 'cc', metadata: { ccOutput: 'Added password reset.' } },
+      { role: 'user', content: 'Also remember me', metadata: {} },
+    ]);
+    // A Claude session with no payer takes the deterministic path too; it
+    // keeps the cumulative per-update record. (OpenRouter sessions use their
+    // agent's latest whole-change description instead, #2820 below.)
+    const session = {
+      id: 12,
+      branch_name: 'feat/auth',
+      pr_number: null,
+      agent_backend: 'claude',
+    };
+
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'Also remember me',
+      ccSummary: 'Wired the remember-me checkbox.',
+      username: 'evan',
+      allowModelGeneration: false,
+    });
+
+    assert.equal(generateCalls, 0, 'still no hidden Anthropic call on this path');
+    const { body } = githubCalls[0].opts;
+    for (const text of [
+      'Added the login form.', 'Added password reset.', 'Wired the remember-me checkbox.',
+    ]) {
+      assert.ok(body.includes(text), `the body carries "${text}"`);
+    }
+    // Oldest-first, and labelled by position on the branch so a reader can
+    // see the whole sequence rather than guessing which turn they are reading.
+    assert.ok(body.indexOf('Added the login form.') < body.indexOf('Added password reset.'));
+    assert.ok(body.indexOf('Added password reset.') < body.indexOf('Wired the remember-me checkbox.'));
+    assert.match(body, /\*\*Update 1\*\*/);
+    assert.match(body, /\*\*Update 3\*\*/);
+
+    // pr_summary_md is what the About sheet reads, so it has to carry the
+    // same whole-PR text and not just the turn that happened to run last.
+    const insert = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.ok(insert, 'the new-PR insert ran');
+    const storedSummary = insert.params[6];
+    assert.ok(storedSummary.includes('Added the login form.'),
+      'the stored summary still covers the first update');
+    assert.ok(storedSummary.includes('Wired the remember-me checkbox.'));
+    assert.equal(session.pr_summary_md, storedSummary);
+  } finally {
+    restore();
+  }
+});
+
+test('a single-update deterministic summary is its bare summary, unlabelled', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    // The common case (a first turn) must stay byte-identical: labelling one
+    // update would rewrite every existing one-turn PR body on its next touch.
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Build a todo app'],
+      summaries: ['Scaffolded the todo app.'],
+      ccSummary: 'Scaffolded the todo app.',
+      username: 'evan',
+    });
+    assert.equal(draft.summary, 'Scaffolded the todo app.');
+  } finally {
+    restore();
+  }
+});
+
+test('the in-flight summary is not doubled when it is also the stored tail', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['One', 'Two'],
+      summaries: ['Did one.', 'Did two.'],
+      ccSummary: 'Did two.',
+      username: 'evan',
+    });
+    assert.match(draft.summary, /\*\*Update 1\*\*/);
+    assert.match(draft.summary, /\*\*Update 2\*\*/);
+    assert.doesNotMatch(draft.summary, /\*\*Update 3\*\*/);
+    assert.equal(draft.summary.match(/Did two\./g).length, 1);
+  } finally {
+    restore();
+  }
+});
+
+test('a long deterministic history is bounded and names what it dropped', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    // No model to compress with, so the cap is structural: the most recent
+    // twelve updates, each clipped. It must still say the earlier ones exist.
+    const summaries = Array.from({ length: 15 }, (_, i) => `Update body ${i + 1}. ${'x'.repeat(2000)}`);
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Start it'], summaries, ccSummary: summaries[14], username: 'evan',
+    });
+    assert.match(draft.summary, /_3 earlier updates not shown\._/);
+    assert.doesNotMatch(draft.summary, /\*\*Update 3\*\*/, 'the oldest three are outside the cap');
+    assert.match(draft.summary, /\*\*Update 4\*\*/, 'and the numbering keeps their positions');
+    assert.match(draft.summary, /\*\*Update 15\*\*/);
+    assert.match(draft.summary, /…/, 'each over-long update is clipped');
+    assert.ok(draft.summary.length < 14000, `bounded, got ${draft.summary.length}`);
+  } finally {
+    restore();
+  }
+});
+
+test('the deterministic path keeps the first request as the title across turns', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    // The cumulative summary must not drag the title along with it: a PR that
+    // renames itself after every follow-up is the behaviour #1949 removed.
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Add a login form', 'Now add password reset'],
+      summaries: ['Added the login form.', 'Added password reset.'],
+      username: 'evan',
+    });
+    assert.equal(draft.title, 'Add a login form');
   } finally {
     restore();
   }
@@ -754,6 +913,53 @@ test('summary is prepended as the first paragraph of the PR body, before bullets
     // The summary is persisted to pr_summary_md on the new-PR write.
     const upd = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
     assert.equal(upd.params[6], 'Adds a dark-mode toggle so people can switch to a dark colour scheme.');
+    assert.match(upd.sql, /pr_summary_input_version = \$11/,
+      'the generated result is published only for the inputs it read');
+    assert.equal(upd.params[10], 0, 'the source input version is recorded');
+    assert.match(upd.params[12], /^[0-9a-f]{64}$/, 'the source body hash is recorded');
+  } finally {
+    restore();
+  }
+});
+
+test('delayed generation cannot publish a summary after newer inputs arrive', async () => {
+  const githubCalls = [];
+  let beginGeneration;
+  const generationStarted = new Promise((resolve) => { beginGeneration = resolve; });
+  let finishGeneration;
+  const generationGate = new Promise((resolve) => { finishGeneration = resolve; });
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    generate: async () => {
+      beginGeneration();
+      await generationGate;
+      return { title: 'Cumulative title', body: 'Old body', summary: 'Old summary' };
+    },
+  });
+  try {
+    let inputVersion = 2;
+    const pool = mockPool([{ role: 'user', content: 'First request', metadata: {} }]);
+    const originalQuery = pool.query.bind(pool);
+    pool.query = (sql, params) => {
+      if (/SELECT pr_summary_input_version FROM chat_sessions/.test(sql)) {
+        return Promise.resolve({ rows: [{ pr_summary_input_version: inputVersion }] });
+      }
+      if (/FROM chat_sessions\b/.test(sql)) {
+        return Promise.resolve({ rows: [{ pr_summary_input_version: inputVersion }] });
+      }
+      return originalQuery(sql, params);
+    };
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_title: 'Cumulative title' };
+    const work = subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'First request', ccSummary: 'Old work', username: 'evan',
+    });
+    await generationStarted;
+    inputVersion = 3;
+    finishGeneration();
+    assert.equal(await work, null);
+    assert.equal(githubCalls.length, 0, 'the old generation never reaches GitHub');
+    assert.equal(session.pr_summary_md, undefined, 'the old summary never becomes current');
   } finally {
     restore();
   }
@@ -823,6 +1029,64 @@ test('existing PR makes no GitHub call when summary (and everything else) is unc
       userMessage: 'x', ccSummary: 'y', username: 'evan',
     });
     assert.equal(githubCalls.length, 0, 'no GitHub call when the summary is unchanged too');
+  } finally {
+    restore();
+  }
+});
+
+test('a regenerated summary clears the stale notice even when its words are unchanged', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, summary: 'Steady summary.',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [75],
+      appliedSummary: 'Steady summary.', summaryStale: true,
+      prBody: 'The currently published PR body.',
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u',
+      pr_title: 'Cumulative title', pr_summary_stale: true };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 0, 'the unchanged PR body needs no GitHub write');
+    assert.equal(session.pr_summary_stale, false);
+    assert.ok(pool.queries.some((q) => /pr_summary_stale = FALSE/.test(q.sql)
+      && /pr_summary_input_version = \$2/.test(q.sql)),
+    'freshness is recorded only for the version used by generation');
+    const refreshed = pool.queries.find((q) => /SET pr_summary_source = 'generated'/.test(q.sql));
+    assert.equal(refreshed.params[3],
+      crypto.createHash('sha256').update('The currently published PR body.').digest('hex'),
+      'the source hash describes the body on GitHub, not an unwritten draft');
+  } finally {
+    restore();
+  }
+});
+
+test('an empty generated summary keeps prior prose when other PR metadata changes', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, summary: '',
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }], {
+      linkedIssues: [75], appliedIssues: [],
+      appliedSummary: 'The earlier explanation.', summaryStale: true,
+    });
+    const session = { id: 1, branch_name: 'feat/x', pr_number: 42, pr_url: 'u',
+      pr_title: 'Cumulative title', pr_summary_stale: true };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(githubCalls.length, 1, 'the changed issue linkage still updates GitHub');
+    assert.match(githubCalls[0].opts.body, /^The earlier explanation\./);
+    assert.equal(session.pr_summary_md, 'The earlier explanation.');
+    assert.equal(session.pr_summary_stale, true, 'old prose is still marked as needing review');
+    const update = pool.queries.find((q) => /UPDATE chat_sessions SET pr_title/.test(q.sql));
+    assert.equal(update.params[10], false, 'an empty result cannot validate the old summary');
   } finally {
     restore();
   }
@@ -972,6 +1236,136 @@ test('creating a PR mirrors its body so the proposal can report a description', 
     assert.ok(write.params.includes(created.opts.body),
       'the mirrored body is the body the PR was opened with');
     assert.equal(session.pr_body, created.opts.body);
+  } finally {
+    restore();
+  }
+});
+
+// ---- #2820: OpenRouter proposals carry the agent's own description ----
+//
+// The agent ends each turn with a "==== DESCRIPTION ====" block describing
+// the whole change so far. The newest block replaces the previous one; no
+// "Update N" log is stacked up.
+
+test('an OpenRouter proposal uses the latest description, replacing earlier ones (#2820)', async () => {
+  let generateCalls = 0;
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => { generateCalls += 1; },
+    githubCalls,
+  });
+  try {
+    const pool = mockPool([
+      { role: 'user', content: 'Add a login form', metadata: {} },
+      {
+        role: 'system',
+        content: 'cc',
+        metadata: {
+          ccOutput: 'Done. Committed as e1d33fa.',
+          proposalDescription: 'Adds a login form to the home page.',
+        },
+      },
+      { role: 'user', content: 'Now add password reset', metadata: {} },
+    ]);
+    const session = {
+      id: 13, branch_name: 'feat/auth', pr_number: null, agent_backend: 'codex_openrouter',
+    };
+
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'Now add password reset',
+      ccSummary: 'Done. The reset flow is wired up; committed as 3f2a9c1.',
+      proposalDescription: 'Adds a login form to the home page, with a "Forgot password?" link that emails a reset code.',
+      username: 'evan',
+    });
+
+    assert.equal(generateCalls, 0, 'still no hidden Anthropic call');
+    const { body } = githubCalls[0].opts;
+    assert.match(body, /^Adds a login form to the home page, with a "Forgot password\?" link/);
+    assert.doesNotMatch(body, /\*\*Update \d+\*\*/, 'no stacked per-turn log');
+    assert.doesNotMatch(body, /Committed as|e1d33fa|3f2a9c1/, 'no raw turn messages');
+    assert.equal(body.match(/Adds a login form/g).length, 1, 'the old description was replaced');
+
+    const insert = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number/.test(q.sql));
+    assert.equal(
+      insert.params[6],
+      'Adds a login form to the home page, with a "Forgot password?" link that emails a reset code.',
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('a stored description is used on later calls that pass no in-flight turn (#2820)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls });
+  try {
+    // Promote / title-heal call sites read the history back from the DB.
+    const pool = mockPool([
+      { role: 'user', content: 'Add dark mode', metadata: {} },
+      {
+        role: 'system', content: 'cc',
+        metadata: { ccOutput: 'Done.', proposalDescription: 'Adds a dark-mode switch to settings.' },
+      },
+    ]);
+    await subject.applyPrMetadata({
+      pool,
+      session: { id: 14, branch_name: 'feat/dark', pr_number: null, agent_backend: 'codex_openrouter' },
+      repoOwner: 'acme', repoName: 'app', userMessage: 'Add dark mode', username: 'evan',
+    });
+    assert.match(githubCalls[0].opts.body, /^Adds a dark-mode switch to settings\./);
+  } finally {
+    restore();
+  }
+});
+
+test('with no description the latest turn message stands alone, cleaned up (#2820)', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Add a header', 'Make it sticky'],
+      summaries: [
+        'Done. Added a header.',
+        'Done. The header in public/index.html now stays pinned while scrolling. Committed as e1d33fa.',
+      ],
+      descriptions: [null, null],
+      latestDescription: true,
+      username: 'evan',
+    });
+    assert.equal(draft.summary, 'The header in public/index.html now stays pinned while scrolling.');
+  } finally {
+    restore();
+  }
+});
+
+test('a turn that skipped its block keeps the last description and adds its own note (#2820)', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    const draft = subject.deterministicPrMetadataDraft({
+      requests: ['Add a header', 'Fix the typo'],
+      summaries: ['Done.', 'Fixed the typo in the header title.'],
+      descriptions: ['Adds a header with the app name to every page.', null],
+      latestDescription: true,
+      username: 'evan',
+    });
+    assert.equal(
+      draft.summary,
+      'Adds a header with the app name to every page.\n\n**Latest update:** Fixed the typo in the header title.',
+    );
+  } finally {
+    restore();
+  }
+});
+
+test('the in-flight description attaches to a summary already stored as the tail (#2820)', async () => {
+  const { subject, restore } = loadWithStubs({ onGenerate: () => {}, githubCalls: [] });
+  try {
+    const pool = mockPool([
+      { role: 'system', content: 'cc', metadata: { ccOutput: 'Did it.' } },
+    ]);
+    const ctx = await subject.gatherSessionContext(pool, 15, 'Did it.', 'Adds the thing.');
+    assert.deepEqual(ctx.summaries, ['Did it.']);
+    assert.deepEqual(ctx.descriptions, ['Adds the thing.']);
   } finally {
     restore();
   }

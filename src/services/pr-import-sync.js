@@ -34,6 +34,7 @@
 // Purely additive to the native proposal/vote/merge path.
 
 const log = require('./logger');
+const summaryFreshness = require('./summary-freshness');
 const github = require('./github');
 const githubMock = require('./github-mock');
 const { usesMockGithubForImports } = require('../config');
@@ -129,7 +130,11 @@ async function syncImportedProposal({ config, pool, session }) {
     const freshBody = typeof pr.body === 'string' ? pr.body : null;
     if (freshBody !== (session.pr_body == null ? null : session.pr_body)) {
       try {
-        await pool.query('UPDATE chat_sessions SET pr_body = $1 WHERE id = $2', [freshBody, session.id]);
+        await pool.query(
+          `UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`,
+          [freshBody, session.id]
+        );
+        session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
         session.pr_body = freshBody;
       } catch (err) {
         log.warn('pr-import-sync', 'description mirror refresh failed (non-fatal)', {
@@ -193,13 +198,20 @@ async function classifyImportedHeadMove({ session, oldHead, newHead }) {
   }
 }
 
-// Verdicts that describe a finished run. Only these can be carried onto a
-// mechanically merged head: a 'pending' verdict is a run still going (or one
-// the sync just superseded), and carrying its stamp forward would leave the
-// row 'pending' with nothing building — the ten-minute stale wait of #1728.
-// 'error' is left out too: it usually means the preview did not boot, which
-// a rebuild against the merged commit is the right way to find out about.
-const CARRIABLE_CHECK_STATES = new Set(['passing', 'skipped', 'failing']);
+// Verdicts that can be carried onto a mechanically merged head. Only a
+// GREEN one: a 'pending' verdict is a run still going (or one the sync just
+// superseded), and carrying its stamp forward would leave the row 'pending'
+// with nothing building — the ten-minute stale wait of #1728. 'error' is
+// left out too: it usually means the preview did not boot, which a rebuild
+// against the merged commit is the right way to find out about. And a
+// 'failing' verdict never carries (#2693): it used to, on the premise that a
+// merge of main does not change what the author must fix — which is false
+// exactly when main is what fixes it (a red base repaired, a test main
+// mended, a dependency main bumped). Proposal 4654 sat red, pinned to a
+// commit that contained the fix, with nothing building and no way to re-run
+// short of an authored push. The merged tree is the only thing that can turn
+// the verdict green, and nobody has tested it, so it is tested.
+const CARRIABLE_CHECK_STATES = new Set(['passing', 'skipped']);
 
 // Apply a head change: advance the stored SHA, decide what the move costs the
 // approvals and the checks, refresh drift, and re-run SHA-pinned checks where
@@ -261,6 +273,7 @@ async function applyHeadChange({
   const { rows: claimed } = await pool.query(
     `UPDATE chat_sessions
         SET imported_pr_head_sha = $1,
+            ${summaryFreshness.INVALIDATE_SQL},
             stale_notified_at = NULL,
             approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 1 ELSE 0 END,
             checks_commit_sha = CASE WHEN $4::boolean THEN $1 ELSE checks_commit_sha END
@@ -286,8 +299,19 @@ async function applyHeadChange({
   }
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.imported_pr_head_sha = newHead;
+  session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
   session.approval_epoch = epoch;
   if (checksCarry) session.checks_commit_sha = newHead;
+  if (session.visual_evidence_state || session.visual_evidence_detail) {
+    // Revision fencing is synchronous with the imported head advance. Even
+    // when execution is disabled, reviewers must stop seeing evidence from
+    // the commit that just ceased to be current.
+    await require('./visual-evidence-state').markStaleForHead(
+      pool, session.id, String(newHead).toLowerCase()
+    ).catch((err) => log.warn('pr-import-sync', 'Visual evidence invalidation failed', {
+      sessionId: session.id, oldHead, newHead, err: err.message,
+    }));
+  }
   if (bumpEpoch) {
     log.info('integration', 'Approvals cleared', {
       sessionId: session.id, epoch, reason: `imported_head_${kind}`,
@@ -529,7 +553,9 @@ async function refreshDriftState({ pool, session, pr, repo }) {
 // import + dev-turn callers; a genuine build failure is recorded as a
 // terminal 'error' verdict (recordStagingBootFailure) so the gate never
 // dead-ends on a NULL/pending state.
-async function rerunChecksForNewHead({ config, pool, session, newHead }) {
+async function rerunChecksForNewHead({
+  config, pool, session, newHead, trigger = 'pr-import',
+}) {
   const visuals = require('./visuals');
   const staging = require('./staging');
   const app = {
@@ -539,21 +565,23 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
 
   // Stamp 'pending' immediately so the badge stops showing the old-head
   // verdict while the (minutes-long) rebuild runs.
-  await visuals.setChecksPending(pool, session.id, newHead, 'building', 'pr-import')
+  await visuals.setChecksPending(pool, session.id, newHead, 'building', trigger)
     .catch((err) => log.warn('pr-import-sync', 'setChecksPending failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
-  visuals.notifyChecksPending(session.id, newHead, 'building', 'pr-import');
+  visuals.notifyChecksPending(session.id, newHead, 'building', trigger);
 
   // #687: in mock-GitHub mode (staging previews) there is no real repo to
   // clone against the new head — record a gate-passing 'skipped' verdict
   // instead of building staging, so the head-change flow stays clickable.
   if (usesMockGithubForImports()) {
-    await visuals.storeChecksSkipped(pool, session.id, newHead,
+    const stored = await visuals.storeChecksSkipped(pool, session.id, newHead,
       'mock GitHub preview: automated checks not run')
       .catch((err) => log.warn('pr-import-sync', 'mock storeChecksSkipped failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
+    // The pending tick above reached every open page; so must the verdict.
+    if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, newHead, null);
     return;
   }
 
@@ -588,7 +616,7 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
     await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
   } catch (_) { /* edge verification is best-effort */ }
 
-  await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {}, trigger: 'pr-import' })
+  await visuals.captureForSession(config, session, app, newHead || null, result, { send: null, trigger })
     .catch((err) => log.warn('pr-import-sync', 'checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
@@ -672,6 +700,20 @@ function notifyStagingFailed({ session, app }) {
   }
 }
 
+// #2601/#2558: the connector-submission path reaches the evidence
+// orchestrator through `visuals.captureForSession`, which schedules a run in
+// its own `finally` — so an import whose preview builds does call
+// `scheduleForSession`. The gap was the paths BELOW that never get that far:
+// a preview environment that runs no builds, and a staging build that fails.
+// Neither produced a run and neither wrote anything down, so the proposal
+// kept the 'planned' its submission wrote, with nothing to explain it.
+function noteEvidenceNotStarted(pool, sessionId, reason) {
+  require('./visual-evidence-orchestrator').noteNotStarted(pool, Number(sessionId), reason)
+    .catch((err) => log.warn('pr-import-sync', 'could not record why the preview did not start', {
+      sessionId, reason, err: err.message,
+    }));
+}
+
 // #687 Slice 1 / #846 — the IMPORT-TIME checks kick. Called (un-awaited) by
 // POST /api/apps/:slug/pr-import once the proposal row exists, so the route
 // can answer immediately while the SHA-pinned staging build runs behind it.
@@ -703,11 +745,13 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // verdict — the imported proposal shows a neutral (mergeable) check so
     // the whole preview flow (import → vote → merge) is exercisable.
     if (usesMockGithubForImports()) {
-      await visuals.storeChecksSkipped(pool, session.id, headSha || null,
+      const stored = await visuals.storeChecksSkipped(pool, session.id, headSha || null,
         'mock GitHub preview: automated checks not run')
         .catch((err) => log.warn('pr-import-sync', 'import mock storeChecksSkipped failed (non-fatal)', {
           sessionId: session.id, err: err.message,
         }));
+      if (stored) visuals.notifyChecks(session.id, { state: 'skipped', results: [] }, headSha || null, null);
+      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }
 
@@ -734,6 +778,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
         sessionId: session.id, err: e.message,
       }));
       notifyStagingFailed({ session, app });
+      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
       throw err;
     }
 
@@ -745,6 +790,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
     // vote is over.
     if (!(await stillOpenForPreview(pool, session))) {
       await discardStagingResult({ staging, session, app, result });
+      noteEvidenceNotStarted(pool, session.id, 'no_staging_preview');
       return;
     }
 

@@ -4,11 +4,15 @@ const poolMod = require('../src/db/pool');
 let session;
 let privateApp = false;
 let queries;
+// The spec lives only behind its own query, as it does in the table's real
+// projection — the mock session row never carries it.
+let specMd = null;
 poolMod.getPool = () => ({ query: async (sql) => {
   queries.push(sql);
   if (sql.includes('SELECT a.id, a.collab_visibility')) return { rows: [{ id: 1,
     view_visibility: privateApp ? 'private' : 'public', collab_visibility: 'public' }] };
   if (sql.includes('SELECT handoff_head_sha')) return { rows: [{ handoff_head_sha: session.checks_commit_sha }] };
+  if (sql.includes('SELECT spec_md FROM chat_sessions')) return { rows: [{ spec_md: specMd }] };
   if (sql.includes('FROM chat_sessions cs')) return { rows: session ? [session] : [] };
   return { rows: [] };
 } });
@@ -90,6 +94,32 @@ test('change details use the same privacy gate and an explicit public projection
   assert.doesNotMatch(projection, /cs\.\*|cs\.spec_md|chat_session_messages|cc_session|api_key/);
 });
 
+test('the owner of an underway change reads its spec from details; nobody else does (#2371)', async () => {
+  const spec = '# Authenticate previews\n\nWait for the session before opening a preview.';
+  specMd = spec;
+  reset({ shared_at: '2026-09-11', app_id: 1, linked_issues: [] });
+  const owner = await get({ id: 42 }, 'details');
+  assert.equal(owner.status, 200);
+  assert.equal(owner.body.session.spec_md, spec, 'the author can review what the change is built from');
+  // Read on its own, so the shared projection still never names it.
+  assert.ok(queries.some((sql) => /^SELECT spec_md FROM chat_sessions WHERE id = \$1$/.test(sql)));
+  assert.doesNotMatch(queries.find((sql) => sql.includes('cs.pr_summary_md')), /spec_md/);
+
+  reset({ shared_at: '2026-09-11', app_id: 1, linked_issues: [] });
+  const viewer = await get({ id: 99 }, 'details');
+  assert.equal(viewer.status, 200);
+  assert.equal(viewer.body.session.spec_md, undefined, 'a shared viewer never gets the spec');
+  assert.ok(!queries.some((sql) => sql.includes('SELECT spec_md')));
+
+  reset({ status: 'promoted', app_id: 1, linked_issues: [] });
+  const promoted = await get({ id: 42 }, 'details');
+  assert.equal(promoted.body.session.spec_md, undefined, 'once up for review the PR body takes over');
+
+  reset({ app_id: 1, linked_issues: [] });
+  assert.equal((await get({ id: 42 }, 'checks')).body.session.spec_md, undefined, 'and /checks never carries it');
+  specMd = null;
+});
+
 test('managed handoff details derive readiness from the checked revision', async () => {
   reset({ source: 'cli_handoff', app_id: 1, linked_issues: [], check_state: 'passing',
     checks_commit_sha: 'a'.repeat(40), staging_url: 'https://preview.example', checks_checked_at: new Date().toISOString() });
@@ -101,7 +131,7 @@ test('managed handoff details derive readiness from the checked revision', async
   assert.equal((await get({ id: 42 }, 'details')).body.session.proposal_state, 'failed');
 });
 
-test('shared demo details reuse the list fixture only in staging demo mode', async () => {
+test('shared and own demo details reuse list fixtures only in staging demo mode', async () => {
   reset(); session = null;
   const previous = process.env.USERNODE_ENV;
   try {
@@ -110,6 +140,10 @@ test('shared demo details reuse the list fixture only in staging demo mode', asy
     assert.equal(result.status, 200);
     assert.equal(result.body.session.id, 990002);
     assert.equal(result.body.session.transcript_shared, true);
+    const own = await get({ id: 42 }, 'details?demo=1', 990101);
+    assert.equal(own.status, 200);
+    assert.equal(own.body.session.user_id, 42);
+    assert.equal(own.body.session.session_title, '[Mock] Your in-progress session');
     assert.equal((await get({ id: 42 }, 'details', 990002)).status, 404);
     process.env.USERNODE_ENV = 'production';
     assert.equal((await get({ id: 42 }, 'details?demo=1', 990002)).status, 404);

@@ -1,7 +1,10 @@
-import { useMemo } from 'react';
+import { useMemo, type MouseEvent } from 'react';
 
 import { messageStamp } from '../../lib/timestamp';
+import { decorateRefs } from './channels';
 import type { ConversationUser, SharedObjectCard } from './types';
+
+const NO_CHANNELS: ReadonlySet<string> = new Set();
 
 export function initials(label: string): string {
   return label
@@ -28,14 +31,31 @@ function fallbackMarkdown(value: string): string {
     .replace(/\n/g, '<br>');
 }
 
-export function MessageMarkdown({ content }: { content: string }) {
+/**
+ * A message body: the shared markdown renderer, then its references chipped
+ * (#2783) — `@name`, `#123` and `PR#123` as the app chat draws them, and a
+ * `#name` that names one of the viewer's channels as a link to it. Built on
+ * the sanitized HTML with DOM APIs (./channels.ts `decorateRefs`), never by a
+ * regex over markup.
+ */
+export function MessageMarkdown({ content, channels }: { content: string; channels?: ReadonlySet<string> }) {
   const html = useMemo(() => {
-    if (typeof window !== 'undefined' && window.DevChat?.renderMarkdown) {
-      return window.DevChat.renderMarkdown(content, { breaks: true });
-    }
-    return fallbackMarkdown(content);
-  }, [content]);
-  return <div className="messages-markdown gc-msg-content" dangerouslySetInnerHTML={{ __html: html }} />;
+    const rendered = typeof window !== 'undefined' && window.DevChat?.renderMarkdown
+      ? window.DevChat.renderMarkdown(content, { breaks: true })
+      : fallbackMarkdown(content);
+    if (typeof document === 'undefined') return rendered;
+    const root = document.createElement('div');
+    root.innerHTML = rendered;
+    const me = String(window.App?.user?.username || '').toLowerCase();
+    decorateRefs(root, channels || NO_CHANNELS, me);
+    return root.innerHTML;
+  }, [content, channels]);
+  // The SAME object while the html is unchanged. React 19 compares this prop
+  // by identity and reassigns innerHTML when it differs, so an inline
+  // `{ __html }` tore down and rebuilt every message body on every render of
+  // its row, even with identical text (board-frame.tsx documents the same).
+  const inner = useMemo(() => ({ __html: html }), [html]);
+  return <div className="messages-markdown gc-msg-content" dangerouslySetInnerHTML={inner} />;
 }
 
 /**
@@ -97,6 +117,26 @@ const OBJECT_LABELS: Record<SharedObjectCard['type'], string> = {
   app: 'App', issue: 'Issue', proposal: 'Code proposal', governance: 'Governance proposal', spec: 'Spec version',
 };
 
+// #3103: a shared card that opens a Workshop topic or a dev session records
+// the conversation it was tapped in, so that page's back returns here rather
+// than to the app's Workshop. The Improve store's own "where from" is the last
+// APP route, and a Messages conversation is not one. Plain clicks only: a
+// modified click opens a new tab, which navigates nothing here. Not in the side
+// panel's document, whose links are the top window's to follow.
+export function recordObjectOrigin(event: MouseEvent<HTMLAnchorElement>, href: string): void {
+  const w = window as unknown as {
+    NavLink?: { isNativeClick?: (e: unknown) => boolean };
+    App?: { embeddedPanel?: boolean };
+    Improve?: { enterTopicFrom?: (href: string) => void; enterSessionFrom?: (href: string) => void };
+  };
+  if (!href.startsWith('#app/') || w.App?.embeddedPanel) return;
+  if (w.NavLink?.isNativeClick?.(event)) return;
+  const here = window.location.hash;
+  const origin = here.startsWith('#messages') ? here : '#messages';
+  if (/\/dev\/sessions\//.test(href)) w.Improve?.enterSessionFrom?.(origin);
+  else if (/\/dev\/(?:issues|proposals|governance)\//.test(href)) w.Improve?.enterTopicFrom?.(origin);
+}
+
 export function ObjectCard({ object, compact = false }: { object: SharedObjectCard; compact?: boolean }) {
   if (!object.available) {
     return (
@@ -122,7 +162,7 @@ export function ObjectCard({ object, compact = false }: { object: SharedObjectCa
     </>
   );
   return object.href ? (
-    <a href={object.href} className="messages-object-card" target={object.href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer">{body}</a>
+    <a href={object.href} className="messages-object-card" target={object.href.startsWith('http') ? '_blank' : undefined} rel="noopener noreferrer" onClick={(event) => recordObjectOrigin(event, object.href as string)}>{body}</a>
   ) : <div className="messages-object-card">{body}</div>;
 }
 

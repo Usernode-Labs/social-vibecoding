@@ -1,7 +1,7 @@
 /**
  * The shell's dialogs, one component per modal root.
  *
- * `Dialogs` renders all nine in the order Shell.tsx used to spell them out
+ * `Dialogs` renders them in the order Shell.tsx used to spell them out
  * inline. Order is load-bearing twice over: the prerendered public/index.html
  * is compared byte-for-byte against what the hand-written shell shipped, and
  * `tests/baselines/shell-markup.json` pins the id inventory that dapp.json's
@@ -22,6 +22,8 @@
  * header gives the reason.
  */
 
+import { AppSettingsDialog } from './app-settings';
+import { AppNotificationsDialog } from './app-notifications';
 import { CreateAppDialog } from './create-app';
 import { RenameAppDialog } from './rename-app';
 import { CloseIssueDialog } from './close-issue';
@@ -58,6 +60,8 @@ export function Dialogs() {
           existing dialog keeps its byte position in the built document.
       */}
       <WalletRecoveryDialog />
+      <AppSettingsDialog />
+      <AppNotificationsDialog />
     </>
   );
 }

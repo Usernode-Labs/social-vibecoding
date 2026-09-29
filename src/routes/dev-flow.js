@@ -72,6 +72,7 @@ const STATUS_BY_CODE = {
   pr_open_failed: 502,
   import_failed: 502,
   invalid_request: 400,
+  invalid_visual_evidence: 400,
   at_capacity: 429,
   // The update path (#1054). Three of these are 409 rather than 403 on
   // purpose: `base_mismatch` and `branch_moved` mean the caller's picture of
@@ -127,6 +128,11 @@ function sendFailure(res, result) {
     // is now.
     ...(result.expectedBase ? { expectedBase: result.expectedBase } : {}),
     ...(result.headSha ? { headSha: result.headSha } : {}),
+    ...(result.prNumber ? { prNumber: result.prNumber } : {}),
+    ...(result.prUrl ? { prUrl: result.prUrl } : {}),
+    ...(result.stage ? { stage: result.stage } : {}),
+    ...(result.field ? { field: result.field } : {}),
+    ...(result.recovery ? { recovery: result.recovery } : {}),
   });
 }
 
@@ -158,7 +164,9 @@ function taskDeps(pool, config) {
 // How many live connector grants this account has. Advisory only — the
 // walkthrough never requires one — but worth showing at the hand-off step,
 // where "you already have Claude connected" changes the instructions from
-// "paste this" to "or just tell Claude to pick it up".
+// "paste this" to "or just tell Claude to pick it up". A delegated grant
+// (#2779) is the platform's own agent, not a connected chat product, so it
+// never counts.
 async function connectorCount(pool, userId) {
   if (IS_STAGING) return 0;
   try {
@@ -167,7 +175,8 @@ async function connectorCount(pool, userId) {
          FROM mcp_tokens t
         WHERE t.user_id = $1
           AND t.revoked_at IS NULL
-          AND t.expires_at > clock_timestamp()`,
+          AND t.expires_at > clock_timestamp()
+          AND NOT EXISTS (SELECT 1 FROM mcp_delegations d WHERE d.grant_id = t.grant_id)`,
       [userId]
     );
     return rows[0]?.n || 0;
@@ -260,6 +269,32 @@ function shapeBranch(state) {
   };
 }
 
+// The spec an agent session's hand-off carries (#3078). The caller names its
+// change as `specFrom`; that id is a claim, not a grant, so the spec is read
+// only when the change is the VIEWER'S OWN, on this same app. Anyone else's
+// change, or one on another app, carries nothing and the instructions fall
+// back to asking what to build, exactly as without the parameter. The source
+// is the one the spec pane reads for its owner (GET /api/sessions/:id/spec):
+// chat_sessions.spec_md, the live draft, which equals the newest version.
+async function ownSpecForHandoff(pool, user, app, specFrom) {
+  const id = /^\d+$/.test(String(specFrom || '')) ? parseInt(specFrom, 10) : null;
+  if (!id || !user || !app) return null;
+  try {
+    const { rows } = await pool.query(
+      `SELECT spec_md, COALESCE(pr_title, session_title) AS title
+         FROM chat_sessions
+        WHERE id = $1 AND user_id = $2 AND app_id = $3`,
+      [id, user.id, app.id]
+    );
+    const row = rows[0];
+    if (!row || !String(row.spec_md || '').trim()) return null;
+    return { text: row.spec_md, title: row.title || '' };
+  } catch (err) {
+    log.warn('dev-flow', 'hand-off spec read failed', { id, err: err.message });
+    return null;
+  }
+}
+
 function devFlowRoutes(config) {
   const router = Router();
   const pool = getPool();
@@ -302,8 +337,12 @@ function devFlowRoutes(config) {
         // `demo` already selected to an ORDINARY work order — one that
         // continues nothing, which both of the others do carry and which is
         // the only shape "Start over" is offered on.
+        // `?order=link` (#2679, #2680) is the walkthrough at its FIRST step:
+        // nothing linked yet, so the "Link GitHub" anchor is on screen for
+        // the declared check to see.
         const order = req.query.order === 'connect' ? 'connect'
-          : (req.query.order === 'continue' ? 'continue' : null);
+          : (req.query.order === 'link' ? 'link'
+            : (req.query.order === 'continue' ? 'continue' : null));
         return res.json(req.query.demo === '1' || req.query.demo === 'session'
           ? demoStatus(app, parsed, order)
           : {
@@ -395,11 +434,18 @@ function devFlowRoutes(config) {
         : null;
       payload.targetKind = targetId && req.query.targetKind === 'session' ? 'session'
         : (targetId ? 'proposal' : null);
+      const spec = req.query.specFrom
+        ? await ownSpecForHandoff(pool, req.user, app, req.query.specFrom)
+        : null;
       payload.instructions = prompts.getLaunchpadInstructions({
         appName: app.name,
         slug: app.slug,
         targetProposalId: targetId,
+        spec,
       });
+      // Only for a caller that asked (the agent session's "Build with"), so
+      // the dev chat's payload is exactly what it was.
+      if (req.query.specFrom) payload.specCarried = !!spec;
 
       // Per SESSION when the caller names one, which the dev chat always does.
       // Keyed on the app alone, one open work order spoke for every session in
@@ -842,26 +888,34 @@ function devFlowRoutes(config) {
 // shooting: the hand-off step becomes "Connect Homeroom", because without one
 // the agent cannot call prepare_work and there is nothing useful to hand it.
 // `?order=continue` makes it a continuation, where the instructions name the
-// proposal being updated. Any value here must also be in DevChat's
-// DEV_FLOW_ORDERS or the client drops it before it arrives; a test holds the
-// two lists to each other.
+// proposal being updated. `?order=link` (#2679, #2680) is the walkthrough at
+// its first step, GitHub not linked, so the "Link GitHub" anchor is on screen.
+// Any value here must also be in DevChat's DEV_FLOW_ORDERS or the client
+// drops it before it arrives; a test holds the two lists to each other.
 function demoStatus(app, parsed, order) {
   const owner = (parsed && parsed.owner) || 'usernode-apps';
   const repo = (parsed && parsed.repo) || app.slug;
   const login = 'octo-contributor';
   const continuing = order === 'continue';
+  const unlinked = order === 'link';
   return {
     available: true,
     reason: null,
     demo: true,
     repo: { owner, repo },
-    github: { linked: true, login, available: true },
+    // Unlinked, the card opens on "Link your GitHub account" with its anchor,
+    // which is the one thing the check for that step needs to see. No fork
+    // either: the fork read is keyed on the linked login, so a real unlinked
+    // user has none yet.
+    github: unlinked
+      ? { linked: false, login: null, available: true }
+      : { linked: true, login, available: true },
     // Connected, unless the fixture is deliberately showing the other state.
     // It used to be zero on purpose, to show an advisory note under the
     // hand-off step; that note is gone, because the connector is a
     // requirement now rather than a suggestion.
     connectors: { count: order === 'connect' ? 0 : 2 },
-    fork: {
+    fork: unlinked ? null : {
       state: 'ready',
       owner: login,
       repo,
@@ -869,7 +923,9 @@ function demoStatus(app, parsed, order) {
       pageUrl: `https://github.com/${owner}/${repo}/fork`,
     },
     targetKind: continuing ? 'proposal' : null,
-    instructions: prompts.getLaunchpadInstructions({
+    // The live route answers an unlinked user before it writes instructions
+    // (`if (!linked) return res.json(payload)` above), so the fixture does too.
+    instructions: unlinked ? null : prompts.getLaunchpadInstructions({
       appName: app.name,
       slug: app.slug,
       targetProposalId: continuing ? 990601 : null,
@@ -879,4 +935,4 @@ function demoStatus(app, parsed, order) {
   };
 }
 
-module.exports = { devFlowRoutes, PICKABLE_AGENTS, STATUS_BY_CODE, shapeBranch };
+module.exports = { devFlowRoutes, PICKABLE_AGENTS, STATUS_BY_CODE, shapeBranch, demoStatus };

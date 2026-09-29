@@ -19,6 +19,34 @@ import { cn } from '@/lib/utils';
  *                     text-amber-800 dark:text-amber-400 text-xs text-center
  *                     px-3 py-1.5
  *
+ * ── The `notice` variant (#2443) ───────────────────────────────────────
+ *
+ * The caution box — a rounded, tinted panel inside a screen, as opposed to
+ * the full-bleed strip `banner` spells. The UI-consistency audit (#2383)
+ * found eight of them and no two alike: three radii, two tint systems, three
+ * dark-mode fills, five paddings, two text sizes.
+ *
+ * The spelling transcribed here is the one auth/login.tsx and auth/landing.tsx
+ * already shared, and it is the right base for two reasons beyond being the
+ * plurality. It is the ALPHA tint (`amber-500/40` border over `amber-500/10`
+ * fill), which is the system `banner` above is already written in — so the
+ * two variants are one vocabulary rather than two. And an alpha tint composes
+ * with whatever surface is behind it, which is why those sites need no `dark:`
+ * background at all: the competing `bg-amber-50` spelling had to name a dark
+ * fill explicitly and the three sites that did picked three different ones
+ * (`amber-950/30`, `amber-950/40`, `amber-500/10`). One fill, both themes,
+ * removes that axis instead of standardising it.
+ *
+ * `density` is the one axis that survived, because it is real: the offline
+ * explanation on a full-width auth screen and the health warning inside a
+ * 320px header sheet are not the same box. It is deliberately NOT defaulted —
+ * a default would have to apply to `banner` too, which carries its own
+ * padding — so every `notice` call site names `roomy` or `compact`.
+ *
+ * There is no red / emerald / violet notice. Every site the audit found is
+ * amber, and an unused cva branch is dead code the extractor still compiles.
+ * Add a colour when a call site needs it, not before.
+ *
  * ── Why the OTHER amber banner is not in here ──────────────────────────
  *
  * `#view-as-non-admin-banner` looks like a sibling variant and deliberately
@@ -64,6 +92,21 @@ const alertVariants = cva('', {
       // keeps it out of the flex column's height negotiation.
       banner:
         'shrink-0 bg-amber-500/15 border-b border-amber-500/30 text-amber-800 dark:text-amber-400 text-xs text-center px-3 py-1.5',
+      // The caution box, from auth/login.tsx and auth/landing.tsx. No padding
+      // here: it comes from `density` below, which a `notice` call site must
+      // name. The ink is inherited rather than set per child — the two auth
+      // sites give their own heading and body explicit colours, so it is inert
+      // there and load-bearing everywhere else.
+      notice:
+        'rounded-lg border border-amber-500/40 bg-amber-500/10 text-sm text-amber-800 dark:text-amber-300',
+    },
+    // Declared AFTER `variant`, so padding lands at the end of the run. No
+    // default: `banner` spells its own `px-3 py-1.5` and must stay
+    // byte-identical (tests/shell-banners.test.js), and cva emits nothing for
+    // a group with neither a value nor a default.
+    density: {
+      roomy: 'px-4 py-3',
+      compact: 'px-3 py-2',
     },
   },
   defaultVariants: { variant: 'banner', startHidden: false },
@@ -78,11 +121,11 @@ export interface AlertProps
 // `class` — again, the order the hand-written markup had. className is
 // destructured out above, so the spread can never clobber it.
 const Alert = React.forwardRef<HTMLDivElement, AlertProps>(
-  ({ className, variant, startHidden, ...props }, ref) => (
+  ({ className, variant, startHidden, density, ...props }, ref) => (
     <div
       ref={ref}
       {...props}
-      className={cn(alertVariants({ variant, startHidden }), className)}
+      className={cn(alertVariants({ variant, startHidden, density }), className)}
     />
   ),
 );

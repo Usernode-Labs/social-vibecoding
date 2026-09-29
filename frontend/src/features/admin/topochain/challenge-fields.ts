@@ -41,8 +41,12 @@ export const CH_TEMPLATE_FIELDS: TemplateField[] = [
 // (buildChallengeListItem's `overrides`) — so the edit form stays on them.
 // Rendering the rest there would show the TEMPLATE's values in fields that
 // save as challenge-level overrides, quietly freezing them into the event on
-// the next save.
-export const CH_EDIT_FIELDS = ['goal', 'reward', 'kind', 'task', 'description'];
+// the next save. The two schedule dates are among the reported overrides, so
+// an existing challenge's window can be moved without touching the template;
+// a date cleared back to blank saves null and inherits again.
+export const CH_EDIT_FIELDS = [
+  'goal', 'reward', 'kind', 'schedule_start', 'schedule_end', 'task', 'description',
+];
 
 // What one template field looks like IN the form. Shared by the fill and by
 // the save below, which compares against it — if these two ever disagreed,

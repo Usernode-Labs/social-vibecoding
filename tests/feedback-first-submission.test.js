@@ -55,6 +55,7 @@ global.fetch = async (url, opts) => String(url).startsWith('https://api.github.c
   ? { ok: !githubFails, status: githubFails ? 502 : 201, text: async () => '', json: async () => ({ number: ++issueNumber }) }
   : realFetch(url, opts);
 const { feedbackRoutes } = require('../src/routes/feedback');
+const { feedbackSubmitLimiter } = require('../src/middleware/rate-limits');
 let server;
 test.before(async () => {
   const serverApp = express();
@@ -72,6 +73,12 @@ test.after(() => {
   else process.env.GITHUB_BOT_TOKEN = oldToken;
 });
 test.beforeEach(() => {
+  // #2520: POST /api/feedback is limited to 10 submissions per hour per
+  // user and this suite files more than that between its two reporters,
+  // so each test starts from fresh buckets rather than inheriting the
+  // last one's.
+  feedbackSubmitLimiter.resetKey('user:7');
+  feedbackSubmitLimiter.resetKey('user:8');
   user = { id: 7, username: 'reporter' };
   seen = new Set(); queries = []; issueNumber = 40;
   githubFails = markerFails = destinationFails = false;

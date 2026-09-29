@@ -41,6 +41,8 @@
 
 import type { ReactNode } from 'react';
 
+import { SECTION_TAB_ACTIVE } from '@/components/ui/tabs';
+
 /** The card shell, matching `.gc-vote-item`'s box (see dev-card.tsx). */
 export const SKELETON_CARD_CLS =
   'w-full flex items-center gap-3 rounded-2xl bg-white dark:bg-zinc-900 px-3.5 py-3';
@@ -154,10 +156,8 @@ function cardHtml(i: number): string {
 export function skeletonKanbanHtml(): string {
   const tabs = KANBAN_COLS.map((title, i) => (
     '<div class="dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 '
-    + 'flex flex-col items-center justify-center border-b-2 '
-    + (i === 0
-      ? 'border-violet-500 text-violet-700 font-semibold dark:text-violet-400'
-      : 'border-transparent text-zinc-500 dark:text-zinc-400')
+    + 'flex flex-col items-center justify-center rounded-full font-semibold '
+    + (i === 0 ? SECTION_TAB_ACTIVE : 'text-zinc-500 dark:text-zinc-400')
     + '">'
     + `<span class="text-xs leading-tight truncate max-w-full">${title}</span>`
     + `<span class="font-mono text-[11px] leading-tight">${COUNT_BAR}</span>`
@@ -176,8 +176,8 @@ export function skeletonKanbanHtml(): string {
   )).join('');
 
   return '<div class="sr-only" role="status">Loading the board</div>'
-    + '<div class="sm:hidden flex items-stretch gap-1 mb-2 border-b '
-    + `border-zinc-200 dark:border-zinc-800" aria-hidden="true">${tabs}</div>`
+    + '<div class="sm:hidden flex items-stretch gap-0.5 mb-2 rounded-full '
+    + `bg-white dark:bg-zinc-900 p-0.5" aria-hidden="true">${tabs}</div>`
     + `<div class="flex gap-3 overflow-x-auto pb-2" aria-hidden="true">${cols}</div>`;
 }
 
