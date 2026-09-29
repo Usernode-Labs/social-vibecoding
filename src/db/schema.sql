@@ -3112,8 +3112,8 @@ COMMENT ON TABLE session_visuals IS 'staging:private';
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
 
 -- Plain-language, user-facing summary of a proposed change (1-3 sentences,
--- no jargon/file names/code). Generated alongside pr_title by the Haiku
--- PR-metadata call, prepended as the first paragraph of the GitHub PR body,
+-- no jargon/file names/code). Generated alongside pr_title by the
+-- PR-metadata call (Sonnet 5.5, llm.PR_METADATA_MODEL), prepended as the first paragraph of the GitHub PR body,
 -- and rendered at the top of the in-app proposal view (the column is this
 -- surface's single source of truth). NULL = none generated yet (legacy /
 -- pre-feature proposals, or an LLM-unavailable fallback); the view simply

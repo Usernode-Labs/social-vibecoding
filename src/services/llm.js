@@ -37,6 +37,10 @@ const FABLE_MODEL = 'claude-fable-5-1';
 const FALLBACK_MODE = 'default';
 const FALLBACK_BETA = 'server-side-fallback-2026-07-01';
 
+// The per-change metadata call (title, description, plain-English summary)
+// and the hub's since-your-last-visit summary both run on this model.
+const PR_METADATA_MODEL = 'claude-sonnet-5-5';
+
 // A fallback-served response is detected reliably ONLY via
 // usage.iterations carrying a 'fallback_message' entry. A sticky-served
 // turn (conversation already pinned to the fallback model) carries NO
@@ -547,9 +551,14 @@ function recordAnthropicError({
   }
 }
 
+// `fallbacks: true` sends the request through the beta endpoint with the
+// server-side refusal fallback ("default" mode, FALLBACK_BETA above), so a
+// safety classifier declining the request re-runs it on a fallback model
+// inside the same call instead of coming back empty. A client without the
+// beta namespace (the test stubs) takes the plain path unchanged.
 async function createMessageWithTelemetry({
   activeClient, params, requestOptions, passRequestOptions = false,
-  telemetryContext, defaults, apiKey,
+  telemetryContext, defaults, apiKey, fallbacks = false,
 }) {
   const context = telemetryBase(telemetryContext, defaults, apiKey);
   const startedAt = new Date();
@@ -557,12 +566,16 @@ async function createMessageWithTelemetry({
   const requestMetrics = llmTelemetry.isCollectionEnabled()
     ? anthropicRequestMetrics(params, { requestMode: 'single' })
     : {};
+  const beta = fallbacks && activeClient.beta && activeClient.beta.messages
+    && typeof activeClient.beta.messages.create === 'function';
+  const target = beta ? activeClient.beta.messages : activeClient.messages;
+  const sent = beta ? { ...params, betas: [FALLBACK_BETA], fallbacks: FALLBACK_MODE } : params;
   try {
     // Preserve the provider call's arity as well as its params object. Some
     // SDK stubs distinguish create(params) from create(params, undefined).
     const response = passRequestOptions
-      ? await activeClient.messages.create(params, requestOptions)
-      : await activeClient.messages.create(params);
+      ? await target.create(sent, requestOptions)
+      : await target.create(sent);
     recordAnthropicResponse({
       context,
       requestedModel: params.model,
@@ -932,26 +945,38 @@ ${sumBlock}
 ${specBlock ? `\nSPEC${specList.length > 1 ? 'S' : ''} (intended scope / theme):\n${specBlock}\n` : ''}
 Author: ${stripLoneSurrogates(username) || 'unknown'}`;
 
-  const model = 'claude-haiku-4-5';
+  // Sonnet 5.5, not Haiku: the summary written here is the first thing
+  // every voter reads about a change, and the hub's since-your-last-visit
+  // line is built from it. Sonnet 5.5 thinks by default and its thinking
+  // counts against max_tokens, so the old 512 would end the call before
+  // the JSON: low effort keeps the thinking short and 4000 leaves room.
+  // A refusal returns no text to parse, so it throws like any other
+  // failure and the caller keeps its deterministic title.
+  const model = PR_METADATA_MODEL;
   const resp = await createMessageWithTelemetry({
     activeClient,
     params: {
       model,
-      max_tokens: 512,
+      max_tokens: 4000,
       system,
       messages: [{ role: 'user', content: user }],
+      output_config: { effort: 'low' },
     },
     telemetryContext,
     defaults: { backend: 'helper', component: 'pr_metadata' },
     apiKey,
+    fallbacks: true,
   });
+  if (resp.stop_reason === 'refusal') throw new Error('PR metadata request was refused');
 
   const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
   const { title, body, summary } = parsePrMetadataText(text);
   // Surface usage so callers (pr-metadata.js) can debit the user
   // who triggered the PR. May be undefined if the SDK strips it on
-  // some response shapes; callers must tolerate that.
-  return { title, body, summary, usage: resp.usage, model };
+  // some response shapes; callers must tolerate that. A fallback-served
+  // response bills at the model that actually answered.
+  const served = detectFallback(resp) && typeof resp.model === 'string' ? resp.model : model;
+  return { title, body, summary, usage: resp.usage, model: served };
 }
 
 // Clamp an estimate phrase to something safe to inline in the dev-chat
@@ -2642,6 +2667,6 @@ module.exports = {
   answerWorkshopQuestion, WORKSHOP_ASK_MODEL, WORKSHOP_ASK_HISTORY_MAX,
   // Fable 5 classifier-fallback surface (+ tests)
   detectFallback, sanitizeFallbackContent, fallbackBoundary,
-  FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA,
+  FABLE_MODEL, FALLBACK_MODE, FALLBACK_BETA, PR_METADATA_MODEL,
   _setClientForTests,
 };
