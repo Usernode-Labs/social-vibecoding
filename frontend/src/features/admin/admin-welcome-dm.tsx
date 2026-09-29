@@ -13,14 +13,19 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // AdminConsole.canWrite() (canAdminWrite). The server enforces the same on
 // PUT /api/admin/welcome-dm.
 //
-// `members` is edited as one comma-separated line of usernames and sent as
-// a list; the server resolves each to an account and refuses a name it
-// cannot find, so what is saved is always people who exist.
+// `members` is edited one person per row, in order (the first sends), each
+// row a username field that suggests accounts as you type
+// (GET /api/admin/welcome-dm/people, which offers only people the Save will
+// accept). The rows are sent as a list; the server still resolves each to an
+// account and refuses a name it cannot find, so what is saved is always
+// people who exist.
 
 type Tone = 'ok' | 'err';
 interface Status { text: string; tone: Tone }
 
 interface Member { id: number; username: string | null; active: boolean }
+interface Row { key: number; username: string; inactive: boolean }
+interface Suggestion { id: number; username: string }
 interface RecentRow {
   userId: number; username: string; status: 'pending' | 'sent' | 'skipped' | 'failed';
   enqueuedAt: string; processedAt: string | null; conversationId: number | null;
@@ -55,12 +60,122 @@ const DETAIL_TEXT: Record<string, string> = {
   group_refused: 'The group could not be opened.',
 };
 
-function membersLine(members: Member[]): string {
-  return members.filter((m) => m.username).map((m) => `@${m.username}`).join(', ');
+const SUGGEST_DELAY_MS = 150;
+
+function handle(raw: string): string {
+  return raw.trim().replace(/^@/, '');
 }
 
-function parseMembers(raw: string): string[] {
-  return raw.split(/[\s,]+/).map((s) => s.trim().replace(/^@/, '')).filter(Boolean);
+// One row per saved person, and one empty row when there is nobody yet, so
+// the list always starts with somewhere to type.
+function rowsFrom(members: Member[], nextKey: () => number): Row[] {
+  const rows = members
+    .filter((m) => m.username)
+    .map((m) => ({ key: nextKey(), username: m.username as string, inactive: !m.active }));
+  return rows.length ? rows : [{ key: nextKey(), username: '', inactive: false }];
+}
+
+function membersFrom(rows: Row[]): string[] {
+  return rows.map((r) => handle(r.username)).filter(Boolean);
+}
+
+// One "People in the group" row: a username field that suggests accounts as
+// you type, a beat behind (a late answer to an older query never replaces a
+// newer one), with the create dialog's keyboard: arrows move, Enter picks,
+// Escape closes. An option is taken on mousedown, before the field's blur
+// can close the list.
+function MemberRow({ row, index, taken, disabled, canWrite, onEdit, onRemove, inputRef }: {
+  // The other rows' handles, lowercased and newline-joined: a string, so the
+  // suggestion effect below only re-runs when they actually change.
+  row: Row; index: number; taken: string; disabled: boolean; canWrite: boolean;
+  onEdit: (username: string) => void; onRemove: () => void;
+  inputRef: (el: HTMLInputElement | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [active, setActive] = useState(0);
+  const seq = useRef(0);
+  const q = handle(row.username);
+
+  useEffect(() => {
+    if (!open || !q) { seq.current += 1; setSuggestions([]); return undefined; }
+    const mine = ++seq.current;
+    const timer = setTimeout(async () => {
+      const { data } = await (window as any).AdminConsole
+        .fetchJson(`/api/admin/welcome-dm/people?q=${encodeURIComponent(q)}`);
+      if (mine !== seq.current) return;
+      const found: Suggestion[] = Array.isArray(data?.users) ? data.users : [];
+      const others = new Set(taken.split('\n'));
+      setSuggestions(found.filter((u) => !others.has(u.username.toLowerCase())));
+      setActive(0);
+    }, SUGGEST_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [open, q, taken]);
+
+  const pick = (username: string) => {
+    onEdit(username);
+    setSuggestions([]);
+    setOpen(false);
+  };
+  // Nothing to offer when the one suggestion is what is already typed.
+  const shown = open && suggestions.length > 0
+    && !(suggestions.length === 1 && suggestions[0].username.toLowerCase() === q.toLowerCase());
+  const listId = `admin-welcome-dm-member-${index}-suggestions`;
+  const optionId = (i: number) => `${listId}-${i}`;
+  const name = q ? `@${q}` : `person ${index + 1}`;
+
+  return (
+    <div className="relative" data-welcome-member-row={index}>
+      <div className="flex items-center gap-2">
+        <input
+          id={`admin-welcome-dm-member-${index}`} ref={inputRef}
+          type="text" autoComplete="off" spellCheck={false}
+          className={`${AdminUI.input} disabled:opacity-60`}
+          placeholder="@username" disabled={disabled}
+          aria-label={index === 0 ? 'Person 1, who sends the message' : `Person ${index + 1}`}
+          role="combobox" aria-autocomplete="list" aria-expanded={shown} aria-controls={listId}
+          aria-activedescendant={shown ? optionId(active) : undefined}
+          value={row.username}
+          onChange={(e) => { onEdit(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setOpen(false)}
+          onKeyDown={(e) => {
+            if (!shown) return;
+            if (e.key === 'ArrowDown') { e.preventDefault(); setActive((active + 1) % suggestions.length); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((active - 1 + suggestions.length) % suggestions.length); }
+            else if (e.key === 'Enter') { e.preventDefault(); pick(suggestions[active].username); }
+            else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+          }}
+        />
+        {index === 0 ? (
+          <span className={`${AdminUI.badge.secondary} shrink-0`} title="The first person sends the message and owns the group">Sends</span>
+        ) : null}
+        {canWrite ? (
+          <button type="button" className={`${AdminUI.btn.outlineSm} shrink-0`}
+            data-welcome-member-remove={index} aria-label={`Remove ${name}`}
+            disabled={disabled} onClick={onRemove}>Remove</button>
+        ) : null}
+      </div>
+      {row.inactive ? (
+        <p className="text-xs mt-1 text-amber-700 dark:text-amber-400" data-welcome-member-inactive={index}>
+          @{q} can no longer use the platform and will be left out of new groups.
+        </p>
+      ) : null}
+      {shown ? (
+        <ul id={listId} role="listbox" aria-label={`Accounts matching ${q}`}
+          className="absolute left-0 right-0 z-10 mt-1 max-h-60 overflow-y-auto rounded-lg bg-white py-1 shadow-lg ring-1 ring-zinc-200 dark:bg-zinc-800 dark:ring-zinc-700">
+          {suggestions.map((u, i) => (
+            <li key={u.id} id={optionId(i)} role="option" aria-selected={i === active}
+              className="cursor-pointer px-3 py-1.5 text-sm text-zinc-900 aria-selected:bg-zinc-100 dark:text-zinc-100 dark:aria-selected:bg-zinc-700"
+              onMouseEnter={() => setActive(i)}
+              onMouseDown={(e) => { e.preventDefault(); pick(u.username); }}>
+              @{u.username}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
 }
 
 function render(template: string): string {
@@ -88,14 +203,40 @@ function detailFor(row: RecentRow): string {
 function WelcomeDmForm({ data, canWrite, onSaved }: {
   data: Payload; canWrite: boolean; onSaved: (next: Payload) => void;
 }) {
+  const keySeq = useRef(0);
+  const nextKey = () => { keySeq.current += 1; return keySeq.current; };
   const [enabled, setEnabled] = useState(!!data.enabled);
-  const [members, setMembers] = useState(membersLine(data.members || []));
+  const [rows, setRows] = useState<Row[]>(() => rowsFrom(data.members || [], nextKey));
+  const [focusKey, setFocusKey] = useState<number | null>(null);
+  const inputs = useRef(new Map<number, HTMLInputElement>());
   const [title, setTitle] = useState(data.title || '');
   const [message, setMessage] = useState(data.message || '');
   const [status, setStatus] = useState<Status | null>(null);
   const [saving, setSaving] = useState(false);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
+
+  // A row just added takes the focus, so "+ Add person" goes straight to typing.
+  useEffect(() => {
+    if (focusKey == null) return;
+    inputs.current.get(focusKey)?.focus();
+    setFocusKey(null);
+  }, [focusKey]);
+
+  const editRow = (key: number, username: string) => {
+    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, username, inactive: false } : r)));
+  };
+  const removeRow = (key: number) => {
+    setRows((prev) => {
+      const next = prev.filter((r) => r.key !== key);
+      return next.length ? next : [{ key: nextKey(), username: '', inactive: false }];
+    });
+  };
+  const addRow = () => {
+    const key = nextKey();
+    setRows((prev) => [...prev, { key, username: '', inactive: false }]);
+    setFocusKey(key);
+  };
 
   const save = async () => {
     setStatus(null);
@@ -104,13 +245,13 @@ function WelcomeDmForm({ data, canWrite, onSaved }: {
       const res = await fetch('/api/admin/welcome-dm', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ members: parseMembers(members), title, message, enabled }),
+        body: JSON.stringify({ members: membersFrom(rows), title, message, enabled }),
       });
       const next = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(next.error || `Save failed (${res.status})`);
       if (!alive.current) return;
       setEnabled(!!next.enabled);
-      setMembers(membersLine(next.members || []));
+      setRows(rowsFrom(next.members || [], nextKey));
       setTitle(next.title || '');
       setMessage(next.message || '');
       onSaved(next);
@@ -128,7 +269,7 @@ function WelcomeDmForm({ data, canWrite, onSaved }: {
   };
 
   const dis = !canWrite || saving;
-  const inactive = (data.members || []).filter((m) => !m.active);
+  const full = rows.length >= data.limits.members;
   let source = '';
   if (data.updatedAt) {
     const who = data.updatedBy ? ` by @${data.updatedBy}` : '';
@@ -146,25 +287,29 @@ function WelcomeDmForm({ data, canWrite, onSaved }: {
         />
         <span>Send a welcome message to everyone who joins</span>
       </label>
-      <label className="block" htmlFor="admin-welcome-dm-members">
-        <span className={LABEL}>People in the group</span>
-        <input
-          id="admin-welcome-dm-members" type="text" autoComplete="off" spellCheck={false}
-          className={`${AdminUI.input} mt-1 disabled:opacity-60`}
-          placeholder="@you, @teammate" disabled={dis}
-          value={members} onChange={(e) => setMembers(e.target.value)}
-        />
-        <p className={HELP}>
-          Usernames, separated by commas, up to {data.limits.members}. The first sends the
-          message and owns the group.
-        </p>
-        {inactive.length ? (
-          <p id="admin-welcome-dm-inactive" className="text-xs mt-1 text-amber-700 dark:text-amber-400">
-            {inactive.length === 1 ? 'One person here' : `${inactive.length} people here`} can no
-            longer use the platform and will be left out of new groups.
-          </p>
+      <div>
+        <p className={LABEL} id="admin-welcome-dm-members-label">People in the group</p>
+        <div id="admin-welcome-dm-members" role="group" aria-labelledby="admin-welcome-dm-members-label"
+          className="mt-1 space-y-2">
+          {rows.map((row, i) => (
+            <MemberRow
+              key={row.key} row={row} index={i} disabled={dis} canWrite={canWrite}
+              taken={rows.filter((r) => r.key !== row.key).map((r) => handle(r.username).toLowerCase()).filter(Boolean).join('\n')}
+              onEdit={(username) => editRow(row.key, username)}
+              onRemove={() => removeRow(row.key)}
+              inputRef={(el) => { if (el) inputs.current.set(row.key, el); else inputs.current.delete(row.key); }}
+            />
+          ))}
+        </div>
+        {canWrite ? (
+          <button id="admin-welcome-dm-add-member" type="button" className={`${AdminUI.btn.outlineSm} mt-2`}
+            disabled={dis || full} onClick={addRow}>+ Add person</button>
         ) : null}
-      </label>
+        <p className={HELP}>
+          One person per row, up to {data.limits.members}. The first sends the message and owns
+          the group.
+        </p>
+      </div>
       <label className="block" htmlFor="admin-welcome-dm-title">
         <span className={LABEL}>Group name</span>
         <input

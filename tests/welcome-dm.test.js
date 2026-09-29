@@ -128,10 +128,20 @@ test('the form shows the saved people in order, the preview, and Save only to fu
   const mod = loadSection();
   const html = renderToHtml(createElement(mod.WelcomeDmForm, { data: PAYLOAD, canWrite: true, onSaved() {} }));
   assert.match(html, /id="admin-welcome-dm-enabled"[^>]*checked=""/);
-  assert.match(html, /id="admin-welcome-dm-members"[^>]*value="@evan, @lukas, @gone"/);
+  // One row per person, in order, the first marked as the sender.
+  assert.match(html, /id="admin-welcome-dm-members" role="group" aria-labelledby="admin-welcome-dm-members-label"/);
+  assert.match(html, /id="admin-welcome-dm-member-0"[^>]*aria-label="Person 1, who sends the message"[^>]*role="combobox"[^>]*value="evan"/);
+  assert.match(html, /id="admin-welcome-dm-member-1"[^>]*value="lukas"/);
+  assert.match(html, /id="admin-welcome-dm-member-2"[^>]*value="gone"/);
+  assert.doesNotMatch(html, /id="admin-welcome-dm-member-3"/);
+  assert.equal((html.match(/>Sends</g) || []).length, 1, 'only the first row sends');
+  assert.equal((html.match(/data-welcome-member-remove=/g) || []).length, 3, 'every row can be removed');
+  assert.match(html, /id="admin-welcome-dm-add-member"[^>]*>\+ Add person</);
   assert.match(html, /id="admin-welcome-dm-title"[^>]*value="Welcome, \{username\}"/);
   assert.match(html, /Hi @\{username\}!<\/textarea>/);
-  assert.match(html, /id="admin-welcome-dm-inactive"/, 'someone who can no longer take part is called out');
+  assert.match(html, /data-welcome-member-inactive="2"[^>]*>@gone can no longer use the platform/,
+    'someone who can no longer take part is called out on their own row');
+  assert.doesNotMatch(html, /data-welcome-member-inactive="[01]"/);
   assert.match(html, /Welcome, newcomer/, 'the preview fills the placeholder');
   assert.match(html, /Hi @newcomer!/);
   assert.match(html, /id="admin-welcome-dm-save"/);
@@ -140,7 +150,35 @@ test('the form shows the saved people in order, the preview, and Save only to fu
 
   const viewOnly = renderToHtml(createElement(mod.WelcomeDmForm, { data: PAYLOAD, canWrite: false, onSaved() {} }));
   assert.doesNotMatch(viewOnly, /admin-welcome-dm-save/, 'a view-only admin gets no Save');
-  assert.match(viewOnly, /id="admin-welcome-dm-members"[^>]*disabled=""/);
+  assert.match(viewOnly, /id="admin-welcome-dm-member-0"[^>]*disabled=""/);
+  assert.doesNotMatch(viewOnly, /data-welcome-member-remove=/, 'nor Remove');
+  assert.doesNotMatch(viewOnly, /admin-welcome-dm-add-member/, 'nor Add person');
+
+  // Nobody saved yet: one empty row to type into.
+  const empty = renderToHtml(createElement(mod.WelcomeDmForm, {
+    data: { ...PAYLOAD, members: [] }, canWrite: true, onSaved() {},
+  }));
+  assert.match(empty, /id="admin-welcome-dm-member-0"[^>]*placeholder="@username"[^>]*value=""/);
+  assert.doesNotMatch(empty, /id="admin-welcome-dm-member-1"/);
+
+  // At the limit there is no room for another row.
+  const many = Array.from({ length: PAYLOAD.limits.members }, (_, i) => ({ id: 100 + i, username: `p${i}`, active: true }));
+  const full = renderToHtml(createElement(mod.WelcomeDmForm, {
+    data: { ...PAYLOAD, members: many }, canWrite: true, onSaved() {},
+  }));
+  assert.match(full, /id="admin-welcome-dm-add-member"[^>]*disabled=""/);
+});
+
+test('each row asks the admin search for people, which offers only accounts the Save accepts', () => {
+  const tsx = read('frontend/src/features/admin/admin-welcome-dm.tsx');
+  assert.match(tsx, /fetchJson\(`\/api\/admin\/welcome-dm\/people\?q=\$\{encodeURIComponent\(q\)\}`\)/);
+  assert.match(tsx, /if \(mine !== seq\.current\) return;/, 'a late answer never replaces a newer one');
+  assert.match(tsx, /onMouseDown=\{\(e\) => \{ e\.preventDefault\(\); pick\(u\.username\); \}\}/,
+    'an option is taken before the blur closes the list');
+  const admin = read('src/routes/admin.js');
+  assert.match(admin, /router\.get\('\/api\/admin\/welcome-dm\/people', async/);
+  const service = read('src/services/welcome-dm.js');
+  assert.match(service, /AND has_platform_access AND anonymised_at IS NULL AND NOT is_synthetic\n\s+ORDER BY LOWER\(username\), id/);
 });
 
 test('recently welcomed lists each person with what happened', () => {

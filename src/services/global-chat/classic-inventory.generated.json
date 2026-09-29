@@ -1077,6 +1077,21 @@
     },
     {
       "source": "src/routes/admin.js",
+      "method": "GET",
+      "path": "/api/admin/welcome-dm/people",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.welcome.dm.people.104663d7",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
       "method": "PUT",
       "path": "/api/admin/welcome-dm",
       "expression": null,

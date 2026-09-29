@@ -42,6 +42,7 @@
 
 const log = require('./logger');
 const conversations = require('./conversations');
+const userDirectory = require('./user-directory');
 
 const KEY_ENABLED = 'welcome_dm_enabled';
 const KEY_MEMBERS = 'welcome_dm_members';
@@ -69,6 +70,7 @@ const MAX_ATTEMPTS = 3;
 const MAX_AGE_DAYS = 14;
 const BATCH_SIZE = 25;
 const RECENT_LIMIT = 20;
+const SEARCH_LIMIT = 8;
 
 const INTERVAL_MS = 30_000;
 const FIRST_SWEEP_DELAY_MS = 20_000;
@@ -210,6 +212,25 @@ async function writeSettings(pool, patch, actorId) {
     );
   }
   return { ok: true };
+}
+
+/**
+ * Suggestions for a "People in the group" row: usernames starting with what
+ * was typed, among the accounts validatePatch would accept (platform access,
+ * not deleted, not a bot), so a suggestion is never refused on Save.
+ */
+async function searchPeople(pool, raw) {
+  const q = typeof raw === 'string' ? raw.trim().replace(/^@/, '').slice(0, 32) : '';
+  if (!q) return [];
+  const { rows } = await pool.query(
+    `SELECT id, username FROM users
+      WHERE LOWER(username) LIKE LOWER($1) || '%' ESCAPE '\\'
+        AND has_platform_access AND anonymised_at IS NULL AND NOT is_synthetic
+      ORDER BY LOWER(username), id
+      LIMIT $2`,
+    [userDirectory.escapeLike(q), SEARCH_LIMIT]
+  );
+  return rows;
 }
 
 /** What #admin/welcome-dm shows: the settings, and who was welcomed lately. */
@@ -462,6 +483,7 @@ module.exports = {
   validatePatch,
   writeSettings,
   adminPayload,
+  searchPeople,
   render,
   renderTitle,
   SETTING_KEYS,
@@ -470,5 +492,6 @@ module.exports = {
   MAX_ATTEMPTS,
   MAX_AGE_DAYS,
   MAX_MEMBERS,
+  SEARCH_LIMIT,
   INTERVAL_MS,
 };
