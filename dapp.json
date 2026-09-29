@@ -78,6 +78,12 @@
   ],
   "platform_env": [
     {
+      "key": "CONTENT_REVIEW_MODE",
+      "group": "Platform",
+      "default": "advisory",
+      "description": "The Content rules check on every proposal (#2722): a model reads the proposal's diff against the conventions' Content rules section. off: no row. advisory (default): a flag shows on the checks but does not stop the merge. blocking: a flag fails the checks, so the proposal cannot merge until the content is fixed. Fails open on any error."
+    },
+    {
       "key": "LOG_LEVEL",
       "group": "Platform",
       "default": "INFO",
