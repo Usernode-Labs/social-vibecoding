@@ -105,16 +105,6 @@ export function MorePanel({ rows }: {
         />
         <ListRow
           as="a"
-          id="profile-row-proposals"
-          href="#profile/proposals"
-          leading={<IconTile size="sm"><BallotIcon /></IconTile>}
-          title="Your proposals"
-          titleClassName={TITLE}
-          subtitle={rows.proposals || 'Every proposal you have started'}
-          subtitleClassName={SUBTITLE}
-        />
-        <ListRow
-          as="a"
           id="profile-row-feedback"
           href="#profile?feedback"
           onClick={(event) => {
@@ -137,6 +127,16 @@ export function MorePanel({ rows }: {
           title="Settings"
           titleClassName={TITLE}
           subtitle={settingsLine}
+          subtitleClassName={SUBTITLE}
+        />
+        <ListRow
+          as="a"
+          id="profile-row-proposals"
+          href="#profile/proposals"
+          leading={<IconTile size="sm"><BallotIcon /></IconTile>}
+          title="Your proposals"
+          titleClassName={TITLE}
+          subtitle={rows.proposals || 'Every proposal you have started'}
           subtitleClassName={SUBTITLE}
         />
       </GroupedList>
