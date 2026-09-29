@@ -257,37 +257,36 @@ test('issuePoster: the platform\'s issue row, the feedback report, the Source li
   assert.equal((await poster({ body: 'plain', user: 'stranger' })).name, null, 'no linked account, nobody to notify here');
 });
 
-test('the answers that ask something of the poster name them; the notice and a held note do not; the bot never names itself', async (t) => {
+test('the answers tag whoever filed the issue and took part; the notice and a held note tag nobody', async (t) => {
+  // Who exactly, and who is left out, is tests/homeroom-bot-mentions.test.js.
   const h = actHarness();
   const realPost = live.post;
-  const realPoster = live.issuePoster;
-  t.after(() => { live.post = realPost; live.issuePoster = realPoster; });
+  const realTargets = live.mentionTargets;
+  t.after(() => { live.post = realPost; live.mentionTargets = realTargets; });
   const lookups = [];
-  let who = 'evan';
-  live.issuePoster = async (_pool, args) => { lookups.push(args); return who; };
-  live.post = async (args) => { h.posts.push({ kind: args.kind, mention: args.mention, senderId: args.senderId }); return {}; };
+  live.mentionTargets = async (args) => { lookups.push(args); return ['evan', 'maya']; };
+  live.post = async (args) => { h.posts.push({ kind: args.kind, mentions: args.mentions, senderId: args.senderId }); return {}; };
 
   await act(h, { verdict: 'question', question: 'Which colour?' });
   await act(h, { verdict: 'person', reason: 'Taste.' });
   await act(h, { verdict: 'empty', reason: 'Nothing.' });
-  assert.deepEqual(h.posts.map((p) => [p.kind, p.mention, p.senderId]),
-    [['question', 'evan', 77], ['person', 'evan', 77], ['empty', 'evan', 77]]);
-  assert.equal(lookups.length, 3, 'one lookup per answer');
+  assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions, p.senderId]),
+    [['question', ['evan', 'maya'], 77], ['person', ['evan', 'maya'], 77], ['empty', ['evan', 'maya'], 77]]);
+  assert.equal(lookups.length, 3, 'one lookup per run, read fresh each time');
   assert.equal(lookups[0].issueNumber, 12);
+  assert.equal(lookups[0].bot.id, 77, 'so the bot can leave itself out');
 
   h.posts.length = 0;
   lookups.length = 0;
   await act(h, { verdict: 'question', question: 'x' }, { capSuppressed: 'question_tripwire' });
-  assert.deepEqual(h.posts.map((p) => [p.kind, p.mention]), [['held_question_tripwire', null]]);
+  assert.deepEqual(h.posts.map((p) => [p.kind, p.mentions]), [['held_question_tripwire', []]]);
   assert.equal(lookups.length, 0, 'a held note looks nobody up');
 
-  h.posts.length = 0;
-  who = 'Homeroom_Bot';
-  await act(h, { verdict: 'person', reason: 'x' });
-  assert.equal(h.posts[0].mention, null, 'an issue the bot itself filed names nobody');
-
-  assert.ok(live.tagsPoster('proposal') && live.tagsPoster('build_failed'), 'a proposal or a failed build is theirs to know about too');
+  for (const kind of ['proposal', 'build_failed', 'spec', 'blocked', 'followup_answer', 'followup_revise']) {
+    assert.ok(live.tagsPoster(kind), `${kind} is theirs to know about too`);
+  }
   assert.ok(!live.tagsPoster('looking'));
+  assert.ok(!live.tagsPoster('held_proposals_per_app'));
 });
 
 test('what it says: the question with its default, notes that never close, a linked proposal', () => {
@@ -439,8 +438,10 @@ test('an issue with an open bot proposal is left alone', () => {
 
 // ── The build ────────────────────────────────────────────────────────────
 
-function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }, promote = { status: 200, body: { ok: true, prNumber: 42 } }, hang = false } = {}) {
-  const calls = { queries: [], ensured: [], loop: null, exec: null, stopped: [], promoted: [] };
+// The spec turn comes first (mode 'scout', see tests/homeroom-bot-spec.test.js);
+// `loop` and `exec` are the BUILD turn's.
+function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }, promote = { status: 200, body: { ok: true, prNumber: 42 } }, hang = false, spec = '' } = {}) {
+  const calls = { queries: [], ensured: [], loop: null, exec: null, stopped: [], promoted: [], modes: [] };
   const pool = {
     async query(sql, params) {
       calls.queries.push({ sql: String(sql), params });
@@ -459,16 +460,23 @@ function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }
     worker: {
       async ensureWorkerImage() {},
       async ensureWorker(id, opts) { calls.ensured.push({ id, opts }); return 'usernode-worker-5001'; },
-      async execInWorker(id, opts) { calls.exec = { id, opts }; return result; },
+      async execInWorker(id, opts) {
+        calls.modes.push(opts.mode);
+        if (opts.mode === 'scout') return { lastResultText: spec };
+        calls.exec = { id, opts };
+        return result;
+      },
       stopTurn(id) { calls.stopped.push(id); release(); return Promise.resolve(); },
     },
     sessions: {
       async runCodexAttemptLoop(args) {
-        calls.loop = args;
         const r = await args.dispatchOnce({ openrouterApiKey: 'k' });
+        if (args.mode === 'scout') return { result: r, error: null, estimatedCostUsd: null };
+        calls.loop = args;
         if (hang) await hung;
         return { result: r, error: null, estimatedCostUsd: 0.05 };
       },
+      async persistScoutPublication() { return { specVersion: 1 }; },
     },
     agentTurn: { async resolveCodexRuntimeContext() { return {}; } },
     sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `homeroom_bot/s${sessionId}` }; } },
@@ -490,7 +498,8 @@ test('a ready request is built in a session of its own and proposed', async () =
   assert.deepEqual(out, { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.05 });
 
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
-  assert.match(insert.sql, /ARRAY\[\$3\]::int\[\], TRUE/, 'the issue is linked, so the PR says Closes #12');
+  assert.match(insert.sql, /ELSE ARRAY\[\$3::int\] END, TRUE/, 'the issue is linked, so the PR says Closes #12');
+  assert.equal(insert.params[2], 12, 'a proposing build links its issue');
   assert.match(insert.sql, /'active', FALSE/, 'a normal dev session, never a headless one');
   assert.equal(insert.params[1], BOT.id, 'owned by the bot');
 
@@ -503,6 +512,7 @@ test('a ready request is built in a session of its own and proposed', async () =
   assert.match(h.calls.exec.opts.prompt, /Add an hourly refresh to the feed poller\./);
   assert.match(h.calls.exec.opts.prompt, /Do not commit or push yourself/);
   assert.deepEqual(h.calls.promoted, [{ id: '5001', user: BOT.id }], 'proposed once, as the bot');
+  assert.deepEqual(h.calls.modes, ['scout', 'build'], 'a spec first; with none written, the build goes ahead from the plan');
   assert.ok(!h.calls.queries.some((q) => /status = 'archived'/.test(q.sql)));
 });
 
@@ -633,7 +643,16 @@ test('runTriage acts only through the live module, and only when the app is live
   for (const forbidden of ['createIssueComment', 'sendSystemMessage', '/promote']) {
     assert.ok(!BOT_SRC.includes(forbidden), `homeroom-bot.js never reaches ${forbidden} itself`);
   }
-  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 1, 'one build call, inside actOnVerdict');
+  // Two build calls: actOnVerdict's, and the shadow build's, which never
+  // proposes and never posts (shadow builds leave a branch and nothing else).
+  assert.equal((BOT_SRC.match(/buildAndPropose\(/g) || []).length, 2, 'actOnVerdict, and the shadow build');
+  const shadow = BOT_SRC.slice(BOT_SRC.indexOf('async function shadowBuild('), BOT_SRC.indexOf('/**', BOT_SRC.indexOf('async function shadowBuild(')));
+  assert.match(shadow, /propose: false,?\s*\}\);/);
+  assert.doesNotMatch(shadow, /live\.post\(|promoteAsBot|advanceSeen/, 'a shadow build says nothing anywhere');
+  assert.match(BOT_SRC, /\} else if \(parsed\.verdict === 'ready' && shadowBuildsApply\(settings, app, config\)\) \{/,
+    'and it is queued only where the live branch does not run');
+  assert.equal(bot.shadowBuildSkipReason({ mode: 'shadow', liveApps: ['todo'], shadowBuilds: true }, { slug: 'todo' }),
+    'the app is live now', 'a live app is never also shadow built');
   assert.match(BOT_SRC, /const liveMode = live\.isLiveFor\(settings, app\);/);
   assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+const open = await live\.openBotProposal/);
   assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+try \{\n\s+acted = await actOnVerdict\(/);

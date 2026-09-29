@@ -38,6 +38,8 @@ const COMPONENTS = new Set([
   'homeroom_bot_triage',
   // #3146: its build turn on a live app, for a request it judged ready.
   'homeroom_bot_build',
+  // Its spec turn, just before that build (live and shadow alike).
+  'homeroom_bot_spec',
   'other_helper',
 ]);
 const BILLING_PATHS = new Set([
