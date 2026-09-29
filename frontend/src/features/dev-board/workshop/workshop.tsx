@@ -55,6 +55,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronUpIcon,
+  DescriptionIcon,
   EllipsisHorizontalIcon,
   HandRaisedIcon,
   NewspaperIcon,
@@ -65,6 +66,7 @@ import {
   UserGroupIcon,
 } from '@/components/ui/icons';
 
+import { Html } from '../../../lib/html';
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Improve } from '../../improve/improve-controller.js';
@@ -1094,7 +1096,7 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
  * ═══════════════════════════════════════════════════════════════════════ */
 
 type QueueRow = Extract<DevWorkshopView['queue'][number], { t: 'card' }>;
-type SheetKind = 'vote' | 'ask' | 'comments';
+type SheetKind = 'vote' | 'description' | 'ask' | 'comments';
 type Side = 'before' | 'after';
 
 /** One turn in the ask box. `pending` is the answer still being written. */
@@ -1112,45 +1114,61 @@ function askMsgClass(m: AskMsg): string {
   return 'dev-ws-ask-msg dev-ws-ask-ai';
 }
 
-/** The status pill's tone as a caption chip. Complete literals, as above. */
+/**
+ * A fact's tone, twice: as a chip on the Description sheet and as one word
+ * of the card's facts line. Complete literals, as above.
+ */
 function chipTone(tone: string | undefined): string {
   switch (tone) {
     case 'ok': return 'dev-ws-chip dev-ws-chip-ok';
     case 'progress': return 'dev-ws-chip dev-ws-chip-progress';
     case 'warn': case 'attention': return 'dev-ws-chip dev-ws-chip-warn';
     case 'blocked': case 'reject': return 'dev-ws-chip dev-ws-chip-blocked';
+    case 'info': return 'dev-ws-chip dev-ws-chip-info';
     default: return 'dev-ws-chip';
   }
 }
+function factTone(tone: string | undefined): string {
+  switch (tone) {
+    case 'ok': return 'dev-ws-fact dev-ws-fact-ok';
+    case 'progress': return 'dev-ws-fact dev-ws-fact-progress';
+    case 'warn': case 'attention': return 'dev-ws-fact dev-ws-fact-warn';
+    case 'blocked': case 'reject': return 'dev-ws-fact dev-ws-fact-blocked';
+    default: return 'dev-ws-fact';
+  }
+}
 
-/**
- * The caption's chips: what the card's status pill says, the tally, and the
- * category or priority when one is set. Four at most — this is a caption,
- * not the card's badge band, and the rail already says a vote is owed.
- */
 /** The key legend for an item of this kind: the keys it answers to. */
 function legendFor(kind: QueueRow['kind'] | 'done'): Array<[string[], string]> {
   const keys: Array<[string[], string]> = [[['↑', '↓'], 'move']];
   // The end card answers to the move keys alone.
   if (kind === 'done') return keys;
   if (kind === 'vote') keys.push([['V'], 'vote']);
-  keys.push([['A'], 'ask'], [['C'], 'comments']);
+  keys.push([['D'], 'description'], [['A'], 'ask'], [['C'], 'comments']);
   if (kind === 'vote') keys.push([['T'], 'try it']);
   keys.push([['M'], 'more']);
   return keys;
 }
 
-function chipsFor(row: QueueRow, voted: string | null): { key: string; cls: string; text: string }[] {
-  const out: { key: string; cls: string; text: string }[] = [];
+/**
+ * The item's facts: how you voted, where the vote stands, what the card's
+ * status pill says, and the category or priority when one is set. Four at
+ * most. The card sets them as ONE line at its foot (they were a row of
+ * chips, two rows on a phone, under a by-line that looked like one more
+ * numbered change); the Description sheet has them in full, as chips.
+ */
+type Fact = { key: string; tone: string | undefined; text: string };
+function factsFor(row: QueueRow, voted: string | null): Fact[] {
+  const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
   if (row.kind === 'vote' && st) {
-    if (voted) out.push({ key: 'voted', cls: 'dev-ws-chip dev-ws-chip-ok', text: `You voted ${voted}` });
-    if (st.label && !/^Vote\b/.test(st.label)) out.push({ key: 'state', cls: chipTone(st.tone), text: st.label });
-    out.push({ key: 'tally', cls: 'dev-ws-chip', text: `${st.yes} of ${st.majority} yes` });
+    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
+    out.push({ key: 'tally', tone: undefined, text: `${st.yes} of ${st.majority} yes` });
+    if (st.label && !/^Vote\b/.test(st.label)) out.push({ key: 'state', tone: st.tone, text: st.label });
   }
   for (const b of row.card.badges) {
     if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority') && b.label.text) {
-      out.push({ key: b.key, cls: 'dev-ws-chip dev-ws-chip-info', text: b.label.text });
+      out.push({ key: b.key, tone: 'info', text: b.label.text });
     }
   }
   return out.slice(0, 4);
@@ -1301,21 +1319,19 @@ function BeforeAfter({ v, near, onFull }: {
       style = { width: w, height: h, transform: `translate(${(view.w - w * scale) / 2}px, ${(view.h - h * scale) / 2}px) scale(${scale})` };
     }
   }
+  // The switch and the way out sit in a bar ABOVE the picture, never on it:
+  // laid over the still they covered the very corner a change often is.
   return (
     <div className="dev-ws-media" data-ws-media="">
-      <div className="dev-ws-media-view" ref={viewRef}>
-        {id && style ? (
-          <img
-            className="dev-ws-media-img"
-            src={visualSrc(id, v.protected === true)}
-            alt={side === 'after' ? 'After the change' : 'Before the change'}
-            style={style}
-            draggable={false}
-          />
-        ) : null}
-        {spot ? <span className="dev-ws-media-spot" style={spot} aria-hidden="true" /> : null}
-        {geo ? null : <span className="dev-ws-media-wait" aria-hidden="true" />}
-      </div>
+      <div className="dev-ws-media-bar">
+        {v.before && v.after ? (
+          <div className="dev-ws-seg" role="group" aria-label="Before or after">
+            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
+            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
+          </div>
+        ) : (
+          <span className="dev-ws-seg dev-ws-seg-one">{v.after ? 'After' : 'Before'}</span>
+        )}
       <button
         type="button"
         className="dev-ws-media-full"
@@ -1332,16 +1348,179 @@ function BeforeAfter({ v, near, onFull }: {
         data-claim={v.protected ? (v.claim || v.path) : undefined}
         onClick={(e) => onFull(e.currentTarget)}
       >
-        {cropped ? 'Cropped to the change · Full page ↗' : 'Full page ↗'}
+        {cropped ? 'Cropped · Full page ↗' : 'Full page ↗'}
       </button>
-      {v.before && v.after ? (
+      </div>
+      <div className="dev-ws-media-view" ref={viewRef}>
+        {id && style ? (
+          <img
+            className="dev-ws-media-img"
+            src={visualSrc(id, v.protected === true)}
+            alt={side === 'after' ? 'After the change' : 'Before the change'}
+            style={style}
+            draggable={false}
+          />
+        ) : null}
+        {spot ? <span className="dev-ws-media-spot" style={spot} aria-hidden="true" /> : null}
+        {geo ? null : <span className="dev-ws-media-wait" aria-hidden="true" />}
+      </div>
+    </div>
+  );
+}
+
+type ShotScreen = NonNullable<NonNullable<QueueRow['visuals']>['screens']>[number];
+type Box = { x: number; y: number; w: number; h: number };
+
+const isPhoneScreen = (screen: ShotScreen) => /phone|mobile/i.test(screen.viewport);
+
+/**
+ * The screen this reader sees: a phone's on a phone, a desktop one on a wide
+ * window, whichever the run has when it has only one.
+ */
+function pickScreen(screens: ShotScreen[], wide: boolean): ShotScreen | null {
+  return screens.find((s) => (wide ? !isPhoneScreen(s) : isPhoneScreen(s))) || screens[0] || null;
+}
+
+/** A region's rectangle on one side: its box, or a line where it begins. */
+function regionRect(region: ShotScreen['regions'][number], side: Side): { box: Box; line: boolean } | null {
+  const box = side === 'before' ? region.b : region.a;
+  if (box && box.length === 4) return { box: { x: box[0], y: box[1], w: box[2], h: box[3] }, line: false };
+  const mark = side === 'before' ? region.bMark : region.aMark;
+  if (region.n > 0 && mark && mark.length === 3) return { box: { x: mark[0], y: mark[1], w: mark[2], h: 0 }, line: true };
+  return null;
+}
+
+/**
+ * The item's picture when its before & after run worked out its screens:
+ * ONE screen, at the reader's own size, cropped to the areas the run found
+ * different and outlined there, numbered as the declared changes are (the
+ * proposal's own card draws the same outlines, services/shots-diff.js). The
+ * changes it shows are listed under it in a line or two each; the full words
+ * are in the Description sheet. Tap the picture, or the switch above it, to
+ * flip between after and before.
+ *
+ * The outlines are drawn in the VIEW's pixels over the scaled still, not
+ * inside it, so a line and a number stay crisp at any scale. Nothing loads
+ * until the item is in view or next to it (`near`).
+ */
+function ShotsPicture({ v, near, wide }: {
+  v: NonNullable<QueueRow['visuals']>;
+  near: boolean;
+  wide: boolean;
+}): ReactNode {
+  const viewRef = useRef<HTMLDivElement>(null);
+  const [side, setSide] = useState<Side>('after');
+  const [view, setView] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = viewRef.current;
+    if (!el || typeof ResizeObserver !== 'function') return undefined;
+    const measure = () => setView((cur) => (
+      cur.w === el.clientWidth && cur.h === el.clientHeight ? cur : { w: el.clientWidth, h: el.clientHeight }
+    ));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const screen = pickScreen(v.screens || [], wide);
+  if (!screen) return null;
+  const W = screen.width;
+  const H = Math.max(screen.before.height, screen.after.height);
+  // The crop: every outlined area on either side, so a flip never moves it.
+  const rects = screen.regions.flatMap((r) => [regionRect(r, 'before'), regionRect(r, 'after')])
+    .filter((r): r is { box: Box; line: boolean } => !!r);
+  let place: { scale: number; tx: number; ty: number } | null = null;
+  if (view.w && view.h) {
+    const pad = 16;
+    const x0 = rects.length ? Math.max(0, Math.min(...rects.map((r) => r.box.x)) - pad) : 0;
+    const y0 = rects.length ? Math.max(0, Math.min(...rects.map((r) => r.box.y)) - pad) : 0;
+    const x1 = rects.length ? Math.min(W, Math.max(...rects.map((r) => r.box.x + r.box.w)) + pad) : W;
+    const y1 = rects.length ? Math.min(H, Math.max(...rects.map((r) => r.box.y + Math.max(r.box.h, 2))) + pad) : H;
+    const box = { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+    const scale = Math.min(1, view.w / box.w, view.h / box.h);
+    const sw = W * scale;
+    const sh = H * scale;
+    const tx = sw <= view.w ? (view.w - sw) / 2 : Math.max(view.w - sw, Math.min(0, view.w / 2 - (box.x + box.w / 2) * scale));
+    const ty = sh <= view.h ? (view.h - sh) / 2 : Math.max(view.h - sh, Math.min(0, view.h / 2 - (box.y + box.h / 2) * scale));
+    place = { scale, tx, ty };
+  }
+  const flip = () => setSide((s) => (s === 'after' ? 'before' : 'after'));
+  const shown = new Set(screen.changes);
+  const changes = (v.changes || []).filter((c) => shown.has(c.n));
+  const sideShot = (which: Side) => {
+    const shot = which === 'before' ? screen.before : screen.after;
+    return (
+      <span
+        key={which}
+        className={which === 'before' ? 'dev-ws-shot-side dev-ws-shot-before' : 'dev-ws-shot-side dev-ws-shot-after'}
+        style={place ? { width: W, height: shot.height, transform: `translate(${place.tx}px, ${place.ty}px) scale(${place.scale})` } : undefined}
+      >
+        {near && place ? <img src={shot.url} alt={which === 'after' ? 'After the change' : 'Before the change'} draggable={false} /> : null}
+      </span>
+    );
+  };
+  const outlines = (which: Side) => (place ? screen.regions.map((r, k) => {
+    const rect = regionRect(r, which);
+    if (!rect) return null;
+    const p = place as { scale: number; tx: number; ty: number };
+    const style = {
+      left: rect.box.x * p.scale + p.tx,
+      top: rect.box.y * p.scale + p.ty,
+      width: rect.box.w * p.scale,
+      height: rect.line ? 0 : rect.box.h * p.scale,
+    };
+    const cls = rect.line
+      ? (which === 'before' ? 'dev-ws-shot-mark dev-ws-shot-on-before' : 'dev-ws-shot-mark dev-ws-shot-on-after')
+      : r.n > 0
+        ? (which === 'before' ? 'dev-ws-shot-box dev-ws-shot-on-before' : 'dev-ws-shot-box dev-ws-shot-on-after')
+        : (which === 'before' ? 'dev-ws-shot-box dev-ws-shot-box-other dev-ws-shot-on-before' : 'dev-ws-shot-box dev-ws-shot-box-other dev-ws-shot-on-after');
+    // The number sits on the outline's corner, pulled back inside the
+    // picture when the outline meets its edge, so it is never cut in half.
+    const badge = {
+      left: Math.max(-9, 2 - style.left),
+      top: Math.min(Math.max(-9, 2 - style.top), view.h - 22 - style.top),
+    };
+    return (
+      <span key={`${which}-${k}`} className={cls} style={style} aria-hidden="true">
+        {r.n > 0 ? <span className="dev-ws-shot-n" style={badge}>{r.n}</span> : null}
+      </span>
+    );
+  }) : null);
+  const size = isPhoneScreen(screen) ? 'Phone' : screen.viewport.charAt(0).toUpperCase() + screen.viewport.slice(1);
+  return (
+    <div className="dev-ws-media dev-ws-media-shots" data-ws-media="" data-ws-shots="" data-side={side}>
+      <div className="dev-ws-media-bar">
         <div className="dev-ws-seg" role="group" aria-label="Before or after">
-          <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
-          <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
+          <button type="button" className="dev-ws-seg-btn dev-ws-seg-before" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
+          <button type="button" className="dev-ws-seg-btn dev-ws-seg-after" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
         </div>
-      ) : (
-        <span className="dev-ws-seg dev-ws-seg-one">{v.after ? 'After' : 'Before'}</span>
-      )}
+        <span className="dev-ws-media-size">{size}</span>
+      </div>
+      <div
+        className="dev-ws-media-view"
+        ref={viewRef}
+        role="button"
+        tabIndex={0}
+        aria-label={side === 'after' ? 'Show before the change' : 'Show after the change'}
+        onClick={flip}
+        onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } }}
+      >
+        {sideShot('before')}
+        {sideShot('after')}
+        {outlines('before')}
+        {outlines('after')}
+        {near && place ? null : <span className="dev-ws-media-wait" aria-hidden="true" />}
+      </div>
+      {changes.length ? (
+        <ol className="dev-ws-shot-changes">
+          {changes.map((c) => (
+            <li key={c.n} className="dev-ws-shot-change">
+              <span className="dev-ws-shot-n">{c.n}</span>
+              <span className="dev-ws-shot-text">{c.text}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
     </div>
   );
 }
@@ -1349,13 +1528,43 @@ function BeforeAfter({ v, near, onFull }: {
 /* ── One item of the feed ────────────────────────────────────────────── */
 
 /**
+ * Who and when, for an item: a proposal's author, or an issue's number and
+ * who filed it. On the card it sits over the title, where it reads as the
+ * author; at the foot, its round avatar looked like one more numbered change
+ * beside the picture's. The Description sheet draws the same line.
+ */
+function ItemBy({ row }: { row: QueueRow }): ReactNode {
+  const isVote = row.kind === 'vote';
+  return (
+    <p className="dev-ws-item-by">
+      {row.who ? (
+        <span className="dev-ws-item-avatar" style={{ background: swatchFor(row.who) }} aria-hidden="true">
+          {row.who.slice(0, 1).toUpperCase()}
+        </span>
+      ) : null}
+      <span>
+        {isVote ? (
+          <>{row.who ? <b>{row.who}</b> : 'Proposed'}{row.ago ? ` · ${row.who ? 'proposed ' : ''}${row.ago}` : ''}</>
+        ) : (
+          <>
+            {row.number != null ? <b>{`#${row.number}`}</b> : null}
+            {row.who ? <>{row.number != null ? ' · filed by ' : 'Filed by '}<b>{row.who}</b></> : null}
+            {row.ago ? ` · ${row.ago}` : ''}
+          </>
+        )}
+      </span>
+    </p>
+  );
+}
+
+/**
  * memo(): the feed holds the Ask sheet's draft and its streamed answer, so it
  * renders on every keystroke and every token of an answer, and none of that
  * is any item's business. Every prop is a primitive, a row off the publish,
- * or a callback the feed keeps stable (`openFull`), so an item renders again
- * only when something it draws changed.
+ * or a callback the feed keeps stable (`openFull`, `onDescribe`), so an item
+ * renders again only when something it draws changed.
  */
-const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull }: {
+const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull, onDescribe, railClear }: {
   row: QueueRow;
   index: number;
   count: number;
@@ -1368,20 +1577,53 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   swipe: boolean;
   slug: string;
   onFull: (el: HTMLElement) => void;
+  /** Opens the Description sheet, which the facts line is a door to. */
+  onDescribe: () => void;
+  /**
+   * On a phone, how far down the item the rail's first button starts (0
+   * until measured, and on a wide window, where the rail stands beside the
+   * card). Above it the by-line and title take the item's full width.
+   */
+  railClear: number;
 }): ReactNode {
   const isVote = row.kind === 'vote';
   const href = openHref(slug, row.card);
   const title = row.card.title.text || row.card.title.title;
-  const chips = chipsFor(row, voted);
+  const facts = factsFor(row, voted);
   const summary = isVote ? row.summary : (row.body || null);
   const pct = Math.max(2, Math.round(((index + 1) / Math.max(1, count)) * 100));
+  // A run that worked out its screens IS the summary: the picture takes the
+  // paragraph's room, and the words are one tap away in Description.
+  const shots = !!(row.visuals && row.visuals.screens && row.visuals.screens.length);
+  // THE HEAD TAKES THE FULL WIDTH WHEN IT ENDS ABOVE THE RAIL. The rail sits
+  // at the item's foot on a phone, so on most screens the by-line, title and
+  // summary are nowhere near it, and keeping its lane free only wrapped them
+  // early. Measured laid out wide, before paint, in two steps: the summary
+  // too if it ends above the rail ('all'), else the title alone ('title'),
+  // else the item keeps the lane (a short screen, a long title).
+  const itemRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const summaryRef = useRef<HTMLParagraphElement>(null);
+  const [head, setHead] = useState<'all' | 'title' | 'none'>('all');
+  useLayoutEffect(() => { setHead('all'); }, [railClear, title, summary, shots]);
+  useLayoutEffect(() => {
+    if (!railClear || head === 'none') return;
+    const item = itemRef.current;
+    const last = head === 'all' ? (summaryRef.current || titleRef.current) : titleRef.current;
+    if (!item || !last) return;
+    if (last.getBoundingClientRect().bottom - item.getBoundingClientRect().top > railClear - 12) {
+      setHead(head === 'all' ? 'title' : 'none');
+    }
+  });
   return (
     <section
+      ref={itemRef}
       className="dev-ws-item"
       data-ws-item={row.key}
       data-ws-kind={row.kind}
       data-ws-tint={tint}
       data-ws-swipeable={swipe ? '' : undefined}
+      data-ws-head={railClear && head !== 'none' ? head : undefined}
     >
       <div className="dev-ws-item-progress" aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
       <div className="dev-ws-item-top">
@@ -1395,41 +1637,26 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
         )}
         <span className="dev-ws-item-of">{`${index + 1} / ${count}`}</span>
       </div>
+      <ItemBy row={row} />
       {/* The title is the headline and the door to the full card: its own
           page, with the checks, the thread and every affordance the card
           has. Same route the Board's rows open. */}
-      <h2 className="dev-ws-item-title">{href ? <a href={href}>{title}</a> : title}</h2>
-      {summary ? (
-        <p className="dev-ws-item-summary">{summary}</p>
+      <h2 className="dev-ws-item-title" ref={titleRef}>{href ? <a href={href}>{title}</a> : title}</h2>
+      {shots ? null : summary ? (
+        <p className="dev-ws-item-summary" ref={summaryRef}>{summary}</p>
       ) : (
-        <p className="dev-ws-item-summary dev-ws-item-nosummary">
+        <p className="dev-ws-item-summary dev-ws-item-nosummary" ref={summaryRef}>
           {isVote ? 'No plain-language summary was written for this change.' : 'This issue has no description.'}
         </p>
       )}
-      {row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} /> : <div className="dev-ws-item-spacer" aria-hidden="true" />}
+      {shots && row.visuals ? <ShotsPicture v={row.visuals} near={near} wide={wide} />
+        : row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} />
+          : <div className="dev-ws-item-spacer" aria-hidden="true" />}
       <div className="dev-ws-item-caption">
-        <p className="dev-ws-item-by">
-          {row.who ? (
-            <span className="dev-ws-item-avatar" style={{ background: swatchFor(row.who) }} aria-hidden="true">
-              {row.who.slice(0, 1).toUpperCase()}
-            </span>
-          ) : null}
-          <span>
-            {isVote ? (
-              <>{row.who ? <b>{row.who}</b> : 'Proposed'}{row.ago ? ` · ${row.who ? 'proposed ' : ''}${row.ago}` : ''}</>
-            ) : (
-              <>
-                {row.number != null ? <b>{`#${row.number}`}</b> : null}
-                {row.who ? <>{row.number != null ? ' · filed by ' : 'Filed by '}<b>{row.who}</b></> : null}
-                {row.ago ? ` · ${row.ago}` : ''}
-              </>
-            )}
-          </span>
-        </p>
-        {chips.length ? (
-          <div className="dev-ws-item-chips">
-            {chips.map((c) => <span key={c.key} className={c.cls}>{c.text}</span>)}
-          </div>
+        {facts.length ? (
+          <button type="button" className="dev-ws-item-facts" data-ws-facts="" aria-haspopup="dialog" onClick={onDescribe}>
+            {facts.map((f) => <span key={f.key} className={factTone(f.tone)}>{f.text}</span>)}
+          </button>
         ) : null}
       </div>
       {/* The swipe's two hints, last so the item's reading order is
@@ -1782,7 +2009,10 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const endScrollRef = useRef<boolean>(endOnOpen);
   const moreRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLElement>(null);
   const wide = useMediaFlag(WIDE_QUERY);
+  // How far down an item the rail starts, on a phone (see FeedItem's head).
+  const [railClear, setRailClear] = useState(0);
 
   // Keyed by row, so moving to the next proposal does not carry the last
   // one's conversation with it.
@@ -2078,11 +2308,41 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   });
   useSwipeVote(scrollRef, !wide, swipeHandle);
 
+  /**
+   * Where the rail starts, measured down from the top of the item in view:
+   * the items fill the scroller, so the scroller's top is theirs. Again when
+   * the rail changes (an issue has no Try it) or anything resizes. Nothing on
+   * a wide window, where the rail stands beside the card.
+   */
+  useLayoutEffect(() => {
+    const rail = railRef.current;
+    const sc = scrollRef.current;
+    if (wide || !rail || !sc || typeof ResizeObserver !== 'function') {
+      setRailClear(0);
+      return undefined;
+    }
+    const measure = () => {
+      const v = Math.round(rail.getBoundingClientRect().top - sc.getBoundingClientRect().top);
+      setRailClear((cur) => (cur === v ? cur : Math.max(0, v)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(rail);
+    ro.observe(sc);
+    return () => ro.disconnect();
+  }, [wide, row ? row.key : null, row ? row.kind : null]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const preview = row ? (row.card.rail.preview || row.card.actionPreview || null) : null;
   const canTry = !!(preview && preview.state === 'live');
   const tryIt = () => {
     if (preview && preview.state === 'live') callAppView('swapToStagingForSession', preview.sessionId, preview.url);
   };
+  // The facts line on a card opens the Description sheet. Stable, like
+  // openFull below, so handing it to the memo()'d items costs no render.
+  const describe = useCallback(() => {
+    setLeaving(null);
+    setSheet('description');
+  }, []);
   // Stable, so the memo()'d items it is handed to skip a render of the feed.
   const openFull = useCallback((el: HTMLElement) => callAppView(
     el.dataset.shots === 'true' ? 'openShotsComparison' : 'openVisualComparison',
@@ -2098,6 +2358,8 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const shown = row ? (sheet || leaving) : null;
   const leavingAttr = !sheet && leaving ? { 'data-ws-leaving': '' } : {};
   const commentCount = row ? (row.card.chatCount || 0) : 0;
+  const descFacts = row ? factsFor(row, voted) : [];
+  const descChanges = row && row.visuals && row.visuals.changes ? row.visuals.changes : [];
 
   /**
    * The keys. Every one is also a button on the rail, so nothing is ONLY a
@@ -2119,6 +2381,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       if ((k === 'v' || k === 'V') && row.kind === 'vote') { toggleSheet('vote'); return; }
       if ((k === 'y' || k === 'Y') && sheet === 'vote') { answer('yes'); return; }
       if ((k === 'n' || k === 'N') && sheet === 'vote') { answer('no'); return; }
+      if (k === 'd' || k === 'D') { toggleSheet('description'); return; }
       if (k === 'a' || k === 'A') { toggleSheet('ask'); return; }
       if (k === 'c' || k === 'C') { toggleSheet('comments'); return; }
       if ((k === 't' || k === 'T') && canTry) { tryIt(); return; }
@@ -2319,6 +2582,8 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             swipe={!wide && canSwipeVote(r) && !answered[r.key]}
             slug={slug}
             onFull={openFull}
+            onDescribe={describe}
+            railClear={wide ? 0 : railClear}
           />
         ))}
         {/* ALWAYS, after the last item: the swipe past the end lands here.
@@ -2334,7 +2599,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       </div>
 
       {row ? (
-        <aside className="dev-ws-rail" data-ws-rail="" aria-label="This item">
+        <aside className="dev-ws-rail" data-ws-rail="" aria-label="This item" ref={railRef}>
           {row.kind === 'vote' ? (
             <button
               type="button"
@@ -2361,6 +2626,21 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
               <span className="dev-ws-rail-lab">Take it</span>
             </button>
           )}
+          {/* Everything the card leaves out, the way a short video's words
+              open under it: the summary, the changes in their own words and
+              the facts in full. Second, because it is read before a vote. */}
+          <button
+            type="button"
+            className="dev-ws-rail-btn dev-ws-rail-description"
+            data-ws-rail-btn="description"
+            aria-haspopup="dialog"
+            aria-expanded={sheet === 'description'}
+            onClick={() => toggleSheet('description')}
+          >
+            <span className="dev-ws-rail-ic"><DescriptionIcon aria-hidden="true" /></span>
+            <span className="dev-ws-rail-lab">Description</span>
+            <kbd className="dev-ws-rail-key" aria-hidden="true">D</kbd>
+          </button>
           <button
             type="button"
             className="dev-ws-rail-btn dev-ws-rail-comments"
@@ -2565,6 +2845,53 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
           ) : null}
           {!row.thread && row.commentsFor == null ? <p className="dev-ws-ask-hint">No comments yet.</p> : null}
+        </div>
+      </section>
+      </div>
+      ) : null}
+
+      {/* ── Description: what the card leaves out ──
+          The title, who and when, the facts as chips, the declared changes
+          in their own words, and the summary as its own page renders it. */}
+      {row && shown === 'description' ? (
+      <div className="dev-ws-sheet-modal dev-ws-sheet-description" data-ws-sheet="description" role="dialog" aria-label="Description" {...leavingAttr}>
+      <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+      <section className="dev-ws-sheet-card" data-ws-description="">
+        <span className="dev-ws-sheet-handle" aria-hidden="true" />
+        <div className="dev-ws-sheet-head">
+          <span><span className="dev-ws-sheet-title">Description</span></span>
+          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>Close</button>
+        </div>
+        <div className="dev-ws-sheet-body">
+          <h3 className="dev-ws-desc-title">{row.card.title.text || row.card.title.title}</h3>
+          <ItemBy row={row} />
+          {descFacts.length ? (
+            <div className="dev-ws-item-chips">
+              {descFacts.map((f) => <span key={f.key} className={chipTone(f.tone)}>{f.text}</span>)}
+            </div>
+          ) : null}
+          {descChanges.length ? (
+            <div className="dev-ws-desc-part">
+              <h4 className="dev-ws-desc-head">What changes</h4>
+              <ol className="dev-ws-shot-changes dev-ws-desc-changes">
+                {descChanges.map((c) => (
+                  <li key={c.n} className="dev-ws-shot-change">
+                    <span className="dev-ws-shot-n">{c.n}</span>
+                    <span>{c.text}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+          <div className="dev-ws-desc-part">
+            <h4 className="dev-ws-desc-head">{row.kind === 'vote' ? 'Summary' : 'The issue'}</h4>
+            {row.descriptionHtml ? (
+              <Html className="dev-ws-desc-body" html={row.descriptionHtml} />
+            ) : (
+              <p className="dev-ws-ask-hint">{row.kind === 'vote' ? 'No plain-language summary was written for this change.' : 'This issue has no description.'}</p>
+            )}
+          </div>
+          {cardHref ? <a className="dev-ws-desc-open" href={cardHref}>{row.kind === 'vote' ? 'Open the proposal' : 'Open the issue'}</a> : null}
         </div>
       </section>
       </div>

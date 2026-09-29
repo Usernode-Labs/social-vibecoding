@@ -7687,6 +7687,40 @@ const AppView = {
         }
       }
       if (!before && !after) return null;
+      // The run's own screens, when it worked them out: each a before and an
+      // after screen shot with the areas that differ, numbered by the change
+      // they belong to. The feed draws one of them, outlined, instead of
+      // working out a crop from the pixels itself.
+      const claims = Array.isArray(shots.claims) ? shots.claims : [];
+      const numberOf = (id) => claims.findIndex((c) => c && c.id === id) + 1;
+      const box = (value, size) => (Array.isArray(value) && value.length === size
+        && value.every((x) => Number.isFinite(x) && x >= 0) ? value.slice() : null);
+      const screens = (Array.isArray(shots.screens) ? shots.screens : []).map((screen) => {
+        if (!screen || typeof screen.viewport !== 'string') return null;
+        const base = find({ id: screen.shot }, screen.viewport, 'base', 'context');
+        const head = find({ id: screen.shot }, screen.viewport, 'head', 'context');
+        const width = Number(screen.width);
+        const heightBefore = Number(screen.heightBefore);
+        const heightAfter = Number(screen.heightAfter);
+        if (!base || !head || !(width > 0 && heightBefore > 0 && heightAfter > 0)) return null;
+        const regions = (Array.isArray(screen.regions) ? screen.regions : []).map((r) => ({
+          n: r && r.story ? Math.max(0, numberOf(r.story)) : 0,
+          b: box(r && r.b, 4),
+          a: box(r && r.a, 4),
+          bMark: box(r && r.bMark, 3),
+          aMark: box(r && r.aMark, 3),
+        })).filter((r) => r.b || r.a);
+        const changes = (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
+          .map(numberOf).filter((n) => n > 0);
+        return {
+          viewport: screen.viewport,
+          width,
+          before: { url: base.url, height: heightBefore },
+          after: { url: head.url, height: heightAfter },
+          regions,
+          changes,
+        };
+      }).filter(Boolean);
       return {
         path: claim?.claim || 'Before & after',
         claim: claim?.claim || 'Before & after',
@@ -7696,6 +7730,8 @@ const AppView = {
         beforeWebm: null,
         afterWebm: null,
         protected: true,
+        screens,
+        changes: claims.map((c, k) => ({ n: k + 1, text: String((c && c.claim) || '') })).filter((c) => c.text),
       };
     }
     if (!visuals) return null;
@@ -8859,6 +8895,9 @@ const AppView = {
       queue.push({
         ...(voteRow(card, x.item, x.kind) || {}),
         kind: 'vote',
+        // The Description sheet's body: the summary as its own page renders
+        // it (sanitised where it is built), for a proposal that has one.
+        descriptionHtml: x.kind === 'proposal' ? AppView._proposalSummaryHtml(x.item) : '',
         ask: 'Should this change go in?',
         yes: yes ? { label: yes.label, act: yes.act } : null,
         no: no ? { label: no.label, act: no.act } : null,
@@ -8878,6 +8917,8 @@ const AppView = {
         // The issue's own words, as the line under its title. Plain text:
         // the feed sets it as a sentence, not as a document.
         body: AppView._workshopExcerpt(e.item && e.item.body),
+        // And the whole of them, rendered, for the Description sheet.
+        descriptionHtml: e.item && e.item.body ? AppView._issueBodyHtml(e.item) : '',
         visuals: null,
         // TWO ANSWERS, NOT THREE. "No" and "Skip" were the same press wearing
         // two labels: neither recorded anything, both moved the deck on, and

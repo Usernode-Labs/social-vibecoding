@@ -16213,6 +16213,30 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-chip-warn { background: var(--state-attention-bg); color: var(--state-attention); }
 .dev-ws-chip-blocked { background: var(--state-blocked-bg); color: var(--state-blocked); }
 .dev-ws-chip-info { background: var(--accent-tint); color: var(--accent-wash-ink); }
+/* WHO sits over the title (workshop.tsx ItemBy): at the foot, its round
+   avatar read as one more numbered change beside the picture's. */
+.dev-ws-item > .dev-ws-item-by { margin: 14px 74px 0 0; }
+.dev-ws-item > .dev-ws-item-by + .dev-ws-item-title { margin-top: 8px; }
+/* On a phone the rail sits at the item's foot. What ends above it takes the
+   full width (workshop.tsx measures): the by-line and title, and the summary
+   too when it clears the rail as well. */
+.dev-ws-item[data-ws-head] > .dev-ws-item-by,
+.dev-ws-item[data-ws-head] > .dev-ws-item-title,
+.dev-ws-item[data-ws-head="all"] > .dev-ws-item-summary { margin-right: 0; }
+/* The facts, ONE line at the foot: where the vote stands first, then the
+   status and the category, cut short rather than wrapped. It opens the
+   Description sheet, which has them in full. */
+.dev-ws-item-facts {
+  display: block; max-width: 100%; margin: 0; padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 13px; line-height: 1.4; text-align: left; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dev-ws-fact:first-child { font-weight: 600; color: var(--text-secondary); }
+.dev-ws-fact + .dev-ws-fact::before { content: " · "; font-weight: 400; color: var(--text-muted); }
+.dev-ws-fact.dev-ws-fact-ok { color: var(--state-ok); }
+.dev-ws-fact.dev-ws-fact-progress { color: var(--state-progress); }
+.dev-ws-fact.dev-ws-fact-warn { color: var(--state-attention); }
+.dev-ws-fact.dev-ws-fact-blocked { color: var(--state-blocked); }
 /* ── The Communities screen's two views (features/workshop/index.tsx) ──
    Current status and Needs you switch the way a project's own page switches
    Hub and Workshop: the raised track and the lit tab of `.dev-ws-tablist`
@@ -16463,29 +16487,78 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   position: absolute; inset: 0;
   background: linear-gradient(90deg, rgba(255, 255, 255, .04), rgba(255, 255, 255, .10), rgba(255, 255, 255, .04));
 }
-/* The way out is a pill at the picture's foot; the Before/After switch sits
-   at its head, so the two never share a row — on a phone the picture is
-   about 300px wide, which is not room for both. */
+/* The switch and the way out sit in a bar ABOVE the picture, never on it:
+   laid over the still they covered the corner a change often is. The bar
+   keeps the rail's lane free on a phone, like everything else in the item. */
+.dev-ws-media-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin: 0 74px 8px 0; min-height: 30px;
+}
 .dev-ws-media-full {
-  position: absolute; left: 10px; bottom: 10px;
-  padding: 6px 11px; border: 0; border-radius: 9999px; cursor: pointer;
+  flex: none; padding: 6px 11px; border: 0; border-radius: 9999px; cursor: pointer;
   font: inherit; font-size: 12px; font-weight: 600; line-height: 1.2;
-  background: rgba(20, 20, 26, .72); color: #fff;
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  background: var(--state-neutral-bg); color: var(--text-secondary);
 }
 .dev-ws-seg {
-  position: absolute; right: calc(74px + 10px); top: 10px;
-  display: inline-flex; padding: 3px; border-radius: 9999px;
-  background: rgba(20, 20, 26, .72);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  display: inline-flex; flex: none; padding: 2px; border-radius: 9999px;
+  background: var(--state-neutral-bg);
 }
 .dev-ws-seg-btn {
-  padding: 6px 14px; border: 0; border-radius: 9999px; cursor: pointer;
+  padding: 5px 12px; border: 0; border-radius: 9999px; cursor: pointer;
   font: inherit; font-size: 12px; font-weight: 700;
-  background: none; color: rgba(255, 255, 255, .8);
+  background: none; color: var(--text-secondary);
 }
-.dev-ws-seg-btn[aria-pressed="true"] { background: #fff; color: #141418; }
-.dev-ws-seg-one { padding: 6px 14px; font-size: 12px; font-weight: 700; color: rgba(255, 255, 255, .85); }
+.dev-ws-seg-btn[aria-pressed="true"] { background: var(--dc-sheet-solid, #fff); color: var(--text-primary); box-shadow: 0 1px 2px rgba(0, 0, 0, .14); }
+.dev-ws-seg-one { padding: 5px 12px; font-size: 12px; font-weight: 700; color: var(--text-secondary); }
+/* With a run's outlines the switch wears their colours: red where it was,
+   green where it is now. */
+.dev-ws-seg-btn.dev-ws-seg-before[aria-pressed="true"] { background: #dc2626; color: #fff; }
+.dev-ws-seg-btn.dev-ws-seg-after[aria-pressed="true"] { background: #15803d; color: #fff; }
+.dev-ws-media-size { font-size: 12px; font-weight: 600; color: var(--text-muted); }
+
+/* ── The picture from a before & after run (workshop.tsx ShotsPicture) ──
+   One screen, cropped to the areas the run outlined. Both sides are laid in
+   the view with the same transform and one is hidden, so a flip never moves
+   the crop; the outlines are drawn in the view's own pixels over them, so a
+   line and a number stay crisp whatever the scale. */
+.dev-ws-media-shots .dev-ws-media-view { cursor: pointer; }
+.dev-ws-media-shots .dev-ws-media-view:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.dev-ws-shot-side { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.dev-ws-shot-side > img { display: block; width: 100%; height: 100%; max-width: none; }
+.dev-ws-media-shots[data-side="after"] .dev-ws-shot-before,
+.dev-ws-media-shots[data-side="before"] .dev-ws-shot-after,
+.dev-ws-media-shots[data-side="after"] .dev-ws-shot-on-before,
+.dev-ws-media-shots[data-side="before"] .dev-ws-shot-on-after { visibility: hidden; }
+.dev-ws-shot-box { position: absolute; pointer-events: none; border: 2px solid #16a34a; border-radius: 6px; background: rgba(22, 163, 74, .1); }
+.dev-ws-shot-box.dev-ws-shot-on-before { border-color: #dc2626; background: rgba(220, 38, 38, .1); }
+.dev-ws-shot-box.dev-ws-shot-box-other { border: 1.5px dashed rgba(161, 161, 170, .95); background: transparent; }
+/* Lifted by its own width, so a line at the very foot of a shot shows. */
+.dev-ws-shot-mark { position: absolute; pointer-events: none; height: 0; margin-top: -2px; border-top: 2px dashed #16a34a; }
+.dev-ws-shot-mark.dev-ws-shot-on-before { border-top-color: #dc2626; }
+.dev-ws-shot-n {
+  flex: none; width: 20px; height: 20px; border-radius: 9999px; display: inline-grid; place-items: center;
+  font-size: 11px; font-weight: 700; line-height: 1; color: #fff; background: #16a34a; font-variant-numeric: tabular-nums;
+}
+.dev-ws-shot-box > .dev-ws-shot-n, .dev-ws-shot-mark > .dev-ws-shot-n {
+  position: absolute; left: -9px; top: -9px; box-shadow: 0 0 0 2px #111114;
+}
+.dev-ws-media-shots[data-side="before"] .dev-ws-shot-n { background: #dc2626; }
+/* Under the picture: the changes it shows, a line or two each. The full
+   words are in the Description sheet. */
+.dev-ws-shot-changes { list-style: none; margin: 10px 74px 0 0; padding: 0; display: grid; gap: 6px; }
+.dev-ws-shot-change { display: flex; align-items: flex-start; gap: 8px; font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary); }
+.dev-ws-shot-change > .dev-ws-shot-n { margin-top: 1px; }
+.dev-ws-shot-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ── The Description sheet ── */
+.dev-ws-desc-title { margin: 0; font-size: 18px; font-weight: 700; line-height: 1.3; color: var(--text-primary); text-wrap: balance; }
+.dev-ws-desc-part { display: flex; flex-direction: column; gap: 6px; }
+.dev-ws-desc-head { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted); }
+.dev-ws-desc-changes { margin: 0; }
+.dev-ws-desc-changes .dev-ws-shot-change { font-size: 14px; font-weight: 500; line-height: 1.45; color: var(--text-secondary); }
+.dev-ws-desc-body { font-size: 14px; line-height: 1.5; color: var(--text-secondary); }
+.dev-ws-desc-open { align-self: flex-start; font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none; }
+.dev-ws-desc-open:hover { text-decoration: underline; text-underline-offset: 3px; }
 
 /* ── The rail ─────────────────────────────────────────────────────────
    One column of round buttons at the right edge, bottom-aligned with the
@@ -17128,7 +17201,8 @@ a.dev-ws-hero-pending {
   .dev-ws-item-by { flex: 0 0 auto; max-width: 55%; }
   .dev-ws-item-chips { flex: 1 1 auto; justify-content: flex-end; }
   .dev-ws-media-view { margin-right: 0; }
-  .dev-ws-seg { right: 12px; }
+  .dev-ws-media-bar, .dev-ws-shot-changes { margin-right: 0; }
+  .dev-ws-item > .dev-ws-item-by { margin-right: 0; }
   .dev-ws-rail {
     position: relative; right: auto; bottom: auto; z-index: auto;
     flex: 0 0 84px; padding-top: 6px; gap: 14px;
@@ -17159,13 +17233,13 @@ a.dev-ws-hero-pending {
   /* The panels: Ask and comments beside the rail, the stage's full height.
      They slide in from the right rather than rising from a floor they do not
      sit on (the names feed the base block's one animation rule). */
-  .dev-ws-sheet-ask, .dev-ws-sheet-comments {
+  .dev-ws-sheet-ask, .dev-ws-sheet-comments, .dev-ws-sheet-description {
     position: relative; inset: auto; flex: 0 0 400px; z-index: auto;
     display: flex; flex-direction: column;
     --ws-sheet-in: dev-ws-panel-in; --ws-sheet-out: dev-ws-panel-out;
   }
-  .dev-ws-sheet-ask > .dev-ws-scrim, .dev-ws-sheet-comments > .dev-ws-scrim { display: none; }
-  .dev-ws-sheet-ask > .dev-ws-sheet-card, .dev-ws-sheet-comments > .dev-ws-sheet-card {
+  .dev-ws-sheet-ask > .dev-ws-scrim, .dev-ws-sheet-comments > .dev-ws-scrim, .dev-ws-sheet-description > .dev-ws-scrim { display: none; }
+  .dev-ws-sheet-ask > .dev-ws-sheet-card, .dev-ws-sheet-comments > .dev-ws-sheet-card, .dev-ws-sheet-description > .dev-ws-sheet-card {
     flex: 1 1 auto; max-height: none; min-height: 0;
     padding: 18px 20px 12px;
     border-radius: 24px;
@@ -17205,7 +17279,7 @@ a.dev-ws-hero-pending {
 /* Between the breakpoint and a wide desktop the panel would push the card
    off the stage, so it OVERLAYS the stage's right side instead. */
 @media (min-width: 700px) and (max-width: 1179.98px) {
-  .dev-ws-sheet-ask, .dev-ws-sheet-comments {
+  .dev-ws-sheet-ask, .dev-ws-sheet-comments, .dev-ws-sheet-description {
     position: absolute; right: 0; top: 0; bottom: 0; width: min(400px, 60%); z-index: 8;
   }
 }
