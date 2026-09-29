@@ -339,7 +339,11 @@ test('detail refresh uses the lifecycle endpoint and preserves demo context', as
         return { ok: true, json: async () => review ? { proposal: session } : { session } };
       };
       assert.deepEqual(await readChangeDetail(session, true, signal), session);
-      assert.equal(requests.at(-1), review ? '/api/apps/example/proposals/123?demo=1' : '/api/sessions/123/details?demo=1');
+      // `results=failing`: the page counts its passing checks and their fold
+      // reads the names when opened (tests/item-page-reads.test.js).
+      assert.equal(requests.at(-1), review
+        ? '/api/apps/example/proposals/123?results=failing&demo=1'
+        : '/api/sessions/123/details?results=failing&demo=1');
     }
     assert.equal(requests.length, 5, 'one authoritative detail request per refresh');
     assert.equal(roster, 3);

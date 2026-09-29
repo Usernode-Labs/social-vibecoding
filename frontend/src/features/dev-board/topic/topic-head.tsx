@@ -30,7 +30,7 @@
 
 import { Fragment, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode } from 'react';
+import type { FormEvent, KeyboardEvent, MouseEvent, ReactNode, SyntheticEvent } from 'react';
 
 import { Html } from '../../../lib/html';
 import { useStoreState } from '../../../lib/use-store-state';
@@ -189,11 +189,40 @@ function CheckRowView({ r }: { r: CheckRow }): ReactNode {
   );
 }
 
+/**
+ * Passing checks that are counted but not yet named (`passesFor`): opening
+ * their fold reads them (AppView._loadCheckNames), and the verdict re-renders
+ * with the names once they land. Until then the fold says so.
+ */
+function usePassNames(passesFor: number | null | undefined) {
+  const [state, setState] = useState<'idle' | 'loading' | 'failed'>('idle');
+  const onToggle = (e: SyntheticEvent<HTMLDetailsElement>) => {
+    const av = typeof window === 'undefined' ? null : (window as any).AppView;
+    if (!e.currentTarget.open || !passesFor || state === 'loading' || !av?._loadCheckNames) return;
+    setState('loading');
+    Promise.resolve(av._loadCheckNames(passesFor)).then(
+      (ok: boolean) => setState(ok ? 'idle' : 'failed'),
+      () => setState('failed'),
+    );
+  };
+  return { state, onToggle };
+}
+
+function PassNamesPending({ state }: { state: 'idle' | 'loading' | 'failed' }): ReactNode {
+  return (
+    <li className="dev-passes-pending opacity-70">
+      {state === 'failed' ? 'Could not load the passing checks. Close this and open it again to retry.' : 'Loading passing checks…'}
+    </li>
+  );
+}
+
 /** The checks verdict: its rows nest, and its passes fold away. */
 export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
-  const passList = v.passes.length ? (
+  const names = usePassNames(v.passesFor);
+  const passList = v.passes.length || v.passesFor ? (
     <ul className="mt-1 ml-1 space-y-0.5">
       {v.passes.map((r) => <CheckRowView key={r.key} r={r} />)}
+      {v.passesFor ? <PassNamesPending state={names.state} /> : null}
     </ul>
   ) : null;
   return (
@@ -206,7 +235,7 @@ export function ChecksVerdictView({ v }: { v: ChecksVerdict }): ReactNode {
         </ul>
       ) : null}
       {v.foldPasses ? (
-        <details className="mt-1">
+        <details className="mt-1" onToggle={names.onToggle}>
           <summary className="cursor-pointer opacity-80">{`Show ${v.passCount ?? v.passes.length} passing checks`}</summary>
           {passList}
         </details>
@@ -412,6 +441,7 @@ function passingCount(r: LedgerRow): number {
 }
 
 function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode {
+  const names = usePassNames(r.passesFor);
   return (
     <>
       {r.text.length ? (
@@ -461,10 +491,11 @@ function LedgerRowBody({ r, help }: { r: LedgerRow; help: boolean }): ReactNode 
         <span className="dev-ledger-ops">
           {(r.actions || []).map((a) => <ActionButton key={a.key} a={a} />)}
           {passingCount(r) ? (
-            <details className="dev-ledger-passes">
+            <details className="dev-ledger-passes" onToggle={names.onToggle}>
               <summary className="gc-vote-btn dev-ledger-passes-btn">{`${passingCount(r)} passing`}</summary>
               <ul className="dev-ledger-fails">
                 {(r.passes || []).map((c) => <CheckRowView key={c.key} r={c} />)}
+                {r.passesFor ? <PassNamesPending state={names.state} /> : null}
               </ul>
             </details>
           ) : null}
@@ -545,7 +576,10 @@ export async function readChangeDetail(item: any, owner: boolean, signal: AbortS
   const av = (window as any).AppView;
   const review = ['promoted', 'merging', 'merged'].includes(item.status) && av?.appData?.slug;
   const url = review ? `/api/apps/${av.appData.slug}/proposals/${id}` : `/api/sessions/${id}/details`;
-  const response = await fetch(`${url}${av?._demoQS?.() || ''}`, { signal });
+  // The short form: passing checks are counted, and their fold reads the
+  // names when opened (AppView._loadCheckNames, _readTopicRow).
+  const demo = av?._demoQS?.() ? '&demo=1' : '';
+  const response = await fetch(`${url}?results=failing${demo}`, { signal });
   const payload = await response.json();
   if (!response.ok) throw new Error(payload.error || 'Could not refresh this change.');
   const session = review ? payload.proposal : payload.session;
