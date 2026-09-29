@@ -197,7 +197,9 @@ test('#2905: report and block are one ⋯ menu on both transcripts', () => {
   // #2387: the app chat's rows carry the shared hover bar too, and its ⋯
   // menu holds report and block after the everyday acts.
   assert.match(TRANSCRIPT, /<MessageActionBar[\s\S]*?moreClassName="gc-msg-more-action"/);
-  assert.match(TRANSCRIPT, /label: 'Report message'[\s\S]*?label: `Report @\$\{msg\.username\}`[\s\S]*?label: `Block @\$\{msg\.username\}`/);
+  assert.match(TRANSCRIPT, /label: 'Report message'[\s\S]*?label: `Block @\$\{msg\.username\}`/);
+  assert.doesNotMatch(TRANSCRIPT, /report-user|onReportUser|targetType: 'user'/,
+    'message menus offer one report action, targeting the message');
 
   // #2387: the ⋯ is the shared hover bar's (../message-actions/action-bar.tsx),
   // and it keeps the class and the popup role the declared checks select on.
@@ -206,7 +208,8 @@ test('#2905: report and block are one ⋯ menu on both transcripts', () => {
   assert.match(ROW, /<MessageActionBar[\s\S]*?onToggleMore=/);
   assert.doesNotMatch(ROW, />⚑<\/button>|>⊘<\/button>|>!<\/button>/, 'the three discs are gone');
   assert.match(ROW, /openReport\(\{ targetType: 'conversation_message'/);
-  assert.match(ROW, /openReport\(\{ targetType: 'user'/);
+  assert.doesNotMatch(ROW, /report-user|targetType: 'user'/,
+    'private message menus also report only the message');
 });
 
 test('dapp.json declares the ⋯ menus', () => {

@@ -62,6 +62,7 @@ export function ReportDialog() {
   }
   return <DialogRoot id="report-modal" ref={dialog.rootRef} {...dialog.backdropProps}>
     <DialogCard>
+      {target ? <>
       <h2 className="text-lg font-bold">{receipt ? 'Report received' : `Report ${target?.targetType === 'app' ? 'app' : target?.targetType === 'user' ? 'user' : 'message'}`}</h2>
       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">{target?.label}</p>
       {receipt ? <div className="mt-4 space-y-4">
@@ -86,6 +87,7 @@ export function ReportDialog() {
         <div className="flex gap-3"><Button type="button" disabled={busy} onClick={dialog.close}>Cancel</Button><Button type="submit" disabled={busy || !reason || (reason === 'other' && !detail.trim())}>{busy ? 'Sending…' : 'Submit report'}</Button></div>
       </form>}
       {error ? <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-400">{error}</p> : null}
+      </> : null}
     </DialogCard>
   </DialogRoot>;
 }

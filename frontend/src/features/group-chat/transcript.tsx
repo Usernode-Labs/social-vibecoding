@@ -59,7 +59,7 @@ import { ChatMessageRow, groupsWithPrevious } from '@/components/ui/chat';
 import { Avatar, ReactionPill } from '@/components/ui/feed';
 import {
   BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
-  PencilSquareIcon, ReplyArrowIcon, ThreadIcon, UserIcon,
+  PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
 import { confirmAction } from '../../lib/confirm';
@@ -561,12 +561,11 @@ function SpecSnippet({ html }: { html: string }) {
  * the same acts as a sheet; the module's own long-press stands down for a
  * `.gc-msg` row (see `_attachQuoteHandlers`).
  */
-function MessageActions({ msg, surface, onReportMessage, onReportUser }: {
+function MessageActions({ msg, surface, onReportMessage }: {
   msg: TranscriptMessage;
   /** Which transcript the row is in: a reply thread offers no thread of its own. */
   surface: 'main' | 'thread';
   onReportMessage: () => void;
-  onReportUser: () => void;
 }) {
   const [picker, setPicker] = useState<'above' | 'below' | null>(null);
   const [menu, setMenu] = useState<'above' | 'below' | null>(null);
@@ -576,7 +575,7 @@ function MessageActions({ msg, surface, onReportMessage, onReportUser }: {
   const recents = useRecentReactions();
   useDismiss(!!(picker || menu), [bar], () => { setPicker(null); setMenu(null); });
   const chat = controller();
-  const items = messageMenuItems(msg, surface, onReportMessage, onReportUser);
+  const items = messageMenuItems(msg, surface, onReportMessage);
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
   const pick = (emoji: string) => {
     rememberReaction(emoji);
@@ -617,7 +616,6 @@ export function messageMenuItems(
   msg: TranscriptMessage,
   surface: 'main' | 'thread',
   onReportMessage: () => void,
-  onReportUser: () => void,
 ): MenuItem[] {
   const chat = controller();
   const id = msg.id;
@@ -654,7 +652,6 @@ export function messageMenuItems(
     });
   } else if (!msg.mine && msg.senderId && msg.kind === 'message') {
     items.push({ key: 'report', label: 'Report message', icon: FlagIcon, separated: true, onSelect: onReportMessage });
-    items.push({ key: 'report-user', label: `Report @${msg.username}`, icon: UserIcon, onSelect: onReportUser });
     items.push({
       key: 'block', label: `Block @${msg.username}`, icon: NoSymbolIcon, danger: true,
       onSelect: () => {
@@ -697,9 +694,8 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
   const live = !msg.deleted && !!msg.id;
   const longPress = useLongPress(() => setSheet(true), { disabled: !live });
   const reportMessage = () => msg.id && openReport({ targetType: 'app_message', target: msg.id, label: `Message from @${msg.username}`, userId: msg.senderId });
-  const reportUser = () => openReport({ targetType: 'user', target: msg.username, label: `@${msg.username}`, userId: msg.senderId });
   const reacted = (emoji: string) => msg.reactions.some((r) => r.emoji === emoji && r.mine);
-  const items = live ? messageMenuItems(msg, surface, reportMessage, reportUser) : [];
+  const items = live ? messageMenuItems(msg, surface, reportMessage) : [];
   const sheetItems: MenuItem[] = live ? [
     ...(!chat?._readOnly?.() ? [{ key: 'reply', label: 'Reply', icon: ReplyArrowIcon, onSelect: () => chat?.replyToMessage?.(msg.id, surface) }] : []),
     ...(msg.showBookmark ? [{ key: 'save', label: msg.bookmarked ? 'Unsave' : 'Save', icon: msg.bookmarked ? BookmarkSolidIcon : BookmarkIcon, onSelect: () => chat?.toggleBookmark?.(msg.id) }] : []),
@@ -736,8 +732,7 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
           ) : null}
         </>
       )}
-      actions={live ? <MessageActions msg={msg} surface={surface} onReportMessage={reportMessage}
-        onReportUser={reportUser} /> : undefined}
+      actions={live ? <MessageActions msg={msg} surface={surface} onReportMessage={reportMessage} /> : undefined}
     >
       {msg.deleted ? <p className="gc-msg-deleted-text">Message deleted</p> : (
         <>

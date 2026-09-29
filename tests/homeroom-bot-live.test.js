@@ -346,6 +346,7 @@ function guardedRouter({ app, sessionUserId }) {
         return { rows: [{ user_id: sessionUserId }] };
       }
       if (/FROM app_collaborators/.test(text)) return { rows: [] };
+      if (/FROM user_app_blocks/.test(text)) return { rows: [] };
       throw new Error(`unexpected query: ${text.slice(0, 80)}`);
     },
   };
@@ -414,7 +415,7 @@ test('the exception is the bot\'s own session only, and only its in-process prom
   });
   assert.deepEqual(quiet.owners, [], 'no owner lookup for an ordinary request');
   assert.match(read('src/services/app-access.js'),
-    /`SELECT a\.id, a\.collab_visibility, a\.view_visibility\n\s+FROM chat_sessions cs JOIN apps a ON a\.id = cs\.app_id\n\s+WHERE cs\.id = \$1`/);
+    /`SELECT a\.id, a\.collab_visibility, a\.view_visibility, a\.moderation_suspended_at\n\s+FROM chat_sessions cs JOIN apps a ON a\.id = cs\.app_id\n\s+WHERE cs\.id = \$1`/);
 
   // Never an admin: the marker is the whole exception.
   const src = read('src/services/homeroom-bot-live.js');

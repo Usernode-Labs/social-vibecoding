@@ -2,7 +2,7 @@ import { memo, useRef, useState } from 'react';
 
 import {
   BookmarkIcon, BookmarkSolidIcon, CopyIcon, DraftTrashIcon, EnvelopeIcon, FlagIcon, LinkIcon, NoSymbolIcon,
-  PencilSquareIcon, ReplyArrowIcon, ThreadIcon, UserIcon,
+  PencilSquareIcon, ReplyArrowIcon, ThreadIcon,
 } from '@/components/ui/icons';
 
 import { openReport } from '../dialogs/report';
@@ -40,7 +40,7 @@ import { useDismiss } from '../message-actions/use-dismiss';
  * three recent reactions, the picker, Reply, Save and ⋯ — on hover with a
  * pointer, and the same acts in a sheet on a long press on a phone. ⋯ holds
  * the rarer ones: the thread, edit, copy, the link, mark unread, delete,
- * report and block. Report and report-user open the shared reporting dialog
+ * report and block. Report message opens the shared reporting dialog
  * (../dialogs/report.tsx), which feeds the platform's one moderation queue
  * rather than an inline form of its own (issue #2721).
  */
@@ -207,10 +207,6 @@ export const MessageRow = memo(function MessageRow({
       onSelect: () => openReport({ targetType: 'conversation_message', target: message.id, label: `Message from @${message.sender.username}`, userId: message.sender.id }),
     });
     if (message.sender.id) {
-      items.push({
-        key: 'report-user', label: `Report @${message.sender.username}`, icon: UserIcon,
-        onSelect: () => openReport({ targetType: 'user', target: message.sender.username, label: `@${message.sender.username}`, userId: message.sender.id }),
-      });
       items.push({ key: 'block', label: `Block @${message.sender.username}`, icon: NoSymbolIcon, danger: true, disabled: busy, onSelect: () => { void blockSender(); } });
     }
   }

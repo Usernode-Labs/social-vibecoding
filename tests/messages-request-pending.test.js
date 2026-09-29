@@ -45,7 +45,7 @@ test('a second pre-acceptance send is a 409 awaiting_acceptance, not a 404', () 
   assert.match(ROUTE, /const AWAITING_ACCEPTANCE = Object\.freeze\(\{ error: 'awaiting_acceptance' \}\);/);
   assert.match(ROUTE, /if \(error === 'awaiting_acceptance'\) return res\.status\(409\)\.json\(AWAITING_ACCEPTANCE\);/);
   // The send route reads the service's error before its null → 404.
-  assert.match(ROUTE, /conversations\.sendMessage\(pool, req\.user, id, req\.body \|\| \{\}\);\s*if \(result\?\.error\) return sendMessageError\(res, result\.error\);\s*if \(!result\) return sendNotFound\(res\);/);
+  assert.match(ROUTE, /conversations\.sendMessage\(pool, req\.user, id, input\);\s*if \(result\?\.error\) return sendMessageError\(res, result\.error\);\s*if \(!result\) return sendNotFound\(res\);/);
 });
 
 test('the conversation says it is waiting, and canSend turns false once the opening message is spent', () => {

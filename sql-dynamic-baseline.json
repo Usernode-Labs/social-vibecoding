@@ -159,7 +159,7 @@
     {
       "source": "src/routes/apps.js",
       "kind": "structural-template",
-      "fingerprint": "2af50ec967a3eb8b0faa",
+      "fingerprint": "1012d07842e867c85087",
       "count": 1,
       "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
     },
@@ -192,18 +192,11 @@
       "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name FROM apps WHERE slug = $1 AND (NOT self_hosted OR $2::boolean)`"
     },
     {
-      "source": "src/routes/apps.js",
-      "kind": "structural-template",
-      "fingerprint": "7b1ff9cff45031446175",
-      "count": 1,
-      "preview": "` SELECT ${appAccess.nonSecretAppColumnList('a')}, COALESCE(msg_counts.cnt, 0) AS message_count, COALESCE(activity.total_seconds, 0) AS total_seconds, COALESCE("
-    },
-    {
       "source": "src/routes/chat.js",
       "kind": "structural-template",
-      "fingerprint": "a8088914fba97dc374b7",
+      "fingerprint": "8fa09856905a3850d87a",
       "count": 1,
-      "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at FROM "
+      "preview": "`SELECT m.id, m.user_id, u.username, m.content, m.msg_type, m.metadata, m.thread_type, m.thread_ref, m.created_at, m.edited_at, m.posted_via, m.deleted_at, m.mo"
     },
     {
       "source": "src/routes/cli-auth.js",

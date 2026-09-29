@@ -76,7 +76,7 @@ test('a conversation folds messages that are only a shared item, never ones a pe
 });
 
 test('the #general demo carries a run of four cards for the declared check', () => {
-  const src = read('src/routes/conversations.js');
+  const src = read('src/services/staging-messages.js');
   for (const id of [9100406, 9100407, 9100408, 9100409]) assert.match(src, new RegExp(`\\[${id}, \\d+, '`));
 });
 

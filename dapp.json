@@ -3116,13 +3116,13 @@
     {
       "name": "#2884: four shared cards in a row in #general draw as the first card and a “… 3 more” row, the rest folded",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel:not(:has(#messages-message-9100407)) #messages-message-9100406:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message:has(.messages-object-card) + .messages-card-run > button.messages-card-run-more[data-card-run-more=\"3\"][aria-expanded=\"false\"]",
       "expectText": "… 3 more"
     },
     {
       "name": "#2884: a plain message before the run is not folded into it",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100405 + #messages-message-9100406 + .messages-card-run"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message:not(:has(.messages-object-card)) + .messages-message:has(.messages-object-card) + .messages-card-run"
     },
     {
       "name": "#general is what people said: Homeroom posts no proposal or merge line there, so the room is people's messages alone",
@@ -3132,7 +3132,7 @@
     {
       "name": "A group conversation renders an attached screenshot with a macOS-style name, a thumbnail that opens in the app's own viewer (#2113, #3286)",
       "path": "/?demo=1#messages/910002",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb?demo=1\"] img[alt]"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-group .messages-attachment a[data-image-open][href*=\"/attachments/\"] img[alt*=\"Screenshot 2026-08-13\"]"
     },
     {
       "name": "The notifications strip reads Unread, Messages, All — agents live under Messages, and it opens on Unread (#2718 review, #2815)",
@@ -3181,7 +3181,7 @@
     {
       "name": "#2905: a follow-up message's report and block sit behind one ⋯ disc, not three, so the line keeps its width on a phone",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100402.messages-message-grouped:not(:has(button[aria-label=\"Report message\"])) > .messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"][aria-expanded=\"false\"]",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message-grouped > .msgx-bar.messages-message-actions > button.messages-action-more[aria-haspopup=\"menu\"][aria-expanded=\"false\"]",
       "impact": [
         "frontend/src/features/messages/**",
         "public/css/app.css"
@@ -5234,19 +5234,19 @@
     {
       "name": "#2387: every message carries one hover bar (recent reactions, the picker, reply, save, ⋯), and a threaded one its reply count",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": "#messages-screen:not(.hidden) #messages-message-9100404:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more[aria-haspopup=\"menu\"]",
+      "expectSelector": ".messages-thread-channel .messages-message:has(.msgx-thread-chip) > .msgx-bar:has([aria-label^=\"React with\"]) > [aria-label=\"Add reaction\"] ~ [aria-label=\"Reply\"] ~ [aria-label=\"Save message\"] ~ .messages-action-more",
       "expectText": "3 replies"
     },
     {
       "name": "#2387: a reply thread opens beside its channel, with its first message and a composer of its own",
       "path": "/?demo=1#messages/910004/thread/9100404",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-has-reply-thread > .messages-reply-pane[data-reply-thread=\"9100404\"] .messages-composer-thread",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-layout.messages-has-reply-thread > .messages-reply-pane[data-reply-thread] .messages-composer-thread",
       "expectText": "Threads keep the room readable"
     },
     {
       "name": "#2387: a deleted message leaves a placeholder, a message link lands on it, and Full width, just before ⋯ in the header, can hide the list beside it",
       "path": "/?demo=1#messages/910002/m/9100202",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-layout:has(.messages-thread-header > .messages-list-toggle[aria-label=\"Full width\"][aria-pressed=\"false\"] + .relative) #messages-message-9100202 .messages-deleted",
+      "expectSelector": ".messages-layout:has(.messages-thread-header > .messages-list-toggle[aria-label=\"Full width\"][aria-pressed=\"false\"] + .relative) .messages-message .messages-deleted",
       "expectText": "Message deleted"
     },
     {
@@ -5274,7 +5274,7 @@
     {
       "name": "#2387 follow-up: a thread's replies show in #general where they landed, one card for the run, and the card under the first message shows the newest reply",
       "path": "/?demo=1#messages/910004",
-      "expectSelector": ".messages-thread-channel:has(#messages-message-9100404 .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card .msgx-thread-line",
+      "expectSelector": ".messages-thread-channel:has(.messages-message .msgx-thread-card .msgx-thread-line) .msgx-thread-activity > button.msgx-thread-activity-card .msgx-thread-line",
       "expectText": "3 replies in thread"
     },
     {

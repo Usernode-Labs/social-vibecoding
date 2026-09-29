@@ -97,6 +97,20 @@ test('Preview lists and actions share persisted identities, with private viewer 
     const message = transcript.body.messages[0];
     assert.equal(message.content, 'I attached the launch checklist.');
     assert.equal(message.attachments.length, 2);
+    assert.ok(transcript.body.messages.some(row => row.deleted), 'the deleted-message sample is stored too');
+    const thread = await api('/api/conversations/910004/threads/9100404?demo=1');
+    assert.equal(thread.status, 200, JSON.stringify(thread.body));
+    assert.equal(thread.body.messages.length, 3);
+    assert.notEqual(thread.body.root.id, 9100404, 'old thread links resolve to a real stored root');
+    for (const reply of thread.body.messages) {
+      assert.equal(reply.threadRootId, thread.body.root.id);
+      assert.equal((await pool.query('SELECT id FROM conversation_messages WHERE id = $1 AND sender_id = $2',
+        [reply.id, reply.sender.id])).rowCount, 1);
+      assert.notEqual(reply.sender.id, viewers[0].id, 'shared fixtures never invent a post from the viewer');
+    }
+    const linked = await api('/api/conversations/910002/messages?demo=1&around=9100202');
+    assert.equal(linked.status, 200);
+    assert.ok(linked.body.messages.some(row => row.id === linked.body.focus.messageId && row.deleted));
     for (const attachment of message.attachments) {
       const download = await api(attachment.url);
       assert.equal(download.status, 200);
@@ -127,6 +141,17 @@ test('Preview lists and actions share persisted identities, with private viewer 
     assert.equal(refreshed.body.messages.at(-1).content, 'Edited and persisted');
     assert.equal(refreshed.body.messages[0].saved, true);
     assert.equal(refreshed.body.messages[0].reactions[0].reacted, true);
+    const reply = await api(`/api/conversations/${group}/messages?demo=1`, 'POST', {
+      content: 'A stored thread reply', thread_root_id: message.id,
+    });
+    assert.equal(reply.status, 201, JSON.stringify(reply.body));
+    const storedThread = await api(`/api/conversations/${group}/threads/${message.id}?demo=1`);
+    assert.equal(storedThread.body.messages[0].id, reply.body.message.id);
+    const removed = await api(`/api/conversations/${group}/messages/${reply.body.message.id}?demo=1`, 'DELETE');
+    assert.equal(removed.status, 200);
+    assert.equal(removed.body.message.deleted, true);
+    assert.ok((await pool.query('SELECT deleted_at FROM conversation_messages WHERE id = $1',
+      [reply.body.message.id])).rows[0].deleted_at, 'demo deletes persist');
     const invite = first.get(910003);
     assert.equal((await api(`/api/conversations/${invite}/messages`)).status, 404, 'invites do not grant history access');
     assert.equal((await api(`/api/conversations/${invite}/respond`, 'POST', { action: 'accept' })).status, 200);
