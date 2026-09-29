@@ -466,6 +466,35 @@ const MESSAGE_SELECT = `
     LEFT JOIN conversation_messages tr ON tr.id = m.thread_root_id
     LEFT JOIN users tru ON tru.id = tr.sender_id`;
 
+// @mention candidates for one conversation (#3361). Channels have no loaded
+// roster -- serializeConversation counts them because a channel is every user
+// -- so the composer gets its people from here instead: the distinct recent
+// authors of the channel's messages, block-filtered, system and deleted
+// messages excluded, capped like the app-level suggestions route. Recent-first
+// is the whole benefit: the viewer is realistically replying to whoever spoke
+// last. `id` travels with the username so the client can keep its friend-first
+// ordering without new plumbing.
+async function mentionCandidates(pool, user, conversationId) {
+  const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
+  if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
+  const { rows } = await pool.query(
+    `SELECT u.id, u.username
+       FROM conversation_messages m
+       JOIN users u ON u.id = m.sender_id
+      WHERE m.conversation_id = $1
+        AND m.sender_id IS NOT NULL
+        AND m.msg_type = 'message'
+        AND m.deleted_at IS NULL
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE b.blocker_id = $2 AND b.blocked_user_id = m.sender_id)
+      GROUP BY u.id, u.username
+      ORDER BY MAX(m.id) DESC
+      LIMIT 500`,
+    [conversationId, user.id]
+  );
+  return rows.map((row) => ({ id: row.id, username: row.username }));
+}
+
 async function getMessage(db, user, conversationId, messageId) {
   const { rows } = await db.query(
     `${MESSAGE_SELECT} WHERE m.id = $1 AND m.conversation_id = $2
@@ -1955,6 +1984,7 @@ module.exports = {
   addMembers,
   leave,
   removeMember,
+  mentionCandidates,
   mentionsUsername,
   ensureChannelMemberships,
   sendMessage,

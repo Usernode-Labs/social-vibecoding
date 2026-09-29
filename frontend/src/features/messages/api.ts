@@ -287,6 +287,16 @@ export async function getConversation(id: number): Promise<ConversationDetail> {
   return normalizeConversation(pick(data, 'conversation') ?? data);
 }
 
+// #3361: @mention candidates for a conversation. A channel has no member
+// roster (the server counts it instead of loading it), so the composer gets
+// its people from this endpoint: the conversation's recent message authors,
+// already block-filtered and capped server-side. Failures degrade silently in
+// the composer to the pre-fix behaviour.
+export async function getMentionCandidates(id: number): Promise<ConversationUser[]> {
+  const data = record(await request<unknown>(`/api/conversations/${id}/mention-candidates`));
+  return array(pick(data, 'users', 'items')).map(normalizeUser).filter((user) => user.id);
+}
+
 export async function createConversation(body: { kind: 'direct'; userId: number } | { kind: 'group'; title: string; memberIds: number[] }): Promise<ConversationDetail> {
   const payload = body.kind === 'direct'
     ? { kind: 'direct', user_id: body.userId }

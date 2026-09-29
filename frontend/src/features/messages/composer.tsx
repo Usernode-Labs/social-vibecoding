@@ -3,7 +3,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Chan
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
-import type { MessageAttachment, SharedObjectReference } from './types';
+import type { ConversationUser, MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
@@ -74,6 +74,21 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     if (replyId && wantsKeyboardFocus()) inputRef.current?.focus({ preventScroll: true });
   }, [replyId]);
 
+  // #3361: a channel has no loaded roster (the server counts it), so its @
+  // suggestions come from the conversation's recent message authors instead,
+  // fetched once per conversation. Group chats and DMs keep reading
+  // active.members exactly as before; failures degrade silently to no list.
+  const [channelCandidates, setChannelCandidates] = useState<ConversationUser[]>([]);
+  useEffect(() => {
+    setChannelCandidates([]);
+    if (active?.kind !== 'channel' || !conversationId) return undefined;
+    let live = true;
+    api.getMentionCandidates(conversationId)
+      .then((users) => { if (live) setChannelCandidates(users); })
+      .catch(() => { if (live) setChannelCandidates([]); });
+    return () => { live = false; };
+  }, [active?.kind, conversationId]);
+
   useEffect(() => {
     if (inThread) return undefined;
     const onSelected = (event: Event) => {
@@ -114,9 +129,18 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     const cursor = inputRef.current?.selectionStart ?? value.length;
     const prefix = value.slice(0, cursor).match(/(?:^|\s)@([^\s@]*)$/)?.[1];
     if (prefix === undefined) return null;
+    // #3361: a channel has no loaded roster (the server counts it), so its
+    // candidates are the conversation's recent authors, fetched once per
+    // conversation; having spoken there implies membership, so the
+    // member-status filter does not apply. Group chats and DMs keep the
+    // member-roster source below, exactly as before.
+    if (active?.kind === 'channel') {
+      return orderFriendsFirst(channelCandidates
+        .filter((member) => member.username.toLowerCase().startsWith(prefix.toLowerCase())), friendIds).slice(0, 6);
+    }
     return orderFriendsFirst((active?.members || []).filter((member) => member.status === 'member'
       && member.username.toLowerCase().startsWith(prefix.toLowerCase())), friendIds).slice(0, 6);
-  }, [active?.members, value, friendIds]);
+  }, [active?.kind, active?.members, channelCandidates, value, friendIds]);
 
   // #2783: `#` offers the viewer's channels — #general and their apps' —
   // and inserts `#handle`, which every chat renders as a link to it. Only a

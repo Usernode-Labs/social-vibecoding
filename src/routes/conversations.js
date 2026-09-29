@@ -265,6 +265,24 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // #3361: @mention candidates for one conversation. A channel has no loaded
+  // roster (serializeConversation counts it), so the composer fetches its
+  // people from here instead: the conversation's distinct recent message
+  // authors, capped and block-filtered by the service. The gate matches the
+  // other per-conversation reads; auth is enforced by the global JWT gate.
+  router.get('/api/conversations/:id/mention-candidates', async (req, res) => {
+    let id = conversations.strictId(req.params.id);
+    if (!id) return sendNotFound(res);
+    try {
+      if (isDemo(req)) id = await stagingMessages.resolveLegacyLink(pool, req.user, id);
+      const users = await conversations.mentionCandidates(pool, req.user, id);
+      return users ? res.json({ users }) : sendNotFound(res);
+    } catch (err) {
+      log.error('conversations', 'mention candidates failed', { id, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/conversations/:id/messages', conversationMessageLimiter, async (req, res) => {
     let id = conversations.strictId(req.params.id);
     if (!id) return sendNotFound(res);
