@@ -70,7 +70,9 @@ async function connect(t, { beforeMigration = null } = {}) {
       -- reduced copy creates them up front, the way it creates every other
       -- column the agent-sessions statements touch.
       icon_emoji VARCHAR(32), icon_image_id VARCHAR(32),
+      moderation_suspended_at TIMESTAMPTZ,
       collab_visibility TEXT NOT NULL DEFAULT 'public', view_visibility TEXT NOT NULL DEFAULT 'public');
+    CREATE TABLE user_app_blocks (user_id INTEGER, app_id INTEGER, PRIMARY KEY (user_id, app_id));
     CREATE TABLE chat_sessions (
       id SERIAL PRIMARY KEY, app_id INTEGER REFERENCES apps(id), user_id INTEGER REFERENCES users(id),
       status VARCHAR(32) NOT NULL DEFAULT 'active', source TEXT,

@@ -3230,9 +3230,9 @@
     },
     {
       "id": "workshop.all-apps",
-      "name": "The Workshop screen lists your apps with both of their numbers",
+      "name": "Workshop links joined communities to their actual app Workshop",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list a[data-workshop-app=\"staging-demo-your-app\"][href=\"/app/staging-demo-your-app/workshop\"] [data-workshop-needs=\"3\"]",
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-section=\"open\"] a[data-workshop-app][href$=\"/workshop\"]",
       "expectText": "Votes waiting on you",
       "visual": true,
       "impact": [
@@ -3244,15 +3244,15 @@
       ]
     },
     {
-      "name": "A Workshop row says what you are working on as well as what needs you",
+      "name": "Workshop rows carry both counts from their stored app data",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-app=\"staging-demo-your-app\"] [data-workshop-working=\"2\"] + [data-workshop-needs=\"3\"]"
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list a[data-workshop-app]:has([data-workshop-working] + [data-workshop-needs])"
     },
     {
-      "name": "The Workshop lists your communities under Communities, Groups and Just you, in that order",
+      "name": "A saved Home tile does not invent a Workshop community membership",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-list > [data-workshop-section=\"open\"] ~ [data-workshop-section=\"invited\"]:has([data-workshop-app=\"staging-demo-long-name\"]) ~ [data-workshop-section=\"solo\"] [data-workshop-app=\"staging-demo-emoji-icon\"]",
-      "expectText": "Just you"
+      "expectSelector": "#workshop-screen:not(.hidden) #workshop-list:has([data-workshop-section=\"open\"]):not(:has([data-workshop-app=\"staging-demo-your-app\"]))",
+      "expectText": "Communities"
     },
     {
       "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over its Current status and Needs you tabs, lit like a project page's (#3051)",
