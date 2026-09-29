@@ -176,6 +176,19 @@ jobs:
           echo "version=$CLAUDE_CODE_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_arg=CLAUDE_CODE_VERSION=$CLAUDE_CODE_VERSION" >> "$GITHUB_OUTPUT"
 
+      # The platform image stamps its shell with the commit it is built from
+      # (Dockerfile.kubernetes, ARG GIT_SHA). Without it the shell says `dev`
+      # while the chart runs the pod as this commit (release.sourceRevision),
+      # and the server refuses to start on the mismatch
+      # (src/services/shell-release.js). The platform image is only ever
+      # reused for its own commit (scripts/resolve-kubernetes-image.js), so
+      # this is always the revision the release deploys it as.
+      - name: Resolve platform source revision
+        id: source
+        if: matrix.component == 'platform'
+        shell: bash
+        run: echo "build_arg=GIT_SHA=$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
       - name: Resolve reusable ${{ matrix.component }} image
         id: reuse
         env:
@@ -198,7 +211,9 @@ jobs:
             ${{ steps.reuse.outputs.reuse_tag }}
           pull: true
           no-cache: ${{ steps.reuse.outputs.refresh == 'true' }}
-          build-args: ${{ steps.claude.outputs.build_arg }}
+          build-args: |
+            ${{ steps.claude.outputs.build_arg }}
+            ${{ steps.source.outputs.build_arg }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

@@ -172,7 +172,12 @@ test('Kubernetes workflow resolves all three images before publishing a release'
   assert.match(workflow, /REUSE_CURRENT_PLATFORM: 'true'/);
   assert.match(workflow, /name: image-digest-scheduled-bases/);
   assert.match(workflow, /CLAUDE_CODE_VERSION: \$\{\{ steps\.claude\.outputs\.version \}\}/);
-  assert.match(workflow, /build-args: \$\{\{ steps\.claude\.outputs\.build_arg \}\}/);
+  assert.match(workflow, /build-args: \|\n\s+\$\{\{ steps\.claude\.outputs\.build_arg \}\}\n\s+\$\{\{ steps\.source\.outputs\.build_arg \}\}/);
+  // The platform image's shell must be stamped with the commit the chart runs
+  // it as (release.sourceRevision is GITHUB_SHA). Built without it, the shell
+  // says `dev` and the server refuses to start (src/services/shell-release.js).
+  assert.match(workflow, /id: source\n\s+if: matrix\.component == 'platform'\n[\s\S]*?echo "build_arg=GIT_SHA=\$GITHUB_SHA"/);
+  assert.match(workflow, /const sourceRevision = process\.env\.GITHUB_SHA;/);
   assert.match(workerDockerfile, /ARG CLAUDE_CODE_VERSION=latest/);
   assert.match(workerDockerfile, /@anthropic-ai\/claude-code@\$\{CLAUDE_CODE_VERSION\}/);
 });
