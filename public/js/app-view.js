@@ -18179,91 +18179,178 @@ const AppView = {
       a && a.storyId === storyId && a.viewport === viewport && a.side === side
       && a.variant === variant && (!media || a.media === media) && shotsUrl(a.url)
     ));
-    const rendered = [];
     // One result per declared change; runs from before shots have none.
     const shotResults = Array.isArray(shots.shotResults) ? shots.shotResults : [];
+    const resultOf = (claim) => shotResults.find((entry) => entry && entry.id === claim.id);
+    const skipped = (claim) => resultOf(claim)?.status === 'skipped';
+    const numberOf = (storyId) => claims.findIndex((claim) => claim.id === storyId) + 1;
     const persona = (claim) => (claim.persona === 'read_only_admin' ? 'read-only admin'
       : claim.persona === 'full_admin' ? 'full admin' : 'member');
     const videoStyle = 'display:block;width:100%;max-height:360px;border-radius:6px;background:rgba(0,0,0,0.35)';
-    for (const claim of claims) {
-      const result = shotResults.find((entry) => entry && entry.id === claim.id);
-      if (result && result.status === 'skipped') {
-        rendered.push(`<article data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="skipped" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
-        <div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400">Skipped</span></div>
-        <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || 'The shots agent could not get to this change.')}</p>
-      </article>`);
-        continue;
+
+    // One screen per screen size that flips between before and after, with
+    // each declared change outlined where the run found the two differ
+    // (services/shots-diff.js) and numbered as in the list below it. Changes
+    // on the same screen share it. A run from before that was worked out gets
+    // a screen per change and size, with nothing outlined.
+    let screens = (Array.isArray(shots.screens) ? shots.screens : []).filter((screen) => screen
+      && by(screen.shot, screen.viewport, 'base', 'context') && by(screen.shot, screen.viewport, 'head', 'context'));
+    if (!screens.length) {
+      for (const claim of claims.filter((entry) => !skipped(entry))) {
+        const viewports = Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop'];
+        for (const viewport of viewports) {
+          if (by(claim.id, viewport, 'base', 'context') || by(claim.id, viewport, 'head', 'context')) {
+            screens.push({ viewport, shot: claim.id, stories: [claim.id], regions: [] });
+          }
+        }
       }
-      const viewports = Array.isArray(claim.viewports) && claim.viewports.length
-        ? claim.viewports.slice(0, 2) : ['desktop'];
-      const flow = Array.isArray(claim.steps) ? claim.steps.slice(0, 40).map((s) => esc(s)).join(' <span aria-hidden="true">→</span> ') : '';
-      const viewportRows = [];
-      for (const viewport of viewports) {
-        const baseAbsent = claim.baseState === 'not_present';
-        const baseFocus = by(claim.id, viewport, 'base', 'focus');
-        const headFocus = by(claim.id, viewport, 'head', 'focus');
-        const baseContext = by(claim.id, viewport, 'base', 'context');
-        const headContext = by(claim.id, viewport, 'head', 'context');
+    }
+    const pctOf = (value, total) => `${Math.max(0, Math.min(100, (Number(value) / total) * 100)).toFixed(3)}%`;
+    const outlines = (screen, side) => {
+      const width = Number(screen.width);
+      const height = Number(side === 'base' ? screen.heightBefore : screen.heightAfter);
+      if (!(width > 0 && height > 0)) return '';
+      return (Array.isArray(screen.regions) ? screen.regions : []).map((region) => {
+        const box = side === 'base' ? region.b : region.a;
+        const mark = side === 'base' ? region.bMark : region.aMark;
+        const n = region.story ? numberOf(region.story) : 0;
+        const label = n > 0 ? `<span class="shots-box-n">${n}</span>` : '';
+        if (Array.isArray(box)) {
+          return `<span class="shots-box${n > 0 ? '' : ' shots-box-other'}" style="left:${pctOf(box[0], width)};top:${pctOf(box[1], height)};width:${pctOf(box[2], width)};height:${pctOf(box[3], height)}">${label}</span>`;
+        }
+        if (Array.isArray(mark) && n > 0) {
+          return `<span class="shots-mark" style="left:${pctOf(mark[0], width)};top:${pctOf(mark[1], height)};width:${pctOf(mark[2], width)}">${label}</span>`;
+        }
+        return '';
+      }).join('');
+    };
+    // More than one screen is a carousel: one shows at a time and the
+    // arrows step through them. The screens are radios in one group, so it
+    // needs no script (the keyboard's arrow keys step them too); the ids come
+    // from the proposal, so a repaint renders the same markup.
+    const carouselId = (index) => `shots-${Number.isInteger(sessionId) && sessionId > 0 ? sessionId : 'card'}-screen-${index}`;
+    const screenCount = Math.min(screens.length, 6);
+    screens = screens.slice(0, screenCount);
+    const stepper = (index) => {
+      if (screenCount < 2) return '';
+      const prev = index > 0 ? `<label for="${carouselId(index - 1)}" class="shots-screen-step" title="Previous screen" aria-hidden="true">‹</label>`
+        : '<span class="shots-screen-step shots-screen-step-off" aria-hidden="true">‹</span>';
+      const next = index < screenCount - 1 ? `<label for="${carouselId(index + 1)}" class="shots-screen-step" title="Next screen" aria-hidden="true">›</label>`
+        : '<span class="shots-screen-step shots-screen-step-off" aria-hidden="true">›</span>';
+      return `<span class="shots-screen-nav">${prev}<span class="shots-screen-count">${index + 1} of ${screenCount}</span>${next}</span>`;
+    };
+    const screenHtml = screens.map((screen, screenIndex) => {
+      const onScreen = (Array.isArray(screen.stories) && screen.stories.length ? screen.stories : [screen.shot])
+        .map((id) => claims.find((claim) => claim.id === id)).filter(Boolean);
+      const before = by(screen.shot, screen.viewport, 'base', 'context');
+      const after = by(screen.shot, screen.viewport, 'head', 'context');
+      const absent = onScreen.length > 0 && onScreen.every((claim) => claim.baseState === 'not_present');
+      const who = [...new Set(onScreen.map(persona))].join(', ') || 'member';
+      const narrow = Number(screen.width) > 0 ? Number(screen.width) < 600 : /phone|mobile/i.test(screen.viewport);
+      const described = onScreen.map((claim) => claim.claim || '').join(' ');
+      const side = (which, artifact, label) => {
+        const cls = which === 'base' ? 'shots-flip-before' : 'shots-flip-after';
+        return artifact
+          ? `<span class="shots-flip-side ${cls}"><img src="${attr(shotsUrl(artifact.url))}" alt="${attr(`${label}: ${described}`)}" loading="lazy">${outlines(screen, which)}</span>`
+          : `<span class="shots-flip-side ${cls} shots-flip-missing">No shot</span>`;
+      };
+      return `<figure class="shots-flip${narrow ? ' shots-flip-narrow' : ''}" data-shots-screen="${attr(screen.viewport)}" data-shots-viewport="${attr(screen.viewport)}">
+        <label class="shots-flip-frame" title="Click to flip between before and after">
+          <input type="checkbox" class="shots-flip-toggle" aria-label="${attr(`Show the ${screen.viewport} screen before the change`)}">
+          <span class="shots-flip-chip shots-flip-chip-after">After</span><span class="shots-flip-chip shots-flip-chip-before">${absent ? 'Before · not there yet' : 'Before'}</span>
+          ${side('head', after, 'After')}
+          ${side('base', before, absent ? 'Before, not there yet' : 'Before')}
+        </label>
+        <figcaption class="flex flex-wrap items-center justify-between gap-2 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${stepper(screenIndex)}<span>${esc(screen.viewport)} · ${esc(who)} · click the screen to flip</span><button type="button" data-shots-open="1" class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.openShotsScreen(this)">Open full screen</button></figcaption>
+      </figure>`;
+    });
+
+    // The declared changes, numbered as on the screens above.
+    const items = claims.map((claim) => {
+      const result = resultOf(claim);
+      const n = numberOf(claim.id);
+      if (skipped(claim)) {
+        return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="skipped" class="shots-claim">
+          <span class="shots-claim-n">${n}</span>
+          <div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong><span class="dev-badge bg-zinc-500/10 text-zinc-600 dark:text-zinc-400">Skipped</span></div>
+          <p class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${esc(result.reason || 'The shots agent could not get to this change.')}</p></div>
+        </li>`;
+      }
+      const flow = Array.isArray(claim.steps) ? claim.steps.slice(0, 40).map((step) => esc(step)).join(' <span aria-hidden="true">→</span> ') : '';
+      // What the shots agent said its shots leave out of the claim.
+      const shotNote = result && result.status === 'ready' && typeof result.note === 'string' ? result.note : '';
+      const viewports = Array.isArray(claim.viewports) && claim.viewports.length ? claim.viewports.slice(0, 2) : ['desktop'];
+      const clips = viewports.map((viewport) => {
         // A motion change has a clip per side; older runs stored one paired
         // before/after recording instead.
         const baseClip = by(claim.id, viewport, 'base', 'animation', 'webm');
         const headClip = by(claim.id, viewport, 'head', 'animation', 'webm');
         const pairedClip = by(claim.id, viewport, 'paired', 'animation', 'webm');
-        // The element shot leads when there is one; otherwise the screen.
-        const focusLeads = AppView._shotsCropReadable(baseFocus) && AppView._shotsCropReadable(headFocus);
-        const baseUrl = focusLeads && baseFocus ? shotsUrl(baseFocus.url) : (baseContext ? shotsUrl(baseContext.url) : '');
-        const headUrl = focusLeads && headFocus ? shotsUrl(headFocus.url) : (headContext ? shotsUrl(headContext.url) : '');
-        const beforeContextUrl = baseContext ? shotsUrl(baseContext.url) : baseUrl;
-        const afterContextUrl = headContext ? shotsUrl(headContext.url) : headUrl;
-        const compareAttrs = `data-before-url="${attr(beforeContextUrl)}" data-head-url="${attr(afterContextUrl)}" data-claim="${attr(claim.claim || '')}" data-viewport="${attr(viewport)}" data-base-absent="${baseAbsent ? '1' : '0'}"`;
-        const imageStyle = 'display:block;width:100%;height:180px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.24);border-radius:6px';
-        const side = (label, url, missing) => `<figure style="flex:1 1 280px;min-width:0;margin:0">
-          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label}</figcaption>
-          ${url ? `<button type="button" ${compareAttrs} class="block w-full rounded-md border-0 bg-transparent p-0 text-left" aria-label="Open the ${attr(viewport)} before and after of ${attr(claim.claim || '')}" onclick="AppView.openShotsComparison(this)"><img src="${attr(url)}" alt="${attr(`${label}: ${claim.claim || ''}`)}" loading="lazy" style="${imageStyle}"></button>`
-            : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:180px">${esc(missing)}</div>`}
-        </figure>`;
-        const clip = (label, artifact, poster) => `<figure style="flex:1 1 280px;min-width:0;margin:0">
-          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label} clip</figcaption>
-          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${poster ? ` poster="${attr(poster)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`
+        const poster = (side) => { const shot = by(claim.id, viewport, side, 'context'); return shot ? shotsUrl(shot.url) : ''; };
+        const clip = (label, artifact, posterUrl) => `<figure style="flex:1 1 240px;min-width:0;margin:0">
+          <figcaption class="mb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${label} clip · ${esc(viewport)}</figcaption>
+          ${artifact ? `<video src="${attr(shotsUrl(artifact.url))}"${posterUrl ? ` poster="${attr(posterUrl)}"` : ''} controls preload="none" muted playsinline aria-label="${attr(`${label} clip: ${claim.claim || ''}`)}" style="${videoStyle}"></video>`
             : `<div class="flex items-center justify-center rounded-md border border-dashed border-zinc-300 text-xs text-zinc-500 dark:border-zinc-700 dark:text-zinc-400" style="height:120px">No clip</div>`}
         </figure>`;
-        const controls = [];
-        if (beforeContextUrl || afterContextUrl) {
-          controls.push(`<button type="button" ${compareAttrs} class="text-xs font-medium text-violet-700 dark:text-violet-400" onclick="AppView.openShotsComparison(this)">Open full screen</button>`);
+        if (baseClip || headClip) {
+          return `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${clip('Before', baseClip, poster('base'))}${clip('After', headClip, poster('head'))}</div>`;
         }
-        if (pairedClip && !baseClip && !headClip) {
+        if (pairedClip) {
           const videoKind = claim.animation === 'motion' ? 'animation' : 'interaction';
-          controls.push(`<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play ${videoKind}</summary><video src="${attr(shotsUrl(pairedClip.url))}" controls preload="none" muted playsinline aria-label="${videoKind === 'animation' ? 'Animation' : 'Interaction'} for ${attr(claim.claim || '')}" style="${videoStyle};margin-top:6px"></video></details>`);
+          return `<details class="mt-2"><summary class="cursor-pointer text-xs font-medium text-violet-700 dark:text-violet-400">Play ${videoKind}</summary><video src="${attr(shotsUrl(pairedClip.url))}" controls preload="none" muted playsinline aria-label="${videoKind === 'animation' ? 'Animation' : 'Interaction'} for ${attr(claim.claim || '')}" style="${videoStyle};margin-top:6px"></video></details>`;
         }
-        const clips = baseClip || headClip
-          ? `<div data-shots-clips="1" class="mt-2 flex flex-wrap items-stretch gap-2">${clip('Before', baseClip, beforeContextUrl)}${clip('After', headClip, afterContextUrl)}</div>`
-          : '';
-        viewportRows.push(`<div data-shots-viewport="${attr(viewport)}" class="mt-3">
-          <div class="mb-1 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewport)} · ${esc(persona(claim))}</div>
-          <div class="flex flex-wrap items-stretch gap-2">${side(baseAbsent ? 'Before · Not there yet' : 'Before', baseUrl, baseAbsent ? 'Not there yet' : 'No shot')}${side('After', headUrl, 'No shot')}</div>
+        return '';
+      }).join('');
+      return `<li data-shots-story="${attr(claim.id || '')}" data-shots-shot-status="ready" class="shots-claim">
+        <span class="shots-claim-n">${n}</span>
+        <div class="min-w-0 flex-1">
+          <strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>
+          <div class="mt-0.5 text-[0.68rem] text-zinc-500 dark:text-zinc-400">${esc(viewports.join(', '))} · ${esc(persona(claim))}</div>
+          ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
+          ${shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Not in these shots:</span> ${esc(shotNote)}</p>` : ''}
           ${clips}
-          ${controls.length ? `<div class="mt-2 flex flex-wrap items-start gap-3">${controls.join('')}</div>` : ''}
-        </div>`);
-      }
-      // What the shots agent said its shots leave out of the claim.
-      const shotNote = result && result.status === 'ready' && typeof result.note === 'string' ? result.note : '';
-      rendered.push(`<article data-shots-story="${attr(claim.id || '')}" class="rounded-lg border border-zinc-200 bg-zinc-50/70 p-3 dark:border-zinc-800 dark:bg-zinc-900/60">
-        <div class="flex items-start justify-between gap-3"><strong class="text-sm leading-snug">${esc(claim.claim || '')}</strong>${badge}</div>
-        ${flow ? `<div class="mt-1 text-xs text-zinc-600 dark:text-zinc-400">${flow}</div>` : ''}
-        ${shotNote ? `<p data-shots-shot-note="1" class="mt-1 text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Not in these shots:</span> ${esc(shotNote)}</p>` : ''}
-        ${viewportRows.join('')}
-        <details class="mt-2 text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">Shot details</summary>
-          <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span>${shotResults.length ? '<span>taken by the shots agent</span>' : ''}</div>
-        </details>
-      </article>`);
-    }
-    if (!rendered.length) {
+        </div>
+      </li>`;
+    });
+    if (!screenHtml.length && !claims.some(skipped)) {
       return `<section data-shots="1" data-shots-state="verified" class="rounded-lg border border-red-300 p-3 text-xs text-red-700 dark:border-red-900 dark:text-red-400">These before & after shots are missing their details, so none can be shown.</section>`;
     }
     const lookCopy = artifacts.some((artifact) => artifact?.variant === 'animation')
       ? 'Look at the shots and clips to decide whether they show the change.'
       : 'Look at the shots to decide whether they show the change.';
-    return `<section data-shots="1" data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">Taken on the exact before and after builds of this proposal. ${lookCopy}</p>${rendered.join('')}</section>`;
+    const picks = screenCount > 1
+      ? screens.map((screen, index) => `<input type="radio" class="shots-screen-pick" name="${carouselId('pick')}" id="${carouselId(index)}" aria-label="${attr(`Screen ${index + 1} of ${screenCount}: ${screen.viewport}`)}"${index === 0 ? ' checked' : ''}>`).join('')
+      : '';
+    const screensBlock = screenCount > 1
+      ? `<div class="shots-screens">${picks}${screenHtml.join('')}</div>`
+      : screenHtml.join('');
+    return `<section data-shots="1" data-shots-state="verified" aria-label="Before &amp; after" class="space-y-3"><div class="flex items-start justify-between gap-3"><p class="text-xs text-zinc-600 dark:text-zinc-400">Taken on the exact before and after builds of this proposal. ${lookCopy}</p>${badge}</div>${screensBlock}<ol class="shots-claims">${items.join('')}</ol>
+      <details class="text-xs text-zinc-600 dark:text-zinc-400"><summary class="cursor-pointer font-medium">Shot details</summary>
+        <div class="mt-1 flex flex-wrap gap-2">${provenance}<span>shots <code>${esc(String(shots.planHash || '').slice(0, 12) || 'unknown')}</code></span>${shotResults.length ? '<span>taken by the shots agent</span>' : ''}</div>
+      </details></section>`;
+  },
+
+  // A screen of the card above, larger, in the comparison overlay. The copy
+  // is the card's own markup, so it flips the same way.
+  openShotsScreen(triggerEl) {
+    const figure = triggerEl && triggerEl.closest ? triggerEl.closest('.shots-flip') : null;
+    if (!figure) return;
+    const clone = figure.cloneNode(true);
+    for (const node of clone.querySelectorAll('[data-shots-open], .shots-screen-nav')) node.remove();
+    clone.classList.add('shots-flip-full');
+    const compare = AppView._visualCompare();
+    compare.open({ label: `Before & after · ${figure.dataset.shotsViewport || 'screen'}`, bodyHtml: clone.outerHTML, openedAt: Date.now() });
+    compare.setHandlers({
+      onBack: () => AppView.closeVisualComparison(),
+      onBackdrop: () => {
+        if (AppView._visualCompareDismissGuarded()) return;
+        AppView.closeVisualComparison();
+      },
+    });
+    AppView._visualCompareKeyHandler = (event) => {
+      if (event.key === 'Escape') AppView.closeVisualComparison();
+    };
+    document.addEventListener('keydown', AppView._visualCompareKeyHandler);
   },
 
   // Authenticated shots uses full relative URLs rather than public

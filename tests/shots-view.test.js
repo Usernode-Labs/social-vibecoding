@@ -298,3 +298,36 @@ test('an interrupted run with an automatic retry to come says so, and is not off
   }
   assert.equal(view.fromSnapshot(session(), HEAD).automaticRetryPending, false);
 });
+
+test('a verified run\'s screens reach the card as integers and its own story ids only', () => {
+  const screens = [{
+    viewport: 'desktop', shot: 'dialog', stories: ['dialog', 'someone-else'],
+    width: 1280, heightBefore: 800, heightAfter: 800,
+    regions: [
+      { story: 'dialog', b: [1, 2, 3, 4], a: [1, 2, 3, 4], bMark: null, aMark: null },
+      { story: 'not-declared', b: null, a: [0, 0, 10, 10], bMark: [0, 0, 10], aMark: null },
+      { story: 'dialog', b: ['1', 2, 3, 4], a: [1.5, 2, 3, 4] },
+      { story: 'dialog', b: [-1, 0, 0, 0], a: null },
+    ],
+  }, { viewport: 'phone', shot: 'unknown-story', regions: [] }];
+  const shown = view.serialize(run({ screens }), session(), 'demo', HEAD).screens;
+  assert.equal(shown.length, 1, 'a screen for a change this run did not declare is dropped');
+  assert.deepEqual(shown[0].stories, ['dialog']);
+  assert.deepEqual(shown[0].regions, [
+    { story: 'dialog', b: [1, 2, 3, 4], a: [1, 2, 3, 4], bMark: null, aMark: null },
+    { story: null, b: null, a: [0, 0, 10, 10], bMark: [0, 0, 10], aMark: null },
+  ]);
+  // Only for the verified run on the current head.
+  assert.deepEqual(view.serialize(run({ screens, state: 'failed' }), session(), 'demo', HEAD).screens, []);
+  assert.deepEqual(view.serialize(run({ screens }), session(), 'demo', OTHER).screens, []);
+  assert.deepEqual(view.fromSnapshot(session(), HEAD).screens, []);
+});
+
+test('a note or reason the agent wrote with escaped quotation marks reads with plain ones', () => {
+  const results = view.cleanShotResults([
+    { id: 'dialog', status: 'ready', note: 'The old \\"Continue\\" heading could not be shown.' },
+    { id: 'other', status: 'skipped', reason: 'No \\\\"Invite\\\\" button for a member.' },
+  ]);
+  assert.equal(results[0].note, 'The old "Continue" heading could not be shown.');
+  assert.equal(results[1].reason, 'No "Invite" button for a member.');
+});

@@ -380,6 +380,10 @@ function runSummary(row, artifactSummary = []) {
     // One result per declared change: ready (with the shots agent's note
     // on what its shots leave out, if any), or skipped with the reason
     // people see on the proposal. Runs from before shots have none.
+    // The screens the card shows, with where each change's before and after
+    // differ (services/shots-diff.js). Runs from before it have none.
+    screens: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.screens)
+      ? row.hard_verdict.screens : [],
     shotResults: shots.isShotsVerdict(row.hard_verdict) && Array.isArray(row.hard_verdict.stories)
       ? row.hard_verdict.stories.map((story) => ({
         id: story?.id,

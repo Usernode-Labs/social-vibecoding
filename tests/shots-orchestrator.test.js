@@ -346,13 +346,18 @@ test('every declared change saved publishes the ready files, tears the builds do
   assert.deepEqual(dispatchOptions.navigationHints.intentPaths, ['/lists/demo', '/lists/demo']);
 
   const reviewing = fixture.transitions.find((entry) => entry.next === 'reviewing').patch;
-  assert.deepEqual(reviewing.hardVerdict, {
+  const { screens, ...verdict } = reviewing.hardVerdict;
+  assert.deepEqual(verdict, {
     passed: true, mode: shots.SHOTS_MODE, runs: 1,
     stories: [
       { id: 'invite-suggestions', status: 'ready', files: 3 },
       { id: 'invite-empty', status: 'ready', files: 2 },
     ],
   });
+  // Where each change's before and after differ, worked out as the shots
+  // are saved (services/shots-diff.js), for the card to outline.
+  assert.ok(Array.isArray(screens) && screens.length > 0);
+  assert.ok(screens.every((screen) => screen.stories.every((id) => ['invite-suggestions', 'invite-empty'].includes(id))));
   assert.equal(shots.isShotsVerdict(reviewing.hardVerdict), true);
 
   assert.equal(stored.runId, RUN_ID);

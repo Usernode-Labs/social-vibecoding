@@ -95,7 +95,7 @@ const server = new McpServer(
   { instructions: 'After implementing a change, declare what a person will see change, only for a visible state you reached in the running local app with representative test data. Report missing data or an unreachable state instead of guessing. This only records the declared changes; Homeroom\'s shots agent later follows them on the before and after builds and takes the shots.' }
 );
 server.registerTool('declare_visible_changes', {
-  description: 'Declare 1-3 visible changes and how a person reaches each one, as you reached them in the running local app with representative test data, or impact=none with a specific rationale for a truly non-visual change. Add hints (setup, expectText, focusTarget) when they would help someone else find the same state. A state that needs a server fault or background job needs a repeatable staging fixture; report that rather than guessing the steps. Call once after implementation and before finishing the build turn.',
+  description: 'Declare 1-3 visible changes and how a person reaches each one, as you reached them in the running local app with representative test data, or impact=none with a specific rationale for a truly non-visual change. Changes that show on the same screen are one declared change: name everything that differs there in its claim. Add hints (setup, expectText, focusTarget) when they would help someone else find the same state. A state that needs a server fault or background job needs a repeatable staging fixture; report that rather than guessing the steps. Call once after implementation and before finishing the build turn.',
   inputSchema: intentSchema,
   annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
 }, async (intent) => {

@@ -58,13 +58,14 @@ test('parallel cleanup waits for every sibling before surfacing a failure', asyn
   assert.deepEqual(order, ['slow']);
 });
 
-test('each paired reset serializes clones and adds the same member fixture to both revisions', async () => {
+test('each paired reset serializes clones and adds the same member and full-admin fixtures to both revisions', async () => {
   const original = {
     remove: runtime.remove, deploy: runtime.deploy, appOrigin: runtime.appOrigin,
     clone: dbManager.cloneFromPreparedSource, connectionUrl: dbManager.connectionUrl,
     fullAdmin: fixtures.ensureFullAdminIdentity,
     hostedApp: fixtures.ensureHostedAppFixture,
     inspect: fixtures.canCopyMemberAgentSession, copy: fixtures.copyMemberAgentSession,
+    copyAdmin: fixtures.copyFullAdminAgentSession,
   };
   const runId = '2'.repeat(32);
   const slug = 'usernode-2d5619';
@@ -110,6 +111,11 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     });
     fixtures.copyMemberAgentSession = async ({ side }) => ({ id: fixtures.PROFILE,
       persona: 'member', path: '/#messages/agent/990899', side });
+    const adminSides = [];
+    fixtures.copyFullAdminAgentSession = async ({ side }) => {
+      adminSides.push(side);
+      return { id: fixtures.FULL_ADMIN_SESSION_PROFILE, persona: 'full_admin', path: '/#messages/agent/990897', side };
+    };
     const progress = [];
     const captureDigest = `capture@sha256:${'c'.repeat(64)}`;
     const deployment = await environment.resetPair({
@@ -123,12 +129,16 @@ test('each paired reset serializes clones and adds the same member fixture to bo
       'clone_base', 'clone_base_copy_template', 'clone_base_scrub_private',
       'clone_head', 'clone_head_copy_template', 'clone_head_scrub_private',
     ]);
-    assert.equal(deployment.availableFixtures.length, 3);
+    assert.equal(deployment.availableFixtures.length, 4);
     assert.equal(deployment.availableFixtures[0].persona, 'full_admin');
     assert.deepEqual(deployment.availableFixtures[0].appMembership,
       { appId: 42, slug, status: 'member' });
     assert.equal(deployment.availableFixtures[1].appSlug, fixtures.hostedAppSlug(runId));
     assert.equal(deployment.availableFixtures[2].persona, 'member');
+    // The full admin gets an agent session too, on both revisions, so a list
+    // drawn only for a viewer with sessions is there before as well as after.
+    assert.equal(deployment.availableFixtures[3].id, fixtures.FULL_ADMIN_SESSION_PROFILE);
+    assert.deepEqual(adminSides.sort(), ['base', 'head']);
     const pairedEnvs = deployedEnvs.filter((env) => env.DATABASE_URL);
     assert.equal(pairedEnvs.length, 2);
     assert.ok(pairedEnvs.every((env) => env.MAX_APPS === '0'));
@@ -137,7 +147,7 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     assert.ok(progress.includes('seed_hosted_app_fixture'));
     assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
       .update(`source-fingerprint\n${fixtures.FULL_ADMIN_PROFILE}`
-        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}+${fixtures.PROFILE}`).digest('hex'));
+        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}+${fixtures.PROFILE}+${fixtures.FULL_ADMIN_SESSION_PROFILE}`).digest('hex'));
   } finally {
     runtime.remove = original.remove;
     runtime.deploy = original.deploy;
@@ -148,6 +158,7 @@ test('each paired reset serializes clones and adds the same member fixture to bo
     fixtures.ensureHostedAppFixture = original.hostedApp;
     fixtures.canCopyMemberAgentSession = original.inspect;
     fixtures.copyMemberAgentSession = original.copy;
+    fixtures.copyFullAdminAgentSession = original.copyAdmin;
   }
 });
 

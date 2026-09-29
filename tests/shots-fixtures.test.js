@@ -14,6 +14,34 @@ test('shots identities and rows cannot be created, inspected, or copied outside 
   await assert.rejects(fixtures.ensureHostedAppFixture(input), /isolated shots database/);
   await assert.rejects(fixtures.canCopyMemberAgentSession(input), /isolated shots database/);
   await assert.rejects(fixtures.copyMemberAgentSession(input), /isolated shots database/);
+  await assert.rejects(fixtures.copyFullAdminAgentSession(input), /isolated shots database/);
+});
+
+test('the full admin gets its own copy of the fixture agent session, with its change and a message', async () => {
+  // Without one, a list drawn only for a viewer with sessions (the menu's
+  // Agent sessions) is missing on the before build of a full-admin change.
+  const queries = [];
+  const client = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      if (/INSERT INTO agent_sessions/.test(sql)) return { rowCount: 1, rows: [{ id: params[0], title: 'Fixture session' }] };
+      return { rowCount: 1, rows: [{ id: params?.[0] }] };
+    },
+  };
+  const session = await fixtures.copyAgentSession(client, {
+    userId: fixtures.FULL_ADMIN_USER_ID, appId: 7, sessionId: fixtures.FULL_ADMIN_SESSION_ID,
+    changeId: fixtures.FULL_ADMIN_CHANGE_ID, branch: 'shots-fixture/full-admin-agent-session', persona: 'full admin',
+  });
+  assert.equal(session.title, 'Fixture session');
+  const insert = queries.find(({ sql }) => /INSERT INTO agent_sessions/.test(sql));
+  assert.deepEqual(insert.params, [fixtures.FULL_ADMIN_SESSION_ID, fixtures.FULL_ADMIN_USER_ID, 7, fixtures.SOURCE_SESSION_ID]);
+  assert.match(insert.sql, /u\.username = 'usernode-capture-admin'/, 'copied from the staging fixture\'s own session');
+  const change = queries.find(({ sql }) => /INSERT INTO chat_sessions/.test(sql));
+  assert.equal(change.params[0], fixtures.FULL_ADMIN_CHANGE_ID);
+  assert.equal(change.params[6], 'shots-fixture/full-admin-agent-session');
+  assert.ok(queries.some(({ sql }) => /INSERT INTO chat_session_messages/.test(sql)));
+  assert.notEqual(fixtures.FULL_ADMIN_SESSION_ID, fixtures.MEMBER_SESSION_ID);
+  assert.notEqual(fixtures.FULL_ADMIN_CHANGE_ID, fixtures.MEMBER_CHANGE_ID);
 });
 
 test('the hosted-app fixture is a public running row bound to the exact shots run', async () => {

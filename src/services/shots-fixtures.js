@@ -15,6 +15,9 @@ const SOURCE_CHANGE_ID = 990802;
 const MEMBER_SESSION_ID = 990899;
 const MEMBER_CHANGE_ID = 990898;
 const PROFILE = 'platform-member-agent-session-v1';
+const FULL_ADMIN_SESSION_ID = 990897;
+const FULL_ADMIN_CHANGE_ID = 990896;
+const FULL_ADMIN_SESSION_PROFILE = 'platform-full-admin-agent-session-v1';
 // This identity is inserted only into the two disposable shots databases.
 // Production and ordinary staging databases never contain a full-admin
 // service account. The high, fixed id lets the platform mint one short-lived
@@ -211,6 +214,53 @@ async function ensureHostedAppFixture({ databaseUrl, slug, runId, side }) {
   });
 }
 
+// A copy of the staging fixture's agent session, owned by `userId`, with its
+// change and first user message. The source belongs to the read-only admin;
+// the other personas get a copy so every persona's session lists (Messages'
+// Agents, the menu's Agent sessions) look the same on both builds.
+async function copyAgentSession(client, { userId, appId, sessionId, changeId, branch, persona }) {
+  const session = await client.query(
+    `INSERT INTO agent_sessions
+       (id, user_id, title, title_source, status, focus_app_id, focus_context,
+        last_activity_at, created_at)
+     SELECT $1, $2, s.title, 'manual', 'open', $3, s.focus_context,
+            NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '5 minutes'
+       FROM agent_sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.id = $4 AND u.username = 'usernode-capture-admin'
+     RETURNING id, title`,
+    [sessionId, userId, appId, SOURCE_SESSION_ID]
+  );
+  if (session.rowCount !== 1) throw new Error(`The source agent session is unavailable for ${persona} shots.`);
+  const change = await client.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, session_title, status, agent_session_id,
+        created_at, last_activity_at)
+     SELECT $1, $2, $3, $7, c.session_title,
+            'active', $4, NOW() - INTERVAL '4 minutes', NOW() - INTERVAL '2 minutes'
+       FROM chat_sessions c
+      WHERE c.id = $5 AND c.agent_session_id = $6
+     RETURNING id`,
+    [changeId, appId, userId, sessionId, SOURCE_CHANGE_ID, SOURCE_SESSION_ID, branch]
+  );
+  if (change.rowCount !== 1) throw new Error(`The source agent change is unavailable for ${persona} shots.`);
+  await client.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1', [sessionId, changeId]);
+  // Copy a real user message from the exact revision's own staging
+  // fixture. It proves the transcript loaded; no model or fake response
+  // is needed and no admin confirmation card crosses the identity wall.
+  const message = await client.query(
+    `INSERT INTO chat_session_messages
+       (session_id, agent_session_id, role, content, metadata, created_at)
+     SELECT NULL, $1, m.role, m.content, '{}'::jsonb, NOW() - INTERVAL '5 minutes'
+       FROM chat_session_messages m
+      WHERE m.agent_session_id = $2 AND m.role = 'user'
+      ORDER BY m.id LIMIT 1
+     RETURNING id`,
+    [sessionId, SOURCE_SESSION_ID]
+  );
+  if (message.rowCount !== 1) throw new Error(`The source agent message is unavailable for ${persona} shots.`);
+  return session.rows[0];
+}
+
 async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppSlug }) {
   assertShotsDatabase(databaseUrl, slug, runId, side);
   return withClient(databaseUrl, async (client) => {
@@ -234,53 +284,17 @@ async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppS
          DO UPDATE SET status = 'member', accepted_at = COALESCE(app_collaborators.accepted_at, NOW())`,
         [appId, userId]
       );
-      const session = await client.query(
-        `INSERT INTO agent_sessions
-           (id, user_id, title, title_source, status, focus_app_id, focus_context,
-            last_activity_at, created_at)
-         SELECT $1, $2, s.title, 'manual', 'open', $3, s.focus_context,
-                NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '5 minutes'
-           FROM agent_sessions s JOIN users u ON u.id = s.user_id
-          WHERE s.id = $4 AND u.username = 'usernode-capture-admin'
-         RETURNING id, title`,
-        [MEMBER_SESSION_ID, userId, appId, SOURCE_SESSION_ID]
-      );
-      if (session.rowCount !== 1) throw new Error('The source agent session is unavailable for member shots.');
-      const change = await client.query(
-        `INSERT INTO chat_sessions
-           (id, app_id, user_id, branch_name, session_title, status, agent_session_id,
-            created_at, last_activity_at)
-         SELECT $1, $2, $3, 'shots-fixture/member-agent-session', c.session_title,
-                'active', $4, NOW() - INTERVAL '4 minutes', NOW() - INTERVAL '2 minutes'
-           FROM chat_sessions c
-          WHERE c.id = $5 AND c.agent_session_id = $6
-         RETURNING id`,
-        [MEMBER_CHANGE_ID, appId, userId, MEMBER_SESSION_ID, SOURCE_CHANGE_ID, SOURCE_SESSION_ID]
-      );
-      if (change.rowCount !== 1) throw new Error('The source agent change is unavailable for member shots.');
-      await client.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1',
-        [MEMBER_SESSION_ID, MEMBER_CHANGE_ID]);
-      // Copy a real user message from the exact revision's own staging
-      // fixture. It proves the transcript loaded; no model or fake response
-      // is needed and no admin confirmation card crosses the identity wall.
-      const message = await client.query(
-        `INSERT INTO chat_session_messages
-           (session_id, agent_session_id, role, content, metadata, created_at)
-         SELECT NULL, $1, m.role, m.content, '{}'::jsonb, NOW() - INTERVAL '5 minutes'
-           FROM chat_session_messages m
-          WHERE m.agent_session_id = $2 AND m.role = 'user'
-          ORDER BY m.id LIMIT 1
-         RETURNING id`,
-        [MEMBER_SESSION_ID, SOURCE_SESSION_ID]
-      );
-      if (message.rowCount !== 1) throw new Error('The source agent message is unavailable for member shots.');
+      const session = await copyAgentSession(client, {
+        userId, appId, sessionId: MEMBER_SESSION_ID, changeId: MEMBER_CHANGE_ID,
+        branch: 'shots-fixture/member-agent-session', persona: 'member',
+      });
       await client.query('COMMIT');
       return {
         id: PROFILE,
         persona: 'member',
         startPath: '/#messages',
         path: `/#messages/agent/${MEMBER_SESSION_ID}`,
-        title: session.rows[0].title,
+        title: session.title,
         sessionId: MEMBER_SESSION_ID,
         changeId: MEMBER_CHANGE_ID,
       };
@@ -291,8 +305,49 @@ async function copyMemberAgentSession({ databaseUrl, slug, runId, side, selfAppS
   });
 }
 
+// The full admin gets an agent session too. Without one, anything drawn only
+// for a viewer with sessions (the menu's Agent sessions list) is absent on a
+// before build, and its change cannot be shown there.
+async function copyFullAdminAgentSession({ databaseUrl, slug, runId, side, selfAppSlug }) {
+  assertShotsDatabase(databaseUrl, slug, runId, side);
+  return withClient(databaseUrl, async (client) => {
+    await client.query('BEGIN');
+    try {
+      const app = await client.query('SELECT id FROM apps WHERE slug = $1', [selfAppSlug]);
+      const admin = await client.query('SELECT id FROM users WHERE id = $1 AND username = $2',
+        [FULL_ADMIN_USER_ID, FULL_ADMIN_USERNAME]);
+      if (app.rowCount !== 1 || admin.rowCount !== 1) {
+        throw new Error('Before & after shots full-admin identity or platform app is missing from the paired fixture.');
+      }
+      const session = await copyAgentSession(client, {
+        userId: FULL_ADMIN_USER_ID, appId: app.rows[0].id,
+        sessionId: FULL_ADMIN_SESSION_ID, changeId: FULL_ADMIN_CHANGE_ID,
+        branch: 'shots-fixture/full-admin-agent-session', persona: 'full admin',
+      });
+      await client.query('COMMIT');
+      return {
+        id: FULL_ADMIN_SESSION_PROFILE,
+        persona: 'full_admin',
+        startPath: '/#messages',
+        path: `/#messages/agent/${FULL_ADMIN_SESSION_ID}`,
+        title: session.title,
+        sessionId: FULL_ADMIN_SESSION_ID,
+        changeId: FULL_ADMIN_CHANGE_ID,
+      };
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    }
+  });
+}
+
 module.exports = {
   PROFILE,
+  FULL_ADMIN_SESSION_ID,
+  FULL_ADMIN_CHANGE_ID,
+  FULL_ADMIN_SESSION_PROFILE,
+  copyFullAdminAgentSession,
+  copyAgentSession,
   SOURCE_SESSION_ID,
   MEMBER_SESSION_ID,
   MEMBER_CHANGE_ID,
