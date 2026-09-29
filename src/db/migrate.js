@@ -188,6 +188,7 @@ async function migrate(config) {
   await backfillLinkedIssuesFromPrBodies(pool);
   await backfillProposalIssuerAssignments(pool);
   await backfillUsernameChoiceForEmailHandles(pool);
+  await backfillProposeChallengeTask(pool);
   await migrateWaitlistCountryCodes(pool);
   // After backfillVotesRequired, which reads the merge announcements.
   await clearAutomatedChannelLines(pool);
@@ -258,6 +259,79 @@ async function backfillUsernameChoiceForEmailHandles(pool) {
     });
   }
   return result.rowCount || 0;
+}
+
+// #3253: the "Propose an app change" onboarding challenge (template 24) read
+// as if creating sessions and chats were the task, but the scorer
+// (PROPOSAL_SENT in services/topochain/challenge-scorer.js) credits the
+// challenge only from chat_sessions.promoted_at — which the promote route
+// writes. The task sentence now says so, matching what READS.PROPOSAL_SENT
+// in challenge-anatomy.js has always stated.
+//
+// The old text exists only in the production data (templates were imported
+// from a legacy dump, not seeded by this repo), so it cannot be hardcoded as
+// the exact-match guard the one-shot rewrites rely on. Instead the migration
+// runs ONCE, guarded by a platform_settings marker in the style of
+// migrateWaitlistCountryCodes: on that first run the template's current task
+// is read into a variable and both updates are guarded on that exact value,
+// so an instance row whose task override was deliberately customised (its
+// text differing from the template's) is left alone, and after the marker is
+// set every later boot is a no-op — an organiser's subsequent edit of either
+// the template or an instance is never clobbered. A database that has not
+// imported template 24 yet affects zero rows and sets no marker, so a later
+// import is still fixed on the boot after it.
+const PROPOSE_CHALLENGE_TEMPLATE_ID = 24;
+const PROPOSE_CHALLENGE_TASK = "Propose a change to an app and put it up for the group's vote — the Propose click is what completes this challenge. Sessions and chats on their own do not count.";
+const PROPOSE_CHALLENGE_TASK_MIGRATED_KEY = 'propose_challenge_task_migrated';
+
+async function backfillProposeChallengeTask(pool) {
+  try {
+    const marker = await pool.query(
+      `SELECT 1 FROM platform_settings WHERE key = $1`,
+      [PROPOSE_CHALLENGE_TASK_MIGRATED_KEY]
+    );
+    if (marker.rows.length) return 0;
+
+    const { rows } = await pool.query(
+      `SELECT task FROM challenge_templates WHERE id = $1`,
+      [PROPOSE_CHALLENGE_TEMPLATE_ID]
+    );
+    if (!rows.length) return 0;
+
+    let changed = 0;
+    if (rows[0].task !== PROPOSE_CHALLENGE_TASK) {
+      const oldTask = rows[0].task;
+      const templates = await pool.query(
+        `UPDATE challenge_templates
+            SET task = $2, updated_at = NOW()
+          WHERE id = $1 AND task = $3`,
+        [PROPOSE_CHALLENGE_TEMPLATE_ID, PROPOSE_CHALLENGE_TASK, oldTask]
+      );
+      const instances = await pool.query(
+        `UPDATE challenges
+            SET task = $2, updated_at = NOW()
+          WHERE challenge_template_id = $1 AND task = $3`,
+        [PROPOSE_CHALLENGE_TEMPLATE_ID, PROPOSE_CHALLENGE_TASK, oldTask]
+      );
+      changed = (templates.rowCount || 0) + (instances.rowCount || 0);
+      if (changed) {
+        log.info('db', 'Rewrote the propose challenge task text', {
+          templates: templates.rowCount, instances: instances.rowCount,
+        });
+      }
+    }
+
+    await pool.query(
+      `INSERT INTO platform_settings (key, value, description) VALUES
+         ($1, 'true',
+          'Marker: the one-time rewrite of the propose challenge''s task text (#3253) has run. Do not delete — deleting re-runs the rewrite against whatever the template''s task says now, clobbering any organiser''s edit made since.')`,
+      [PROPOSE_CHALLENGE_TASK_MIGRATED_KEY]
+    );
+    return changed;
+  } catch (err) {
+    log.warn('db', 'Propose-challenge task rewrite skipped', { err: err.message });
+    return 0;
+  }
 }
 
 // The schema apply is dozens of `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` /
@@ -13420,6 +13494,7 @@ module.exports = {
   migrateWaitlistCountryCodes,
   clearAutomatedChannelLines,
   backfillProposalIssuerAssignments,
+  backfillProposeChallengeTask,
   seedStagingTopicScrollThreads, seedStagingLlmUsage, seedStagingHomeLayout,
   seedStagingAnalyticsCharts, seedStagingSpendDistribution,
   seedStagingGeneralChannel,
