@@ -795,13 +795,17 @@ test('syncImportedProposal: a changed body is mirrored even when the head has no
     })],
   ], async () => {
     const pool = recordingPool();
-    const session = { ...SESSION, pr_body: null };
+    const session = { ...SESSION, pr_body: null, pr_summary_md: 'Author-written summary.' };
     const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
     // Still 'unchanged' — mirroring a description is not a revision.
     assert.equal(res, 'unchanged');
     const write = pool.calls.find((c) => /SET pr_body/.test(c.sql));
     assert.ok(write, 'the row learned the description');
     assert.deepEqual(write.params, ['The description as it now reads on GitHub.', 321]);
+    assert.match(write.sql, /pr_summary_previous_md = COALESCE\(pr_summary_md, pr_summary_previous_md\)/);
+    assert.equal(session.pr_summary_md, 'Author-written summary.',
+      'author prose remains readable while the changed description is flagged');
+    assert.equal(session.pr_summary_stale, true);
     assert.equal(session.pr_body, 'The description as it now reads on GitHub.',
       'and the in-memory row matches, like every other mirror here');
   });

@@ -4050,6 +4050,7 @@ const AppView = {
       body = {
         actions: AppView._detailActionsView('proposal', item),
         summaryHtml: AppView._proposalSummaryHtml(item),
+        summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         // #1370's "Full proposal details" disclosure, between the generated
         // summary and the detail block, exactly where it was inserted.
         proposalBody: AppView._proposalBodyView(item),
@@ -4074,6 +4075,7 @@ const AppView = {
       body = {
         actions: AppView._detailActionsView('session', item),
         summaryHtml: AppView._proposalSummaryHtml(item),
+        summaryStale: !!(item.pr_summary_stale && typeof item.pr_summary_md === 'string' && item.pr_summary_md.trim()),
         proposalBody: AppView._proposalBodyView(item),
         details: AppView._proposalDetailsView(item),
         transcript: AppView._transcriptSectionView(item),
@@ -4490,8 +4492,10 @@ const AppView = {
     const specStandIn = !body.proposalBody && mine && underway && !!item.spec_md;
     if (specStandIn) body.proposalBody = AppView._proposalBodyView({ ...item, pr_body: item.spec_md });
     body.summaryHtml ||= specStandIn
-      ? '<p>No change summary has been added yet. The spec this change is built from is under Technical details.</p>'
-      : '<p>No change summary has been added yet.</p>';
+      ? '<p>No short summary has been added yet. The spec this change is built from is under Technical details.</p>'
+      : body.proposalBody
+        ? '<p>No short summary has been added yet. The current description is under Technical details.</p>'
+        : '<p>No change summary has been added yet.</p>';
     const md = item.testing_md || '';
     body.testing = { html: md ? AppView._proposalBodyView({ pr_body: md })?.html : null, path: item.testing_path || null };
     body.workspace = mine && item.source !== 'imported' ? item.id : null;
@@ -10420,6 +10424,24 @@ const AppView = {
   _doneDeploymentStatus() {
     const d = AppView._mergedCtx && AppView._mergedCtx.deployment;
     if (!d || typeof d !== 'object') return null;
+    if (d.kind === 'child') {
+      if (d.state === 'failed') return {
+        tone: 'blocked', text: 'Latest merged change · deploy failed',
+        title: 'The latest merged change has not been confirmed in production.',
+      };
+      if (d.state === 'pending') return {
+        tone: 'neutral', text: 'Latest merged change · awaiting deployment',
+        title: 'Production is still serving an earlier revision.',
+      };
+      if (d.state === 'deployed') return {
+        tone: 'ok', text: `Production live at ${String(d.runningSha).slice(0, 7)}`,
+        title: 'The latest merged change is included in the observed production revision.',
+      };
+      return {
+        tone: 'neutral', text: 'Production delivery could not be confirmed',
+        title: 'The running revision or its relationship to the latest merge is unknown.',
+      };
+    }
     const pending = Number.isFinite(Number(d.pendingCount)) ? Math.max(0, Number(d.pendingCount)) : null;
     const noun = pending === 1 ? 'change' : 'changes';
     if (pending > 0) {
@@ -17736,6 +17758,18 @@ const AppView = {
       if (p.deployment_state === 'stalled') {
         return { ...base, tier: 0, key: 'deployment_stalled', label: 'Merged · deployment stalled', tone: 'blocked', lock: false, advisory: 0,
           title: 'This change has merged, but its production deployment is stalled.' };
+      }
+      if (p.deployment_kind === 'child') {
+        if (p.deployment_state === 'pending') {
+          return { ...base, tier: 0, key: 'delivery_pending', label: 'Merged · awaiting deployment', tone: 'neutral', lock: false, advisory: 0,
+            title: 'This change has merged, but production is still serving an earlier revision.' };
+        }
+        if (p.deployment_state === 'failed') {
+          return { ...base, tier: 0, key: 'delivery_failed', label: 'Merged · deploy failed', tone: 'blocked', lock: false, advisory: 0,
+            title: 'The production rebuild failed after this change merged.' };
+        }
+        return { ...base, tier: 0, key: 'delivery_unknown', label: 'Merged · delivery unknown', tone: 'neutral', lock: false, advisory: 0,
+          title: 'The running production revision could not be confirmed.' };
       }
       return { ...base, tier: 0, key: 'merged', label: '✓ Merged', tone: 'ok', lock: false, advisory: 0 };
     }

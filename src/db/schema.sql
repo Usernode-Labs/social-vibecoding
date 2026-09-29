@@ -1001,6 +1001,9 @@ ALTER TABLE apps                   ADD COLUMN IF NOT EXISTS unit_suite_last_test
 --   revert PR — the UI hides chat input + the undo button on
 --   reverts so we can't vote-to-undo-an-undo from the merged list.
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_commit_sha    VARCHAR(40);
+-- A recovery sweep may release a failed merge claim only after its GitHub
+-- request has had time to finish. The timestamp is set with the claim.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS merge_attempt_at   TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS revert_of_session_id INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS chat_sessions_revert_of_idx ON chat_sessions(revert_of_session_id);
 
@@ -3116,6 +3119,63 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_visuals_applied TEXT;
 -- pre-feature proposals, or an LLM-unavailable fallback); the view simply
 -- omits the summary paragraph in that case.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_md TEXT;
+
+-- A summary is a snapshot of proposal inputs, not a timeless description.
+-- Keep the last copy visible when inputs change and track its freshness
+-- separately. Generated writes may publish only against the input version
+-- they read before generation.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source TEXT
+  CHECK (pr_summary_source IN ('author', 'generated'));
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source_head_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_source_body_hash VARCHAR(64);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_input_version BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_applied_version BIGINT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_previous_md TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_summary_stale BOOLEAN NOT NULL DEFAULT FALSE;
+-- Existing summaries have no recorded input revision. Preserve their words,
+-- but do not assert that they describe today's branch or description.
+UPDATE chat_sessions
+   SET pr_summary_source = CASE WHEN source = 'imported' THEN 'author' ELSE 'generated' END,
+       pr_summary_previous_md = pr_summary_md,
+       pr_summary_stale = TRUE
+ WHERE pr_summary_md IS NOT NULL AND pr_summary_source IS NULL;
+-- The previous freshness migration archived live summaries. Restore them
+-- without claiming they describe the current revision. Normal invalidation
+-- no longer clears this column, so this remains safe on repeated startup.
+UPDATE chat_sessions
+   SET pr_summary_md = pr_summary_previous_md,
+       pr_summary_stale = TRUE
+ WHERE pr_summary_md IS NULL AND pr_summary_previous_md IS NOT NULL;
+
+-- History is an input to generated PR metadata. Invalidate in the same
+-- transaction as a new request or native handoff summary, including context
+-- that arrives after the PR was first written. Hosted turn summaries are
+-- saved after PR generation; that generation already receives the in-flight
+-- text, so saving the same text must not invalidate its new summary.
+CREATE OR REPLACE FUNCTION invalidate_pr_summary_on_history() RETURNS TRIGGER AS $$
+DECLARE relevant BOOLEAN := FALSE;
+BEGIN
+  IF NEW.session_id IS NULL THEN RETURN NEW; END IF;
+  IF TG_OP = 'INSERT' THEN
+    relevant := NEW.role = 'user' OR NEW.metadata->>'handoffSummary' = 'true';
+  ELSE
+    relevant := (NEW.role = 'user' AND NEW.content IS DISTINCT FROM OLD.content)
+      OR NEW.metadata->>'handoffSummary' IS DISTINCT FROM OLD.metadata->>'handoffSummary';
+  END IF;
+  IF relevant THEN
+    UPDATE chat_sessions
+       SET pr_summary_input_version = pr_summary_input_version + 1,
+           pr_summary_previous_md = COALESCE(pr_summary_md, pr_summary_previous_md),
+           pr_summary_stale = pr_summary_stale OR pr_summary_md IS NOT NULL
+     WHERE id = NEW.session_id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS trg_pr_summary_history ON chat_session_messages;
+CREATE TRIGGER trg_pr_summary_history
+  AFTER INSERT OR UPDATE OF content, metadata ON chat_session_messages
+  FOR EACH ROW EXECUTE FUNCTION invalidate_pr_summary_on_history();
 
 -- App access to user LLM budgets (issue #34). One row per (app, user)
 -- consent: the user explicitly allowed this app to spend from their
@@ -7166,6 +7226,17 @@ CREATE TABLE IF NOT EXISTS agent_model_compatibility (
 INSERT INTO agent_model_compatibility (backend, model_id, status, note, checked_at)
 VALUES ('codex_openrouter', 'openai/gpt-5.3-codex', 'verified', 'Default verified Codex model', NOW())
 ON CONFLICT (backend, model_id) DO NOTHING;
+
+-- The OpenRouter model catalog, one copy for the whole platform
+-- (services/agent-models.js): OpenRouter's public GET /models, refreshed in
+-- the background. Kept here so every pod, a fresh deploy included, answers a
+-- model menu from it at once instead of asking OpenRouter while it waits.
+-- One row; `models` is OpenRouter's own list, less the descriptions.
+CREATE TABLE IF NOT EXISTS openrouter_model_catalog (
+  id         BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (id),
+  models     JSONB NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL
+);
 
 -- AI-generated progress report cache (Reporting tab). One row per app —
 -- the summary is shared by every viewer, which is why its input is built

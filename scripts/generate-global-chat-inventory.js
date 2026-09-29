@@ -83,6 +83,11 @@ const PATH_EXEMPTIONS = [
 const REVIEWED_ROUTE_EXEMPTIONS = [
   {
     matches: (route) => route.source === 'server.js'
+      && ['/sw.js', '/shell/release.json'].includes(route.path),
+    reason: 'generated service-worker and asset manifest delivery, not an interactive control',
+  },
+  {
+    matches: (route) => route.source === 'server.js'
       && ['/health', '/claude.md', '/node-status'].includes(route.path),
     reason: 'public health, documentation, or redirect surface rather than a signed-in Classic control',
   },

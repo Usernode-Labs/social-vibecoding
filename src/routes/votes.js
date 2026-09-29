@@ -27,6 +27,8 @@ const { isCliCredentialManagementSession } = require('../services/cli-api-policy
 const visualEvidencePlan = require('../services/visual-evidence-plan');
 const visualEvidenceState = require('../services/visual-evidence-state');
 const visualEvidenceView = require('../services/visual-evidence-view');
+const summaryFreshness = require('../services/summary-freshness');
+const proposalDelivery = require('../services/proposal-delivery');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -277,10 +279,18 @@ function stagingMockProposals(viewer) {
       my_prior_vote: 'yes',
     },
     // One No vote: eased threshold restored, window pushed back out.
-    mk(9000002, 900102,
-      '[Mock] Long-title test: walk brand-new collaborators through '
-      + 'voting, kudos and dev sessions step by step',
-      11, 1, 1, 0, { required: 5, windowEndsAt: hoursAhead(120) }),
+    {
+      ...mk(9000002, 900102,
+        '[Mock] Long-title test: walk brand-new collaborators through '
+        + 'voting, kudos and dev sessions step by step',
+        11, 1, 1, 0, { required: 5, windowEndsAt: hoursAhead(120) }),
+      // The description changed after this summary was written. Keep its
+      // useful words beside a freshness note on the ?demo=1 proposal page.
+      pr_summary_md: 'Makes vote buttons easier to read on long proposal titles.',
+      pr_summary_previous_md: 'Makes vote buttons easier to read on long proposal titles.',
+      pr_summary_stale: true,
+      pr_body: '## What changed\n\nThe proposal now covers the newer revision.',
+    },
     // Contested (No >= 1/3): window no longer applies, pure full-majority
     // count gate — no countdown, "Contested" treatment.
     mk(9000015, 900115,
@@ -1292,28 +1302,21 @@ function isAfterDeploymentBoundary(row, boundary) {
 }
 
 // Deployment is deliberately a derived view of a merged proposal, not a
-// second persisted lifecycle. Hosted apps finish their merge only after the
-// production rebuild succeeds, so every merged row there is deployed. The
-// platform app is different: its external release can lag behind the GitHub
-// merge, and apps.main_sha is the build answering this request. Match that SHA
+// second persisted lifecycle. Child apps require runtime revision evidence:
+// a GitHub merge can succeed even when its production rebuild fails. The
+// platform app has its own external release path; apps.main_sha is the build
+// answering this request there. Match that SHA
 // to the exact merged session across the WHOLE history (not just this page),
 // then classify rows by their merge order. If old data cannot establish that
 // boundary, leave the honest `unknown` fallback for the client to render as
 // “Merged”.
-async function annotateDeploymentState(pool, app, rows) {
+async function annotateDeploymentState(config, pool, app, rows) {
+  if (!app?.self_hosted) {
+    return proposalDelivery.annotateChild(config, pool, app, rows);
+  }
+
   const prRows = rows.filter((row) => (row.row_type || 'pr') === 'pr' && row.status === 'merged');
   const runningSha = normalizedSha(app?.main_sha);
-
-  if (!app?.self_hosted) {
-    for (const row of prRows) row.deployment_state = 'deployed';
-    return {
-      state: 'deployed',
-      runningSha,
-      liveSessionId: null,
-      livePrNumber: app?.main_pr_number || null,
-      pendingCount: 0,
-    };
-  }
 
   if (!runningSha) {
     for (const row of prRows) row.deployment_state = 'unknown';
@@ -1588,10 +1591,11 @@ async function reconcileNativeReviewedHead({
   // must not clear anything.
   if (!oldHead) {
     await pool.query(
-      `UPDATE chat_sessions SET reviewed_head_sha = $1, stale_notified_at = NULL WHERE id = $2`,
+      `UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL WHERE id = $2`,
       [liveHead, session.id]
     );
     session.reviewed_head_sha = liveHead;
+    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
     if (session.visual_evidence_state || session.visual_evidence_detail) {
       await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
         log.warn('votes', 'Visual evidence invalidation after revision bind failed', {
@@ -1620,6 +1624,7 @@ async function reconcileNativeReviewedHead({
   const { rows: claimed } = await pool.query(
     `UPDATE chat_sessions
         SET reviewed_head_sha = $1,
+            ${summaryFreshness.INVALIDATE_SQL},
             stale_notified_at = NULL,
             approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 0 ELSE 1 END
       WHERE id = $2
@@ -1632,11 +1637,14 @@ async function reconcileNativeReviewedHead({
     // Another verifier installed a revision while we were reading. Re-read
     // rather than reset a second time.
     const { rows } = await pool.query(
-      `SELECT reviewed_head_sha, approval_epoch FROM chat_sessions WHERE id = $1`,
+      `SELECT reviewed_head_sha, approval_epoch, pr_summary_md, pr_summary_stale
+         FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
     session.reviewed_head_sha = rows[0]?.reviewed_head_sha || null;
     session.approval_epoch = rows[0]?.approval_epoch;
+    session.pr_summary_md = rows[0]?.pr_summary_md || null;
+    session.pr_summary_stale = !!rows[0]?.pr_summary_stale;
     if (sameSha(session.reviewed_head_sha, liveHead)) {
       return { enforced: true, headSha: liveHead, epoch: epochOf(session), unchanged: true };
     }
@@ -1649,6 +1657,7 @@ async function reconcileNativeReviewedHead({
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.reviewed_head_sha = liveHead;
   session.approval_epoch = epoch;
+  session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
   if (session.visual_evidence_state || session.visual_evidence_detail) {
     await visualEvidenceState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
       log.warn('votes', 'Visual evidence invalidation after head move failed', {
@@ -2034,7 +2043,7 @@ async function reconcilePromotedSweepHead({ config, pool, session }) {
 // user id (for the per-viewer my_vote / my_kudos subqueries). Callers
 // append their own WHERE / ORDER / LIMIT.
 function mergedRowSelect() {
-  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, cs.merge_commit_sha, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
+  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.user_id, cs.status, cs.linked_issues, cs.merge_commit_sha, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
            -- #1264: the exact merge time (and the promotion time beside it)
            -- so the progress report can date completed work by when it
            -- actually landed instead of when it was started. NULL on rows
@@ -3029,12 +3038,17 @@ function voteRoutes(config) {
             imported_pr_author, imported_pr_head_repo,
             promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths, linked_issues, pr_body,
-            pr_summary_md)
+            pr_summary_md, pr_summary_source, pr_summary_source_head_sha,
+            pr_summary_source_body_hash, pr_summary_applied_version)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
-            'imported', $8, $9, $10, $11,
+            'imported', $8::text, $9, $10, $11,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
             CASE WHEN $7::text = 'active' THEN NOW() END,
-            NOW(), $12, $13, $14::jsonb, $15, $16, $17)
+            NOW(), $12, $13, $14::jsonb, $15, $16, $17,
+            CASE WHEN $17::text IS NULL THEN NULL ELSE 'author' END,
+            CASE WHEN $17::text IS NULL THEN NULL ELSE $8::text END,
+            CASE WHEN $17::text IS NULL THEN NULL ELSE $18 END,
+            CASE WHEN $17::text IS NULL THEN NULL ELSE 0 END)
            RETURNING id, status`,
           [
             app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
@@ -3055,6 +3069,7 @@ function voteRoutes(config) {
             // sent none: the platform does not generate one here, so a proposal
             // without it renders exactly as it did before this field existed.
             importSummary,
+            summaryFreshness.bodyHash(pr.body || null),
           ]
         ));
         await topicAttrs.selfAssignProposal(
@@ -3847,7 +3862,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.pr_summary_stale, cs.pr_body, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, COALESCE(u.username, 'Deleted user') AS username, cs.created_at,
            cs.visual_evidence_state, cs.visual_evidence_run_id,
            cs.visual_evidence_detail, cs.visual_evidence_updated_at,
            -- #687 (PR-import): provenance so the client can render the
@@ -4210,7 +4225,8 @@ function voteRoutes(config) {
     try {
       const gatedApp = await appAccess.getAppForUser(
         pool, req.params.slug, req.user, 'view',
-        `${appAccess.ACCESS_COLUMNS}, main_sha, main_pr_number, release_stall`
+        `${appAccess.ACCESS_COLUMNS}, repo_url, runtime_kind, runtime_name,
+         main_sha, main_pr_number, last_failure, release_stall`
       );
       if (!gatedApp) return res.status(404).json({ error: 'App not found' });
       const appRows = [gatedApp];
@@ -4521,24 +4537,34 @@ function voteRoutes(config) {
       }
 
       for (const row of rows) row.completed_at = completedAt(row);
-      let deployment = await annotateDeploymentState(pool, appRows[0], rows);
+      let deployment = await annotateDeploymentState(config, pool, appRows[0], rows);
       // A proposal preview runs the platform app from the proposal head, so
-      // its boot-time main_sha intentionally has no merged-session match.
-      // Give ?demo=1 a deterministic live boundary and one pending card so
-      // the new Done-column cue is visually reviewable on staging instead of
-      // showing only the honest unmatched-history fallback.
+      // its boot-time main_sha has no merged-session match. Give ?demo=1
+      // deterministic child-delivery fixtures for the Done-column cues;
+      // these mock rows have no real merge commits or running child app.
       if (IS_STAGING && req.query.demo === '1' && isFirstPage) {
         const demoRows = rows.filter((row) => row.row_type === 'pr'
           && Number(row.id) >= 9100000 && Number(row.id) <= 9100034);
         for (const row of demoRows) row.deployment_state = 'deployed';
         const pendingDemo = demoRows.find((row) => Number(row.id) === 9100000);
-        if (pendingDemo) pendingDemo.deployment_state = 'deploying';
+        if (pendingDemo) {
+          pendingDemo.deployment_state = 'pending';
+          pendingDemo.deployment_kind = 'child';
+        }
+        const failedDemo = demoRows.find((row) => Number(row.id) === 9100001);
+        if (failedDemo) {
+          failedDemo.deployment_state = 'failed';
+          failedDemo.deployment_kind = 'child';
+        }
+        const unknownDemo = demoRows.find((row) => Number(row.id) === 9100002);
+        if (unknownDemo) {
+          unknownDemo.deployment_state = 'unknown';
+          unknownDemo.deployment_kind = 'child';
+        }
         deployment = {
-          state: 'deploying',
+          kind: 'child', state: 'pending',
           runningSha: 'dddddddddddddddddddddddddddddddddddddddd',
-          liveSessionId: 9100027,
-          livePrNumber: 910127,
-          pendingCount: 1,
+          liveSessionId: null, livePrNumber: null, pendingCount: null,
         };
       }
 
@@ -5003,6 +5029,19 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
     const app = appRows[0];
 
+    // Start the combined-main check as soon as GitHub has returned its merge
+    // SHA. A deploy failure or interruption later in this finalizer must not
+    // prevent the check from being claimed; recovery picks up a missing claim.
+    if (app && mergeCommitSha) {
+      require('../services/main-watch').afterMerge(config, pool, {
+        app, session, mergeSha: mergeCommitSha,
+      }).catch((err) => {
+        log.warn('votes', 'Main watch failed to run (non-fatal)', {
+          appId: session.app_id, sha: mergeCommitSha, err: err.message,
+        });
+      });
+    }
+
     // Apply any values this proposal carried for the variables it
     // DECLARES (services/pending-secrets.js — the "+ New variable" panel
     // flow). BEFORE the rebuild, deliberately: a newly `required` child-app
@@ -5424,19 +5463,6 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     checkAndResolveConflicts(config, { app_id: session.app_id, excludeSessionId: session.id }).catch((err) => {
       log.error('votes', 'Conflict resolution check failed', { err: err.message });
     });
-
-    // The whole-tree check under direct merges (services/main-watch.js): the
-    // repo's unit suite on the merge commit, red pausing the app's merges.
-    // Fire-and-forget; a merge never waits on it and never fails because of it.
-    if (app && mergeCommitSha) {
-      require('../services/main-watch').afterMerge(config, pool, {
-        app, session, mergeSha: mergeCommitSha,
-      }).catch((err) => {
-        log.warn('votes', 'Main watch failed to run (non-fatal)', {
-          appId: session.app_id, sha: mergeCommitSha, err: err.message,
-        });
-      });
-    }
 
     dstep({ phase: 'merged', message: `Marked session merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}.`, detail: { sha: mergeCommitSha, yesCount, majority } });
     // Optional: finalizeMerge is exported and called directly (the imported-PR
@@ -6201,7 +6227,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
   }
 
   const { rows: claim } = await pool.query(
-    `UPDATE chat_sessions SET status = 'merging'
+    `UPDATE chat_sessions SET status = 'merging', merge_attempt_at = NOW()
      WHERE id = $1 AND status = 'promoted'
      RETURNING id`,
     [session.id]
@@ -6266,8 +6292,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // e.g. a newly-required secret with no production value — yet the merge is
   // done). See the catch block below.
   let githubMerged = false;
+  let releaseMergeLock = null;
 
   try {
+    releaseMergeLock = await require('../services/merge-finalization-lock').acquire(pool, session.id);
     // Merge PR on GitHub
     // Pin every GitHub merge to the exact reviewed commit so GitHub refuses
     // (409) if the head moved. Imported staging previews still use their
@@ -6773,6 +6801,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dend('error', `Merge failed: ${err.message}`);
     }
     return { merged: false, error: err.message, conflict: isConflict };
+  } finally {
+    if (releaseMergeLock) await releaseMergeLock().catch((err) => {
+      log.warn('votes', 'Could not release merge finalization lock', {
+        sessionId: session.id, err: err.message,
+      });
+    });
   }
 }
 

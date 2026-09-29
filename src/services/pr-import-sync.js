@@ -34,6 +34,7 @@
 // Purely additive to the native proposal/vote/merge path.
 
 const log = require('./logger');
+const summaryFreshness = require('./summary-freshness');
 const github = require('./github');
 const githubMock = require('./github-mock');
 const { usesMockGithubForImports } = require('../config');
@@ -129,7 +130,11 @@ async function syncImportedProposal({ config, pool, session }) {
     const freshBody = typeof pr.body === 'string' ? pr.body : null;
     if (freshBody !== (session.pr_body == null ? null : session.pr_body)) {
       try {
-        await pool.query('UPDATE chat_sessions SET pr_body = $1 WHERE id = $2', [freshBody, session.id]);
+        await pool.query(
+          `UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`,
+          [freshBody, session.id]
+        );
+        session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
         session.pr_body = freshBody;
       } catch (err) {
         log.warn('pr-import-sync', 'description mirror refresh failed (non-fatal)', {
@@ -268,6 +273,7 @@ async function applyHeadChange({
   const { rows: claimed } = await pool.query(
     `UPDATE chat_sessions
         SET imported_pr_head_sha = $1,
+            ${summaryFreshness.INVALIDATE_SQL},
             stale_notified_at = NULL,
             approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 1 ELSE 0 END,
             checks_commit_sha = CASE WHEN $4::boolean THEN $1 ELSE checks_commit_sha END
@@ -293,6 +299,7 @@ async function applyHeadChange({
   }
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.imported_pr_head_sha = newHead;
+  session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
   session.approval_epoch = epoch;
   if (checksCarry) session.checks_commit_sha = newHead;
   if (session.visual_evidence_state || session.visual_evidence_detail) {

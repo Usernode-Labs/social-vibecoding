@@ -210,6 +210,17 @@ test('afterMerge: a green run records passing, clears the pause column, and tell
   } finally { suite.restore(); }
 });
 
+test('afterMerge: a concurrent or completed claim for the same SHA does not run the suite again', async () => {
+  const pool = fakePool({ claim: null });
+  const suite = stubSuite(async () => pass);
+  try {
+    assert.equal(await run(pool), null);
+    assert.equal(suite.calls.length, 0);
+    assert.match(pool.calls[0].sql, /main_check_sha IS DISTINCT FROM \$2/);
+    assert.equal(pool.calls[0].params[3], false);
+  } finally { suite.restore(); }
+});
+
 test('afterMerge: a first red is provisional — it holds the pause (the banner says so) and re-runs once', async () => {
   const pool = fakePool();
   const suite = scripted(fail(TAP_RED), fail(TAP_RED));

@@ -392,6 +392,19 @@ async function navigateStart(page, url, onRetry = () => {}, wait = (ms) => new P
   }
 }
 
+async function verifyDocumentRevision(page, expectedSha) {
+  const actual = await page.evaluate(() => document.querySelector('meta[name="platform-build"]')?.content || null);
+  // Non-platform apps have no marker; historical images can predate revision
+  // stamping. New hosted shells validate their exact revision at startup.
+  if (!actual || actual === 'dev') return null;
+  if (actual !== expectedSha) {
+    throw new ReplayFailure('document_revision_mismatch',
+      'The browser loaded a different interface revision than the one being verified.',
+      { expectedSha, actualSha: clip(actual, 40) });
+  }
+  return actual;
+}
+
 function recoveredInitialDocumentFailure(request, page, startUrl, retryCodes) {
   if (!retryCodes?.size || !request?.isNavigationRequest?.()
       || request.resourceType?.() !== 'document') return false;
@@ -1378,6 +1391,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
       initialNavigationRetries, navigation.status
     );
     await settlePage(page, { motion });
+    navigation.documentRevision = await verifyDocumentRevision(page, input.provenance[`${side}Sha`]);
     emitEvent({
       type: 'navigation_completed', ...eventBase,
       status: navigation.status,
@@ -1444,6 +1458,7 @@ async function runSide(browser, scratchPage, input, story, viewport, side) {
     failureStage = { phase: 'browser_diagnostics' };
     assertCleanBrowser();
     failureStage = { phase: 'capture_checkpoint' };
+    await verifyDocumentRevision(page, input.provenance[`${side}Sha`]);
     const { png: contextPng, stability } = await captureStableCheckpoint(page, network, { motion });
     emitEvent({ type: 'checkpoint_stability', ...eventBase, ...stability });
     stages.push({ stage: '__checkpoint__', image: contextPng });
@@ -1732,6 +1747,7 @@ module.exports = {
   authorizedUrl,
   replayNavigationToken,
   navigateStart,
+  verifyDocumentRevision,
   discardRecoveredInitialNavigationFailures,
   discardRecoveredNetworkChanges,
   discardCancelledReads,

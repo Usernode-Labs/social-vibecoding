@@ -686,7 +686,6 @@ async function mergeUsers(pool, { keepId, mergeId, actorId, emailFrom, confirmat
   // visibility / admin rosters that named it are rebuilt.
   try {
     require('./account-deletion-runtime').revoke(mergeId, []);
-    require('./agent-models').invalidateUser(keepId);
   } catch {
     log.warn('user-merge', 'Live disconnect will be reconciled', { mergedUserId: mergeId });
   }

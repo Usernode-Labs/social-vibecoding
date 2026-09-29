@@ -123,18 +123,19 @@ test('a permanently-refused message is handed back with the words intact', () =>
 test('a captured screenshot survives a failed upload', () => {
   // The bug: resetScreenshotState() on a network failure threw the capture
   // away at the exact moment it could not be re-taken cheaply.
+  // #3027: per image now — each thumbnail keeps its own bytes.
   const uploadCatch = feedbackJs.slice(
-    feedbackJs.indexOf("screenshotState.textContent = 'Uploading…';"),
-    feedbackJs.indexOf("screenshotRemove.addEventListener('click'"),
+    feedbackJs.indexOf("shot.stateEl.textContent = 'Uploading…';"),
+    feedbackJs.indexOf('const waitForHiddenDialogPaint'),
   );
   const networkCatch = uploadCatch.slice(uploadCatch.indexOf('} catch {'));
-  assert.doesNotMatch(networkCatch, /resetScreenshotState\(\)/, 'the blob must be kept for the outbox');
+  assert.doesNotMatch(networkCatch, /resetScreenshotState\(\)|removeScreenshot\(shot\)/, 'the blob must be kept for the outbox');
   assert.match(networkCatch, /Saved with your feedback. It'll upload when you're back online/);
-  assert.match(feedbackJs, /let screenshotBlob = null;/);
+  assert.match(feedbackJs, /const shot = \{ blob, objectUrl: URL\.createObjectURL\(blob\), id: null, uploading: true \};/);
   // Cleared with the rest of the attachment state, and re-uploaded before an
   // online submit so the promise on screen stays true.
-  assert.match(feedbackJs, /screenshotBlob = null;\n\s+if \(screenshotObjectUrl\)/);
-  assert.match(submitFeedback, /if \(!screenshotId && screenshotBlob && !isOfflineNow\(\)\)/);
+  assert.match(feedbackJs, /for \(const shot of screenshots\.slice\(\)\) discardScreenshot\(shot\);/);
+  assert.match(submitFeedback, /if \(shot\.id \|\| !shot\.blob \|\| isOfflineNow\(\)\) continue;/);
 });
 
 test('the outbox is armed once, and flushed when a session exists', () => {

@@ -175,7 +175,8 @@ test('valid screenshotId appends the exact embed line and links the row', async 
       `issue body should end with the embed line, got: ${ghCreates[0].body}`);
     const link = poolQueries.find((q) => q.sql.includes('UPDATE issue_screenshots'));
     assert.ok(link, 'expected the row to be linked to the filed issue');
-    assert.deepEqual(link.params, [GOOD_ID, 'plat', 'repo', 42]);
+    // #3027: linking takes the list of ids and stays bound to the uploader.
+    assert.deepEqual(link.params, [[GOOD_ID], 'plat', 'repo', 42, 7]);
   } finally {
     server.close();
   }
