@@ -2908,6 +2908,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.proposal_session_id,
             r.build_ok, r.build_branch, r.build_sha, r.build_commits, r.build_error,
             r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at, r.build_spec_md,
+            r.build_session_id,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -2955,6 +2956,8 @@ const EXPORT_COLUMNS = Object.freeze([
   'build_cost_usd', 'build_at', 'build_queued_at',
   // The spec the build worked from, live or shadow.
   'build_spec_md',
+  // #3385: the build's session, to look a build up by.
+  'build_session_id',
 ]);
 
 /** One run as the values of EXPORT_COLUMNS, in that order. */

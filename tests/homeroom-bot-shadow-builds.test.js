@@ -505,7 +505,7 @@ test('the backfill refuses while shadow builds are off', async () => {
 
 test('the export carries the branch, with a compare address to open, after every older column', () => {
   const header = bot.EXPORT_COLUMNS;
-  assert.deepEqual(header.slice(-10), ['build_ok', 'build_branch', 'build_url', 'build_sha', 'build_commits', 'build_error', 'build_cost_usd', 'build_at', 'build_queued_at', 'build_spec_md']);
+  assert.deepEqual(header.slice(-11), ['build_ok', 'build_branch', 'build_url', 'build_sha', 'build_commits', 'build_error', 'build_cost_usd', 'build_at', 'build_queued_at', 'build_spec_md', 'build_session_id']);
   assert.ok(header.indexOf('proposal_session_id') < header.indexOf('build_ok'), 'appended, so older analyses do not shift');
   const row = bot.exportRow({
     id: 1, issue_number: 12, repo_url: 'https://github.com/usernode-bot/todo.git',
