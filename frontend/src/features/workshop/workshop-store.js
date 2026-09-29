@@ -49,7 +49,8 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {boolean} open   The router has this screen on show.
  * @property {WorkshopRow[]|null} rows  Null until the first load answers.
  * @property {boolean} error The load failed; the screen offers a retry.
- * @property {'status'|'needs'} tab  Which of the two tabs is showing (#3051).
+ * @property {'status'|'needs'|'proposals'} tab  Which of the three tabs is
+ *   showing (#3051, then #3204).
  * @property {boolean} scopeOpen  The All apps chip's panel is open (#3051).
  * @property {Record<string, {working: WorkshopItem[], needs: WorkshopItem[]}>|null} items
  *   GET /api/workshop/items, keyed by slug. Null until it answers.
@@ -59,6 +60,11 @@ import { createStore } from '../../lib/plain-store.js';
  *   the Needs you tab draws as one feed (#3270). Null until it answers.
  * @property {boolean} feedError  That read failed; the tab says so.
  * @property {boolean} feedCapped  The read stopped at its bound.
+ * @property {Record<string, WorkshopItem[]>|null} mine
+ *   GET /api/workshop/my-proposals (#3204): the viewer's own change
+ *   proposals across their projects, keyed by slug. Null until it answers.
+ * @property {boolean} mineError  That read failed; the tab says so.
+ * @property {boolean} mineCapped  That read stopped at its bound (50).
  */
 
 /**
@@ -79,6 +85,9 @@ const INITIAL = {
   feed: null,
   feedError: false,
   feedCapped: false,
+  mine: null,
+  mineError: false,
+  mineCapped: false,
 };
 
 export const workshopStore = createStore(INITIAL);

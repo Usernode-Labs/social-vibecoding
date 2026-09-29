@@ -91,7 +91,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { AllAppsScope } from './workshop-chrome';
-import { NeedsReel, type NeedsFeedItem } from './needs-reel';
+import { NeedsReel, tallyLine, type NeedsFeedItem } from './needs-reel';
 import { workshopStore } from './workshop-store.js';
 
 // The legacy router reads the DOM on the line after it routes — the ?shot=
@@ -169,11 +169,19 @@ type WorkshopItem = {
   title: string;
   status: string;
   at: string | null;
+  /** My proposals rows carry the vote tally (issue #3204); the others do not. */
+  yes?: number | null;
+  no?: number | null;
 };
 
-type Items = Record<string, { working?: WorkshopItem[]; needs?: WorkshopItem[] } | undefined>;
+/** GET /api/workshop/items' two sections per slug, or My proposals' bare
+    list per slug (issue #3204). */
+type Items = Record<
+  string,
+  { working?: WorkshopItem[]; needs?: WorkshopItem[] } | WorkshopItem[] | undefined
+>;
 
-type TabKey = 'status' | 'needs';
+type TabKey = 'status' | 'needs' | 'proposals';
 
 /** The demo flag the board's own fetches forward, in the same spelling. */
 function demoQuery(): string {
@@ -279,7 +287,7 @@ export function joinCounts(apps: Array<Omit<WorkshopRow, 'working' | 'needs'>>, 
 export function tabFromQuery(search: string): TabKey | null {
   try {
     const v = new URLSearchParams(search).get('ws');
-    return v === 'needs' || v === 'status' ? v : null;
+    return v === 'needs' || v === 'status' || v === 'proposals' ? v : null;
   } catch {
     return null;
   }
@@ -303,6 +311,13 @@ export function itemCaption(item: WorkshopItem, section: TabKey): string {
   let what: string;
   if (section === 'needs') {
     what = item.kind === 'governance' ? 'Group decision waiting on your vote' : 'Change waiting on your vote';
+  } else if (section === 'proposals') {
+    // Issue #3204: the four states a proposal of yours can be in, extending
+    // the wording the Current status tab already uses.
+    what = item.status === 'merging' ? 'Your change, merging'
+      : item.status === 'merged' ? 'Your change, merged'
+      : item.status === 'archived' ? 'Your change, closed'
+      : 'Your change, up for a vote';
   } else if (item.kind === 'session') {
     what = item.status === 'paused' ? 'Your change, paused' : 'Your change, in progress';
   } else if (item.kind === 'governance') {
@@ -311,7 +326,10 @@ export function itemCaption(item: WorkshopItem, section: TabKey): string {
     what = item.status === 'merging' ? 'Your change, merging' : 'Your change, up for a vote';
   }
   const when = item.at ? agoStamp(item.at).text : '';
-  return when ? `${what} · ${when}` : what;
+  // The tally reads the way the Needs you cards print theirs ("2 yes · 1 no"),
+  // and says nothing before anyone has voted.
+  const tally = section === 'proposals' ? tallyLine(item) : '';
+  return [what, tally, when].filter(Boolean).join(' · ');
 }
 
 /**
@@ -328,8 +346,18 @@ export function groupItems(
   items: Items,
   section: TabKey,
 ): Array<{ app: WorkshopRow; items: WorkshopItem[]; more: number }> {
-  const key = section === 'needs' ? 'needs' : 'working';
   const out: Array<{ app: WorkshopRow; items: WorkshopItem[]; more: number }> = [];
+  if (section === 'proposals') {
+    // My proposals: a bare list per slug, no per-app count to be short of.
+    for (const app of rows) {
+      const list = items[app.slug];
+      const mine = Array.isArray(list) ? list : [];
+      if (!mine.length) continue;
+      out.push({ app, items: mine, more: 0 });
+    }
+    return out;
+  }
+  const key = section === 'needs' ? 'needs' : 'working';
   for (const app of rows) {
     const list = items[app.slug]?.[key] || [];
     if (!list.length) continue;
@@ -421,7 +449,7 @@ function ItemGroup({ app, items, more, section }: {
  */
 function ItemPane({ rows, items, itemsError, section, emptyText, heading }: {
   rows: WorkshopRow[] | null;
-  items: Items | null;
+  items: WorkshopItem[] | Record<string, { working?: WorkshopItem[]; needs?: WorkshopItem[] }> | null;
   itemsError: boolean;
   section: TabKey;
   /** The line for "nothing here". Empty: say nothing at all. */
@@ -676,6 +704,7 @@ export function WorkshopScreen() {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
     tab: TabKey; scopeOpen: boolean; items: Items | null; itemsError: boolean;
     feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
+    mine: Items | null; mineError: boolean; mineCapped: boolean;
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
   // TWO TABS, READ ACROSS EVERY APP (#3051). #2718's review took the app
@@ -805,8 +834,8 @@ export function WorkshopScreen() {
               >
                 Current status
               </TabsTrigger>
-              <TabsTrigger
-                id="workshop-tab-needs"
+            <TabsTrigger
+              id="workshop-tab-needs"
                 type="button"
                 value="needs"
                 data-workshop-tab="needs"
@@ -815,6 +844,21 @@ export function WorkshopScreen() {
                 inactiveClassName=""
               >
                 Needs you
+              </TabsTrigger>
+              {/* ISSUE #3204: a THIRD tab, after Needs you so the declared
+                  check's adjacency (… + #workshop-tab-needs) keeps holding.
+                  It reads like the other two: the viewer's proposals across
+                  all their projects, item by item under each. */}
+              <TabsTrigger
+                id="workshop-tab-proposals"
+                type="button"
+                value="proposals"
+                data-workshop-tab="proposals"
+                className="workshop-scope-tab"
+                activeClassName="workshop-scope-tab-on"
+                inactiveClassName=""
+              >
+                My proposals
               </TabsTrigger>
             </TabsList>
           </Tabs>
@@ -925,6 +969,22 @@ export function WorkshopScreen() {
             )}
           </div>
         ) : null}
+        {state.tab === 'proposals' ? (
+          <div data-workshop-pane="proposals">
+            {/* ISSUE #3204: the same ItemPane the Current status tab draws,
+                over the new endpoint's data. The list above is the app list;
+                this pane is all client data and renders only while showing. */}
+            {state.error ? null : (
+              <ItemPane
+                rows={rows}
+                items={state.mine}
+                itemsError={state.mineError}
+                section="proposals"
+                emptyText="You have not started a proposal yet."
+              />
+            )}
+          </div>
+        ) : null}
       </div>
     </main>
   );
@@ -959,9 +1019,10 @@ export const workshopController = {
   isOpen() {
     return workshopStore.get().open;
   },
-  /** Show one of the two tabs, and close the chip's panel on the way. */
+  /** Show one of the three tabs, and close the chip's panel on the way. */
   setTab(tab: TabKey) {
-    workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status', scopeOpen: false });
+    const known = tab === 'needs' || tab === 'proposals' ? tab : 'status';
+    workshopStore.set({ tab: known, scopeOpen: false });
   },
   async reload() {
     const demo = demoQuery();
@@ -971,12 +1032,15 @@ export const workshopController = {
     let items: Items | null = null;
     let feed: NeedsFeedItem[] | null = null;
     let feedCapped = false;
+    let mine: Items | null = null;
+    let mineCapped = false;
     try {
-      const [appsRes, countsRes, itemsRes, feedRes] = await Promise.all([
+      const [appsRes, countsRes, itemsRes, feedRes, mineRes] = await Promise.all([
         fetch(`/api/apps${demo}`),
         fetch(`/api/workshop/counts${demo}`).catch(() => null),
         fetch(`/api/workshop/items${demo}`).catch(() => null),
         fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
+        fetch(`/api/workshop/my-proposals${demo}`).catch(() => null),
       ]);
       if (appsRes.ok) {
         const data = await appsRes.json();
@@ -1008,6 +1072,16 @@ export const workshopController = {
           feedCapped = Number(data.max) > 0 && feed.length >= Number(data.max);
         }
       }
+      // My proposals (#3204), optional in the same way: losing it costs the
+      // third tab its rows (it says so), never the screen.
+      if (mineRes && mineRes.ok) {
+        const data = await mineRes.json().catch(() => null);
+        if (data && data.items && typeof data.items === 'object') {
+          mine = data.items as Items;
+          mineCapped = Number(data.max) > 0
+            && Object.values(mine).reduce((n, list) => n + (Array.isArray(list) ? list.length : 0), 0) >= Number(data.max);
+        }
+      }
     } catch {
       // Offline is a state, not a crash: fall through to the error card,
       // which offers the same load again rather than a page reload.
@@ -1029,6 +1103,9 @@ export const workshopController = {
       feed: feed || [],
       feedError: !feed,
       feedCapped,
+      mine: mine || {},
+      mineError: !mine,
+      mineCapped,
     });
   },
 };

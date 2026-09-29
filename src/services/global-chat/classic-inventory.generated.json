@@ -10753,6 +10753,21 @@
       "classicPath": "#apps"
     },
     {
+      "source": "src/routes/workshop-overview.js",
+      "method": "GET",
+      "path": "/api/workshop/my-proposals",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.get.workshop.my.proposals.f922cc0b",
+      "domain": "apps",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
       "source": "src/routes/workshop-themes.js",
       "method": "GET",
       "path": "/api/apps/:slug/workshop-themes",

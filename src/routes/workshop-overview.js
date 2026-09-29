@@ -100,6 +100,23 @@ const DEMO_COUNTS = {
   'staging-demo-long-name': { working: 4, needs: 1 },
 };
 
+// The feed's ?demo=1 rows on staging for the My proposals tab (issue #3204):
+// one proposal per state, under the same fixture app the other two tabs use.
+// Negative ids, as everywhere above: a tap can never open a real proposal.
+const DEMO_MY_PROPOSALS = {
+  'staging-demo-your-app': [
+    { kind: 'proposal', id: -106, title: 'Show the recipe count on the home card', status: 'promoted', at: '2026-09-24T12:00:00Z', yes: 2, no: 1 },
+    { kind: 'proposal', id: -107, title: 'Sort recipes by rating', status: 'merging', at: '2026-09-24T09:00:00Z', yes: 3, no: 0 },
+    { kind: 'proposal', id: -108, title: 'Add a dark theme toggle', status: 'merged', at: '2026-09-23T15:00:00Z', yes: 4, no: 0 },
+    { kind: 'proposal', id: -109, title: 'Let members share a shopping list', status: 'archived', at: '2026-09-22T10:00:00Z', yes: 1, no: 2 },
+  ],
+};
+
+/** The My proposals demo overlay: the real rows first, then the demo ones. */
+function withDemoMyProposals(items) {
+  return { ...DEMO_MY_PROPOSALS, ...items };
+}
+
 // ── The five populations, spelled ONCE ────────────────────────────────
 //
 // Each is the WHERE body of a query over its own table, and both queries in
@@ -327,6 +344,79 @@ const NEEDS_FEED_SQL = `
    LIMIT $4
 `;
 
+// GET /api/workshop/my-proposals (issue #3204)
+//      → { items: { '<slug>': [item…] } }
+//   Item = { kind: 'proposal', id, title, status, at, yes, no }
+//
+// The Communities screen's THIRD tab, My proposals: every change proposal
+// the VIEWER has put up for a vote, across all their projects, grouped by
+// the project that holds it. MY_PROPOSALS_WHERE names the in-flight half
+// (promoted, merging); the merged and archived branches here extend it the
+// same way GET /api/me/proposal-history does in src/routes/profile.js,
+// including the `is_headless` guard that predicate does not carry on its
+// own. The tallies read the votes that count under the proposal's current
+// approval revision, the same pattern NEEDS_FEED_SQL uses, so a row here and
+// the proposal's own page cannot disagree. VISIBLE_APP_WHERE applies as it
+// does to the counts and the items: nothing the viewer cannot see, even
+// though these are their own rows.
+const MY_PROPOSALS_MAX = 50;
+
+const MY_PROPOSALS_LIST_SQL = `
+  WITH items AS (
+    SELECT 'proposal', cs.app_id, cs.id,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text,
+           cs.status::text, COALESCE(cs.promoted_at, cs.last_activity_at),
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+               AND ${currentVotePredicateSql('pv', 'cs')})::int,
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'no'
+               AND ${currentVotePredicateSql('pv', 'cs')})::int
+      FROM chat_sessions cs
+     WHERE ${MY_PROPOSALS_WHERE} AND cs.is_headless = FALSE
+    UNION ALL
+    SELECT 'proposal', cs.app_id, cs.id,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text,
+           cs.status::text, COALESCE(cs.merged_at, cs.last_activity_at),
+           NULL::int, NULL::int
+      FROM chat_sessions cs
+     WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged'
+    UNION ALL
+    SELECT 'proposal', cs.app_id, cs.id,
+           COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text,
+           cs.status::text, COALESCE(cs.archived_at, cs.last_activity_at),
+           NULL::int, NULL::int
+      FROM chat_sessions cs
+     WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'archived'
+  )
+  SELECT a.slug, i.kind, i.id, i.title, i.status, i.at, i.yes, i.no
+    FROM items i
+    JOIN apps a ON a.id = i.app_id
+    LEFT JOIN app_collaborators me
+      ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
+   WHERE ${VISIBLE_APP_WHERE}
+   ORDER BY i.at DESC NULLS LAST, i.id DESC
+   LIMIT $4
+`;
+
+/** Group MY_PROPOSALS_LIST_SQL's flat rows by slug. Exported for tests. */
+function groupMyProposals(rows) {
+  const items = {};
+  for (const row of rows) {
+    const slot = items[row.slug] || (items[row.slug] = []);
+    slot.push({
+      kind: 'proposal',
+      id: Number(row.id),
+      title: row.title || '',
+      status: row.status || '',
+      at: row.at instanceof Date ? row.at.toISOString() : (row.at || null),
+      yes: row.yes == null ? null : Number(row.yes),
+      no: row.no == null ? null : Number(row.no),
+    });
+  }
+  return items;
+}
+
 /** Shape NEEDS_FEED_SQL's rows for the client. Exported for tests. */
 function shapeNeedsFeed(rows) {
   return rows.map((row) => ({
@@ -505,6 +595,24 @@ function workshopOverviewRoutes(config) {
     }
   });
 
+  router.get('/api/workshop/my-proposals', async (req, res) => {
+    try {
+      if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+      const showSelfHosted = !!req.user.isAdmin || !!config.selfAppPublicVoting;
+      const { rows } = await pool.query(MY_PROPOSALS_LIST_SQL, [
+        req.user.id, showSelfHosted, !!req.user.isAdmin, MY_PROPOSALS_MAX,
+      ]);
+      const items = groupMyProposals(rows);
+      if (IS_STAGING && req.query.demo === '1') {
+        return res.json({ items: withDemoMyProposals(items), max: MY_PROPOSALS_MAX });
+      }
+      return res.json({ items, max: MY_PROPOSALS_MAX });
+    } catch (err) {
+      log.error('workshop-overview', 'Failed to read my proposals', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 
@@ -513,4 +621,6 @@ module.exports = {
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
   NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, DEMO_NEEDS_FEED, withDemoNeedsFeed,
   MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,
+  MY_PROPOSALS_LIST_SQL, MY_PROPOSALS_MAX, groupMyProposals,
+  DEMO_MY_PROPOSALS, withDemoMyProposals,
 };

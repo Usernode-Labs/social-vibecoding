@@ -3278,6 +3278,11 @@
       "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-tab-needs[aria-current=\"page\"]) [data-needs-reel] article[data-needs-card=\"governance\"][data-needs-app=\"staging-demo-your-app\"] a[href^=\"#app/staging-demo-your-app/dev/governance/\"]"
     },
     {
+      "name": "The Communities screen's My proposals tab gathers the viewer's own change proposals across their projects, with a vote tally (#3204)",
+      "path": "/?demo=1&ws=proposals#communities",
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-tab-proposals[aria-current=\"page\"]) [data-workshop-pane=\"proposals\"] [data-workshop-group=\"staging-demo-your-app\"] a[data-workshop-item=\"proposal\"][href^=\"#app/staging-demo-your-app/dev/proposals/-\"]"
+    },
+    {
       "name": "The Challenges area is the way to the Leaderboard screen",
       "path": "/?demo=1",
       "expectSelector": "#home-challenges-section > h2.home-area-label .home-panel-lb-browse[aria-label=\"Open challenges\"]",

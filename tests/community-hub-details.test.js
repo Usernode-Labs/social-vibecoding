@@ -218,7 +218,9 @@ test('the Communities toggle is the project page\'s strip, not the black pill', 
   const screen = read('frontend/src/features/workshop/index.tsx');
   assert.doesNotMatch(screen, /SECTION_TAB_ACTIVE/);
   assert.match(screen, /<TabsList className="workshop-scope-tabs" aria-label="Communities sections">/);
-  assert.equal((screen.match(/className="workshop-scope-tab"\s*activeClassName="workshop-scope-tab-on"/g) || []).length, 2);
+  // Three since #3204: My proposals joins Current status and Needs you on
+  // the same strip, drawn by the same two class tables.
+  assert.equal((screen.match(/className="workshop-scope-tab"\s*activeClassName="workshop-scope-tab-on"/g) || []).length, 3);
   assert.match(CSS, /\.workshop-scope-tabs \{[^}]*background-color: var\(--dc-sheet-raise\);/);
   assert.match(CSS, /\.workshop-scope-tab-on \{\s*background: var\(--lit-tint\); color: var\(--lit-ink\);\s*box-shadow: inset 0 0 0 1px var\(--lit-line\);/);
 });

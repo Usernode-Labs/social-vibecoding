@@ -833,12 +833,17 @@ test('#3051: the items query reads the counts\' own five predicates, once each',
     assert.equal((src.match(new RegExp(`const ${name} = `, 'g')) || []).length, 1, `${name} is defined once`);
     // The owed populations are read a third time, by the Needs you feed
     // (#3270), so the tab's cards and the counts beside it cannot disagree.
-    const reads = name.startsWith('OWED_') ? 3 : 2;
+    // MY_PROPOSALS_WHERE is read a third time too, by My proposals across
+    // apps (#3204): its in-flight half is that same population, and the
+    // merged and closed branches are written out beside it.
+    const reads = name === 'MY_PROPOSALS_WHERE' || name.startsWith('OWED_') ? 3 : 2;
     assert.equal((src.match(new RegExp(`\\$\\{${name}\\}`, 'g')) || []).length, reads,
       `${name} is read by COUNTS_SQL and ITEMS_SQL alike${reads === 3 ? ', and by NEEDS_FEED_SQL' : ''}`);
   }
-  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 3,
-    'and all three apply GET /api/apps\'s visibility filter');
+  // The fourth read is My proposals' (#3204), over the same filter as the
+  // counts and the two lists beside it.
+  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 4,
+    'and all of the screen\'s queries apply GET /api/apps\'s visibility filter');
   const items = route.ITEMS_SQL;
   assert.ok(items.includes(require('../src/services/pr-vote-revision').currentVotePredicateSql('pv', 'cs')));
   assert.equal((items.match(new RegExp(require('../src/services/governance-kinds')
@@ -895,6 +900,65 @@ test('#3051: rows group by app and section, and the demo agrees with the demo co
   const real = { 'staging-demo-your-app': { working: [], needs: [] } };
   assert.deepEqual(route.withDemoItems(real)['staging-demo-your-app'], { working: [], needs: [] },
     'real rows win, as they do for the counts');
+});
+
+test('#3204: GET /api/workshop/my-proposals refuses an anonymous caller', async () => {
+  const router = route.workshopOverviewRoutes({ databaseUrl: 'postgres://stub/stub' });
+  const layer = router.stack.find((l) => l.route?.path === '/api/workshop/my-proposals');
+  assert.ok(layer, 'GET /api/workshop/my-proposals is registered');
+  assert.ok(layer.route.methods.get && Object.keys(layer.route.methods).length === 1, 'and it only reads');
+  let status = null;
+  let body = null;
+  await layer.route.stack[0].handle(
+    { user: null, query: {}, params: {} },
+    { status(code) { status = code; return this; }, json(payload) { body = payload; return this; } },
+    () => {},
+  );
+  assert.equal(status, 401);
+  assert.deepEqual(body, { error: 'Not authenticated' });
+});
+
+test('#3204: the my-proposals query reads MY_PROPOSALS_WHERE and bounds to 50', () => {
+  const sql = route.MY_PROPOSALS_LIST_SQL;
+  // The in-flight half is the SAME predicate the counts and items read;
+  // the merged and closed branches extend it as the profile's own
+  // proposal-history does, headless rows included.
+  assert.ok(sql.includes(route.MY_PROPOSALS_WHERE),
+    'the in-flight branch is that predicate, not a second copy of it');
+  assert.match(sql, /cs\.is_headless = FALSE/);
+  assert.match(sql, /cs\.status = 'merged'/);
+  assert.match(sql, /cs\.status = 'archived'/);
+  assert.match(sql, /COALESCE\(cs\.promoted_at, cs\.last_activity_at\)/);
+  assert.match(sql, /COALESCE\(cs\.merged_at, cs\.last_activity_at\)/);
+  assert.match(sql, /COALESCE\(cs\.archived_at, cs\.last_activity_at\)/);
+  // The tally is the votes that count under the current approval revision,
+  // the same pattern the Needs you feed reads.
+  assert.ok(sql.includes(require('../src/services/pr-vote-revision').currentVotePredicateSql('pv', 'cs')));
+  assert.match(sql, /ORDER BY i\.at DESC NULLS LAST, i\.id DESC/);
+  assert.match(sql, /LIMIT \$4/);
+  assert.equal(route.MY_PROPOSALS_MAX, 50, 'the profile history\'s own bound');
+});
+
+test('#3204: rows shape into a bare list per slug, and the demo carries every state', () => {
+  const at = new Date('2026-09-24T09:00:00Z');
+  const items = route.groupMyProposals([
+    { slug: 'a', kind: 'proposal', id: '7', title: 'P', status: 'promoted', at, yes: '2', no: '0' },
+    { slug: 'a', kind: 'proposal', id: 8, title: null, status: 'merged', at: null, yes: null, no: null },
+    { slug: 'b', kind: 'proposal', id: 9, title: 'Q', status: 'merging', at, yes: 0, no: 3 },
+  ]);
+  assert.deepEqual(items.a, [
+    { kind: 'proposal', id: 7, title: 'P', status: 'promoted', at: at.toISOString(), yes: 2, no: 0 },
+    { kind: 'proposal', id: 8, title: '', status: 'merged', at: null, yes: null, no: null },
+  ]);
+  assert.deepEqual(items.b.map((i) => [i.id, i.status, i.yes, i.no]), [[9, 'merging', 0, 3]]);
+  // One demo row per state, under the same fixture app, so the preview and
+  // the declared check reach all four wordings.
+  const demo = route.DEMO_MY_PROPOSALS['staging-demo-your-app'];
+  assert.deepEqual(demo.map((d) => d.status), ['promoted', 'merging', 'merged', 'archived']);
+  assert.ok(demo.every((d) => d.id < 0), 'demo ids are negative, so a tap cannot open a real proposal');
+  const real = { 'staging-demo-your-app': [] };
+  assert.deepEqual(route.withDemoMyProposals(real)['staging-demo-your-app'], [],
+    'real rows win, as they do for the counts and items');
 });
 
 test('#3051: each tab lists its items under each of your apps, in the list\'s order', () => {
@@ -963,6 +1027,87 @@ test('#3270: the Needs you pane is one feed, every project mixed, one card per s
   out = html();
   assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-needs-error=""/);
   mod.workshopStore.set({ open: false, tab: 'status', rows: null, items: null, itemsError: false, feed: null, feedError: false });
+});
+
+test('#3204: My proposals is a third tab, reads its own population and prints the tally', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
+
+  // The deep link opens the tab directly, like ?ws=needs does.
+  assert.equal(mod.tabFromQuery('?demo=1&ws=proposals'), 'proposals');
+  // The tab sits after Needs you, so the declared checks' adjacency there
+  // (`#workshop-tab-status … + #workshop-tab-needs`) keeps holding.
+  const src = read('frontend/src/features/workshop/index.tsx');
+  const statusAt = src.indexOf('id="workshop-tab-status"');
+  const needsAt = src.indexOf('id="workshop-tab-needs"');
+  const proposalsAt = src.indexOf('id="workshop-tab-proposals"');
+  assert.ok(statusAt < needsAt && needsAt < proposalsAt, 'status, then Needs you, then My proposals');
+
+  const item = (id, status, yes = null, no = null) => ({
+    kind: 'proposal', id, title: `Proposal ${id}`, status, at: null, yes, no,
+  });
+  mod.workshopStore.set({
+    open: true, error: false, tab: 'proposals', scopeOpen: false, itemsError: false,
+    items: {}, rows: [{ slug: 'garden', name: 'Garden', working: 0, needs: 0 }],
+    mine: { garden: [item(3, 'promoted', 2, 1), item(4, 'merging', 1, 0), item(5, 'merged'), item(6, 'archived')] },
+    mineError: false, mineCapped: false, feed: null, feedError: false,
+  });
+  let out = html();
+  const pane = out.slice(out.indexOf('data-workshop-pane="proposals"'));
+  assert.match(out, /data-workshop-tab="proposals"[^>]*>\s*My proposals</, 'the tab names itself as the request does');
+  assert.match(pane, /Your change, up for a vote/);
+  assert.match(pane, /Your change, merging/);
+  assert.match(pane, /Your change, merged/);
+  assert.match(pane, /Your change, closed/);
+  assert.match(pane, /2 yes · 1 no/, 'the tally reads the way the Needs you cards print it');
+  assert.doesNotMatch(pane, /0 yes/, 'and says nothing before anyone has voted');
+  assert.match(pane, /href="#app\/garden\/dev\/proposals\/3"/, 'a row opens its own page inside its project');
+
+  mod.workshopStore.set({ mine: {} });
+  out = html();
+  assert.match(out.slice(out.indexOf('data-workshop-pane="proposals"')), /data-workshop-items-empty="">You have not started a proposal yet\./);
+  mod.workshopStore.set({ mine: null, mineError: true });
+  out = html();
+  assert.match(out.slice(out.indexOf('data-workshop-pane="proposals"')), /data-workshop-items-error=""/);
+  assert.doesNotMatch(out.slice(out.indexOf('data-workshop-pane="proposals"')), /Couldn't load your communities/,
+    'the pane fails quietly, never into the app list\'s error card');
+  mod.workshopStore.set({ open: false, tab: 'status', rows: null, mine: null, mineError: false });
+});
+
+test('#3204: the my-proposals read rides with the others and survives losing it', async () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const { workshopController, workshopStore } = mod;
+  const priorWindow = global.window;
+  const priorFetch = global.fetch;
+  global.window = { Home: { isJoined: (app) => !!(app && app.is_member) } };
+  try {
+    const answers = new Map([
+      ['/api/apps', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) }],
+      ['/api/workshop/counts', { ok: true, json: async () => ({ counts: {} }) }],
+      ['/api/workshop/items', { ok: true, json: async () => ({ items: {} }) }],
+      ['/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [], max: 60 }) }],
+      ['/api/workshop/my-proposals', {
+        ok: true,
+        json: async () => ({ items: { a: [{ kind: 'proposal', id: 7, title: 'P', status: 'promoted', at: null, yes: 1, no: 0 }] }, max: 50 }),
+      }],
+    ]);
+    const asked = [];
+    global.fetch = async (url) => { asked.push(url); return answers.get(url) || { ok: false, json: async () => ({}) }; };
+    await workshopController.open();
+    assert.ok(asked.includes('/api/workshop/my-proposals'), 'the new read is fetched with the others');
+    assert.equal(workshopStore.get().mineError, false);
+    assert.equal(workshopStore.get().mine.a.length, 1);
+    assert.equal(workshopStore.get().mineCapped, false);
+
+    answers.set('/api/workshop/my-proposals', { ok: false, json: async () => ({}) });
+    await workshopController.reload();
+    assert.equal(workshopStore.get().error, false, 'losing it is not the error card');
+    assert.equal(workshopStore.get().mineError, true, 'the tab says so instead');
+    workshopController.close();
+  } finally {
+    if (priorWindow === undefined) delete global.window; else global.window = priorWindow;
+    if (priorWindow === undefined) delete global.fetch; else global.fetch = priorFetch;
+  }
 });
 
 test('#3051: the controller reads the items alongside, and survives losing them', async () => {
