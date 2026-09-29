@@ -464,6 +464,10 @@ function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }
         calls.modes.push(opts.mode);
         if (opts.mode === 'scout') return { lastResultText: spec };
         calls.exec = { id, opts };
+        if (hang && opts.onProgress) {
+          for (const line of ['Reading public/app.js', 'Running: npm test', 'Running: npm test',
+            'Waiting on a command for 540s: npm start', 'Waiting on a command for 600s: npm start']) opts.onProgress(line);
+        }
         return result;
       },
       stopTurn(id) { calls.stopped.push(id); release(); return Promise.resolve(); },
@@ -545,6 +549,9 @@ test('a build is held to the same wall clock as a triage turn', async (t) => {
   const out = await running;
   assert.deepEqual(h.calls.stopped, [5001]);
   assert.match(out.error, /ran past its time limit/);
+  // #3385: what it was waiting on, the last three distinct progress lines.
+  assert.equal(out.error, 'the build ran past its time limit; last activity: Running: npm test | '
+    + 'Waiting on a command for 540s: npm start | Waiting on a command for 600s: npm start');
   assert.deepEqual(h.calls.promoted, [], 'a stopped build is never proposed');
 });
 

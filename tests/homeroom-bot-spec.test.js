@@ -118,6 +118,19 @@ test('a spec is written first, read-only, stored as the session\'s spec doc, pos
   assert.deepEqual(out, { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.060000000000000005, specMd: SPEC, specVersion: 3 });
 });
 
+test('a spec starts at its title: what the model said before it is dropped (#3385)', async () => {
+  const chatty = harness({ spec: `All the code I need is verified. Writing the spec now.\n\n${SPEC}` });
+  const out = await live.buildAndPropose({ pool: chatty.pool, deps: chatty.deps, ...ARGS, onSpec: chatty.onSpec });
+  assert.equal(out.specMd, SPEC);
+  assert.equal(chatty.calls.published[0].content, SPEC, 'stored, and so posted, from the title on');
+  assert.equal(live.specFromTitle('# T\nbody'), '# T\nbody', 'a spec that starts with its title is untouched');
+  assert.equal(live.specFromTitle('No title at all.\n## User-facing changes\nx'), 'No title at all.\n## User-facing changes\nx',
+    'no title, nothing dropped');
+  assert.equal(live.specFromTitle('x\n## Not a title\n# Title\ny'), '# Title\ny', 'a ## heading is not the title');
+  const far = `${'line\n'.repeat(50)}# Late title\nbody`;
+  assert.equal(live.specFromTitle(far), far, 'a title far down is part of the text, not a spec after chatter');
+});
+
 test('a spec wrapped in one fence is unwrapped; a spec that is really an API error is no spec', async () => {
   const fenced = harness({ spec: `\`\`\`markdown\n${SPEC}\n\`\`\`` });
   const a = await live.buildAndPropose({ pool: fenced.pool, deps: fenced.deps, ...ARGS, onSpec: fenced.onSpec });
@@ -348,7 +361,9 @@ test('a shadow build records the spec on its run', async (t) => {
 test('the spec turn is its own telemetry component, the run keeps the spec, and the dashboard shows it', () => {
   assert.match(read('src/services/llm-telemetry.js'), /'homeroom_bot_spec',/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_spec_md TEXT;/);
-  assert.equal(bot.EXPORT_COLUMNS.at(-1), 'build_spec_md');
+  assert.equal(bot.EXPORT_COLUMNS.at(-2), 'build_spec_md');
+  assert.equal(bot.EXPORT_COLUMNS.at(-1), 'build_session_id', '#3385: a build can be looked up');
+  assert.match(read('src/services/homeroom-bot.js'), /r\.build_spec_md,\n\s+r\.build_session_id,/);
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   const fn = tsx.slice(tsx.indexOf('function BuildSpec('), tsx.indexOf('function VerdictBody('));
   assert.match(fn, /<details className="text-sm" data-build-spec>/);

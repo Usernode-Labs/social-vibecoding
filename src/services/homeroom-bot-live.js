@@ -181,6 +181,10 @@ function proposalLink(domain, appSlug, sessionId) {
 const SPEC_TURN_MAX_MS = 10 * 60 * 1000;
 // GitHub refuses a comment over 65,536 characters.
 const MAX_SPEC_COMMENT_CHARS = 60_000;
+// A timed-out build's last few progress lines, kept for its failure reason.
+// Three short ones fit the run's error column (600 characters).
+const PROGRESS_LINES_KEPT = 3;
+const PROGRESS_LINE_CHARS = 160;
 
 function specPrompt({ seed, buildNote }) {
   return [
@@ -223,6 +227,20 @@ function specPrompt({ seed, buildNote }) {
 
 // The spec turn's one way out: a first line "BLOCKED: <why>".
 const BLOCKED_RE = /^\s*BLOCKED:\s*(.+)/i;
+
+/**
+ * The spec from its "# " title line on. A model sometimes says what it is
+ * about to do before the document ("All the code I need is verified.
+ * Writing the spec now…": 7 of the first 32 shadow specs, #3385), and on a
+ * live app that line would be posted on the issue with it. Only lines
+ * before a title near the top are dropped; a spec with no title is kept.
+ */
+function specFromTitle(text) {
+  const lines = String(text || '').split('\n');
+  const at = lines.findIndex((l) => /^# \S/.test(l));
+  if (at <= 0 || at > 40) return String(text || '');
+  return lines.slice(at).join('\n').trim();
+}
 
 /** Why the spec turn found the request impossible, or null. */
 function specBlocked(text) {
@@ -890,7 +908,7 @@ async function draftSpec({
   if (stopped) return { ok: false, stopped: true, costUsd, error: 'the spec ran past its time limit' };
   if (!routed) return { ok: false, costUsd, error: 'the spec turn did not run' };
   if (routed.error) return { ok: false, costUsd, error: `the spec turn failed (${routed.error})` };
-  const specMd = stripSpecWrapperFence(String(routed.result?.lastResultText || '').trim());
+  const specMd = specFromTitle(stripSpecWrapperFence(String(routed.result?.lastResultText || '').trim()));
   if (!specMd) return { ok: false, costUsd, error: 'the spec turn returned nothing' };
   const blocked = specBlocked(specMd);
   if (blocked) return { ok: false, blocked, costUsd, error: `blocked: ${blocked}` };
@@ -1035,6 +1053,16 @@ async function buildAndPropose({
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
   const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null });
+  // What the build was last doing, so a turn stopped on its clock says what
+  // it was waiting on (#3385): 12 of the first 18 shadow failures were
+  // time-outs, most of them cheap, with nothing recorded about why.
+  const recent = [];
+  const noteProgress = (line) => {
+    const text = clipText(String(line || '').replace(/\s+/g, ' '), PROGRESS_LINE_CHARS);
+    if (!text || recent[recent.length - 1] === text) return;
+    recent.push(text);
+    if (recent.length > PROGRESS_LINES_KEPT) recent.shift();
+  };
   let routed;
   try {
     routed = await sessions.runCodexAttemptLoop({
@@ -1053,7 +1081,7 @@ async function buildAndPropose({
         branchName,
         ...(ctx || {}),
         telemetryComponent: 'homeroom_bot_build',
-        onProgress: () => {},
+        onProgress: noteProgress,
       }),
       retryPredicate: () => null,
       sendStatus: async () => {},
@@ -1080,7 +1108,10 @@ async function buildAndPropose({
   const costUsd = buildCostUsd == null && spec.costUsd == null
     ? null
     : (buildCostUsd || 0) + (spec.costUsd || 0);
-  if (stopped) return { ...(await fail('the build ran past its time limit')), costUsd };
+  if (stopped) {
+    const last = recent.length ? `; last activity: ${recent.join(' | ')}` : '';
+    return { ...(await fail(`the build ran past its time limit${last}`)), costUsd };
+  }
   if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
@@ -1148,6 +1179,7 @@ module.exports = {
   specCommentText,
   specCard,
   specBlocked,
+  specFromTitle,
   blockedText,
   shareSpecVersion,
   postSpecOnProposal,
