@@ -1,9 +1,9 @@
 'use strict';
 
-// The Workshop's scope chip and its totals (#2718).
+// The Communities screen's scope chip and its Needs you row (#2718, #3051).
 //
 // The screen answers "which of my apps wants something from me": a chip that
-// says what you are looking at and narrows it, a legend that totals what is
+// says what you are looking at and narrows it, a row that totals the votes
 // owed, and one row per app carrying both of its numbers.
 //
 // ── What this suite used to pin, and why it does not ──────────────────
@@ -24,12 +24,13 @@
 // ── #3051 brought two of those back, on the owner's request ──────────
 //
 // The chip, reading "All apps", and two of the tabs: Current status and
-// Needs you. The argument above is answered rather than ignored: these tabs
-// do not filter the list of apps. Current status IS that list, unchanged,
-// with your in-flight items under it; Needs you lists the votes waiting on
-// you ITEM BY ITEM, grouped by app, from GET /api/workshop/items. All items
-// and the plus stay retired: every item of every app is not a page, and the
-// plus's two questions can still only be asked inside an app.
+// Needs you. The UI overhaul took the tabs away again: your in-flight items
+// moved to Profile's Your changes, which left Current status holding only
+// the list, so the list is the page and Needs you is ONE ROW at its top
+// ("3 votes waiting on you") that opens the cross-community feed as a page
+// with a way back. Nothing filters the list of apps, which is the argument
+// above. All items and the plus stay retired: every item of every app is not
+// a page, and the plus's two questions can still only be asked inside an app.
 //
 // Three things are still pinned, and each is a way the screens can be quietly
 // wrong:
@@ -37,8 +38,8 @@
 //   1. PICKING AN APP NAVIGATES, to that app's own Workshop.
 //   2. THE NAVIGATION IS AWAITED, so a refused one cannot read as a
 //      completed one.
-//   3. THE TOTALS DO NOT REWORD THE LEGEND. A declared check pins the phrase
-//      "Votes waiting on you" on this screen.
+//   3. THE NEEDS YOU ROW SAYS NOTHING OVER A ZERO, and totals every
+//      project, not a filtered few.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -82,89 +83,67 @@ test('the action waits for the navigation', () => {
   assert.ok(!fn.includes('giveFeedback'), 'nor reported from it');
 });
 
-test('All items and the plus stay gone; Current status and Needs you are back (#3051)', () => {
+test('All items, the plus and now the tabs are gone; Needs you is a row (#3051)', () => {
   for (const id of ['workshop-tabs', 'workshop-tab-all', 'workshop-tab-empty', 'workshop-plus',
-    'workshop-plus-change', 'workshop-plus-issue', 'workshop-plus-create', 'workshop-picker']) {
+    'workshop-plus-change', 'workshop-plus-issue', 'workshop-plus-create', 'workshop-picker',
+    'workshop-tab-status', 'workshop-tab-needs', 'workshop-total-working', 'workshop-total-needs']) {
     assert.ok(!CHROME.includes(`id="${id}"`), `#${id} is not rendered`);
     assert.ok(!SCREEN.includes(`id="${id}"`), `#${id} is not on the screen either`);
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is not in the shipped shell`);
   }
-  // The two that came back ship in the cold document, the default one current.
-  assert.match(HTML, /<button id="workshop-tab-status" type="button" data-workshop-tab="status" aria-current="page"/);
-  assert.match(HTML, /<button id="workshop-tab-needs" type="button" data-workshop-tab="needs" aria-current="false"/);
-  // THEY DO NOT FILTER THE LIST OF APPS, which is the argument that retired
-  // the old strip. Both panes render; the list lives in Current status
-  // untouched, and nothing narrows `rows` by a tab.
+  // NOTHING FILTERS THE LIST OF APPS, which is the argument that retired the
+  // old strip: the Needs you feed is a page of its own over the list, and
+  // nothing narrows `rows` by it.
   assert.ok(!SCREEN.includes('filterRows'), 'the screen does not filter the app list');
   const store = read('frontend/src/features/workshop/workshop-store.js');
-  assert.match(store, /^\s*tab: 'status',/m, 'Current status is the default, and the prerender');
+  assert.match(store, /^\s*tab: 'status',/m, 'the list is the default, and the prerender');
   assert.match(store, /^\s*scopeOpen: false,/m, 'the chip\'s panel ships closed');
+  assert.doesNotMatch(store, /itemsError|^\s*items:/m, 'the items read left with the pane it filled');
   // ONE PANEL COMPONENT for both ends of the chip.
   assert.match(CHROME, /export const ALL_APPS_SCOPE_ID = 'workshop-scope';/);
   assert.match(CHROME, /<WorkshopPicker\n\s+id=\{panelId\}\n\s+apps=\{apps\}\n\s+scope=\{null\}/);
 });
 
-test('#3051: the tabs switch panes without redrawing the list, and close the chip\'s panel', () => {
+test('the Needs you row opens the feed over the list without redrawing it, and closes the chip\'s panel', () => {
   const html = () => renderToHtml(createElement(screen.WorkshopScreen, {}));
   screen.workshopStore.set({
-    open: true, error: false, tab: 'status', scopeOpen: true, itemsError: false,
+    open: true, error: false, tab: 'status', scopeOpen: true,
     rows: [app('staging-demo-your-app', 2, 3)],
-    items: {
-      'staging-demo-your-app': {
-        working: [{ kind: 'session', id: 7, title: 'Dark theme', status: 'active', at: null }],
-        needs: [{ kind: 'proposal', id: 8, title: 'Sort by rating', status: 'promoted', at: null }],
-      },
-    },
   });
   let out = html();
   assert.match(out, /data-workshop-pane="status" class=""/);
-  assert.doesNotMatch(out, /data-workshop-pane="needs"/, 'the Needs you pane renders only while showing');
+  assert.match(out, /data-workshop-needs-open=""/);
+  assert.doesNotMatch(out, /data-workshop-pane="needs"/, 'the feed renders only while showing');
   assert.match(out, /id="workshop-scope-picker"/, 'the panel renders once open');
   screen.workshopController.setTab('needs');
-  assert.equal(screen.workshopStore.get().scopeOpen, false, 'a tab press closes the panel');
+  assert.equal(screen.workshopStore.get().scopeOpen, false, 'opening the feed closes the panel');
   out = html();
   assert.match(out, /data-workshop-pane="status" class="hidden"/);
   assert.match(out, /data-workshop-pane="needs"/);
+  assert.match(out, /data-workshop-needs-back=""[^>]*aria-label="Back to Communities"/);
   assert.match(out, /data-workshop-app="staging-demo-your-app"/,
-    'the list is still in the document, hidden with its pane, not unmounted');
+    'the list is still in the document, hidden, not unmounted');
   screen.workshopController.setTab('nonsense');
-  assert.equal(screen.workshopStore.get().tab, 'status', 'anything else is the default');
-  screen.workshopStore.set({ tab: 'status', scopeOpen: false, rows: null, items: null });
+  assert.equal(screen.workshopStore.get().tab, 'status', 'anything else is the list');
+  screen.workshopStore.set({ tab: 'status', scopeOpen: false, rows: null });
 });
 
-test('the legend carries the totals, and says nothing when there is nothing', () => {
-  // The design study put three count cards at the top of this screen. The
-  // question they answer is real — the rows say which APPS need you, and
-  // nothing said how much there is altogether — but a deck above a list whose
-  // every row carries the same two figures is the third telling of one fact,
-  // so the numbers went into the legend that already names the two glyphs.
-  const screen = read('frontend/src/features/workshop/index.tsx');
-  assert.match(screen, /id="workshop-total-working"/);
-  assert.match(screen, /id="workshop-total-needs"/);
-  // ACROSS EVERY APP, not the filtered tab: "how much is there" is not a
-  // question whose answer should move when you change tabs.
-  const at = screen.indexOf('const totals = all');
-  const decl = screen.slice(at, screen.indexOf('const empty', at));
+test('the Needs you row totals every project, and says nothing over a zero', () => {
+  // The legend that totalled both figures is gone (your own work is
+  // Profile's now); the votes total is the row's title, and it is drawn
+  // only when a vote waits.
+  const at = SCREEN.indexOf('const totals = all');
+  const decl = SCREEN.slice(at, SCREEN.indexOf('const empty', at));
   assert.match(decl, /all\.length > 0/,
-    'no totals with no apps — the empty card already says why the screen is bare');
-  assert.match(decl, /acc\.working \+ \(row\.working \|\| 0\)/);
+    'no totals with no apps: the empty card already says why the screen is bare');
   assert.match(decl, /acc\.needs \+ \(row\.needs \|\| 0\)/);
-  assert.ok(!decl.includes('rows'), 'it sums `all`, not the tab-filtered rows');
-  // THE WORDS ARE NOT THE NUMBER'S TO CHANGE, which is the whole reason this
-  // assertion exists in this shape. The totals first shipped as "2 working
-  // on" / "3 waiting on your vote" — a rewording on the way past — and a
-  // declared check pins the phrase "Votes waiting on you" on this screen, so
-  // it went red on the platform's own run. The number is additive now: the
-  // legend says what it always said and gains a figure at the end.
-  assert.match(screen, /You are working on\n\s+\{totals \? <b id="workshop-total-working"/);
-  assert.match(screen, /Votes waiting on you\n\s+\{totals \? <b id="workshop-total-needs"/);
+  assert.ok(!decl.includes('rows'), 'it sums `all`, every project');
+  assert.match(SCREEN, /\{totals && totals\.needs > 0 \? \(\n\s*<section data-workshop-needs-door=""/);
   const dapp = JSON.parse(read('dapp.json'));
-  const pinned = dapp.tests.find((t) => t.expectText === 'Votes waiting on you');
-  assert.ok(pinned, 'the phrase is still a declared check\'s expectText');
-  assert.ok(read('public/index.html').includes('Votes waiting on you'),
-    'and the cold document still carries it, with no figure to wait for');
-  assert.ok(!HTML.includes('id="workshop-total-working"'),
-    'a figure read from data is not in a cold document');
+  assert.ok(!dapp.tests.some((t) => t.expectText === 'Votes waiting on you'),
+    'no declared check waits for the retired legend');
+  assert.ok(!HTML.includes('data-workshop-needs-door'),
+    'a row read from data is not in a cold document');
 });
 
 test('#3051: the all-apps screen wears the All apps chip again (reverses #2759)', () => {
@@ -188,10 +167,10 @@ test('#3051: the all-apps screen wears the All apps chip again (reverses #2759)'
   assert.match(panel, /id="workshop-scope-picker-all"[\s\S]*?<\/svg><\/span><span[^>]*><span[^>]*>All<\/span><\/span><svg/,
     'All carries the tick');
   assert.match(CHROME, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
-  // The chip's row leads the screen now, so it carries the header's notch
-  // clearance the legend carried while it led.
+  // The chip's row leads the screen, so it carries the header's notch
+  // clearance; the legend line that sat under it is gone.
   assert.match(SCREEN, /<div className="px-4 pt-5 pb-2 flex flex-wrap items-center gap-x-3 gap-y-2">\n\s*<AllAppsScope/);
-  assert.match(SCREEN, /<p className="px-4 pt-1 pb-2 flex flex-wrap/);
+  assert.doesNotMatch(SCREEN, /<p className="px-4 pt-1 pb-2 flex flex-wrap/);
 });
 
 // ── The same panel, scoped to one app (#2718 review, #3295) ───────────

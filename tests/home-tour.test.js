@@ -104,7 +104,7 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   const byId = Object.fromEntries(steps.TOUR_STEPS.map((s) => [s.id, s]));
   // Every step has something to point at.
   for (const step of steps.TOUR_STEPS) assert.ok(step.targets.length > 0, `${step.id} points at something`);
-  // The whole Your apps section, heading included, so the card never sits on
+  // The whole Shortcuts section, heading included, so the card never sits on
   // the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
   assert.match(byId.apps.body, /people for a private community, a lock for one that is just yours/,
@@ -734,7 +734,7 @@ test('the first render is the hidden overlay, with nothing measured', () => {
   assert.match(html, /Are you sure\? You can reopen this from Settings\./);
   // Step 1 is what a step-less render shows, on both sides of hydration.
   assert.match(html, /1 of 4/);
-  assert.match(html, /Your apps/);
+  assert.match(html, /Shortcuts/);
   // No geometry in the markup: the hole and the card position are style
   // writes through refs, and a measured pixel in the prerender would be a
   // hydration mismatch waiting for the first viewport that differs.

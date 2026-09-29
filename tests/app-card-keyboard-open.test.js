@@ -110,7 +110,7 @@ test('Discover card: a focusable button named by its app, attributes after data-
   assert.match(html, /class="app-card home-discover-card [^"]*" data-slug="alpha"/);
   assert.ok(tag.indexOf('data-slug=') < tag.indexOf('role='), 'role comes after data-slug');
   // The inner ⊕ keeps its own name; the card's does not replace it.
-  assert.match(html, /class="card-add-btn [^"]*"[^>]*aria-label="Add Alpha Board to Your apps"/);
+  assert.match(html, /class="card-add-btn [^"]*"[^>]*aria-label="Add Alpha Board to Shortcuts"/);
 });
 
 test('Discover card: the editor preview stays a picture, out of the tab order', () => {

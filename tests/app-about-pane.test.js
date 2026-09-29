@@ -139,7 +139,7 @@ test('an app\'s About, in the design\'s order', () => {
   assert.match(html, /id="app-about-version"[^>]*>a1b2c3d · 2h ago</);
   assert.match(html, /id="app-about-open"[^>]*href="\/app\/notes-ab12"[^>]*>Open</,
     'Open is an address, so a modified click still opens a tab');
-  assert.match(html, /id="app-about-add"[^>]*data-added="false"[^>]*>(?:<[^>]+>)*Add to your apps/);
+  assert.match(html, /id="app-about-add"[^>]*data-added="false"[^>]*>(?:<[^>]+>)*Add to Shortcuts/);
   assert.match(html, /Loading contributors…/, 'the roster loads after the pane opens, never in a render');
   assert.match(html, /Anyone can propose; a proposal merges once/);
 });

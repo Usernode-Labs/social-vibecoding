@@ -112,12 +112,12 @@ export interface TourStep {
  */
 export const TOUR_STEPS: readonly TourStep[] = [
   {
-    // The Your apps section, heading and grid together, so the card never
+    // The Shortcuts section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback
     // for a section that has not rendered its box yet.
     id: 'apps',
-    title: 'Your apps',
-    body: 'Shortcuts to the apps you use. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
+    title: 'Shortcuts',
+    body: 'The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
     targets: ['#home-apps-section', '#app-list'],
   },
   {

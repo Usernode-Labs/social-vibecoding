@@ -1333,10 +1333,10 @@
       "expectText": "Nothing to discover right now"
     },
     {
-      "name": "Adding from Discover lands in Your apps with no reload, and removing takes it out again (#1567)",
+      "name": "Adding from Discover lands in Shortcuts with no reload, and removing takes it out again (#1567)",
       "path": "/?shot=discover-add",
       "expectSelector": "body[data-shot-add=\"round-trip\"] #home-apps-section #app-list",
-      "expectText": "Your apps"
+      "expectText": "Shortcuts"
     },
     {
       "name": "The launcher grid shows two rows by default, with a way to the rest",
@@ -1348,7 +1348,7 @@
       "name": "Each home area is introduced by its own label (#1478)",
       "path": "/?demo=1",
       "expectSelector": "#home-body #home-apps-section > h2.home-area-label",
-      "expectText": "Your apps"
+      "expectText": "Shortcuts"
     },
     {
       "name": "App tiles are placed at explicit grid cells, with iOS-sized two-line labels (#951)",
@@ -3264,7 +3264,7 @@
       "name": "Workshop links joined communities to their actual app Workshop",
       "path": "/?demo=1#workshop",
       "expectSelector": "#workshop-screen:not(.hidden) #workshop-list [data-workshop-section=\"open\"] a[data-workshop-app][href$=\"/workshop\"]",
-      "expectText": "Votes waiting on you",
+      "expectText": "Public communities",
       "visual": true,
       "impact": [
         "frontend/src/features/workshop/**",
@@ -3286,14 +3286,14 @@
       "expectText": "Public communities"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over its Current status and Needs you tabs, lit like a project page's (#3051)",
+      "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over the list itself, with no tabs (#3051)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"] ~ div > #workshop-tab-status.workshop-scope-tab-on[aria-current=\"page\"] + #workshop-tab-needs):has(#workshop-list [data-workshop-app]) #workshop-empty.hidden"
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"]):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
     },
     {
-      "name": "The Communities screen's Needs you tab is one feed of every decision owed, mixed across projects, one card per screen (#3270)",
+      "name": "The Communities screen's Needs you page is one feed of every decision owed, mixed across projects, one card per screen, with a way back (#3270)",
       "path": "/?demo=1&ws=needs#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-tab-needs[aria-current=\"page\"]) [data-needs-reel] article[data-needs-card=\"governance\"][data-needs-app=\"staging-demo-your-app\"] a[href^=\"#app/staging-demo-your-app/dev/governance/\"]"
+      "expectSelector": "#workshop-screen:not(.hidden):has([data-workshop-needs-back][aria-label=\"Back to Communities\"]) [data-needs-reel] article[data-needs-card=\"governance\"][data-needs-app=\"staging-demo-your-app\"] a[href^=\"#app/staging-demo-your-app/dev/governance/\"]"
     },
     {
       "name": "The Challenges area is the way to the Leaderboard screen",
@@ -3605,7 +3605,7 @@
       "expectSelector": "#settings-section-content [data-settings-section]:not(.hidden)"
     },
     {
-      "name": "Home 'Your apps' section renders for the seeded admin",
+      "name": "Home's Shortcuts section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
     },
@@ -3723,7 +3723,7 @@
       "expectSelector": ".app-card[data-yours].cursor-grab"
     },
     {
-      "name": "A persisted staging sample appears in expanded Your apps",
+      "name": "A persisted staging sample appears in expanded Shortcuts",
       "path": "/?demo=1&shot=home-apps",
       "expectSelector": ".app-card[data-slug='staging-demo-your-app']"
     },

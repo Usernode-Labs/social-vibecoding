@@ -251,13 +251,15 @@ export function HomeScreen() {
           {/*
               The area's label, in the same treatment the two below it use —
               see ./panels/ui.tsx's SectionHeading for why every area on this
-              screen is now "grey label, then the thing". This one is what the
-              reference screen calls "Your saved apps"; "Your apps" is the name
-              the rest of the product already uses for the same set (the tile
-              menus' "Add to Your apps", the browse screen's badge), and two
-              names for one collection is worse than a shorter label.
+              screen is now "grey label, then the thing". It was "Your apps";
+              it is "Shortcuts" since the UI overhaul gave your communities
+              (every project you are in) the Communities tab, which left this
+              set as what it always was: the apps you keep a tile for. The
+              rest of the product names the set the same way (the tile menus'
+              "Add to Shortcuts", the browse screen's badge), because two
+              names for one collection is worse than either.
           */}
-          <SectionHeading>Your apps</SectionHeading>
+          <SectionHeading>Shortcuts</SectionHeading>
           <AppGrid />
           {/*
               "Show all N apps" — revealed by Home.render() only when the

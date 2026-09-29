@@ -1002,7 +1002,7 @@ test('detailActionsFor: filters favorite + add-to-homescreen + app-details', () 
   // tested) permission gates inside menuItemsFor.
   Home.menuItemsFor = () => ([
     { key: 'app-details', label: 'App details', run: () => {} },
-    { key: 'favorite', label: 'Add to Your apps', run: () => {} },
+    { key: 'favorite', label: 'Add to Shortcuts', run: () => {} },
     { key: 'add-to-homescreen', label: 'Add to Homeroom widget', run: () => {} },
     { key: 'retry', label: 'Retry', run: () => {} },
     { key: 'build-log', label: 'View build log', run: () => {} },
@@ -1038,7 +1038,7 @@ test('detailActionsFor: derives from Home.menuItemsFor, never re-derived', () =>
 test('the detail page describes Open, Add/Remove and the action rows', () => {
   const { Browse, Home, state } = makeBrowse();
   Home.menuItemsFor = () => ([
-    { key: 'favorite', label: 'Add to Your apps', run: () => {} },
+    { key: 'favorite', label: 'Add to Shortcuts', run: () => {} },
     { key: 'fork', label: 'Fork this app', run: () => {} },
     { key: 'delete', label: 'Delete app', danger: true, run: () => {} },
   ]);
@@ -1050,7 +1050,7 @@ test('the detail page describes Open, Add/Remove and the action rows', () => {
   assert.equal(d.slug, 'detail-me');
   assert.equal(d.canOpen, true, 'Open is the primary action');
   assert.equal(d.openLabel, 'Open');
-  assert.equal(d.favLabel, 'Add to Your apps');
+  assert.equal(d.favLabel, 'Add to Shortcuts');
   assert.deepEqual(d.actions.map((a) => a.label), ['Fork this app', 'Delete app'],
     'favorite is NOT duplicated as an action row');
   assert.equal(d.actions[1].danger, true, 'the danger row is flagged');
