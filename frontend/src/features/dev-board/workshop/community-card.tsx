@@ -517,7 +517,7 @@ function AudienceChange({ slug, name, audience, onOpened }: {
   );
 }
 
-export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu }: {
+export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp = false }: {
   slug: string;
   /** The app's identity as the page already knows it (improveStore), so the
       hero draws the same tile and name as the header's chip. */
@@ -527,6 +527,9 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu }: {
   /** The ⋯ and its menu (../actions-row.tsx DevPlusMenu), last on the
       members row. The page renders it so its props stay the page's. */
   menu?: ReactNode;
+  /** Whether "Open app" leads the actions (#3367): every project but the
+      platform's own, which is the page you are on. */
+  canOpenApp?: boolean;
 }) {
   const data = useCommunity(slug);
   const [busy, setBusy] = useState(false);
@@ -707,10 +710,25 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu }: {
       Joined
     </Button>
   );
-  // WHAT YOU CAN DO HERE, at the end of the members row.
+  // WHAT YOU CAN DO HERE, at the end of the members row: Open app (#3367),
+  // then Invite and "Open it up", then the ⋯. A project that is just yours
+  // grows from its Share it card at the foot of the hub instead (ShareItCard,
+  // below), so its hero keeps Open app and the ⋯ alone.
   const actions = (
     <div className="dev-ws-hero-actions">
-      {showsMembers ? (
+      {canOpenApp ? (
+        <Button
+          type="button"
+          variant="pillNeutral"
+          size="sm"
+          ink="neutral"
+          data-ws-community-open-app=""
+          onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
+        >
+          Open app
+        </Button>
+      ) : null}
+      {showsMembers && !solo ? (
         <Button
           type="button"
           variant="pillNeutral"
@@ -723,7 +741,7 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu }: {
           Invite
         </Button>
       ) : null}
-      {data.can_manage && !data.audience_change ? (
+      {data.can_manage && !data.audience_change && !solo ? (
         <AudienceChange slug={slug} name={displayName} audience={data.audience} onOpened={() => { void load(); }} />
       ) : null}
       {menu}
@@ -751,6 +769,9 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu }: {
       {data.description ? (
         <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
       ) : null}
+      {solo ? (
+        <p className="dev-ws-hero-line" data-ws-community-solo-line="">Only you can see it and change it.</p>
+      ) : null}
       {solo ? actions : (
         <HeroPeople members={data.members} count={Number(data.member_count) || 0}>
           {actions}
@@ -767,6 +788,48 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu }: {
           <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
         </a>
       ) : null}
+    </section>
+  );
+}
+
+/**
+ * SHARE IT: how a project that is just yours grows, at the foot of its hub.
+ * The same two levers the hero offers a community (Invite makes it a private
+ * community; "Open it up" proposes making it public, voted in like any other
+ * line of dapp.json), gathered under one line that says what they do, since
+ * on a project of one they are the whole of what there is to do with people.
+ * Offered to exactly whom the hero would offer them; nothing when neither
+ * applies, and nothing until the shared read has answered.
+ */
+export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
+  const data = useCommunity(slug);
+  if (!data || data.audience !== 'solo') return null;
+  const showsMembers = !!(window as any).AppView?._plusMenuShowsMembers?.();
+  const canOpenUp = !!data.can_manage && !data.audience_change;
+  if (!showsMembers && !canOpenUp) return null;
+  return (
+    <section className="dev-ws-strip dev-ws-share" data-ws-share="">
+      <div className="dev-ws-head">
+        <span className="dev-ws-head-title">Share it</span>
+      </div>
+      <p className="dev-ws-strip-text">Invite people to make it a private community, or open it up so anyone can join.</p>
+      <div className="dev-ws-share-actions">
+        {showsMembers ? (
+          <Button
+            type="button"
+            variant="pillNeutral"
+            size="sm"
+            ink="neutral"
+            data-ws-share-invite=""
+            onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
+          >
+            Invite people
+          </Button>
+        ) : null}
+        {canOpenUp ? (
+          <AudienceChange slug={slug} name={name || data.name || slug} audience={data.audience} onOpened={() => { void reloadCommunity(slug); }} />
+        ) : null}
+      </div>
     </section>
   );
 }

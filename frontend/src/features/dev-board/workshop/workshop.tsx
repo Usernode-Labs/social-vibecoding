@@ -78,7 +78,7 @@ import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
-import { ApprovalRules, CommunityCard, useCommunity } from './community-card';
+import { ApprovalRules, CommunityCard, ShareItCard, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
 import { ChannelCard, NeedsCard, WorkshopDoor, YourWorkCard } from './hub-cards';
 import { SinceSummaryCard } from './since-summary-card';
@@ -3262,6 +3262,7 @@ export function DevWorkshop(): ReactNode {
           name={app.name || undefined}
           iconUrl={app.iconUrl}
           iconEmoji={app.iconEmoji}
+          canOpenApp={!actions.selfHosted}
           menu={(
             <DevPlusMenu
               illustrationApp={actions.illustrationApp}
@@ -3307,9 +3308,13 @@ export function DevWorkshop(): ReactNode {
           onAll={() => setWorkAll(!workAll)}
         />
       ) : null}
-      {slug ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
+      {/* A project that is just yours has nobody to talk to yet: no channel
+          card, and a Share it card at the foot instead, which is how it
+          grows (./community-card.tsx ShareItCard). */}
+      {slug && community?.audience !== 'solo' ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
       {v.queue.length ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} /> : null}
       <WorkshopDoor open={v.dashboard ? v.dashboard.open : 0} filtered={!!v.meta.filtered} onOpen={() => openTab('workshop')} />
+      {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
       </>
       ) : null}
 

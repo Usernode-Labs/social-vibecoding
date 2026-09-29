@@ -16323,6 +16323,19 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-since-nest > .dev-ws-since-seen { margin-top: 2px; padding-left: 0; }
 
+/* ── Share it (community-card.tsx ShareItCard) ──────────────────────
+   A project that is just yours: its two ways to grow, side by side. The
+   "Open it up" question hangs from its button's LEFT here, since the
+   buttons lead the row and a popup opening leftward would leave the screen. */
+.dev-ws-share-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.dev-ws-share .dev-ws-join-anchor { margin-left: 0; }
+.dev-ws-share .dev-ws-join-pop { left: -6px; right: auto; }
+.dev-ws-share .dev-ws-join-pop::before { left: 26px; right: auto; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-share .dev-ws-join-pop { transform-origin: 32px 0; }
+}
+.dev-ws-share:has(.dev-ws-join-pop) { position: relative; z-index: 5; }
+
 /* ── Approval rules (community-card.tsx ApprovalRules) ─────────────── */
 .dev-ws-rules-line { margin: 0; font-size: 14px; line-height: 1.45; color: var(--text-primary); }
 .dev-ws-rules-sub { margin: 0; font-size: 12.5px; line-height: 1.4; color: var(--text-muted); }

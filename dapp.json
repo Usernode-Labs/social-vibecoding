@@ -1754,8 +1754,8 @@
       "expectSelector": ".un-popover .card-menu-header .card-menu-title"
     },
     {
-      "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",
-      "path": "/?ws=all&shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
+      "name": "The hub's ⋯ menu opens as an action sheet on touch (#929)",
+      "path": "/?ws=status&shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
       "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
     },
     {
