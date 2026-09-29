@@ -50,7 +50,11 @@ const CONTROLLER_TEXT = fs.readFileSync(CONTROLLER_PATH, 'utf8');
 // The exact copy, asserted as a literal on both sides: the declared
 // dapp.json check matches on this text, so a reword that touched only one
 // of the two would go green here and fail the merge gate.
-const HINT = 'Choose where this feedback goes.';
+// UI overhaul: the row's label asks the question ("Where should this go?"),
+// so this line is only the refusal after a submit with nothing chosen. It
+// was "Choose where this feedback goes." and also the grey prompt (#2707).
+const HINT = 'Choose where this goes.';
+const LABEL = 'Where should this go?';
 
 // ── Half one: the shipped document ───────────────────────────────────
 
@@ -110,7 +114,7 @@ test('?shot=feedback-choose is a recognised deep link', () => {
   assert.ok(start > 0, 'the shot handler is still named that');
   const shot = app.slice(start, app.indexOf('renderAdminButton()', start));
   assert.match(shot, /'feedback-choose'/, 'the shot name is accepted');
-  assert.match(shot, /feedback-target-hint/, 'and it waits for the visible hint');
+  assert.match(shot, /feedback-target-app-name/, 'and it waits for the app option, live and named');
   assert.match(
     shot,
     /App\._simulateFeedbackTargetChoice/,
@@ -145,10 +149,12 @@ test('all four declared checks exist and match the shipped ids and copy', () => 
   assert.ok(choice, 'the unchosen state is covered');
   assert.equal(choice.path, '/?shot=feedback-choose');
   assert.equal(choice.visual, true, 'and it is the representative visual flow');
-  assert.ok(
-    HINT.startsWith(choice.expectText),
-    'the check\'s expectText is a prefix of the copy the controller writes'
-  );
+  assert.equal(choice.expectText, LABEL, 'the row asks by its label');
+  assert.match(choice.expectSelector, /#feedback-target-label \+ #feedback-target:/);
+  assert.match(choice.expectSelector, /#feedback-target-hint\.hidden$/, 'and says nothing under it yet');
+  const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+  assert.match(html, new RegExp(`<p[^>]*id="feedback-target-label"[^>]*>${LABEL.replace('?', '\\?')}</p>`));
+  assert.match(html, /id="feedback-target"[^>]*aria-labelledby="feedback-target-label"/);
 
   // #2888: Submit is live while the question waits — never disabled for it.
   assert.ok(
@@ -171,7 +177,8 @@ test('all four declared checks exist and match the shipped ids and copy', () => 
   assert.ok(HINT.startsWith(missed.expectText));
   assert.ok(CONTROLLER_TEXT.includes("'!border-red-600'"), 'the class the check selects is the one the controller writes');
 
-  const single = declared.find((t) => /#feedback-target-hint\.hidden/.test(t.expectSelector || ''));
+  const single = declared.find((t) => t.path === '/?shot=feedback'
+    && /#feedback-target-hint\.hidden/.test(t.expectSelector || ''));
   assert.ok(single, 'the ONE-destination case is covered too');
   assert.equal(single.path, '/?shot=feedback', 'on the route where no app is open');
   assert.match(
@@ -355,20 +362,18 @@ test('with two destinations, the dialog opens with neither chosen', () => {
   assert.equal(h.el('feedback-target-platform').disabled, false);
 });
 
-test('Submit stays pressable while the question waits, which is asked quietly', () => {
+test('Post request stays pressable while the question waits, which is asked quietly', () => {
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
 
-  assert.equal(h.el('feedback-submit').disabled, false, 'Submit is live (#2888)');
+  assert.equal(h.el('feedback-submit').disabled, false, 'Post request is live (#2888)');
   assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null, 'nothing is red yet');
   assert.equal(h.el('feedback-target-hint').getAttribute('role'), null, 'nor announced');
-  assert.ok(h.hintShown(), 'and the row says what it is asking');
-  assert.equal(h.el('feedback-target-hint').textContent, HINT);
-  assert.equal(
-    h.el('feedback-target').getAttribute('aria-describedby'),
-    'feedback-target-hint',
-    'the radiogroup points at its own explanation'
-  );
+  // The row's label asks ("Where should this go?", in the markup); nothing
+  // under it speaks until a submit is refused.
+  assert.equal(h.hintShown(), false, 'no line under the row yet');
+  assert.equal(h.el('feedback-target-hint').textContent, '');
+  assert.equal(h.el('feedback-target').getAttribute('aria-describedby'), null);
 });
 
 test('tapping a destination selects it, clears the hint and frees Submit', () => {
@@ -415,6 +420,11 @@ test('#2888: that submit turns the row red, announces why and focuses the row', 
   await h.submit();
 
   assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), 'true', 'the row is marked invalid');
+  assert.equal(
+    h.el('feedback-target').getAttribute('aria-describedby'),
+    'feedback-target-hint',
+    'the radiogroup points at its own explanation'
+  );
   for (const which of ['app', 'platform']) {
     assert.ok(h.el(`feedback-target-${which}`).classes.has('!border-red-600'), `${which} is outlined red`);
   }
@@ -466,7 +476,7 @@ test('#2888: a reopen asks again quietly, without the previous red', async () =>
 
   h.sandbox.Feedback._reset();
   h.open();
-  assert.ok(h.hintShown());
+  assert.equal(h.hintShown(), false, 'asked by the label again, quietly');
   assert.equal(h.el('feedback-target').getAttribute('aria-invalid'), null);
   assert.equal(h.el('feedback-target-hint').classes.has('!text-red-700'), false);
 });
@@ -515,7 +525,9 @@ test('an app with no repo yet keeps its name on the grayed option', () => {
   const h = makeHarness({ appData: { name: 'Example App', repo_url: '' } });
   h.open();
 
-  assert.equal(h.el('feedback-target-app').textContent, 'This app (Example App)');
+  // The option leads with the app's name, "This app" under it (UI overhaul).
+  assert.equal(h.el('feedback-target-app-name').textContent, 'Example App');
+  assert.equal(h.el('feedback-target-app-sub').classList.contains('hidden'), false);
   assert.equal(h.el('feedback-target-app').disabled, true);
   assert.equal(h.checked('platform'), 'true');
 });
@@ -548,16 +560,17 @@ test('reopening after a choice asks again', () => {
 
   assert.equal(h.checked('app'), 'false', 'the previous answer is not a new default');
   assert.equal(h.checked('platform'), 'false');
-  assert.ok(h.hintShown());
+  assert.equal(h.hintShown(), false, 'asked by the label, quietly');
   assert.equal(h.el('feedback-submit').disabled, false, 'still pressable (#2888)');
 });
 
-test('closing the dialog does not leave the question behind for the next open', () => {
+test('closing the dialog does not leave the question behind for the next open', async () => {
   // _open clears the question first, so the one-destination case that
   // follows a two-destination one is not poisoned by it.
   const h = makeHarness({ appData: OPEN_APP });
   h.open();
-  assert.ok(h.hintShown());
+  await h.submit();
+  assert.ok(h.hintShown(), 'a refused submit left the line up');
 
   h.sandbox.Feedback._reset();
   h.sandbox.AppView.appData = null;
@@ -571,13 +584,17 @@ test('closing the dialog does not leave the question behind for the next open', 
 
 // ── QA 2026-09-24: what the dialog calls itself, and what a failure says ──
 
-test('the dialog is headed with the words of the way in', () => {
+test('the dialog is headed Ask for a change from every way in', () => {
+  // QA 2026-09-24 renamed it per way in ("Ask for a change" from the hub's
+  // ⋯, "Send feedback" otherwise). Since the UI overhaul it is "Ask for a
+  // change" everywhere, so the heading is the markup's own and the
+  // controller no longer writes it.
+  const tsx = fs.readFileSync(path.join(__dirname, '..', 'frontend/src/features/dialogs/feedback.tsx'), 'utf8');
+  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Ask for a change\s*<\/h2>\s*<p[^>]*>\s*Members can see it, vote on it and pick it up\.\s*<\/p>/);
+  assert.doesNotMatch(CONTROLLER_TEXT, /heading\.textContent|'Send feedback'/);
   const h = makeHarness({ appData: OPEN_APP });
-  const heading = () => h.el('feedback-form').querySelector('h2').textContent;
-  h.sandbox.Feedback._open({ fromDev: true, intent: 'issue' });
-  assert.equal(heading(), 'Ask for a change', 'the hub ⋯ menu\'s row says Ask for a change');
-  h.sandbox.Feedback._open({ fromDev: true });
-  assert.equal(heading(), 'Send feedback', 'every other way in is feedback, and the next open resets it');
+  assert.doesNotThrow(() => h.sandbox.Feedback._open({ fromDev: true, intent: 'issue' }),
+    'the hub ⋯ still passes intent, which changes nothing');
 });
 
 function failingSubmit(status, error) {
@@ -622,6 +639,6 @@ test('the title hint fits a phone-width field, and the resting heading is senten
   assert.ok(hint, 'the title field carries a hint');
   assert.equal(hint[1], 'Suggested as you type');
   assert.ok(hint[1].length <= 24, 'short enough for the narrowest supported phone');
-  assert.match(tsx, /<h2 className="text-lg font-bold mb-4">\s*Send feedback\s*<\/h2>/,
-    'the prerendered heading is the one the controller resets to');
+  assert.match(tsx, /<h2 className="text-lg font-bold">\s*Ask for a change\s*<\/h2>/,
+    'the heading is sentence case');
 });

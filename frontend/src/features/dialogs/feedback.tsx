@@ -70,12 +70,18 @@ export function FeedbackDialog() {
     >
       <DialogCard size="sm">
         <div id="feedback-form">
-        {/* QA 2026-09-24: the resting heading. The controller renames it on
-            each open to match the way in ("Ask for a change" from the hub's
-            ⋯ menu), like every other string inside this card. */}
-        <h2 className="text-lg font-bold mb-4">
-          Send feedback
+        {/* ASK FOR A CHANGE, from every way in (UI overhaul). It was "Send
+            feedback", and "Ask for a change" only from the hub's ⋯ (QA
+            2026-09-24); people read feedback as a note to nobody in
+            particular, when what it posts is a request the members of the
+            place it goes can see, vote on and pick up. The line under the
+            heading says exactly that. */}
+        <h2 className="text-lg font-bold">
+          Ask for a change
         </h2>
+        <p className="mt-0.5 mb-4 text-sm text-zinc-600 dark:text-zinc-400">
+          Members can see it, vote on it and pick it up.
+        </p>
         {/*
             Target toggle: file this feedback against the app being viewed
             or against the Homeroom platform. The "This app" button
@@ -92,7 +98,15 @@ export function FeedbackDialog() {
             selects the single available destination when there is only one:
             an extra tap that cannot disambiguate anything is just a tax.
         */}
-        <div id="feedback-target" className="flex gap-2 mb-3" role="radiogroup" aria-label="Feedback target">
+        {/* WHERE SHOULD THIS GO? (UI overhaul): the question the row asks,
+            as its label, where the grey hint under it used to ask it. Each
+            option leads with the NAME of the place (the app's, or
+            Homeroom), with what it is under it, so the choice is between
+            two places a person knows rather than two categories. */}
+        <p id="feedback-target-label" className="mb-1.5 text-sm font-medium text-zinc-900 dark:text-zinc-100">
+          Where should this go?
+        </p>
+        <div id="feedback-target" className="flex gap-2 mb-3" role="radiogroup" aria-labelledby="feedback-target-label">
           <div className="flex-1 flex flex-col items-center">
             <button
               type="button"
@@ -100,9 +114,13 @@ export function FeedbackDialog() {
               aria-checked="false"
               data-feedback-target="app"
               id="feedback-target-app"
-              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs font-medium transition-colors"
+              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-left transition-colors"
             >
-              This app
+              {/* The controller writes the app's name into the first line,
+                  and "No app open" when there is none; the second line says
+                  what it is, and goes when the first already says it. */}
+              <span id="feedback-target-app-name" className="block truncate text-sm font-semibold">This app</span>
+              <span id="feedback-target-app-sub" className="block truncate text-xs opacity-75">This app</span>
             </button>
             {/* Caret indicating the selected option; shown/hidden by the controller. */}
             <div
@@ -118,9 +136,10 @@ export function FeedbackDialog() {
               aria-checked="false"
               data-feedback-target="platform"
               id="feedback-target-platform"
-              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs font-medium transition-colors"
+              className="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-left transition-colors"
             >
-              Homeroom Platform
+              <span className="block truncate text-sm font-semibold">Homeroom</span>
+              <span className="block truncate text-xs opacity-75">The platform itself</span>
             </button>
             <div
               id="feedback-caret-platform"
@@ -130,14 +149,16 @@ export function FeedbackDialog() {
           </div>
         </div>
         {/*
-            #2707: what the row is asking while no destination is chosen —
-            and, #2888, the red "choose one" the controller turns it into when
-            Submit is pressed anyway (Submit stays live; it refuses and says
-            why rather than sitting disabled). Renders EMPTY and hidden for the same two reasons #feedback-text-error
-            does — the controller owns the text, and a prompt on the initial
-            render would both lie (the one-destination case never shows it)
-            and mismatch on hydration. The controller also points the
-            radiogroup's `aria-describedby` at it while it is up.
+            #2888: the red "Choose where this goes." the controller shows when
+            Post request is pressed with no destination (the button stays
+            live; it refuses and says why rather than sitting disabled). It
+            was also a grey prompt while the choice was open (#2707); the
+            label above asks the question now, so the line is only the
+            refusal. Renders EMPTY and hidden for the same two reasons
+            #feedback-text-error does: the controller owns the text, and a
+            line on the initial render would both lie and mismatch on
+            hydration. The controller also points the radiogroup's
+            `aria-describedby` at it while it is up.
 
             #1603 is the precedent this follows: a control that refuses and
             says nothing reads as a broken control, so the reason is on
@@ -181,18 +202,18 @@ export function FeedbackDialog() {
             open and mismatch on hydration.
         */}
         <div>
+          {/* "What should change?", which was "Description*" (UI overhaul):
+              a question that says what to write, and plainly the one thing
+              the request needs, so it carries no asterisk. */}
           <Label id="feedback-text-label" htmlFor="feedback-text" className="mb-1">
-            Description
-            <span id="feedback-text-required" aria-hidden="true" className="text-red-700 dark:text-red-400">
-              *
-            </span>
+            What should change?
           </Label>
           <Textarea
             id="feedback-text"
             rows={4}
             maxLength={2000}
             aria-required="true"
-            placeholder="Describe the issue or suggestion..."
+            placeholder="Describe the change, or the problem you hit"
             className="resize-none"
           >
           </Textarea>
@@ -325,13 +346,13 @@ export function FeedbackDialog() {
             Cancel
           </button>
           <Button id="feedback-submit" layout="flex">
-            Submit
+            Post request
           </Button>
         </div>
         </div>
         <section id="feedback-first-success" className="hidden" aria-labelledby="feedback-first-title" tabIndex={-1}>
           <h2 id="feedback-first-title" className="text-xl font-bold mb-3">
-            Congratulations on your first feedback!
+            Congratulations on your first request!
           </h2>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
             You’ve helped make this app better. Want to take the next step?
@@ -344,7 +365,7 @@ export function FeedbackDialog() {
             </p>
             <Button id="feedback-first-board" variant="neutral" ink="neutral" disabledStyle="block" className="min-h-[44px]">See this app’s board</Button>
             {/* #3186: the Me screen's list, where this report now is. */}
-            <Button id="feedback-first-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your feedback</Button>
+            <Button id="feedback-first-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
             <Button id="feedback-first-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
           </div>
         </section>
@@ -352,20 +373,21 @@ export function FeedbackDialog() {
             #3186: every other filed report's confirmation. It was the status
             line, and the dialog closed itself 1.5 s later; now it is this
             section, drawn like the first-feedback moment above, and it stays
-            until Done. The controller fills the notice (the "Thanks! Filed
-            against …" line, with any bounty outcome) and reveals it, so it
-            renders empty and hidden for the reason #feedback-status does.
+            until Done. The controller names where it went in the heading
+            ("Posted to Run Club", "Posted to Homeroom") and fills the notice
+            with any bounty outcome, so the notice renders empty and hidden
+            for the reason #feedback-status does.
         */}
         <section id="feedback-sent" className="hidden" aria-labelledby="feedback-sent-title" tabIndex={-1}>
           <h2 id="feedback-sent-title" className="text-lg font-bold mb-3">
-            Feedback sent
+            Request posted
           </h2>
-          <p id="feedback-sent-notice" className="text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p>
+          <p id="feedback-sent-notice" className="hidden text-sm text-emerald-700 dark:text-emerald-400 mb-2" role="status"></p>
           <p className="text-sm text-zinc-600 dark:text-zinc-400 mb-4">
-            It is in Your feedback on your profile, with its status.
+            Find it on your profile, under Your requests.
           </p>
           <div className="flex flex-col gap-3">
-            <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your feedback</Button>
+            <Button id="feedback-sent-mine" variant="neutral" ink="neutral" className="min-h-[44px]">See your requests</Button>
             <Button id="feedback-sent-done" variant="unstyled" ink="muted" className="min-h-[44px]">Done</Button>
           </div>
         </section>

@@ -1703,11 +1703,14 @@ const App = {
           // Same retry shape, and for the same reason, as the two above: the
           // dialog's own open-time reset decides the destination row, so a
           // pose that lands before it is wiped. What the check asserts is
-          // the hint being VISIBLE, so that is what this waits for.
+          // the app option LIVE and named, with nothing chosen (the row asks
+          // by its label now; the hint under it is only a refusal), so that
+          // is what this waits for.
           let chooseTries = App.IMPROVE_SHOT_TRIES;
           const poseChoice = () => {
-            const hint = document.getElementById('feedback-target-hint');
-            if (hint && !hint.classList.contains('hidden')) return;
+            const app = document.getElementById('feedback-target-app');
+            const name = document.getElementById('feedback-target-app-name');
+            if (app && !app.disabled && name && name.textContent === 'Example App') return;
             try { App._simulateFeedbackTargetChoice?.('Example App'); } catch (e) { /* ignore */ }
             if (--chooseTries > 0) setTimeout(poseChoice, App.IMPROVE_SHOT_INTERVAL_MS);
           };

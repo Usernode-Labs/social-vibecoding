@@ -1314,8 +1314,8 @@ test('#2573: the status tab offers to start an app with nothing open and nothing
   assert.match(html, /data-ws-start-here=""/, 'the banner is up');
   assert.match(html, /Start working on this app/, 'with the heading the request names');
   assert.match(html, /Nothing is open and nothing has shipped yet/, 'and one line saying why');
-  assert.match(html, /data-ws-start-here-btn=""[^>]*>New change</,
-    'and the action, labelled as the Improve panel labels it');
+  assert.match(html, /data-ws-start-here-btn=""[^>]*>Start a new change</,
+    'and the action, labelled as the Homeroom menu labels it');
 
   // AT THE TOP OF THE HUB, ahead of the no-items note and the hub's own
   // cards. The note answers what the board HOLDS and points at the ⋯;
@@ -1389,16 +1389,15 @@ test('#2573: the button is offered on the gate the Improve panel offers New chan
 
 // The entry point is BORROWED, not rebuilt: two copies of "navigate to the
 // app, then create a proposal" is the duplication this reuses away.
-test('#2573: the banner presses the same New change the menu does', () => {
+test('#2573: the banner presses the same Start a new change the menu does', () => {
   assert.match(WORKSHOP, /import \{ Improve \} from '\.\.\/\.\.\/improve\/improve-controller\.js'/);
   assert.match(WORKSHOP, /onClick=\{\(\) => Improve\.startSession\(\)\}/);
-  // The other button was the Improve panel's row; the panel retired (#2718
-  // review) and its two actions are the mark menu's, in ../improve/actions.tsx.
-  // Same method, which is the whole point of asserting both: two buttons
-  // saying "new change" have to mean it.
-  const ACTIONS = read('frontend/src/features/improve/actions.tsx');
-  assert.match(ACTIONS, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
-    'which is the method the menu\'s button calls');
+  // The other one was the Improve panel's row, then the mark menu's button;
+  // since the UI overhaul it is "Start a new change" under the menu's Agent
+  // sessions. Same method, which is the whole point of asserting both: two
+  // controls saying "start a new change" have to mean it.
+  assert.match(SHEET_TSX, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
+    'which is the method the menu\'s row calls');
 });
 
 test('"try taking this one next" names an open issue nobody is on', () => {
@@ -2640,7 +2639,7 @@ test('the Workshop is a menu row, and an anchor at its route (#2761)', () => {
   assert.ok(!/data-context-row="board"|dataContextRow="board"/.test(SHEET_TSX),
     'and the Board segment after it — the Workshop and the kanban are one '
     + 'screen in two layouts, so the layout is not a destination in the menu');
-  assert.match(SHEET_TSX, /label="Go to community hub"/);
+  assert.match(SHEET_TSX, /label="Go to community"/);
 });
 
 test('the declared checks cover the lander, its strips and an unfolded row', () => {
@@ -3353,7 +3352,7 @@ test('an empty board still gets the All items pane, and the note names the ⋯ a
   assert.doesNotMatch(status, /Press <span[^>]*>⋯<\/span> on the hub/, 'so on the hub it does not say where');
 });
 
-test('bug g: the empty-board note says what the ⋯ holds, and sends "start a change" to New change', () => {
+test('bug g: the empty-board note says what the ⋯ holds, and sends "make one yourself" to Start a new change', () => {
   // The second half: "Press + to propose a change or file an issue". The "+"
   // has had no propose row since New change moved to Improve (#1490) and
   // then to the Homeroom menu's New change button — an owner decision
@@ -3373,7 +3372,8 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "start a ch
     return AppView;
   };
   const NOTE = (tail) => new RegExp(`data-ws-empty=""[^>]*>Nothing on the board yet\\. Press <span[^>]*>⋯<\\/span>${tail}<\\/div>`);
-  const START = '; to start a change, use New change in the Homeroom menu\\.';
+  // The menu's New change is "Start a new change" since the UI overhaul.
+  const START = '; to make one yourself, use Start a new change in the Homeroom menu\\.';
 
   // ALL ITEMS, where no banner offers New change: the whole sentence, and
   // where the ⋯ is, since it is the hub's.
@@ -3390,7 +3390,7 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "start a ch
   // with its own New change, so the note stops at the "+" rather than sending
   // the reader to a menu for the button just above it.
   const status = workshopHtml(fresh, 'status');
-  assert.match(status, /data-ws-start-here-btn=""[^>]*>New change</, 'the banner offers New change');
+  assert.match(status, /data-ws-start-here-btn=""[^>]*>Start a new change</, 'the banner offers Start a new change');
   assert.match(status, NOTE(' to ask for a change\\.'), 'and the note under it names the ⋯ alone');
   assert.doesNotMatch(status, /propose a change/);
   // ...and "What you are working on", on the Workshop tab beside it, states
@@ -3488,7 +3488,7 @@ test('the ⋯ is the hub hero’s: once, at the end of the members row, and no p
   }
   const html = await heroWithMenu();
   assert.match(html,
-    /class="dev-ws-hero-people"[\s\S]*?<div class="dev-ws-hero-actions">[\s\S]*?data-ws-community-manage=""[^>]*>Invite<\/button><div class="dev-ws-plus ?"><button id="dev-plus-btn"/,
+    /class="dev-ws-hero-people"[\s\S]*?<div class="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[^>]*>Invite<\/button><div class="dev-ws-plus ?"><button id="dev-plus-btn"/,
     'Invite, then the ⋯, ending the members row');
   assert.equal(html.split('id="dev-plus-btn"').length - 1, 1, 'one ⋯');
   // The menu comes with it, leading with the ask, then Settings & rules.
@@ -4919,7 +4919,7 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
   // and the "+" has no propose row — starting a change is the Homeroom
   // menu's New change (an owner decision, #2740 review). It names that door
   // now, by the name the header gives the menu.
-  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item in All items, or start a change with New change in the Homeroom menu\.<\/p>/,
+  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item in All items, or use Start a new change in the Homeroom menu\.<\/p>/,
     'with the note in the lane');
   assert.doesNotMatch(html, /start something from the \+ button/, 'and not the door that cannot open');
   // A read-only viewer has neither door (no New change, no board writes), so

@@ -103,11 +103,11 @@ export function CountSkeleton(): ReactNode {
  * fetch: `AppView._repaintDevBody` builds this same list every time.
  *
  * The skeleton names them rather than drawing four grey bars, and that is the
- * difference between "something is coming" and "this board has an Issues
+ * difference between "something is coming" and "this board has a Requests
  * column and it is filling". Only the counts are unknown, so only the counts
  * pulse — see `COUNT_BAR` below, the string form of <CountSkeleton/>.
  */
-const KANBAN_COLS = ['Issues', 'Underway', 'In review', 'Done'];
+const KANBAN_COLS = ['Requests', 'Underway', 'In review', 'Done'];
 
 /** <CountSkeleton/> as a string, for the HTML builders below. */
 const COUNT_BAR =

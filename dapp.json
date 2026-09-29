@@ -738,13 +738,13 @@
       "expectText": "You can attach up to 3 images."
     },
     {
-      "name": "First feedback is congratulated in a lasting confirmation (#1583)",
+      "name": "A first request is congratulated in a lasting confirmation (#1583, UI overhaul)",
       "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-first-success:not(.hidden)",
-      "expectText": "Congratulations on your first feedback!"
+      "expectText": "Congratulations on your first request!"
     },
     {
-      "name": "First feedback offers an editable fix, this app's board and Your feedback (#1583, #3186)",
+      "name": "A first request offers an editable fix, this app's board and Your requests (#1583, #3186)",
       "path": "/?shot=feedback-first#app/usernode-2d5619/dev",
       "expectSelector": "#feedback-first-success:not(.hidden):has(#feedback-first-fix:not(:disabled)) #feedback-first-board:not(:disabled) + #feedback-first-mine",
       "expectText": "Try a fix yourself"
@@ -778,23 +778,23 @@
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-submit:not(:disabled)"
     },
     {
-      "name": "The feedback description is marked required before you type anything (#1603)",
+      "name": "The request asks what should change, on the field it requires, before you type anything (#1603, UI overhaul)",
       "path": "/?shot=feedback",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-label #feedback-text-required",
-      "expectText": "Description"
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-label + #feedback-text[aria-required=\"true\"]",
+      "expectText": "What should change?"
     },
     {
       "name": "An empty submit says what is missing instead of doing nothing (#1603)",
       "path": "/?shot=feedback-required",
       "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-text-error:not(.hidden)",
-      "expectText": "Please add a description"
+      "expectText": "Please say what should change"
     },
     {
       "id": "feedback.destination-choice",
-      "name": "With two destinations available, neither is preselected and the row says to choose (#2707)",
+      "name": "With two destinations available, neither is preselected and the row asks where it should go (#2707, UI overhaul)",
       "path": "/?shot=feedback-choose",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-target:has(#feedback-target-app[aria-checked=\"false\"]):has(#feedback-target-platform[aria-checked=\"false\"]) + #feedback-target-hint:not(.hidden)",
-      "expectText": "Choose where this feedback goes",
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)) #feedback-target-label + #feedback-target:has(#feedback-target-app[aria-checked=\"false\"]):has(#feedback-target-platform[aria-checked=\"false\"]) + #feedback-target-hint.hidden",
+      "expectText": "Where should this go?",
       "visual": true,
       "impact": [
         "frontend/src/features/dialogs/feedback.tsx",
@@ -802,16 +802,17 @@
       ]
     },
     {
-      "name": "Submit stays pressable while no destination is picked (#2707, #2888)",
+      "name": "Post request stays pressable while no destination is picked, and nothing is red yet (#2707, #2888)",
       "path": "/?shot=feedback-choose",
-      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint:not(.hidden)):has(#feedback-target:not([aria-invalid])) #feedback-submit:not(:disabled)"
+      "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-hint.hidden):has(#feedback-target:not([aria-invalid])) #feedback-submit:not(:disabled)",
+      "expectText": "Post request"
     },
     {
       "id": "feedback.destination-missed",
-      "name": "Submit with no destination turns the row red and says why (#2888)",
+      "name": "Post request with no destination turns the row red and says why (#2888)",
       "path": "/?shot=feedback-choose-missed",
       "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target[aria-invalid=\"true\"]):has(#feedback-target-app.\\!border-red-600[aria-checked=\"false\"]) #feedback-target-hint[role=\"alert\"]:not(.hidden)",
-      "expectText": "Choose where this feedback goes",
+      "expectText": "Choose where this goes",
       "visual": true,
       "impact": [
         "frontend/src/features/dialogs/feedback.tsx",
@@ -819,7 +820,7 @@
       ]
     },
     {
-      "name": "With only one destination reachable it stays selected and Submit is live (#2707)",
+      "name": "With only one destination reachable it stays selected and Post request is live (#2707)",
       "path": "/?shot=feedback",
       "expectSelector": "body:has(#feedback-modal:not(.hidden)):has(#feedback-target-platform[aria-checked=\"true\"]):has(#feedback-target-hint.hidden) #feedback-submit:not(:disabled)"
     },
@@ -1500,22 +1501,22 @@
       "expectText": "Ask for a change"
     },
     {
-      "name": "New change survives the '+' menu dedup, and the drawer's retirement (#1490, #2718 review)",
+      "name": "Start a new change leads the menu's Agent sessions, where New change went (#1490, #2718 review, UI overhaul)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-new-session",
-      "expectText": "New change"
+      "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-sessions > #improve-row-new-session",
+      "expectText": "Start a new change"
     },
     {
-      "name": "Give feedback survives the menu split, in exactly one place (#1490, #2718)",
+      "name": "Ask for a change is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback",
-      "expectText": "Give feedback"
+      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:only-child",
+      "expectText": "Ask for a change"
     },
     {
       "name": "The Homeroom menu opens anchored under the mark, not as a panel in the middle of the screen (#2784)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
-      "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-new-session",
-      "expectText": "New change"
+      "expectSelector": "body:has(#platform-mark-btn[aria-expanded=\"true\"]) #apps-switcher-sheet[data-open][style*=\"--menu-anchor-top\"][style*=\"--menu-anchor-left\"] #improve-quick-actions > #improve-row-feedback",
+      "expectText": "Ask for a change"
     },
     {
       "name": "The hub's ⋯ menu asks for a change directly and keeps New change in Improve (#1900)",
@@ -2261,13 +2262,13 @@
       "expectSelector": "#app-install"
     },
     {
-      "name": "The app's own menu carries Improve's two actions on an app view",
+      "name": "The app's own menu carries Ask for a change on an app view",
       "path": "/app/staging-demo-admins",
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback",
       "allowConsoleErrors": true
     },
     {
-      "name": "The Dev view carries the standing Improve actions, one tap behind the mark",
+      "name": "The Dev view carries Ask for a change, one tap behind the mark",
       "path": "/app/staging-demo-admins/dev",
       "expectSelector": "#apps-switcher-sheet #improve-quick-actions > #improve-row-feedback"
     },
@@ -2277,9 +2278,9 @@
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
     },
     {
-      "name": "The app-context sheet carries the + New change action (Streamlined Concept)",
+      "name": "The app-context sheet carries Start a new change under Agent sessions (Streamlined Concept, UI overhaul)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#improve-quick-actions #improve-row-new-session"
+      "expectSelector": "#app-menu-sessions #improve-row-new-session"
     },
     {
       "name": "The header names the app it is in, as a heading (#2718)",
@@ -2302,7 +2303,7 @@
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] #dev-kanban"
     },
     {
-      "name": "#2761: the mark's menu opens its list on Go to community hub, with no App segment above it (owner's decision; reverses #1386's App segment)",
+      "name": "#2761: the mark's menu opens its list on Go to community, with no App segment above it (owner's decision; reverses #1386's App segment)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav > a#app-menu-row-workshop:first-child"
     },
@@ -2312,7 +2313,7 @@
       "expectSelector": "#header-title #header-title-name"
     },
     {
-      "name": "Home's menu offers to improve the platform, same two buttons (#2718 review)",
+      "name": "Home's menu offers to ask the platform for a change, the same button (#2718 review, UI overhaul)",
       "path": "/?shot=app-context",
       "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback"
     },
@@ -2883,10 +2884,10 @@
       "expectText": "Session finished"
     },
     {
-      "name": "The menu leads with Give feedback, ahead of New change (#2718 review)",
+      "name": "The menu leads with Ask for a change, one button where there were two (#2718 review, UI overhaul)",
       "path": "/?shot=improve&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions > #improve-row-feedback:first-child + #improve-row-new-session",
-      "expectText": "Give feedback"
+      "expectSelector": "#apps-switcher-sheet[data-open] #improve-quick-actions:not(:has(#improve-row-new-session)) > #improve-row-feedback:first-child",
+      "expectText": "Ask for a change"
     },
     {
       "name": "Settings' About pane: all three version rows share one left edge",
@@ -2922,7 +2923,7 @@
       "expectSelector": "head > meta[name=\"platform-build\"][content]"
     },
     {
-      "name": "The mark's menu: the two actions, then the app's options, with no view strip between them (#2718 review, #2761)",
+      "name": "The mark's menu: the action, then the app's options, with no view strip between them (#2718 review, #2761)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet > #improve-quick-actions + #switcher-nav"
     },
@@ -3244,20 +3245,21 @@
       "expectText": "Challenges"
     },
     {
-      "name": "The mark opens the menu, and it lists the app's own options, Invite to community among them (#2718, invite links)",
+      "name": "The mark opens the menu, and it lists the app's own options, then Agent sessions, with no discussion or invite row (#2718, #3362)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav #app-menu-row-discussion + #app-menu-row-invite + #app-menu-row-about"
+      "expectSelector": "#apps-switcher-sheet[data-open]:not(:has(#app-menu-row-discussion, #app-menu-row-invite)) #switcher-nav > #app-menu-row-workshop ~ #app-menu-row-about + #app-menu-sessions"
     },
     {
-      "name": "The menu links out to the project's community hub, scoped to the app, as a Go to community hub row (#2718, #2761, #3287)",
+      "name": "The menu links out to the project's community, scoped to the app, as a Go to community row (#2718, #2761, #3287)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-workshop[href=\"#app/usernode-2d5619/workshop\"]",
-      "expectText": "Go to community hub"
+      "expectText": "Go to community"
     },
     {
-      "name": "#2763: Go to app discussion opens the two-pane Messages route, not the old full-screen chat",
+      "name": "Agent sessions leads with Start a new change, sessions or none (UI overhaul; it was Continue)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav a#app-menu-row-discussion[href=\"#messages/app/usernode-2d5619\"]"
+      "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav > #app-menu-sessions > #improve-row-new-session:nth-child(2)",
+      "expectText": "Agent sessions"
     },
     {
       "id": "workshop.all-apps",
@@ -4739,7 +4741,7 @@
       "expectSelector": "#notifications-sheet.dc-lift.dc-lift-panel[data-open] #notifications-sheet-close"
     },
     {
-      "name": "The menu's two actions ride the same lifted pane as the bell's sheet",
+      "name": "The menu's action rides the same lifted pane as the bell's sheet",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet.dc-lift.dc-lift-panel[data-open] #improve-quick-actions"
     },

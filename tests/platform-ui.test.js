@@ -367,7 +367,7 @@ test('the right group is the bell and the mark, in that order, after the title',
   );
 });
 
-test('the Improve row is retired; the two actions it led to are in the menu', () => {
+test('the Improve row is retired; what it led to is in the menu', () => {
   // THE ROW WAS A TAP TO REACH A TAP. It shipped hidden, revealed itself when
   // a target was published, and opened a drawer whose whole remaining content
   // was two buttons — the sessions under them had already moved to the
@@ -383,8 +383,11 @@ test('the Improve row is retired; the two actions it led to are in the menu', ()
   // so a row inside it was never the place a cue could be read from.
   const band = INDEX.match(/<div id="improve-quick-actions"[\s\S]*?<\/div>/);
   assert.ok(band, 'missing #improve-quick-actions');
-  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Give feedback leads');
-  assert.ok(band[0].includes('id="improve-row-new-session"'), 'New change follows it');
+  assert.ok(band[0].includes('id="improve-row-feedback"'), 'Ask for a change is the band\'s button');
+  // New change is Start a new change under Agent sessions (UI overhaul).
+  assert.ok(!band[0].includes('id="improve-row-new-session"'), 'and alone in it');
+  const sessions = INDEX.match(/<div id="app-menu-sessions"[\s\S]*?id="improve-row-new-session"/);
+  assert.ok(sessions, 'Start a new change leads the Agent sessions section');
   assert.ok(!/\bhidden\b/.test(band[0].slice(0, band[0].indexOf('>'))),
     'the band itself ships visible');
 
@@ -565,7 +568,7 @@ test('home publishes the PLATFORM Improve target, from render and not only on re
 
 // ── #1367: the App/Feed/Kanban toggle, and what it replaced ──────────
 
-test('the two actions lead the menu, shaped like the pill that used to open them', () => {
+test('the menu\'s action leads it, shaped like the pill that used to open it', () => {
   // ../improve/actions.tsx is where these live since the panel retired
   // (#2718 review). They stayed in the Improve feature rather than moving
   // into the menu's own file, because they are the Improve feature's
@@ -600,8 +603,11 @@ test('the two actions lead the menu, shaped like the pill that used to open them
   // element claiming it.
   assert.ok(!read('frontend/src/features/app-context/app-context-sheet.tsx')
     .includes('id="improve-row-feedback"'), 'and not in two places');
-  assert.match(panel, /id="improve-row-new-session"/, 'New change survives');
-  assert.match(panel, /Improve\.startSession\(\)/, 'with the same handler');
+  // New change survives as Start a new change, a row under Agent sessions
+  // in the menu's list (UI overhaul), with the same handler.
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /id="improve-row-new-session"/, 'New change survives');
+  assert.match(sheet, /Improve\.startSession\(\)/, 'with the same handler');
   // The BAND stays, and it is the same element: `#improve-quick-actions`
   // was a direct child of `#improve-body` and is a direct child of the
   // menu's sheet now. dapp.json's band-order check used to select the four
@@ -624,9 +630,9 @@ test('the two actions lead the menu, shaped like the pill that used to open them
   // panel and behind its backdrop once it was up — and since #2718 there is
   // no second filled pill to compete with at all.
   assert.match(panel, /rounded-full text-sm font-semibold/,
-    'and the two actions are the same pill shape');
+    'and the action is that pill shape');
   assert.match(panel, /const ACTION_FILL =\n\s+'bg-violet-600 hover:bg-violet-500 text-white';/,
-    'both wearing the platform\'s ordinary primary fill');
+    'wearing the platform\'s ordinary primary fill');
   assert.ok(!/ACTION_PRIMARY/.test(panel),
     'there is no primary-and-secondary pair here any more');
   assert.ok(!/\bprimary\b/.test(panel.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')),

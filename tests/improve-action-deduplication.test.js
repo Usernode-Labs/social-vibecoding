@@ -220,30 +220,27 @@ for (const touch of [false, true]) {
   });
 }
 
-test('Improve retains its two wired quick actions, and the New change read-only gate', () => {
-  // TWO AGAIN (#2718 review). #2718 moved "Give feedback" to the mark's
-  // menu, where it led — the row somebody who is NOT a developer of this app
-  // wants, in a panel that assumes you are. True of the reader, and it cost
-  // the action its shape: a filled button that says what it DOES became the
-  // first of eight rows in a place you go to navigate. It is a button again.
+test('Ask for a change and Start a new change each exist once, and the read-only gate holds', () => {
+  // ONE BUTTON AND ONE ROW (UI overhaul). The menu's well held two buttons,
+  // Give feedback and New change, and people found both confusing. The
+  // button is Ask for a change now (the same dialog), and New change is
+  // "Start a new change" under Agent sessions in the menu's list, because
+  // what it opens is an agent session.
   //
   // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
   // ONE method, whichever surface it is on.
-  assert.equal(PANEL.split('id="improve-row-new-session"').length - 1, 1);
-  assert.match(PANEL, /id="improve-row-new-session"\s+label="New change"\s+onClick=\{\(\) => Improve\.startSession\(\)\}/);
-  assert.equal(PANEL.split('id="improve-row-feedback"').length - 1, 1,
-    'feedback is here');
-  assert.match(PANEL, /id="improve-row-feedback"\s+label="Give feedback"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
   const MENU = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.equal(PANEL.split('id="improve-row-feedback"').length - 1, 1, 'the button is here');
+  assert.match(PANEL, /id="improve-row-feedback"\s+label="Ask for a change"\s+onClick=\{\(\) => Improve\.giveFeedback\(\)\}/);
+  assert.equal(PANEL.split('id="improve-row-new-session"').length - 1, 0, 'and it is alone in its well');
   assert.equal(MENU.split('id="improve-row-feedback"').length - 1, 0,
     'and not in two places — that id is what the outbox dot\'s writer selects');
   assert.ok(!MENU.includes('giveFeedback'),
     'the menu does not keep a second caller of the same method');
-  // IT LEADS, and it is the only thing in the well for a read-only viewer:
-  // it needs nothing of them — no collaborator bit, no session, no repo —
-  // while "New change" has nothing to offer.
-  assert.ok(PANEL.indexOf('id="improve-row-feedback"') < PANEL.indexOf('id="improve-row-new-session"'));
-  assert.match(PANEL, /state\.readOnly \? null : \(\s*<QuickAction\s+id="improve-row-new-session"/);
+  assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 1);
+  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,240}label="Start a new change"/);
+  // A read-only viewer may not start a change, as the button's gate was.
+  assert.match(MENU, /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
   assert.doesNotMatch(VIEW, /querySelector\('\[data-plus="proposal"\]'\)/);
 });
 

@@ -102,7 +102,7 @@ test('the dialog states the offline situation on open, in the words dapp.json ch
   // dapp.json /?shot=feedback-queued matches this one (singular form).
   assert.match(feedbackJs, /1 message saved on this device is waiting to send/);
   // The button says what it will do.
-  assert.match(feedbackJs, /feedbackBtn\.textContent = isOfflineNow\(\) \? 'Save for later' : 'Submit'/);
+  assert.match(feedbackJs, /feedbackBtn\.textContent = isOfflineNow\(\) \? 'Save for later' : 'Post request'/);
 });
 
 test('the dialog repaints when connectivity changes under it', () => {

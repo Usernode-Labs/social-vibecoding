@@ -213,6 +213,20 @@ const communities = new Map<string, CommunityPayload>();
 const inflight = new Map<string, Promise<void>>();
 const listeners = new Set<() => void>();
 
+/**
+ * Invite people with a link (#3362): the Homeroom menu's invite pane, a link
+ * to this project anyone can use to join it (../../app-context/invite-pane.tsx).
+ * The menu's own "Invite to community" row is gone, so the hub's Invite is
+ * the way in, beside the people it adds. Collaborators and approvals are
+ * still the ⋯'s "Members & approvals".
+ */
+export function openInviteLinks(): void {
+  const ctx = (window as any).AppContext;
+  if (!ctx) return;
+  ctx.open?.();
+  ctx.showInvite?.();
+}
+
 export function reloadCommunity(slug: string): Promise<void> {
   if (!slug) return Promise.resolve();
   const pending = readCommunity(slug).then((next) => {
@@ -632,11 +646,10 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
     }
   };
 
-  // The dialog's own gate (AppView._plusMenuShowsMembers, the ⋯ menu's):
-  // offered here to exactly the people the ⋯ menu offers it to. Read at
-  // render, which is safe because this card has no server render — it is
-  // null until its fetch has answered in the browser.
-  const showsMembers = !!(window as any).AppView?._plusMenuShowsMembers?.();
+  // Invite is a MEMBER's (#3362): an invite link can be made by anyone in
+  // the community (services/community-invites.js), and the pane says so when
+  // the viewer cannot make one yet. Collaborators and approvals stay behind
+  // the ⋯'s own gate.
   const displayName = name || data.name || slug;
   const tileApp = { slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
 
@@ -728,15 +741,15 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
           Open app
         </Button>
       ) : null}
-      {showsMembers && !solo ? (
+      {data.is_member && !solo ? (
         <Button
           type="button"
           variant="pillNeutral"
           size="sm"
           ink="neutral"
-          data-ws-community-manage=""
-          title="Members & approvals"
-          onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
+          data-ws-community-invite=""
+          title="Invite people with a link"
+          onClick={openInviteLinks}
         >
           Invite
         </Button>
@@ -804,9 +817,9 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
 export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
   const data = useCommunity(slug);
   if (!data || data.audience !== 'solo') return null;
-  const showsMembers = !!(window as any).AppView?._plusMenuShowsMembers?.();
+  const canInvite = !!data.is_member;
   const canOpenUp = !!data.can_manage && !data.audience_change;
-  if (!showsMembers && !canOpenUp) return null;
+  if (!canInvite && !canOpenUp) return null;
   return (
     <section className="dev-ws-strip dev-ws-share" data-ws-share="">
       <div className="dev-ws-head">
@@ -814,14 +827,14 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
       </div>
       <p className="dev-ws-strip-text">Invite people to make it a private community, or open it up so anyone can join.</p>
       <div className="dev-ws-share-actions">
-        {showsMembers ? (
+        {canInvite ? (
           <Button
             type="button"
             variant="pillNeutral"
             size="sm"
             ink="neutral"
             data-ws-share-invite=""
-            onClick={() => { (window as any).AppView?.openMembersModal?.(); }}
+            onClick={openInviteLinks}
           >
             Invite people
           </Button>

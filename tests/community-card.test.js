@@ -78,8 +78,12 @@ test('the channel is a hub card at its old address; Join asks under its button a
   assert.match(src, /home\.setMembership\(slug, false\)/, 'Joined leaves through the same call Discover makes');
   assert.match(src, /data-ws-community-leave=""[\s\S]*Joined/, 'Joined is the leave control, as on Discover');
   assert.match(src, /\) : data\.is_creator \? null : \(/, 'the creator is never offered Leave');
-  assert.match(src, /_plusMenuShowsMembers/,
-    'Invite (Members & approvals) is offered to exactly whom the "+" menu offers it');
+  // #3362: Invite is invite LINKS, which any member can make
+  // (services/community-invites.js); Members & approvals stays the ⋯'s, behind
+  // its own gate.
+  assert.match(src, /\{data\.is_member && !solo \? \(\s*<Button[\s\S]{0,160}data-ws-community-invite=""/,
+    'Invite is offered to members');
+  assert.doesNotMatch(src, /_plusMenuShowsMembers/, 'not by the members dialog\'s gate');
 });
 
 test('the hero leads the hub, above its channel and Needs you; who is here is the hero\'s (#3268)', () => {

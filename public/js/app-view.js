@@ -10387,7 +10387,7 @@ const AppView = {
 
     const cols = [
       {
-        key: 'issues', title: 'Issues', count: kIssues.length,
+        key: 'issues', title: 'Requests', count: kIssues.length,
         rows: cardRows(kIssues, (i) => AppView._issueCardModel(i), (i) => ({ kind: 'issue', item: i })),
         empty: kIssues.length ? null : emptyNote,
         footer: issuesFooter,

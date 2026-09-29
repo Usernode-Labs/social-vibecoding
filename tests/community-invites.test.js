@@ -286,9 +286,15 @@ test('the words: the landing card, the invite pane', () => {
   assert.equal(pane.newcomerLine(null), 'Someone new to Homeroom joins the waitlist first, and this project when they are let in.');
   assert.equal(pane.newcomerLine(2), 'You can let 2 people new to Homeroom skip the waitlist.');
 
+  // #3362: the menu's "Invite to community" row is gone; the pane opens from
+  // the hub's Invite (and a just-yours project's Share it card), beside the
+  // people it adds.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  assert.match(sheet, /id="app-menu-row-invite"\s+ref=\{inviteRowRef\}\s+type="button"/);
-  assert.match(sheet, /<RowBody icon=\{<LinkIcon \/>\} label="Invite to community" \/>/);
+  assert.doesNotMatch(sheet, /id="app-menu-row-invite"/);
+  const hubCard = read('frontend/src/features/dev-board/workshop/community-card.tsx');
+  assert.match(hubCard, /export function openInviteLinks\(\): void \{[\s\S]*?ctx\.open\?\.\(\);\s*ctx\.showInvite\?\.\(\);/);
+  assert.match(hubCard, /data-ws-community-invite=""[\s\S]{0,120}onClick=\{openInviteLinks\}/);
+  assert.match(hubCard, /data-ws-share-invite=""[\s\S]{0,60}onClick=\{openInviteLinks\}/);
   assert.match(sheet, /view === 'invite' \? \(\s+<InvitePane slug=\{slug \|\| null\} label=\{appLabel\} \/>/);
   assert.match(read('frontend/src/features/app-context/app-context-controller.js'), /showInvite\(\) \{\s+appContextStore\.set\(\{ view: 'invite' \}\);/);
 });

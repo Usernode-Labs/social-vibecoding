@@ -444,21 +444,22 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * stopped being true: the "+" was only in All items' search row, so on
  * Current status it pointed at nothing on screen, and it has had no propose
  * row since New change moved to Improve (#1490) and then to the Homeroom
- * menu's New change button (#2740 review) — an owner decision this note does
- * not undo. The "+" became the hero's ⋯, on the hub, so the note names what
- * it holds (and, on All items, where it is), and sends "start a change" to
- * the button that does it, by the name the header gives that menu
- * ("Homeroom menu", the mark's own aria-label).
+ * menu (#2740 review), where it is "Start a new change" under Agent sessions
+ * since the UI overhaul — an owner decision this note does not undo. The "+"
+ * became the hero's ⋯, on the hub, so the note names what it holds (and, on
+ * All items, where it is), and sends "make one yourself" to the row that
+ * does it, by the name the header gives that menu ("Homeroom menu", the
+ * mark's own aria-label).
  *
  * Gated on the same facts as what it names: "import a PR" only where the ⋯
  * carries that row (`canCollaborate`), and nothing to press at all for a
- * read-only viewer, whose ⋯ holds Fork alone and whose menu has no New
- * change (both from `AppView.readOnly`, the flag the menu's New change and
- * the ⋯'s writable rows are each gated on).
+ * read-only viewer, whose ⋯ holds Fork alone and whose menu has no Start a
+ * new change (both from `AppView.readOnly`, the flag that row and the ⋯'s
+ * writable rows are each gated on).
  *
  * UNDER THE START-HERE BANNER it stops at the ⋯. On the hub an empty
  * board is nearly always an app nobody has started, and #2573's banner right
- * above the note carries its own New change button — so sending the reader
+ * above the note carries its own Start a new change button — so sending the reader
  * to the Homeroom menu for the same button would be the note talking past
  * the screen it is on. All items has no banner, so there it says the whole
  * thing.
@@ -473,7 +474,7 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
   const { readOnly, canCollaborate } = useDevActions();
   const where = onHub ? '' : ' on the hub';
   const adds = canCollaborate ? ' to ask for a change or import a PR' : ' to ask for a change';
-  const start = underStartHere ? '.' : '; to start a change, use New change in the Homeroom menu.';
+  const start = underStartHere ? '.' : '; to make one yourself, use Start a new change in the Homeroom menu.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       {filtered ? (
@@ -514,10 +515,10 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
  * The search and filters narrow All items alone now (#2915) and the count is
  * the whole app's, so the two conditions above are the whole claim.
  *
- * ── Why the button is not a second "New change" ─────────────────────────
+ * ── Why the button is not a second "Start a new change" ─────────────────
  *
- * It is `Improve.startSession()`, the one the Improve panel's own New change
- * row calls — imported, not re-implemented, so the navigate-then-create
+ * It is `Improve.startSession()`, the one the Homeroom menu's Start a new
+ * change row calls (it was the Improve panel's New change) — imported, not re-implemented, so the navigate-then-create
  * sequence that entry point owns (features/improve/improve-controller.js)
  * can never drift from this copy of it. The gate is the same store field the
  * panel gates that row on, for the same reason: a viewer who may not start a
@@ -549,7 +550,7 @@ function StartHereBanner(): ReactNode {
           className="self-start"
           onClick={() => Improve.startSession()}
         >
-          New change
+          Start a new change
         </Button>
       )}
     </section>
@@ -3347,20 +3348,20 @@ export function DevWorkshop(): ReactNode {
                 underway. It says so instead, so the pane keeps one shape
                 and the place your work will appear is always the same.
 
-                The way in is NEW CHANGE, by the name the Homeroom menu
-                gives it. This said "start something from the + button",
+                The way in is START A NEW CHANGE, by the name the Homeroom
+                menu gives it. This said "start something from the + button",
                 and the "+" has no propose row — starting a change is that
-                menu's New change, an owner decision (#2740 review) — so
+                menu's, an owner decision (#2740 review) — so
                 the line sent a viewer to a menu that could not do what it
                 promised. A read-only viewer has neither door, so is told
                 the fact and nothing to press — and so is a viewer under the
-                start-here banner, whose New change is at the top of this
+                start-here banner, whose Start a new change is at the top of this
                 very tab and whose board has no open item to pick up. */}
             {!v.mine.rows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
                 {actions.readOnly || startHere
                   ? 'You have no work going on.'
-                  : 'You have no work going on. Pick up an open item in All items, or start a change with New change in the Homeroom menu.'}
+                  : 'You have no work going on. Pick up an open item in All items, or use Start a new change in the Homeroom menu.'}
               </p>
             ) : null}
             {/* IN FULL on the Workshop tab: the whole of your own work is

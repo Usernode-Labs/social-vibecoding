@@ -91,7 +91,7 @@ test('#3268: the hero carries who is here and the fortnight, with the actions at
   assert.ok(src.indexOf('data-ws-community-description') < src.indexOf('<HeroPeople members'), 'what it is, then who is here');
   // Joined sits across from the name; Invite, Open it up and the ⋯ end the members row.
   assert.match(src, /<HeroId app=\{tileApp\} end=\{membership\}>/);
-  assert.match(src, /const actions = \(\s*<div className="dev-ws-hero-actions">[\s\S]*?data-ws-community-manage=""[\s\S]*?<AudienceChange[\s\S]*?\{menu\}\s*<\/div>/);
+  assert.match(src, /const actions = \(\s*<div className="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[\s\S]*?<AudienceChange[\s\S]*?\{menu\}\s*<\/div>/);
   // How a change gets in is the Workshop page's Approval rules card now.
   const hero = src.slice(src.indexOf('export function CommunityCard('), src.indexOf('export function ApprovalRules('));
   assert.doesNotMatch(hero, /data-ws-community-rule/);
@@ -182,7 +182,9 @@ test('the hero offers Open it up or Make it private, as a proposal, to whoever m
     'a public community is public to use and to build; a private community is private to both, as the create dialog maps them');
   assert.match(change, /if \(!res\.ok && res\.status !== 409\)/, 'one already up is not an error: the hero shows it');
   assert.match(change, /Members vote on this first, and it applies once it merges\./, 'it says it is a proposal, not a switch');
-  assert.match(CARD_SRC, /\{data\.can_manage && !data\.audience_change \? \(\s*<AudienceChange /);
+  // A project that is just yours offers it on its Share it card instead.
+  assert.match(CARD_SRC, /\{data\.can_manage && !data\.audience_change && !solo \? \(\s*<AudienceChange /);
+  assert.match(CARD_SRC, /\{canOpenUp \? \(\s*<AudienceChange /);
   assert.match(CARD_SRC, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/proposals\/\$\{data\.audience_change\.session_id\}`\}/);
   // The server offers it to exactly whom POST /visibility-pr accepts.
   const route = read('src/routes/apps.js');
@@ -230,13 +232,17 @@ test('Discover rows open the hub; the controls sit over the list\'s card', () =>
     'the same address App._hubHref builds');
 });
 
-test('the Communities toggle is the project page\'s strip, not the black pill', () => {
+test('the Communities screen has no toggle: Needs you is a row that opens a page', () => {
+  // It had two tabs, Current status and Needs you, drawn as the project
+  // page's strip. The UI overhaul made the list the page and Needs you a
+  // row at its top ("3 votes waiting on you"), which opens the feed with a
+  // way back; the strip and its CSS went with the tabs.
   const screen = read('frontend/src/features/workshop/index.tsx');
-  assert.doesNotMatch(screen, /SECTION_TAB_ACTIVE/);
-  assert.match(screen, /<TabsList className="workshop-scope-tabs" aria-label="Communities sections">/);
-  assert.equal((screen.match(/className="workshop-scope-tab"\s*activeClassName="workshop-scope-tab-on"/g) || []).length, 2);
-  assert.match(CSS, /\.workshop-scope-tabs \{[^}]*background-color: var\(--dc-sheet-raise\);/);
-  assert.match(CSS, /\.workshop-scope-tab-on \{\s*background: var\(--lit-tint\); color: var\(--lit-ink\);\s*box-shadow: inset 0 0 0 1px var\(--lit-line\);/);
+  assert.doesNotMatch(screen, /SECTION_TAB_ACTIVE|<TabsList|workshop-scope-tab/);
+  assert.doesNotMatch(CSS, /\.workshop-scope-tabs? \{/);
+  assert.match(screen, /<ListRow\s+as="button"\s+data-workshop-needs-open=""/);
+  assert.match(screen, /className="dev-ws-page-back un-touch-target"\s+data-workshop-needs-back=""/,
+    'the way back is the project page\'s own back disc');
 });
 
 test('Home\'s Browse all links carry the accent, not the header\'s periwinkle', () => {

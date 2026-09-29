@@ -322,19 +322,19 @@ test('offline: nothing is published, and a burst of screen changes does not retr
 
 // ── 4. The seams ──────────────────────────────────────────────────────
 
-test('the restricted rows hide through a layout effect, so the prerendered menu is untouched', () => {
+test('the restricted row hides through a layout effect, so the prerendered menu is untouched', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
-  // The invite row hides with them: its links are to the same project.
-  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*for \(const el of \[workshopRowRef\.current, discussionRowRef\.current, inviteRowRef\.current\]\)/);
+  // The discussion and invite rows that hid with it left the menu (UI
+  // overhaul, #3362); the workshop row is the one left to hide.
+  assert.match(sheet, /useIsomorphicLayoutEffect\(\(\) => \{\s*for \(const el of \[workshopRowRef\.current\]\)/);
   assert.match(sheet, /el\.classList\.toggle\('hidden', !!restricted\);[\s\S]{0,40}\}, \[restricted, view\]\);/,
     'and re-runs when the menu pane comes back from About, whose rows mount again');
   assert.match(sheet, /id="app-menu-row-workshop"\s+dataContextRow="workshop"\s+elRef=\{workshopRowRef\}/);
-  assert.match(sheet, /id="app-menu-row-discussion"\s+elRef=\{discussionRowRef\}/);
+  assert.doesNotMatch(sheet, /id="app-menu-row-(discussion|invite)"/);
   const html = read('public/index.html');
   assert.match(html, /<a id="app-menu-row-workshop" data-context-row="workshop" href="#" class="flex/,
-    'the prerender ships both rows unhidden, with the one class string React keeps');
-  assert.match(sheet, /label=\{mounted && target === 'platform' \? 'Go to platform discussion' : 'Go to app discussion'\}/,
-    'the design\'s "Go to platform discussion" on a platform tab, decided after mount');
+    'the prerender ships the row unhidden, with the one class string React keeps');
+  // The viewer's own rows (agent sessions) wait for mount.
   assert.match(sheet, /const \[mounted, setMounted\] = useState\(false\);\s*useEffect\(\(\) => \{ setMounted\(true\); \}, \[\]\);/);
 });
 

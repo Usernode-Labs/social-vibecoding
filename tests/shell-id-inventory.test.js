@@ -372,7 +372,8 @@ const ADDED_IDS = {
   'platform-parked': '#2718: the app you left, offered above the tab bar until it is resumed or dismissed. The bar makes the platform\'s five places one tap each and in doing so makes the app you were IN the one thing that is not: it has no tab, the header\'s app strip goes with it, and Home\'s grid is every app rather than the one you were halfway through. Every host that runs other people\'s programs keeps a handle to the thing you stepped out of — the app switcher, the taskbar, Telegram\'s minimised bot window, WeChat\'s floating capsule — and this is that handle at phone scale. The ROOT ships in the document, `hidden` and EMPTY, which is what an empty store renders; the app arrives from localStorage in an effect, so the prerender and the first client render agree and the id stays in this inventory whatever is parked. Its two children (#platform-parked-resume, #platform-parked-forget) are conditional and therefore not in this map, like #header-app-tile above.',
   'platform-recents': '#2802: the desktop rail\'s Recents, between Workshop and Me: the apps you left and the conversations you were in (DMs, group chats, channels, agent chats) on one clock, newest first. It replaces the Resume strip (#platform-parked) on the desktop; the phone keeps the strip. The ROOT ships `hidden` with only its heading, which is what an empty list renders; every row arrives one commit after mount, so the prerender and the first client render agree. The rows carry no ids (they are data), only data-recent-kind / data-recent-key, which are client-only and so not in the baseline.',
   'platform-recents-head': '#2802: the Recents heading, which names the group for assistive tech (`aria-labelledby` on #platform-recents). Rendered unconditionally inside the hidden root so the label target exists on a cold document.',
-  'app-menu-row-discussion': '#2718: "Go to app discussion" — the same link-out, to the app\'s own chat. The menu is where an app\'s conversation is reached from inside it; the Messages tab is where it is reached from outside.',
+  // #app-menu-row-discussion ("Go to app discussion", #2718) left the menu in
+  // the UI overhaul: the project's channel is on its hub, one row above it.
   // ── Three ids from #2718's second pass that are NOT in this map ──
   //
   // #workshop-total-working, #workshop-total-needs (both retired again with
@@ -383,7 +384,9 @@ const ADDED_IDS = {
   // the same test a stray id does — so a conditional id is recorded in prose
   // rather than in the map. They are listed here so the inventory is still
   // the complete log of what this branch added.
-  'app-menu-row-invite': 'Invite links: "Invite to community" opens the sheet\'s THIRD pane, a link to the project anyone can use to join it (features/app-context/invite-pane.tsx, services/community-invites.js). A button for About\'s reason, and rendered unconditionally, like the rows beside it, so the prerender and the hydrating render agree.',
+  // #app-menu-row-invite ("Invite to community") left the menu in the UI
+  // overhaul (#3362): invite links open from the hub's Invite, and the
+  // sheet's invite pane is unchanged.
   'app-menu-row-about': '#2718: the row that opens the sheet\'s SECOND PANE — the repository, sharing, the running version and how to add the app to a home screen. A button and not an anchor, which is the honest shape: there is no address to open in a new tab, because the pane is this sheet in another state. Two panes of one sheet rather than two sheets, because the kit cannot present a sheet while it is still dismissing another.',
   // ── #2718: the platform's five places get a bar ──────────────────
   // The app chip's menu was carrying two unlike lists — the app's own
@@ -710,7 +713,13 @@ const ADDED_IDS = {
   // marking one of two fields required only reads as a rule if the other's
   // silence is deliberate rather than an omission.
   'feedback-text-label': 'The Description label on #feedback-text, which had a placeholder and no label at all. Also the anchor the declared check selects the asterisk through, so the marker is asserted where a reader would look for it rather than anywhere on the card.',
-  'feedback-text-required': 'The red asterisk inside that label. `aria-hidden` because the accessible requirement is carried by aria-required on the field itself, and a screen reader announcing "star" adds nothing to that.',
+  // #feedback-text-required, the red asterisk in the description's label
+  // (#1603), left with the label's old words: "What should change?" is plainly
+  // the one thing the request needs (UI overhaul). aria-required on the field
+  // and the refusal under it are unchanged.
+  'feedback-target-label': 'UI overhaul: "Where should this go?", the Ask for a change dialog\'s label for its destination row (#feedback-target is aria-labelledby it). It asks the question the grey #feedback-target-hint used to; the hint is only the refusal now.',
+  'feedback-target-app-name': 'UI overhaul: the app option\'s first line, the app\'s NAME ("Run Club"), written by feedback-controller.js on each open ("This app" with no name, "No app open" with no app). It was the whole button\'s text, "This app (Run Club)".',
+  'feedback-target-app-sub': 'UI overhaul: the app option\'s second line, "This app", mirroring the platform option\'s "Homeroom / The platform itself". The controller hides it when the first line already says "This app".',
   'feedback-text-error': "The inline refusal under the description: \"Please add a description.\" Deliberately its OWN node rather than a fifth writer of #feedback-status, which has an explicit newer-and-more-specific-wins rule (paintQueueState) that would either swallow this message or let it erase the offline hint. Ships empty and hidden, like #feedback-status: the controller owns the text, and a message rendered before the submit that earns it would both lie on open and mismatch on hydration.",
   'feedback-title-label': 'The Title label, marked optional. The title generates itself from the description and the server names the issue when it is blank, so its emptiness is a working state - which is worth saying next to a field that is now visibly required.',
   // ── THE UI OVERHAUL: the Improve panel ───────────────────────────
@@ -725,7 +734,7 @@ const ADDED_IDS = {
   // violet "Improve" pill, between the bell and the mark. The panel it opened
   // is reached from #app-menu-row-improve below; its glyph and both its dots
   // kept their ids and are listed here still, on the row and on the mark.
-  'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn.',
+  'improve-row-feedback': 'Opens the feedback dialog — the retired #feedback-btn. The Homeroom menu\'s one button since the UI overhaul, "Ask for a change".',
   'improve-quick-actions': 'The panel\'s three circular actions — Feedback, New change, Share — captioned beneath so three fit across a phone.',
   // #improve-version-dot is NOT here any more, and did not move: it is
   // retired. Amber while a build was deploying or downloading, violet once
@@ -736,7 +745,8 @@ const ADDED_IDS = {
   // it is. `Improve.setVersionState` and the store field stay; the second
   // renderer is what went. It never reached tests/baselines, so it leaves
   // this map without entering RETIRED_IDS.
-  'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change".',
+  'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change". Since the UI overhaul it is "Start a new change", the first row under Agent sessions in the Homeroom menu (#app-menu-sessions), not a button beside Ask for a change.',
+  'app-menu-sessions': 'UI overhaul: the Homeroom menu\'s Agent sessions section (it was "Continue"), rendered on the menu pane whether or not you have sessions, because it leads with "Start a new change" (#improve-row-new-session). Your sessions (#app-menu-continue) arrive after mount, inside it.',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
   // Your apps, Discover, Challenges, Create app — stacked, in that order.

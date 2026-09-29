@@ -1,4 +1,5 @@
-// The "Continue" rows under the platform mark (#2779 follow-up): your agent
+// The rows under "Agent sessions" in the Homeroom menu (#2779 follow-up; it
+// was "Continue" until the UI overhaul): your agent
 // sessions, so going back to one is a tap from anywhere. Pure, so tests can
 // read the rules without a browser.
 //
@@ -33,8 +34,8 @@ export interface ContinueAgentSession {
   status: string;
   lastActivityAt: string | null;
   createdAt?: string | null;
-  focusApp: { slug: string | null } | null;
-  activeChange: { appSlug: string | null; status: string | null; title: string | null } | null;
+  focusApp: { slug: string | null; name?: string | null } | null;
+  activeChange: { appSlug: string | null; appName?: string | null; status: string | null; title: string | null } | null;
   busy?: boolean;
   doneUnseen?: boolean;
 }
@@ -44,6 +45,12 @@ export interface ContinueRow {
   href: string;
   title: string;
   detail: string;
+  /**
+   * "Run Club · in progress": the app the work is on, then where it stands,
+   * the line under the title (UI overhaul). Where it stands alone when the
+   * session names no app yet.
+   */
+  sub: string;
   activity: AgentActivity;
 }
 
@@ -58,6 +65,18 @@ export const CONTINUE_MAX = 5;
 function time(value: string | null | undefined): number {
   const t = Date.parse(value || '');
   return Number.isFinite(t) ? t : 0;
+}
+
+/** The app a session's work is on: its change's, else the one it started from. */
+function agentApp(session: ContinueAgentSession): string | null {
+  return (session.activeChange && session.activeChange.appName)
+    || (session.focusApp && session.focusApp.name)
+    || null;
+}
+
+/** "Run Club · in progress", or "In progress" with no app to name. */
+export function agentSub(app: string | null, detail: string): string {
+  return app ? `${app} · ${detail.charAt(0).toLowerCase()}${detail.slice(1)}` : detail;
 }
 
 function agentDetail(session: ContinueAgentSession): string {
@@ -85,6 +104,7 @@ export function continueRows(
       href: `#messages/agent/${session.id}`,
       title: session.title || (session.activeChange && session.activeChange.title) || 'Agent session',
       detail: agentDetail(session),
+      sub: agentSub(agentApp(session), agentDetail(session)),
       activity: agentActivity(session),
     }));
   return { rows, more: current.length > shown.length };

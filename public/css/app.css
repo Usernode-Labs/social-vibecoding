@@ -16028,31 +16028,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-chip-warn { background: var(--state-attention-bg); color: var(--state-attention); }
 .dev-ws-chip-blocked { background: var(--state-blocked-bg); color: var(--state-blocked); }
 .dev-ws-chip-info { background: var(--accent-tint); color: var(--accent-wash-ink); }
-/* ── The Communities screen's two views (features/workshop/index.tsx) ──
-   Current status and Needs you switch the way a project's own page switches
-   Hub and Workshop: the raised track and the lit tab of `.dev-ws-tablist`
-   and `.dev-ws-tab` at their desktop size, at every width here, because
-   this strip shares a row with the All apps chip rather than spanning the
-   screen. The selected tab carries the marker's fill itself: two tabs, and
-   nothing to slide. */
-.workshop-scope-tabs {
-  display: inline-flex; align-items: center; gap: 2px;
-  padding: 2px; border-radius: 9999px;
-  background-color: var(--dc-sheet-raise);
-}
-.workshop-scope-tab {
-  display: inline-flex; align-items: center; justify-content: center;
-  height: 32px; padding: 0 16px; border: 0; border-radius: 9999px;
-  background: transparent; color: var(--text-muted);
-  font-size: 14px; font-weight: 600; white-space: nowrap; cursor: pointer;
-}
-.workshop-scope-tab-on {
-  background: var(--lit-tint); color: var(--lit-ink);
-  box-shadow: inset 0 0 0 1px var(--lit-line);
-}
-@media (hover: hover) {
-  .workshop-scope-tab:not(.workshop-scope-tab-on):hover { color: var(--text-primary); }
-}
+/* The Communities screen's two views (Current status | Needs you,
+   `.workshop-scope-tabs`) are gone with the UI overhaul: the list is the
+   page, and Needs you is a row at its top that opens the feed below. */
 /* ── The Communities screen's Needs you feed (#3270, workshop/needs-reel.tsx) ──
    One decision per screen, like a project's own Needs you page: the reel is
    its own scroller, a screen tall less the bars around it, and snaps a card
