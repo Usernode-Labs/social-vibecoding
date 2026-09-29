@@ -19,6 +19,7 @@ const { authMiddleware } = require('./src/middleware/auth');
 const { errorHandler } = require('./src/middleware/error-handler');
 const { explorerProxyRoutes } = require('./src/routes/explorer-proxy');
 const { githubWebhookRoutes } = require('./src/routes/github-webhook');
+const { mobileAppLinkRoutes } = require('./src/routes/mobile-app-links');
 const { authRoutes } = require('./src/routes/auth');
 const { illustrationRoutes, illustrationImageRoutes } = require('./src/routes/app-illustrations');
 const { challengeIllustrationImageRoutes } = require('./src/routes/topochain/challenge-illustrations');
@@ -187,6 +188,10 @@ app.use(responseCompression());
 // bearer, no parser, no route. See src/middleware/public-cors.js for why a
 // wildcard origin with no credentials is the safe shape for this prefix.
 app.use(publicApiCors());
+
+// OS domain verification is anonymous and must never reach login redirects
+// or the SPA/static fallback (which does not serve dot directories).
+app.use(mobileAppLinkRoutes());
 
 // Global CLI authentication has a hard staging/enablement gate before any
 // body parser, cookie lookup, bearer lookup, or static fallback. Public
