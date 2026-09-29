@@ -404,7 +404,7 @@ const SOON_TAG = 'shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400'
 
 /** The three audiences, in the order and the words the screen uses. */
 const WHO: ReadonlyArray<{ key: Audience; title: string; caption: string }> = [
-  { key: 'solo', title: 'Just me', caption: 'Only you can see it. Invite people or open it up later, from its page.' },
+  { key: 'solo', title: 'Just me', caption: 'Only you can see it. Invite people or make it public later, from its page.' },
   { key: 'invited', title: 'A private community', caption: 'Private to you and the people you invite.' },
   { key: 'open', title: 'A public community', caption: 'Anyone can find it, join and build.' },
 ];

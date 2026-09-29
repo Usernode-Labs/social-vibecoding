@@ -35,10 +35,12 @@
  *   page's DevPlusMenu) holds Ask for a change and the project's settings.
  *   This hero lists; it does not manage.
  *
- *   OPEN IT UP. Who a project is for can grow after it exists: Invite
- *   makes a Just-you project a private community, and "Open it up" makes
- *   it a public one (or "Make it private" takes a public community back).
- *   That is the
+ *   MAKE IT PUBLIC. Who a project is for can grow after it exists: Invite
+ *   makes a Just-you project a private community, and "Make it public" (it
+ *   was "Open it up") makes it a public one. Taking a public community back
+ *   is "Make it private", a row of the ⋯ rather than a button here
+ *   (confirmMakePrivate): narrowing who a project is for is a setting, not
+ *   an invitation, and the hero's row is for asking people in. That is the
  *   visibility change the settings dialog proposes, POST
  *   /api/apps/:slug/visibility-pr, offered to the same people the route
  *   lets open it (`can_manage`). It is a PROPOSAL, not a switch: dapp.json
@@ -257,7 +259,7 @@ export const HERO_FACES = 5;
 
 /**
  * The hero's people row (#3268): up to HERO_FACES faces, the member count,
- * and the actions (Invite, Open it up, ⋯) at its far end.
+ * and the actions (Invite, Make it public, ⋯) at its far end.
  */
 export function HeroPeople({ members, count, children }: {
   members: CommunityPayload['members'] | null | undefined;
@@ -420,14 +422,66 @@ export function HeroActivity({ activity }: { activity: CommunityPayload['activit
 }
 
 /**
- * "Open it up" / "Make it private": the audience change as a question under
- * its button, the Join popup's shape. The answer opens the visibility PR;
- * the hero then re-reads and shows it as up for a vote.
+ * Open the visibility proposal (POST /api/apps/:slug/visibility-pr) that
+ * makes a project public or private. A public community is public to use and
+ * to build; a private community is private to both, as the create dialog
+ * maps them. A 409 is one already up, which the hero shows either way, so it
+ * is not an error. Throws with words a person can read.
  */
-function AudienceChange({ slug, name, audience, onOpened }: {
+export async function proposeAudience(slug: string, to: 'public' | 'private'): Promise<void> {
+  const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/visibility-pr`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(to === 'private'
+      ? { collabVisibility: 'private', viewVisibility: 'private' }
+      : { collabVisibility: 'public', viewVisibility: 'public' }),
+  });
+  if (!res.ok && res.status !== 409) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error((body && body.error) || 'That did not go through. Try again.');
+  }
+}
+
+/** What making it private means, said before it is proposed. */
+export const MAKE_PRIVATE_LINE = 'Only people who are invited can see it and build it. '
+  + 'Members vote on this first, and it applies once it merges.';
+
+/**
+ * "Make it private", from the hub's ⋯ (../actions-row.tsx DevPlusMenu's
+ * `onMakePrivate`). It was a button in the hero beside Invite; it is a
+ * setting, so it lives with the settings. The same question the hero's
+ * popup asked, as the platform's confirm (the kit's alert, which a row of
+ * the touch action sheet can present, as App display name's prompt does),
+ * then the same proposal, then the hero re-reads and shows it up for a vote.
+ */
+export async function confirmMakePrivate(slug: string, name: string): Promise<void> {
+  const ui = (window as any).PlatformUI;
+  if (!ui || typeof ui.confirm !== 'function') return;
+  const ok = await ui.confirm({
+    title: `Make ${name} a private community?`,
+    message: MAKE_PRIVATE_LINE,
+    confirmLabel: 'Propose making it private',
+    cancelLabel: 'Not now',
+  });
+  if (!ok) return;
+  try {
+    await proposeAudience(slug, 'private');
+  } catch (err) {
+    ui.toast?.(err instanceof Error ? err.message : 'That did not go through. Try again.');
+    return;
+  }
+  await reloadCommunity(slug);
+}
+
+/**
+ * "Make it public" (it was "Open it up"): the audience change as a question
+ * under its button, the Join popup's shape. The answer opens the visibility
+ * PR; the hero then re-reads and shows it as up for a vote. Only this way
+ * round: "Make it private" is the ⋯'s (confirmMakePrivate, above).
+ */
+function MakePublic({ slug, name, onOpened }: {
   slug: string;
   name: string;
-  audience: Audience;
   onOpened: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -435,7 +489,6 @@ function AudienceChange({ slug, name, audience, onOpened }: {
   const [error, setError] = useState('');
   const btnRef = useRef<HTMLButtonElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
-  const toGroup = audience === 'open';
 
   useEffect(() => {
     if (!open) return undefined;
@@ -458,18 +511,7 @@ function AudienceChange({ slug, name, audience, onOpened }: {
     setBusy(true);
     setError('');
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/visibility-pr`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(toGroup
-          ? { collabVisibility: 'private', viewVisibility: 'private' }
-          : { collabVisibility: 'public', viewVisibility: 'public' }),
-      });
-      // 409: one is already up. Either way the answer is on the hero now.
-      if (!res.ok && res.status !== 409) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error((body && body.error) || 'That did not go through. Try again.');
-      }
+      await proposeAudience(slug, 'public');
       setOpen(false);
       onOpened();
     } catch (err) {
@@ -479,7 +521,6 @@ function AudienceChange({ slug, name, audience, onOpened }: {
     }
   };
 
-  const label = toGroup ? 'Make it private' : 'Open it up';
   return (
     <span className="dev-ws-join-anchor">
       <Button
@@ -488,26 +529,24 @@ function AudienceChange({ slug, name, audience, onOpened }: {
         variant="pillNeutral"
         size="sm"
         ink="neutral"
-        data-ws-community-audience-change={toGroup ? 'invited' : 'open'}
+        data-ws-community-audience-change="open"
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => { setError(''); setOpen((v) => !v); }}
       >
-        {label}
+        Make it public
       </Button>
       {open ? (
         <div
           ref={popRef}
           className="dev-ws-join-pop"
           role="dialog"
-          aria-label={toGroup ? `Make ${name} a private community?` : `Make ${name} a public community?`}
+          aria-label={`Make ${name} a public community?`}
           data-ws-audience-pop=""
         >
-          <p className="dev-ws-ask-q">{toGroup ? `Make ${name} a private community?` : `Make ${name} a public community?`}</p>
+          <p className="dev-ws-ask-q">{`Make ${name} a public community?`}</p>
           <p className="dev-ws-vote-sub">
-            {toGroup
-              ? 'Only people who are invited can see it and build it. Members vote on this first, and it applies once it merges.'
-              : 'Anyone can find it on Discover, join, and propose changes. Members vote on this first, and it applies once it merges.'}
+            Anyone can find it on Discover, join, and propose changes. Members vote on this first, and it applies once it merges.
           </p>
           {error ? <p className="dev-ws-audience-error" role="alert" data-ws-audience-error="">{error}</p> : null}
           <div className="dev-ws-answer-row">
@@ -519,7 +558,7 @@ function AudienceChange({ slug, name, audience, onOpened }: {
               disabled={busy}
               onClick={() => { void propose(); }}
             >
-              {toGroup ? 'Propose making it private' : 'Propose opening it up'}
+              Propose making it public
             </button>
           </div>
           <button type="button" className="dev-ws-vote-later" data-ws-audience-answer="later" onClick={() => setOpen(false)}>
@@ -529,6 +568,15 @@ function AudienceChange({ slug, name, audience, onOpened }: {
       ) : null}
     </span>
   );
+}
+
+/**
+ * Whether the hub's ⋯ offers "Make it private": a public community, to
+ * whoever may open the visibility proposal (`can_manage`, the route's own
+ * rule), while no change to who it is for is already up for a vote.
+ */
+export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_manage' | 'audience_change'> | null | undefined): boolean {
+  return !!data && data.audience === 'open' && !!data.can_manage && !data.audience_change;
 }
 
 export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp = false }: {
@@ -724,7 +772,8 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
     </Button>
   );
   // WHAT YOU CAN DO HERE, at the end of the members row: Open app (#3367),
-  // then Invite and "Open it up", then the ⋯. A project that is just yours
+  // then Invite and "Make it public" (a private community only: a public
+  // one's "Make it private" is a row of the ⋯), then the ⋯. A project that is just yours
   // grows from its Share it card at the foot of the hub instead (ShareItCard,
   // below), so its hero keeps Open app and the ⋯ alone.
   const actions = (
@@ -754,8 +803,8 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
           Invite
         </Button>
       ) : null}
-      {data.can_manage && !data.audience_change && !solo ? (
-        <AudienceChange slug={slug} name={displayName} audience={data.audience} onOpened={() => { void load(); }} />
+      {data.can_manage && !data.audience_change && data.audience === 'invited' ? (
+        <MakePublic slug={slug} name={displayName} onOpened={() => { void load(); }} />
       ) : null}
       {menu}
     </div>
@@ -808,7 +857,7 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
 /**
  * SHARE IT: how a project that is just yours grows, at the foot of its hub.
  * The same two levers the hero offers a community (Invite makes it a private
- * community; "Open it up" proposes making it public, voted in like any other
+ * community; "Make it public" proposes making it public, voted in like any other
  * line of dapp.json), gathered under one line that says what they do, since
  * on a project of one they are the whole of what there is to do with people.
  * Offered to exactly whom the hero would offer them; nothing when neither
@@ -825,7 +874,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">Share it</span>
       </div>
-      <p className="dev-ws-strip-text">Invite people to make it a private community, or open it up so anyone can join.</p>
+      <p className="dev-ws-strip-text">Invite people to make it a private community, or make it public so anyone can join.</p>
       <div className="dev-ws-share-actions">
         {canInvite ? (
           <Button
@@ -840,7 +889,7 @@ export function ShareItCard({ slug, name }: { slug: string; name?: string }) {
           </Button>
         ) : null}
         {canOpenUp ? (
-          <AudienceChange slug={slug} name={name || data.name || slug} audience={data.audience} onOpened={() => { void reloadCommunity(slug); }} />
+          <MakePublic slug={slug} name={name || data.name || slug} onOpened={() => { void reloadCommunity(slug); }} />
         ) : null}
       </div>
     </section>

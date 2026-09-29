@@ -240,9 +240,9 @@ is no replay plan to write and nothing to verify locally.
   off the app's `view_visibility` and its member/invite count. A second
   stored copy is one the visibility reconcile would have to remember. So a
   project GROWS by the same two levers: Invite makes Just you a Private
-  community, and the hero's "Open it up" / "Make it private" opens the
-  visibility PR (`POST /api/apps/:slug/visibility-pr`), which applies once
-  it merges.
+  community, and the hero's "Make it public" (or, on a public community,
+  "Make it private" in the hero's ⋯) opens the visibility PR
+  (`POST /api/apps/:slug/visibility-pr`), which applies once it merges.
 - **Communities and apps are one-to-one today.** A community with a single
   project is drawn as that project — its name, icon and page — and nothing
   should render a separate "community" layer for it. The table is bare on

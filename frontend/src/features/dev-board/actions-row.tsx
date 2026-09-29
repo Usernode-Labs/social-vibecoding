@@ -56,7 +56,7 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, EllipsisHorizontalIcon, GitHubIcon, KeyIcon, LightBulbIcon, PencilSquareIcon, UserGroupIcon,
+  AppWindowIcon, EllipsisHorizontalIcon, GitHubIcon, KeyIcon, LightBulbIcon, LockIcon, PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
 import { callAppView } from './card/fold';
@@ -81,6 +81,14 @@ export interface DevActionsRowProps {
    * one row of buttons. See `DevPlusMenu`.
    */
   inHero?: boolean;
+  /**
+   * "Make it private", the first of Settings & rules when the page passes
+   * it: a public community, to whoever may open the visibility proposal
+   * (workshop/community-card.tsx canMakePrivate / confirmMakePrivate). It
+   * was a button in the hub's hero; narrowing who a project is for is a
+   * setting, so it is a row here. Absent everywhere else.
+   */
+  onMakePrivate?: (() => void) | null;
 }
 
 /**
@@ -229,6 +237,7 @@ export function DevPlusMenu({
   canCollaborate,
   showsMembers,
   inHero = false,
+  onMakePrivate = null,
 }: DevActionsRowProps): ReactNode {
   const [editingIllustration, setEditingIllustration] = useState(false);
   useEffect(() => {
@@ -334,6 +343,17 @@ export function DevPlusMenu({
               groupKey="settings"
               divider={true}
             />
+            {onMakePrivate ? (
+              <PlusRow
+                data-plus="make-private"
+                icon={<LockIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+                title="Make it private"
+                sub="Only invited people can see it and build it. Members vote first"
+                // It renders after the menu was wired (once the community
+                // read answers), so it closes the menu itself.
+                onClick={() => { callAppView('_closePlusMenu'); onMakePrivate(); }}
+              />
+            ) : null}
             {typeof window !== 'undefined' && ((window.AppView?.appData?.can_manage && !selfHosted)
               || window.AppView?.appData?.can_delete
               || window.AppView?.appData?.delete_block === 'shared') ? <PlusRow

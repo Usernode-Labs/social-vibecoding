@@ -80,7 +80,7 @@ import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
-import { ApprovalRules, CommunityCard, ShareItCard, useCommunity } from './community-card';
+import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
 import { ChannelCard, NeedsCard, WorkshopDoor, YourWorkCard } from './hub-cards';
 import { SinceSummaryCard } from './since-summary-card';
@@ -3600,6 +3600,11 @@ export function DevWorkshop(): ReactNode {
               canCollaborate={actions.canCollaborate}
               showsMembers={actions.showsMembers}
               inHero
+              // A public community's "Make it private" is the ⋯'s, not a
+              // hero button (./community-card.tsx confirmMakePrivate).
+              onMakePrivate={canMakePrivate(community)
+                ? () => { void confirmMakePrivate(slug, app.name || community?.name || slug); }
+                : null}
             />
           )}
         />

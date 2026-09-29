@@ -2,8 +2,8 @@
 
 // The hub's details and the loose ends around it (communities, after #3261):
 //
-//   - who a project is for can grow from its page: "Open it up" / "Make it a
-//     group" on the hero opens the visibility proposal
+//   - who a project is for can grow from its page: "Make it public" on the
+//     hero, or "Make it private" in its ⋯, opens the visibility proposal
 //     (dev-board/workshop/community-card.tsx);
 //   - the hub's channel card posts from its own composer, Members & activity
 //     draws fourteen days, Needs you counts the votes you owe, and a person
@@ -89,9 +89,9 @@ test('#3268: the hero carries who is here and the fortnight, with the actions at
   const src = CARD_SRC;
   assert.match(src, /\{solo \? actions : \(\s*<HeroPeople members=\{data\.members\} count=\{Number\(data\.member_count\) \|\| 0\}>\s*\{actions\}\s*<\/HeroPeople>\s*\)\}\s*\{solo \? null : <HeroActivity activity=\{data\.activity\} \/>\}/);
   assert.ok(src.indexOf('data-ws-community-description') < src.indexOf('<HeroPeople members'), 'what it is, then who is here');
-  // Joined sits across from the name; Invite, Open it up and the ⋯ end the members row.
+  // Joined sits across from the name; Invite, Make it public and the ⋯ end the members row.
   assert.match(src, /<HeroId app=\{tileApp\} end=\{membership\}>/);
-  assert.match(src, /const actions = \(\s*<div className="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[\s\S]*?<AudienceChange[\s\S]*?\{menu\}\s*<\/div>/);
+  assert.match(src, /const actions = \(\s*<div className="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[\s\S]*?<MakePublic[\s\S]*?\{menu\}\s*<\/div>/);
   // How a change gets in is the Workshop page's Approval rules card now.
   const hero = src.slice(src.indexOf('export function CommunityCard('), src.indexOf('export function ApprovalRules('));
   assert.doesNotMatch(hero, /data-ws-community-rule/);
@@ -111,7 +111,7 @@ test('#3276: the people row wraps its actions instead of running past a phone\'s
   assert.match(rule('.dev-ws-hero-people'), /display: flex; flex-wrap: wrap;/);
   const actions = rule('.dev-ws-hero-people > .dev-ws-hero-actions');
   assert.match(actions, /flex-wrap: wrap;/);
-  // Still at the row's far end when they wrap: the Join and "Open it up"
+  // Still at the row's far end when they wrap: the Join and "Make it public"
   // popups hang from the right of their button.
   assert.match(actions, /margin-left: auto;/);
   assert.match(actions, /justify-content: flex-end;/);
@@ -169,22 +169,49 @@ test('a person who has not joined sees "Recently" over the same rows', () => {
   assert.doesNotMatch(LANDER, /outsider \? null/);
 });
 
-test('the hero offers Open it up or Make it private, as a proposal, to whoever may open one', () => {
-  const { audienceChangeLine } = loadTsx(CARD);
+test('Make it public is the hero\'s, Make it private is the ⋯\'s, and both are a proposal', () => {
+  const { audienceChangeLine, canMakePrivate } = loadTsx(CARD);
   assert.equal(audienceChangeLine('Make this app public'), 'Making it a public community is up for a vote');
   assert.equal(audienceChangeLine('Make this app private (collaborators only)'), 'Making it a private community is up for a vote');
   assert.equal(audienceChangeLine('Make this app invite-only build, public to view'), 'A change to who it is for is up for a vote');
   assert.equal(audienceChangeLine(null), 'A change to who it is for is up for a vote');
 
-  const change = CARD_SRC.slice(CARD_SRC.indexOf('function AudienceChange('), CARD_SRC.indexOf('export function CommunityCard('));
-  assert.match(change, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/visibility-pr`/);
-  assert.match(change, /\? \{ collabVisibility: 'private', viewVisibility: 'private' \}\s*: \{ collabVisibility: 'public', viewVisibility: 'public' \}/,
+  // One proposal for both directions.
+  const propose = CARD_SRC.slice(CARD_SRC.indexOf('export async function proposeAudience('), CARD_SRC.indexOf('export const MAKE_PRIVATE_LINE'));
+  assert.match(propose, /fetch\(`\/api\/apps\/\$\{encodeURIComponent\(slug\)\}\/visibility-pr`/);
+  assert.match(propose, /to === 'private'\s*\? \{ collabVisibility: 'private', viewVisibility: 'private' \}\s*: \{ collabVisibility: 'public', viewVisibility: 'public' \}/,
     'a public community is public to use and to build; a private community is private to both, as the create dialog maps them');
-  assert.match(change, /if \(!res\.ok && res\.status !== 409\)/, 'one already up is not an error: the hero shows it');
-  assert.match(change, /Members vote on this first, and it applies once it merges\./, 'it says it is a proposal, not a switch');
-  // A project that is just yours offers it on its Share it card instead.
-  assert.match(CARD_SRC, /\{data\.can_manage && !data\.audience_change && !solo \? \(\s*<AudienceChange /);
-  assert.match(CARD_SRC, /\{canOpenUp \? \(\s*<AudienceChange /);
+  assert.match(propose, /if \(!res\.ok && res\.status !== 409\)/, 'one already up is not an error: the hero shows it');
+
+  // MAKE IT PUBLIC (it was "Open it up"): a button, on a private community's
+  // hero and a just-yours project's Share it card, asking under itself.
+  const pub = CARD_SRC.slice(CARD_SRC.indexOf('function MakePublic('), CARD_SRC.indexOf('export function canMakePrivate('));
+  assert.match(pub, />\s*Make it public\s*</);
+  assert.match(pub, /await proposeAudience\(slug, 'public'\);/);
+  assert.match(pub, /Members vote on this first, and it applies once it merges\./, 'it says it is a proposal, not a switch');
+  assert.doesNotMatch(CARD_SRC, /Open it up'|>Open it up<|opening it up/i, 'the old words are gone from what is drawn');
+  assert.match(CARD_SRC, /\{data\.can_manage && !data\.audience_change && data\.audience === 'invited' \? \(\s*<MakePublic /);
+  assert.match(CARD_SRC, /\{canOpenUp \? \(\s*<MakePublic /);
+  assert.match(CARD_SRC, /or make it public so anyone can join\./);
+
+  // MAKE IT PRIVATE: not a hero button, a row of the ⋯, for a public
+  // community, to whoever may open the proposal, while none is up.
+  assert.equal(canMakePrivate({ audience: 'open', can_manage: true, audience_change: null }), true);
+  assert.equal(canMakePrivate({ audience: 'invited', can_manage: true, audience_change: null }), false);
+  assert.equal(canMakePrivate({ audience: 'open', can_manage: false, audience_change: null }), false);
+  assert.equal(canMakePrivate({ audience: 'open', can_manage: true, audience_change: { session_id: 4 } }), false);
+  assert.equal(canMakePrivate(null), false);
+  const priv = CARD_SRC.slice(CARD_SRC.indexOf('export async function confirmMakePrivate('), CARD_SRC.indexOf('function MakePublic('));
+  assert.match(priv, /ui\.confirm\(\{\s*title: `Make \$\{name\} a private community\?`,\s*message: MAKE_PRIVATE_LINE,\s*confirmLabel: 'Propose making it private',/);
+  assert.match(priv, /if \(!ok\) return;\s*try \{\s*await proposeAudience\(slug, 'private'\);/);
+  assert.match(priv, /await reloadCommunity\(slug\);/, 'and the hero shows it up for a vote');
+  const menu = read('frontend/src/features/dev-board/actions-row.tsx');
+  assert.match(menu, /\{onMakePrivate \? \(\s*<PlusRow\s+data-plus="make-private"[\s\S]{0,120}title="Make it private"[\s\S]{0,300}onClick=\{\(\) => \{ callAppView\('_closePlusMenu'\); onMakePrivate\(\); \}\}/);
+  assert.ok(menu.indexOf('data-plus="make-private"') > menu.indexOf('label="Settings &amp; rules"'), 'the first of Settings & rules');
+  assert.match(read('frontend/src/features/dev-board/workshop/workshop.tsx'), /onMakePrivate=\{canMakePrivate\(community\)\s*\? \(\) => \{ void confirmMakePrivate\(slug, app\.name \|\| community\?\.name \|\| slug\); \}\s*: null\}/);
+  // The row appears once the read answers, after the menu was wired, so it
+  // closes the menu through the close the wiring publishes.
+  assert.match(read('public/js/app-view.js'), /AppView\._closePlusMenu = close;/);
   assert.match(CARD_SRC, /href=\{`#app\/\$\{encodeURIComponent\(slug\)\}\/dev\/proposals\/\$\{data\.audience_change\.session_id\}`\}/);
   // The server offers it to exactly whom POST /visibility-pr accepts.
   const route = read('src/routes/apps.js');
