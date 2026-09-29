@@ -1,9 +1,6 @@
 /**
  * #platform-mark-btn — the Homeroom mark, and the menu behind it.
  *
- * The button now draws a sparkle glyph where the "H" brand tile was (see
- * the comment above the glyph); the id and the argument below still hold.
- *
  * ── What it replaces, and why the chip could not keep the job ──────────
  *
  * #1443's charter put one control at the top-left of every screen: the
@@ -63,7 +60,7 @@
 
 import { useRef } from 'react';
 
-import { ChevronDownIcon, SparklesIcon, SpinnerRingIcon } from '@/components/ui/icons';
+import { ChevronDownIcon, SpinnerRingIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -154,23 +151,33 @@ export function PlatformMark() {
       }).AppContext?.toggle?.()}
     >
       {/*
-          A sparkle, not the "H" tile it replaced: what this menu leads with
-          is making the app better (Give feedback, the Improve row, a new
-          change), and the sparkle is the icon that job already wears
-          elsewhere in the shell. Same 26px box the raster occupied, so the
-          #909 row height and the two corner dots below are unchanged.
+          `alt=""` and aria-hidden: the button's aria-label above is the only
+          producer of this control's accessible name, exactly as the chevron
+          below. A named image here would be read twice.
 
-          aria-hidden: the button's aria-label above is the only producer of
-          this control's accessible name, exactly as the chevron below.
+          NO `loading="lazy"`. It is in the first screenful on every route,
+          and a lazy header logo is a hole at the top of a cold paint.
 
-          It takes the bar's brand ink from the button (`currentColor`) and
-          stays unframed, so it still differs in KIND from the framed bell
-          beside it rather than reading as one segmented control with it.
+          The rounded corner is the artwork's own — the file is a squircle
+          tile with its own radius — so `rounded-[7px]` here only clips the
+          box, it does not invent a shape. The hairline is what keeps a
+          near-black tile from disappearing into the dark bar behind it, and
+          it is the same inset hairline .app-icon-tile draws for the same
+          reason one screen down.
+
+          The artwork is unframed, so it still differs in KIND from the
+          framed bell beside it rather than reading as one segmented control
+          with it.
       */}
       <span className="relative shrink-0 inline-flex">
-        <SparklesIcon
-          className="platform-mark-glyph w-[26px] h-[26px] shrink-0"
+        <img
+          src="/brand/homeroom-mark.png"
+          alt=""
           aria-hidden="true"
+          draggable="false"
+          width={26}
+          height={26}
+          className="platform-mark-tile w-[26px] h-[26px] rounded-[7px] shrink-0"
         />
         {/* Bottom-LEFT: an unsent feedback draft, waiting for a connection. */}
         <span

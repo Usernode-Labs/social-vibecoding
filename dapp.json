@@ -5135,9 +5135,9 @@
       "expectText": "\"observabilityUrl\":\"https://"
     },
     {
-      "name": "The menu button is a sparkle, unframed beside the framed bell (#2718)",
+      "name": "The mark is the header's menu button, unframed beside the framed bell (#2718)",
       "path": "/?demo=1",
-      "expectSelector": "#platform-header #notifications-btn ~ #platform-mark-btn svg.platform-mark-glyph"
+      "expectSelector": "#platform-header #notifications-btn ~ #platform-mark-btn img.platform-mark-tile"
     },
     {
       "name": "About is the menu's second pane: the repository, sharing, the version (#2718)",
