@@ -319,7 +319,7 @@ export function HeroActivity({ activity }: { activity: CommunityPayload['activit
 }
 
 /**
- * "Open it up" / "Make it a group": the audience change as a question under
+ * "Open it up" / "Make it private": the audience change as a question under
  * its button, the Join popup's shape. The answer opens the visibility PR;
  * the hero then re-reads and shows it as up for a vote.
  */
@@ -544,8 +544,8 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji }: {
   const displayName = name || data.name || slug;
   const tileApp = { slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
 
-  // Who it is for, and who is here (#3268). A Community or a Group puts its
-  // people and its fortnight in the hero, where the page starts, instead of
+  // Who it is for, and who is here (#3268). A public or a private community
+  // puts its people and its fortnight in the hero, where the page starts, instead of
   // in a card fourth down the hub: the faces and the count lead the row the
   // actions end, and the activity line under it carries the 14-day trend.
   // Just you has nobody else to count, so its hero is as it was.

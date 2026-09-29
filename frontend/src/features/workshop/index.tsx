@@ -620,8 +620,9 @@ function RowSkeletons(): ReactNode {
  *
  * `SectionHeader` over `GroupedList` — the language's label-over-card shape,
  * the same pair Discover's tiers use. The header carries the count of the
- * whole section, not of the rows showing, so "Groups 5" over three rows is
- * what tells you there are two more before you find the button.
+ * whole section, not of the rows showing, so "Private communities 5" over
+ * three rows is what tells you there are two more before you find the
+ * button.
  *
  * THE FOLD IS A ROW OF THE CARD, not a link under it: the language's "Show
  * more" (Messages' channels, Discover's tiers) is the last row of the group it

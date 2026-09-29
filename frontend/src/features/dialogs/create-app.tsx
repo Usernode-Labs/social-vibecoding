@@ -8,19 +8,20 @@
  * agreed as a clickable mock first) turned each question into a step of its
  * own and moved "how do you want to start" to the end:
  *
- *   who      Just me, A group, or A community: the audiences
- *            services/communities.js derives (`solo`, `invited`, `open`), in
- *            the words the Workshop tab heads its sections with.
- *   invite   a group only: who is in it, one row per person. A @username is
- *            picked from GET /api/users/search; an email address becomes a
- *            row that says "Will invite" (services/email-invites.js sends it
- *            and turns it into a project invite when that person signs up).
+ *   who      Just me, A private community, or A public community: the
+ *            audiences services/communities.js derives (`solo`, `invited`,
+ *            `open`), in the words the Workshop tab heads its sections with.
+ *   invite   a private community only: who is in it, one row per person. A
+ *            @username is picked from GET /api/users/search; an email
+ *            address becomes a row that says "Will invite"
+ *            (services/email-invites.js sends it and turns it into a project
+ *            invite when that person signs up).
  *   kind     what you are making: App, with Document and Video there, dimmed,
  *            saying Soon.
  *   details  the name, and the optional one line about what it is.
  *   approve  who approves changes: members vote, or people you pick (starting
  *            with you), with "at least N yes votes" as a follow-up under the
- *            second. A group or a community only.
+ *            second. A private or a public community only.
  *   start    how to begin: from scratch, from a template (Soon), or from a
  *            GitHub repo, whose check opens under its row. The check also
  *            reads the repo's dapp.json, and a notice names each earlier
@@ -141,20 +142,20 @@ type Approvals = 'majority' | 'atLeast';
  */
 type Step = 'who' | 'invite' | 'kind' | 'details' | 'approve' | 'start';
 
-/** One person a group is created with: a Homeroom account, or an address. */
+/** One person a private community is created with: an account, or an address. */
 export type Invitee =
   | { kind: 'user'; username: string; friend?: boolean }
   | { kind: 'email'; email: string };
 
-/** The most people a group is created with (services/create-options.js). */
+/** The most people a private community is created with (services/create-options.js). */
 export const MAX_INVITEES = 20;
 
 /** An address worth offering as a "Will invite" row. The server checks again. */
 export const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 
 /**
- * The steps a given set of answers walks. A group names its people; a group
- * or a community says who approves changes; how to begin comes last for
+ * The steps a given set of answers walks. A private community names its
+ * people; a private or a public community says who approves changes; how to begin comes last for
  * everyone. An unanswered audience counts as Just me, so the indicator reads
  * "Step 1 of 4" before anything is chosen. Exported and pure: the
  * indicator's "of N" and the footer's Next-or-Create both read it.
@@ -206,7 +207,7 @@ function visibilityWords(v: NonNullable<RepoManifest['visibility']>): string {
  * (the name, visibility and governance reconciles in
  * services/app-manifest.js, and the description every surface reads). Only
  * real differences: a repo that keeps a project private does not clash with
- * "A group". Exported and pure for tests/create-app-steps.test.js.
+ * "A private community". Exported and pure for tests/create-app-steps.test.js.
  */
 export function repoOverrides(manifest: RepoManifest | null, answers: {
   name: string;
@@ -227,7 +228,8 @@ export function repoOverrides(manifest: RepoManifest | null, answers: {
     out.push({ key: 'desc', label: 'What it is', repo: manifest.description, yours: description || 'left blank' });
   }
   // An audience is a pair of visibilities (communities.visibilityForAudience):
-  // a community is public to see and to build, Just me and a group private.
+  // a public community is public to see and to build, Just me and a private
+  // community private.
   // A repo that sets either axis the other way changes who it is for.
   const v = manifest.visibility;
   if (v && answers.audience) {
@@ -314,10 +316,10 @@ interface ShotState {
  * declared checks and for screenshots. Display only, read once on open, and
  * never on the prerender pass (no `location` there).
  *
- *   create-group    A group chosen, on the invite step
+ *   create-group    A private community chosen, on the invite step
  *   create-details  Just me, an app, on the name step
- *   create-approve  A community, on the approval step
- *   create-start    A community, on the last step, nothing picked yet
+ *   create-approve  A public community, on the approval step
+ *   create-start    A public community, on the last step, nothing picked yet
  *   create-import   the last step, importing
  *
  * `create-access`, an older link, lands on `create-approve`.
@@ -748,7 +750,7 @@ export function CreateAppDialog() {
     },
     // Reset the form, clear the error, and put every answer back to empty
     // so the next open never inherits the last one's half-finished import
-    // or group.
+    // or private community's invitees.
     onClose: () => {
       formRef.current?.reset();
       setError('');
@@ -992,7 +994,7 @@ export function CreateAppDialog() {
   }
 
   const stepIndex = Math.max(0, steps.indexOf(step)) + 1;
-  // A step's number follows the answers so far: a group has one more.
+  // A step's number follows the answers so far: a private community has one more.
   const numberOf = (which: Step) => stepsFor(audience ?? 'open').indexOf(which) + 1;
   // The card and the root carry every answer, like data-mode always has:
   // the kit lifts the card out of the root while presented, so CSS keyed on
