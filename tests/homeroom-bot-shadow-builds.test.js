@@ -122,7 +122,8 @@ test('propose: false builds and pushes, then puts the session away: no proposal,
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS, propose: false });
   assert.deepEqual(out, {
     ok: true, sessionId: 6001, branchName: 'dev/homeroom_bot-s6001', sha: 'c'.repeat(40), commits: 2, costUsd: 0.04,
-  });
+    specNote: 'no spec (the spec turn returned nothing); the build worked from the plan',
+  }, 'this harness writes no spec, and the result says so');
   assert.deepEqual(h.calls.promoted, [], 'never promoted');
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
   assert.equal(insert.params[2], null, 'no issue: no board reads it as work under way on #12');

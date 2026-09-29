@@ -276,6 +276,9 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // THE GRID left this list again with #3051. #2759 had put it behind state
     // when the all-apps Workshop's scope chip went; the owner brought that
     // chip back as "All apps", and it draws the grid unconditionally.
+    // DescriptionIcon: the Needs-you rail's Description, client-rendered
+    // with the rest of that rail.
+    'M4 6h16M4 12h16M4 18h10',
     'M4 6h16M4 12h16M4 18h16',
     'M4.5 12.75l6 6 9-13.5',
     'M5 13l4 4L19 7',

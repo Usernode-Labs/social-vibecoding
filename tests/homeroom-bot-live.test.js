@@ -499,7 +499,10 @@ const BUILD_ARGS = {
 test('a ready request is built in a session of its own and proposed', async () => {
   const h = buildHarness();
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
-  assert.deepEqual(out, { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.05 });
+  assert.deepEqual(out, {
+    ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.05,
+    specNote: 'no spec (the spec turn returned nothing); the build worked from the plan',
+  }, 'this harness writes no spec, and the result says so');
 
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
   assert.match(insert.sql, /ELSE ARRAY\[\$3::int\] END, TRUE/, 'the issue is linked, so the PR says Closes #12');
