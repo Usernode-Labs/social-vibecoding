@@ -6,7 +6,7 @@
 //
 // The builds run in a lane of their own, beside triage: a ready verdict only
 // queues its build, and the lane drains the queue `buildConcurrency` at a
-// time, one per app. tests/homeroom-bot-build-lane-postgres.test.js runs the
+// time, shared between apps in turns. tests/homeroom-bot-build-lane-postgres.test.js runs the
 // lane's SQL against the real schema; this file pins the rest with stubs.
 //
 // Run with: node --test tests/homeroom-bot-shadow-builds.test.js
@@ -429,13 +429,16 @@ test('the lane idles when shadow builds are off, and on the weekly cap', async (
   assert.equal(seen.some((q) => /WITH building AS/.test(q.s)), false, 'nothing is claimed that cannot be paid for');
 });
 
-test('the claim takes one build per app, oldest first, skipping paused apps and apps already building', () => {
+test('the claim deals the free slots to apps in turns, oldest first, skipping paused apps', () => {
   const src = read('src/services/homeroom-bot.js');
   const sql = src.slice(src.indexOf('const CLAIM_BUILDS_SQL'), src.indexOf('RETURNING r.id, r.app_id, r.issue_number, r.build_note'));
-  assert.match(sql, /SELECT DISTINCT ON \(r\.app_id\)/, 'one per app');
-  assert.match(sql, /r\.app_id NOT IN \(SELECT app_id FROM building\)/, 'none for an app already building');
+  assert.match(sql, /SELECT app_id, COUNT\(\*\)::int AS n FROM homeroom_bot_runs/, 'builds under way are counted per app');
+  assert.match(sql, /COALESCE\(b\.n, 0\)\s*\+ ROW_NUMBER\(\) OVER \(PARTITION BY r\.app_id ORDER BY r\.build_queued_at, r\.id\) AS turn/,
+    'an app\'s queued builds take turns after the ones it already has under way');
+  assert.doesNotMatch(sql, /NOT IN \(SELECT app_id FROM building\)/, 'an app already building can still fill an idle slot');
+  assert.doesNotMatch(sql, /DISTINCT ON/, 'an app alone in the queue is not held to one slot');
   assert.match(sql, /NOT \(a\.slug = ANY\(\$2::text\[\]\)\)/, 'paused apps wait');
-  assert.match(sql, /ORDER BY build_queued_at, id LIMIT \$1/, 'oldest first, the free slots only');
+  assert.match(sql, /ORDER BY turn, build_queued_at, id LIMIT \$1/, 'turn first, then oldest, the free slots only');
   assert.match(sql, /WHERE r\.id = picked\.id AND r\.build_at IS NULL/, 'the UPDATE is the claim');
 });
 
