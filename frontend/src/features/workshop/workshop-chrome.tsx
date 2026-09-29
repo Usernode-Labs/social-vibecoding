@@ -54,15 +54,23 @@ import {
 } from '@/components/ui/icons';
 
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { SectionHeader } from '@/components/ui/grouped-list';
 import { focusFirstItem, roveMenuFocus } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { APP_SCOPE_PANEL_ID, appScopeStore } from './app-scope-store.js';
+import {
+  groupRows, SECTION_LIMIT, sectionFold, type WorkshopRow,
+} from './grouping.js';
 
 type PickerApp = {
   slug: string;
   name?: string;
   icon_url?: string | null;
   icon_emoji?: string | null;
+  audience?: string;
+  member_count?: number;
+  last_active_at?: string | null;
+  demo?: boolean;
 };
 
 const win = () => window as unknown as {
@@ -181,11 +189,80 @@ function PanelRow({ id, leading, title, detail, trailing, onClick }: {
 }
 
 /**
+ * One section of the all-apps panel: its label with the count of the whole
+ * group, its most recent rows, and the fold row that extends it.
+ *
+ * The same shape the Workshop screen's `Section` draws, dressed for the
+ * menu: the label is the screen's own `SectionHeader` (small caps, with the
+ * count of the whole section on its right), and the fold is a `PanelRow` —
+ * the panel's row is a button with `role="menuitem"`, so the arrows and the
+ * Escape contract the panel already carries (QA 2026-09-24 Q18) reach the
+ * rows it reveals.
+ */
+function PickerSection({ label, rows, scope, onClose }: {
+  label: string;
+  rows: WorkshopRow[];
+  scope: PickerApp | null;
+  onClose: () => void;
+}) {
+  const [limit, setLimit] = useState(SECTION_LIMIT);
+  const fold = sectionFold(rows.length, limit);
+  const shown = rows.slice(0, fold.shown);
+  return (
+    <>
+      {/* Tighter than the screen's `pt-6`, which separates a section from a
+          whole page above it; inside the panel the header follows a row. */}
+      <SectionHeader className="flex items-center gap-1.5 pt-2">
+        <span>{label}</span>
+        <span className="ml-auto tabular-nums" aria-label={`${rows.length} in ${label}`}>{rows.length}</span>
+      </SectionHeader>
+      {shown.map((app) => (
+        <PanelRow
+          key={app.slug}
+          leading={(
+            <span
+              data-icon={appIconKind(app as never)}
+              className="app-icon-tile w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center text-sm font-bold"
+            >
+              <AppIconContent app={app as never} />
+            </span>
+          )}
+          title={app.name || app.slug}
+          trailing={scope?.slug === app.slug
+            ? <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            : undefined}
+          onClick={() => {
+            onClose();
+            if (scope?.slug === app.slug) return;
+            void goToApp(app.slug);
+          }}
+        />
+      ))}
+      {rows.length > SECTION_LIMIT ? (
+        <PanelRow
+          title={fold.label || ''}
+          onClick={() => setLimit(fold.next)}
+        />
+      ) : null}
+    </>
+  );
+}
+
+/**
  * The scope chip's panel: which workshop you are looking at.
  *
  * All apps first, then each of your apps, the one on screen carrying the
  * tick. On the all-apps screen (`scope: null`) the tick is on All apps and
  * that row only closes the panel, for the reason an app's own row does below.
+ *
+ * #3363: THE ALL-APPS PANEL MATCHES THE COMMUNITIES SCREEN's LIST. The same
+ * grouping module the screen draws (`./grouping.ts`) splits the rows into
+ * Public communities / Private communities / Just you, most recently active
+ * first, and each section shows three with a "Show N more" fold row that
+ * reveals five a press and folds back to "Show fewer" — the screen's own
+ * rhythm, copied so the menu and the page agree about what "all" means.
+ * The panel inside ONE app's Workshop stays flat: there the panel is the
+ * way into another app, not a survey of all of them.
  */
 export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
   apps: PickerApp[] | null;
@@ -197,6 +274,7 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
   panelRef?: RefObject<HTMLDivElement | null>;
 }) {
   const rows = apps || [];
+  const sections = scope === null ? groupRows(rows as WorkshopRow[]) : null;
 
   return (
     <div
@@ -230,7 +308,17 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
           goToAllApps();
         }}
       />
-      {rows.map((app) => (
+      {sections ? (
+        sections.map((section) => (
+          <PickerSection
+            key={section.key}
+            label={section.label}
+            rows={section.rows}
+            scope={scope}
+            onClose={onClose}
+          />
+        ))
+      ) : rows.map((app) => (
         <PanelRow
           key={app.slug}
           leading={(

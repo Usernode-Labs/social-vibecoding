@@ -173,6 +173,53 @@ test('#3051: the all-apps screen wears the All apps chip again (reverses #2759)'
   assert.doesNotMatch(SCREEN, /<p className="px-4 pt-1 pb-2 flex flex-wrap/);
 });
 
+test('#3363: the all-apps panel groups like the Communities screen; the app panel stays flat', () => {
+  // The same grouping module the screen draws splits the panel's rows into
+  // the screen's three sections, most recently active first, with the
+  // screen's three-then-five-then-fewer fold.
+  const rows = [
+    { slug: 'a-open-1', name: 'Open 1', working: 0, needs: 0, audience: 'open' },
+    { slug: 'a-open-2', name: 'Open 2', working: 0, needs: 0, audience: 'open' },
+    { slug: 'a-open-3', name: 'Open 3', working: 0, needs: 0, audience: 'open' },
+    { slug: 'a-open-4', name: 'Open 4', working: 0, needs: 0, audience: 'open' },
+    { slug: 'a-open-5', name: 'Open 5', working: 0, needs: 0, audience: 'open' },
+    { slug: 'b-invited-1', name: 'Private 1', working: 0, needs: 0, audience: 'invited' },
+    { slug: 'b-invited-2', name: 'Private 2', working: 0, needs: 0, audience: 'invited' },
+    { slug: 'c-solo-1', name: 'Mine 1', working: 0, needs: 0, audience: 'solo' },
+  ];
+
+  // THE ALL-APPS PANEL: three sections in the screen's order, each with its
+  // count, and the fold row on the section that holds more than three.
+  const panel = renderToHtml(createElement(chrome.WorkshopPicker, {
+    id: 'workshop-scope-picker', scope: null, onClose: () => {},
+    apps: rows,
+  }));
+  const at = (s) => panel.indexOf(s);
+  const openAt = at('Public communities');
+  const invAt = at('Private communities');
+  const soloAt = at('Just you');
+  assert.ok(openAt >= 0 && invAt > openAt && soloAt > invAt,
+    'the three sections are drawn in the screen\'s order');
+  assert.match(panel, /aria-label="5 in Public communities"/, 'the header counts the whole section');
+  assert.match(panel, /aria-label="2 in Private communities"/);
+  assert.match(panel, /aria-label="1 in Just you"/);
+  // Only three of the public section's five are out; the fold row says how
+  // many are hidden and reveals five a press.
+  assert.ok(panel.includes('Open 3') && !panel.includes('Open 4'),
+    'three rows are out before the fold');
+  assert.match(panel, />Show 2 more</, 'the fold says how many are hidden');
+  // The app-workshop panel on the same rows draws NO section headers and
+  // shows every row: the panel inside one app stays flat.
+  const flat = renderToHtml(createElement(chrome.WorkshopPicker, {
+    id: 'dev-ws-scope-chip-picker', scope: { slug: 'a-open-1' }, onClose: () => {},
+    apps: rows,
+  }));
+  assert.ok(!flat.includes('Public communities'), 'no section headers on the app panel');
+  assert.ok(flat.includes('Open 4') && flat.includes('Open 5') && flat.includes('Mine 1'),
+    'every app is drawn, in the order given');
+  assert.ok(!flat.includes('Show 2 more'), 'and no fold row either');
+});
+
 // ── The same panel, scoped to one app (#2718 review, #3295) ───────────
 //
 // On an app's own Workshop the control is the HEADER's tile and name, at
