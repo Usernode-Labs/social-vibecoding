@@ -5672,7 +5672,7 @@ const App = {
       App._showOnlyScreen('profile-proposals-screen');
       App._enterScreenChrome();
       App.setHeaderTitle(App.PROFILE_WORK_TITLES[view]);
-    }, { type: switching ? 'none' : App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+    }, { type: App._entryTransition(switching || fromIframe ? 'none' : 'push', screen) });
   },
 
   // State-only (#979) — see _exitLeaderboard.
