@@ -82,7 +82,7 @@ import { describe as describeCommunity } from '../../workshop/community-scope';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
 import { ChannelCard, NeedsCard, NothingToVote, owesVote, YourWorkCard } from './hub-cards';
-import { ProjectDiscussion } from './project-discussion';
+import { discussionElsewhere, openDiscussionElsewhere, ProjectDiscussion } from './project-discussion';
 import { ProjectBand, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
 import { PageBack } from './page-back';
@@ -3219,6 +3219,11 @@ export function DevWorkshop(): ReactNode {
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
   // from a door lower down should start at its own head.
   const openTab = (next: TabKey) => {
+    // Homeroom's Discussion is #general, a room of Messages: the tab and the
+    // hub card's doors go there rather than turning the page
+    // (./project-discussion.tsx).
+    const elsewhere = next === 'discussion' ? discussionElsewhere(community) : null;
+    if (elsewhere) { openDiscussionElsewhere(elsewhere); return; }
     setTab(next);
     callAppView('_setWorkshopTab', next);
     try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }

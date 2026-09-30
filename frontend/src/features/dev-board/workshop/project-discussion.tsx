@@ -23,16 +23,48 @@
  *
  * Its channel is #general, which is a conversation of the Messages store
  * rather than an app chat, and has no pane that can be mounted elsewhere
- * (the general chat's ids are global, and Messages owns that one). So its
- * Discussion tab is the channel card in full, composer and all, with the way
- * to the room itself. So is any project whose channel the viewer may not
- * read.
+ * (the thread reads Messages' one route, and its composer's ids are global).
+ * So its Discussion tab IS that conversation: pressing it opens #general in
+ * Messages, whose back goes to this hub (#3407) (#852 review: it was the
+ * hub's channel card, composer and all, which read as a preview rather than
+ * the room). `discussionElsewhere` says where, for the page's tab and the hub
+ * card's doors.
+ *
+ * A COLD `?ws=discussion` IS A DOOR, NOT A FORWARD. Forwarding from a deep
+ * link raced the router's own "back to where the app was opened from" on a
+ * fresh load (measured: a phone landed on Home), and forwarding by a pushed
+ * entry would leave the `ws=discussion` address under it, so Back would
+ * forward again. The tab press is the one path that goes straight there.
  */
 
 import { useEffect, useRef, type ReactNode } from 'react';
 
 import type { CommunityPayload } from './community-card';
-import { ChannelCard } from './hub-cards';
+import { callAppView } from '../card/fold';
+
+type Channel = NonNullable<CommunityPayload['channel']>;
+
+/** A channel this page can mount: an app's own, addressed in Messages' app threads. */
+function embeddable(channel: Channel | null): boolean {
+  return !!channel && channel.handle !== 'general'
+    && (!channel.href || channel.href.startsWith('#messages/app/'));
+}
+
+/**
+ * Where the discussion is when it cannot be mounted here: #general's address
+ * in Messages (`#messages/<id>`). Null for a channel the page mounts itself,
+ * and for none.
+ */
+export function discussionElsewhere(data: CommunityPayload | null | undefined): string | null {
+  const channel = data?.channel || null;
+  return channel && !embeddable(channel) && channel.href ? channel.href : null;
+}
+
+/** Go to the discussion's own room; the page reopens on its hub after. */
+export function openDiscussionElsewhere(href: string): void {
+  callAppView('_setWorkshopTab', 'status');
+  try { window.location.hash = href; } catch { /* no window */ }
+}
 
 export function ProjectDiscussion({ slug, name, data }: {
   slug: string;
@@ -41,14 +73,13 @@ export function ProjectDiscussion({ slug, name, data }: {
 }): ReactNode {
   const host = useRef<HTMLDivElement | null>(null);
   const channel = data?.channel || null;
-  // #general, or no channel to mount: the card, whole.
-  const embeddable = !!channel && channel.handle !== 'general'
-    && (!channel.href || channel.href.startsWith('#messages/app/'));
+  const mountable = embeddable(channel);
+  const elsewhere = discussionElsewhere(data);
   const readOnly = !channel?.post_url;
 
   useEffect(() => {
     const el = host.current;
-    if (!el || !embeddable) return undefined;
+    if (!el || !mountable) return undefined;
     const view = (window as any).AppView;
     const chat = (window as any).UsernodeReact?.groupChat;
     let live = true;
@@ -65,13 +96,30 @@ export function ProjectDiscussion({ slug, name, data }: {
       chat?.unmountGeneralChat?.(el);
       (window as any).GroupChat?.releaseUnreadHold?.(slug);
     };
-  }, [slug, name, readOnly, embeddable]);
+  }, [slug, name, readOnly, mountable]);
 
   if (!data) return null;
-  if (!embeddable) {
-    return channel
-      ? <ChannelCard slug={slug} name={name} data={data} />
-      : <p className="dev-ws-week-note" data-ws-discussion-none="">This project has no discussion you can read.</p>;
+  if (elsewhere) {
+    const handle = channel?.handle || 'general';
+    return (
+      <section className="dev-ws-strip" data-ws-discussion-elsewhere="">
+        <div className="dev-ws-head">
+          <span className="dev-ws-head-title">{`#${handle}`}</span>
+        </div>
+        <p className="dev-ws-week-note">{`${name}'s discussion is #${handle}, in Messages.`}</p>
+        <button
+          type="button"
+          className="dev-ws-hub-open un-touch-target"
+          data-ws-discussion-open=""
+          onClick={() => openDiscussionElsewhere(elsewhere)}
+        >
+          {`Open #${handle}`}
+        </button>
+      </section>
+    );
+  }
+  if (!mountable) {
+    return <p className="dev-ws-week-note" data-ws-discussion-none="">This project has no discussion you can read.</p>;
   }
   return (
     <section className="dev-ws-discussion" data-ws-discussion="" aria-label={`${name} discussion`}>

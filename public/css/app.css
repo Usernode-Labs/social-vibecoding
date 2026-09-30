@@ -15594,7 +15594,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    scroller they scroll in, and `.dev-ws-tabbody` is not a scroller itself,
    so shrinking them to the viewport would clip what they hold rather than
    make it reachable. */
-#dev-workshop > .dev-ws[data-ws-tab="needs"] { min-height: 0; }
+#dev-workshop > .dev-ws[data-ws-tab="needs"],
+#dev-workshop > .dev-ws[data-ws-tab="discussion"] { min-height: 0; }
 /* …AND ON THE TWO TABS THAT GROW, THE LINKS ABOVE MUST NOT SHRINK (#3053).
    `min-height: 0` on #dev-body and #dev-workshop is what lets Needs you be
    bounded; on Current status and All items it let both shrink to the
@@ -15606,8 +15607,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    to scroll it clear. Native layout only — in the browser layout the
    scroller is auto-height and nothing shrinks. `flex-shrink: 0` keeps the
    grow (the lander still fills a short tab) and gives the padding back. */
-#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"])),
-#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"])) { flex-shrink: 0; }
+#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])),
+#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])) { flex-shrink: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 /* The tab body takes the space the tabs above it leave. */
 .dev-ws-tabbody {
@@ -17022,11 +17023,31 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 .community-switcher-tick { flex: none; width: 20px; display: grid; place-items: center; color: var(--text-primary); }
 .community-switcher-note { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--text-muted); }
 
-/* THE DISCUSSION TAB (project-discussion.tsx): the channel's own pane, as
-   tall as the screen leaves it, so its composer sits above the tab bar and
-   its stream scrolls inside it rather than the page. */
-.dev-ws-discussion { display: flex; flex-direction: column; height: calc(100dvh - 210px); min-height: 380px; }
+/* THE DISCUSSION TAB (project-discussion.tsx): the channel's own pane, a
+   FITTED SCREEN like Needs you, so its composer rests on the foot of the
+   reading area and the stream scrolls inside it rather than the page. It
+   was a guessed `calc(100dvh - 210px)`, which stopped short of the bottom
+   (#852 review). The flex chain above bounds it in the native layout;
+   in a mobile browser, where the page scrolls, the tab takes `--ws-fit` as
+   a definite height, at every width. The pane draws its own sheet
+   (general-chat.tsx's `dc-lift dc-lift-session`), which runs off the
+   bottom as it does in Messages, so on a phone it spans the band's width. */
+html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
+  height: var(--ws-fit);
+  min-height: var(--ws-fit);
+}
+.dev-ws-discussion { flex: 1 1 auto; min-height: 320px; display: flex; flex-direction: column; }
 .dev-ws-discussion-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.dev-ws-discussion-host > * { flex: 1 1 auto; min-height: 0; }
+@media (max-width: 767.98px) {
+  .dev-ws-discussion { margin: 0 -12px; }
+}
+/* THE COMPOSER'S FOOT IS ALREADY CLEAR. `.platform-safe-bar` adds the tab
+   bar's height under every composer, on the rule that inside #app-view the
+   bar is hidden; a project page under the Communities tab shows it, and
+   this fitted box already ends above it, so that reserve left a strip of
+   empty pane under the composer. The bar's own 8px base gap stays. */
+.dev-ws-discussion .platform-safe-bar { padding-bottom: 0.5rem !important; }
 .dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
 .dev-ws-hero-spark-tip {
   position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6;

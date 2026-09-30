@@ -2553,9 +2553,9 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "Homeroom's Discussion tab is its channel, #general, with a composer that posts there and no link to the old discussion; the header's name is the switcher, on a desktop too (#2768, #3295, #3406)",
+            "name": "Homeroom's Discussion is its channel, #general itself: the tab opens that conversation in Messages, and its address is a door there rather than a card of it (#3406, #852 review)",
       "path": "/?demo=1&ws=discussion#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has(#header-app-switch > #header-title-name) .dev-ws[data-ws-tab=\"discussion\"] section[data-ws-channel-handle=\"general\"]:has(form[data-ws-channel-compose] > input[placeholder=\"Message #general…\"]):not(:has(a[data-ws-channel-archive]))",
+      "expectSelector": ".dev-ws[data-ws-tab=\"discussion\"] section[data-ws-discussion-elsewhere] > button[data-ws-discussion-open]",
       "expectText": "#general"
     },
     {
