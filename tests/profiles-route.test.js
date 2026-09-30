@@ -6,6 +6,8 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
+const profileRoute = require('../src/routes/profile');
+
 const BOB_AVATAR = '0123456789abcdef0123456789abcdef';
 
 function initialUsers() {
@@ -604,5 +606,51 @@ test('a handle nobody ever held is still a plain 404', async () => {
     assert.deepEqual(res.body, { error: 'Profile not found' });
   } finally {
     await server.close();
+  }
+});
+
+// GET /api/me/proposal-history (#3204): an open-for-vote row carries its
+// current-vote tally and the merge-state columns the proposal page reads, so
+// the one list can say how each vote is going without opening every app.
+test('proposal history: a vote row maps its tally and merge state; others carry nulls', () => {
+  const { shapeProposals } = profileRoute;
+  const at = '2026-09-22T10:00:00Z';
+  const base = { title: 'Fix pace rounding', app_slug: 'run-club', app_name: 'Run Club',
+    status: 'promoted', at };
+
+  // The open-for-vote row maps the raw snake_case columns onto camelCase.
+  const voted = shapeProposals([
+    { section: 'openForVote', session_id: 2, ...base,
+      yes_count: 3, no_count: 1, behind_main: 4,
+      merge_conflict_state: null, check_state: 'passing' },
+  ]).proposals.openForVote[0];
+  assert.deepEqual(
+    { yesCount: voted.yesCount, noCount: voted.noCount, behindMain: voted.behindMain,
+      mergeConflictState: voted.mergeConflictState, checkState: voted.checkState },
+    { yesCount: 3, noCount: 1, behindMain: 4, mergeConflictState: null, checkState: 'passing' });
+
+  // A raw row without the new columns (old shape) maps to nulls, not undefined.
+  const bare = shapeProposals([
+    { section: 'openForVote', session_id: 2, ...base },
+  ]).proposals.openForVote[0];
+  assert.deepEqual(
+    { yesCount: bare.yesCount, noCount: bare.noCount, behindMain: bare.behindMain,
+      mergeConflictState: bare.mergeConflictState, checkState: bare.checkState },
+    { yesCount: null, noCount: null, behindMain: null,
+      mergeConflictState: null, checkState: null });
+
+  // Every other bucket carries the fields as nulls, so the response's rows
+  // keep one shape; the view ignores them there.
+  for (const section of ['inProgress', 'merged', 'closed']) {
+    const row = shapeProposals([
+      { section, session_id: 9, title: 'Whatever', app_slug: 'run-club',
+        app_name: 'Run Club', status: 'x', at },
+    ]).proposals[section][0];
+    assert.deepEqual(
+      { yesCount: row.yesCount, noCount: row.noCount, behindMain: row.behindMain,
+        mergeConflictState: row.mergeConflictState, checkState: row.checkState },
+      { yesCount: null, noCount: null, behindMain: null,
+        mergeConflictState: null, checkState: null },
+      `${section} rows carry nulls for the vote fields`);
   }
 });

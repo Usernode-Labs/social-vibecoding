@@ -65,6 +65,7 @@ const {
 } = require('./home-panels');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 const { MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE } = require('./workshop-overview');
+const { currentVotePredicateSql } = require('../services/pr-vote-revision');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // ─── Field limits ──────────────────────────────────────────────────────
@@ -275,22 +276,35 @@ const PROPOSALS_PER_BUCKET = 50;
 const MY_PROPOSALS_SQL = `
   WITH items AS (
     SELECT 'inProgress' AS section, cs.id AS session_id, cs.session_title AS title,
-           cs.app_id, cs.status, cs.last_activity_at AS at
+           cs.app_id, cs.status, cs.last_activity_at AS at,
+           NULL::int AS yes_count, NULL::int AS no_count,
+           cs.behind_main, cs.merge_conflict_state, cs.check_state
       FROM chat_sessions cs
      WHERE ${MY_SESSIONS_WHERE}
      UNION ALL
     SELECT 'openForVote' AS section, cs.id AS session_id, cs.session_title AS title,
-           cs.app_id, cs.status, COALESCE(cs.promoted_at, cs.last_activity_at) AS at
+           cs.app_id, cs.status, COALESCE(cs.promoted_at, cs.last_activity_at) AS at,
+           (SELECT COUNT(*)::int FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+               AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+           (SELECT COUNT(*)::int FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'no'
+               AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count,
+           cs.behind_main, cs.merge_conflict_state, cs.check_state
       FROM chat_sessions cs
      WHERE ${MY_PROPOSALS_WHERE} AND cs.is_headless = FALSE
      UNION ALL
     SELECT 'merged' AS section, cs.id AS session_id, cs.session_title AS title,
-           cs.app_id, cs.status, COALESCE(cs.merged_at, cs.last_activity_at) AS at
+           cs.app_id, cs.status, COALESCE(cs.merged_at, cs.last_activity_at) AS at,
+           NULL::int AS yes_count, NULL::int AS no_count,
+           cs.behind_main, cs.merge_conflict_state, cs.check_state
       FROM chat_sessions cs
      WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'merged'
      UNION ALL
     SELECT 'closed' AS section, cs.id AS session_id, cs.session_title AS title,
-           cs.app_id, cs.status, COALESCE(cs.archived_at, cs.last_activity_at) AS at
+           cs.app_id, cs.status, COALESCE(cs.archived_at, cs.last_activity_at) AS at,
+           NULL::int AS yes_count, NULL::int AS no_count,
+           cs.behind_main, cs.merge_conflict_state, cs.check_state
       FROM chat_sessions cs
      WHERE cs.user_id = $1 AND cs.is_headless = FALSE AND cs.status = 'archived'
   ),
@@ -301,6 +315,8 @@ const MY_PROPOSALS_SQL = `
       FROM items it
   )
   SELECT r.section, r.session_id, r.title, r.status, r.at,
+         r.yes_count, r.no_count, r.behind_main,
+         r.merge_conflict_state, r.check_state,
          a.slug AS app_slug, a.name AS app_name
     FROM ranked r
     JOIN apps a ON a.id = r.app_id
@@ -317,6 +333,11 @@ function shapeProposalRow(r) {
     appName: r.app_name,
     status: r.status,
     at: r.at ? new Date(r.at).toISOString() : null,
+    yesCount: Number.isInteger(r.yes_count) ? r.yes_count : null,
+    noCount: Number.isInteger(r.no_count) ? r.no_count : null,
+    behindMain: Number.isInteger(r.behind_main) ? r.behind_main : null,
+    mergeConflictState: r.merge_conflict_state || null,
+    checkState: r.check_state || null,
   };
 }
 
@@ -339,7 +360,8 @@ const DEMO_PROPOSALS = {
     { sessionId: 9100035, title: '[Mock] Rework the onboarding checklist', status: 'active' },
   ],
   openForVote: [
-    { sessionId: 9100036, title: '[Mock] Ship the notification digest', status: 'promoted' },
+    { sessionId: 9100036, title: '[Mock] Ship the notification digest', status: 'promoted',
+      yesCount: 3, noCount: 1 },
   ],
   merged: [
     { sessionId: 9100030, title: '[Mock] Completed: rework the onboarding checklist',
@@ -370,6 +392,8 @@ function withDemoProposals(proposals, selfApp, now = Date.now()) {
       appName: selfApp.name || selfApp.slug,
       status: d.status,
       at: new Date(now).toISOString(),
+      yesCount: d.yesCount ?? null,
+      noCount: d.noCount ?? null,
     }));
   }
   return result;

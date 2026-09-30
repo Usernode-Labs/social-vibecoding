@@ -102,6 +102,54 @@ test('Your changes: in progress (either kind, newest first), then merged, then c
   assert.equal(proposalsView({ proposals: { inProgress: [], merged: [] } }).empty, true);
 });
 
+test('Your changes: a vote says how it is going — counts, then one merge-state word', () => {
+  const { proposalsView } = loadTsx(STORE);
+  const voteRow = (over) => ({
+    sessionId: 2, title: 'Fix pace rounding', appSlug: 'run-club', appName: 'Run Club',
+    at: '2026-09-22T10:00:00Z', status: 'promoted', ...over,
+  });
+  const view = (rows) => proposalsView({ proposals: { openForVote: rows } }, NOW);
+
+  // Counts ride the same line, and no state word when nothing is wrong.
+  assert.equal(view([voteRow({ yesCount: 3, noCount: 1 })]).sections[0].rows[0].meta,
+    'Run Club · in vote · 3 yes · 1 no');
+  // No votes yet is an honest state, not a missing one.
+  assert.equal(view([voteRow({ yesCount: 0, noCount: 0 })]).sections[0].rows[0].meta,
+    'Run Club · in vote · 0 yes · 0 no');
+  // Each state word, lowercase, after the counts.
+  assert.equal(view([voteRow({ yesCount: 3, noCount: 1, behindMain: 4 })]).sections[0].rows[0].meta,
+    'Run Club · in vote · 3 yes · 1 no · behind main');
+  assert.equal(view([voteRow({ yesCount: 2, noCount: 0, checkState: 'failing' })]).sections[0].rows[0].meta,
+    'Run Club · in vote · 2 yes · 0 no · checks failing');
+  assert.equal(view([voteRow({ yesCount: 1, noCount: 2, mergeConflictState: 'failed' })]).sections[0].rows[0].meta,
+    'Run Club · in vote · 1 yes · 2 no · merge conflict');
+  // Precedence: conflict beats failing checks beats behind main; one word only.
+  assert.equal(view([voteRow({ yesCount: 3, noCount: 1, mergeConflictState: 'failed',
+    checkState: 'failing', behindMain: 7 })]).sections[0].rows[0].meta,
+    'Run Club · in vote · 3 yes · 1 no · merge conflict');
+  // A row without counts (old cached response) renders exactly as today.
+  assert.equal(view([voteRow({ yesCount: undefined, noCount: undefined })]).sections[0].rows[0].meta,
+    'Run Club · in vote');
+});
+
+test('Your changes: merged and closed rows ignore the vote fields they now receive', () => {
+  const { proposalsView } = loadTsx(STORE);
+  const view = proposalsView({
+    proposals: {
+      merged: [{ sessionId: 3, title: 'Pace calculator', appSlug: 'run-club', appName: 'Run Club',
+        at: '2026-09-21T12:00:00Z', yesCount: 9, noCount: 0, behindMain: 4,
+        mergeConflictState: 'failed', checkState: 'failing' }],
+      closed: [{ sessionId: 4, title: 'Leaderboard badges', appSlug: 'run-club', appName: 'Run Club',
+        at: '2026-08-01T12:00:00Z', yesCount: 9, noCount: 0, behindMain: 4,
+        mergeConflictState: 'failed', checkState: 'failing' }],
+    },
+  }, NOW);
+  assert.equal(view.sections[0].rows[0].meta, 'Run Club · 2 days ago',
+    'merged keeps its how-long-ago line, its state');
+  assert.equal(view.sections[1].rows[0].meta, 'Run Club · closed without merging',
+    'closed keeps closed without merging, its state');
+});
+
 test('Your requests: open, then done, each opening the request', () => {
   const { requestsView } = loadTsx(STORE);
   const view = requestsView({

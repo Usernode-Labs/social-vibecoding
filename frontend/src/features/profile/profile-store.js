@@ -444,6 +444,18 @@ export function proposalsView(data, now = Date.now()) {
     if (key === 'openForVote') where = 'in vote';
     else if (key === 'inProgress') where = 'in progress';
     else if (key === 'closed') where = 'closed without merging';
+    if (key === 'openForVote') {
+      // #3204: how the vote is going, on the line the row already has.
+      // Counts only when the row carries them (a 0·0 tally is honest and
+      // shown); then at most one state word, the proposal page's precedence —
+      // conflict, then failing checks, then behind main.
+      if (Number.isInteger(row.yesCount) && Number.isInteger(row.noCount)) {
+        where += ` · ${row.yesCount} yes · ${row.noCount} no`;
+      }
+      if (row.mergeConflictState === 'failed') where += ' · merge conflict';
+      else if (row.checkState === 'failing') where += ' · checks failing';
+      else if (Number(row.behindMain) > 0) where += ' · behind main';
+    }
     const slug = encodeURIComponent(row.appSlug);
     const id = Number(row.sessionId);
     return {
