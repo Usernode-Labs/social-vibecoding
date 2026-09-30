@@ -109,12 +109,13 @@ test('the build prompt interpolates backend guidance; the scout prompt has no br
     path.join(__dirname, '..', 'src', 'routes', 'sessions.js'),
     'utf8'
   );
-  // The build prompt uses the pure backend selector. Hosted Claude receives
-  // the compact system-handbook reminder; unchanged backends receive the full
-  // inline constant through the same selector.
+  // The build prompt uses the pure backend selector, per transport: a turn
+  // whose CLI takes the handbook as system context (hosted Claude, or an
+  // OpenRouter model in Claude Code) receives the compact reminder; Codex and
+  // local runs receive the full inline constant through the same selector.
   assert.match(src, /buildCodingAgentBuildGuidance\(\{/);
-  assert.match(src, /\$\{buildGuidance\.browserGuidance\}/);
-  assert.match(src, /\$\{buildGuidance\.testingGuidance\}/);
+  assert.match(src, /\$\{guidance\.browserGuidance\}/);
+  assert.match(src, /\$\{guidance\.testingGuidance\}/);
   assert.match(src, /require\('\.\.\/services\/in-loop-browser'\)/);
 
   // The scout prompt template must NOT offer a browser. Slice out the

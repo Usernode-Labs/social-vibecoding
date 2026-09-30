@@ -142,7 +142,10 @@ const OWED_GOVERNANCE_WHERE = `i.status = 'open'
 
 // GET /api/apps's visibility filter, over `a` (apps) and `me` (the viewer's
 // membership row). `$2` is "may see self-hosted rows", `$3` "is an admin".
-const VISIBLE_APP_WHERE = `(NOT a.self_hosted OR $2::boolean)
+// A suspended app is left out for everyone, admins included: it refuses to
+// open (checkAppAccess), so a row for it would lead nowhere.
+const VISIBLE_APP_WHERE = `a.moderation_suspended_at IS NULL
+     AND (NOT a.self_hosted OR $2::boolean)
      AND ($3::boolean OR a.view_visibility = 'public' OR me.user_id IS NOT NULL)`;
 
 // Counts for every app the viewer can see that has a non-zero one.

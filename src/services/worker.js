@@ -1138,6 +1138,9 @@ function parseLine(line, onProgress, state) {
       // string → no conflicts. Threaded out as result.conflictFiles so
       // sync-main.js can persist the merge-conflict snapshot.
       else if (k === 'conflict_files') state.conflictFiles = v ? v.split(',').filter(Boolean) : [];
+      // The agent ended on a line that does not build on the session branch
+      // (worker/session-branch.sh): nothing was committed or pushed.
+      else if (k === 'branch_mismatch') state.branchMismatch = v === '1';
     }
     state.resultSeen = true;
     const terminalExit = Number.isInteger(state.agentExit) ? state.agentExit : state.ccExit;
@@ -1417,6 +1420,9 @@ function newWatchState() {
     // #8: clean|resolved|conflict|already_synced (MODE=sync only). The
     // route handler routes the chat message off this.
     syncResult: null,
+    // The build ended off the session branch, on work that does not build
+    // on it; the runner committed and pushed nothing (session-branch.sh).
+    branchMismatch: false,
     // #361: conflicted file paths from a MODE=sync turn's
     // __USERNODE_RESULT__ line. Defaults empty.
     conflictFiles: [],
@@ -2662,6 +2668,10 @@ async function ensureWorker(sessionId, {
             containerName, err: err.message,
           });
         });
+      } else {
+        // The Recreate below replaces the Pod, and the workspace with it,
+        // without passing through evictWorker.
+        await rescueUnpushedCommit(sessionId, { branchName });
       }
       // Kubernetes falls through without deleting the Deployment. Its
       // Recreate strategy updates the immutable image and stops the old Pod
@@ -3152,6 +3162,10 @@ async function execInWorker(sessionId, {
   _registryUpsert(sessionId, {
     inFlight: true, activeTurnMode: mode, journal, activeTurnId: durableTurnId,
     turnByokCents: 0, turnByokSwitched: false,
+    // A new turn starts from GitHub's copy of the branch (the runner resets
+    // to it), so an earlier turn's unpushed commit is no longer this
+    // worker's to rescue.
+    unpushed: null,
   });
   const activeTurnPersisted = await _persistActiveTurn(sessionId, {
     turnId: durableTurnId,
@@ -3355,6 +3369,10 @@ async function execInWorker(sessionId, {
       // Remembered for finishTurn so the caller's `finally` doesn't have
       // to thread the journal path back through its own scope.
       ...(holdTurnRecord ? { finishedJournal: journal, finishedTurnId: durableTurnId } : {}),
+      // What a finished build committed but could not push. The tail's heal
+      // re-pushes it (and clears this); if that fails too, evictWorker
+      // tries once more before the workspace is thrown away.
+      unpushed: unpushedCommit(mode, execState, branchName),
     });
     if (holdTurnRecord) {
       // Hand the record to the tail rather than dropping it. Seed the
@@ -3786,13 +3804,18 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
 //
 // `stopRequestedAt` on the registry entry tightens the watchdog cadence as
 // a fallback for the case where this append doesn't land at all.
-async function stopTurn(sessionId) {
+async function stopTurn(sessionId, { force = false } = {}) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerRuntimeName(sessionId);
   _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
-  await execWorkerCommand(containerName, ['sh', '-c',
-    buildTurnStopScript(meta?.journal || null),
-  ]).catch(() => {});
+  const command = execWorkerCommand(containerName, ['sh', '-c',
+    buildTurnStopScript(meta?.journal || null, { force }),
+  ], null, { timeoutMs: force ? 5000 : 30000 });
+  if (force) {
+    const result = await command;
+    return /__USERNODE_STOP_CONFIRMED__/.test(result?.stdout || '');
+  }
+  await command.catch(() => {});
   log.info('worker', 'Stop signal sent (in-container kill + journal exit marker)', {
     containerName, sessionId, journal: meta?.journal || '(discovered in-container)',
   });
@@ -3971,11 +3994,50 @@ async function resumeTurnFromJournal(sessionId, {
   }
 }
 
+// A finished build whose runner committed but could not push: the runner
+// printed its RESULT line (a stopped turn is killed before it does, and a
+// stop means its work is dropped), reported commits ahead of main and a sha,
+// and push_ok=0. Anything else is null.
+function unpushedCommit(mode, state, branchName) {
+  if (mode !== 'build' || !state || !state.resultSeen) return null;
+  if (state.pushOk === true || !(state.ahead > 0) || !state.sha || !branchName) return null;
+  return { sha: state.sha, branchName };
+}
+
+// The workspace lives on the container's own filesystem, so evicting or
+// replacing a worker (idle, a stale image, a new runtime contract) deletes
+// any commit it still holds. For the one kind the platform means to publish,
+// a finished build's commit whose push and heal both failed, push once more
+// first. Best effort: it never blocks the eviction, and a failure is logged
+// with the sha so the commit can still be named. Sheep countrr's session
+// 5030 lost a whole feature to a stale-image replacement this way
+// (usernode-bot/sheep-countrr-a08857#48).
+async function rescueUnpushedCommit(sessionId, { branchName = null } = {}) {
+  const meta = _registryGet(sessionId);
+  const pending = meta?.unpushed;
+  if (!pending || meta?.inFlight) return { attempted: false };
+  const branch = branchName || pending.branchName;
+  try {
+    const pushed = await execPushFromWorker(sessionId, branch);
+    log.info('worker', 'Pushed an unpushed commit before the worker was replaced', {
+      sessionId, branch, sha: String(pushed?.sha || pending.sha).slice(0, 8),
+    });
+    return { attempted: true, pushed: true };
+  } catch (err) {
+    log.warn('worker', 'Could not push an unpushed commit before the worker was replaced', {
+      sessionId, branch, sha: pending.sha, code: err.code || null, err: err.message,
+    });
+    return { attempted: true, pushed: false };
+  }
+}
+
 // Tear down a warm worker container (eviction). Volume is preserved so
-// the next `ensureWorker` re-warms with CC's session memory intact.
+// the next `ensureWorker` re-warms with CC's session memory intact. A
+// finished build's unpushed commit is pushed first (rescueUnpushedCommit).
 async function evictWorker(sessionId) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
+  await rescueUnpushedCommit(sessionId);
   if (usesKubernetesWorkers()) {
     await kubernetes.deleteWorker(kubernetesWorkerConfig(), sessionId, { deleteVolume: false }).catch(() => {});
   } else {
@@ -4140,14 +4202,15 @@ const TURN_STOP_GRACE_TICKS = 20;
 // `journal` is the host's recorded path for the in-flight turn. When it is
 // unknown (an adopted worker whose registry entry predates this dispatch)
 // the script discovers the newest turn journal itself — the dispatch
-// wrapper rm's stale ones first, so at most one exists. `exit 0` throughout:
-// a stop must never fail loudly, the watchdog is behind it either way.
-function buildTurnStopScript(journal) {
+// wrapper rm's stale ones first, so at most one exists. Classic stops are
+// best-effort; force stops must return confirmation or fail for recovery.
+function buildTurnStopScript(journal, { force = false } = {}) {
   const journalExpr = journal
     // Single-quoted: the path is platform-generated (/home/node/.claude/
     // turn-<ms>.log), never user input, and quoting keeps it one word.
     ? `J='${journal}'`
     : 'J=$(ls -t /home/node/.claude/turn-*.log 2>/dev/null | head -1)';
+  if (force) return buildImmediateTurnStopScript(journalExpr);
   return [
     turnProcSignalSnippet('TERM'),
     // Wait for the SIGTERMed processes to actually disappear. Breaks out on
@@ -4162,6 +4225,40 @@ function buildTurnStopScript(journal) {
     // 143 = 128 + SIGTERM, what a docker-stop-based kill would have produced.
     '[ -n "$J" ] && [ -f "$J" ] && echo "__USERNODE_EXIT__ 143" >> "$J" 2>/dev/null',
     'exit 0',
+  ].join('; ');
+}
+
+// Hard cancellation preserves the warm worker and workspace. Freeze the
+// owned roots before walking descendants so a stopped parent cannot fork
+// fresh tools while we terminate its process tree. The warm idle wrapper,
+// journal reader and this control shell are not roots.
+function buildImmediateTurnStopScript(journalExpr) {
+  return [
+    'targets=" "',
+    'for d in /proc/[0-9]*; do '
+      + '[ "$d" = "/proc/$$" ] && continue; '
+      + 'c=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null) || continue; '
+      + `printf "%s" "$c" | grep -qE '${TURN_PROC_RE}' || continue; `
+      + 'p=${d#/proc/}; targets="$targets$p "; kill -STOP "$p" 2>/dev/null; done',
+    'added=1; while [ "$added" = 1 ]; do added=0; '
+      + 'for d in /proc/[0-9]*; do p=${d#/proc/}; [ "$p" = "$$" ] && continue; '
+      + 'case "$targets" in *" $p "*) continue;; esac; '
+      + 'parent=$(sed -n "s/^PPid:[[:space:]]*//p" "$d/status" 2>/dev/null); '
+      + '[ -n "$parent" ] || continue; '
+      + 'case "$targets" in *" $parent "*) targets="$targets$p "; added=1; kill -STOP "$p" 2>/dev/null;; esac; '
+      + 'done; done',
+    'for p in $targets; do kill -KILL "$p" 2>/dev/null; done',
+    // Do not write a terminal marker while any signalled process can run.
+    // A zombie has already exited; reaping it belongs to its parent.
+    'i=0; while :; do alive=0; for p in $targets; do '
+      + '[ -r "/proc/$p/stat" ] || continue; '
+      + 'state=$(sed "s/^.*) //" "/proc/$p/stat" 2>/dev/null); '
+      + 'case "$state" in Z*|X*|"") ;; *) alive=1;; esac; done; '
+      + '[ "$alive" = 0 ] && break; [ "$i" -ge 10 ] && exit 75; '
+      + 'i=$((i+1)); sleep 0.05; done',
+    journalExpr,
+    '[ -n "$J" ] && [ -f "$J" ] && echo "__USERNODE_EXIT__ 137" >> "$J" 2>/dev/null',
+    'echo __USERNODE_STOP_CONFIRMED__',
   ].join('; ');
 }
 
@@ -4327,6 +4424,34 @@ async function cloneCcVolume(srcSessionId, destSessionId) {
 // excluded `@`, which every email-address username produces — so those
 // sessions committed fine and then failed every push, heal included.
 
+// The push, as the one-shot script that runs in the worker. Two things it
+// does beyond `git push`, both from Sheep countrr's session 5030
+// (usernode-bot/sheep-countrr-a08857#48), where an agent committed its
+// feature on a local branch of its own (`wolf-mechanic`):
+//
+//   - If HEAD is on another branch that grew from the session branch, the
+//     session branch is moved up to it first. That is the turn's work; the
+//     runner does the same before its own push (worker/session-branch.sh),
+//     and this covers a heal against a worker whose runner predates that.
+//   - It prints the commit it pushed (the session branch), not HEAD. It used
+//     to print HEAD, so the heal reported the stray commit as pushed while
+//     GitHub had nothing new, and every retry of the PR 422'd with "No
+//     commits between main and <branch>".
+//
+// $PAT and $BRANCH come from the exec's environment, never argv. `workspace`
+// is overridable for tests only.
+function buildPushScript({ workspace = '/home/node/workspace' } = {}) {
+  return `set -e; cd ${shellQuote(workspace)}; `
+    + 'cur=$(git symbolic-ref --quiet --short HEAD || true); '
+    + 'if [ "$cur" != "$BRANCH" ] '
+    + '&& git rev-parse --quiet --verify "refs/heads/$BRANCH" >/dev/null '
+    + '&& git merge-base --is-ancestor "refs/heads/$BRANCH" HEAD; then '
+    + 'git branch --force "$BRANCH" HEAD >&2; fi; '
+    + 'git -c credential.helper="!f() { echo username=x-access-token; echo password=$PAT; }; f" '
+    + 'push -u origin "$BRANCH" >&2 && '
+    + 'git rev-parse "refs/heads/$BRANCH"';
+}
+
 async function execPushFromWorker(sessionId, branchName) {
   const botToken = process.env.GITHUB_BOT_TOKEN || '';
   if (!botToken) {
@@ -4375,14 +4500,10 @@ async function execPushFromWorker(sessionId, branchName) {
   // reads $PAT and $BRANCH from the exec env (passed via bare `-e`
   // so the values aren't in argv).
   //
-  // Final `git rev-parse HEAD` prints the SHA we pushed, which the
-  // caller surfaces back to the worker for logging and the
-  // __USERNODE_RESULT__ accounting.
-  const inlineScript =
-    'set -e; cd /home/node/workspace && ' +
-    'git -c credential.helper="!f() { echo username=x-access-token; echo password=$PAT; }; f" ' +
-    'push -u origin "$BRANCH" >&2 && ' +
-    'git rev-parse HEAD';
+  // The script (buildPushScript below) settles the session branch first and
+  // prints the SHA it pushed, which the caller surfaces back to the worker
+  // for logging and the __USERNODE_RESULT__ accounting.
+  const inlineScript = buildPushScript();
 
   const args = [
     'exec',
@@ -4408,6 +4529,7 @@ async function execPushFromWorker(sessionId, branchName) {
     log.info('worker', 'Push proxied to GitHub', {
       sessionId, branch: branchName, sha: (sha || '').slice(0, 8),
     });
+    if (_registryGet(sessionId)?.unpushed) _registryUpsert(sessionId, { unpushed: null });
     return { sha, stderr: (stderr || '').trim() };
   } catch (err) {
     // Don't leak the PAT into log lines if `docker exec` printed any
@@ -4506,6 +4628,7 @@ module.exports = {
   // exposed for unit tests (watchdog strike policy + line parsing)
   newWatchState,
   _recordClaudeCodingRunForTests: recordClaudeCodingRun,
+  _registryUpsertForTests: _registryUpsert,
   parseLine,
   newWatchdogCounters,
   recordWatchdogProbe,
@@ -4517,6 +4640,9 @@ module.exports = {
   workerRuntimeName,
   // platform-side git push proxy (called from src/routes/internal.js)
   execPushFromWorker,
+  buildPushScript,
+  unpushedCommit,
+  rescueUnpushedCommit,
   mintWorkerJwt,
   mintAnthropicProxyJwt,
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)

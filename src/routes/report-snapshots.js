@@ -8,6 +8,7 @@ const appAdmins = require('../services/app-admins');
 const reportAi = require('../services/report-ai');
 const { reportSnapshotLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Locked report snapshots (Reporting tab). Locking freezes the client's
 // self-contained standalone report document (the same HTML the download
@@ -161,6 +162,7 @@ function reportSnapshotRoutes(config) {
 
   router.post('/api/apps/:slug/report-snapshots/:id/share',
     reportSnapshotLimiter,
+    sameOriginBrowserOnly,
     async (req, res) => {
       try {
         const app = await getApp(req);
@@ -191,6 +193,7 @@ function reportSnapshotRoutes(config) {
 
   router.post('/api/apps/:slug/report-snapshots/:id/unshare',
     reportSnapshotLimiter,
+    sameOriginBrowserOnly,
     async (req, res) => {
       try {
         const app = await getApp(req);

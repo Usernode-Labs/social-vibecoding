@@ -32,12 +32,20 @@ const illustrationProposals = require('../services/illustration-proposals');
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // #2089: the board search's server half. Shorter queries are not asked
 // (the browser applies the same floor); the hit list is capped because the
 // browser only ever intersects it with the cards it already holds.
 const BOARD_SEARCH_MIN_CHARS = 2;
 const BOARD_SEARCH_MAX_HITS = 200;
+
+// An issue id from the path, or null when it is not a positive integer that
+// fits `issues.id` (SERIAL). Answered as 404 rather than handed to Postgres
+// as a bad cast, which would surface as a 500.
+function positiveIssueId(raw) {
+  return /^[1-9]\d{0,9}$/.test(String(raw)) && Number(raw) <= 2147483647 ? Number(raw) : null;
+}
 
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
@@ -1336,6 +1344,9 @@ function issueRoutes(config) {
     if (normalized.error) return res.status(400).json({ error: normalized.error });
     const reason = normalized.reason;
 
+    const issueId = positiveIssueId(req.params.id);
+    if (!issueId) return res.status(404).json({ error: 'Issue not found' });
+
     try {
       // Join to apps so we have the slug for the WS broadcast below;
       // without it, other users' vote panels wouldn't refresh until they
@@ -1344,7 +1355,7 @@ function issueRoutes(config) {
         `SELECT i.*, a.slug AS app_slug
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
-        [req.params.id]
+        [issueId]
       );
       if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
       const issue = issueRows[0];
@@ -2505,7 +2516,7 @@ function issueRoutes(config) {
   //   409 conflict  — viewer already has an open bounty on this issue
   //   429 too_many  — shared weekly kudos allowance exhausted
   // ----------------------------------------------------------------
-  router.post('/api/apps/:slug/issues/:number/bounty', async (req, res) => {
+  router.post('/api/apps/:slug/issues/:number/bounty', sameOriginBrowserOnly, async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
       return res.status(400).json({ error: 'Invalid issue number' });
@@ -2592,7 +2603,7 @@ function issueRoutes(config) {
   // no GitHub write. Expiry is a read-time filter in the /github-issues
   // enrichment (ISSUE_CLAIM_TTL_DAYS).
   // ----------------------------------------------------------------
-  router.post('/api/apps/:slug/github-issues/:number/claim', async (req, res) => {
+  router.post('/api/apps/:slug/github-issues/:number/claim', sameOriginBrowserOnly, async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
       return res.status(400).json({ error: 'Invalid issue number' });
@@ -2653,7 +2664,7 @@ function issueRoutes(config) {
   // and forth between users. Idempotent: clearing a nonexistent (or
   // already-expired-and-replaced) claim is a soft 200.
   // ----------------------------------------------------------------
-  router.delete('/api/apps/:slug/github-issues/:number/claim', async (req, res) => {
+  router.delete('/api/apps/:slug/github-issues/:number/claim', sameOriginBrowserOnly, async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
       return res.status(400).json({ error: 'Invalid issue number' });
@@ -2714,13 +2725,15 @@ function issueRoutes(config) {
   // trivially satisfied by the admin acting). Same visibility rules:
   // the chat message + GitHub comment name the admin so the override
   // is never silent.
-  router.post('/api/issues/:id/admin-apply', async (req, res) => {
+  router.post('/api/issues/:id/admin-apply', sameOriginBrowserOnly, async (req, res) => {
+    const issueId = positiveIssueId(req.params.id);
+    if (!issueId) return res.status(404).json({ error: 'Issue not found' });
     try {
       const { rows: issueRows } = await pool.query(
         `SELECT i.*, a.slug AS app_slug, a.created_by AS app_created_by
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
-        [req.params.id]
+        [issueId]
       );
       if (!issueRows.length) {
         if (!req.user?.canAdminWrite) {
@@ -2792,13 +2805,15 @@ function issueRoutes(config) {
   // PR-proposal equivalent is POST /api/sessions/:id/archive). Only the
   // proposal's creator may withdraw, and only while it is still open, so a
   // stale double-tap or a race against a passing vote is a harmless no-op.
-  router.post('/api/issues/:id/close', async (req, res) => {
+  router.post('/api/issues/:id/close', sameOriginBrowserOnly, async (req, res) => {
+    const issueId = positiveIssueId(req.params.id);
+    if (!issueId) return res.status(404).json({ error: 'Issue not found' });
     try {
       const { rows: issueRows } = await pool.query(
         `SELECT i.*, a.slug AS app_slug, a.repo_url AS repo_url
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
-        [req.params.id]
+        [issueId]
       );
       if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
       const issue = issueRows[0];

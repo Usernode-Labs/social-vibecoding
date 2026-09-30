@@ -121,7 +121,8 @@ test('the wire body: who it is for, the people and addresses, and what an import
   assert.match(submit, /const body = createBody\(\{/);
   assert.match(submit, /invitees: people,/);
   assert.match(submit, /repo,\s*\}\);/);
-  assert.match(submit, /body: JSON\.stringify\(body\)/);
+  assert.match(submit, /await postCreateApp\(body\)/);
+  assert.match(SRC, /body: JSON\.stringify\(body\)/);
 });
 
 test('an import names each earlier answer its repo’s dapp.json replaces', () => {
@@ -288,10 +289,11 @@ test('Create sends one request at a time and shows it is busy', () => {
   const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  return (\n    <DialogRoot'));
   const guard = submit.indexOf('if (submittingRef.current) return;');
   assert.ok(guard > 0, 'the handler has its own in-flight guard');
-  assert.ok(guard < submit.indexOf("await fetch('/api/apps'"), 'claimed before the request');
+  assert.ok(guard < submit.indexOf('await postCreateApp(body)'), 'claimed before the request');
   assert.match(submit, /if \(submittingRef\.current\) return;\s*submittingRef\.current = true;\s*setSubmitting\(true\);\s*try \{/);
   assert.match(submit, /\} finally \{\s*submittingRef\.current = false;\s*setSubmitting\(false\);\s*\}/);
-  assert.equal((submit.match(/fetch\('\/api\/apps'/g) || []).length, 1);
+  assert.equal((submit.match(/postCreateApp\(/g) || []).length, 1);
+  assert.equal((SRC.match(/fetch\('\/api\/apps'/g) || []).length, 1);
   const button = SRC.slice(SRC.indexOf('id="create-submit"'), SRC.indexOf('</Button>', SRC.indexOf('id="create-submit"')));
   assert.match(button, /aria-busy=\{submitting \|\| undefined\}/, 'no aria-busy in the prerender');
   assert.match(button, /\{submitting \? <SpinnerArcIcon /);
@@ -305,4 +307,41 @@ test('the prerendered Create button is idle', () => {
   assert.doesNotMatch(submit, /aria-busy/);
   assert.doesNotMatch(submit, /<svg/);
   assert.match(submit, />Create<\/button>$/);
+});
+
+// A failed create says which failure it was. An error page in front of the
+// server (a deploy, a proxy) is not JSON; before, the throw from res.json()
+// landed in the catch meant for a dropped connection and read "Network error".
+test('a failed create tells a network error from a server error page', async () => {
+  const { postCreateApp } = mod();
+  const real = globalThis.fetch;
+  const reply = (status, text, type = 'application/json') =>
+    async () => new Response(text, { status, headers: { 'Content-Type': type } });
+  try {
+    globalThis.fetch = reply(502, '<html><body>Bad Gateway</body></html>', 'text/html');
+    assert.deepEqual(await postCreateApp({ name: 'x' }),
+      { ok: false, error: 'Homeroom couldn’t create the project (502). Try again in a moment.' });
+
+    globalThis.fetch = async () => { throw new TypeError('Failed to fetch'); };
+    assert.deepEqual(await postCreateApp({ name: 'x' }), { ok: false, error: 'Network error. Try again.' });
+
+    globalThis.fetch = reply(409, JSON.stringify({ error: 'You already have a project called x.' }));
+    assert.deepEqual(await postCreateApp({ name: 'x' }), { ok: false, error: 'You already have a project called x.' });
+
+    globalThis.fetch = reply(500, JSON.stringify({}));
+    assert.match((await postCreateApp({ name: 'x' })).error, /couldn’t create the project \(500\)/, 'JSON with no error text names the status');
+
+    let sent;
+    globalThis.fetch = async (url, init) => {
+      sent = { url, method: init.method, body: init.body };
+      return new Response(JSON.stringify({ app: { slug: 'x-1', name: 'x' } }), { status: 201 });
+    };
+    assert.deepEqual(await postCreateApp({ name: 'x' }), { ok: true, data: { app: { slug: 'x-1', name: 'x' } } });
+    assert.deepEqual(sent, { url: '/api/apps', method: 'POST', body: '{"name":"x"}' });
+  } finally {
+    globalThis.fetch = real;
+  }
+  const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
+  assert.match(submit, /if \(!reply\.ok\) return setError\(reply\.error\);/);
+  assert.doesNotMatch(submit, /Network error/, 'only postCreateApp decides it was the network');
 });

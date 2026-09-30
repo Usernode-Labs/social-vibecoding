@@ -4128,9 +4128,31 @@ test('since-your-last-visit shows three a week and reveals the rest in place', (
   const quiet = workshopHtml(fresh, 'workshop');
   assert.match(quiet, /data-ws-since-none=""/);
   assert.ok(quiet.includes('Nothing has changed since you were last here.'));
+  // Zero says nothing: no "0" pill beside the heading on a quiet visit.
+  assert.doesNotMatch(quiet, /dev-ws-since-n"/, 'no count pill when nothing moved');
   // #2183: the way into what was seen is still there on a quiet day, the day
   // the reader most wants it: this week's seen rows, folded into one row.
   assert.match(quiet, /data-ws-since-seen-fold=""/);
+});
+
+test('since-your-last-visit counts one unnamed change in the singular', () => {
+  // Governance items, shared sessions and the discussion are counted only in
+  // `total`, so the sentence falls back to "N things moved" — and one of
+  // them reads "1 thing moved", not "1 things moved".
+  const AppView = makeAppView({ localStorage: { 'workshopSeen:demo-app': String(Date.now() - 12 * 3600000) } });
+  seed(AppView);
+  AppView._govProposals = [
+    { id: 72, kind: 'close_issue', title: 'Theirs', status: 'open', created_by: 9,
+      created_by_username: 'carol', payload: { issueNumber: 13, issueTitle: 'Keyboard voting' },
+      created_at: at(0.1), last_message_at: at(0.1), up_count: 0, down_count: 0, my_vote: null },
+  ];
+  const v = AppView._workshopView();
+  assert.equal(v.since.total, 1, 'only the governance proposal moved');
+  assert.equal(v.since.shipped + v.since.opened + v.since.proposed, 0, 'and it is none of the named kinds');
+  const html = workshopHtml(AppView, 'workshop');
+  assert.match(html, /data-ws-since-sum="">1 thing moved</);
+  assert.ok(!html.includes('1 things moved'));
+  assert.match(html, /class="dev-ws-since-n">1</, 'the pill shows a count above zero');
 });
 
 // ── #2183: Clear, and a Show older that is always there ──────────────
@@ -4201,6 +4223,7 @@ test('Clear moves the baseline to now, persists it, and the rows fold under thei
   assert.equal(AppView._workshopSince['demo-app'], after.since.baseline);
   const cleared = workshopHtml(AppView, 'workshop');
   assert.match(cleared, /data-ws-since-none=""/);
+  assert.doesNotMatch(cleared, /dev-ws-since-n"/, 'and no "0" pill once cleared');
   assert.match(cleared, /<button type="button" class="dev-ws-since-clear un-touch-target" data-ws-since-clear="" disabled="">Clear<\/button>/,
     'disabled rather than absent, so the row does not reflow');
   assert.match(cleared, /data-ws-since-seen-fold=""/, 'and the way back to what was cleared is one row under its week');
@@ -4297,6 +4320,7 @@ test('Clear is live once anything is unfolded, and folds what it revealed (#2240
   assert.ok(v.since.seen.rows.length > 0, 'while the whole list is below it, to walk into');
   const html = workshopHtml(AppView, 'workshop');
   assert.match(html, /data-ws-since-none=""/, 'the strip opens on "nothing has changed"');
+  assert.doesNotMatch(html, /dev-ws-since-n"/, 'with no "0" count pill beside it');
   assert.match(html, /data-ws-since-seen-fold=""/, 'with the week\'s seen rows a press away');
   assert.match(html, /data-ws-since-clear="" disabled=""/,
     'and Clear still disabled BEFORE the walk — there is nothing on screen to fold yet');

@@ -14,6 +14,7 @@
 // existing self_hosted precedent so private apps aren't enumerable.
 
 const log = require('./logger');
+const { positiveId } = require('./row-id');
 
 const ACCESS_COLUMNS = 'id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at';
 
@@ -209,10 +210,14 @@ async function isBotOwnSession(pool, user, sessionId) {
 // so private sessions aren't enumerable. A missing session falls
 // through to the route's own lookup (which already 404s with its
 // route-specific wording).
+//
+// A malformed id is answered here, 404 without a query, rather than let
+// through: the routes behind this guard read req.params.id in many ways,
+// and letting it pass would hand each of them an id no access check saw.
 function sessionCollabGuard(pool) {
   return async (req, res, next) => {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return next();
+    const id = positiveId(req.params.id);
+    if (!id) return res.status(404).json({ error: 'Session not found' });
     try {
       const { rows } = await pool.query(
         `SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at
@@ -238,7 +243,8 @@ function sessionCollabGuard(pool) {
 function issueCollabGuard(pool) {
   return async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return next();
+    // Out of int4 range falls through too: Postgres would reject the cast.
+    if (!Number.isFinite(id) || id < 1 || id > 2147483647) return next();
     try {
       const { rows } = await pool.query(
         `SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at

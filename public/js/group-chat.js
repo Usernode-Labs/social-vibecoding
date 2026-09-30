@@ -556,6 +556,13 @@ const GroupChat = {
       case 'chat_delete': {
         // #2387: its author deleted it — the placeholder, wherever it is drawn.
         GroupChat._applyDelete(msg);
+        GroupChat._settleDelete(msg.id, null);
+        break;
+      }
+      case 'delete_error': {
+        // The server refused THIS socket's own delete (services/ws.js): put
+        // the message back and let deleteMessage's caller say so.
+        GroupChat._settleDelete(msg.id, new Error(`Delete failed (${msg.code || 'refused'})`));
         break;
       }
       case 'thread_summary': {
@@ -1757,25 +1764,63 @@ const GroupChat = {
   // Delete one of your own messages. Over the socket when it is open (the
   // same path an edit takes), else the REST route; the row turns into its
   // placeholder at once, and the server's `chat_delete` confirms it.
+  //
+  // A delete that does not go through puts the message back before
+  // rejecting, so the caller's "Couldn't delete" toast is not shown beside a
+  // placeholder: a REST delete refused, or whose fetch throws (offline), and
+  // a socket delete the server answers with `delete_error`. A socket delete
+  // resolves on its `chat_delete`, or quietly after DELETE_SETTLE_MS when no
+  // answer comes (an already-deleted message is confirmed by silence).
+  DELETE_SETTLE_MS: 30000,
+  _pendingDeletes: new Map(),
+
   async deleteMessage(id) {
     const slug = GroupChat.appSlug;
     if (!slug || !id) return;
     const before = [];
     GroupChat._eachCopy(id, (m) => { before.push([m, { ...m }]); });
     GroupChat._applyDelete({ id });
-    if (GroupChat.ws && GroupChat.ws.readyState === 1) {
-      GroupChat.ws.send(JSON.stringify({ type: 'delete', id: Number(id) }));
-      return;
-    }
-    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(id)}`, {
-      method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) {
+    const restore = () => {
       for (const [m, copy] of before) Object.assign(m, copy, { deleted: false });
       GroupChat.render();
       if (GroupChat.activeThread) GroupChat.renderThread();
+    };
+    if (GroupChat.ws && GroupChat.ws.readyState === 1) {
+      const key = Number(id);
+      GroupChat._settleDelete(key, null);
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => GroupChat._settleDelete(key, null), GroupChat.DELETE_SETTLE_MS);
+        GroupChat._pendingDeletes.set(key, { resolve, reject, restore, timer });
+        GroupChat.ws.send(JSON.stringify({ type: 'delete', id: key }));
+      });
+    }
+    let res;
+    try {
+      res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(id)}`, {
+        method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' },
+      });
+    } catch (err) {
+      restore();
+      throw err;
+    }
+    if (!res.ok) {
+      restore();
       throw new Error(`Delete failed (${res.status})`);
     }
+  },
+
+  // Settle a socket delete this client is waiting on: `err` null confirms
+  // it, an Error puts the message back and rejects. An id nobody is waiting
+  // on is ignored.
+  _settleDelete(id, err) {
+    const key = Number(id);
+    const pending = GroupChat._pendingDeletes.get(key);
+    if (!pending) return;
+    GroupChat._pendingDeletes.delete(key);
+    clearTimeout(pending.timer);
+    if (!err) { pending.resolve(); return; }
+    pending.restore();
+    pending.reject(err);
   },
 
   _applyDelete(data) {

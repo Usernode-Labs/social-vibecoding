@@ -149,6 +149,53 @@ test('an older rollout response or worker cannot downgrade the cached shell', as
   assert.match(await (await stale.get('/', 'tab-b', true)).text(), new RegExp(b.revision));
 });
 
+// A staging preview keeps one hostname across rebuilds, so the worker from a
+// reviewer's previous visit answers the first open of the rebuilt preview.
+// 80ms is a good link, but a new build is a document, a manifest and its
+// changed assets in series: past the 200ms deadline even at that latency.
+test('a rebuilt preview shows its new build on the first navigation over a real round trip', async t => {
+  const a = fixture(t, 'a'); const b = fixture(t, 'b');
+  const env = harness(a); env.policy('latest');
+  const worker = env.worker(a);
+  await worker.install(); await worker.activate();
+  env.serve(b); env.latency(80);
+  assert.match(await (await worker.get('/index.html', 'tab-a', true)).text(), new RegExp(b.revision));
+});
+
+test('production keeps time-to-page: the previous build paints and the new one is ready next time', async t => {
+  const a = fixture(t, 'a'); const b = fixture(t, 'b');
+  const env = harness(a); const worker = env.worker(a);
+  await worker.install(); await worker.activate();
+  env.serve(b); env.latency(80);
+  assert.match(await (await worker.get('/index.html', 'tab-a', true)).text(), new RegExp(a.revision));
+  assert.match(await (await worker.get('/index.html', 'tab-b', true)).text(), new RegExp(b.revision));
+});
+
+test('a preview document that misses the deadline still paints from cache', async t => {
+  const a = fixture(t, 'a'); const b = fixture(t, 'b');
+  const env = harness(a); env.policy('latest');
+  const worker = env.worker(a);
+  await worker.install(); await worker.activate();
+  env.serve(b); env.latency(250);
+  assert.match(await (await worker.get('/index.html', 'tab-a', true)).text(), new RegExp(a.revision));
+});
+
+test('only a staging preview document asks the worker for the latest build', () => {
+  const { applyShellDocumentHeaders, SHELL_BUILD_POLICY_HEADER } = require('../src/services/static-cache');
+  const headers = env => {
+    const set = {};
+    applyShellDocumentHeaders({ setHeader: (k, v) => { set[k.toLowerCase()] = v; } }, __filename, env);
+    return set;
+  };
+  const name = SHELL_BUILD_POLICY_HEADER.toLowerCase();
+  assert.match(fs.readFileSync(path.join(__dirname, '../public/sw-release.js'), 'utf8'),
+    new RegExp(`headers\\.get\\('${name}'\\) === 'latest'`), 'the worker reads the header the server sends');
+  assert.equal(headers({ GIT_SHA: 'abc1234', USERNODE_ENV: 'staging' })[name], 'latest');
+  assert.equal(headers({ GIT_SHA: 'abc1234', USERNODE_ENV: 'production' })[name], undefined);
+  // No build id means no generated release, so there is no worker to ask.
+  assert.equal(headers({ USERNODE_ENV: 'staging' })[name], undefined);
+});
+
 test('migration retains legacy open-tab assets until those tabs have moved to generated releases', async t => {
   const a = fixture(t, 'a'); const env = harness(a);
   const oldPath = `/b/${'f'.repeat(40)}/js/app.js`;

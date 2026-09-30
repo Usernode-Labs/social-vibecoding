@@ -47,7 +47,8 @@ const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
 const { inviteUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
-const { listPublicApps, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const { loadMobileAppUrls } = require('../services/mobile-store-links');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
 // module-scoped rather than built per request, so the four branches cannot
@@ -124,18 +125,21 @@ function publicApiRoutes(config) {
   });
 
   // GET /api/public/apps/:slug/contributors — one app's contributor list.
-  // 404 (never 403) for a missing, self-hosted, or view-private slug so a
-  // hidden app's existence isn't disclosed.
+  // Answers only for an app the public directory lists (isPublicDirectoryApp:
+  // not self-hosted, not suspended by moderators, view-public, and not in a
+  // hidden status). Anything else is 404 (never 403), so a hidden app's
+  // existence isn't disclosed.
   router.get('/api/public/apps/:slug/contributors', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
       const { rows } = await pool.query(
-        `SELECT id, slug, self_hosted, view_visibility
+        `SELECT id, slug, self_hosted, view_visibility, status,
+                moderation_suspended_at
            FROM apps WHERE slug = $1`,
         [String(req.params.slug)]
       );
       const app = rows[0];
-      if (!app || app.self_hosted || app.view_visibility !== 'public') {
+      if (!isPublicDirectoryApp(app)) {
         return res.status(404).json({ error: 'App not found' });
       }
 
@@ -670,30 +674,16 @@ function publicApiRoutes(config) {
 
   // GET /api/public/mobile-app — where a phone browser can install the native
   // app, per OS. Backs the install banner (#1372); anonymous, because the
-  // banner shows on the landing screen too.
-  //
-  // The URL is `app_version_configs.update_url`, which already exists, is
-  // already editable in the admin console (App version), and is already the
-  // place the native update gate sends a user to. A store listing is the same
-  // destination whether you are updating or arriving, so this needs no new
-  // setting and no second thing for an operator to keep in sync — the day a
-  // listing goes live, one field turns the banner on.
+  // banner shows on the landing screen too. The URLs come from
+  // services/mobile-store-links.js, which says why they are the store listings.
   //
   // NOT a reuse of POST /api/v4/app-version/check: that route records a
   // version check for analytics, so answering this from it would file a check
   // for a build that does not exist on every mobile pageview.
   router.get('/api/public/mobile-app', async (_req, res) => {
-    // Both keys are always present, so the client has one shape to read.
-    const urls = { ios: null, android: null };
+    let urls = { ios: null, android: null };
     try {
-      const { rows } = await pool.query(
-        `SELECT os, update_url FROM app_version_configs
-          WHERE is_active = TRUE AND os IN ('ios', 'android')`
-      );
-      for (const row of rows) {
-        const url = String(row.update_url || '').trim();
-        if (url && Object.prototype.hasOwnProperty.call(urls, row.os)) urls[row.os] = url;
-      }
+      urls = await loadMobileAppUrls(pool);
     } catch (err) {
       // Degrade to "no offer" rather than 500. This is an upsell strip on an
       // otherwise-working page, and a failed request here would put a console

@@ -59,6 +59,7 @@ const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure } = require('./agent-result-text');
 const { SPEC_DESIGN_BRIEF } = require('./prompts');
+const buildContract = require('./build-contract');
 
 // A staging copy of the platform starts from production's settings, live
 // list included. Posting on real GitHub issues and pushing real branches
@@ -862,26 +863,12 @@ function buildPrompt({ seed, buildNote, spec = null }) {
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
     ...specBlock,
     '',
-    'Make exactly that change, and nothing else:',
-    '- Read the repository\'s own agent instructions (AGENTS.md, CLAUDE.md) first, and follow them.',
-    '- Keep the change as small as the request needs. Do not refactor or tidy unrelated code.',
-    '- Run the tests that cover what you changed, if the repository has them.',
-    '- Do not change a lockfile (package-lock.json, yarn.lock, pnpm-lock.yaml and the like) unless the change',
-    '  adds or removes a dependency. If installing dependencies rewrote one, restore it before you finish',
-    '  (for example `git checkout -- package-lock.json`).',
-    '- A test or check you add must fail without your change: assert what the change makes true, not only that',
-    '  the page loads. Where you can run it, run it against the code as it was before your edit and see it fail.',
-    '- Do not loosen, skip, delete or rewrite an existing test or check to make it pass. Change one only where',
-    '  the spec changes the behaviour it pins, and name it in your summary.',
-    '- A database query you add or change must run in a test against a real database, where the repository has',
-    '  such tests (for example its *-postgres tests). A test that only matches the query\'s text does not count.',
-    '  Do not stub the code you changed in the test that checks it: stub what it calls, not what it is.',
-    '- Do not add reports, notes or other documents to the repository unless the spec asks for that file.',
-    '- If the request reports a bug, find where in the code it happens before changing anything. If you cannot',
-    '  find it, stop and say so instead of changing code: do not ship a guessed fix.',
-    '- Do not commit or push yourself: when you finish, your working tree is committed and pushed for you.',
-    '- If you find you cannot make the change safely, stop and say why instead of changing code.',
-    'End with a short, plain-language summary of what you changed.',
+    // The rules every on-platform build works under (services/build-contract.js):
+    // this bot's own list, which the dev chat now shares.
+    buildContract.buildContractBlock({
+      heading: 'Make exactly that change, and nothing else:',
+      commits: 'harness',
+    }),
   ].join('\n');
 }
 

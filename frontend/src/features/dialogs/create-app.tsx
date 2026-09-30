@@ -292,6 +292,38 @@ export function createBody(answers: {
   return body;
 }
 
+/**
+ * POST /api/apps and say what came back. Three failures read differently: a
+ * fetch that throws never reached Homeroom (a network error); a JSON reply
+ * carries the server's own `error`; and a reply that is not JSON at all is an
+ * error page from in front of the server (a deploy, a proxy), so it names
+ * the status rather than blaming the network. Never throws.
+ */
+export async function postCreateApp(
+  body: Record<string, unknown>,
+): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; error: string }> {
+  let res: Response;
+  try {
+    res = await fetch('/api/apps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, error: 'Network error. Try again.' };
+  }
+  let data: Record<string, unknown> | null = null;
+  try {
+    const parsed: unknown = await res.json();
+    if (parsed && typeof parsed === 'object') data = parsed as Record<string, unknown>;
+  } catch {
+    /* not JSON: reported through the status below */
+  }
+  if (res.ok) return { ok: true, data: data || {} };
+  if (data && typeof data.error === 'string' && data.error) return { ok: false, error: data.error };
+  return { ok: false, error: `Homeroom couldn’t create the project (${res.status}). Try again in a moment.` };
+}
+
 /** The inline row under the repo URL: spinner, green tick, or red error. */
 interface ImportStatus {
   tone: 'none' | 'ok' | 'err';
@@ -956,14 +988,10 @@ export function CreateAppDialog() {
     submittingRef.current = true;
     setSubmitting(true);
     try {
-      const res = await fetch('/api/apps', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json();
+      const reply = await postCreateApp(body);
       void invalidateAppAllowance();
-      if (!res.ok) return setError(data.error || 'Failed to create app');
+      if (!reply.ok) return setError(reply.error);
+      const data = reply.data as { app?: { slug?: string; name?: string } };
       // The POST returns 201 with the row still in 'creating' — the build
       // runs async server-side. The dialog STAYS OPEN and reports the phases
       // app-creator broadcasts.
@@ -985,8 +1013,6 @@ export function CreateAppDialog() {
       // Refresh the grid behind the dialog so the new tile is already
       // there when the user closes it.
       (window.Home?.load as (() => void) | undefined)?.();
-    } catch {
-      setError('Network error');
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

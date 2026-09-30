@@ -68,14 +68,24 @@ export WORKER_JWT
 WORKSPACE_DIR="${WORKSPACE_DIR:-/home/node/workspace}"
 cd "$WORKSPACE_DIR" || die "no workspace: $WORKSPACE_DIR"
 
-# Pre-exec hygiene: start from a known-good tree (same as run-cc.sh).
+# Session-branch integrity helpers, shared with run-cc.sh.
+. "$(dirname "$0")/session-branch.sh"
+
+# Pre-exec hygiene: start from a known-good tree (same as run-cc.sh): main
+# and this session's branch only, the turn on the session branch, and for a
+# build no untracked leftovers from an earlier turn.
 echo "__USERNODE_PHASE__ refresh"
-if ! git fetch origin --quiet 2>&1; then
+if ! usernode_fetch_session_refs; then
   echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
 fi
 if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-  git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
-    echo "__USERNODE_WARN__ git reset failed"
+  if [ "$MODE" = "build" ]; then
+    usernode_start_turn_on_session_branch clean_untracked || \
+      echo "__USERNODE_WARN__ git reset failed"
+  else
+    usernode_start_turn_on_session_branch || \
+      echo "__USERNODE_WARN__ git reset failed"
+  fi
 elif [ "$MODE" = "build" ]; then
   die "branch missing upstream: origin/$BRANCH"
 fi
@@ -320,6 +330,10 @@ start_codex() {
 
 CODEX_REQUEST_WRAPPER="$(dirname "$0")/codex-openrouter-request.js"
 
+# What HEAD was when the agent started, so the commit step can tell whether
+# the agent committed its own work this turn.
+TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+
 # A scout is read-only by contract: it reads the repository and writes the
 # spec as its final message. run-cc.sh enforces that with
 # --disallowed-tools; Codex runs danger-full-access inside this container
@@ -425,17 +439,18 @@ if [ "$CODEX_EXIT" -ne 0 ]; then
   exit "$CODEX_EXIT"
 fi
 
+# Same settling as run-cc.sh: the agent's commits on a branch of its own are
+# brought onto the session branch; work that does not build on it is
+# neither committed nor pushed, and is reported as branch_mismatch=1.
 echo "__USERNODE_PHASE__ commit"
-if [ -n "$(git status --porcelain)" ]; then
-  git add -A
-  git commit -m "$COMMIT_MSG" || echo "__USERNODE_WARN__ commit failed"
+if usernode_settle_session_branch; then
+  usernode_commit_leftovers "$TURN_START_SHA" "$COMMIT_MSG"
 fi
 
 echo "__USERNODE_PHASE__ push"
 PUSH_OK=0
-HEAD_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-if [ "$HEAD_BRANCH" != "$BRANCH" ]; then
-  echo "__USERNODE_WARN__ HEAD branch ($HEAD_BRANCH) != session branch ($BRANCH); skipping push"
+if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
+  echo "__USERNODE_WARN__ skipping push"
 elif /usr/local/bin/usernode-push; then
   PUSH_OK=1
 else
@@ -446,11 +461,17 @@ git fetch origin main --quiet 2>/dev/null || true
 AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
 SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+BRANCH_MISMATCH_FIELD=""
+if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
+  AHEAD=0
+  SHA=""
+  BRANCH_MISMATCH_FIELD=" branch_mismatch=1"
+fi
 
 if [ "$PUSH_OK" = "1" ]; then
   echo "__USERNODE_PHASE__ done"
 else
   echo "__USERNODE_PHASE__ push_failed"
 fi
-echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT"
+echo "__USERNODE_RESULT__ cc_exit=$CODEX_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build agent_backend=codex_openrouter agent_model=$AGENT_MODEL agent_thread_id=$AGENT_THREAD_OUT agent_exit=$CODEX_EXIT$BRANCH_MISMATCH_FIELD"
 exit "$CODEX_EXIT"

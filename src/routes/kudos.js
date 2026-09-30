@@ -6,6 +6,7 @@ const ws = require('../services/ws');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const { rankedUsers, weekStartUtc } = require('../services/leaderboard-users');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
   WEEKLY_KUDOS_LIMIT,
   WEEKLY_BOUNTY_LIMIT,
@@ -171,7 +172,7 @@ function kudosRoutes(config) {
   //   409 conflict     — already gave kudos to this PR
   //   429 too_many     — weekly quota exceeded
   // --------------------------------------------------------------
-  router.post('/api/sessions/:id/kudos', async (req, res) => {
+  router.post('/api/sessions/:id/kudos', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const sessionId = parseInt(req.params.id, 10);
     if (!Number.isFinite(sessionId)) {
@@ -349,7 +350,7 @@ function kudosRoutes(config) {
   // current-week row frees a slot while deleting an old-week row
   // changes nothing for this week.
   // --------------------------------------------------------------
-  router.delete('/api/sessions/:id/kudos', async (req, res) => {
+  router.delete('/api/sessions/:id/kudos', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const sessionId = parseInt(req.params.id, 10);
     if (!Number.isFinite(sessionId)) {

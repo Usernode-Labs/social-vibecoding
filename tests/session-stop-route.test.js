@@ -42,7 +42,7 @@ const workerMod = require('../src/services/worker');
 const wsMod = require('../src/services/ws');
 const sessionBus = require('../src/services/session-bus');
 
-const { sessionRoutes } = require('../src/routes/sessions');
+const { sessionRoutes, requestSessionStop } = require('../src/routes/sessions');
 
 const OWNER = { id: 7, username: 'alice' };
 const WRITE_ADMIN = { id: 99, username: 'root', isAdmin: true, canAdminWrite: true };
@@ -66,8 +66,13 @@ async function call(server, path, init) {
 
 // The route runs a handful of unrelated reads (progress log, session row,
 // lease). Only two matter here, so answer by shape and default to empty.
-function routeQueries({ activeTurn = null, ownerId = OWNER.id } = {}) {
+function routeQueries({
+  activeTurn = null, ownerId = OWNER.id, status = 'active', sharedAt = null,
+} = {}) {
   poolQueryHandler = async (sql, params = []) => {
+    if (/SELECT user_id, status, shared_at FROM chat_sessions/.test(sql)) {
+      return { rows: [{ user_id: ownerId, status, shared_at: sharedAt }] };
+    }
     if (/SELECT active_turn FROM chat_sessions/.test(sql)) {
       return { rows: [{ active_turn: activeTurn }] };
     }
@@ -183,6 +188,61 @@ test('a durable stop stamp repaints Stopping… across a restart, with its origi
   } finally { server.close(); }
 });
 
+// ── GET /status: who may read it ────────────────────────────────────────
+//
+// The live status carries the session's progress log, spend and runner, so
+// it follows the /checks and /details visibility rule: owner, admin, a
+// shared underway session, or a proposal up for a vote.
+
+const STRANGER = { id: 55, username: 'mallory' };
+
+async function statusAs(viewer, rows) {
+  routeQueries(rows);
+  const server = await startServer(viewer);
+  try {
+    return await call(server, `/api/sessions/${SESSION_ID}/status`);
+  } finally { server.close(); }
+}
+
+test('a non-owner of an unshared underway session gets a 404, with no progress', async () => {
+  for (const status of ['active', 'paused']) {
+    const res = await statusAs(STRANGER, { status });
+    assert.equal(res.status, 404, `${status} session`);
+    assert.deepEqual(res.body, { error: 'Session not found' });
+  }
+  const leaked = capturedQueries.some((q) => /chat_session_messages|last_turn_runner/.test(q.sql));
+  assert.equal(leaked, false, 'no session data is read for a caller who may not see it');
+});
+
+test('a missing session answers 404', async () => {
+  poolQueryHandler = async () => ({ rows: [] });
+  const server = await startServer(OWNER);
+  try {
+    const res = await call(server, `/api/sessions/${SESSION_ID}/status`);
+    assert.equal(res.status, 404);
+  } finally { server.close(); }
+});
+
+test('the owner, an admin, a shared session and a proposal up for a vote all read the status', async () => {
+  assert.equal((await statusAs(OWNER, { status: 'active' })).status, 200, 'owner');
+  assert.equal((await statusAs(VIEW_ADMIN, { status: 'active' })).status, 200, 'view-only admin');
+  assert.equal((await statusAs(STRANGER, { status: 'active', sharedAt: new Date().toISOString() })).status,
+    200, 'shared underway session');
+  for (const status of ['promoted', 'merging', 'merged']) {
+    assert.equal((await statusAs(STRANGER, { status })).status, 200, `${status} proposal`);
+  }
+  assert.equal((await statusAs(STRANGER, { status: 'archived', sharedAt: new Date().toISOString() })).status,
+    404, 'a shared session stops being public once it is archived');
+});
+
+test('/status and /checks share one visibility predicate', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
+  const uses = src.match(/canViewSession\(session, req\.user\)|canViewSession\(seen\[0\], req\.user\)/g) || [];
+  assert.equal(uses.length, 2, 'both routes call the shared helper');
+});
+
 // ── POST /stop: who may press it ────────────────────────────────────────
 
 test('an admin who can write stops another user\'s turn, and is recorded as the stopper', async () => {
@@ -271,24 +331,26 @@ test('a stop writes the intent durably so a cutover mid-click still honours it',
   assert.ok(stamp.params.includes('turn-xyz'), 'stamped against this turn\'s identity');
 });
 
-test('a stop with nothing to stop reports hasDurableTurn so the client can keep escalating', async () => {
+test('a stop with no local handle durably cancels the recovered job and keeps it busy', async () => {
   // The honest miss: no handle here, but the turn record says a turn is
   // alive somewhere. Answering a bare "no active turn" is what let the
   // client stand down while the agent kept running.
   activeWorkers.add(SESSION_ID);
   routeQueries({ activeTurn: durableTurn() });
 
+  const realStop = workerMod.stopTurn;
+  workerMod.stopTurn = async () => true;
   const server = await startServer(OWNER);
   try {
     const { status, body } = await call(server, `/api/sessions/${SESSION_ID}/stop`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
     });
-    assert.equal(status, 200);
-    assert.equal(body.stopped, false);
-    assert.equal(body.reason, 'no active turn');
-    assert.equal(body.hasDurableTurn, true,
-      'the client needs this to keep the Force stop rung armed');
-  } finally { server.close(); }
+    assert.equal(status, 202);
+    assert.equal(body.stopped, true);
+    assert.equal(body.stopping, true);
+    assert.equal(activeWorkers.has(SESSION_ID), true, 'only cleanup can release the running job');
+    assert.ok(capturedQueries.some((q) => /stopRequestedAt/.test(q.sql)), 'intent is persisted for the owning process');
+  } finally { workerMod.stopTurn = realStop; server.close(); }
 });
 
 test('with no handle and no turn record, hasDurableTurn is false', async () => {
@@ -360,4 +422,93 @@ test('force-stopping a handle-less turn still announces it on both channels', as
   const row = capturedQueries.find((q) => /INSERT INTO chat_session_messages/.test(q.sql));
   assert.ok(row, 'the forced stop is persisted too, for the reloading tab');
   assert.match(row.params[1], /Stopped by @alice \(forced\)\./);
+});
+
+
+test('force stop reports an error and preserves ownership when termination cannot be confirmed', async () => {
+  routeQueries({ activeTurn: durableTurn() });
+  activeWorkers.add(SESSION_ID);
+  const originals = { stop: workerMod.stopTurn, executing: workerMod.isWorkerExecuting, evict: workerMod.evictWorker };
+  workerMod.stopTurn = async () => false;
+  workerMod.isWorkerExecuting = async () => null;
+  workerMod.evictWorker = async () => { throw new Error('Runtime unavailable'); };
+  const server = await startServer(OWNER);
+  try {
+    const { status, body } = await call(server, `/api/sessions/${SESSION_ID}/stop`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }),
+    });
+    assert.equal(status, 503);
+    assert.equal(body.code, 'stop_unconfirmed');
+    assert.equal(activeWorkers.has(SESSION_ID), true);
+    assert.equal(capturedQueries.some((q) => /SET active_turn = NULL/.test(q.sql)), false);
+  } finally {
+    workerMod.stopTurn = originals.stop;
+    workerMod.isWorkerExecuting = originals.executing;
+    workerMod.evictWorker = originals.evict;
+    server.close();
+  }
+});
+
+
+test('the agent-session first Stop goes straight to a hard kill, including a recovered job with no handle', async () => {
+  for (const withHandle of [false, true]) {
+    routeQueries({ activeTurn: durableTurn() });
+    stopRegistry._reset();
+    if (withHandle) stopRegistry.set(SESSION_ID, stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'cc' }));
+    const original = { stop: workerMod.stopTurn, probe: workerMod.isWorkerExecuting, evict: workerMod.evictWorker, clear: workerMod.clearActiveTurn };
+    const calls = [];
+    workerMod.stopTurn = async (id, options) => { calls.push(['kill', id, options]); return true; };
+    workerMod.isWorkerExecuting = async () => { throw new Error('No initial probe or polling needed after an acknowledged kill'); };
+    workerMod.evictWorker = async () => { throw new Error('Keep the warm worker after a successful kill'); };
+    workerMod.clearActiveTurn = async () => true;
+    try {
+      const answer = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
+        immediate: true, force: true, expectedTurnId: 'turn-xyz' });
+      assert.equal(answer.status, 200);
+      assert.equal(answer.body.stopped, true);
+      assert.deepEqual(calls, [['kill', SESSION_ID, { force: true }]]);
+      assert.ok(capturedQueries.some((q) => /stopRequestedAt/.test(q.sql)));
+    } finally {
+      workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe;
+      workerMod.evictWorker = original.evict; workerMod.clearActiveTurn = original.clear;
+    }
+  }
+});
+
+test('a failed immediate kill escalates automatically and keeps ownership if termination is unconfirmed', async () => {
+  routeQueries({ activeTurn: durableTurn() });
+  activeWorkers.add(SESSION_ID);
+  const original = { stop: workerMod.stopTurn, probe: workerMod.isWorkerExecuting, evict: workerMod.evictWorker };
+  const calls = [];
+  workerMod.stopTurn = async (_id, opts) => { calls.push(['kill', opts]); throw new Error('Exec failed'); };
+  workerMod.isWorkerExecuting = async () => null;
+  workerMod.evictWorker = async () => { calls.push(['evict']); throw new Error('Unavailable'); };
+  try {
+    await assert.rejects(requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
+      immediate: true, force: true, expectedTurnId: 'turn-xyz' }), /Could not confirm/);
+    assert.deepEqual(calls, [['kill', { force: true }], ['evict']]);
+    assert.equal(activeWorkers.has(SESSION_ID), true);
+  } finally {
+    workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe; workerMod.evictWorker = original.evict;
+  }
+});
+
+test('an unacknowledged hard kill still evicts when a root-only probe would say idle', async () => {
+  routeQueries({ activeTurn: durableTurn() });
+  stopRegistry._reset();
+  const original = { stop: workerMod.stopTurn, probe: workerMod.isWorkerExecuting, evict: workerMod.evictWorker, clear: workerMod.clearActiveTurn };
+  const calls = [];
+  workerMod.stopTurn = async () => { calls.push('kill'); return false; };
+  workerMod.isWorkerExecuting = async () => { calls.push('probe'); return false; };
+  workerMod.evictWorker = async () => { calls.push('evict'); };
+  workerMod.clearActiveTurn = async () => true;
+  try {
+    const answer = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
+      immediate: true, force: true, expectedTurnId: 'turn-xyz' });
+    assert.equal(answer.body.stopped, true);
+    assert.deepEqual(calls, ['kill', 'evict', 'probe'], 'unconfirmed tool children require whole-worker cancellation');
+  } finally {
+    workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe;
+    workerMod.evictWorker = original.evict; workerMod.clearActiveTurn = original.clear;
+  }
 });

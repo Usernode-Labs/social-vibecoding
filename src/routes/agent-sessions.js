@@ -23,9 +23,11 @@ const { drainGuard } = require('../services/lifecycle');
 const agentSessions = require('../services/agent-sessions');
 const actions = require('../services/agent-session-actions');
 const agentTurn = require('../services/mayor/agent-turn');
+const agentStop = require('../services/agent-session-stop');
 const models = require('../services/models');
 const agentPreferences = require('../services/agent-preferences');
 const notifications = require('../services/notifications');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const MAX_MESSAGE_CHARS = 20000;
 
@@ -170,7 +172,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // POST /api/agent-sessions { hint?: { slug, issueNumber?, proposalId?, entry? }, agent? }
   // Called on the FIRST message of a New change, carrying the model the
   // viewer picked while it was unsent (`agent`, see resolveChoice).
-  router.post('/api/agent-sessions', requireUser, agentSessionCreateLimiter, async (req, res) => {
+  router.post('/api/agent-sessions', requireUser, agentSessionCreateLimiter, sameOriginBrowserOnly, async (req, res) => {
     const body = req.body || {};
     if (typeof body !== 'object' || Array.isArray(body)) {
       return res.status(400).json({ error: 'Body must be an object.' });
@@ -248,6 +250,8 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         const startedAt = Date.parse((rows[0] && rows[0].started_at) || '');
         turn = Number.isFinite(startedAt) ? { ...recovered, startedAt } : recovered;
       }
+      const work = await agentStop.readWork(pool, { agentSessionId: session.id, userId: req.user.id });
+      if (work) return res.json({ session: { ...session, busy: work.busy }, turn: work.turn });
       return res.json({ session: turn && !session.busy ? { ...session, busy: true } : session, turn });
     } catch (err) {
       return sendError(res, err, 'Read agent session');
@@ -294,8 +298,9 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       const recovered = !local && !state.busy && !(state.session && state.session.busy)
         ? agentTurn.recoveredRunState(id, state.activeChangeId)
         : null;
-      const turn = local || recovered || state.lease || null;
-      const busy = !!(local || recovered || (state.unchanged ? state.busy : state.session.busy));
+      const work = await agentStop.readWork(pool, { agentSessionId: id, userId: req.user.id });
+      const turn = work ? work.turn : (local || recovered || state.lease || null);
+      const busy = work ? work.busy : !!(local || recovered || (state.unchanged ? state.busy : state.session.busy));
       if (state.unchanged) {
         return res.json({ unchanged: true, version: state.version, busy, turn: busy ? turn : null });
       }
@@ -366,7 +371,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/archive', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/archive', requireUser, sameOriginBrowserOnly, async (req, res) => {
     try {
       const session = await agentSessions.archiveAgentSession(pool, { userId: req.user.id, id: req.params.id });
       if (!session) return res.status(404).json({ error: 'Agent session not found or already archived' });
@@ -376,7 +381,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/unarchive', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/unarchive', requireUser, sameOriginBrowserOnly, async (req, res) => {
     try {
       const session = await agentSessions.unarchiveAgentSession(pool, { userId: req.user.id, id: req.params.id });
       if (!session) return res.status(404).json({ error: 'Agent session not found or not archived' });
@@ -533,6 +538,14 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
         );
         if (sent.length) return duplicate({ messageId: sent[0].id, turnId: sent[0].turn_id });
       }
+      const work = await agentStop.readWork(pool, { agentSessionId: id, userId: req.user.id });
+      if (work?.busy) {
+        return res.status(409).json({
+          error: work.turn?.stopping ? 'The agent is stopping. Your message has not been sent.'
+            : 'The agent is still working. Stop it or wait before sending another message.',
+          busy: true, turn: work.turn,
+        });
+      }
       // Every id must be this user's own upload to this conversation, not
       // yet sent. Checked before the stream opens, so a refusal is a plain
       // 400 and nothing is recorded.
@@ -664,26 +677,23 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     return undefined;
   });
 
-  router.post('/api/agent-sessions/:id/stop', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/stop', requireUser, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
+    if (!id) return res.status(400).json({ error: 'Bad agent session id' });
+    const body = req.body || {};
+    if (Object.keys(body).some((key) => !['force', 'token'].includes(key))
+        || (body.token != null && (typeof body.token !== 'string' || body.token.length > 1024))
+        || (body.force != null && typeof body.force !== 'boolean')) {
+      return res.status(400).json({ error: 'Invalid stop request' });
+    }
     try {
-      const { rows } = id
-        ? await pool.query('SELECT active_turn, active_change_id FROM agent_sessions WHERE id = $1 AND user_id = $2', [id, req.user.id])
-        : { rows: [] };
-      if (!rows.length) return res.status(404).json({ error: 'Agent session not found' });
-      // During a dispatch the answer names the change: its own stop route
-      // (POST /api/sessions/:changeId/stop) confirms the kill and escalates.
-      let answer = agentTurn.stopAgentTurn(id, { by: req.user.username });
-      const recovered = answer.reason === 'no_active_turn'
-        ? agentTurn.recoveredRunState(id, rows[0].active_change_id ? Number(rows[0].active_change_id) : null)
-        : null;
-      if (recovered) {
-        answer = { stopped: false, reason: 'dispatch_running', changeId: recovered.changeId };
-      } else if (answer.reason === 'no_active_turn' && rows[0].active_turn) {
-        answer.released = await agentTurn.handBackOrphanedTurn({ pool, agentSessionId: id, userId: req.user.id });
-      }
-      return res.json({ ok: true, ...answer });
+      const result = await agentStop.requestStop({
+        pool, user: req.user, agentSessionId: id, force: body.force === true,
+        token: body.token || null, scheduleInteractiveRecovery,
+      });
+      return res.status(result.status).json(result.body);
     } catch (err) {
+      if (err.code === 'stop_unconfirmed') return res.status(503).json({ error: err.message, code: err.code });
       return sendError(res, err, 'Stop agent turn');
     }
   });
@@ -692,7 +702,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // drawer's "Switch to". The same move as the Mayor's switch_active_change
   // (parks the current change, appends a change_switched note), without
   // spending a model call on a button press.
-  router.post('/api/agent-sessions/:id/active-change', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/active-change', requireUser, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(404).json({ error: 'Agent session not found' });
     try {
@@ -721,7 +731,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/actions/:actionId/confirm', requireUser, drainGuard, async (req, res) => {
+  router.post('/api/agent-sessions/:id/actions/:actionId/confirm', requireUser, drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(404).json({ error: 'Agent session not found' });
     try {
@@ -743,7 +753,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/actions/:actionId/dismiss', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/actions/:actionId/dismiss', requireUser, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(404).json({ error: 'Agent session not found' });
     try {

@@ -23,6 +23,7 @@ const waitlist = require('../../../services/waitlist');
 const communityInvites = require('../../../services/community-invites');
 const { signalsFor } = require('../../../services/waitlist-signals');
 const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
+const { loadMobileAppUrls } = require('../../../services/mobile-store-links');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
 const { ok, fail, iso, paginate, meta, csvField } = require('../helpers');
@@ -391,7 +392,14 @@ function waitlistAdminRoutes(config) {
       // idempotent no-ops and must not re-email). Degrades silently when
       // no mail transport is configured; never fails the release.
       if (released.newly_released) {
+        // The mail's mobile steps link the published store listings; a failed
+        // lookup drops those steps rather than the mail or the release.
+        const mobile = await loadMobileAppUrls(pool).catch((err) => {
+          log.error('topochain-admin', 'release mail mobile links failed', { message: err.message });
+          return null;
+        });
         await sendWaitlistReleaseMail(config, released.email, {
+          mobile,
           hasAccount: released.linked_user_id != null,
           // #1548: lets the signup screen prefill the address and send the
           // code without a second step. An unguessable capability already

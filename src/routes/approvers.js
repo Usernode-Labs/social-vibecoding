@@ -32,6 +32,7 @@ const governance = require('../services/governance');
 const approverInvites = require('../services/approver-invites');
 const appAdmins = require('../services/app-admins');
 const { drainGuard } = require('../services/lifecycle');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // #788: the app's own declared admins manage the approver roster too —
 // they are creator-equivalent for this app. Async because the app-admin
@@ -120,7 +121,7 @@ function approverRoutes(config) {
   });
 
   // Accept a pending approver invite. Invitee-only; idempotent.
-  router.post('/api/approver-invites/:appId/accept', drainGuard, async (req, res) => {
+  router.post('/api/approver-invites/:appId/accept', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isFinite(appId)) return res.status(400).json({ error: 'Invalid app id' });
     try {
@@ -185,7 +186,7 @@ function approverRoutes(config) {
 
   // Decline a pending approver invite. Deletes the row; success even
   // when nothing was pending — races are fine.
-  router.post('/api/approver-invites/:appId/decline', drainGuard, async (req, res) => {
+  router.post('/api/approver-invites/:appId/decline', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isFinite(appId)) return res.status(400).json({ error: 'Invalid app id' });
     try {
@@ -208,7 +209,7 @@ function approverRoutes(config) {
 
   // Remove an approver or revoke a pending invite. Creator / full
   // admin, or the approver removing themself (leave).
-  router.delete('/api/apps/:slug/approvers/:userId', drainGuard, async (req, res) => {
+  router.delete('/api/apps/:slug/approvers/:userId', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const targetId = parseInt(req.params.userId, 10);
     if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'Invalid user id' });
     try {

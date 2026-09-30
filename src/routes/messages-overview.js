@@ -140,7 +140,8 @@ const DISCUSSIONS_SQL = `
       FROM apps a
       LEFT JOIN member ON member.app_id = a.id
       LEFT JOIN app_favorites fav ON fav.app_id = a.id AND fav.user_id = $1
-     WHERE (NOT a.self_hosted OR $2::boolean)
+     WHERE a.moderation_suspended_at IS NULL
+       AND (NOT a.self_hosted OR $2::boolean)
        AND NOT EXISTS (SELECT 1 FROM user_app_blocks b WHERE b.user_id = $1 AND b.app_id = a.id)
        AND ($2::boolean OR a.view_visibility = 'public' OR member.app_id IS NOT NULL)
        AND (member.app_id IS NOT NULL
@@ -312,7 +313,8 @@ async function withDemoDiscussions(pool, discussions) {
       `SELECT slug, name, icon_image_id, icon_emoji
          FROM apps
         WHERE slug = ANY($1::text[])
-          AND view_visibility = 'public' AND NOT self_hosted`,
+          AND view_visibility = 'public' AND NOT self_hosted
+          AND moderation_suspended_at IS NULL`,
       [wanted.map((d) => d.slug)]
     );
     for (const row of rows) {

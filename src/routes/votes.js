@@ -30,6 +30,7 @@ const shotsState = require('../services/shots-state');
 const shotsView = require('../services/shots-view');
 const summaryFreshness = require('../services/summary-freshness');
 const proposalDelivery = require('../services/proposal-delivery');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -2176,7 +2177,7 @@ function voteRoutes(config) {
   // exiting — a half-run rebuild leaves the app down until the next heal
   // sweep. 503 here is honest and the client retries against the new
   // container. Read-only vote/undo paths stay ungated.
-  router.post('/api/sessions/:id/promote', drainGuard, requireMembership, async (req, res) => {
+  router.post('/api/sessions/:id/promote', drainGuard, requireMembership, sameOriginBrowserOnly, async (req, res) => {
     try {
       // #183: headless rows are excluded — auto sessions are never
       // promotable themselves; users clone them and propose the clone.
@@ -4643,7 +4644,7 @@ function voteRoutes(config) {
   //
   // The caller becomes the revert session's owner (user_id) so they
   // "own" the resulting PR for chat / status purposes.
-  router.post('/api/sessions/:id/undo', async (req, res) => {
+  router.post('/api/sessions/:id/undo', sameOriginBrowserOnly, async (req, res) => {
     try {
       const { rows: sessionRows } = await pool.query(
       `SELECT cs.*, a.slug as app_slug, a.repo_url
@@ -4729,7 +4730,7 @@ function voteRoutes(config) {
   // pass `force: true` to skip the early gates. The chat message
   // distinguishes the override so users see who did it and why a PR
   // landed without the usual tally.
-  router.post('/api/sessions/:id/admin-merge', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/admin-merge', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       // Cheap pre-gate, preserving the old 403-before-404 stance: a
       // caller who can't force-merge ANYWHERE never gets to probe

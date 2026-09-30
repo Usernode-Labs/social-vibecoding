@@ -167,6 +167,12 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   }
   const files = read('frontend/src/features/settings/agent-files-list.tsx');
   assert.equal((files.match(/font-medium touch-target-32"/g) || []).length, 2, 'agent files View and Delete');
+  // Each row's View and Delete name their file, and View says whether it is
+  // open and which <pre> it opens (tests/agent-files-list-aria.test.js renders it).
+  assert.match(files, /aria-expanded=\{open\}/, 'agent files View reports open');
+  assert.match(files, /aria-controls=\{contentId\}/, 'agent files View points at its content');
+  assert.match(files, /aria-label=\{`\$\{open \? 'Hide' : 'View'\} \$\{file\.name\}`\}/, 'agent files View names its file');
+  assert.match(files, /aria-label=\{`Delete \$\{file\.name\}`\}/, 'agent files Delete names its file');
 });
 
 test('Q19: where a slop cannot hang off the control, the control or its row grows on touch', () => {
@@ -205,6 +211,19 @@ test('Q20: form controls the audit found unnamed have names', () => {
   const connectors = read('frontend/src/features/settings/sections/connectors.tsx');
   assert.match(connectors, /id="settings-dev-flow"\n\s*aria-label="Where changes get built"/,
     'the dev-flow select is named after its heading');
+  // Four text boxes that took focus announcing only "edit text".
+  assert.match(read('frontend/src/features/messages/message-row.tsx'),
+    /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
+  assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
+    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? 'Proposal title' : 'Issue title'\}/,
+    'the card title editor, named by kind');
+  const topicHead = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">About this issue<\/h4>/);
+  assert.match(topicHead, /id="dev-issue-body-input"\n\s*aria-labelledby="dev-issue-body-heading"/,
+    'the issue body editor is named after its heading');
+  const wallet = read('frontend/src/features/header/wallet-sheet-body.tsx');
+  assert.match(wallet, /placeholder="Recipient address \(ut1…\)" aria-label="Recipient address"/);
+  assert.match(wallet, /placeholder="Amount" aria-label="Amount"/);
 });
 
 test('Q20: the setup guide\'s scrolling code blocks are focusable, named regions', () => {
