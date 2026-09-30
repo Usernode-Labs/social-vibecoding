@@ -536,6 +536,21 @@ function HomeroomBotSection() {
     load();
   };
 
+  // A live app's open issues, all of them, as if just posted (#3480): the
+  // loop takes them one at a time, as it takes new ones.
+  const retriageApp = async (slug: string) => {
+    const data = await write('/api/admin/homeroom-bot/retriage-app', 'POST', { slug }, 'Queued.');
+    if (!data || !alive.current) return;
+    const busy = data.left?.busy || 0;
+    setStatus({
+      text: data.queued
+        ? `${data.queued} open issue${data.queued === 1 ? '' : 's'} on ${appName(slug)} will be triaged again, one at a time, oldest first.${busy ? ` ${busy} somebody is working on left alone.` : ''}`
+        : `No open issues on ${appName(slug)} to triage again.${busy ? ` ${busy} somebody is working on left alone.` : ''}`,
+      tone: 'ok',
+    });
+    load();
+  };
+
   // An ask the bot misread: tag this person on this issue again.
   const tagAgain = async (o: MentionOptOut) => {
     const data = await write('/api/admin/homeroom-bot/mention-optouts/remove', 'POST',
@@ -810,6 +825,17 @@ function HomeroomBotSection() {
                       .filter((a) => a.slug === slug || !liveRows.includes(a.slug))
                       .map((a) => <option key={a.slug} value={a.slug}>{a.name}</option>)}
                   </select>
+                  {canWrite && slug && savedLive.includes(slug) && !settings?.pausedApps.includes(slug) ? (
+                    <button
+                      type="button"
+                      className={AdminUI.btn.outlineSm}
+                      data-live-app-retriage={slug}
+                      title="Every open issue on this app, as if just posted: the bot takes them one at a time, oldest first."
+                      onClick={() => retriageApp(slug)}
+                    >
+                      Triage again
+                    </button>
+                  ) : null}
                   {canWrite ? (
                     <button
                       type="button"

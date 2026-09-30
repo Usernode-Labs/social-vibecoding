@@ -279,6 +279,56 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     assert.equal(again.queued, 0, 'queued once');
   });
 
+  await t.test('"Triage this app again" queues every open issue of a live app, oldest first, as the loop takes new ones (#3480)', async () => {
+    const shop = await app('shop', 'https://github.com/usernode-bot/shop');
+    const issues = [
+      { number: 7, state: 'open', createdAt: '2026-09-03T00:00:00Z', updatedAt: '2026-09-03T00:00:00Z' },
+      { number: 3, state: 'open', createdAt: '2026-09-01T00:00:00Z', updatedAt: '2026-09-05T00:00:00Z' },
+      { number: 5, state: 'open', createdAt: '2026-09-02T00:00:00Z', updatedAt: '2026-09-02T00:00:00Z' },
+      { number: 9, state: 'closed', createdAt: '2026-09-04T00:00:00Z', updatedAt: '2026-09-04T00:00:00Z' },
+      { number: 11, state: 'open', createdAt: '2026-09-06T00:00:00Z', updatedAt: '2026-09-06T00:00:00Z' },
+      { number: 13, state: 'open', createdAt: '2026-09-07T00:00:00Z', updatedAt: '2026-09-07T00:00:00Z' },
+    ];
+    const github = { async fetchPublicIssues() { return { issues }; } };
+    const queue = async () => (await pool.query(
+      `SELECT issue_number, priority, reason, started_at, thread_seen_at
+         FROM homeroom_bot_queue WHERE app_id = $1 ORDER BY priority, enqueued_at`, [shop.id],
+    )).rows;
+
+    assert.equal((await bot.retriageApp(pool, { slug: 'shop', deps: { github } })).status, 409, 'not on the live list: nothing is queued');
+    assert.deepEqual(await queue(), []);
+
+    await setting(bot.KEY_LIVE_APPS, '["shop"]');
+    // #11 is somebody's: a person claimed it. #13 is the one the bot is on now.
+    const { rows: [person] } = await pool.query(
+      `INSERT INTO users (username, password) VALUES ('shopkeeper', 'x') RETURNING id`,
+    );
+    await pool.query('INSERT INTO issue_claims (app_id, github_issue_number, user_id) VALUES ($1, 11, $2)', [shop.id, person.id]);
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, started_at)
+       VALUES ($1, 13, 2, 'new', NOW())`, [shop.id],
+    );
+
+    const out = await bot.retriageApp(pool, { slug: 'shop', deps: { github } });
+    assert.equal(out.ok, true);
+    assert.deepEqual(out.left, { busy: 1, closed: 1 });
+    const rows = await queue();
+    const waiting = rows.filter((r) => !r.started_at);
+    assert.deepEqual(waiting.map((r) => r.issue_number), [3, 5, 7], 'oldest first, closed and claimed left out');
+    assert.ok(waiting.every((r) => r.priority === 0 && r.reason === 'app_again'), 'kept by the refresh, like a Run now');
+    assert.equal(new Date(waiting[0].thread_seen_at).toISOString(), '2026-09-05T00:00:00.000Z', 'seen as of its last change, so it is not queued again after');
+    const onNow = rows.find((r) => r.issue_number === 13);
+    assert.ok(onNow.started_at, 'the row the bot is on is left alone');
+    assert.equal(onNow.reason, 'new');
+    assert.equal(out.queued, 4, 'the one in progress is counted but not touched');
+
+    await setting('homeroom_bot_paused_apps', '["paused-app","shop"]');
+    assert.equal((await bot.retriageApp(pool, { slug: 'shop', deps: { github } })).status, 409, 'not while paused');
+    await setting('homeroom_bot_paused_apps', '["paused-app"]');
+    await setting(bot.KEY_LIVE_APPS, '[]');
+    await pool.query('DELETE FROM homeroom_bot_queue WHERE app_id = $1', [shop.id]);
+  });
+
   await t.test('the dashboard counts and the export read the lane columns', async () => {
     const summary = await bot.buildLaneSummary(pool);
     assert.equal(summary.queued, 2);
