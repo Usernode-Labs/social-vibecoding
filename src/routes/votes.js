@@ -6176,10 +6176,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
             behindBy: measured.behindBy, mergesClean: measured.mergesClean, checkState,
           },
         });
-        gateTrace.stop('main_healthy', 'blocked', {
+        // A first red being re-run is in flight, not an admin's turn: no
+        // control is offered until it is confirmed (merge-requirements.js
+        // mainStep says the same off the live columns).
+        gateTrace.stop('main_healthy', mainHealth.confirming ? 'active' : 'blocked', {
           sha: mainHealth.sha,
           paused: true,
           confirming: mainHealth.confirming,
+          actor: mainHealth.confirming ? 'auto' : 'admin',
           note: `${what}; merges are paused until a fix lands or an admin resumes them`,
         });
         gateSave();
@@ -6800,10 +6804,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
               : 'auto-resolver queued.'),
         detail: { autoResolve, forced: !!force },
       });
+      // A refusal the platform will not resolve is the author's to sync; the
+      // gate's default actor ('auto') read as "Nothing needs you" over a red ✕.
       gateTrace.revise('github', autoResolve ? 'active' : 'blocked', {
         note: autoResolve
           ? 'GitHub refused the merge, so the platform is resolving it automatically'
           : 'GitHub refused the merge',
+        ...(autoResolve ? {} : { actor: 'author' }),
       });
       gateSave();
       dend(autoResolve ? 'conflict_resolving' : 'conflict_failed', 'Merge conflict at GitHub.');

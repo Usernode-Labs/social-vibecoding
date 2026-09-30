@@ -1005,9 +1005,8 @@ const REQ_TONE: Record<string, string> = {
   blocked: 'text-red-600 dark:text-red-400',
   pending: 'text-zinc-400 dark:text-zinc-500',
 };
-const REQ_ACTOR: Record<string, string> = {
-  auto: 'automatic', author: 'the author', admin: 'an admin', group: 'the group',
-};
+// No "who acts" column: the headline already says whose turn it is, and the
+// change page's steps carry none either, so the two read alike.
 
 function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }): ReactNode {
   const [open, setOpen] = useState(x.open);
@@ -1037,7 +1036,7 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
         {x.gates.map((g) => (
           <li
             key={g.key}
-            className="px-2.5 py-1 grid grid-cols-[1rem_1fr_auto] gap-x-1.5 items-baseline text-[0.72rem]"
+            className="px-2.5 py-1 grid grid-cols-[1rem_1fr] gap-x-1.5 items-baseline text-[0.72rem]"
             data-req-gate={g.key}
             data-req-state={g.state}
           >
@@ -1050,9 +1049,6 @@ function RequirementsRow({ x }: { x: Extract<ExtraSpec, { t: 'requirements' }> }
               ? 'text-zinc-500 dark:text-zinc-400'
               : 'text-zinc-900 dark:text-zinc-100 font-semibold'}>
               {g.label}
-            </span>
-            <span className="text-[0.65rem] text-zinc-400 dark:text-zinc-500 whitespace-nowrap">
-              {REQ_ACTOR[g.actor] || g.actor}
             </span>
             {g.note
               ? <span className="col-start-2 text-[0.68rem] leading-snug text-zinc-400 dark:text-zinc-500">{g.note}</span>
