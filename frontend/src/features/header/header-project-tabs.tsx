@@ -1,10 +1,10 @@
 /**
  * A project's tabs in the header's one row, on a wide window.
  *
- * On a phone the tabs are a band under the header
+ * On a phone the tabs are a band under the header, in the community's colour
  * (features/dev-board/workshop/project-band.tsx). From 768px up the header
  * has the room, so they sit after the community's name and ⌄, and app.css
- * does not draw the band: one row, as the desktop design has it.
+ * does not draw the band: one coloured row, as the desktop design has it.
  *
  * Rendered only while a project page has published itself and the window is
  * wide, both of which are learned after the first paint (an effect-settled

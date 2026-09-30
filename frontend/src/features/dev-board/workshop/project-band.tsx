@@ -4,8 +4,9 @@
  * All items is a page under the Workshop (its "See all"), with a way back,
  * so while it is up the Workshop tab stays lit.
  *
- * TWO PLACES, ONE CONTROL. On a phone they are a BAND under the header,
- * continuing it (./workshop.tsx renders it at the head of the page). On a wide window the header has the room, so they sit
+ * TWO PLACES, ONE CONTROL. On a phone they are a BAND under the header, in
+ * the community's colour, continuing it (./workshop.tsx renders it at the
+ * head of the page). On a wide window the header has the room, so they sit
  * in its one row, after the community's name, and the band is not drawn
  * (features/header/header-project-tabs.tsx, app.css).
  *
@@ -64,7 +65,8 @@ export function requestProjectTab(slug: string, tab: ProjectTabKey): void {
  * (#2915), which narrow that page alone.
  *
  * In the page (`inHeader` false) it keeps the old strip's box, `.dev-ws-tabs`
- * around a `.dev-ws-tabtrack`, under the header in the header's own colours.
+ * around a `.dev-ws-tabtrack`. Its colour is the root's `--community-tint`,
+ * which the header sets (features/header/community-tint.ts).
  */
 export function ProjectBand({ tab, owed, filtered, onTab, barRef, inHeader = false }: {
   tab: ProjectTabKey;

@@ -3339,7 +3339,7 @@ test('#2915: while a search or filter is on, a dot on the way to All items says 
 test('the tabs are a band in the community\'s colour, not the old pill: nothing slides', () => {
   // The hub and the Workshop were two tabs under a segmented control with a
   // sliding marker, and then no tabs at all. #852 brings back four (Hub,
-  // Discussion, Needs you, Workshop) as a band under the header,
+  // Discussion, Needs you, Workshop) as a band under the coloured header,
   // with an underline rather than a marker; All items is the Workshop's page.
   assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"/);
   assert.match(WORKSHOP, /<ProjectBand\s+tab=\{tab\}\s+owed=\{owed\}/);

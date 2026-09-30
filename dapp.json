@@ -2,7 +2,8 @@
   "name": "Homeroom",
   "description": "The community for the platform itself. Discuss the platform and help make it better.",
   "icon": {
-    "image": "public/apple-touch-icon.png"
+    "image": "public/apple-touch-icon.png",
+    "color": "#37477b"
   },
   "secrets": [
     {
@@ -2581,9 +2582,9 @@
       "expectText": "Staging demo: mostly polish on Messages and Discover"
     },
     {
-      "name": "A project page's tabs are Hub, Discussion, Needs you and Workshop",
+      "name": "A project page's tabs are Hub, Discussion, Needs you and Workshop, in the community's colour",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop [data-ws-band] > [role=\"tablist\"] > [data-ws-tab-btn=\"status\"][aria-selected=\"true\"] + [data-ws-tab-btn=\"discussion\"] + [data-ws-tab-btn=\"needs\"] + [data-ws-tab-btn=\"workshop\"]",
+      "expectSelector": "html[data-community-tint] #dev-workshop [data-ws-band] > [role=\"tablist\"] > [data-ws-tab-btn=\"status\"][aria-selected=\"true\"] + [data-ws-tab-btn=\"discussion\"] + [data-ws-tab-btn=\"needs\"] + [data-ws-tab-btn=\"workshop\"]",
       "expectText": "Discussion"
     },
     {

@@ -9,7 +9,8 @@
  *
  * It replaced the in-place "Which project?" panel under the header, and it
  * opens from three places, all through the same store: the phone's tab
- * pressed while it is lit, the community's name and ⌄ in the header, and the header's "All ⌄" on the Communities list. (On a wide
+ * pressed while it is lit, the community's name and ⌄ in the coloured
+ * header, and the header's "All ⌄" on the Communities list. (On a wide
  * window the lit sidebar row goes back to All communities instead.)
  *
  * ── Two presentations ──────────────────────────────────────────────────
@@ -33,6 +34,7 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
+import { useCommunityColor } from '../../lib/community-color';
 import {
   closeSwitcher, communityScopeStore, goToCommunity, type CommunityInfo,
 } from './community-scope';
@@ -70,6 +72,7 @@ function Waiting({ n }: { n: number }) {
 }
 
 function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
+  const color = useCommunityColor({ color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.slug });
   const app = { slug: info.slug, name: info.name, icon_url: info.iconUrl, icon_emoji: info.iconEmoji };
   return (
     <button
@@ -77,6 +80,7 @@ function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
       className="community-switcher-row"
       data-switcher-community={info.slug}
       aria-current={current ? 'true' : undefined}
+      style={current ? { background: `color-mix(in srgb, ${color} 12%, transparent)` } : undefined}
       onClick={() => goToCommunity(info.slug)}
     >
       <span className="app-icon-tile community-switcher-tile" data-icon={appIconKind(app as never)} aria-hidden="true">
@@ -87,7 +91,7 @@ function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
         <span className="community-switcher-sub">{switcherSub(info)}</span>
       </span>
       <Waiting n={Number(info.needs) || 0} />
-      <span className="community-switcher-tick" style={{ visibility: current ? 'visible' : 'hidden' }} aria-hidden="true">
+      <span className="community-switcher-tick" style={{ color, visibility: current ? 'visible' : 'hidden' }} aria-hidden="true">
         <CheckIcon className="w-5 h-5" strokeWidth="2.5" />
       </span>
     </button>
@@ -125,6 +129,7 @@ export function SwitcherBody(): ReactNode {
           className="community-switcher-row"
           data-switcher-community="all"
           aria-current={all ? 'true' : undefined}
+          style={all ? { background: 'rgba(0,0,0,0.06)' } : undefined}
           onClick={() => goToCommunity(null)}
         >
           <span className="community-switcher-tile community-switcher-tile-all" aria-hidden="true">

@@ -235,7 +235,7 @@ export const HERO_FACES = 5;
  * The hub's people line (#3268): up to HERO_FACES faces, then who the
  * community is for and how many are in it, "Public community · 23 members".
  * The label used to be a chip of its own under the name, and the name is the
- * header's now, so the audience rides the count instead of spending
+ * coloured header's now, so the audience rides the count instead of spending
  * a row of the page on itself. Just you is the label alone.
  */
 export function HeroPeople({ members, count, audience, audienceLabel, children }: {
@@ -640,7 +640,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
 
   // BEFORE THE READ: the actions that depend on nothing the read says (Open
   // app and the ⋯), so a read that fails cannot take the project's settings
-  // off the page. The name and tile are the header's now.
+  // off the page. The name and tile are the coloured header's now.
   const openApp = canOpenApp ? (
     <button
       type="button"
@@ -769,7 +769,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
       {/* WHO IS HERE, AND WHO IT IS FOR: the faces, then "Public community ·
-          23 members". The tile and the name are the header's. */}
+          23 members". The tile and the name are the coloured header's. */}
       <HeroPeople
         members={solo ? [] : data.members}
         count={Number(data.member_count) || 0}
@@ -779,7 +779,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
       {data.description ? (
         <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
       ) : null}
-      {/* WHAT YOU CAN DO HERE, one row: Open app,
+      {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
           Invite, "Make it public" (a private community only: a public one's
           "Make it private" is a row of the ⋯), the ⋯, and across from them
           Join or Joined. A project that is just yours grows from its Share

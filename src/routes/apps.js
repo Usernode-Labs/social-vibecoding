@@ -206,6 +206,7 @@ function compactGlobalChatApp(app, user, adminAppIds = new Set()) {
     status: app.status,
     icon_emoji: app.icon_emoji || null,
     icon_url: app.icon_image_id ? `/app-icons/${app.icon_image_id}` : null,
+    icon_color: app.icon_color || null,
     isFavorited: !!app.is_favorited,
     isCollaborator,
     canCollaborate: !!user?.isAdmin || app.collab_visibility !== 'private' || isCollaborator,

@@ -87,7 +87,7 @@ test('#3268: the hero carries who is here and the fortnight, and who it is for r
 
   // WHO IT IS FOR rides the count: "Public community · 19 members", its
   // glyph leading, and Just you is the label alone (#852: the label was a
-  // chip under the name, and the name is the header's now).
+  // chip under the name, and the name is the coloured header's now).
   const labelled = renderToHtml(createElement(HeroPeople, { members, count: 19, audience: 'open', audienceLabel: 'Public community' }));
   assert.match(labelled, /<span class="dev-ws-hero-count" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience=""><svg[^>]*>[\s\S]*?<\/svg><b>Public community<\/b><\/span> · 19 members<\/span>/);
   const alone = renderToHtml(createElement(HeroPeople, { members: [], count: 1, audience: 'solo', audienceLabel: 'Just you' }));

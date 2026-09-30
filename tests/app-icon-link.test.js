@@ -28,7 +28,7 @@ test('a tap on the icon is never also the card\'s', () => {
 });
 
 // The project hub's hero drew one until #852; the community's tile is the
-// header's now (header-title.tsx, below).
+// coloured header's now (header-title.tsx, below).
 test('every app surface that draws an icon links it', () => {
   for (const file of [
     'frontend/src/features/apps/browse-list.tsx',

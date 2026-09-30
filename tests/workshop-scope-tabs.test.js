@@ -84,9 +84,9 @@ test('picking a community goes to its hub, and All communities to the list', () 
 test('the switcher says which community you are on, who each is for, and what it waits on you for', () => {
   const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
   const info = {
-    garden: { slug: 'garden', name: 'Garden', iconUrl: null, iconEmoji: '🌱', audience: 'open', memberCount: 23, needs: 2 },
-    club: { slug: 'club', name: 'Club', iconUrl: null, iconEmoji: null, audience: 'invited', memberCount: 1, needs: 0 },
-    notes: { slug: 'notes', name: 'Notes', iconUrl: null, iconEmoji: '📝', audience: 'solo', memberCount: 1, needs: 0 },
+    garden: { slug: 'garden', name: 'Garden', iconUrl: null, iconEmoji: '🌱', iconColor: '#2e6660', audience: 'open', memberCount: 23, needs: 2 },
+    club: { slug: 'club', name: 'Club', iconUrl: null, iconEmoji: null, iconColor: null, audience: 'invited', memberCount: 1, needs: 0 },
+    notes: { slug: 'notes', name: 'Notes', iconUrl: null, iconEmoji: '📝', iconColor: null, audience: 'solo', memberCount: 1, needs: 0 },
   };
   const real = loadTsx('frontend/src/features/workshop/community-scope.ts');
   const render = (slug) => {
@@ -115,8 +115,7 @@ test('the switcher says which community you are on, who each is for, and what it
   const one = render('garden');
   assert.match(one, /data-switcher-community="garden" aria-current="true"/, 'the tab\'s community is ticked');
   assert.doesNotMatch(one, /data-switcher-community="all" aria-current/);
-  assert.doesNotMatch(one, /style="background/, 'lit by app.css (--lit-tint), not a colour of its own');
-  assert.match(read('public/css/app.css'), /\.community-switcher-row\[aria-current="true"\] \{ background: var\(--lit-tint\); \}/);
+  assert.match(one, /color-mix\(in srgb, #2e6660 12%, transparent\)/, 'and tinted in its own colour');
 });
 
 test('#852: every class the switcher draws with has a rule, and the menu floats at a fixed size', () => {

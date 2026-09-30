@@ -62,7 +62,9 @@
  * WHAT IT OPENS is "Your communities" now (features/workshop/
  * community-switcher.tsx), the same switcher the Communities tab opens when
  * pressed while lit: a sheet on a phone, a menu under this name on a wide
- * window. The in-page "Which project?" panel it used to drop is gone.
+ * window. The in-page "Which project?" panel it used to drop is gone. On the
+ * project page this bar wears the community's colour (app.css, "The
+ * project's colour"), so the name and ⌄ read as the community's own.
  *
  * ── And on the Communities screen, the All switcher (#3271, #852) ─────
  *

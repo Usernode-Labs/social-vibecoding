@@ -1018,9 +1018,22 @@ function normalizeIconImagePath(raw) {
   return p;
 }
 
+// A project's colour, as dapp.json may set it beside its icon: a hex
+// colour, #rgb or #rrggbb, stored lower-case and expanded to six digits. The
+// page it tints darkens it until white text on it is readable, so any hex is
+// accepted here; anything else is ignored with a warn.
+function normalizeIconColor(raw) {
+  if (typeof raw !== 'string') return null;
+  const m = raw.trim().toLowerCase().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/);
+  if (!m) return null;
+  const hex = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
+  return `#${hex}`;
+}
+
 // Normalize the optional top-level `icon` block:
 //   "icon": { "emoji": "🎮" }  or  "icon": { "image": "public/icon.png" }
-// Returns `{ emoji, image }` (each string-or-null) or null when the
+//   plus, optionally, "color": "#2e6660" (the project's colour)
+// Returns `{ emoji, image, color }` (each string-or-null) or null when the
 // block is absent / carries nothing usable. Both keys are retained when
 // both are valid — the image takes precedence at reconcile time, with
 // the emoji as the fallback should the committed file fail validation.
@@ -1046,11 +1059,16 @@ function readIcon(parsed) {
     image = normalizeIconImagePath(raw.image);
     if (!image) log.warn('app-manifest', 'Ignoring invalid icon.image path', { value: raw.image });
   }
+  let color = null;
+  if (raw.color != null) {
+    color = normalizeIconColor(raw.color);
+    if (!color) log.warn('app-manifest', 'Ignoring invalid icon.color', { value: raw.color });
+  }
   if (emoji != null && image != null) {
     log.warn('app-manifest', 'icon declares both emoji and image; image takes precedence');
   }
-  if (emoji == null && image == null) return null;
-  return { emoji, image };
+  if (emoji == null && image == null && color == null) return null;
+  return { emoji, image, color };
 }
 
 function read(cloneDir) {
@@ -1752,7 +1770,7 @@ async function reconcileAppIcon(pool, app, manifest, cloneDir) {
   const emoji = !image && icon?.emoji ? icon.emoji : null;
 
   const { rows } = await pool.query(
-    'SELECT icon_emoji, icon_image_id FROM apps WHERE id = $1', [app.id]
+    'SELECT icon_emoji, icon_image_id, icon_color FROM apps WHERE id = $1', [app.id]
   );
   if (!rows.length) return false;
   const cur = rows[0];
@@ -1779,16 +1797,22 @@ async function reconcileAppIcon(pool, app, manifest, cloneDir) {
     await pool.query('DELETE FROM app_icons WHERE app_id = $1', [app.id]);
   }
 
-  if ((cur.icon_emoji || null) === emoji && (cur.icon_image_id || null) === imageId) {
+  // The project's colour rides the same block and the same rule: what
+  // dapp.json says, and nothing when it says nothing (the page then derives
+  // one from the icon, in the browser).
+  const color = icon?.color || null;
+
+  if ((cur.icon_emoji || null) === emoji && (cur.icon_image_id || null) === imageId
+    && (cur.icon_color || null) === color) {
     return false;
   }
 
   await pool.query(
-    'UPDATE apps SET icon_emoji = $1, icon_image_id = $2 WHERE id = $3',
-    [emoji, imageId, app.id]
+    'UPDATE apps SET icon_emoji = $1, icon_image_id = $2, icon_color = $3 WHERE id = $4',
+    [emoji, imageId, color, app.id]
   );
   log.info('app-manifest', 'Reconciled app icon from dapp.json', {
-    appId: app.id, slug: app.slug, emoji, imageId,
+    appId: app.id, slug: app.slug, emoji, imageId, color,
   });
 
   try {
@@ -1799,6 +1823,7 @@ async function reconcileAppIcon(pool, app, manifest, cloneDir) {
       slug: app.slug,
       iconEmoji: emoji,
       iconUrl: imageId ? `/app-icons/${imageId}` : null,
+      iconColor: color,
     });
   } catch (err) {
     log.warn('app-manifest', 'Icon broadcast failed', { appId: app.id, err: err.message });
@@ -1886,6 +1911,7 @@ module.exports = {
   readTestsWithMeta,
   checkKey,
   readIcon,
+  normalizeIconColor,
   readAdmins,
   readPlatformEnv,
   reconcilePlatformEnv,
