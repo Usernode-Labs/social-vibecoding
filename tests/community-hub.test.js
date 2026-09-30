@@ -86,7 +86,7 @@ test('a project page is its hub, with doors to the Workshop and Needs you; All i
   const order = ['<CommunityCard', '<SinceSummaryCard', '<YourWorkCard', '<ChannelCard', '<NeedsCard', '<WorkshopDoor'].map((s) => hub.indexOf(s));
   assert.ok(order.every((n) => n >= 0), 'all six on the hub');
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, your work, channel, Needs you, Workshop');
-  assert.match(hub, /\{v\.queue\.length \? <NeedsCard /, 'Needs you only when something waits');
+  assert.match(hub, /^\s*<NeedsCard queue=\{v\.queue\}/m, 'Needs you is always drawn; the card decides door or note');
   assert.match(hub, /\{v\.mine && v\.mine\.rows\.length \? \(\s*<YourWorkCard/, 'your work only when you have some');
   assert.doesNotMatch(hub, /data-ws-since=""/, 'the since list is the Workshop page\'s now');
   // The Workshop page: your work in full, the since list by week, All items
@@ -149,8 +149,10 @@ test('Needs you opens the queue and counts the votes owed', () => {
   const outsider = renderToHtml(createElement(NeedsCard, { queue: [row('a', 'Dark mode', 'ada')], canPost: false, onOpen: () => {} }));
   assert.match(outsider, /Join to vote on these\./);
   const none = renderToHtml(createElement(NeedsCard, { queue: [], canPost: true, onOpen: () => {} }));
-  assert.match(none, /data-ws-hub-needs-open="" disabled=""/);
-  assert.match(none, /Nothing is waiting on you\./);
+  assert.match(none, /data-ws-hub-needs-votes="0"/);
+  assert.match(none, /Nothing more to vote on\./);
+  assert.doesNotMatch(none, /data-ws-hub-needs-open/, 'no votes owed, no door');
+  assert.doesNotMatch(none, /dev-ws-hub-door/, 'the note is not a door row');
 
   // Members & activity is the hero's since #3268: pinned in
   // tests/community-hub-details.test.js.

@@ -3640,7 +3640,7 @@ export function DevWorkshop(): ReactNode {
           card, and a Share it card at the foot instead, which is how it
           grows (./community-card.tsx ShareItCard). */}
       {slug && community?.audience !== 'solo' ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
-      {v.queue.length ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} /> : null}
+      <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
       <WorkshopDoor open={v.dashboard ? v.dashboard.open : 0} filtered={!!v.meta.filtered} onOpen={() => openTab('workshop')} />
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
       </>

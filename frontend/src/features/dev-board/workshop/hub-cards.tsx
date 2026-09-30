@@ -221,9 +221,11 @@ export function ReelThumb(): ReactNode {
  * here: a card that said 14 where two votes were owed read as a backlog
  * with your name on it. They are named under it when they are all there is.
  *
- * A DOOR, and only while something waits: the lander draws it when the
- * queue has anything in it, so a hub with nothing owed spends no row on
- * saying so.
+ * A DOOR, and only while a vote waits: the door's one action is the queue,
+ * and a queue with no vote in it is not worth a row that opens. When no
+ * vote is owed the card is instead one quiet line, in the channel empty
+ * state's manner: "Nothing more to vote on.", naming unclaimed requests
+ * when there are some. (#3408)
  */
 export function NeedsCard({ queue, canPost, onOpen }: {
   queue: DevWorkshopView['queue'];
@@ -235,6 +237,17 @@ export function NeedsCard({ queue, canPost, onOpen }: {
   const first = votes.find((row) => row.t === 'card') || null;
   const count = votes.length;
   const title = first && first.t === 'card' ? first.card.title.text || first.card.title.title : '';
+  if (!count) {
+    return (
+      <section className="dev-ws-strip dev-ws-hub-needs" data-ws-hub-needs="" data-ws-hub-needs-votes="0">
+        <p className="dev-ws-week-note" data-ws-hub-needs-none="">
+          {claims
+            ? `No votes owed. ${plural(claims, 'request', 'requests')} nobody has picked up.`
+            : 'Nothing more to vote on.'}
+        </p>
+      </section>
+    );
+  }
   return (
     <section className="dev-ws-strip dev-ws-hub-needs" data-ws-hub-needs="" data-ws-hub-needs-votes={String(count)}>
       <button type="button" className="dev-ws-hub-row dev-ws-hub-door" onClick={onOpen} data-ws-hub-needs-open="" disabled={!queue.length}>

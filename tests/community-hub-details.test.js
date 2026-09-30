@@ -137,7 +137,9 @@ test('Needs you counts the votes you owe, not the requests nobody has claimed', 
   }));
   assert.doesNotMatch(claimsOnly, /dev-ws-head-n/, 'no votes owed, no count');
   assert.match(claimsOnly, /No votes owed\. 2 requests nobody has picked up\./);
-  assert.doesNotMatch(claimsOnly, /data-ws-hub-needs-open="" disabled/, 'the queue still opens');
+  assert.doesNotMatch(claimsOnly, /data-ws-hub-needs-open/, 'no votes owed, no door — the note opens nothing');
+  assert.doesNotMatch(claimsOnly, /<button/, 'no button in the note branch');
+  assert.match(claimsOnly, /data-ws-hub-needs-votes="0"/);
 });
 
 test('the channel card\'s composer sends to the room and re-reads the hub', () => {
