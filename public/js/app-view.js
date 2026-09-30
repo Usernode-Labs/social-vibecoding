@@ -4389,7 +4389,8 @@ const AppView = {
       ? (parseInt(item.qualified_no_count) || 0) : (parseInt(item.no_count) || 0);
     const snap = parseInt(item.votes_required);
     const majority = (Number.isFinite(snap) && snap > 0) ? snap : (parseInt(ctx.majority) || 1);
-    const vote = { yes, no, majority, pill: card.pill ? card.pill.state : null };
+    const vote = { yes, no, majority, pill: card.pill ? card.pill.state : null,
+      was: AppView.thresholdWasNote(item, majority) };
     // #2588: the two rows this carve-out existed for — the imported note and
     // the built-with note — are gone from the ledger, because neither was a
     // step waiting on anyone and the hero above the card already says where
@@ -17668,6 +17669,19 @@ const AppView = {
       n = (n / total) * 100;
     }
     return { yes: y, no: n };
+  },
+
+  // #3234: the threshold counts active members live, so it can move while a
+  // vote is open. When it has, say what it was when voting opened. Display
+  // only: the merge gate still uses the live number. Null (no note) when it
+  // has not moved, the row predates the stamp, or the app counts a fixed
+  // "at least N" approvals.
+  thresholdWasNote(p, majority) {
+    if (!p || p.status !== 'promoted' || p.approvals_required != null) return null;
+    const was = parseInt(p.votes_required_at_promote, 10);
+    const now = parseInt(majority, 10);
+    if (!Number.isFinite(was) || was < 1 || !Number.isFinite(now) || was === now) return null;
+    return `Needs ${now}, was ${was} when voting opened`;
   },
 
   statusPillState(item, opts) {

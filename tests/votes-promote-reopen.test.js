@@ -77,7 +77,7 @@ function promotePool(session = sessionRow, { promotionMatches = true } = {}) {
   ]);
 }
 
-function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight = false } = {}) {
+function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight = false, activeCount = 1 } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     pool: require.resolve('../src/db/pool'),
@@ -153,7 +153,7 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineI
     pushSessionUpdate() {},
   });
   stub(ids.activeUsers, {
-    getActiveUserStats: async () => ({ active: 1, majority: 1 }),
+    getActiveUserStats: async () => ({ active: activeCount, majority: Math.floor(activeCount / 2) + 1 }),
     isUserActive: async () => true,
     mergeGate,
   });
@@ -195,10 +195,10 @@ function loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineI
 
 async function withServer({
   getPRImpl, reopenImpl, markReadyImpl, session, expectedHandoffHead, expectedHandoffStatus, promotionMatches,
-  pipelineInFlight,
+  pipelineInFlight, activeCount,
 } = {}, fn) {
   const pool = promotePool(session, { promotionMatches });
-  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight });
+  const ctx = loadVotesRouter({ getPRImpl, reopenImpl, markReadyImpl, pool, pipelineInFlight, activeCount });
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -233,6 +233,19 @@ test('paused promotion goes directly to review and duplicate submissions do not 
     assert.equal(duplicate.status, 404);
     assert.equal(ctx.getPRCalls.length, 1);
     assert.equal(ctx.rerunCalls.length, 0);
+  });
+});
+
+// #3234: the vote's threshold counts active members live, so it can move
+// while voting is open. Promote stamps the electorate it opened with — the
+// same count the gate is handed — for the "was N when voting opened" note.
+test('promote stamps the active-member count the vote opened with', async () => {
+  await withServer({ session: { ...sessionRow, status: 'paused' }, activeCount: 7 }, async ctx => {
+    const response = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(response.status, 200);
+    const update = ctx.pool.queries.find(q => /SET status = 'promoted'/.test(q.sql));
+    assert.match(update.sql, /active_users_at_promote = \$4/);
+    assert.equal(update.params[3], 7);
   });
 });
 

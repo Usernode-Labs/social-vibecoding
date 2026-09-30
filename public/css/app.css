@@ -15129,6 +15129,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-step-vote-bar { flex: 0 0 160px; height: 8px; border-radius: 999px; background: var(--state-neutral-bg); overflow: hidden; }
 .dev-step-vote-bar > i { display: block; height: 100%; border-radius: 999px; background: var(--state-ok); }
 .dev-step-vote-tally { color: var(--text-primary); font-weight: 600; font-size: 12.5px; }
+/* #3234: the threshold moved during the vote; muted, beside the counts. */
+.dev-step-vote-was { color: var(--text-muted); font-size: 12.5px; }
 
 /* ── Technical details, as a sheet over the page ──
    Opened from the ⋯ menu (DetailsSheet); body-mounted, so no frosted sheet

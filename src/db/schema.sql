@@ -1635,6 +1635,15 @@ COMMENT ON TABLE chat_session_agent_model_costs IS 'staging:private';
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS votes_required        INTEGER;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_merge INTEGER;
 
+-- #3234: the electorate a proposal's vote OPENED with. The threshold is
+-- still computed live and merge rules do not read this column; it is shown
+-- only, so a voter can see the goalpost moved ("was N when voting opened")
+-- when members joined or left mid-vote. Set where a row becomes 'promoted'
+-- (routes/votes.js promote and the promote-on-import path) from the same
+-- governance.getElectorate count the gate uses. NULL for rows promoted
+-- before it existed, which show no note.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEGER;
+
 -- #788: "explicit approval" flag — this proposal's diff changes a
 -- privilege-granting block in dapp.json (today only the top-level
 -- `admins` list), so the TIME-BASED merge paths are switched off for it:
