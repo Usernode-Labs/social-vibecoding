@@ -472,3 +472,15 @@ test('the ledger, the dashboard and the filter agree on every verdict, follow-up
   assert.match(admin, /\['question', 'ready', 'person', 'empty', 'failed', 'answer', 'revise'\]\.includes\(q\.verdict\)/);
   assert.match(tsx, /isFollowUp\(run\) \? <span className=\{`\$\{AdminUI\.badge\.outline\} ml-1`\}>follow-up<\/span>/);
 });
+
+test('a saved live app has a "Triage again" button that queues its open issues (#3480)', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  // Only on a SAVED live app that is not paused: an unsaved row is not live
+  // yet, and the route refuses a paused app anyway.
+  assert.match(tsx, /\{canWrite && slug && savedLive\.includes\(slug\) && !settings\?\.pausedApps\.includes\(slug\) \? \(\s*<button[\s\S]{0,200}data-live-app-retriage=\{slug\}[\s\S]{0,300}onClick=\{\(\) => retriageApp\(slug\)\}\s*>\s*Triage again\s*<\/button>/);
+  assert.match(tsx, /write\('\/api\/admin\/homeroom-bot\/retriage-app', 'POST', \{ slug \}, 'Queued\.'\)/);
+  assert.match(tsx, /will be triaged again, one at a time, oldest first\./, 'the status says what will happen, and how');
+  const admin = read('src/routes/admin.js');
+  assert.match(admin, /router\.post\('\/api\/admin\/homeroom-bot\/retriage-app', requireAdminWrite, drainGuard, async \(req, res\) => \{/);
+  assert.match(admin, /homeroomBot\.retriageApp\(pool, \{ slug: req\.body\?\.slug, actorId: req\.user\.id \}\)/);
+});

@@ -3631,6 +3631,76 @@ async function retriageQuestions(pool, { actorId = null } = {}) {
   return { ok: true, queued: picked.length, live: questions.length - picked.length };
 }
 
+/**
+ * "Triage this app again" (#3480): every open issue on a live app, as if it
+ * had just been posted. An app added to the live list was triaged in shadow
+ * before, and the refresh queues only what changed since its last verdict,
+ * so without this the bot does nothing live there until somebody comments.
+ *
+ * Nothing new is scheduled: the issues go in the app's queue, oldest first,
+ * and the loop takes them the way it takes new ones, one at a time, back to
+ * back, with the live path and its caps as usual. They go in at priority 0,
+ * as Run now's do, because the refresh drops an unchanged issue's row
+ * otherwise. What the regular refresh leaves out stays out: a closed issue,
+ * and one somebody is working on (busyIssueNumbers). A row the bot is on
+ * right now is left alone. Live apps only, and not while paused.
+ */
+async function retriageApp(pool, { slug, actorId = null, deps = {} } = {}) {
+  if (typeof slug !== 'string' || !/^[a-z0-9-]{1,120}$/.test(slug)) {
+    return { ok: false, status: 400, error: 'Invalid app slug' };
+  }
+  const settings = await readSettings(pool);
+  if (!(settings.liveApps || []).includes(slug)) {
+    return { ok: false, status: 409, error: 'The bot does not act on this app for real: add it to the live apps first' };
+  }
+  if ((settings.pausedApps || []).includes(slug)) {
+    return { ok: false, status: 409, error: 'The app is paused for the bot' };
+  }
+  const { rows: [app] } = await pool.query(
+    'SELECT id, slug, name, repo_url FROM apps WHERE slug = $1 AND repo_url IS NOT NULL', [slug],
+  );
+  const repo = app && parseRepo(app.repo_url);
+  if (!repo) return { ok: false, status: 404, error: 'App not found' };
+  const github = deps.github || require('./github');
+  const fetched = await github.fetchPublicIssues(repo.owner, repo.repo);
+  const issues = Array.isArray(fetched?.issues) ? fetched.issues : [];
+  if (!issues.length && fetched?.note) return { ok: false, status: 503, error: 'GitHub is unavailable; try again shortly' };
+
+  const [busy, threads] = await Promise.all([
+    busyIssueNumbers(pool, app.id),
+    threadActivityByIssue(pool, app.id),
+  ]);
+  const picked = [];
+  const left = { busy: 0, closed: 0 };
+  for (const issue of issues) {
+    const n = Number(issue.number);
+    // Judged as if never triaged: the last verdict does not count here.
+    const verdict = classifyIssue({ issue, threadLastAt: threads.get(n), busy: busy.has(n) });
+    if (verdict.eligible) picked.push({ n, createdMs: toMs(issue.createdAt), threadSeenAt: verdict.threadSeenAt });
+    else if (verdict.reason === 'in_progress') left.busy += 1;
+    else if (verdict.reason === 'closed') left.closed += 1;
+  }
+  // Oldest first: each row's place in the queue is its turn.
+  picked.sort((a, b) => (a.createdMs - b.createdMs) || (a.n - b.n));
+  if (picked.length) {
+    await pool.query(
+      `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason, requested_by, thread_seen_at, enqueued_at)
+       SELECT $1, q.n, 0, 'app_again', $4, q.seen, NOW() + q.ord * INTERVAL '1 millisecond'
+         FROM UNNEST($2::int[], $3::timestamptz[]) WITH ORDINALITY AS q(n, seen, ord)
+       ON CONFLICT (app_id, issue_number) DO UPDATE
+         SET priority = 0, reason = EXCLUDED.reason, requested_by = EXCLUDED.requested_by,
+             thread_seen_at = EXCLUDED.thread_seen_at, enqueued_at = EXCLUDED.enqueued_at
+       WHERE homeroom_bot_queue.started_at IS NULL`,
+      [app.id, picked.map((p) => p.n), picked.map((p) => p.threadSeenAt), actorId],
+    );
+    wake({ appId: app.id });
+  }
+  log.info('homeroom-bot', 'App queued to be triaged again', {
+    app: slug, queued: picked.length, busy: left.busy,
+  });
+  return { ok: true, queued: picked.length, left };
+}
+
 /** An admin's "run now": the issue goes to the head of the queue. */
 async function enqueueNow(pool, { slug, issueNumber, actorId }) {
   const n = Number(issueNumber);
@@ -3661,6 +3731,7 @@ module.exports = {
   runTriage,
   refreshQueue,
   refreshApp,
+  retriageApp,
   nextBatch,
   ensureBotUser,
   ensureBotSession,

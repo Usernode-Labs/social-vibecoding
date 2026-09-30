@@ -1243,6 +1243,21 @@
     {
       "source": "src/routes/admin.js",
       "method": "POST",
+      "path": "/api/admin/homeroom-bot/retriage-app",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.post.admin.homeroom.bot.retriage.app.93f1ff8a",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "POST",
       "path": "/api/admin/homeroom-bot/shadow-builds/backfill",
       "expression": null,
       "status": "mapped",
