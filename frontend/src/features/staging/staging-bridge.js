@@ -77,9 +77,17 @@ export const stagingBridge = {
     stagingStore.set({ urlLabel: text || '' });
   },
 
-  /** #816: an EXPLICIT '' clears a line; `undefined` leaves it alone. */
+  /**
+   * #816: an EXPLICIT '' clears a line; `undefined` leaves it alone.
+   * #3413: the retry label is reset on every call, so only a caller that
+   * names it ("Retry preview") gets anything but "Retry sign-in".
+   */
   setLoader(visible, patch = {}) {
-    const next = { loaderVisible: !!visible, loaderRetry: !!visible && !!patch.retry };
+    const next = {
+      loaderVisible: !!visible,
+      loaderRetry: !!visible && !!patch.retry,
+      loaderRetryLabel: patch.retryLabel || 'Retry sign-in',
+    };
     if (patch.title !== undefined) next.loaderTitle = patch.title;
     if (patch.sub !== undefined) next.loaderSub = patch.sub;
     stagingStore.set(next);

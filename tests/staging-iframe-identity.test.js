@@ -485,6 +485,7 @@ test('#1993 React bridge exposes retry state and clears it without replacing the
   h.AppView._mintToken = async () => null;
   await h.AppView.swapToStaging('https://preview.example', null, { verified: true });
   assert.equal(h.store.get().loaderRetry, true);
+  assert.equal(h.store.get().loaderRetryLabel, 'Retry sign-in', '#3413: sign-in keeps its label');
   assert.equal(h.iframe.loads, 0, 'no unauthenticated navigation');
   assert.equal(h.bridge.frame(), h.iframe);
   h.AppView._mintToken = async () => 'retry-token';
@@ -495,4 +496,15 @@ test('#1993 React bridge exposes retry state and clears it without replacing the
   assert.match(h.iframe.src, /token=retry-token&un-theme=dark$/);
   assert.match(OVERLAY, /useHiddenClass\(retryRef, !state\.loaderRetry\)/);
   assert.match(OVERLAY, /stagingHandlers\.onRetry\?\.\(\)/);
+  assert.match(OVERLAY, /\{state\.loaderRetryLabel\}/, '#3413: the button text comes from the store');
+});
+
+test('#3413 React bridge labels a failed-build retry "Retry preview" and resets it for sign-in', async () => {
+  const h = await makeHarness();
+  h.bridge.setLoader(true, { title: 'Preview couldn’t be rebuilt', sub: 'config error', retry: true, retryLabel: 'Retry preview' });
+  assert.equal(h.store.get().loaderRetry, true);
+  assert.equal(h.store.get().loaderRetryLabel, 'Retry preview');
+  assert.equal(h.store.get().loaderSub, 'config error');
+  h.bridge.setLoader(true, { title: 'Could not sign in to the preview', retry: true });
+  assert.equal(h.store.get().loaderRetryLabel, 'Retry sign-in');
 });
