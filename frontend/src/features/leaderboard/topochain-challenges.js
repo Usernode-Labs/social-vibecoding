@@ -419,7 +419,7 @@ const TopochainChallenges = {
   // screen reader says the words. The keys are not the headings: ids
   // (`tc-se-group-<key>`) and tests name the keys, so a heading can change
   // without them. `order` is each group's rank while setup is unfinished;
-  // _groupRankOf moves a finished First challenges to the end.
+  // _groupRankOf moves a finished First challenges group to the end.
   GROUPS: {
     ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
     WEEKLY: { key: 'week', heading: 'This week', order: 1 },

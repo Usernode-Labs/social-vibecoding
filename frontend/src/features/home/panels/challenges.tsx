@@ -42,7 +42,7 @@
  *
  * The cards are the Challenges tab's list in the tab's order: grouped by the
  * board's categories (First challenges, This week, Always open, the season's other
- * challenges, and a finished First challenges last). Expanded, the block draws
+ * challenges, and a finished First challenges group last). Expanded, the block draws
  * that whole list. Collapsed, its four slots go to the viewer's unfinished
  * challenges first (#2490), cutting a group mid-way when the cap falls inside
  * it; finished challenges only fill the slots that are left, and they sit

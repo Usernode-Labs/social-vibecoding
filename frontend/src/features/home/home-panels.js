@@ -149,7 +149,7 @@ const HomePanels = {
   // from it (visibleSlots).
   //
   // The keys, in order: the group (groupRankOf: First challenges while unfinished,
-  // This week, Always open, Season challenges, then a finished First challenges),
+  // This week, Always open, Season challenges, then a finished First challenges group),
   // then unfinished challenges first (orderDone, the tab's _isDone: the
   // viewer's own progress on every card), then organiser-featured (`featured`, the
   // flag the tab's personalization row carries), then the tab's public list
@@ -157,7 +157,7 @@ const HomePanels = {
   // `display_order` (the staging demo, or a cache written before the field)
   // keeps the server's sequence for that last key instead. Stable, and the
   // input is not mutated. `onboarding` is the payload's gate summary, which
-  // decides whether First challenges is finished (setupFinished).
+  // decides whether the First challenges group is finished (setupFinished).
   orderRows(rows, onboarding) {
     const list = (rows || []).slice();
     const finished = HomePanels.setupFinished(list, onboarding);
@@ -544,7 +544,7 @@ const HomePanels = {
       ? HomePanels.CHALLENGE_GROUPS[category] : HomePanels.OTHER_GROUP;
   },
 
-  // Whether setup is behind the viewer, which decides where First challenges sits.
+  // Whether setup is behind the viewer, which decides where the First challenges group sits.
   // The tab's rule (TopochainChallenges._setupFinished): with an onboarding
   // summary the server's gate says so (`unlocked === true`); without one, the
   // rows must hold at least one setup card and every one of them must be done.
