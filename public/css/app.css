@@ -16341,18 +16341,24 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hub-work-more { margin-top: 2px; }
 
 /* ── What landed since you were last here (since-summary-card.tsx) ─────
-   The hub's first card: the window as the heading, the count, "AI summary"
-   when a model wrote it, and the × at the far end; then the sentence at the
-   reading size, or the titles when there are three or fewer. */
+   The hub's first card: the window as the heading, and at the far end Week
+   by week with its arrow (#3510) and the ×; then the sentence at the reading
+   size, or the titles when there are three or fewer; then the count, and
+   "AI summary" under a model's line. */
 .dev-ws-since-card { gap: 6px; }
-.dev-ws-since-card-n { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
-.dev-ws-since-card-tag { margin-left: auto; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+.dev-ws-since-card .dev-ws-head-title { white-space: nowrap; }
+.dev-ws-since-card-foot {
+  margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px;
+  font-size: 12px; line-height: 16px; color: var(--text-muted);
+}
+.dev-ws-since-card-n { white-space: nowrap; }
+.dev-ws-since-card-tag { white-space: nowrap; }
+.dev-ws-since-card-n + .dev-ws-since-card-tag::before { content: '·'; margin-right: 6px; }
 .dev-ws-since-card-x {
   width: 28px; height: 28px; margin: -4px -6px -4px 0; flex: none; padding: 0;
   display: grid; place-items: center;
   border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); cursor: pointer;
 }
-.dev-ws-since-card-n + .dev-ws-since-card-x { margin-left: auto; }
 .dev-ws-since-card-x-glyph { width: 14px; height: 14px; stroke-width: 2.25; }
 .dev-ws-since-card-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (hover: hover) {
@@ -17019,8 +17025,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   color: var(--accent); font: inherit; font-size: 13.5px; font-weight: 600;
   cursor: pointer;
 }
-/* The way to the rest of what landed, week by week. */
-.dev-ws-since-card-more { align-self: flex-start; font-size: 13.5px; font-weight: 600; }
+/* The way to the rest of what landed, week by week: the head's door, which
+   keeps its words on one line beside the window's name. */
+.dev-ws-since-card-more { white-space: nowrap; }
 /* ── "Your communities" (features/workshop/community-switcher.tsx) ──
    The switcher behind the Communities tab: a sheet from the floor on a
    phone (the kit's own when it adopts it; this scrim and panel when not),
