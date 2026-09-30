@@ -1,8 +1,10 @@
 /**
  * "Your communities": the switcher behind the Communities tab.
  *
- * All communities first (the list of every community you are in), then each
- * community with its tile, who it is for and how many are in it, how many
+ * All communities first (the list of every community you are in), then your
+ * communities grouped like that page's list (./sections.ts): one labelled
+ * section per audience, its three most recent out and "Show N more" for the
+ * rest, each with its tile, who it is for and how many are in it, how many
  * votes it is waiting on you for, and a tick on the one you are on; then
  * "Join or start a community", which is Discover. Picking one makes it the
  * tab's community and opens its hub (./community-scope.ts goToCommunity).
@@ -35,6 +37,7 @@ import { adoptKitSurface, type KitAdoption } from '../../lib/kit-surface';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useCommunityColor } from '../../lib/community-color';
+import { groupRows, SECTION_LIMIT, sectionFold } from './sections';
 import {
   closeSwitcher, communityScopeStore, goToCommunity, type CommunityInfo,
 } from './community-scope';
@@ -98,6 +101,39 @@ function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
   );
 }
 
+/** One audience section of the menu, folded like the All communities page's. */
+function SwitcherSection({
+  section, currentSlug,
+}: {
+  section: { key: string; label: string; rows: CommunityInfo[] };
+  currentSlug: string | null;
+}) {
+  // How many rows are out. Each press of "Show N more" adds SECTION_STEP;
+  // once every row is out the same row folds the section back to three.
+  const [limit, setLimit] = useState(SECTION_LIMIT);
+  const fold = sectionFold(section.rows.length, limit);
+  return (
+    <>
+      <h3 className="community-switcher-section-label">{section.label}</h3>
+      {section.rows.slice(0, fold.shown).map((info) => (
+        <Row key={info.slug} info={info} current={currentSlug === info.slug} />
+      ))}
+      {section.rows.length > SECTION_LIMIT ? (
+        // A row of the menu, not a link under it: carrying the row class keeps
+        // roveRows' arrow keys over the whole list unchanged.
+        <button
+          type="button"
+          className="community-switcher-row community-switcher-fold"
+          aria-expanded={fold.shown === section.rows.length}
+          onClick={() => setLimit(fold.next)}
+        >
+          <span>{fold.label}</span>
+        </button>
+      ) : null}
+    </>
+  );
+}
+
 /** Arrow keys between the rows; Home and End to either end. */
 function roveRows(e: React.KeyboardEvent<HTMLDivElement>): void {
   const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
@@ -117,6 +153,11 @@ export function SwitcherBody(): ReactNode {
   const st = useStoreState(communityScopeStore);
   const all = !st.slug;
   const rows = (st.list || []).map((slug) => st.info[slug]).filter(Boolean) as CommunityInfo[];
+  // groupRows re-runs orderRows, a no-op here: CommunityInfo keeps recency as
+  // `lastActiveAt` (camelCase) while SectionedRow reads `last_active_at`, so
+  // every row sorts as undated and the list's stored order survives. Do NOT
+  // "fix" this by renaming the field — that would silently re-sort the list
+  // the All communities page already ordered (community-scope.ts).
   return (
     <>
       <div className="community-switcher-head">
@@ -148,8 +189,8 @@ export function SwitcherBody(): ReactNode {
         </button>
         {st.list == null ? (
           <p className="community-switcher-note" data-switcher-loading="">Loading your communities…</p>
-        ) : rows.map((info) => (
-          <Row key={info.slug} info={info} current={st.slug === info.slug} />
+        ) : groupRows(rows).map((section) => (
+          <SwitcherSection key={section.key} section={section} currentSlug={st.slug} />
         ))}
         <button
           type="button"

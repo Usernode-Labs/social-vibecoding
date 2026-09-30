@@ -38,9 +38,10 @@
 // "Your communities" is how you change which: a sheet on a phone, a menu on a
 // wide window, opened from the lit tab, the header's name and ⌄, and the All
 // chip here (features/workshop/community-switcher.tsx). The "Which project?"
-// panel both ends of the chip shared is gone, and with it the audience
-// sections and "Show N more" of #3363: the switcher lists every community you
-// are in, newest first, each saying who it is for and what it waits on you for.
+// panel both ends of the chip shared is gone. The switcher lists every
+// community you are in, newest first, each saying who it is for and what it
+// waits on you for; #3519 groups them like the All communities page's list,
+// with the sections and "Show N more" of #3363.
 //
 // What is pinned, each a way the screens can be quietly wrong:
 //
@@ -116,6 +117,81 @@ test('the switcher says which community you are on, who each is for, and what it
   assert.match(one, /data-switcher-community="garden" aria-current="true"/, 'the tab\'s community is ticked');
   assert.doesNotMatch(one, /data-switcher-community="all" aria-current/);
   assert.match(one, /color-mix\(in srgb, #2e6660 12%, transparent\)/, 'and tinted in its own colour');
+  // Grouped like the All communities page (#3519): the page's three labels in
+  // its order, and each community drawn inside its own section.
+  const atLabel = (label) => all.indexOf(`>${label}</h3>`);
+  assert.ok(atLabel('Public communities') >= 0
+    && atLabel('Public communities') < atLabel('Private communities')
+    && atLabel('Private communities') < atLabel('Just you'),
+    'the page\'s three section labels, in its order');
+  assert.ok(all.indexOf('data-switcher-community="garden"') > atLabel('Public communities')
+    && all.indexOf('data-switcher-community="garden"') < atLabel('Private communities'),
+    'a community is drawn inside its own section');
+  assert.ok(all.indexOf('data-switcher-community="all"') < atLabel('Public communities'),
+    'All communities still leads the list');
+});
+
+test('#3519: the switcher folds a long section like the All communities page', () => {
+  const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
+  const info = {};
+  // Five open communities and one Just you: the open section folds, the solo
+  // one is alone, and no private row means no Private communities label.
+  const list = ['grove', 'field', 'orchard', 'meadow', 'terrace', 'notes'];
+  for (const slug of list) {
+    info[slug] = {
+      slug, name: slug, iconUrl: null, iconEmoji: null, iconColor: null,
+      audience: slug === 'notes' ? 'solo' : 'open', memberCount: 1, needs: 0,
+    };
+  }
+  const real = loadTsx('frontend/src/features/workshop/community-scope.ts');
+  const mod = loadTsx('frontend/src/features/workshop/community-switcher.tsx', {
+    stubs: {
+      './community-scope': {
+        ...real,
+        communityScopeStore: fixedStore({ slug: null, info, list, totalNeeds: 0, switcher: 'tab', anchor: null }),
+      },
+    },
+  });
+  const html = renderToHtml(createElement(mod.SwitcherBody, {}));
+  const openSection = html.match(
+    /<h3 class="community-switcher-section-label">Public communities<\/h3>[\s\S]*?<h3 class="community-switcher-section-label">Just you<\/h3>/,
+  );
+  assert.ok(openSection, 'the labels are drawn, each its own small muted caps');
+  const fold = openSection[0].match(/<button type="button" class="community-switcher-row community-switcher-fold"[^>]*>/);
+  assert.ok(fold, 'a five-row section ends in a fold row');
+  assert.match(fold[0], /aria-expanded="false"/, 'folded, not open');
+  assert.match(openSection[0], />Show 2 more<\/span>/, 'the fold names what is left, five out of five minus three');
+  assert.ok(!fold[0].includes('data-switcher-community'), 'the fold is not a community row');
+  assert.match(openSection[0], />Public communities<\/h3>/, 'the label carries no count — the fold says more are hidden');
+  const soloTail = html.slice(html.indexOf('>Just you</h3>'));
+  assert.ok(!soloTail.includes('community-switcher-fold'), 'a section of three or fewer draws no fold row');
+  assert.doesNotMatch(html, /Private communities/, 'an empty section is left out');
+
+  // The fold's three-then-five-then-fewer sequence is sections.ts's, the
+  // All communities page's own (#3269) — pinned there in full; this is the
+  // five-row shape the fold row above renders.
+  const sections = loadTsx('frontend/src/features/workshop/sections.ts');
+  let step = sections.sectionFold(5, sections.SECTION_LIMIT);
+  assert.deepEqual(step, { shown: 3, label: 'Show 2 more', next: 8 });
+  step = sections.sectionFold(5, step.next);
+  assert.deepEqual(step, { shown: 5, label: 'Show fewer', next: sections.SECTION_LIMIT },
+    'once every row is out, the same row folds the section back to three');
+});
+
+test('#3519: before the list answers, the loading note stays and no sections render', () => {
+  const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
+  const real = loadTsx('frontend/src/features/workshop/community-scope.ts');
+  const mod = loadTsx('frontend/src/features/workshop/community-switcher.tsx', {
+    stubs: {
+      './community-scope': {
+        ...real,
+        communityScopeStore: fixedStore({ slug: null, info: {}, list: null, totalNeeds: null, switcher: 'tab', anchor: null }),
+      },
+    },
+  });
+  const html = renderToHtml(createElement(mod.SwitcherBody, {}));
+  assert.match(html, /data-switcher-loading="">Loading your communities/);
+  assert.doesNotMatch(html, /community-switcher-section-label/, 'nothing to group yet');
 });
 
 test('#852: every class the switcher draws with has a rule, and the menu floats at a fixed size', () => {
@@ -217,7 +293,7 @@ test('#3051, #852: the header\'s "Communities" switcher is there at every width,
 //
 // The panel drew the screen's three audience sections from one shared module.
 // The switcher lists communities in the screen's own order (orderRows), and
-// the sections stay the screen's.
+// #3519 groups them with the same groupRows, folded like the screen's list.
 
 const SECTIONS_SRC = read('frontend/src/features/workshop/sections.ts');
 

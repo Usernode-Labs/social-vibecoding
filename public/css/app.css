@@ -17107,6 +17107,20 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 }
 .community-switcher-tick { flex: none; width: 20px; display: grid; place-items: center; color: var(--text-primary); }
 .community-switcher-note { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--text-muted); }
+/* The audience section's label: the menu title's small muted caps at 11px,
+   padded to line up with the rows' 12px text column. */
+.community-switcher-section-label {
+  margin: 0; padding: 10px 12px 4px;
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+  color: var(--text-muted);
+}
+/* "Show N more" / "Show fewer": a row of the menu, in the accent ink, a
+   little shorter than a community row. */
+.community-switcher-fold {
+  justify-content: center; min-height: 44px;
+  color: var(--accent); font-weight: 600; text-align: center;
+}
 
 /* THE DISCUSSION TAB (project-discussion.tsx): the channel's own pane, a
    FITTED SCREEN like Needs you, so its composer rests on the foot of the
