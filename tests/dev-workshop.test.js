@@ -3948,8 +3948,8 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   // of the press only persists the choice — nothing re-runs the wiring.
   assert.match(WORKSHOP, /onMore=\{\(\) => openTab\('workshop'\)\}/);
   assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
-  // (Past the one tab that is a door elsewhere: Homeroom's Discussion, #general.)
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{[\s\S]{0,420}?if \(elsewhere\) \{ openDiscussionElsewhere\(elsewhere\); return; \}\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
   const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));
   const setTabBody = setTab.slice(0, setTab.indexOf('\n  },'));
   assert.match(setTabBody, /localStorage\.setItem\(AppView\.WORKSHOP_TAB_KEY, next\)/);
@@ -4652,8 +4652,8 @@ test('the project page opens on the page you last used', () => {
   assert.match(APP_VIEW_SRC, /tab: AppView\._workshopTab\(\),/);
   assert.match(WORKSHOP, /onOpen=\{\(\) => openTab\('needs'\)\}/);
   assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
-  // (Past the one tab that is a door elsewhere: Homeroom's Discussion, #general.)
-  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{[\s\S]{0,420}?if \(elsewhere\) \{ openDiscussionElsewhere\(elsewhere\); return; \}\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
+  // Every tab turns the page, Homeroom's Discussion (#general) included (#3494).
+  assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
 });
 
 test('a category card is raised off the pane it sits on', () => {

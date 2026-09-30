@@ -2553,10 +2553,9 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-            "name": "Homeroom's Discussion is its channel, #general itself: the tab opens that conversation in Messages, and its address is a door there rather than a card of it (#3406, #852 review)",
+      "name": "Homeroom's Discussion is its channel, #general, in place: the room is drawn in the project page under its own header and tabs, like any project's channel, rather than opening Messages (#3494)",
       "path": "/?demo=1&ws=discussion#app/usernode-2d5619/workshop",
-      "expectSelector": ".dev-ws[data-ws-tab=\"discussion\"] section[data-ws-discussion-elsewhere] > button[data-ws-discussion-open]",
-      "expectText": "#general"
+      "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] section[data-ws-discussion-room=\"general\"] > .messages-layout-embedded > .messages-thread-embedded:not(:has(.messages-thread-header))"
     },
     {
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",

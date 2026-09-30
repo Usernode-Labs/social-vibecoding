@@ -17112,6 +17112,17 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
    this fitted box already ends above it, so that reserve left a strip of
    empty pane under the composer. The bar's own 8px base gap stays. */
 .dev-ws-discussion .platform-safe-bar { padding-bottom: 0.5rem !important; }
+/* HOMEROOM'S ROOM, #general, IN PLACE TOO (#3494). It is Messages' own
+   thread (EmbeddedConversation) rather than the group chat's pane, so it
+   drops the margins it keeps on the Messages strip and fills the tab edge to
+   edge, as a project's own chat does. A reply thread opens beside it on a
+   desktop and over it on a phone, as it does in Messages. */
+.dev-ws-discussion > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
+.messages-layout-embedded > .messages-thread-pane,
+.messages-layout-embedded > .messages-reply-pane { margin: 0; }
+@media (min-width: 768px) {
+  .messages-layout-embedded > .messages-reply-pane { margin-left: 8px; }
+}
 .dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
 .dev-ws-hero-spark-tip {
   position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6;

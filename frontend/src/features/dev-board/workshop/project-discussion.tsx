@@ -19,28 +19,24 @@
  * composer is wired on the line after the portal is published, which cannot
  * happen inside React's commit).
  *
- * ── Homeroom's own hub is the exception ───────────────────────────────
+ * ── Homeroom's own room is #general, in place too (#3494) ─────────────
  *
- * Its channel is #general, which is a conversation of the Messages store
- * rather than an app chat, and has no pane that can be mounted elsewhere
- * (the thread reads Messages' one route, and its composer's ids are global).
- * So its Discussion tab IS that conversation: pressing it opens #general in
- * Messages, whose back goes to this hub (#3407) (#852 review: it was the
- * hub's channel card, composer and all, which read as a preview rather than
- * the room). `discussionElsewhere` says where, for the page's tab and the hub
- * card's doors.
- *
- * A COLD `?ws=discussion` IS A DOOR, NOT A FORWARD. Forwarding from a deep
- * link raced the router's own "back to where the app was opened from" on a
- * fresh load (measured: a phone landed on Home), and forwarding by a pushed
- * entry would leave the `ws=discussion` address under it, so Back would
- * forward again. The tab press is the one path that goes straight there.
+ * Its channel is #general, a conversation of the Messages store rather than
+ * an app chat. It used to be a door: the tab opened #general on the Messages
+ * screen, which swapped the page's header, its tabs and its colour for
+ * Messages' own (#3491). Now the tab turns like every other project's and
+ * the room is drawn here, under the same header — Messages' own thread,
+ * composer and reply threads (features/messages/index.tsx
+ * EmbeddedConversation), holding the store's one route while this page is
+ * the screen on show. `generalRoom` reads which conversation it is.
  */
 
 import { useEffect, useRef, type ReactNode } from 'react';
 
 import type { CommunityPayload } from './community-card';
-import { callAppView } from '../card/fold';
+import { EmbeddedConversation } from '../../messages';
+import { navStore } from '../../nav/nav-store.js';
+import { useStoreState } from '../../../lib/use-store-state';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
 
@@ -51,19 +47,16 @@ function embeddable(channel: Channel | null): boolean {
 }
 
 /**
- * Where the discussion is when it cannot be mounted here: #general's address
- * in Messages (`#messages/<id>`). Null for a channel the page mounts itself,
- * and for none.
+ * The conversation a channel is when it is one of Messages' own rooms —
+ * #general, on Homeroom's page (`#messages/<id>`) — or null for an app's own
+ * channel, and for none.
  */
-export function discussionElsewhere(data: CommunityPayload | null | undefined): string | null {
+export function generalRoom(data: CommunityPayload | null | undefined): number | null {
   const channel = data?.channel || null;
-  return channel && !embeddable(channel) && channel.href ? channel.href : null;
-}
-
-/** Go to the discussion's own room; the page reopens on its hub after. */
-export function openDiscussionElsewhere(href: string): void {
-  callAppView('_setWorkshopTab', 'status');
-  try { window.location.hash = href; } catch { /* no window */ }
+  if (!channel || embeddable(channel)) return null;
+  const m = /^#messages\/([1-9]\d{0,9})$/.exec(channel.href || '');
+  const id = m ? Number(m[1]) : null;
+  return id && id <= 2147483647 ? id : null;
 }
 
 export function ProjectDiscussion({ slug, name, data }: {
@@ -74,8 +67,14 @@ export function ProjectDiscussion({ slug, name, data }: {
   const host = useRef<HTMLDivElement | null>(null);
   const channel = data?.channel || null;
   const mountable = embeddable(channel);
-  const elsewhere = discussionElsewhere(data);
+  const room = generalRoom(data);
   const readOnly = !channel?.post_url;
+  // The room holds Messages' one route only while this page is the screen
+  // on show: #app-view stays mounted, hidden, behind every other screen, and
+  // behind the running app on its App tab (the one #app-view route that
+  // lights no tab).
+  const { screen, tab } = useStoreState(navStore) as { screen: string | null; tab: string | null };
+  const onShow = screen === 'app-view' && !!tab;
 
   useEffect(() => {
     const el = host.current;
@@ -99,22 +98,15 @@ export function ProjectDiscussion({ slug, name, data }: {
   }, [slug, name, readOnly, mountable]);
 
   if (!data) return null;
-  if (elsewhere) {
-    const handle = channel?.handle || 'general';
+  if (room) {
     return (
-      <section className="dev-ws-strip" data-ws-discussion-elsewhere="">
-        <div className="dev-ws-head">
-          <span className="dev-ws-head-title">{`#${handle}`}</span>
-        </div>
-        <p className="dev-ws-week-note">{`${name}'s discussion is #${handle}, in Messages.`}</p>
-        <button
-          type="button"
-          className="dev-ws-hub-open un-touch-target"
-          data-ws-discussion-open=""
-          onClick={() => openDiscussionElsewhere(elsewhere)}
-        >
-          {`Open #${handle}`}
-        </button>
+      <section
+        className="dev-ws-discussion"
+        data-ws-discussion=""
+        data-ws-discussion-room={channel?.handle || ''}
+        aria-label={`${name} discussion`}
+      >
+        <EmbeddedConversation conversationId={room} active={onShow} />
       </section>
     );
   }

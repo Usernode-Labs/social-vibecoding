@@ -780,6 +780,38 @@ export function close(): void {
   });
 }
 
+/**
+ * #3494: a conversation open IN ITS COMMUNITY'S PAGE rather than on this
+ * screen. #general is the Homeroom community's channel, and Homeroom's
+ * Discussion tab mounts it in place (ConversationThread, `embedded`) the way
+ * any other project's tab mounts its own chat, so the page keeps its header
+ * and its tabs. It is the same thread, drafts and realtime included — the
+ * store has one route, so the page takes it and the Messages screen shows
+ * none while it does (MessagesScreen).
+ *
+ * `open` stays false: this screen's chrome, Back and the router all ask
+ * whether Messages is ON SCREEN, and it is not. Any route here takes the
+ * store back (route() never short-circuits an embedded route), and the page
+ * gives it back when it leaves the screen (release).
+ */
+export function embed(conversationId: number): void {
+  if (!validId(conversationId) || state.route.open) return;
+  if (state.route.embedded && state.route.conversationId === conversationId) return;
+  focusLoaded = null;
+  unreadHold = null;
+  publish({
+    route: { open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
+    thread: null, nextAfter: null, threadError: null, discussionContext: null, discussionError: null,
+  });
+  void loadConversations();
+  void loadThread(conversationId);
+}
+
+/** The page is leaving: close the room it embedded, unless Messages has since taken the store. */
+export function release(conversationId: number): void {
+  if (state.route.embedded && state.route.conversationId === conversationId) close();
+}
+
 export function isOpen(): boolean {
   return state.route.open;
 }
@@ -1398,7 +1430,8 @@ export async function markUnread(messageId: number): Promise<void> {
   unreadHold = conversationId;
   publish({ conversations: state.conversations.map((item) => item.id === conversationId ? { ...item, unreadCount } : item) });
   void loadConversations(true);
-  if (isMobile()) open(null);
+  // Not from a community's page (#3494): there is no list there to return to.
+  if (isMobile() && !state.route.embedded) open(null);
 }
 
 /** The address a message link opens (#2387): the conversation, scrolled to it. */
@@ -1415,6 +1448,12 @@ export function threadAddress(conversationId: number, rootId: number): string {
 export function openThread(rootId: number): void {
   const conversationId = state.route.conversationId;
   if (typeof window === 'undefined' || !conversationId || !validId(rootId)) return;
+  // #3494: in its community's page the thread opens beside the room there,
+  // with no address of its own: the page's address is the page's.
+  if (state.route.embedded) {
+    if (state.route.threadRootId !== rootId) publish({ thread: null, route: { ...state.route, threadRootId: rootId } });
+    return;
+  }
   const target = threadAddress(conversationId, rootId);
   if (window.location.hash === target) route(conversationId, null, null, { threadRootId: rootId });
   else window.location.hash = target;
@@ -1425,7 +1464,7 @@ export function closeThread(): void {
   const conversationId = state.route.conversationId;
   replyThreadRequest += 1;
   publish({ thread: null, route: { ...state.route, threadRootId: null } });
-  if (typeof window === 'undefined' || !conversationId) return;
+  if (typeof window === 'undefined' || !conversationId || state.route.embedded) return;
   const target = `#messages/${conversationId}`;
   if (window.location.hash !== target) {
     try { history.replaceState(null, '', target); } catch { window.location.hash = target; }
@@ -1577,6 +1616,11 @@ function eventConversationId(event: ConversationEvent): number | null {
   return api.strictId(event.conversationId ?? event.conversation_id);
 }
 
+/** Is this conversation's thread drawn — on this screen, or in its community's page (#3494)? */
+function onScreen(conversationId: number): boolean {
+  return (state.route.open || !!state.route.embedded) && state.route.conversationId === conversationId;
+}
+
 export function handleEvent(raw: ConversationEvent): void {
   const event = raw || { type: '' };
   const conversationId = eventConversationId(event);
@@ -1590,7 +1634,7 @@ export function handleEvent(raw: ConversationEvent): void {
       // one open, and the conversation either way — the reply count on the
       // message the thread hangs off is the conversation's to draw.
       const rootId = api.strictId(event.threadRootId ?? event.thread_root_id);
-      if (state.route.open && state.route.conversationId === conversationId) {
+      if (onScreen(conversationId)) {
         void loadThread(conversationId, true);
         if (rootId && state.thread?.rootId === rootId) void loadReplyThread(conversationId, rootId, true);
       }
@@ -1602,7 +1646,7 @@ export function handleEvent(raw: ConversationEvent): void {
       if (!messageId) break;
       // Like message create/edit, reaction realtime is intentionally id-only.
       // Rehydrate under this viewer's current membership/block permissions.
-      if (state.route.open && state.route.conversationId === conversationId) {
+      if (onScreen(conversationId)) {
         void loadThread(conversationId, true);
         // A reply in the open thread pane (#2387), or its first message.
         const thread = state.thread;
