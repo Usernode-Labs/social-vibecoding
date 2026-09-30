@@ -618,6 +618,24 @@ test('issue vote: re-casting the same side still RETRACTS, and is never asked fo
   assert.equal(pool.issued(/INSERT INTO issue_votes/), undefined);
 });
 
+// #3410: the state check is about the vote, never about the issue's
+// existence. An OPEN row takes the vote; a settled one answers 409 "Issue
+// is not open" — the one message that says the decision was already made —
+// and never "Issue not found", which is the 404 a missing row gets.
+test('issue vote: an open issue accepts the vote, and a settled one says it is not open', async () => {
+  const { res: open, pool } = await castIssueVote({ vote: 'up' });
+  assert.equal(open.statusCode, 200, 'the vote the card offered is the vote the route takes');
+  assert.ok(pool.issued(/INSERT INTO issue_votes/), 'recorded on the open row');
+
+  const { res: settled, pool: settledPool } = await castIssueVote(
+    { vote: 'up' }, { row: { status: 'closed' } }
+  );
+  assert.equal(settled.statusCode, 409);
+  assert.equal(settled.body.error, 'Issue is not open');
+  assert.equal(settledPool.issued(/INSERT INTO issue_votes/), undefined, 'nothing recorded');
+  assert.notEqual(settled.body.error, 'Issue not found', 'the issue exists; it is settled');
+});
+
 test('governance roster: up/down become yes/no, and every line is listed with its voter', async () => {
   const pool = makeIssuePool([
     [/FROM issue_votes iv/, [
