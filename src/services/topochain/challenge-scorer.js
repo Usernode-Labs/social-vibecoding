@@ -122,7 +122,7 @@ const CREDITED_SQL = `
 // makes somebody eligible for "Try 3 apps" is that they used three apps, and
 // the app heartbeat already records that.
 //
-// Every windowed query takes ($1 start, $2 end) as timestamps; the two state
+// Every windowed query takes ($1 start, $2 end) as timestamps; the four state
 // measures take none. `date`-grained sources are compared as dates, which is
 // the granularity `app_activity` has — a window that opens mid-day therefore
 // counts that whole day. Weekly windows open at midnight, so this is exact
@@ -220,6 +220,77 @@ const BLOCK_PRODUCTION_SQL = `
    LIMIT $1
 `;
 
+// State: in a public or private community. The audience test is
+// services/communities.js audienceSql written out, because a scorer query is
+// a plain constant (scripts/check-sql.js reads it statically): view-public,
+// or more than one member, or a pending invite. 'auto' rows and the
+// platform's own project are left out — every account is put there without
+// choosing it — and so is a project that never got built (or was deleted),
+// the same status filter as the next measure.
+const COMMUNITY_JOINED_SQL = `
+  SELECT m.user_id, MIN(m.joined_at) AS joined_at
+    FROM community_members m
+    JOIN apps a ON a.community_id = m.community_id
+   WHERE m.source <> 'auto'
+     AND a.self_hosted = FALSE
+     AND a.status NOT IN ('creating', 'failed', 'deleted')
+     AND (a.view_visibility = 'public'
+          OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = m.community_id) > 1
+          OR EXISTS (SELECT 1 FROM app_collaborators ic
+                      WHERE ic.app_id = a.id AND ic.status = 'invited'))
+   GROUP BY m.user_id
+   ORDER BY m.user_id ASC
+   LIMIT $1
+`;
+
+// State: a project they made whose community is public or private, by the
+// same audience test. One credit however many they made.
+const COMMUNITY_APP_CREATED_SQL = `
+  SELECT a.created_by AS user_id, MIN(a.created_at) AS created_at
+    FROM apps a
+   WHERE a.created_by IS NOT NULL
+     AND a.self_hosted = FALSE
+     AND a.status NOT IN ('creating', 'failed', 'deleted')
+     AND (a.view_visibility = 'public'
+          OR (SELECT COUNT(*) FROM community_members o WHERE o.community_id = a.community_id) > 1
+          OR EXISTS (SELECT 1 FROM app_collaborators ic
+                      WHERE ic.app_id = a.id AND ic.status = 'invited'))
+   GROUP BY a.created_by
+   ORDER BY a.created_by ASC
+   LIMIT $1
+`;
+
+// People who came in by somebody's invite, credited to the inviter. Two
+// records of an invite taken: a link followed and applied (a queued one
+// counts on the day its person is let in), and a collaborator invite — by
+// username, or by email once claimed — accepted. A link on an invite-only
+// project writes both, which is why each person is taken once: the FIRST
+// invite they took, across all time, names their one inviter. Without that,
+// a handful of accounts joining each other's communities would pay every
+// one of them.
+const INVITES_JOINED_SQL = `
+  SELECT f.inviter_id AS user_id, f.invitee_id, f.at, u.username AS invitee_username
+    FROM (
+      SELECT DISTINCT ON (t.invitee_id) t.inviter_id, t.invitee_id, t.at
+        FROM (
+          SELECT i.created_by AS inviter_id, x.user_id AS invitee_id, x.applied_at AS at
+            FROM community_invite_redemptions x
+            JOIN community_invites i ON i.id = x.invite_id
+           WHERE x.status = 'joined' AND x.applied_at IS NOT NULL AND i.created_by IS NOT NULL
+          UNION ALL
+          SELECT c.invited_by, c.user_id, c.accepted_at
+            FROM app_collaborators c
+           WHERE c.status = 'member' AND c.invited_by IS NOT NULL AND c.accepted_at IS NOT NULL
+        ) t
+       WHERE t.inviter_id <> t.invitee_id
+       ORDER BY t.invitee_id ASC, t.at ASC, t.inviter_id ASC
+    ) f
+    LEFT JOIN users u ON u.id = f.invitee_id
+   WHERE f.at >= $1 AND f.at <= $2
+   ORDER BY f.inviter_id ASC, f.at ASC, f.invitee_id ASC
+   LIMIT $3
+`;
+
 // The query each measure runs, by measure. loadCandidates below names the
 // constants directly — that is what keeps them statically checkable
 // (scripts/check-sql.js) — and this map is for the one reader that needs them
@@ -234,6 +305,9 @@ const MEASURE_SQL = Object.freeze({
   USEFUL_FEEDBACK: USEFUL_FEEDBACK_SQL,
   CONNECT_ACCOUNTS: CONNECT_ACCOUNTS_SQL,
   BLOCK_PRODUCTION_ON: BLOCK_PRODUCTION_SQL,
+  COMMUNITY_JOINED: COMMUNITY_JOINED_SQL,
+  COMMUNITY_APP_CREATED: COMMUNITY_APP_CREATED_SQL,
+  INVITES_JOINED: INVITES_JOINED_SQL,
 });
 
 const isoOf = (v) => (v instanceof Date ? v.toISOString() : (v == null ? null : String(v)));
@@ -330,6 +404,33 @@ async function loadCandidates(pool, measure, window, { target }) {
         sourceKey: 'block-production',
         activityAt: isoOf(r.at) || new Date().toISOString(),
         description: 'Block production is on',
+      }));
+    }
+    case 'COMMUNITY_JOINED': {
+      const { rows } = await pool.query(COMMUNITY_JOINED_SQL, [CANDIDATE_LIMIT]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: 'community',
+        activityAt: isoOf(r.joined_at) || new Date().toISOString(),
+        description: 'Joined a community',
+      }));
+    }
+    case 'COMMUNITY_APP_CREATED': {
+      const { rows } = await pool.query(COMMUNITY_APP_CREATED_SQL, [CANDIDATE_LIMIT]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: 'community-app',
+        activityAt: isoOf(r.created_at) || new Date().toISOString(),
+        description: 'Created an app for a community',
+      }));
+    }
+    case 'INVITES_JOINED': {
+      const { rows } = await pool.query(INVITES_JOINED_SQL, [startIso, endIso, CANDIDATE_LIMIT]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `invitee:${r.invitee_id}`,
+        activityAt: isoOf(r.at),
+        description: r.invitee_username ? `@${r.invitee_username} joined by your invite` : 'Somebody joined by your invite',
       }));
     }
     default:

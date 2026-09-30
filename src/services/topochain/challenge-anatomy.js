@@ -3,7 +3,7 @@
 // An operator choosing how often a rule should run needs to know what a run
 // of it DOES: which tables it reads, whether a model is called, what stops it
 // paying twice. That used to be knowable only by reading the scorer, and the
-// difference matters — five of the seven measures are two SQL reads, and two
+// difference matters — eight of the ten measures are two SQL reads, and two
 // of them can spend most of a minute on model calls.
 //
 // Everything printed here is taken from the thing that runs, not retyped
@@ -76,6 +76,29 @@ const READS = {
     keyLabel: 'block-production',
     text: () => 'Everyone who asked for block production access, was released, or has already won a '
       + 'slot. No window: state from before the season counts.',
+  },
+  COMMUNITY_JOINED: {
+    tables: ['community_members', 'apps', 'app_collaborators'],
+    key: 'community',
+    keyLabel: 'community',
+    text: () => 'Everyone in a public or private community: the audience rule the Workshop labels them by. '
+      + 'The platform\'s own project and "Just you" projects are left out. No window: a membership from '
+      + 'before the season counts.',
+  },
+  COMMUNITY_APP_CREATED: {
+    tables: ['apps', 'community_members', 'app_collaborators'],
+    key: 'community-app',
+    keyLabel: 'community-app',
+    text: () => 'Everyone who made a project whose community is public or private, by the same audience '
+      + 'rule. One credit however many they made. No window: a project from before the season counts.',
+  },
+  INVITES_JOINED: {
+    tables: ['community_invite_redemptions', 'community_invites', 'app_collaborators', 'users'],
+    key: 'invitee:',
+    keyLabel: 'invitee:<user id>',
+    text: () => 'One row per person who joined inside the window through an invite link or an accepted '
+      + 'invite, credited to whoever made the invite. Each person counts once, for the first invite '
+      + 'they ever took.',
   },
 };
 

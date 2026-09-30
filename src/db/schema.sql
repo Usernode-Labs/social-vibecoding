@@ -4283,7 +4283,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_activities_source_key_unique
 -- `measure` is a slug from a fixed list the code implements
 -- (services/topochain/challenge-rules.js: TRY_APPS, USE_APPS_MINUTES,
 -- PROPOSAL_SENT, PROPOSAL_ACCEPTED, USEFUL_FEEDBACK, CONNECT_ACCOUNTS,
--- BLOCK_PRODUCTION_ON). Deliberately NOT free-form logic: the thing that
+-- BLOCK_PRODUCTION_ON, COMMUNITY_JOINED, COMMUNITY_APP_CREATED,
+-- INVITES_JOINED). Deliberately NOT free-form logic: the thing that
 -- decides who gets points has to be reviewable and testable, so what an
 -- admin composes is the CONFIGURATION of a measure, never its body. It is
 -- also NOT `challenges.kind` — that column already means something to the

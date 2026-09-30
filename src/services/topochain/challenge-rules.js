@@ -26,14 +26,15 @@
 //
 // ── Windowed measures vs state measures ────────────────────────────────
 //
-// Five measures score ACTIONS and count only what happened inside the
+// Six measures score ACTIONS and count only what happened inside the
 // challenge's own window. Without that rule, opening a season would
 // retroactively pay everyone who had ever promoted a proposal, and the first
 // tick would hand the onboarding points to people who never saw the
 // challenge.
 //
-// Two score a STATE instead — "is your GitHub linked", "is block production
-// on" — and deliberately do NOT filter by window. A state has no date to
+// Four score a STATE instead — "is your GitHub linked", "is block production
+// on", "are you in a community", "have you made an app for one" — and
+// deliberately do NOT filter by window. A state has no date to
 // compare: somebody who linked their account last month still has it linked,
 // and a persistent challenge that refused to see that would be telling them
 // to do something they have already done.
@@ -167,6 +168,45 @@ const MEASURES = {
     counted: false,
     payout: 'full',
     windowed: false,
+    graded: false,
+  },
+  // The three community measures (Season 2's "Find people to build with",
+  // "Build for your community" and "Invite 3 people"). "In a community"
+  // means what the Workshop labels Public or Private community — the
+  // audience rule in services/communities.js — never "Just you", and never
+  // the platform's own project, which every account is put in without
+  // choosing it.
+  COMMUNITY_JOINED: {
+    label: 'Joined a community',
+    phrase: 'joins a community',
+    summary: 'Is in a public or private community: joined one, took an invite, or started one. The platform\'s own project and a project only they can see do not count. Counts memberships from before the season too.',
+    unit: 'state',
+    targetUnit: null,
+    counted: false,
+    payout: 'full',
+    windowed: false,
+    graded: false,
+  },
+  COMMUNITY_APP_CREATED: {
+    label: 'Created an app for a community',
+    phrase: 'creates an app for a community',
+    summary: 'Made a project whose community is public or private, not "Just you". A private project counts once somebody else is in it or invited. Counts projects from before the season too.',
+    unit: 'state',
+    targetUnit: null,
+    counted: false,
+    payout: 'full',
+    windowed: false,
+    graded: false,
+  },
+  INVITES_JOINED: {
+    label: 'People who joined by their invite',
+    phrase: 'brings in {target} people by invite',
+    summary: 'People who joined through their invite link, or accepted their invite by username or email, inside the window. Each person counts once, for the first invite they took, so a ring of accounts cannot pay each other.',
+    unit: 'person',
+    targetUnit: 'people',
+    counted: true,
+    payout: 'per_unit',
+    windowed: true,
     graded: false,
   },
 };

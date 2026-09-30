@@ -1168,3 +1168,79 @@ test('the cadence read is scoped the way the scorer\'s own is', () => {
     'the live events RULE_CHALLENGES_SQL scores, and no others');
   assert.match(scorer.RULE_CHALLENGES_SQL.replace(/\s+/g, ' '), /se\.is_active = TRUE AND COALESCE\(s\.is_active, FALSE\) = TRUE/);
 });
+
+// ─── The community measures ────────────────────────────────────────────
+//
+// Season 2's "Find people to build with", "Build for your community" and
+// "Invite 3 people". The first two are state (a membership or a project from
+// before the season counts); the third counts people, 250 pts each.
+
+test('"Invite 3 people" pays 250 a person and stops at the third', () => {
+  const row = challengeRow({
+    measure: 'INVITES_JOINED', metric_target: 3, t_metric_target: 3,
+    reward: 'Up to 750 pts', t_reward: 'Up to 750 pts', t_category: 'PERSISTENT',
+  });
+  const plan = rules.planCredits(rule({ measure: 'INVITES_JOINED' }), row, {
+    candidates: [candidate(7, 'invitee:21'), candidate(7, 'invitee:22'), candidate(7, 'invitee:23'), candidate(7, 'invitee:24')],
+    now: NOW,
+  });
+  assert.deepEqual(plan.map((c) => c.points), [250, 250, 250]);
+  assert.equal(plan.every((c) => c.completion === false), true, 'three people are three rows, not a completion');
+  assert.equal(rules.skipReason(rule({ measure: 'INVITES_JOINED' }), row, { now: NOW }), null);
+});
+
+test('joining a community and making an app for one are single state credits', () => {
+  for (const measure of ['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED']) {
+    const spec = rules.MEASURES[measure];
+    assert.equal(spec.windowed, false, `${measure} is state`);
+    assert.equal(spec.counted, false, measure);
+    const plan = rules.planCredits(rule({ measure }), challengeRow({
+      measure, metric_target: null, t_metric_target: null, reward: '500 pts', t_reward: '500 pts',
+    }), { candidates: [candidate(7, 'community', iso(NOW - 90 * DAY))], now: NOW });
+    assert.equal(plan.length, 1, `${measure}: a membership from before the season counts`);
+    assert.equal(plan[0].completion, true);
+    assert.equal(plan[0].points, 500);
+  }
+});
+
+test('the community audience test is the Workshop\'s: never "Just you", never the platform\'s own project', () => {
+  const communities = require('../src/services/communities');
+  const flat = (s) => s.replace(/\s+/g, ' ');
+  // The same three branches audienceSql derives 'open' and 'invited' from.
+  const audience = flat(communities.audienceSql('a', 'x'));
+  assert.match(audience, /a\.view_visibility = 'public'/);
+  assert.match(audience, /ic\.status = 'invited'/);
+  for (const measure of ['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED']) {
+    const sql = flat(scorer.MEASURE_SQL[measure]);
+    assert.match(sql, /a\.self_hosted = FALSE/, `${measure}: the platform's project is everyone's, not a choice`);
+    assert.match(sql, /a\.status NOT IN \('creating', 'failed', 'deleted'\)/, `${measure}: a project that never got built is nobody's community`);
+    assert.match(sql, /a\.view_visibility = 'public'/, measure);
+    assert.match(sql, /\) > 1/, `${measure}: a private project counts once somebody else is in it`);
+    assert.match(sql, /ic\.app_id = a\.id AND ic\.status = 'invited'/, `${measure}: or somebody is invited`);
+  }
+  assert.match(flat(scorer.MEASURE_SQL.COMMUNITY_JOINED), /m\.source <> 'auto'/,
+    'being put in by the platform is not joining');
+});
+
+test('an invitee counts once, for the first invite they took, and only once they joined', async () => {
+  const sql = scorer.MEASURE_SQL.INVITES_JOINED.replace(/\s+/g, ' ');
+  assert.match(sql, /x\.status = 'joined' AND x\.applied_at IS NOT NULL/, 'a queued person has not joined yet');
+  assert.match(sql, /c\.status = 'member' AND c\.invited_by IS NOT NULL AND c\.accepted_at IS NOT NULL/,
+    'a pending username or email invite is not a person who came');
+  assert.match(sql, /DISTINCT ON \(t\.invitee_id\)/);
+  assert.match(sql, /ORDER BY t\.invitee_id ASC, t\.at ASC/, 'the earliest invite names the one inviter');
+  assert.match(sql, /t\.inviter_id <> t\.invitee_id/);
+
+  const seen = [];
+  const pool = {
+    async query(text, params) {
+      seen.push(params);
+      return { rows: [{ user_id: 7, invitee_id: 21, at: new Date(NOW - HOUR), invitee_username: 'ana' },
+        { user_id: 7, invitee_id: 22, at: new Date(NOW - HOUR), invitee_username: null }] };
+    },
+  };
+  const out = await scorer.loadCandidates(pool, 'INVITES_JOINED', { startMs: NOW - DAY, endMs: NOW + DAY }, { target: 3 });
+  assert.deepEqual(seen[0].slice(0, 2), [iso(NOW - DAY), iso(NOW + DAY)], 'windowed: from the challenge\'s own start');
+  assert.deepEqual(out.map((c) => c.sourceKey), ['invitee:21', 'invitee:22']);
+  assert.deepEqual(out.map((c) => c.description), ['@ana joined by your invite', 'Somebody joined by your invite']);
+});
