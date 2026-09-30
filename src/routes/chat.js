@@ -17,6 +17,7 @@ const {
   attachmentUploadLimiter,
   groupChatWriteLimiter,
   messageBookmarkLimiter,
+  userDirectoryLimiter,
 } = require('../middleware/rate-limits');
 
 // #194's topic threads, plus #2387's reply threads ('message', ref = the
@@ -1152,8 +1153,10 @@ function chatRoutes(config) {
   // so in a community past the 500-row cap a new member is still found by
   // name; usernames are returned in
   // canonical casing so the inserted @mention renders correctly. Auth is
-  // enforced by the global JWT gate (this is a GET under /api/).
-  router.get('/api/apps/:slug/mention-suggestions', async (req, res) => {
+  // enforced by the global JWT gate (this is a GET under /api/). A
+  // per-keystroke search over people, so it shares the user-directory
+  // searches' per-user bucket, as /mention-candidates does.
+  router.get('/api/apps/:slug/mention-suggestions', userDirectoryLimiter, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(
         pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS

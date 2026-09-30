@@ -157,6 +157,8 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
     const res = await fetch(conversationId
       ? `/api/conversations/${conversationId}/mention-candidates?q=${q}&limit=8`
       : `${mentionSuggestionsPath(slug)}?q=${q}`);
+    // Rate-limited: a failure, so this prefix is not remembered as empty.
+    if (res.status === 429) throw new Error('rate_limited');
     if (!res.ok) return [];
     const data = await res.json().catch(() => null);
     return Array.isArray(data?.users) ? data.users.map((u: any) => String((u && u.username) || '')).filter(Boolean) : [];
