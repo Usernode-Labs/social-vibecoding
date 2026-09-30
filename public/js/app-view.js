@@ -1191,17 +1191,18 @@ const AppView = {
         AppView._workshopSince[slug] = Date.now() - 30 * 86400000;
       }
       // `?shot=since-seen` lands on the state #2240 is about, which is the
-      // OTHER end of the same walk: a reader with nothing new who pressed
-      // `Show older` anyway — which the strip invites, because that button is
-      // drawn and live on a quiet day by design. One press crosses the
-      // baseline, a wall of already-seen rows comes out, and `Clear`, the
-      // control that folds them again, is what has to be live there.
+      // OTHER end of the same walk: a reader with nothing new who walked into
+      // what they had seen anyway — which the strip invites, because its
+      // controls are drawn and live on a quiet day by design. Seen rows come
+      // out, and `Clear`, the control that folds them again, is what has to
+      // be live there.
       // The baseline is seeded to NOW rather than a month back, so every row
       // is on the seen side and the strip opens on its "nothing has changed"
-      // note; then `Show older` is pressed — through its own handler, as
-      // `?shot=board-unfold` presses a row — until the "Seen before" mark is
-      // on screen. It stops on the mark rather than after a fixed number of
-      // presses, because how many the first one spends depends on the rows.
+      // note; then the real controls are pressed — through their own
+      // handlers, as `?shot=board-unfold` presses a row — until the "Seen
+      // before" mark is on screen. It stops on the mark rather than after a
+      // fixed number of presses, because how many it takes depends on the
+      // rows.
       // Nothing is written to storage, so a human who opens the link is not
       // told they were here.
       if (shot === 'since-seen') {
@@ -1226,10 +1227,11 @@ const AppView = {
           // behind the board's data and repaint the list, and a check that
           // judged the page after an unfold was undone failed intermittently.
           if (document.querySelector('[data-ws-since-seen]')) return;
-          // The Workshop page folds each week's seen rows into one row, so
-          // that row is the press when there is one; `Show older` steps back
-          // a week to find one when there is not.
-          const more = document.querySelector('button[data-ws-since-seen-fold]')
+          // A week's seen rows follow its new ones behind that week's one
+          // `Show N more` (#3524), so an open week's reveal is the press when
+          // there is one; `Show an earlier week` steps back a week to find
+          // one when there is not.
+          const more = document.querySelector('button[data-ws-since-week-more]')
             || document.querySelector('button[data-ws-since-more]:not([disabled])');
           if (more) more.click();
         }, 300);
@@ -8037,9 +8039,9 @@ const AppView = {
   // Rows in the "since your last visit" list.
   WORKSHOP_SINCE_MAX: 30,
   // Rows of the SAME list from before the baseline — what the reader has
-  // already seen — that `Show older` can walk down into (#2183). The board
-  // holds every card, so this is a cap, not a window; the count of the
-  // whole rest is published beside it.
+  // already seen — that each week's `Show N more` walks down into (#2183,
+  // #3524). The board holds every card, so this is a cap, not a window;
+  // the count of the whole rest is published beside it.
   WORKSHOP_SEEN_MAX: 30,
   // One calendar week, in ms. The digest's windows are Monday-anchored in
   // UTC — see services/workshop-themes.js `weekStart`, which this file's
@@ -8091,7 +8093,7 @@ const AppView = {
   // in-memory copy, so this page session compares against the new point,
   // AND the stored stamp, so a reload does not bring the list back — and
   // repaints. Nothing is thrown away: what was new is "seen before" now, a
-  // `Show older` press away, the way a read notification is still in the
+  // press into its week away, the way a read notification is still in the
   // inbox. `through` is the newest activity stamp among the rows being
   // cleared, so a row a server clock put a moment in the future is cleared
   // with the rest rather than surviving the press.
@@ -8945,8 +8947,8 @@ const AppView = {
     if (baseline) {
       const moved = entries.filter((e) => e.t > baseline).sort((a, b) => b.t - a.t);
       // The rest of the same list, newest first: what moved BEFORE the
-      // baseline, which the reader has already seen. `Show older` walks
-      // down into it once the new rows are exhausted, and `Clear` moves the
+      // baseline, which the reader has already seen. A week's `Show N more`
+      // walks into it once the new rows are exhausted, and `Clear` moves the
       // new rows here (#2183) — the notifications sheet's read/unread split,
       // on one list. Keyed `seen:` so a row cannot be drawn twice under the
       // same key on the day the baseline moves between two publishes.
