@@ -2472,7 +2472,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
   pendingLive.delete(Number(sessionId));
   try {
     const { rows: [session] } = await pool.query(
-      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md,
+      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md, cs.agent_model,
               (SELECT MAX(version) FROM chat_session_specs WHERE session_id = cs.id) AS spec_version
          FROM chat_sessions cs WHERE cs.id = $1`,
       [sessionId],
@@ -2520,6 +2520,12 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       const pushed = {
         branchName: session.branch_name || null, sha: plan.result.sha || null, commits: Number(plan.result.ahead) || 0,
       };
+      // Named and described from the spec and the build's own message, as
+      // the live path does before it proposes (#3518).
+      await live.prepareProposal({
+        pool, bot, sessionId, spec: session.spec_md || null,
+        buildText: plan.result.lastResultText, model: session.agent_model || null,
+      });
       const promoted = await live.promoteAsBot({ config, bot, sessionId, router: liveD.votesRouter });
       if (promoted.status === 200 && promoted.body?.ok) {
         built = {

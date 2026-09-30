@@ -33,6 +33,9 @@
 //      When no helper model is reachable at all, generateAndApply falls
 //      back to the same deterministic name rather than leaving the
 //      session showing its branch.
+//   7. #3518: the Homeroom bot's build session is the same case with a
+//      different wrapper, `Build issue #N: <title>` over the triage's
+//      plan (BOT_SEED_RE below). parseIssueSeed peels that one too.
 //
 // Every entry point is fire-and-forget: the returned promise ALWAYS
 // resolves (with the new title, or null on failure/skip) and never
@@ -82,18 +85,37 @@ const ISSUE_SEED_RE = /^\s*Please implement GitHub issue #(\d+):\s*"([\s\S]*?)"\
 // prompt too.
 const ISSUE_SEED_TAIL_RE = /\s*Open a PR that closes this issue \(include "Closes #\d+"[^)]*\)\.?\s*$/;
 
-// { number, title, body } for a message that is the issue-card seed, or
-// null for anything a user wrote themselves.
+// #3518: the Homeroom bot's build session opens with its own wrapper
+// (homeroom-bot-live.js buildAndPropose):
+//
+//   Build issue #N: <issue title>
+//
+//   <the triage's plan>
+//
+// The issue title is one line (GitHub keeps titles to one), so the line is
+// the title and everything under it is the body. Before this was peeled the
+// deterministic trim flattened the lot into one line and cut it at 72, which
+// is how the bot's proposals came to be named "Build issue 3253: Propose
+// task text hides that only promoting counts…": the issue number the
+// proposal already shows in Addresses, then the title, then the opening
+// words of the plan, severed.
+const BOT_SEED_RE = /^\s*Build issue #(\d+):[ \t]*([^\r\n]*)(?:\r?\n|$)/;
+
+// { number, title, body } for a message that is the issue-card seed or the
+// Homeroom bot's build seed, or null for anything a user wrote themselves.
 function parseIssueSeed(text) {
   const raw = String(text || '');
   const m = ISSUE_SEED_RE.exec(raw);
-  if (!m) return null;
-  const number = parseInt(m[1], 10);
+  const bot = m ? null : BOT_SEED_RE.exec(raw);
+  const found = m || bot;
+  if (!found) return null;
+  const number = parseInt(found[1], 10);
   if (!Number.isInteger(number) || number <= 0) return null;
+  const rest = raw.slice(found[0].length);
   return {
     number,
-    title: m[2].replace(/\s+/g, ' ').trim(),
-    body: raw.slice(m[0].length).replace(ISSUE_SEED_TAIL_RE, '').trim(),
+    title: found[2].replace(/\s+/g, ' ').trim(),
+    body: (m ? rest.replace(ISSUE_SEED_TAIL_RE, '') : rest).trim(),
   };
 }
 

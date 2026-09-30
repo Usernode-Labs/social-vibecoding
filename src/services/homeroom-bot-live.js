@@ -58,6 +58,7 @@
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure } = require('./agent-result-text');
+const proposalDescription = require('./proposal-description');
 const { SPEC_DESIGN_BRIEF } = require('./prompts');
 const buildContract = require('./build-contract');
 
@@ -225,6 +226,9 @@ function specPrompt({ seed, buildNote }) {
     '  two halves, and use ### or deeper for any other heading. "User-facing changes" is for a non-developer:',
     '  what people will see and do differently, no file paths or code. "Technical implementation" holds the',
     '  files, data, edge cases and tests.',
+    '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
+    '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
+    '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
     '- As small as the request: the plan above, no refactoring or extra features.',
     `- ${SPEC_DESIGN_BRIEF}`,
     '',
@@ -286,14 +290,170 @@ function blockedText(reason) {
   ].join('\n');
 }
 
-/** The spec's "# " title, as routes/sessions.js extractSpecTitle reads it. */
-function specTitle(spec) {
+// The longest spec title the card shows, and the longest the proposal is
+// named with whole (see proposalTitle).
+const SPEC_TITLE_MAX = 120;
+
+/** The spec's whole "# " heading, unclipped, or null. */
+function specHeading(spec) {
   const lines = String(spec || '').split('\n');
   for (let i = 0; i < Math.min(lines.length, 30); i += 1) {
     const line = lines[i].trim();
-    if (line.startsWith('# ') && line.slice(2).trim()) return line.slice(2).trim().slice(0, 120);
+    if (line.startsWith('# ') && line.slice(2).trim()) return line.slice(2).trim();
   }
   return null;
+}
+
+/** The spec's "# " title, as routes/sessions.js extractSpecTitle reads it. */
+function specTitle(spec) {
+  const heading = specHeading(spec);
+  return heading ? heading.slice(0, SPEC_TITLE_MAX) : null;
+}
+
+// ── What the proposal is called, and what it says (#3518) ────────────────
+//
+// The promote route names a pull request from the session's first request
+// and leads it with the coding agent's latest description (pr-metadata's
+// deterministic path, which every OpenRouter session takes). The bot's build
+// gave it neither: its only request was the "Build issue #N: …" seed, and
+// its turn ran outside the dev chat, so no completion row recorded what it
+// said. Every bot proposal came out titled with the issue number and a
+// severed run of the plan, with no summary at all.
+//
+// The spec already holds both halves of a better answer, written for people:
+// a title naming the change (the spec prompt asks for one shaped like a pull
+// request title) and a "User-facing changes" half written for somebody who
+// is not a developer. The build adds the most accurate half: a DESCRIPTION
+// block written after the change exists, the one an OpenRouter dev chat turn
+// ends with (proposal-description.js, #2820).
+
+// Scaffolding a title is not: a "Spec:" label, and the issue number, which
+// the proposal shows as its own Addresses chip.
+const TITLE_LABEL_RE = /^(?:spec(?:ification)?|plan)(?:\s+for\b)?\s*(?:[:\u2013\u2014-]\s*|(?=(?:(?:github\s+)?issue\s+)?#\d))/i;
+const TITLE_ISSUE_LEAD_RE = /^(?:(?:build\s+)?(?:github\s+)?issue\s+#?\d+|#\d+)\s*[:\u00b7\u2013\u2014-]?\s*/i;
+const TITLE_ISSUE_TAIL_RE = /\s*(?:[([]\s*(?:(?:github\s+)?issue\s+)?#\d+\s*[)\]]|[\u2013\u2014-]\s*(?:issue\s+)?#\d+)$/i;
+
+/**
+ * The name the bot proposes a change under: the spec's title, the way the
+ * spec prompt asks for it (what the change does, in pull request form),
+ * with a "Spec:" label or an issue number taken off, or null when there is
+ * none worth using. Null sends the promote route to its own deterministic
+ * name, which since #3518 is the issue's title with the seed peeled off
+ * (session-title.js parseIssueSeed).
+ *
+ * Never cut. The prompt asks for 72 characters, as the platform's own
+ * generated titles are asked for, and a model that runs over has still
+ * written a whole name: a title up to the spec card's own bound is used as
+ * it is, and one past it is not a title, so the fallback names the change
+ * instead. Cutting a name short is the fault this replaces.
+ */
+function proposalTitle(spec) {
+  const heading = specHeading(spec);
+  if (!heading) return null;
+  const title = heading
+    .replace(/[`*]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(TITLE_LABEL_RE, '')
+    .replace(TITLE_ISSUE_LEAD_RE, '')
+    .replace(TITLE_ISSUE_TAIL_RE, '')
+    .replace(/\.+$/, '')
+    .trim();
+  // One word ("Spec", "Leaderboard") names a topic, not a change.
+  if (!title || title.length > SPEC_TITLE_MAX || title.split(' ').length < 2) return null;
+  return title;
+}
+
+/**
+ * The spec's "User-facing changes" half, as far as its "### Assumptions"
+ * subsection: what people will see and do differently, written for somebody
+ * who is not a developer (specPrompt). The assumptions stay in the spec,
+ * which is on the proposal as a card; they are choices, not changes. Null
+ * when the spec has no such half.
+ */
+function specUserFacing(spec) {
+  const lines = String(spec || '').split('\n');
+  const start = lines.findIndex((l) => /^##\s+user[- ]facing changes\s*:?\s*$/i.test(l.trim()));
+  if (start === -1) return null;
+  const kept = [];
+  for (const line of lines.slice(start + 1)) {
+    const t = line.trim();
+    if (/^##\s/.test(t) || /^###\s+assumptions\b/i.test(t)) break;
+    kept.push(line);
+  }
+  const text = kept.join('\n').trim();
+  if (!text) return null;
+  const max = proposalDescription.DESCRIPTION_MAX;
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+/**
+ * What the build said, as the completion row a dev chat turn writes stores
+ * it: `ccOutput` is its message with the DESCRIPTION block taken out, and
+ * `proposalDescription` the block, or the spec's user-facing half when the
+ * build left the block out. A final message that is a wire failure (a run
+ * can commit and then die on the API) says nothing about the change.
+ */
+function buildDescription({ text, spec = null }) {
+  const raw = String(text || '').trim();
+  const said = raw && !agentApiFailure(raw) ? proposalDescription.extract(raw) : { cleanedText: '', description: null };
+  const description = said.description || specUserFacing(spec);
+  return { ccOutput: String(said.cleanedText || '').trim() || description || '', description: description || null };
+}
+
+/**
+ * Write the proposal's name and description onto the build's session, just
+ * before the promote route reads them. Both go through the seams a person's
+ * change uses, so nothing downstream learns about the bot:
+ *   - the name is proposed_pr_title, the author's own title for a change not
+ *     yet proposed, which the route names the pull request with verbatim.
+ *     submit_work stores an external agent's title there, and the bot is
+ *     this change's author the same way. (#2779 keeps a Mayor's start_change
+ *     name out of it because that name is a guess made before any work; the
+ *     spec's title is written from the code, and the proposal goes up as
+ *     soon as the build ends.) Only written while the session has no pull
+ *     request and no chosen title;
+ *   - the description is the completion row every dev chat build leaves
+ *     (a system row carrying ccOutput and proposalDescription), which
+ *     pr-metadata's gatherSessionContext reads for the summary the group
+ *     sees first, and the pull request body leads with.
+ * Best-effort: a proposal that cannot be named or described still goes up,
+ * under the fallback name. Resolves { title, description }; never throws.
+ */
+async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null }) {
+  const title = proposalTitle(spec);
+  if (title) {
+    try {
+      await pool.query(
+        `UPDATE chat_sessions SET proposed_pr_title = $1
+          WHERE id = $2 AND user_id = $3 AND pr_number IS NULL AND proposed_pr_title IS NULL`,
+        [title, Number(sessionId), bot.id],
+      );
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not name the proposal; the route names it', { sessionId, err: err.message });
+    }
+  }
+  const { ccOutput, description } = buildDescription({ text: buildText, spec });
+  if (ccOutput) {
+    try {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [Number(sessionId), 'Homeroom bot finished building', JSON.stringify({
+          ccOutput,
+          ...(description ? { proposalDescription: description } : {}),
+          ccOutcome: 'success',
+          agentBackend: 'codex_openrouter',
+          agentModel: model || null,
+        })],
+      );
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not record what the build said; proposing without a summary', {
+        sessionId, err: err.message,
+      });
+    }
+  }
+  return { title, description };
 }
 
 /** The card's preview: the body after the title, as the share route cuts it. */
@@ -846,6 +1006,24 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
   });
 }
 
+// #3518: the proposal's summary, the text the group reads before it votes.
+// The same block an OpenRouter dev chat turn ends with (#2820), parsed by
+// proposal-description.js; prepareProposal files it where the promote route
+// reads it.
+const BUILD_DESCRIPTION_LINES = Object.freeze([
+  '',
+  'After that summary, end your final message with a description of the change for the people who will vote on',
+  'it, between these two marker lines:',
+  '',
+  '==== DESCRIPTION ====',
+  'One or two short paragraphs, in plain language: what is different for someone using the app, what they can',
+  'now do, or what stops going wrong.',
+  '==== END DESCRIPTION ====',
+  '',
+  'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
+  'test results: those belong in the summary above it. Skip the block only if you changed nothing.',
+]);
+
 function buildPrompt({ seed, buildNote, spec = null }) {
   const specBlock = spec
     ? [
@@ -875,6 +1053,7 @@ function buildPrompt({ seed, buildNote, spec = null }) {
       heading: 'Make exactly that change, and nothing else:',
       commits: 'harness',
     }),
+    ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
 }
 
@@ -1056,7 +1235,9 @@ async function buildAndPropose({
 
   // The request, as the proposal's pull request metadata reads it: the
   // promote route drafts the title and body from the session's last user
-  // message.
+  // message. Its "Build issue #N:" line is scaffolding, peeled off wherever
+  // a name is derived from it (session-title.js parseIssueSeed, #3518), and
+  // the name the bot proposes under is the spec's (prepareProposal).
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content)
      VALUES ($1, 'user', $2)`,
@@ -1202,6 +1383,12 @@ async function buildAndPropose({
 
   // What the build pushed, recorded on a live run as a shadow build's is (#3509).
   const pushed = { branchName: session.branch_name, sha: result.sha || null, commits: Number(result.ahead) || 0 };
+  // Named and described first: the route reads both as it opens the pull
+  // request (#3518).
+  await prepareProposal({
+    pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
+    buildText: result.lastResultText, model,
+  });
   const promoted = await promoteAsBot({ config, bot, sessionId: session.id, router: deps.votesRouter || null });
   if (promoted.status !== 200 || !promoted.body?.ok) {
     const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
@@ -1244,6 +1431,10 @@ module.exports = {
   botUsernameOf,
   openBotProposal,
   promoteAsBot,
+  prepareProposal,
+  proposalTitle,
+  specUserFacing,
+  buildDescription,
   buildPrompt,
   buildAndPropose,
   draftSpec,
