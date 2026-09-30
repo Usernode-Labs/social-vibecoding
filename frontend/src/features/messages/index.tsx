@@ -50,12 +50,15 @@ import {
   setListCollapsed,
   setShowMoreChannels,
   syncChrome,
+  followPlatformSlug,
   setFilter,
   typingUsers,
   useChannelHandles,
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
+import { PageBackButton } from '../dev-board/workshop/page-back';
+import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
@@ -1054,6 +1057,8 @@ function FullWidthToggle() {
  * floating discs. No back control of its own — on a phone the platform
  * header's back arrow already points at the list (see syncChrome in
  * ./store.ts), and a second one here was the same affordance twice.
+ * #general is the exception: a channel goes back up to its hub, not to this
+ * list, and like the hub's own pages it says so in the page (#3407).
  */
 function ThreadHeader() {
   const snap = useMessagesSnapshot();
@@ -1068,6 +1073,10 @@ function ThreadHeader() {
   const menuWrapRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
+  // #3407: #general's hub is the platform project's, whose slug may land
+  // after this header first draws (channel-hub.ts), so it is subscribed to;
+  // the disc's label and its press come from that one value.
+  const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
   const closeMenu = () => setMenu(false);
   useDismiss(menu, [menuWrapRef], closeMenu);
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
@@ -1132,6 +1141,7 @@ function ThreadHeader() {
         : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
+      {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
@@ -1296,6 +1306,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           once per browser and then never again. The conversation pane beside
           it carries the same row (ThreadHeader). */}
       <header className="messages-thread-header">
+        <PageBackButton label={name} onBack={() => openChannelHub(slug)} data-channel-back="" />
         <AppIconLink
           slug={slug}
           name={name}
@@ -1932,6 +1943,8 @@ export function MessagesScreen() {
     if (!snap.route.open || !window.App?.user) return;
     void Promise.resolve(Improve.loadSessions()).catch(() => {});
   }, [snap.route.open]);
+  // #3407: and again when #general's hub becomes known (store.ts).
+  useEffect(() => followPlatformSlug(), []);
   useEffect(() => { if (snap.route.open) syncChrome(); },
     // The DISCUSSION's two facts belong here for the same reason the
     // conversation's title does: on a phone this is what names the thread in

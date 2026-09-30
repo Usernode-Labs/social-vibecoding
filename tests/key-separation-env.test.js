@@ -321,6 +321,9 @@ test('the production app-container env contract leaks nothing', async () => {
       stopAndRemove: async () => {},
       runContainer: async (_name, opts) => { captured = opts.env; return 'cid-1'; },
       waitForHealthy: async () => {},
+      // #3368: a respawn pins `:latest` to an image id first. Unresolved here,
+      // so it runs the tag and carries no label; the env contract is the same.
+      imageId: async () => null,
     });
     stub(ids.dbManager, {
       appDbName: (slug) => `usernode_app_${slug}`,
