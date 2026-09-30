@@ -16234,10 +16234,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   flex-basis: 100%; margin: 0; padding: 0 14px 8px;
   font-size: 12.5px; color: var(--state-blocked);
 }
-.dev-ws-hub-archive {
-  display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
-  font-size: 12.5px; color: var(--text-muted);
-}
 /* Needs you is one door: the whole card opens the queue. */
 .dev-ws-hub-row {
   display: flex; flex-direction: column; gap: 6px; width: 100%;

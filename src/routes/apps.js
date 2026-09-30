@@ -3184,9 +3184,8 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       const canChat = await appAccess.checkAppAccess(pool, app, req.user, 'collab');
       // THE HOMEROOM COMMUNITY'S CHANNEL IS #general. The platform's own
       // project talks in the platform's one channel, which every signed-in
-      // person can read; its old project discussion stays reachable as
-      // read-only history (`archive_href`). Any other project's channel is
-      // its own discussion, at its own address.
+      // person can read. Any other project's channel is its own discussion,
+      // at its own address.
       let channel = null;
       if (app.slug === config.selfAppSlug) {
         const general = await communities.generalChannelSummary(pool, req.user?.id);
@@ -3199,7 +3198,6 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
             // which gates it on Homeroom membership (generalNeedsJoin).
             post_url: `/api/conversations/${conversationId}/messages`,
             handle: 'general',
-            archive_href: `#messages/app/${encodeURIComponent(app.slug)}`,
           };
         }
       } else if (canChat) {

@@ -2551,10 +2551,9 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "Homeroom's hub carries its channel, #general, with a composer that posts there and its old discussion read-only; the header's app switcher names the app, on a desktop too (#2768, #3295)",
+      "name": "Homeroom's hub carries its channel, #general, with a composer that posts there; the header's app switcher names the app, on a desktop too (#2768, #3295)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has(#header-app-switch > #header-title-name) #dev-workshop section[data-ws-channel][data-ws-channel-handle=\"general\"]:has(form[data-ws-channel-compose] > input[placeholder=\"Message #general…\"]) a[data-ws-channel-archive]",
-      "expectText": "Earlier project discussion"
+      "expectSelector": "body:has(#header-app-switch > #header-title-name) #dev-workshop section[data-ws-channel][data-ws-channel-handle=\"general\"]:has(form[data-ws-channel-compose] > input[placeholder=\"Message #general…\"])"
     },
     {
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
