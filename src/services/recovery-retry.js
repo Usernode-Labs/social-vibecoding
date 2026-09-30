@@ -7,6 +7,13 @@
 
 const DEFAULT_BASE_DELAY_MS = 1000;
 const DEFAULT_MAX_DELAY_MS = 60 * 1000;
+// How many failed attempts a retained recovery gets before it stops. A
+// restart's ordinary recovery succeeds within a handful (1 to 8 across every
+// session in the 30 days before this limit); the three that looped were
+// failing the same way every time, one of them 1,357 times over 23 hours
+// (usernode-bot/sheep-countrr-a08857#48). Thirty attempts at this backoff is
+// about 25 minutes: long enough to outlast a GitHub or database blip.
+const DEFAULT_MAX_FAILURES = 30;
 const turnLifecycle = require('./turn-lifecycle');
 const jobs = new Map();
 const PERMANENT_RECOVERY_ERROR_CODES = new Set([
@@ -80,16 +87,24 @@ function isDurableTurnCleanupError(err) {
   return err?.code === 'recovery_cleanup_pending';
 }
 
+// When a job has failed `maxFailures` times, it stops: `onExhausted` runs
+// (callers terminalize what the user sees there) and the session reservation
+// is released. The durable active_turn is left as it is, which is what lets
+// the stale-turn watchdog end it the same way it ends any turn nothing owns:
+// ledger closed, "[interrupted]" on the progress card, the unfinished-turn
+// message with its retry pills, and the owner notified.
 function scheduleRetainedRecovery({
   key,
   run,
   hold = () => {},
   release = () => {},
   onError = async () => true,
+  onExhausted = async () => {},
   onComplete = () => {},
   onHookError = () => {},
   baseDelayMs = DEFAULT_BASE_DELAY_MS,
   maxDelayMs = DEFAULT_MAX_DELAY_MS,
+  maxFailures = DEFAULT_MAX_FAILURES,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 }) {
@@ -161,6 +176,15 @@ function scheduleRetainedRecovery({
         finish(false);
         return;
       }
+      if (state.failures >= maxFailures) {
+        try {
+          await onExhausted(err, { failures: state.failures, key });
+        } catch (hookErr) {
+          safeCall(onHookError, hookErr);
+        }
+        finish(false);
+        return;
+      }
       arm();
     }
   }
@@ -188,6 +212,7 @@ function cancel(key) {
 module.exports = {
   DEFAULT_BASE_DELAY_MS,
   DEFAULT_MAX_DELAY_MS,
+  DEFAULT_MAX_FAILURES,
   retryDelay,
   shouldRetryRecoveryError,
   retainOrQuarantineRecoveryError,

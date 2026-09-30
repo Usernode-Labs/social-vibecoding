@@ -332,14 +332,18 @@ function friendsLine(friends) {
   return `${incoming.toLocaleString()} ${incoming === 1 ? 'request' : 'requests'} waiting`;
 }
 
-/** "4 sent · 1 counted", from GET /api/feedback/mine (#3186). Null when the
- *  read failed or has not answered, so the row falls back to saying what is
- *  behind it rather than claiming none were sent. */
+/** "4 sent · 1 counted", from GET /api/feedback/mine (#3186); "4 sent" while
+ *  none has counted, since a zero says nothing. Null when the read failed or
+ *  has not answered, so the row falls back to saying what is behind it rather
+ *  than claiming none were sent. */
 function feedbackLine(feedback) {
   if (!feedback || typeof feedback !== 'object' || !Number.isFinite(Number(feedback.sent))) return null;
   const sent = Number(feedback.sent) || 0;
   if (sent === 0) return 'Nothing sent yet';
-  return `${sent.toLocaleString()} sent · ${(Number(feedback.counted) || 0).toLocaleString()} counted`;
+  const counted = Number(feedback.counted) || 0;
+  return counted
+    ? `${sent.toLocaleString()} sent · ${counted.toLocaleString()} counted`
+    : `${sent.toLocaleString()} sent`;
 }
 
 /** A report's status as the list says it. Two, not three: see

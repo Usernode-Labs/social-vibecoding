@@ -143,6 +143,8 @@ COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
 COPY run-codex-agent.sh /usr/local/bin/run-codex-agent.sh
 COPY start-inloop-db.sh /usr/local/bin/start-inloop-db.sh
+# Sourced by worker-run.sh and both runners, from their own directory.
+COPY session-branch.sh /usr/local/bin/session-branch.sh
 COPY codex-openrouter-request.js /usr/local/bin/codex-openrouter-request.js
 # #3296: the same per-invocation, worker-local adapter for an OpenRouter turn
 # that Claude Code runs. It holds that turn's key; claude gets a local token.

@@ -193,3 +193,83 @@ test('a retained recovery key can only own one timer', () => {
   assert.equal(timers.queued.length, 1);
   assert.equal(recoveryRetry.cancel(key), true);
 });
+
+// Sheep countrr's session 5030 (usernode-bot/sheep-countrr-a08857#48):
+// a recovery that failed the same way every time was retried ~1,357 times
+// over 23 hours, because nothing bounded the loop.
+test('a retained recovery stops after maxFailures, runs onExhausted once, and releases', async () => {
+  const timers = fakeTimers();
+  let runs = 0;
+  let releases = 0;
+  let completed = 0;
+  const exhausted = [];
+  const key = 'test:exhausted';
+  recoveryRetry.scheduleRetainedRecovery({
+    key,
+    run: async () => { runs += 1; throw Object.assign(new Error('No commits between main and dev/x'), { code: 'no_commits' }); },
+    release: () => { releases += 1; },
+    onError: async () => true,
+    onExhausted: async (err, info) => { exhausted.push({ code: err.code, ...info }); },
+    onComplete: () => { completed += 1; },
+    maxFailures: 3,
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+  });
+
+  await timers.runNext();
+  await timers.runNext();
+  assert.equal(releases, 0, 'still owned while attempts remain');
+  assert.equal(exhausted.length, 0);
+  await timers.runNext();
+  assert.equal(runs, 3);
+  assert.deepEqual(exhausted, [{ code: 'no_commits', failures: 3, key }]);
+  assert.equal(releases, 1, 'the reservation is released so the stale-turn watchdog can end the turn');
+  assert.equal(completed, 0, 'giving up is not completing');
+  assert.equal(timers.queued.length, 0, 'no further attempt is armed');
+  assert.equal(recoveryRetry.isScheduled(key), false);
+});
+
+test('the default limit is far above an ordinary restart recovery and far below a day of retries', () => {
+  assert.equal(recoveryRetry.DEFAULT_MAX_FAILURES, 30);
+  let totalMs = 0;
+  for (let failures = 0; failures < recoveryRetry.DEFAULT_MAX_FAILURES; failures += 1) {
+    totalMs += recoveryRetry.retryDelay(failures, recoveryRetry.DEFAULT_BASE_DELAY_MS, recoveryRetry.DEFAULT_MAX_DELAY_MS);
+  }
+  assert.ok(totalMs > 20 * 60 * 1000 && totalMs < 30 * 60 * 1000, `about 25 minutes of retrying (${totalMs} ms)`);
+});
+
+test('an onExhausted hook that throws still releases the job', async () => {
+  const timers = fakeTimers();
+  let releases = 0;
+  const hookErrors = [];
+  const key = 'test:exhausted-hook-throws';
+  recoveryRetry.scheduleRetainedRecovery({
+    key,
+    run: async () => { throw new Error('still failing'); },
+    release: () => { releases += 1; },
+    onExhausted: async () => { throw new Error('db down'); },
+    onHookError: (err) => hookErrors.push(err.message),
+    maxFailures: 1,
+    setTimer: timers.setTimer,
+    clearTimer: timers.clearTimer,
+  });
+  await timers.runNext();
+  assert.equal(releases, 1);
+  assert.deepEqual(hookErrors, ['db down']);
+  assert.equal(recoveryRetry.isScheduled(key), false);
+});
+
+test('both retained-recovery schedulers terminalize what the user sees when they give up', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  const sessions = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
+  const orphan = server.slice(server.indexOf('function scheduleRetainedOrphanRecovery('),
+    server.indexOf('function scheduleInteractiveTurnRecovery('));
+  assert.match(orphan, /onExhausted: async \(err, \{ failures \}\) => \{\n\s+log\.error\('server', 'Retained orphan recovery gave up; leaving the turn to the stale-turn watchdog'/);
+  const headless = sessions.slice(sessions.indexOf('function scheduleRetainedHeadlessRecovery('));
+  assert.match(headless, /onExhausted: async \(err, \{ failures \}\) => \{[\s\S]{0,300}await failHeadlessRun\(/);
+  // The watchdog ends an unowned turn, but never a quarantined one: giving
+  // up must leave the turn in a phase it reaps.
+  assert.doesNotMatch(orphan.slice(orphan.indexOf('onExhausted')), /markQuarantined/);
+});

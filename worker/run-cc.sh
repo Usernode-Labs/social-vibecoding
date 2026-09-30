@@ -148,8 +148,9 @@ fi
 # requires the separate authoritative system context. Fail before invoking
 # Claude if the host omitted it or failed to materialize it; there is no
 # reduced-context fallback that could silently drop platform rules. An
-# OpenRouter build carries the full conventions block in its prompt instead,
-# exactly as a Codex build does, so the system file is optional there.
+# OpenRouter build may have none: the dev chat sends the handbook here for an
+# OpenRouter model too (sessions.js openRouterBuildPrompts), but the Homeroom
+# bot's builds work from the repository's own instructions alone.
 if { [ "$MODE" = "build" ] || [ "$MODE" = "shots" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ] \
     && [ "$AGENT_PROVIDER" != "openrouter" ]; then
   die "SYSTEM_PROMPT_FILE required for $MODE mode"
@@ -183,18 +184,34 @@ if [ -n "$PAT" ] && ! git config --get credential.helper >/dev/null 2>&1; then
     "!f() { echo username=x-access-token; echo password=$PAT; }; f"
 fi
 
+# Session-branch integrity helpers (fetch scope, turn start, settling the
+# session branch, the post-turn commit). See the file for why each exists.
+# Sourced here, after the readiness and argument guards above, so a turn
+# that must stop early never depends on it.
+. "$(dirname "$0")/session-branch.sh"
+
 # Pre-exec hygiene: every turn starts from a known-good tree. Pulls in
 # anything pushed by a parallel turn / merge bot since we last ran, and
 # discards any uncommitted state from a prior turn that didn't get
-# committed (rare, but worth defending against).
+# committed (rare, but worth defending against). The fetch brings main and
+# this session's branch only, and the turn starts ON the session branch
+# whatever an earlier turn left checked out. A build or sync also drops the
+# untracked files an earlier (for example stopped) turn left behind, so the
+# commit step below only ever sees this turn's files; a read-only scout
+# leaves them alone.
 echo "__USERNODE_PHASE__ refresh"
 if [ "$MODE" != "shots" ]; then
-  if ! git fetch origin --quiet 2>&1; then
+  if ! usernode_fetch_session_refs; then
     echo "__USERNODE_WARN__ git fetch failed; continuing with local state"
   fi
   if git rev-parse --verify "origin/$BRANCH" >/dev/null 2>&1; then
-    git reset --hard "origin/$BRANCH" --quiet 2>&1 || \
-      echo "__USERNODE_WARN__ git reset failed"
+    if [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; then
+      usernode_start_turn_on_session_branch clean_untracked || \
+        echo "__USERNODE_WARN__ git reset failed"
+    else
+      usernode_start_turn_on_session_branch || \
+        echo "__USERNODE_WARN__ git reset failed"
+    fi
   elif [ "$MODE" = "build" ] || [ "$MODE" = "sync" ]; then
     # Branch missing upstream after PR merge → unrecoverable for build/sync.
     # Scout mode can still run against the local checkout, so we don't bail.
@@ -428,6 +445,10 @@ if [ "$MODE" = "build" ]; then
     || echo "__USERNODE_WARN__ in-loop postgres setup failed"
 fi
 
+# What HEAD was when the agent started, so the commit step can tell whether
+# the agent committed its own work this turn.
+TURN_START_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+
 # stream-json emits one JSON object per line. The host parses this via
 # the docker-exec child's stdout (long-lived path) or `docker logs -f`
 # (legacy single-shot path) — same pipeline, different transport.
@@ -470,22 +491,21 @@ if [ "$MODE" = "scout" ] || [ "$MODE" = "shots" ]; then
   exit "$CC_EXIT"
 fi
 
+# The platform-side push proxy pushes the session's own branch, never the
+# worker's HEAD. So work the agent committed on a branch of its own is
+# brought onto the session branch first; work on a line that does not build
+# on it (another member's branch) is neither committed nor pushed, and the
+# turn reports no changes with branch_mismatch=1 rather than a commit that
+# can never reach GitHub.
 echo "__USERNODE_PHASE__ commit"
-if [ -n "$(git status --porcelain)" ]; then
-  git add -A
-  git commit -m "$COMMIT_MSG" || echo "__USERNODE_WARN__ commit failed"
+if usernode_settle_session_branch; then
+  usernode_commit_leftovers "$TURN_START_SHA" "$COMMIT_MSG"
 fi
 
 echo "__USERNODE_PHASE__ push"
 PUSH_OK=0
-HEAD_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
-if [ "$HEAD_BRANCH" != "$BRANCH" ]; then
-  # Belt-and-suspenders: the platform-side push proxy ignores the
-  # worker's local HEAD and pushes the session's canonical branch
-  # from its own DB lookup, but if HEAD has drifted we likely
-  # committed onto the wrong branch, so the push would push stale
-  # content. Skip and surface clearly.
-  echo "__USERNODE_WARN__ HEAD branch ($HEAD_BRANCH) != session branch ($BRANCH); skipping push"
+if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
+  echo "__USERNODE_WARN__ skipping push"
 elif /usr/local/bin/usernode-push; then
   PUSH_OK=1
 else
@@ -498,6 +518,12 @@ AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 # dev-chat "Sync with main" banner and the merge-time block.
 BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
 SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+BRANCH_MISMATCH_FIELD=""
+if [ -n "$USERNODE_BRANCH_MISMATCH" ]; then
+  AHEAD=0
+  SHA=""
+  BRANCH_MISMATCH_FIELD=" branch_mismatch=1"
+fi
 
 # Terminal phase marker: the dev-chat progress card's collapsed label is
 # the LAST line of the log, so without this every build turn ends frozen
@@ -509,5 +535,5 @@ if [ "$PUSH_OK" = "1" ]; then
 else
   echo "__USERNODE_PHASE__ push_failed"
 fi
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build"
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build$BRANCH_MISMATCH_FIELD"
 exit "$CC_EXIT"

@@ -350,7 +350,8 @@ test('the strip is drawn only where the bar is', () => {
   // own visibility, applied as the class and never rendered, so a value
   // published before hydration cannot change the first render.
   assert.match(STRIP, /const barUp = useVisibility\('platform-tabs', true\);/);
-  assert.match(STRIP, /useHiddenClass\(ref, !app \|\| !barUp\);/);
+  assert.match(STRIP, /const shown: ParkedApp \| null = app \|\| leaving;/);
+  assert.match(STRIP, /useHiddenClass\(ref, !shown \|\| !barUp\);/);
   assert.match(STRIP, /className="platform-parked hidden"/, 'the class string stays a constant');
   // The keyboard takes it with the bar, and a folded desktop rail takes its
   // footer with it — both presentation, so CSS rather than the class.
@@ -367,6 +368,59 @@ test('on a peeked rail the strip rides on top, and holds the peek while pointed 
   // a peek is up — pointing at the strip never starts one.
   assert.match(STRIP, /onMouseEnter=\{peek \? enterPeek : undefined\}/);
   assert.match(STRIP, /onMouseLeave=\{peek \? leavePeek : undefined\}/);
+});
+
+// ── It arrives and leaves by the bar (#3376) ───────────────────────────
+
+test('the phases are classes toggled on the root, never a rendered className', () => {
+  assert.match(STRIP, /useClassToggle\(ref, 'platform-parked-enter', entering && !!app && barUp\);/);
+  assert.match(STRIP, /useClassToggle\(ref, 'platform-parked-leave', !app && !!leaving && barUp\);/);
+  assert.doesNotMatch(STRIP, /className=\{/, 'the root and its parts keep constant class strings');
+});
+
+test('the bar going away hides at once; a restored app does not slide in', () => {
+  const fx = STRIP.slice(STRIP.indexOf('useIsomorphicLayoutEffect(() => {'));
+  const body = fx.slice(0, fx.indexOf('}, [app, barUp]);'));
+  assert.match(body, /if \(!barUp\) \{\s*\/\/[^\n]*\n\s*setLeaving\(null\);\s*setEntering\(false\);/,
+    'never a slide over the app being opened');
+  assert.match(body, /setEntering\(!restoring\);/);
+  assert.match(STRIP, /quiet\.current = true;\s*parkedStore\.set\(\{ app: stored \}\);/,
+    'the load-time restore is marked quiet');
+  assert.match(body, /if \(leaveAnimates\(\)\) setLeaving\(was\.app\);/,
+    'a forget only lingers when the leave is actually drawn');
+});
+
+test('reduced motion and the desktop skip the leave, and a timer always ends it', () => {
+  assert.match(STRIP, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches\) return false;/);
+  assert.match(STRIP, /matchMedia\('\(max-width: 767px\)'\)\.matches;/);
+  assert.match(STRIP, /window\.setTimeout\(finish, \(leaving \? LEAVE_MS : ENTER_MS\) \+ SLACK_MS\);/,
+    'no animationend under display: none, so a timer backs it');
+  assert.match(STRIP, /el\.toggleAttribute\('inert', out\);/, 'a leaving strip takes no taps');
+});
+
+test('a forgotten app is still drawn while it leaves', () => {
+  const before = ui.parkedStore.get().app;
+  try {
+    ui.parkedStore.set({ app: null });
+    assert.doesNotMatch(renderToHtml(createElement(ui.ParkedStrip, {})), /platform-parked-resume/,
+      'with nothing parked and nothing leaving, the strip is empty');
+  } finally {
+    ui.parkedStore.set({ app: before });
+  }
+  assert.match(STRIP, /\{shown && record \? \(/, 'the children draw from the app shown, leaving included');
+});
+
+test('the motion is phone-only, clips the root and slides only its children', () => {
+  const at = CSS.indexOf('@media (max-width: 767px) {\n  .platform-parked-enter {');
+  assert.ok(at > 0, 'phone-only phase rules');
+  const block = CSS.slice(at, CSS.indexOf('\n}\n', at));
+  assert.match(block, /\.platform-parked-enter \{\s*animation: platform-parked-reveal 220ms/);
+  assert.match(block, /\.platform-parked-leave \{\s*pointer-events: none;\s*animation: platform-parked-conceal 160ms[^;]*forwards;/);
+  assert.match(CSS, /@keyframes platform-parked-reveal \{\s*from \{ clip-path: inset\(100% 0 0 0\); \}/);
+  assert.match(CSS, /@keyframes platform-parked-rise \{\s*from \{ transform: translateY\(52px\); opacity: 0; \}/);
+  assert.doesNotMatch(CSS, /@keyframes platform-parked-(reveal|conceal) \{[^}]*transform/,
+    'a transform on the root breaks its fixed glass layer');
+  assert.match(CSS, /@media \(prefers-reduced-motion: reduce\) \{\s*\.platform-parked-enter, \.platform-parked-leave,\s*\.platform-parked-enter > \*, \.platform-parked-leave > \* \{ animation: none; \}/);
 });
 
 test('storage is read defensively and written through one key', () => {

@@ -72,6 +72,8 @@ test('the rows say what is behind them, from the data only', () => {
   assert.equal(quiet.requests, null);
   assert.equal(quiet.votes, null);
   assert.equal(quiet.friends, null, 'friends are never counted (#2386), only requests to answer');
+  assert.equal(moreRowsView({ ranking: {}, summary: SUMMARY, feedback: { sent: 4, counted: 0, reports: [] } }).feedback,
+    '4 sent', 'none counted yet: no "· 0 counted"');
   assert.equal(moreRowsView({ ranking: {}, summary: { ...SUMMARY, merged: 0 } }).changes, null);
   // A read that failed is not a claim that there is nothing.
   assert.deepEqual(moreRowsView({ ranking: null, summary: null }), {

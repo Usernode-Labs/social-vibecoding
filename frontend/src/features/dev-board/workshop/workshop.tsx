@@ -1050,7 +1050,7 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
   ].filter(Boolean);
   // `total`, not `rows.length`: the rows are capped for drawing and this
   // sentence describes the whole population the head counts.
-  return bits.length ? bits.join(', ') : `${s.total} things moved`;
+  return bits.length ? bits.join(', ') : `${s.total} ${s.total === 1 ? 'thing' : 'things'} moved`;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -3726,8 +3726,9 @@ export function DevWorkshop(): ReactNode {
             <span className="dev-ws-since-label">{v.since && !outsider ? 'Since your last visit' : 'Recently'}</span>
             {v.since ? (
               <>
-                {/* THE WHOLE POPULATION, not the page of it that is drawn. */}
-                <span className="dev-ws-since-n">{v.since.total}</span>
+                {/* THE WHOLE POPULATION, not the page of it that is drawn.
+                    Zero says nothing: a quiet visit or a Clear shows no pill. */}
+                {v.since.total > 0 ? <span className="dev-ws-since-n">{v.since.total}</span> : null}
                 <button
                   type="button"
                   className="dev-ws-since-clear un-touch-target"

@@ -497,13 +497,17 @@ const Notifications = {
     // the bell's number now, and an exclusion here would leave a count nothing
     // in the drawer can dismiss — which is the bug this change exists to fix.
     if (Notifications.unread === 0) return;
+    // Nothing is cleared until the server answers, so a failed request leaves
+    // every unread mark where it was. It still has to say so: a tap that
+    // silently did nothing reads as a broken button.
+    const failed = () => window.PlatformUI?.toast?.('Couldn’t mark notifications as read. Try again.');
     try {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ all: true }),
       });
-      if (!res.ok) return;
+      if (!res.ok) { failed(); return; }
       const data = await res.json();
       Notifications.unread = data.unread || 0;
       const now = new Date().toISOString();
@@ -520,6 +524,7 @@ const Notifications = {
       window.GroupChat?.reconcileDotsFromNotifications?.();
     } catch (err) {
       console.warn('[notifications] markAllRead failed', err);
+      failed();
     }
   },
 

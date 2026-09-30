@@ -1219,6 +1219,13 @@ async function handleMessage(pool, client, msg) {
     // view access the socket already has, so someone who has since lost
     // collaborator access can still remove what they wrote. Authorship is
     // the gate (services/app-chat.js deleteOwnMessage).
+    //
+    // A refusal is answered to the requesting socket alone, as
+    // `{ type: 'delete_error', id, code }`, so the composer that already drew
+    // the placeholder can put the message back (public/js/group-chat.js). It
+    // names only that sender's own attempt, with the same code the REST twin
+    // answers as 403/404; nothing is broadcast. The REST path has no socket
+    // and reads the returned result instead.
     case 'delete': {
       const messageId = appChat.positiveInt(msg.id);
       if (!messageId) return { ok: false, code: 'not_found' };
@@ -1229,6 +1236,11 @@ async function handleMessage(pool, client, msg) {
         log.warn('ws', 'delete rejected', {
           appId: client.appId, userId: client.user.id, messageId, code: result.code,
         });
+        try {
+          if (client.ws && client.ws.readyState === 1) {
+            client.ws.send(JSON.stringify({ type: 'delete_error', id: messageId, code: result.code }));
+          }
+        } catch { /* a closed socket has nobody to tell */ }
         return result;
       }
       if (result.alreadyDeleted) return result;

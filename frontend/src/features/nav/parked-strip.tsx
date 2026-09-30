@@ -62,19 +62,53 @@
  * the CSS that reserves this strip's band reads that class
  * (`body:has(#platform-parked:not(.hidden))`), so React must never be the one
  * rewriting the attribute.
+ *
+ * ── It arrives and leaves by the bar (#3376) ─────────────────────────
+ *
+ * On the phone the strip slides up out of the tab bar when an app is parked
+ * and sinks back into it when the app is forgotten. Two phase classes carry
+ * it (`platform-parked-enter` / `-leave`), toggled like `hidden` and never
+ * rendered. While it leaves, the app it was drawing is kept in `leaving` so
+ * the content stays put until `hidden` lands — on the leave keyframe's end,
+ * or a timer, since `display: none` (keyboard up) runs no animation at all.
+ *
+ * Only a park or a forget while the bar stays up moves. The bar going away
+ * (you entered the app, signed out) hides the strip at once — it must never
+ * slide on its own over the app you are opening — and a stored app restored
+ * on load is simply there, like the rest of the page. Reduced motion and the
+ * desktop rail skip the leave entirely: hiding is instant, as it was.
+ *
+ * The root's clip is what animates, never a transform on it: a transform
+ * would make the root the containing block for its fixed fake-glass layer,
+ * which would then draw at strip size and snap back when the motion ended.
+ * The children carry the slide (app.css).
  */
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { XIcon } from '@/components/ui/icons';
 
-import { useHiddenClass } from '../../lib/legacy-dom';
+import { useClassToggle, useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { navStore } from './nav-store.js';
 import { parkedStore, readParked, setParked } from './parked-store.js';
 import { enterPeek, leavePeek } from './rail-peek';
+
+type ParkedApp = { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
+
+/** Keyframe lengths in app.css, plus slack, for when no animationend comes. */
+const ENTER_MS = 220;
+const LEAVE_MS = 160;
+const SLACK_MS = 80;
+
+/** Whether a leave would actually be drawn: the phone, with motion allowed. */
+function leaveAnimates(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return false;
+  return window.matchMedia('(max-width: 767px)').matches;
+}
 
 export function ParkedStrip() {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -83,7 +117,68 @@ export function ParkedStrip() {
   // prerender, and it only ever reaches the DOM as a class.
   const barUp = useVisibility('platform-tabs', true);
   const { peek } = useStoreState(navStore);
-  useHiddenClass(ref, !app || !barUp);
+  // The app on its way out, drawn until the leave finishes; null otherwise.
+  const [leaving, setLeaving] = useState<ParkedApp | null>(null);
+  const [entering, setEntering] = useState(false);
+  const shown: ParkedApp | null = app || leaving;
+  useHiddenClass(ref, !shown || !barUp);
+  useClassToggle(ref, 'platform-parked-enter', entering && !!app && barUp);
+  useClassToggle(ref, 'platform-parked-leave', !app && !!leaving && barUp);
+
+  // What was on screen at the last change, null before the first; and
+  // whether the next change is the stored app arriving on load.
+  const prev = useRef<{ app: ParkedApp | null; visible: boolean } | null>(null);
+  const quiet = useRef(false);
+
+  useIsomorphicLayoutEffect(() => {
+    const visible = !!app && barUp;
+    const was = prev.current;
+    const restoring = quiet.current;
+    prev.current = { app, visible };
+    quiet.current = false;
+    if (!was) return;
+    if (!barUp) {
+      // The bar went away with it: gone now, never a slide over the app.
+      setLeaving(null);
+      setEntering(false);
+    } else if (visible && !was.visible) {
+      setLeaving(null);
+      setEntering(!restoring);
+    } else if (!app && was.visible && was.app) {
+      setEntering(false);
+      if (leaveAnimates()) setLeaving(was.app);
+    }
+  }, [app, barUp]);
+
+  // Each phase ends on its own keyframe's end, or on a timer when none runs.
+  useEffect(() => {
+    if (!entering && !leaving) return undefined;
+    const el = ref.current;
+    const name = leaving ? 'platform-parked-conceal' : 'platform-parked-reveal';
+    const finish = () => {
+      if (leaving) setLeaving(null);
+      else setEntering(false);
+    };
+    const onEnd = (event: AnimationEvent) => {
+      if (event.target === el && event.animationName === name) finish();
+    };
+    el?.addEventListener('animationend', onEnd);
+    const timer = window.setTimeout(finish, (leaving ? LEAVE_MS : ENTER_MS) + SLACK_MS);
+    return () => {
+      el?.removeEventListener('animationend', onEnd);
+      window.clearTimeout(timer);
+    };
+  }, [entering, leaving]);
+
+  // A strip on its way out takes no taps and is out of the reading order.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const out = !app && !!leaving;
+    el.toggleAttribute('inert', out);
+    if (out) el.setAttribute('aria-hidden', 'true');
+    else el.removeAttribute('aria-hidden');
+  }, [app, leaving]);
 
   // POST-MOUNT, and that is the whole of why it is an effect: a localStorage
   // read during the first render is a hydration mismatch. Once only — every
@@ -91,11 +186,14 @@ export function ParkedStrip() {
   useEffect(() => {
     if (parkedStore.get().app) return;
     const stored = readParked();
-    if (stored) parkedStore.set({ app: stored });
+    if (stored) {
+      quiet.current = true;
+      parkedStore.set({ app: stored });
+    }
   }, []);
 
-  const record = app
-    ? { icon_url: app.iconUrl, icon_emoji: app.iconEmoji, name: app.name }
+  const record = shown
+    ? { icon_url: shown.iconUrl, icon_emoji: shown.iconEmoji, name: shown.name }
     : null;
 
   return (
@@ -106,7 +204,7 @@ export function ParkedStrip() {
       onMouseEnter={peek ? enterPeek : undefined}
       onMouseLeave={peek ? leavePeek : undefined}
     >
-      {app && record ? (
+      {shown && record ? (
         <>
           <a
             id="platform-parked-resume"
@@ -114,13 +212,15 @@ export function ParkedStrip() {
             // A REAL PATH, so a modified click opens the app in a tab —
             // which is a thing people do with this exact handle, to get the
             // app back without losing the conversation they are reading.
-            href={`/app/${encodeURIComponent(app.slug)}`}
+            href={`/app/${encodeURIComponent(shown.slug)}`}
             onClick={(event) => {
               const nav = (window as unknown as {
                 NavLink?: { isNativeClick?: (e: unknown) => boolean };
               }).NavLink;
               if (nav?.isNativeClick?.(event)) return;
               event.preventDefault();
+              // A leaving strip is inert; there is no app to resume.
+              if (!app) return;
               window.App?.openAppTab?.(app.slug, 'app');
             }}
           >
@@ -130,14 +230,14 @@ export function ParkedStrip() {
             >
               <AppIconContent app={record} />
             </span>
-            <span className="platform-parked-name">{app.name}</span>
+            <span className="platform-parked-name">{shown.name}</span>
             <span className="platform-parked-pill">Resume</span>
           </a>
           <button
             id="platform-parked-forget"
             type="button"
             className="platform-parked-x"
-            aria-label={`Forget ${app.name}`}
+            aria-label={`Forget ${shown.name}`}
             onClick={() => setParked(null)}
           >
             <XIcon className="w-4 h-4" />

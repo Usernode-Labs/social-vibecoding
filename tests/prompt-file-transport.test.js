@@ -69,6 +69,40 @@ test('hosted Claude receives conventions once as system context, while unchanged
   assert.match(codex.promptBlock, /SENTINEL platform rule/);
 });
 
+test('the CLI that runs an OpenRouter turn decides the transport, not the backend (#3296)', () => {
+  const conventions = 'SENTINEL platform rule';
+  // Claude Code driving an OpenRouter model reads --append-system-prompt-file
+  // like hosted Claude does, so the handbook travels the same way.
+  const claudeHarness = buildCodingAgentConventionsContext({ isCodexSession: true, harness: 'claude', conventions });
+  assert.match(claudeHarness.systemPrompt, /SENTINEL platform rule/);
+  assert.doesNotMatch(claudeHarness.promptBlock, /SENTINEL platform rule/);
+  assert.deepEqual(claudeHarness, buildCodingAgentConventionsContext({ conventions }));
+  // Codex has no system-prompt file; absent means Codex.
+  for (const harness of ['codex', null]) {
+    const inline = buildCodingAgentConventionsContext({ isCodexSession: true, harness, conventions });
+    assert.equal(inline.systemPrompt, null);
+    assert.match(inline.promptBlock, /SENTINEL platform rule/);
+  }
+  // A local run keeps it inline whatever the harness.
+  const local = buildCodingAgentConventionsContext({ runLocally: true, isCodexSession: true, harness: 'claude', conventions });
+  assert.equal(local.systemPrompt, null);
+
+  const sessionsSource = read('src/routes/sessions.js');
+  assert.match(sessionsSource, /if \(runLocally \|\| \(isCodexSession && harness !== 'claude'\)\) \{/);
+  assert.match(sessionsSource, /const transport = buildTransport\(agentIdentity\.harness\);/);
+  // Both OpenRouter prompts are rendered, and the attempt takes the one for
+  // the CLI its runtime resolved — the harness map can move between the
+  // prompt render and dispatch.
+  assert.match(sessionsSource, /const openRouterBuildPrompts = isCodexSession && !runLocally\n\s+\? Object\.fromEntries\(\['codex', 'claude'\]\.map\(\(harness\) => \{/);
+  assert.match(sessionsSource, /openRouterBuildPrompts\[ctx\.agentHarness === 'claude' \? 'claude' : 'codex'\]/);
+  assert.match(sessionsSource, /prompt: openRouterBuild \? openRouterBuild\.prompt : claudePrompt,/);
+  assert.match(sessionsSource, /systemPrompt: isClaudeDispatch\n\s+\? conventionsContext\.systemPrompt\n\s+: \(openRouterBuild \? openRouterBuild\.systemPrompt : null\),/);
+  // The worker takes a system prompt from any turn that runs Claude Code, and
+  // run-cc.sh treats the file as optional for an OpenRouter turn.
+  const workerSource = read('src/services/worker.js');
+  assert.match(workerSource, /runsClaude/);
+});
+
 test('hosted build guidance keeps proposal submission with the harness and shots intent with the agent', () => {
   const hosted = buildHostedCodingWorkflowGuidance();
   assert.match(hosted, /HOSTED WORKER LIFECYCLE/);

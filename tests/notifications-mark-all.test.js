@@ -245,3 +245,77 @@ test('a lone unread session notification is enough to send mark-all', async () =
   assert.deepEqual(JSON.parse(calls[0].opts.body), { all: true });
   assert.ok(N.items[0].readAt, 'and the completion is cleared locally');
 });
+
+// ── 4. a failed mark-all says so and leaves the unread marks alone ──────
+//
+// Nothing is cleared locally until the server answers, so offline or a 5xx
+// must leave the items and the badge exactly as they were, and tell the
+// viewer with a toast rather than doing nothing. Expected failures stay off
+// console.error, which a proposal's checks treat as a failure.
+
+function failureFixture() {
+  const rendered = { badge: 0, list: 0 };
+  const N = {
+    unread: 2,
+    items: [
+      { id: 1, kind: 'mention', readAt: null },
+      { id: 2, kind: 'reply', readAt: null },
+      { id: 3, kind: 'kudos', readAt: '2026-01-01T00:00:00Z' },
+    ],
+    _reconcileCompletionTitle() {},
+    _renderBadge() { rendered.badge++; },
+    _renderList() { rendered.list++; },
+  };
+  const toasts = [];
+  let dotReconciles = 0;
+  const windowStub = {
+    PlatformUI: { toast(msg) { toasts.push(msg); } },
+    GroupChat: { reconcileDotsFromNotifications() { dotReconciles++; } },
+  };
+  const errors = [];
+  const consoleStub = { warn() {}, error(...a) { errors.push(a); }, log() {} };
+  return { N, rendered, toasts, windowStub, consoleStub, errors, dots: () => dotReconciles };
+}
+
+function assertUntouched(f) {
+  assert.equal(f.N.unread, 2, 'badge count kept');
+  assert.equal(f.N.items[0].readAt, null, 'unread item kept unread');
+  assert.equal(f.N.items[1].readAt, null, 'unread item kept unread');
+  assert.equal(f.N.items[2].readAt, '2026-01-01T00:00:00Z');
+  assert.equal(f.dots(), 0, 'chat dots not cleared');
+  assert.deepEqual(f.toasts, ['Couldn’t mark notifications as read. Try again.']);
+  assert.equal(f.errors.length, 0, 'no console.error on an expected failure');
+}
+
+test('markAllRead: a rejected fetch (offline) keeps the unread state and shows a toast', async () => {
+  const f = failureFixture();
+  const markAllRead = buildMarkAllRead(methodBody('async markAllRead'));
+  await markAllRead(
+    f.N, () => Promise.reject(new TypeError('Failed to fetch')),
+    f.windowStub, f.consoleStub, SESSION_KINDS, isSessionNotifStub
+  );
+  assertUntouched(f);
+});
+
+test('markAllRead: a server error keeps the unread state and shows a toast', async () => {
+  const f = failureFixture();
+  const markAllRead = buildMarkAllRead(methodBody('async markAllRead'));
+  await markAllRead(
+    f.N, () => Promise.resolve({ ok: false, status: 503, json: () => Promise.resolve({}) }),
+    f.windowStub, f.consoleStub, SESSION_KINDS, isSessionNotifStub
+  );
+  assertUntouched(f);
+});
+
+test('markAllRead: a successful request clears everything and shows no toast', async () => {
+  const f = failureFixture();
+  const markAllRead = buildMarkAllRead(methodBody('async markAllRead'));
+  await markAllRead(
+    f.N, () => Promise.resolve({ ok: true, json: () => Promise.resolve({ unread: 0, cleared: 2 }) }),
+    f.windowStub, f.consoleStub, SESSION_KINDS, isSessionNotifStub
+  );
+  assert.equal(f.N.unread, 0);
+  assert.ok(f.N.items.every((n) => n.readAt));
+  assert.equal(f.dots(), 1);
+  assert.deepEqual(f.toasts, []);
+});
