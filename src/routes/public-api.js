@@ -47,7 +47,7 @@ const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail, sendWaitlistCodeMail } = require('../services/topochain/mailer');
 const { inviteUrl, siteUrl, waitlistUrl } = require('../services/marketing-links');
 const { loadContributors, shapeContributor } = require('../services/contributors');
-const { listPublicApps, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
+const { listPublicApps, isPublicDirectoryApp, HIDDEN_APP_STATUSES } = require('../services/public-app-directory');
 
 // The ONE body POST /api/public/waitlist/resend ever returns. Frozen and
 // module-scoped rather than built per request, so the four branches cannot
@@ -124,18 +124,21 @@ function publicApiRoutes(config) {
   });
 
   // GET /api/public/apps/:slug/contributors — one app's contributor list.
-  // 404 (never 403) for a missing, self-hosted, or view-private slug so a
-  // hidden app's existence isn't disclosed.
+  // Answers only for an app the public directory lists (isPublicDirectoryApp:
+  // not self-hosted, not suspended by moderators, view-public, and not in a
+  // hidden status). Anything else is 404 (never 403), so a hidden app's
+  // existence isn't disclosed.
   router.get('/api/public/apps/:slug/contributors', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
       const { rows } = await pool.query(
-        `SELECT id, slug, self_hosted, view_visibility
+        `SELECT id, slug, self_hosted, view_visibility, status,
+                moderation_suspended_at
            FROM apps WHERE slug = $1`,
         [String(req.params.slug)]
       );
       const app = rows[0];
-      if (!app || app.self_hosted || app.view_visibility !== 'public') {
+      if (!isPublicDirectoryApp(app)) {
         return res.status(404).json({ error: 'App not found' });
       }
 
