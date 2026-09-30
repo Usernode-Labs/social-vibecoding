@@ -13,6 +13,8 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const proposalDescription = require('../services/proposal-description');
+const platformIssueBlock = require('../services/platform-issue-block');
+const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
@@ -8602,7 +8604,11 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       }
     } else {
       const testing = testingNotes.extract(result.lastResultText || '');
-      testing.cleanedText = proposalDescription.extract(testing.cleanedText).cleanedText;
+      // A recovered turn's escalation block is not re-filed (the turn's own
+      // tail did not run), but its markers must not reach the timeline.
+      testing.cleanedText = platformIssueBlock.extract(
+        proposalDescription.extract(testing.cleanedText).cleanedText,
+      ).cleanedText;
       const hasChanges = result.ahead > 0 && !!result.sha;
       // #170: a headless session only ever has spec_md if its own scout
       // wrote it this run — so spec_md present means this build was the
@@ -10924,6 +10930,46 @@ change on this branch does for someone using the app.
   - Put it after the rest of your message and BEFORE the testing block,
     which stays last. Skip it when you changed no files.`;
 
+// A build the Mayor dispatches. It replaced the platform's first prompt
+// (2026-04-25: "Spend minimal time reading files … stage everything with
+// "git add -A" … Do NOT ask questions or request clarification. Just build
+// it."), whose first two lines are how Sheep countrr's #38 shipped a server
+// change nobody had read the Dockerfile for; the rest of what that prompt
+// was for now lives in the shared build contract.
+const DISPATCHED_TURN_INSTRUCTIONS = `- IMPLEMENT the requested change fully: write the code and finish the feature. Do not stop at
+  exploring, and do not stop partway.
+- The request was already worked out with the user, so do not ask questions. Where it is still
+  ambiguous, choose the reading that changes the least existing behaviour, and say which you chose.`;
+
+// The dev chat's closing summary. The build contract's own closing line
+// (services/build-contract.js SUMMARY_LINE) says "End with …", but a dev chat
+// turn's final message ends with its description and testing blocks, so the
+// same request is made here, placed ahead of them.
+const DEV_CHAT_SUMMARY_RULE = `- In your final message, before any block it ends with, say in plain language what you changed,
+  list each file you changed with one line on why, and name anything you noticed but left alone.`;
+
+// An OpenRouter turn — Codex, or Claude Code driving the user's OpenRouter
+// model (#3296) — holds only a push-scoped token, which the platform-issue
+// route refuses, so it cannot run `usernode-report-platform-issue`. Before
+// this block it was told only that, while the conventions told it to
+// escalate instead of working around a platform problem; the workarounds
+// Sheep countrr shipped (usernode-bot/sheep-countrr-a08857#48) all came from
+// such turns. The platform reads the block after the turn and files the same
+// draft card the helper would (services/platform-issue-block.js).
+const OPENROUTER_PLATFORM_ISSUE_GUIDANCE = `When the cause of a problem is outside this app's repository (the shared bridge, the preview,
+build or checks pipeline, or a capability the platform does not provide: see "Platform-level
+problems & missing capabilities" in the supplied platform conventions), do not work around it in
+the app. The \`usernode-report-platform-issue\` helper is not available on this backend. Put the
+report in your FINAL message instead, before its description and testing blocks:
+
+==== PLATFORM ISSUE ====
+One-line title
+What is broken or missing, how you hit it, and what the app needs.
+==== END PLATFORM ISSUE ====
+
+Homeroom turns it into a draft report the user can send to the platform. Write at most one per
+turn, and never for something you can fix in this app.`;
+
 function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   if (runLocally) return '';
   return `HOSTED WORKER LIFECYCLE (this invocation):
@@ -10976,6 +11022,10 @@ function buildCodingAgentBuildGuidance({ authoritativeSystemContext = false } = 
 function buildCodingAgentConventionsContext({
   runLocally = false,
   isCodexSession = false,
+  // #3296: the CLI an OpenRouter turn runs in. Claude Code takes the handbook
+  // as system context whoever serves the model; only Codex (and a local run)
+  // still needs it inline. Absent means Codex, as every OpenRouter turn was.
+  harness = null,
   conventions = getAppConventions(),
   designGuidance = '',
 } = {}) {
@@ -10986,7 +11036,7 @@ ${conventions}
 
 ==== END PLATFORM CONVENTIONS ====${designBlock}`;
 
-  if (runLocally || isCodexSession) {
+  if (runLocally || (isCodexSession && harness !== 'claude')) {
     return { promptBlock: fullBlock, systemPrompt: null };
   }
 
@@ -11333,7 +11383,7 @@ conflict with the platform conventions supplied to this run (which always win)
 or the repo's own \`CLAUDE.md\` on app-specific matters.`
     : '';
   const platformIssueHelperNote = isCodexSession
-    ? 'The `usernode-report-platform-issue` helper is NOT available on this backend; do not call it.'
+    ? OPENROUTER_PLATFORM_ISSUE_GUIDANCE
     : `A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the supplied platform conventions. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.`;
   const taskBlock = directSessionTurn
     ? `DIRECT USER TURN:\n${userMessage}${attachmentsBlock}${discussionBlock}`
@@ -11348,27 +11398,38 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
 - If the user asks for a change, implement it fully and commit it. Do not stop after merely describing what should change.
 - If essential clarification is required, ask one concise question and make no speculative edits.
 - Never claim that files changed unless you actually changed and committed them.`)
-    : `- IMPLEMENT the requested changes fully. Do not just explore — write code.
-- Spend minimal time reading files. Focus on writing and editing.
-- Create or modify all necessary files to complete the request.
-- If building something new, implement the full feature — don't stop partway.
-- After all changes are made, stage everything with "git add -A" and commit
-  with a clear message describing what was built.
-- Do NOT ask questions or request clarification. Just build it.`;
-  const conventionsContext = buildCodingAgentConventionsContext({
-    runLocally,
-    isCodexSession,
-    // #2817: the same design guidance for every backend. Only its self-check
-    // differs: OpenRouter models read text, Claude reads screenshots.
-    designGuidance: getDesignGuidance({ readsImages: !isCodexSession }),
-  });
-  const buildGuidance = buildCodingAgentBuildGuidance({
-    authoritativeSystemContext: Boolean(conventionsContext.systemPrompt),
-  });
+    : DISPATCHED_TURN_INSTRUCTIONS;
+  // The rules every on-platform build works under, shared with the Homeroom
+  // bot (services/build-contract.js). The dev chat's final message ends with
+  // its own blocks (description, testing), so the summary is asked for here,
+  // ahead of them, rather than as the contract's closing line.
+  const buildContractBlock = `${buildContract.buildContractBlock({ commits: 'agent', summary: false })}
+${DEV_CHAT_SUMMARY_RULE}`;
+  // #2817: the same design guidance for every backend. Only its self-check
+  // differs: OpenRouter models read text, Claude reads screenshots.
+  const designGuidance = getDesignGuidance({ readsImages: !isCodexSession });
+  // The CLI that runs the turn decides how the handbook travels: Claude Code
+  // (on Anthropic's models or, since #3296, an OpenRouter model) takes it as
+  // system context; Codex and a local run keep it inline. It used to follow
+  // the backend, so GLM in Claude Code still carried the 165 KB handbook in
+  // every user message.
+  const buildTransport = (harness) => {
+    const conventions = buildCodingAgentConventionsContext({
+      runLocally, isCodexSession, harness, designGuidance,
+    });
+    return {
+      conventions,
+      guidance: buildCodingAgentBuildGuidance({
+        authoritativeSystemContext: Boolean(conventions.systemPrompt),
+      }),
+    };
+  };
+  const transport = buildTransport(agentIdentity.harness);
+  const conventionsContext = transport.conventions;
   const workflowGuidance = buildHostedCodingWorkflowGuidance({ runLocally });
-  const renderClaudePrompt = (renderedSpecBlock) => `${taskBlock}
+  const renderClaudePrompt = (renderedSpecBlock, { conventions, guidance } = transport) => `${taskBlock}
 
-${conventionsContext.promptBlock}
+${conventions.promptBlock}
 ${renderedSpecBlock}${failingChecksBlock}
 
 A \`CLAUDE.md\` at the repo root, if present, contains **app-specific**
@@ -11393,8 +11454,9 @@ ${debugAccess.promptBlock()}
 INSTRUCTIONS:
 ${workflowGuidance}
 ${turnInstructions}
-${buildGuidance.browserGuidance}
-${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildGuidance.testingGuidance}`;
+${buildContractBlock}
+${guidance.browserGuidance}
+${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidance.testingGuidance}`;
 
   const fullClaudePrompt = renderClaudePrompt(specContext.fullBlock);
   const claudePrompt = reuseHostedScoutSpec
@@ -11403,6 +11465,19 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
   // run-cc.sh reads this only after --resume fails. A fresh session therefore
   // gets the exact complete task it received before this optimization.
   const claudeResumeFallbackPrompt = reuseHostedScoutSpec ? fullClaudePrompt : null;
+  // An OpenRouter turn's CLI is settled only at dispatch, where
+  // resolveCodexRuntimeContext resolves harness 'auto' from the per-model map.
+  // Render both prompts so the attempt always gets the one for the CLI that
+  // actually runs, even if the map moves between here and there.
+  const openRouterBuildPrompts = isCodexSession && !runLocally
+    ? Object.fromEntries(['codex', 'claude'].map((harness) => {
+      const t = buildTransport(harness);
+      return [harness, {
+        prompt: renderClaudePrompt(specContext.fullBlock, t),
+        systemPrompt: t.conventions.systemPrompt,
+      }];
+    }))
+    : null;
 
   const commitMsg = github.safeMention(`Changes: ${userMessage.substring(0, 50)}`);
 
@@ -11972,19 +12047,27 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
       const doBuild = (ctx) => {
         const isClaudeDispatch = !ctx || !ctx.logicalTurnId;
         if (isClaudeDispatch) claudeTelemetryAttemptNumber += 1;
+        // An OpenRouter attempt: the prompt and system context rendered for the
+        // CLI its runtime resolved (see openRouterBuildPrompts above).
+        const openRouterBuild = !isClaudeDispatch && openRouterBuildPrompts
+          ? openRouterBuildPrompts[ctx.agentHarness === 'claude' ? 'claude' : 'codex']
+          : null;
         return worker.execInWorker(session.id, {
           mode: 'build',
-          prompt: claudePrompt,
+          prompt: openRouterBuild ? openRouterBuild.prompt : claudePrompt,
           // Present only for the first hosted-Claude build after an exact
           // matching scout. If --resume is unavailable, the runner retries
           // fresh with this complete spec-bearing user prompt.
           resumeFallbackPrompt: isClaudeDispatch ? claudeResumeFallbackPrompt : null,
-          // Hosted Claude gets the same authoritative handbook on every
-          // invocation as stable system context. New, resumed, compacted and
-          // resume-fallback-fresh runs therefore all use the current version
-          // without adding another copy to conversation history. Codex and
-          // local Claude retain the inline block above.
-          systemPrompt: isClaudeDispatch ? conventionsContext.systemPrompt : null,
+          // Claude Code gets the same authoritative handbook on every
+          // invocation as stable system context — hosted Claude, and an
+          // OpenRouter model running in Claude Code (#3296). New, resumed,
+          // compacted and resume-fallback-fresh runs therefore all use the
+          // current version without adding another copy to conversation
+          // history. Codex and local Claude retain the inline block above.
+          systemPrompt: isClaudeDispatch
+            ? conventionsContext.systemPrompt
+            : (openRouterBuild ? openRouterBuild.systemPrompt : null),
           model: turnModel,
           commitMsg,
           resumeSessionId: resumeThreadId,
@@ -12207,7 +12290,30 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
     // A message that was nothing but the block still gets a chat card.
     const described = proposalDescription.extract(testing.cleanedText);
     const turnDescription = described.description;
-    const ccText = described.cleanedText || turnDescription || '';
+    // An OpenRouter turn cannot run usernode-report-platform-issue, so it puts
+    // an escalation in a "==== PLATFORM ISSUE ====" block instead
+    // (OPENROUTER_PLATFORM_ISSUE_GUIDANCE). Peel it off the message and file
+    // the same draft card the helper would: a person still taps it before
+    // anything is filed, and the turn itself never held a token that could.
+    const escalation = isCodexSession
+      ? platformIssueBlock.extract(described.cleanedText)
+      : { cleanedText: described.cleanedText, issue: null };
+    if (escalation.issue) {
+      issueDraft.createDraft(pool, config, {
+        sessionId: session.id,
+        title: escalation.issue.title,
+        body: escalation.issue.body,
+        target: 'platform',
+        source: 'agent',
+      }).then((drafted) => {
+        if (!drafted.ok) {
+          log.info('sessions', 'Platform-issue block not drafted', { sessionId: session.id, code: drafted.code });
+        }
+      }).catch((err) => {
+        log.warn('sessions', 'Platform-issue block draft failed', { sessionId: session.id, err: err.message });
+      });
+    }
+    const ccText = escalation.cleanedText || turnDescription || '';
     commitHash = result.sha;
     const hasChanges = result.ahead > 0 && !!commitHash;
 
@@ -13171,4 +13277,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
