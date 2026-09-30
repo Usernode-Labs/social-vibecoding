@@ -266,3 +266,21 @@ test('#852 review: Homeroom\'s Discussion is #general itself, and a project\'s o
   assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="discussion"\] \{\s*height: var\(--ws-fit\);/);
   assert.match(CSS, /\.dev-ws-discussion \.platform-safe-bar \{ padding-bottom: 0\.5rem !important; \}/);
 });
+
+test('#3499: the band and the Discussion pane bleed to the screen\'s edges, not past them', () => {
+  // Holding the Workshop, #dev-body narrows its sides from `px-3`'s 12px to
+  // 4px. The band and the Discussion pane bled 12 against it and ran 8px
+  // past both edges of a phone, and where #dev-forum-scroll is the scroller
+  // (an installed app, the native WebView) the hub scrolled sideways by 8px.
+  // Each bleed has to cancel exactly the padding it sits in.
+  const CSS = read('public/css/app.css');
+  const body = CSS.match(/^#dev-body:has\(> #dev-workshop\) \{ padding: \S+ (\d+)px /m);
+  assert.ok(body, '#dev-body has its Workshop padding');
+  const side = Number(body[1]);
+  const band = CSS.match(/^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px -(\d+)px 0;/m);
+  assert.ok(band, 'the band bleeds under the header and to the sides');
+  assert.equal(Number(band[1]), side, 'the band cancels #dev-body\'s side padding, no more');
+  const pane = CSS.match(/^@media \(max-width: 767\.98px\) \{\s*\.dev-ws-discussion \{ margin: 0 -(\d+)px; \}/m);
+  assert.ok(pane, 'the Discussion pane bleeds on a phone');
+  assert.equal(Number(pane[1]), side, 'and so does the Discussion pane, to the band\'s width');
+});

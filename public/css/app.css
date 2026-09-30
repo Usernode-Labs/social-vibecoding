@@ -16866,9 +16866,17 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    for the two hooks that measure it, and bleeds to the column's edges and
    up under the header's overlap (`-mb-2` on the bar, plus the body's own
    top padding), so the colour runs unbroken from the top of the screen to
-   the tabs' underline. */
+   the tabs' underline.
+
+   THE SIDES CANCEL 4px, NOT 12 (#3499). `#dev-body` is `px-3`, but holding
+   the Workshop it narrows to 4px at the sides (`#dev-body:has(>
+   #dev-workshop)`), and the band's bleed was written against the 12. It ran
+   8px past both edges of the screen: harmless where the page itself scrolls
+   (a mobile browser clips #dev-forum-scroll's x-axis), but in an installed
+   app or the native WebView #dev-forum-scroll is the scroller, and its
+   `overflow-y: auto` made those 8px a sideways scroll of the whole hub. */
 .dev-ws-tabs.dev-ws-band {
-  margin: -18px -12px 0;
+  margin: -18px -4px 0;
   /* 18px, not 8: the header's foot overlaps the band's top by ten, and the
      count's badge rises above its word into that strip. */
   padding: 18px 8px 0;
@@ -17108,7 +17116,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    in a mobile browser, where the page scrolls, the tab takes `--ws-fit` as
    a definite height, at every width. The pane draws its own sheet
    (general-chat.tsx's `dc-lift dc-lift-session`), which runs off the
-   bottom as it does in Messages, so on a phone it spans the band's width. */
+   bottom as it does in Messages, so on a phone it spans the band's width:
+   the screen's, by cancelling the same 4px of `#dev-body` the band does
+   (#3499), not 12. */
 html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   height: var(--ws-fit);
   min-height: var(--ws-fit);
@@ -17117,7 +17127,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
 .dev-ws-discussion-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .dev-ws-discussion-host > * { flex: 1 1 auto; min-height: 0; }
 @media (max-width: 767.98px) {
-  .dev-ws-discussion { margin: 0 -12px; }
+  .dev-ws-discussion { margin: 0 -4px; }
 }
 /* THE COMPOSER'S FOOT IS ALREADY CLEAR. `.platform-safe-bar` adds the tab
    bar's height under every composer, on the rule that inside #app-view the
