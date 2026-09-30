@@ -654,6 +654,15 @@ console-error check is the built-in baseline: every proposal gets a
 "loads with no console errors" test on its routes for free, even with no
 tests declared.
 
+The platform also reads **every checked page** for its own row, **"Pages
+render with their stylesheets (platform check)"**, which no `dapp.json`
+setting can opt out of (`allowConsoleErrors` included). It fails when one
+of the page's own stylesheets fails, answers `204`, or comes back empty, or
+when a page renders nothing visible at all. A page that lost its stylesheet
+keeps all of its markup, so element and text checks alone never notice. Like
+the repo unit-suite row, it is advisory until the app has passed it once,
+and merge-blocking after that.
+
 Declare tests in a top-level `tests` array in `dapp.json`. They live in
 the repo and **accumulate across proposals** — once a proposal merges, its
 tests run on every future proposal, exactly like CI tests in a GitHub
@@ -1999,6 +2008,13 @@ Rules:
   redeploy SV. All dapps recover on the next page load — no per-dapp
   redeploy needed. This is the single biggest payoff of centralization
   vs. the old vendored-fan-out model.
+- **Never answer these prefixes from the app's own server.** The
+  production edge routes `/usernode-bridge/`, `/usernode-native/` and
+  `/usernode-tailwind/` to the platform before the app sees the request,
+  and the in-loop launch (`usernode-run-inloop`) does the same. A route,
+  proxy, stub or `204` for them in `server.js` is dead code in production
+  that only hides a sandbox symptom, and one that also catches a built
+  asset such as `/tailwind.css` deletes the app's styling for real users.
 - **Local-dev tradeoff.** `npm run dev` for any dapp now requires SV
   reachable for bridge-touching paths. App-logic iteration still
   works offline; only paths that actually exercise the bridge
@@ -2833,6 +2849,13 @@ The one rule this path asks of you:
 - Need a Tailwind plugin (`forms`, `typography`)? Add it to
   `tailwind.config.js` `plugins` — strictly better than the CDN's
   `?plugins=` query, which this path does not use.
+- **Never special-case `/tailwind.css` in `server.js`.** It is served from
+  `public/`, where the image build wrote it. A checkout that has not run
+  `npm run build` has no such file; that is a missing build, not a missing
+  route. Answering the path with an empty or `204` response silences the
+  local error and removes every layout utility the page has in production.
+  The platform's render-health check fails a stylesheet that comes back
+  empty.
 
 ### 2. The centrally-hosted runtime — the escape hatch and migration target
 
@@ -3163,6 +3186,14 @@ locally inside the worker the same way a staging container does:
   `default` values, as staging does. If a required value has no committed
   fallback, it reports the missing key and stops. Never copy a production
   secret or invent a credential just to make the local check run.
+- It also serves the app **the way production does**. It runs the app's
+  `npm run build` first, as every staging and production image does (that
+  is what writes `public/tailwind.css`); a failing build stops the launch,
+  because the image would fail the same way. And on `$INLOOP_PORT` a small
+  front proxy answers `/usernode-bridge/`, `/usernode-native/` and
+  `/usernode-tailwind/` from the platform, as the production edge does, and
+  passes everything else to the app on an internal port. Browse
+  `$INLOOP_PORT`, never the internal one.
 - Navigate to `http://127.0.0.1:$INLOOP_PORT` at the real starting route for
   the flow you will declare. Self-app app screens stay under
   `/app/<slug>/...`; put its other SPA routes after the `#`.
@@ -3170,8 +3201,15 @@ locally inside the worker the same way a staging container does:
   mobile-only change, resize to the viewport you will declare (for example
   390×844). This local check helps you fix the after build; the later shots
   agent independently follows your steps on both builds.
-- A **blank or empty page usually means missing seed data, not a bug** —
-  the local DB starts empty. Check the app's existing staging fixtures or
+- A **blank, unstyled or broken-looking page is a bug until you have ruled
+  the page itself out**: read the console and confirm every stylesheet and
+  script loaded. This launch builds and serves the app as production does,
+  so a failed or empty asset here fails for users too. **Never make the app
+  answer a hosted-asset path or its own built stylesheet with an empty or
+  `204` response to quiet a console error** — an app that did exactly that
+  to `/tailwind.css` shipped a blank production page for days. Only once
+  the page itself is sound, suspect missing seed data — the local DB starts
+  empty. Check the app's existing staging fixtures or
   `?demo=1` route first. A sign-in screen means this browser is signed out;
   use an existing documented fake staging account through the normal UI if
   possible. Do not change auth code or seed passwords solely for this check.

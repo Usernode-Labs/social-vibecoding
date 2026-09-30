@@ -4,10 +4,37 @@
 // Start an app inside a build worker with the same manifest-committed fallback
 // values staging uses. No stored production secret is available here. An app
 // with a required value and no local fallback reports that gap explicitly.
+//
+// The launch also reproduces the two things production puts between a
+// browser and an app, so the agent looks at what users will get rather than
+// at a sandbox-only version of it:
+//
+//   1. THE BUILD. Every production and staging image runs the app's
+//      `npm run build` (the scaffold's Dockerfile builder stage, kpack's
+//      BP_NODE_RUN_SCRIPTS=build). That is what writes public/tailwind.css.
+//      A plain `node server.js` has no such file, so the page an agent
+//      checked used to be unstyled here, and "fixing" the missing file was
+//      how an app once shipped `/tailwind.css → 204` and blanked production
+//      for two days (Sheep countrr #38).
+//   2. THE EDGE. In production the Ingress routes `/usernode-bridge/`,
+//      `/usernode-native/` and `/usernode-tailwind/` to the platform before
+//      the app ever sees them (kubernetes.js PLATFORM_ASSET_PREFIXES). Here a
+//      small front proxy on $INLOOP_PORT does the same — like the shots
+//      browser's worker/shots-origin-proxy.js — and passes everything else,
+//      WebSocket upgrades included, to the app on an internal port. Without
+//      it those requests reached the app, came back 401, and agents patched
+//      the app to silence an error that production never has.
+//
+// The platform's own repository serves its own copies of those three trees
+// (its Ingress deliberately does not route them), so a checkout that carries
+// public/usernode-bridge/ gets them from the app, as it does in production.
 
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const net = require('net');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const ENV_KEY = /^[A-Z][A-Z0-9_]*$/;
 const LAUNCH_KEYS = new Set(['DATABASE_URL', 'USERNODE_ENV', 'PORT']);
@@ -15,6 +42,14 @@ const WORKER_ONLY_KEYS = [
   'OPENROUTER_API_KEY', 'WORKER_JWT', 'HOMEROOM_MCP_TOKEN',
   'ISSUES_JWT', 'PROD_DEBUG_JWT', 'SHOTS_JWT',
 ];
+
+const PLATFORM_ASSET_PREFIXES = Object.freeze(['/usernode-bridge/', '/usernode-native/', '/usernode-tailwind/']);
+// Same allowlists as the shots proxy: an asset request carries none of the
+// page's cookies or credentials to the platform, and brings back only what a
+// browser needs to cache and render it.
+const FORWARDED_ASSET_HEADERS = Object.freeze(['accept', 'accept-encoding', 'if-none-match', 'if-modified-since', 'user-agent']);
+const RETURNED_ASSET_HEADERS = Object.freeze(['content-type', 'content-length', 'content-encoding', 'cache-control', 'etag', 'last-modified']);
+const BUILD_TIMEOUT_MS = 5 * 60 * 1000;
 
 function environmentForInLoop(manifest, workerEnv) {
   if (workerEnv.INLOOP_BROWSER !== '1' || workerEnv.INLOOP_ENV !== 'staging'
@@ -49,7 +84,7 @@ function environmentForInLoop(manifest, workerEnv) {
   return env;
 }
 
-function readManifest(filePath) {
+function readJson(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8'));
   } catch (err) {
@@ -58,7 +93,175 @@ function readManifest(filePath) {
   }
 }
 
-function main() {
+const readManifest = readJson;
+
+// The build production runs, when the app declares one. INLOOP_SKIP_BUILD=1
+// is the deliberate escape hatch (a quick re-launch after a server-only
+// edit); it is never the default because an unbuilt app is exactly the
+// sandbox-only page this launch exists to stop agents from looking at.
+function shouldRunBuild(pkg, env) {
+  if (String(env.INLOOP_SKIP_BUILD || '').trim() === '1') return false;
+  const script = pkg && pkg.scripts && pkg.scripts.build;
+  return typeof script === 'string' && script.trim() !== '';
+}
+
+// True when this checkout ships the hosted asset trees itself — the
+// platform's own repository. Apps may not vendor them, so for every other
+// app the platform answers these paths, here as in production.
+// INLOOP_PLATFORM_ASSETS=1/0 overrides the detection.
+function routesPlatformAssets(dir, env) {
+  const forced = String(env.INLOOP_PLATFORM_ASSETS || '').trim();
+  if (forced === '1') return true;
+  if (forced === '0') return false;
+  return !fs.existsSync(path.join(dir, 'public', 'usernode-bridge'));
+}
+
+function platformAssetOrigin(env) {
+  try {
+    const url = new URL(String(env.PLATFORM_URL || ''));
+    return ['http:', 'https:'].includes(url.protocol) ? url.origin : null;
+  } catch { return null; }
+}
+
+function isPlatformAssetPath(pathname) {
+  if (!PLATFORM_ASSET_PREFIXES.some((prefix) => pathname.startsWith(prefix))) return false;
+  let decoded;
+  try { decoded = decodeURIComponent(pathname); } catch { return false; }
+  return !decoded.split('/').includes('..') && !decoded.includes('\\') && !decoded.includes('\0');
+}
+
+function plainReply(res, status, text) {
+  if (res.headersSent) { res.destroy(); return; }
+  res.writeHead(status, { 'content-type': 'text/plain; charset=utf-8', connection: 'close' });
+  res.end(`${text}\n`);
+}
+
+function forwardPlatformAsset(req, res, target, assetOrigin) {
+  if (!assetOrigin) {
+    return plainReply(res, 502, 'usernode-run-inloop: PLATFORM_URL is not set, so the platform-hosted '
+      + `asset ${target.pathname} cannot be fetched here. In production the platform serves it.`);
+  }
+  const headers = {};
+  for (const name of FORWARDED_ASSET_HEADERS) if (req.headers[name]) headers[name] = req.headers[name];
+  const source = new URL(`${target.pathname}${target.search}`, assetOrigin);
+  const transport = source.protocol === 'https:' ? https : http;
+  const upstream = transport.request(source, { method: req.method, headers }, (assetResponse) => {
+    const returned = {};
+    for (const name of RETURNED_ASSET_HEADERS) {
+      if (assetResponse.headers[name] != null) returned[name] = assetResponse.headers[name];
+    }
+    res.writeHead(assetResponse.statusCode || 502, returned);
+    assetResponse.pipe(res);
+  });
+  upstream.on('error', (err) => plainReply(res, 502,
+    `usernode-run-inloop: the platform did not answer ${target.pathname} (${err.code || err.message}).`));
+  upstream.end();
+}
+
+function forwardToApp(req, res, appPort) {
+  const upstream = http.request({
+    host: '127.0.0.1', port: appPort, method: req.method, path: req.url, headers: req.headers,
+  }, (appResponse) => {
+    res.writeHead(appResponse.statusCode || 502, appResponse.statusMessage, appResponse.headers);
+    appResponse.pipe(res);
+  });
+  upstream.on('error', (err) => plainReply(res, 502, err.code === 'ECONNREFUSED'
+    ? 'usernode-run-inloop: the app is not listening yet (or it exited) — check its output above.'
+    : `usernode-run-inloop: the app did not answer (${err.code || err.message}).`));
+  req.pipe(upstream);
+}
+
+// A WebSocket (or any other) upgrade goes to the app unchanged: re-send the
+// request head the proxy already parsed, then splice the two sockets.
+function forwardUpgrade(req, socket, head, appPort) {
+  const upstream = net.connect(appPort, '127.0.0.1', () => {
+    const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`];
+    for (let i = 0; i < req.rawHeaders.length; i += 2) {
+      lines.push(`${req.rawHeaders[i]}: ${req.rawHeaders[i + 1]}`);
+    }
+    upstream.write(`${lines.join('\r\n')}\r\n\r\n`);
+    if (head && head.length) upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  });
+  // Either side ending ends the other: a spliced socket left half-open would
+  // hold the app (and this launcher) open after the browser has gone.
+  upstream.on('error', () => socket.destroy());
+  socket.on('error', () => upstream.destroy());
+  upstream.on('close', () => socket.destroy());
+  socket.on('close', () => upstream.destroy());
+}
+
+// The production edge in miniature: platform assets to the platform (when
+// routeAssets), everything else to the app.
+function createFrontProxy({ appPort, assetOrigin, routeAssets }) {
+  const server = http.createServer((req, res) => {
+    let target;
+    try { target = new URL(req.url || '/', 'http://inloop.invalid'); }
+    catch { return plainReply(res, 400, 'usernode-run-inloop: bad request URL'); }
+    if (routeAssets && (req.method === 'GET' || req.method === 'HEAD')
+      && isPlatformAssetPath(target.pathname)) {
+      return forwardPlatformAsset(req, res, target, assetOrigin);
+    }
+    return forwardToApp(req, res, appPort);
+  });
+  server.on('upgrade', (req, socket, head) => forwardUpgrade(req, socket, head, appPort));
+  return server;
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const probe = net.createServer();
+    probe.unref();
+    probe.on('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const { port } = probe.address();
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+// Untracked, not-ignored paths, or null outside a git checkout.
+function untrackedFiles(dir) {
+  const out = spawnSync('git', ['ls-files', '--others', '--exclude-standard', '-z'], { cwd: dir, encoding: 'utf8' });
+  if (out.status !== 0 || typeof out.stdout !== 'string') return null;
+  return new Set(out.stdout.split('\0').filter(Boolean));
+}
+
+// Whatever the build wrote that the app does not already ignore is build
+// OUTPUT: the image regenerates it, and the turn's `git add -A` must not
+// commit it. Listed in the checkout's local exclude file (never pushed), and
+// named, so the agent knows.
+function excludeBuildOutputs(dir, before) {
+  const after = untrackedFiles(dir);
+  if (!before || !after) return [];
+  const created = [...after].filter((f) => !before.has(f)).sort();
+  if (!created.length) return [];
+  try {
+    const excludeFile = path.join(dir, '.git', 'info', 'exclude');
+    fs.mkdirSync(path.dirname(excludeFile), { recursive: true });
+    const lines = created.map((f) => `/${f.replace(/([\\*?[\]!#])/g, '\\$1')}`);
+    fs.appendFileSync(excludeFile, `# build outputs written by usernode-run-inloop\n${lines.join('\n')}\n`);
+    process.stderr.write(`usernode-run-inloop: the build wrote ${created.length} file(s) the app does not `
+      + `ignore (${created.slice(0, 5).join(', ')}${created.length > 5 ? ', …' : ''}); they are kept out `
+      + 'of this turn\'s commit because the image builds them itself.\n');
+  } catch (err) {
+    process.stderr.write(`usernode-run-inloop: could not exclude build outputs: ${err.message}\n`);
+  }
+  return created;
+}
+
+function runBuild(env, dir) {
+  process.stderr.write('usernode-run-inloop: running `npm run build`, as the production image does…\n');
+  const before = untrackedFiles(dir);
+  const result = spawnSync('npm', ['run', 'build'], { env, stdio: 'inherit', timeout: BUILD_TIMEOUT_MS });
+  if (result.error) return { ok: false, reason: result.error.message };
+  if (result.status !== 0) return { ok: false, reason: `exit ${result.status == null ? result.signal : result.status}` };
+  excludeBuildOutputs(dir, before);
+  return { ok: true };
+}
+
+async function main() {
   const command = process.argv[2];
   if (!command) {
     process.stderr.write('usage: usernode-run-inloop <app command> [args...]\n');
@@ -75,16 +278,83 @@ function main() {
     process.exitCode = 2;
     return;
   }
-  const child = spawn(command, process.argv.slice(3), { env, stdio: 'inherit' });
+
+  let pkg;
+  try { pkg = readJson(path.resolve('package.json')); } catch (err) {
+    process.stderr.write(`usernode-run-inloop: package.json is not valid JSON (${err.message}); `
+      + 'the image build would fail on it too.\n');
+    process.exitCode = 2;
+    return;
+  }
+  if (shouldRunBuild(pkg, env)) {
+    const build = runBuild(env, process.cwd());
+    if (!build.ok) {
+      process.stderr.write(`usernode-run-inloop: \`npm run build\` failed (${build.reason}). `
+        + 'Every staging and production image runs it, so this app would not deploy as it stands. '
+        + 'Install dependencies first if they are missing (`npm ci`), fix the build, then launch '
+        + 'again. INLOOP_SKIP_BUILD=1 boots without it, but the page will not be what users get.\n');
+      process.exitCode = 2;
+      return;
+    }
+  }
+
+  const publicPort = Number(env.PORT);
+  let appPort;
+  try { appPort = await freePort(); } catch (err) {
+    process.stderr.write(`usernode-run-inloop: could not reserve an internal port: ${err.message}\n`);
+    process.exitCode = 2;
+    return;
+  }
+  const routeAssets = routesPlatformAssets(process.cwd(), env);
+  const assetOrigin = platformAssetOrigin(env);
+  const proxy = createFrontProxy({ appPort, assetOrigin, routeAssets });
+  // Bound before the app starts, so a port still held by an earlier launch
+  // stops here instead of leaving an app running that nothing fronts.
+  try {
+    await new Promise((resolve, reject) => {
+      proxy.once('error', reject);
+      proxy.listen(publicPort, () => { proxy.off('error', reject); resolve(); });
+    });
+  } catch (err) {
+    process.stderr.write(`usernode-run-inloop: cannot listen on ${publicPort}: ${err.message}`
+      + ' (is an earlier launch still running?)\n');
+    process.exitCode = 2;
+    return;
+  }
+  process.stderr.write(`usernode-run-inloop: open http://127.0.0.1:${publicPort} — `
+    + (routeAssets ? 'the platform\'s /usernode-* assets are served there as in production, and ' : '')
+    + `the app itself listens on internal port ${appPort}; browse ${publicPort}, not ${appPort}.\n`);
+
+  const child = spawn(command, process.argv.slice(3), {
+    env: { ...env, PORT: String(appPort) }, stdio: 'inherit',
+  });
+  const stop = (signal) => { try { child.kill(signal); } catch { /* already gone */ } };
+  process.on('SIGTERM', () => stop('SIGTERM'));
+  process.on('SIGINT', () => stop('SIGINT'));
   child.on('error', (err) => {
     process.stderr.write(`usernode-run-inloop: could not start app command: ${err.message}\n`);
     process.exitCode = 2;
+    proxy.close();
   });
   child.on('exit', (code, signal) => {
     process.exitCode = code == null ? (signal ? 128 : 2) : code;
+    proxy.close();
+    // Keep-alive browser sockets would otherwise hold the process open.
+    setTimeout(() => process.exit(), 200).unref();
   });
 }
 
 if (require.main === module) main();
 
-module.exports = { environmentForInLoop, readManifest };
+module.exports = {
+  environmentForInLoop,
+  readManifest,
+  shouldRunBuild,
+  untrackedFiles,
+  excludeBuildOutputs,
+  routesPlatformAssets,
+  platformAssetOrigin,
+  isPlatformAssetPath,
+  createFrontProxy,
+  PLATFORM_ASSET_PREFIXES,
+};
