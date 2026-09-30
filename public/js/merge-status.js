@@ -102,6 +102,18 @@
     return 'measured ' + Math.round(secs / 3600) + ' hours ago';
   }
 
+  // #3232 — how long the checks run in flight has been going, as the pill's
+  // own words ("12 min"). checks_checked_at is stamped when a run starts
+  // (the proposal page reads it as "Started 12 minutes ago"), so a pending
+  // row's stamp is the run's start. Under a minute, missing, unparseable or
+  // in the future (clock skew) says nothing: zero is not worth a word.
+  function runningForOf(p) {
+    var t = p && p.checks_checked_at ? Date.parse(p.checks_checked_at) : NaN;
+    if (!Number.isFinite(t)) return '';
+    var mins = Math.floor((Date.now() - t) / 60000);
+    return mins >= 1 ? mins + ' min' : '';
+  }
+
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
       return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -315,7 +327,11 @@
       });
     }
     if (check === 'pending') {
-      return descriptor('checks_running', 'Checks running…', 'neutral', true, {
+      // A run that has been going a while says for how long, so "pending for
+      // twenty minutes" reads as a number rather than as a hang (#3232).
+      var runningFor = runningForOf(p);
+      return descriptor('checks_running',
+        runningFor ? 'Checks running · ' + runningFor : 'Checks running…', 'neutral', true, {
         votes: votes,
         title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
       });
