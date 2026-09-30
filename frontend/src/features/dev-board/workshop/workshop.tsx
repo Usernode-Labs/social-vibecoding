@@ -2390,7 +2390,9 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   // What is rendered: the open sheet, or the one still leaving. Never on
   // the end card, which has no item for a sheet to be about.
   const shown = row ? (sheet || leaving) : null;
-  const leavingAttr = !sheet && leaving ? { 'data-ws-leaving': '' } : {};
+  // `inert` too: a sheet on its way out takes no focus, and app.css lets taps
+  // through it, so the next tap lands on what it is uncovering.
+  const leavingAttr = !sheet && leaving ? { 'data-ws-leaving': '', inert: true } : {};
   const commentCount = row ? (row.card.chatCount || 0) : 0;
   const descFacts = row ? factsFor(row, voted) : [];
   const descChanges = row && row.visuals && row.visuals.changes ? row.visuals.changes : [];
