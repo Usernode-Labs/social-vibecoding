@@ -18,6 +18,11 @@
 (function (root) {
   'use strict';
 
+  function localReset(text) {
+    var RT = typeof window !== 'undefined' && window.ResetTime;
+    return RT ? RT.localizeResetText(text) : text;
+  }
+
   function num(v) {
     var n = parseInt(v, 10);
     return Number.isFinite(n) ? n : 0;
@@ -191,8 +196,9 @@
     if (status === 'promoted' && served.indexOf('budget') !== -1) {
       return descriptor('integrating', 'Waiting on shared budget', 'amber', false, {
         votes: votes,
-        title: 'This proposal needs merging with main, but the platform\u2019s shared '
-          + 'token budget is spent for today. It resumes after the midnight UTC reset.',
+        // #3230: the reset in the viewer's own clock where ResetTime is loaded.
+        title: localReset('This proposal needs merging with main, but the platform\u2019s shared '
+          + 'token budget is spent for today. It resumes after the midnight UTC reset.'),
       });
     }
 

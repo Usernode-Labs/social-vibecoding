@@ -509,9 +509,15 @@ const Kudos = {
       // you actually give kudos), because the bare #leaderboard hash opens
       // the Challenges tab, which this meter is not about. Tooltip
       // explains the weekly cap + reset boundary.
+      // #3230: the reset in the viewer's own clock, with the exact UTC
+      // instant beside it, since this text is the hover.
+      const RT = window.ResetTime;
+      const resets = RT
+        ? `Resets ${RT.resetWhen('weekly')} (${RT.resetUtc('weekly')}).`
+        : 'Resets Monday 00:00 UTC.';
       const tip = bounties
-        ? `${remaining} of ${limit} thanks and ${bounties.remaining} of ${bounties.limit} bounties left this week. Resets Monday 00:00 UTC.`
-        : `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
+        ? `${remaining} of ${limit} thanks and ${bounties.remaining} of ${bounties.limit} bounties left this week. ${resets}`
+        : `${remaining} of ${limit} kudos left this week. ${resets}`;
       const tone = remaining === 0
         ? 'text-zinc-500 dark:text-zinc-400'
         : 'text-violet-700 dark:text-violet-400';

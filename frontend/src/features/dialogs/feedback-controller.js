@@ -321,9 +321,15 @@ export function init() {
       // ticking the box is stated here, beside the live figure. It is on
       // screen in every state the box can be ticked in — including the one
       // where the budget fetch failed and there is no figure to show.
+      // #3230: the reset in the viewer's own clock, the UTC instant on hover.
+      const RT = window.ResetTime;
+      bountyNote.removeAttribute('title');
       if (remaining === null) bountyNote.textContent = 'Costs 1 kudos';
-      else if (exhausted) bountyNote.textContent = `You've used all ${limit} kudos this week. Resets Monday 00:00 UTC.`;
-      else bountyNote.textContent = `Costs 1 kudos. ${remaining} of ${limit} left this week`;
+      else if (exhausted) {
+        bountyNote.textContent = `You've used all ${limit} kudos this week. Resets ${
+          RT ? RT.resetWhen('weekly') : 'Monday 00:00 UTC'}.`;
+        if (RT) bountyNote.title = RT.resetUtc('weekly');
+      } else bountyNote.textContent = `Costs 1 kudos. ${remaining} of ${limit} left this week`;
       bountyRow.classList.remove('hidden');
     };
     // The selected option uses a darker violet on hover so it keeps its

@@ -4093,8 +4093,8 @@
     {
       "name": "A spent WEEKLY allowance says it comes back Monday, not at midnight (#1788)",
       "path": "/?demo=weekly-out#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "#dc-credits-banner [data-credits-reset]",
-      "expectText": "reset Monday 00:00 UTC"
+      "expectSelector": "#dc-credits-banner [data-credits-reset][title^=\"Mon\"][title$=\" 00:00 UTC\"]",
+      "expectText": "Free credits reset"
     },
     {
       "name": "Admin console renders full width — no capped centered column",
@@ -4126,7 +4126,8 @@
     {
       "name": "A spent allowance says so instead of showing a count (#964)",
       "path": "/?shot=feedback-spent",
-      "expectText": "Resets Monday 00:00 UTC"
+      "expectSelector": "#feedback-bounty-note[title$=\" 00:00 UTC\"]",
+      "expectText": "kudos this week. Resets"
     },
     {
       "name": "First-use dev chat explains how to leave and return through Messages (#1595, #2718)",
@@ -4143,8 +4144,8 @@
     {
       "name": "Out of weekly credits: the banner says when the allowance comes back (#593, #2571)",
       "path": "/?demo=1&workspace=1#app/usernode-2d5619/dev/sessions/990402",
-      "expectSelector": "#dc-credits-banner [data-credits-reset]",
-      "expectText": "reset Monday 00:00 UTC"
+      "expectSelector": "#dc-credits-banner [data-credits-reset][title^=\"Mon\"][title$=\" 00:00 UTC\"]",
+      "expectText": "Free credits reset"
     },
     {
       "name": "Out of credits: the routes anyone can follow render first (#1281)",

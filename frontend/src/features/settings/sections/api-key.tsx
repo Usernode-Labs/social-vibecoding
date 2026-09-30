@@ -74,7 +74,12 @@ export function ApiKeySection() {
             <span id="settings-spend-byok" className="tabular-nums text-zinc-500 dark:text-zinc-400">
             </span>
           </div>
-          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 text-[15px] text-zinc-500 dark:text-zinc-500">
+          {/*
+              #3230: the prerendered words are the server's UTC boundary;
+              Settings._refreshSpend() rewrites them in the viewer's own
+              clock, with the UTC instant on `title`, as it reveals the card.
+          */}
+          <div id="settings-spend-reset" className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 text-[15px] text-zinc-500 dark:text-zinc-500">
             Resets Monday 00:00 UTC.
           </div>
         </div>

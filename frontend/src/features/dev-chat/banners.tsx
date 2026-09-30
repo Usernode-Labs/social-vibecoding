@@ -207,7 +207,7 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
         <span id={moreId} className="dc-credits-banner-more">
           {b.reset === null ? b.tail : (
             <>
-              <span data-credits-reset="1">{` ${b.reset}`}</span>
+              <span data-credits-reset="1" title={b.resetTitle || undefined}>{` ${b.reset}`}</span>
               {b.tail}
             </>
           )}

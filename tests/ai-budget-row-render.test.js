@@ -255,6 +255,10 @@ test('the window wording is derived from capWindow, never retyped per state', ()
   assert.match(CREDIT_SRC, /var windowWhen = weeklyWindow \? 'this week’s' : 'today’s';/);
   assert.ok(!/weekly allowance is used up|of this week’s AI allowance/.test(
     CREDIT_OPTIONS_SRC), 'the tooltip copy has one home, and it is ai-credit.js');
-  // And the reset sentence drops the "at" for a weekday boundary.
-  assert.match(CREDIT_OPTIONS_SRC, /s\.capWindow === 'weekly'\s*\n?\s*\? 'Free credits reset ' \+ resetLabel/);
+  // And the reset sentence drops the "at" for a weekday boundary: in the
+  // viewer's clock through ResetTime (#3230), or in the server's UTC words
+  // where it is absent.
+  assert.match(CREDIT_OPTIONS_SRC, /var weekly = s\.capWindow === 'weekly';/);
+  assert.match(CREDIT_OPTIONS_SRC, /RT\.resetWhen\(weekly \? 'weekly' : 'daily'/);
+  assert.match(CREDIT_OPTIONS_SRC, /weekly\s*\n?\s*\? 'Free credits reset ' \+ resetLabel/);
 });

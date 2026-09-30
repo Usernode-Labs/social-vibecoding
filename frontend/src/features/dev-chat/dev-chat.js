@@ -2456,11 +2456,25 @@ const DevChat = {
 
   // The one sentence that answers "when do I get them back?", shared with
   // every other credits surface. '' when the state is unknown.
-  _creditResetSentence() {
+  //
+  // #3230: the sentence names the viewer's own clock. `withUtc` adds the
+  // exact UTC instant in brackets, for a surface that is itself a tooltip
+  // and has no `title` of its own to carry it.
+  _creditResetSentence({ withUtc = false } = {}) {
     const CO = typeof window !== 'undefined' && window.CreditOptions;
     const state = DevChat._creditState();
     if (!CO || !state) return '';
-    return CO.resetSentence(state);
+    const sentence = CO.resetSentence(state);
+    const utc = withUtc && CO.resetTitle ? CO.resetTitle(state) : null;
+    return utc ? sentence.replace(/\.$/, ` (${utc}).`) : sentence;
+  },
+
+  // #3230: the reset boundary in the viewer's clock ("Sunday at 8:00 PM",
+  // "at 8:00 PM"), or the server's UTC spelling where ResetTime is absent.
+  _resetWhen(weekly) {
+    const RT = typeof window !== 'undefined' && window.ResetTime;
+    if (RT) return RT.resetWhen(weekly ? 'weekly' : 'daily');
+    return weekly ? 'Monday 00:00 UTC' : 'at midnight UTC';
   },
 
   // #1788 gave the allowance two windows and reported whichever was
@@ -2484,9 +2498,7 @@ const DevChat = {
       // "your free daily AI credits"
       creditsNoun: weekly ? 'free weekly AI credits' : 'free daily AI credits',
       // Fallback for the reset sentence when CreditOptions is absent.
-      resetFallback: weekly
-        ? 'Resets Monday 00:00 UTC.'
-        : 'Resets at midnight UTC.',
+      resetFallback: `Resets ${DevChat._resetWhen(weekly)}.`,
     };
   },
 
@@ -2597,7 +2609,7 @@ const DevChat = {
     // header drawer's credits row still spells the remainder out (it has
     // the room, and it is read away from a session), and the low-balance
     // and exhausted banners still say it in words when it starts to matter.
-    const resetTip = DevChat._creditResetSentence();
+    const resetTip = DevChat._creditResetSentence({ withUtc: true });
     // BYOK (#30/#119/#212): billing is limit-first — the daily platform
     // allowance is consumed before any spend hits the user's own key —
     // so key-holders see the limit progress first (same red/yellow
@@ -2856,7 +2868,9 @@ const DevChat = {
           ? 'this week\u2019s' : 'today\u2019s'} free AI credits.`
         : 'The platform\u2019s shared daily AI budget is used up.',
       reset: DevChat._creditResetSentence()
-        || `Free credits reset ${DevChat._creditWindow().weekly ? 'Monday 00:00 UTC' : 'at midnight UTC'}.`,
+        || `Free credits reset ${DevChat._resetWhen(DevChat._creditWindow().weekly)}.`,
+      resetTitle: state && window.CreditOptions && CreditOptions.resetTitle
+        ? CreditOptions.resetTitle(state) : null,
       tail: ' Or keep working right now ' + (DevChat._externalFlowsAvailable()
         ? 'on your own Claude or ChatGPT plan, with your own API key, or with a coding tool on your computer.'
         : 'with your own API key, a coding tool on your computer, or your Claude.ai / ChatGPT subscription.'),
@@ -2918,6 +2932,7 @@ const DevChat = {
       lead: CO.lowLead(state),
       leadTagged: true,
       reset: CO.resetSentence(state),
+      resetTitle: CO.resetTitle ? CO.resetTitle(state) : null,
       tail: ' Set up another way to keep building before it runs out mid-change.',
       actionsHtml: CO.bannerActionsHtml({
         hasApiKey: false,
