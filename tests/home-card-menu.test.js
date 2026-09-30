@@ -441,9 +441,23 @@ const keys = (items) => Array.from(items, (i) => i.key);
 test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
+  assert.deepEqual(keys(items), ['app-details', 'propose-change', 'github', 'favorite', 'notifications', 'report'],
     'nothing admin-gated leaks');
-  assert.equal(items[2].label, 'Add to Shortcuts');
+  assert.equal(items[3].label, 'Add to Shortcuts');
+});
+
+// #3377: the way into the existing "Ask for a change" form from the
+// surfaces people look at when they have the thought — the card's "…"
+// menu here, and the app's own page through the shared action list.
+test('menu: Propose a change appears on a real app and not for demo tiles', () => {
+  const Home = makeHome({ id: ME });
+  const item = Home.menuItemsFor(baseApp()).find((i) => i.key === 'propose-change');
+  assert.ok(item, 'a real app offers it');
+  assert.equal(item.label, 'Propose a change');
+  // Gated exactly like app-details: an inert ?demo=1 tile has no real app
+  // to navigate to, and a slugless row cannot be addressed at all.
+  assert.ok(!keys(Home.menuItemsFor(baseApp({ demo: true }))).includes('propose-change'));
+  assert.ok(!keys(Home.menuItemsFor(baseApp({ slug: null }))).includes('propose-change'));
 });
 
 // "View on GitHub" was a row in the hamburger drawer's reference footer,
@@ -603,7 +617,7 @@ test('menu: full admin on a running repo app gets check-updates, lock and safe a
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings', 'report']);
+    ['app-details', 'propose-change', 'github', 'favorite', 'notifications', 'check-updates', 'lock', 'app-settings', 'report']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'app-settings').danger, undefined);
 });
@@ -662,7 +676,7 @@ test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', (
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
   // App details is navigation, not a mutation, so it survives the gate.
-  assert.deepEqual(keys(items), ['app-details', 'github', 'favorite', 'notifications', 'report'],
+  assert.deepEqual(keys(items), ['app-details', 'propose-change', 'github', 'favorite', 'notifications', 'report'],
     'no retry/check/lock/delete');
 });
 
@@ -670,7 +684,7 @@ test('menu: errored app adds Retry + View build log for the creator (#416)', () 
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ status: 'error', created_by: ME }));
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'notifications', 'retry', 'build-log']);
+    ['app-details', 'propose-change', 'github', 'favorite', 'notifications', 'retry', 'build-log']);
 });
 
 // ── "View build log" gating (#416) ────────────────────────────────
@@ -737,7 +751,7 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
   assert.deepEqual(keys(items),
-    ['app-details', 'github', 'favorite', 'notifications', 'add-to-homescreen', 'report']);
+    ['app-details', 'propose-change', 'github', 'favorite', 'notifications', 'add-to-homescreen', 'report']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'

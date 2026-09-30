@@ -3572,6 +3572,35 @@ const Home = {
         },
       });
     }
+    // #3377: "Propose a change" — the way into the existing "Ask for a
+    // change" form from the surfaces people look at when they have the
+    // thought (the card's "…" menu and, through the detail page's shared
+    // action list, the app's own page). The form itself already exists and
+    // is unchanged; only this entry point is new. Gated like app-details:
+    // an inert ?demo=1 tile has no real app to target.
+    //
+    // The dialog resolves its target from the app that is open when it
+    // opens, so the navigation must SETTLE first — the same
+    // navigate-then-open pattern Improve._withApp uses. A viewer who
+    // navigates away while the fetch is in flight aborts on the same
+    // currentApp guard the router's own tail uses.
+    if (!app.demo && app.slug) {
+      items.push({
+        key: 'propose-change',
+        label: 'Propose a change',
+        title: 'Ask for a change to this app; the group can then vote on it',
+        run: async () => {
+          if (!window.App?.openFeedbackModal) return;
+          if (window.App.currentApp === app.slug) {
+            await window.App.switchTab('dev');
+          } else {
+            await window.App.navigateToApp(app.slug, 'dev');
+          }
+          if (window.App.currentApp !== app.slug) return;
+          window.App.openFeedbackModal({ fromDev: true, intent: 'issue' });
+        },
+      });
+    }
     // The app's source. This was a row in the hamburger drawer's reference
     // footer, revealed by hand from App.navigateToApp when the OPEN app had a
     // repo_url; the Streamlined Concept board draws no such footer, and a
