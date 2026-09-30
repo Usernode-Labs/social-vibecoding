@@ -191,7 +191,18 @@ test('the columns are pinned in order, so an analysis that reads them by positio
     'fixture_fingerprint', 'base_image_digest', 'head_image_digest',
     'overridden_by', 'overridden_at', 'override_reason',
     'intent_json', 'diagnostics_path',
+    'interrupted_by',
   ]);
+});
+
+test('a run a Homeroom restart interrupted says so; anything else leaves the column blank', () => {
+  const restart = shotsExport.exportRecord({
+    ...runs[1], failure_code: 'shots_run_interrupted', trace_summary: { interruptedBy: 'shutdown' },
+  });
+  assert.equal(restart.interrupted_by, 'shutdown');
+  assert.equal(shotsExport.exportRecord(runs[0]).interrupted_by, null);
+  assert.equal(shotsExport.exportRecord({ ...runs[1], trace_summary: { interruptedBy: '=cmd()' } }).interrupted_by,
+    null, 'only a fixed tag is copied out');
 });
 
 test('a failed run carries what the diagnostics screen would say, and no private answer', () => {

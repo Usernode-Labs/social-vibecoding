@@ -1573,3 +1573,14 @@ test('a failed shots sign-in reaches the trace and the failure reason with its s
   assert.match(runner, /export SHOTS_BOOTSTRAP_FAILURE_FILE="\$SHOTS_TMP\/browser-bootstrap\.failure"/);
   assert.match(runner, /\|\| die "\$\(head -c 300 "\$SHOTS_BOOTSTRAP_FAILURE_FILE"/);
 });
+
+test('the trace keeps whether a hosted app\'s page load carried the persona identity, as a boolean only', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'head', identityAttached: true });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'base', identityAttached: 'member.jwt' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', identityAttached: true });
+  const [attached, junk, other] = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.equal(attached.identityAttached, true);
+  assert.equal(junk.identityAttached, undefined, 'anything but a boolean is dropped');
+  assert.equal(other.identityAttached, undefined, 'and only a page load carries it');
+});

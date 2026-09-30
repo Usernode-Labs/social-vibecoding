@@ -417,6 +417,10 @@ if [ "$MODE" = "shots" ]; then
   SHOTS_DIAGNOSTIC_TAIL_PID=$!
   export SHOTS_PROXY_PORT=17891
   export SHOTS_PROXY_SERVER="http://127.0.0.1:$SHOTS_PROXY_PORT"
+  # One proxy listener per fixture persona, so a hosted app's pages carry
+  # that persona's identity on every load (shots-origin-proxy.js). The
+  # bootstrap and the control plane keep the shared port above.
+  export SHOTS_PROXY_PERSONA_PORTS='{"member":17892,"read_only_admin":17893,"full_admin":17894}'
   export SHOTS_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
   export SHOTS_PROXY_READY="$SHOTS_TMP/proxy.ready"
   export SHOTS_ALLOWED_ORIGINS="[\"$SHOTS_BASE_ORIGIN\",\"$SHOTS_HEAD_ORIGIN\"]"
