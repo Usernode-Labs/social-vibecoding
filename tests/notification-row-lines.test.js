@@ -73,9 +73,11 @@ const ROW = {
 
 test('allowance notifications explain the change, request or review outcome', async () => {
   const changed = await lines({ kind: 'app_quota_changed', detail: '2:4', appName: null });
-  assert.equal(changed.label, 'App allowance changed');
-  assert.equal(changed.subject, '2 → 4 app slots');
+  assert.equal(changed.label, 'App allowance');
+  assert.equal(changed.subject, 'Your app allowance changed from 2 to 4.');
   assert.match(changed.meta, /^Account/);
+  const unreadable = await lines({ kind: 'app_quota_changed', detail: 'x:y', appName: null });
+  assert.equal(unreadable.subject, 'View your current app allowance');
   const requested = await lines({ kind: 'app_quota_requested', appName: null });
   assert.equal(requested.subject, '@ada');
   assert.match(requested.meta, /^Admin/);
