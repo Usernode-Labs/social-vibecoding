@@ -913,6 +913,50 @@ test('campaign routes: meta and merge-green are admin-gated; retry hits the engi
     const rOk = mockRes();
     await retry({ params: { id: '5', appId: '9' }, user: { id: 2, canAdminWrite: true } }, rOk);
     assert.equal(rOk.statusCode, 200);
-    assert.deepEqual(spies.retries, [{ id: '5', appId: '9' }]);
+    assert.deepEqual(spies.retries, [{ id: 5, appId: 9 }]);
+    const rBad = mockRes();
+    await retry({ params: { id: '5', appId: 'x' }, user: { id: 2, canAdminWrite: true } }, rBad);
+    assert.equal(rBad.statusCode, 404);
+    assert.equal(spies.retries.length, 1, 'a non-numeric app id never reaches the engine');
+  } finally { restore(); }
+});
+
+test('campaign routes: list and detail are admin-only (a view-only admin may read); a non-numeric id is 404', async () => {
+  const pool = makePool([
+    [/FROM maintenance_campaigns mc/, [{ id: 5, title: 'T', status: 'running' }]],
+  ]);
+  const { router, restore } = loadCampaignRoutes(pool);
+  try {
+    const list = routeHandler(router, '/api/campaigns', 'get');
+    const listDenied = mockRes();
+    await list({ user: { id: 7 } }, listDenied);
+    assert.equal(listDenied.statusCode, 403);
+    assert.equal(listDenied.body.campaigns, undefined);
+    const listOk = mockRes();
+    await list({ user: { id: 8, isAdmin: true, canAdminWrite: false } }, listOk);
+    assert.equal(listOk.statusCode, 200);
+    assert.equal(listOk.body.campaigns.length, 1);
+
+    const detail = routeHandler(router, '/api/campaigns/:id', 'get');
+    const detailDenied = mockRes();
+    await detail({ params: { id: '5' }, user: { id: 7 } }, detailDenied);
+    assert.equal(detailDenied.statusCode, 403);
+    assert.equal(detailDenied.body.campaign, undefined, 'a non-admin sees no campaign apps');
+    const anon = mockRes();
+    await detail({ params: { id: '5' } }, anon);
+    assert.equal(anon.statusCode, 403);
+    const detailOk = mockRes();
+    await detail({ params: { id: '5' }, user: { id: 8, isAdmin: true, canAdminWrite: false } }, detailOk);
+    assert.equal(detailOk.statusCode, 200);
+    assert.equal(detailOk.body.campaign.id, 5);
+
+    for (const bad of ['abc', '0', '-1', '5.5', '1e3', '99999999999']) {
+      const res = mockRes();
+      await detail({ params: { id: bad }, user: { id: 2, isAdmin: true } }, res);
+      assert.equal(res.statusCode, 404, `id ${bad} answers 404`);
+    }
+    const missing = mockRes();
+    await detail({ params: { id: '6' }, user: { id: 2, isAdmin: true } }, missing);
+    assert.equal(missing.statusCode, 404);
   } finally { restore(); }
 });
