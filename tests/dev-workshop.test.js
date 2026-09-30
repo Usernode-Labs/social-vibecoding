@@ -2349,12 +2349,18 @@ test('#2172: one card past the last item is the summary, and it is the screen wh
   assert.match(html, /class="dev-ws-item-of">1 \/ 5</);
   assert.ok(!/class="dev-ws-item-of">6 \//.test(html), 'the end card has no counter');
   // Nothing answered yet and five passed over: the headline says "for now",
-  // the line under it says what is still waiting, and there is a way back
-  // to it as well as the way back to the lander.
+  // the line under it says what was skipped, and there is a way back to it
+  // as well as the way back to the lander.
+  //
+  // #3526: SKIPPED, NOT "STILL WAITING ON YOU". A vote swiped past is seen
+  // now and every badge stops counting it, so the line that used to say
+  // "5 are still waiting on you above" sat under a Needs you count that had
+  // just dropped by five. It says what the reader did, and that the items
+  // are still there to change their mind about.
   assert.match(html, /dev-ws-needs-done-line">That’s it for now\.</);
-  assert.match(html, /dev-ws-needs-done-sub">5 are still waiting on you above\.</);
+  assert.match(html, /dev-ws-needs-done-sub">You skipped 5\. They stay above if you change your mind\.</);
   assert.match(html, /dev-ws-done-cta"[^>]*>See what changed this week</, 'the way back to the lander');
-  assert.match(html, /dev-ws-done-back" data-ws-done-back=""[^>]*>Back to the first one waiting</, 'and back up the feed');
+  assert.match(html, /dev-ws-done-back" data-ws-done-back=""[^>]*>Back to the first one you skipped</, 'and back up the feed');
   // The ring states where the viewer stands against everything they could
   // vote on: three promoted, none answered.
   assert.match(html, /dev-ws-done-ring[\s\S]*?aria-label="0 of 3 open proposals voted on"/);

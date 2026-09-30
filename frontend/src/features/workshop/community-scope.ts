@@ -20,6 +20,12 @@
  * description is kept beside the key, so the tab draws its tile on a cold
  * load without waiting for a read.
  *
+ * THE VOTES OWED ARE THE ONES YOU HAVE NOT PASSED OVER (#3526). Both
+ * describers hand in every vote owed (`owedCount`) and which ones (`owed`),
+ * and `needs`, the number the tab's badge and the switcher draw, is worked
+ * out here from those and ./needs-seen.ts: again whenever a vote is swiped
+ * past anywhere on the page, so the badge drops as you go.
+ *
  * ── The switcher ───────────────────────────────────────────────────────
  *
  * "Your communities": All communities first, then each community you are in,
@@ -37,6 +43,7 @@
  */
 
 import { createStore } from '../../lib/plain-store.js';
+import { hydrateNeedsSeen, needsSeenStore, unseenNeeds } from './needs-seen';
 import { orderRows } from './sections';
 
 export interface CommunityInfo {
@@ -48,8 +55,16 @@ export interface CommunityInfo {
   iconColor: string | null;
   audience?: 'open' | 'invited' | 'solo' | string;
   memberCount?: number;
-  /** Votes owed by the viewer here. */
+  /**
+   * Votes owed by the viewer here that they have not already passed over
+   * (#3526): `owedCount` less the seen ones among `owed`. Worked out by
+   * `derive`, never handed in.
+   */
   needs?: number;
+  /** Every vote owed here, seen or not. */
+  owedCount?: number;
+  /** Which ones, as ./needs-seen.ts keys them, when the describer knows. */
+  owed?: string[];
   selfHosted?: boolean;
   lastActiveAt?: string | null;
 }
@@ -125,18 +140,32 @@ export function setScope(slug: string | null): void {
   saveInfo(slug ? cur.info[slug] || null : null);
 }
 
+/**
+ * `needs` from what was handed in: every vote owed, less the ones passed
+ * over (#3526). An entry nobody has counted keeps whatever it had.
+ */
+function derive(info: CommunityInfo): CommunityInfo {
+  if (info.owedCount == null) return info;
+  const needs = unseenNeeds(info.slug, info.owedCount, info.owed);
+  return needs === info.needs ? info : { ...info, needs };
+}
+
+/** The list of votes compares by what is in it, not by which array it is. */
+const same = (a: unknown, b: unknown): boolean => a === b
+  || (Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, k) => x === b[k]));
+
 /** What someone knows about a community: merged into what is known. */
 export function describe(slug: string, patch: Partial<CommunityInfo>): void {
   if (!slug) return;
   const cur = communityScopeStore.get();
   const prev = cur.info[slug];
   const base: CommunityInfo = prev || { slug, name: slug, iconUrl: null, iconEmoji: null, iconColor: null };
-  const next: CommunityInfo = {
+  const next: CommunityInfo = derive({
     ...base,
     ...(Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Partial<CommunityInfo>),
     slug,
-  };
-  if (prev && Object.keys(next).every((k) => (next as any)[k] === (prev as any)[k])) return;
+  });
+  if (prev && Object.keys(next).every((k) => same((next as any)[k], (prev as any)[k]))) return;
   const info = { ...cur.info, [slug]: next };
   const totalNeeds = cur.list
     ? cur.list.reduce((sum, s) => sum + (Number(info[s]?.needs) || 0), 0)
@@ -212,17 +241,19 @@ export function loadCommunities(force = false): Promise<void> {
       const joined = rows.filter((r) => r && r.slug && (
         typeof home?.isJoined === 'function' ? home.isJoined(r) : !!r.is_member
       ));
-      let counts: Record<string, { needs?: number }> = {};
+      let counts: Record<string, { needs?: number; owed?: unknown }> = {};
       if (countsRes && countsRes.ok) {
         const c = await countsRes.json().catch(() => null);
         counts = (c && c.counts) || {};
       }
       // Newest first, the order the Communities list and its sections use.
       const ordered = orderRows(joined as any) as unknown as AppRow[];
+      hydrateNeedsSeen();
       const cur = communityScopeStore.get();
       const info = { ...cur.info };
       for (const r of ordered) {
-        info[r.slug] = {
+        const owed = counts[r.slug]?.owed;
+        info[r.slug] = derive({
           ...(info[r.slug] || {}),
           slug: r.slug,
           name: r.name || r.slug,
@@ -231,10 +262,12 @@ export function loadCommunities(force = false): Promise<void> {
           iconColor: r.icon_color || null,
           audience: r.audience,
           memberCount: Number(r.member_count) || 0,
-          needs: Number(counts[r.slug]?.needs) || 0,
+          // #3526: which votes, so the ones passed over can be left out.
+          owedCount: Number(counts[r.slug]?.needs) || 0,
+          owed: Array.isArray(owed) ? owed.map(String) : undefined,
           selfHosted: !!r.self_hosted,
           lastActiveAt: r.last_active_at || null,
-        };
+        });
       }
       const list = ordered.map((r) => r.slug);
       communityScopeStore.set({
@@ -293,6 +326,27 @@ export function goToCommunity(slug: string | null): void {
   if (onPage) return;
   void app?.navigateToApp?.(slug, 'dev');
 }
+
+/**
+ * A vote passed over anywhere on the page (./needs-seen.ts) lowers every
+ * count it was in, here and now: the tab's badge and the switcher's lines
+ * drop as the feed is swiped through, not at the next read.
+ */
+needsSeenStore.subscribe(() => {
+  const cur = communityScopeStore.get();
+  let changed = false;
+  const info: Record<string, CommunityInfo> = {};
+  for (const [slug, entry] of Object.entries(cur.info)) {
+    info[slug] = derive(entry);
+    if (info[slug] !== entry) changed = true;
+  }
+  if (!changed) return;
+  const totalNeeds = cur.list
+    ? cur.list.reduce((sum, s) => sum + (Number(info[s]?.needs) || 0), 0)
+    : cur.totalNeeds;
+  communityScopeStore.set({ info, totalNeeds });
+  if (cur.slug && info[cur.slug]) saveInfo(info[cur.slug]);
+});
 
 if (typeof window !== 'undefined') {
   const host = window as unknown as { UsernodeReact?: Record<string, unknown> };

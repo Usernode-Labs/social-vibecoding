@@ -145,6 +145,7 @@ import { AgentActivityIcon } from '../agent-session/activity-mark';
 import { ACTIVITY_LABEL } from '../agent-session/activity';
 import { loadAgentSessions, useAgentSessions } from '../agent-session/store';
 import { setFilter as setMessagesFilter } from '../messages/store';
+import { hydrateNeedsSeen, unseenNeeds } from '../workshop/needs-seen';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 '
@@ -427,7 +428,13 @@ export function AppsSwitcherSheet(): ReactNode {
         const res = await fetch(`/api/workshop/counts${demo}`);
         if (!res.ok) return;
         const data = await res.json();
-        const n = data?.counts?.[slug]?.needs;
+        const c = data?.counts?.[slug];
+        // #3526: less the votes swiped past in a Needs you feed, as every
+        // other count of them is (../workshop/needs-seen.ts).
+        hydrateNeedsSeen();
+        const n = c && typeof c.needs === 'number'
+          ? unseenNeeds(slug, c.needs, Array.isArray(c.owed) ? c.owed : null)
+          : null;
         if (live && typeof n === 'number' && n > 0) setOwed(n);
       } catch {
         // Offline is a state, not a failure: no figure, the row still works.

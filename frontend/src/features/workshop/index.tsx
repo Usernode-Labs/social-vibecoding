@@ -59,6 +59,11 @@
  * are not in Postgres — which is why the Needs you row says "votes
  * waiting" rather than claiming the whole of a project's Needs you.
  *
+ * Since #3526 each project's entry also says WHICH votes (`owed`), and the
+ * rows and the Needs you row leave out the ones this viewer swiped past in a
+ * Needs you feed (`unseenRow`, ./needs-seen.ts): a vote you have seen and
+ * moved on from is not news, and the number is the news.
+ *
  * The COMMUNITY LIST is a second read, and deliberately a different one:
  * GET /api/apps filtered by `Home.isJoined`, the same predicate Discover's
  * Join pill and its Joined chip read. "Which communities am I in" is a
@@ -92,6 +97,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
+import { unseenNeeds, useNeedsSeen } from './needs-seen';
 import {
   groupRows, orderRows, SECTION_LIMIT, sectionFold, type Audience,
 } from './sections';
@@ -124,6 +130,10 @@ type WorkshopRow = {
   demo?: boolean;
   working: number;
   needs: number;
+  /** Which votes `needs` counts, when the counts said (#3526). */
+  owed?: string[];
+  /** Every vote owed, the ones swiped past too (`unseenRow` sets it). */
+  owedCount?: number;
 };
 
 function SectionGlyph({ audience }: { audience: Audience }) {
@@ -133,7 +143,7 @@ function SectionGlyph({ audience }: { audience: Audience }) {
   return <UserGroupIcon className={cls} aria-hidden="true" />;
 }
 
-type Counts = Record<string, { working?: number; needs?: number } | undefined>;
+type Counts = Record<string, { working?: number; needs?: number; owed?: unknown } | undefined>;
 
 type TabKey = 'status' | 'needs';
 
@@ -177,12 +187,25 @@ export function rowSubtitle(row: WorkshopRow, now = Date.now()): string {
 export function joinCounts(apps: Array<Omit<WorkshopRow, 'working' | 'needs'>>, counts: Counts): WorkshopRow[] {
   return apps.map((app) => {
     const found = counts[app.slug];
+    const owed = found?.owed;
     return {
       ...app,
       working: Number(found?.working) || 0,
       needs: Number(found?.needs) || 0,
+      ...(Array.isArray(owed) ? { owed: owed.map(String) } : {}),
     };
   });
+}
+
+/**
+ * #3526: a row's "to vote" less the votes swiped past in a Needs you feed
+ * (./needs-seen.ts). Worked out as the screen draws, not when the counts
+ * land: the feed on this same screen marks votes seen, and the list it goes
+ * back to has to say so without asking the server again. A row the counts
+ * did not list the votes of keeps its number.
+ */
+export function unseenRow(row: WorkshopRow): WorkshopRow {
+  return { ...row, needs: unseenNeeds(row.slug, row.needs, row.owed), owedCount: row.needs };
 }
 
 /**
@@ -205,8 +228,8 @@ export function tabFromQuery(search: string): TabKey | null {
  * The Needs you row's second line: which projects the votes are owed on,
  * in list order, the first three by name and the rest as a count.
  */
-export function needsApps(rows: WorkshopRow[]): string {
-  const names = rows.filter((row) => (row.needs || 0) > 0).map((row) => row.name || row.slug);
+export function needsApps(rows: WorkshopRow[], seenToo = false): string {
+  const names = rows.filter((row) => ((seenToo ? row.owedCount : row.needs) || 0) > 0).map((row) => row.name || row.slug);
   if (names.length <= 3) return names.join(', ');
   return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
 }
@@ -415,10 +438,11 @@ export function WorkshopScreen() {
     feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
+  useNeedsSeen();
   // ONE PAGE: the list of your projects, with Needs you as a row at its top
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
-  const rows = state.rows ? orderRows(state.rows) : null;
+  const rows = state.rows ? orderRows(state.rows.map(unseenRow)) : null;
   const sections = rows ? groupRows(rows) : null;
   const all = rows;
   // `#workshop-empty` keeps its ONE meaning — you have no apps at all — and
@@ -428,11 +452,17 @@ export function WorkshopScreen() {
   // The totals across EVERY project, for the Needs you row. Null until the
   // list has answered, and with no projects at all: the empty card already
   // says why the screen is bare.
+  //
+  // #3526: `needs` is the votes not yet swiped past, and `owed` every vote,
+  // those too. The row is drawn while ANY vote is owed: it is the only door
+  // to the feed on this screen, and a vote you skipped is still one you can
+  // cast. With nothing new it says how many you skipped instead.
   const totals = all && all.length > 0
     ? all.reduce((acc, row) => ({
       working: acc.working + (row.working || 0),
       needs: acc.needs + (row.needs || 0),
-    }), { working: 0, needs: 0 })
+      owed: acc.owed + (row.owedCount || 0),
+    }), { working: 0, needs: 0, owed: 0 })
     : null;
   const empty = !!all && all.length === 0 && !state.error;
 
@@ -486,7 +516,7 @@ export function WorkshopScreen() {
           {/* NEEDS YOU, when something waits: how many votes are owed across
               your projects, which projects, and the way to them. A zero says
               nothing, so the row is not drawn over a quiet day. */}
-          {totals && totals.needs > 0 ? (
+          {totals && totals.owed > 0 ? (
             <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
               <SectionHeader id="workshop-needs-heading">Needs you</SectionHeader>
               <GroupedList tone="plane">
@@ -499,8 +529,10 @@ export function WorkshopScreen() {
                       <SpeechCheckIcon className="w-5 h-5" aria-hidden="true" />
                     </span>
                   )}
-                  title={`${totals.needs} ${totals.needs === 1 ? 'vote' : 'votes'} waiting on you`}
-                  subtitle={needsApps(rows || [])}
+                  title={totals.needs > 0
+                    ? `${totals.needs} ${totals.needs === 1 ? 'vote' : 'votes'} waiting on you`
+                    : `${totals.owed} ${totals.owed === 1 ? 'vote' : 'votes'} you skipped`}
+                  subtitle={needsApps(rows || [], !totals.needs)}
                   // "Review" is the row's affordance; a chevron beside it
                   // would say the same thing twice.
                   trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300">Review</span>}
