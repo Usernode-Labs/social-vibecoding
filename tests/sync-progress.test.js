@@ -606,6 +606,9 @@ test('POST /sync-main: falls through to the coalesced run when the in-flight tur
 
 test('GET /status: exposes the in-flight sync state, and null when idle', async () => {
   poolQueryHandler = async (sql) => {
+    if (/SELECT user_id, status, shared_at FROM chat_sessions/.test(sql)) {
+      return { rows: [{ user_id: VIEWER.id, status: 'active', shared_at: null }] };
+    }
     if (/FROM chat_sessions WHERE id/.test(sql)) return { rows: [{ id: 43 }] };
     return { rows: [] };
   };
@@ -646,6 +649,9 @@ test('GET /status: exposes the merge lifecycle status of the session', async () 
     // #907 widened this read to fetch last_turn_runner/local_agent_label in
     // the same round-trip (it is a 3s poll), so match the column list loosely
     // — what this test is about is the `status` field reaching the payload.
+    if (/SELECT user_id, status, shared_at FROM chat_sessions/.test(sql)) {
+      return { rows: [{ user_id: VIEWER.id, status: 'promoted', shared_at: null }] };
+    }
     if (/SELECT status[\s\S]*?FROM chat_sessions/.test(sql)) {
       return { rows: [{ status: 'promoted' }] };
     }
@@ -665,8 +671,11 @@ test('GET /status: exposes the merge lifecycle status of the session', async () 
     assert.equal(res.status, 200);
     assert.equal(body.status, 'promoted');
 
-    // Missing row → null (fail-safe: the client keeps its banner up).
-    poolQueryHandler = async () => ({ rows: [] });
+    // Missing status column → null (fail-safe: the client keeps its banner
+    // up). The row itself is still visible to its owner.
+    poolQueryHandler = async (sql) => (/SELECT user_id, status, shared_at FROM chat_sessions/.test(sql)
+      ? { rows: [{ user_id: VIEWER.id, status: 'active', shared_at: null }] }
+      : { rows: [] });
     const res2 = await fetch(`http://127.0.0.1:${port}/api/sessions/46/status`);
     assert.equal((await res2.json()).status, null);
   } finally {

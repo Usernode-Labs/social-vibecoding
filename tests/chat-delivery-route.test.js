@@ -94,6 +94,9 @@ function installHandlers({ lookup = () => [], insert = () => [{ id: 1001 }] } = 
   poolQueryHandler = async (sql) => {
     const s = String(sql);
     if (isLookup(s)) { lookups += 1; return { rows: lookup(lookups) }; }
+    if (/SELECT user_id, status, shared_at FROM chat_sessions/.test(s)) {
+      return { rows: [{ user_id: SESSION_ROW.user_id, status: SESSION_ROW.status, shared_at: null }] };
+    }
     if (/FROM chat_sessions cs/.test(s)) return { rows: [{ ...SESSION_ROW }] };
     if (isUserInsert(s)) return { rows: insert() };
     return { rows: [] };
