@@ -188,7 +188,10 @@ test('"Still yes" re-casts the Yes with no line of its own, and marks the row re
   const sheet = fs.readFileSync(path.join(__dirname, '../frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
   assert.match(sheet, /data-notif-action=\{a\.key\}/, 'the screen draws a row\'s actions as real buttons');
   assert.match(sheet, /controller\(\)\?\._onRowAction\(view\.id, a\.key\)/);
-  assert.match(sheet, /const actions = view\.actions \|\| \[\];\s+if \(actions\.length\) \{\s+return \(\s+<div/,
+  // #3538: both row shapes are built into `row` and returned inside the slot
+  // that carries the clear, so the actions shape is a branch of a ternary
+  // rather than an early return. Same <div> around the row's own button.
+  assert.match(sheet, /const actions = view\.actions \|\| \[\];\s+const row = actions\.length \? \(\s+<div/,
     'beside the row, never a button inside a button');
 });
 
