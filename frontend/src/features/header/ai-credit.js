@@ -136,11 +136,16 @@ import { aiBudgetStore } from './ai-budget-store.js';
         var CO = (typeof window !== 'undefined' && window.CreditOptions) || null;
         var state = CO ? CO.creditState(s) : null;
         // The reset boundary, worded once (CreditOptions.resetSentence) so
-        // this row and the dev chat cannot describe it differently.
+        // this row and the dev chat cannot describe it differently. #3230:
+        // in the viewer's own clock, with the exact UTC instant in brackets,
+        // because this text is itself the tooltip.
+        var RT = (typeof window !== 'undefined' && window.ResetTime) || null;
+        var weeklyReset = s.capWindow === 'weekly';
         var resetText = state ? CO.resetSentence(state)
-          : (s.capWindow === 'weekly'
-            ? 'Free credits reset Monday 00:00 UTC.'
-            : 'Free credits reset at midnight UTC.');
+          : 'Free credits reset ' + (RT ? RT.resetWhen(weeklyReset ? 'weekly' : 'daily', { at: s.resetsAt })
+            : (weeklyReset ? 'Monday 00:00 UTC' : 'at midnight UTC')) + '.';
+        var resetUtc = state && CO.resetTitle ? CO.resetTitle(state) : null;
+        if (resetUtc) resetText = resetText.replace(/\.$/, ' (' + resetUtc + ').');
         // The raw figures ride along for a reader that draws them itself
         // (the agent-session composer's "$ left" ring): the same numbers the
         // words below are built from, so the two cannot disagree.

@@ -17456,8 +17456,10 @@ const AppView = {
       out.push({
         key: 'budget',
         label: 'Waiting on shared budget',
-        detail: 'This proposal needs merging with main, but the platform’s shared '
-          + 'token budget is spent for today. It resumes after the midnight UTC reset.',
+        // #3230: the reset in the viewer's own clock (window.ResetTime).
+        detail: (window.ResetTime ? window.ResetTime.localizeResetText : (t) => t)(
+          'This proposal needs merging with main, but the platform’s shared '
+          + 'token budget is spent for today. It resumes after the midnight UTC reset.'),
         soft: true,
       });
     }

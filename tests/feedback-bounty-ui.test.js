@@ -90,7 +90,9 @@ test('the row is repainted from the live Kudos budget, not a literal', () => {
   // Both copy variants interpolate the server's numbers.
   assert.match(feedbackJs, /\$\{remaining\} of \$\{limit\} left this week/);
   assert.match(feedbackJs, /You've used all \$\{limit\} kudos this week/);
-  assert.match(feedbackJs, /Resets Monday 00:00 UTC/);
+  // #3230: the reset in the viewer's own clock, the UTC instant on hover.
+  assert.match(feedbackJs, /RT \? RT\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/);
+  assert.match(feedbackJs, /bountyNote\.title = RT\.resetUtc\('weekly'\)/);
   // #1582: and the cost is stated in every state the box can be ticked in —
   // including the one where the budget fetch failed and there is no figure.
   const note = feedbackJs.slice(
@@ -244,7 +246,9 @@ test('both shot checks survive the manifest reader', () => {
 test('the Kudos-tab subtitle reads the cap from the budget', () => {
   assert.doesNotMatch(lbJs, /'5 kudos per week/);
   assert.match(lbJs, /window\.Kudos\?\.Budget\?\.state\?\.limit \|\| 20/);
-  assert.match(lbJs, /kudos per week, resets Monday 00:00 UTC/);
+  assert.match(lbJs, /kudos per week, resets \$\{/);
+  assert.match(lbJs, /window\.ResetTime\.resetWhen\('weekly'\) : 'Monday 00:00 UTC'/,
+    '#3230: in the viewer\u2019s own clock where ResetTime is loaded');
 });
 
 test('a Dev-screen pledge also refreshes the drawer kudos meter', () => {

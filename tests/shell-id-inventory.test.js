@@ -319,6 +319,9 @@ const RETIRED_IDS = {
 // Ids a conversion chunk deliberately added, each with the reason.
 const ADDED_IDS = {
   'report-modal': '#2721 shared reporting dialog',
+  // #3230: the spend card's reset line, rewritten by Settings._refreshSpend()
+  // in the viewer's own clock (it prerenders the server's UTC boundary).
+  'settings-spend-reset': '#3230 spend card reset line, localized at reveal',
   // ── #2718: the platform's destinations leave the app's menu ──────
   //
   // Eleven ids leave THIS map rather than entering RETIRED_IDS, because the
