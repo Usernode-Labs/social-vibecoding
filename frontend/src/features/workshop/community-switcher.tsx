@@ -7,18 +7,18 @@
  * "Join or start a community", which is Discover. Picking one makes it the
  * tab's community and opens its hub (./community-scope.ts goToCommunity).
  *
- * It replaced the in-place "Which project?" panel under the header
- * (./workshop-chrome.tsx), and it opens from four places, all through the
- * same store: the tab pressed while it is lit, the community's name and ⌄ in
- * the coloured header, the Communities list's header, and the sidebar's
- * Communities row on a wide window.
+ * It replaced the in-place "Which project?" panel under the header, and it
+ * opens from three places, all through the same store: the phone's tab
+ * pressed while it is lit, the community's name and ⌄ in the coloured
+ * header, and the header's "All ⌄" on the Communities list. (On a wide
+ * window the lit sidebar row goes back to All communities instead.)
  *
  * ── Two presentations ──────────────────────────────────────────────────
  *
  * On a phone it is a sheet from the floor, handed to the native kit when one
  * is there (lib/kit-surface.ts, the same hand-off as the staking sheet) and a
  * CSS sheet over a scrim when not. From 768px up it is a menu hung off
- * whatever opened it: beside the sidebar's row, or under the header's name.
+ * whatever opened it: under the header's name.
  *
  * ── Island rules ───────────────────────────────────────────────────────
  *
@@ -236,14 +236,12 @@ function SwitcherMenu(): ReactNode {
       document.removeEventListener('keydown', onKey);
     };
   }, []);
-  // Beside the sidebar's row, or under the header's name; a menu opened from
-  // anywhere else sits under the header's left edge.
+  // Under what opened it (the header's name, or its "All ⌄"); with no box
+  // to hang from, under the header's left edge.
   const a = st.anchor;
-  const style: Record<string, string> = st.switcher === 'rail' && a
-    ? { left: `${Math.round(a.right + 8)}px`, top: `${Math.max(8, Math.round(a.top - 12))}px` }
-    : a
-      ? { left: `${Math.max(8, Math.round(a.left))}px`, top: `${Math.round(a.bottom + 8)}px` }
-      : { left: '240px', top: '64px' };
+  const style: Record<string, string> = a
+    ? { left: `${Math.max(8, Math.round(a.left))}px`, top: `${Math.round(a.bottom + 8)}px` }
+    : { left: '240px', top: '64px' };
   return (
     <div
       ref={panel}

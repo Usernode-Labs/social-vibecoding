@@ -567,7 +567,7 @@ export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_ma
   return !!data && data.audience === 'open' && !!data.can_manage && !data.audience_change;
 }
 
-export function CommunityCard({ slug, name, menu, canOpenApp = false, color = null }: {
+export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
   slug: string;
   /** The app's identity as the page already knows it (improveStore), so the
       hero draws the same tile and name as the header's chip. */
@@ -578,8 +578,6 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, color = nu
   /** Whether "Open app" leads the actions (#3367): every project but the
       platform's own, which is the page you are on. */
   canOpenApp?: boolean;
-  /** The community's colour (lib/community-color.ts), which Open app wears. */
-  color?: string | null;
 }) {
   const data = useCommunity(slug);
   const [busy, setBusy] = useState(false);
@@ -647,7 +645,6 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false, color = nu
     <button
       type="button"
       className="dev-ws-open-app"
-      style={color ? { background: color } : undefined}
       data-ws-community-open-app=""
       onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
     >

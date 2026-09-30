@@ -278,6 +278,15 @@ export function deriveCommunityColor(src: ColorSource): Promise<string> {
  * every later one paints its colour on the first frame.
  */
 export function useCommunityColor(src: ColorSource | null, fallback: string = GRAPHITE): string {
+  return useResolvedCommunityColor(src) || fallback;
+}
+
+/**
+ * The colour once it is known: null while there is no source, or while an
+ * icon is still being read, so a caller can keep what it showed before (the
+ * header does, between one community and the next).
+ */
+export function useResolvedCommunityColor(src: ColorSource | null): string | null {
   const [color, setColor] = useState<string | null>(() => (src ? communityColorNow(src) : null));
   const sig = src ? `${src.color || ''}|${src.iconUrl || ''}|${src.iconEmoji || ''}|${src.key}` : '';
   useEffect(() => {
@@ -288,5 +297,5 @@ export function useCommunityColor(src: ColorSource | null, fallback: string = GR
     if (!now) void deriveCommunityColor(src).then((c) => { if (live) setColor(c); });
     return () => { live = false; };
   }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
-  return color || fallback;
+  return color;
 }

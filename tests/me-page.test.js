@@ -138,7 +138,7 @@ test('Me sits in the Workshop tab\'s frame, and its labels on the rows\' edge (#
   // Workshop's column: the same width, and the same 8px notch + 12px of air.
   const workshop = read('frontend/src/features/workshop/index.tsx');
   assert.match(workshop, /className="max-w-2xl mx-auto pb-8"/, 'Workshop\'s column is still the reference');
-  assert.match(workshop, /className="px-4 pt-5 pb-2 /, 'and its first element still steps down pt-5');
+  assert.match(workshop, /<div className="pt-5" aria-hidden="true" \/>/, 'and it still steps down pt-5 before its first element');
   for (const cls of ['max-w-2xl', 'mx-auto', 'px-4', 'pt-5', 'pb-8']) {
     assert.ok(classes.includes(cls), `#profile-root carries ${cls}`);
   }

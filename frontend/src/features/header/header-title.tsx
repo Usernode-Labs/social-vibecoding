@@ -47,13 +47,11 @@
  * ── On the app's Workshop the strip is the app switcher (#2768, #3295) ─
  *
  * The Workshop used to lead with a scope chip — the app's tile, its name and
- * a ⌄ — whose panel lists your other apps
- * (features/workshop/workshop-chrome.tsx). Under this bar that was the same
+ * a ⌄ — whose panel listed your other apps. Under this bar that was the same
  * tile and the same name twice, an inch apart. #2768 dropped the chip on a
  * phone and made the bar's tile and name the control there: a button with
- * the ⌄ that opens the same panel, through the same flag
- * (features/workshop/app-scope-store.js). A desktop kept the chip and the
- * bar dropped its tile instead.
+ * the ⌄ that opened the same panel. A desktop kept the chip and the bar
+ * dropped its tile instead.
  *
  * #3295 (the owner's request) makes the desktop the phone's: "on desktop,
  * put the community selector dropdown in the header, not either above the
@@ -68,15 +66,15 @@
  * project page this bar wears the community's colour (app.css, "The
  * project's colour"), so the name and ⌄ read as the community's own.
  *
- * ── And on the Communities screen, the all-apps chip (#3271) ─────────
+ * ── And on the Communities screen, the All switcher (#3271, #852) ─────
  *
- * The Communities screen leads with the same kind of chip, "All apps ⌄",
- * whose panel opens one of your apps. On a phone it sat under a header that
- * only said "Communities" (which the lit tab already says), costing a whole
- * row. So it gets the app Workshop's treatment: below 700px the header's
- * title IS the chip, `#header-scope-switch`, and app.css hides the in-page
- * chip. Both open "Your communities", as the app's name does. Above 700px
- * nothing changes.
+ * The Communities screen led with the same kind of chip, "All ⌄". On a phone
+ * it sat under a header that only said "Communities" (which the lit tab
+ * already says), costing a whole row, so the header's title became the chip
+ * there (#3271), `#header-scope-switch`. #852 makes that every width and
+ * drops the chip from the page: the control that says where you are lives
+ * in the bar that says it everywhere else. It opens "Your communities", as
+ * the app's name does.
  *
  * The width is a media flag settled in an effect, so the first client render
  * is the prerender's (no button) and nothing here can mismatch hydration; by
@@ -85,7 +83,7 @@
  * prerender does not have either.
  */
 
-import { useEffect, useState, type RefObject } from 'react';
+import type { RefObject } from 'react';
 
 import { ChevronDownIcon, Squares2X2Icon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
@@ -106,27 +104,6 @@ import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope
 // anything from anywhere.
 const PLATFORM_NAME = 'Homeroom';
 
-/**
- * The phone layout, in the spelling app.css uses for the same breakpoint (the
- * Workshop's own `WIDE_QUERY` is its complement). False until mounted, so the
- * hydrating render agrees with the prerender whatever the window is. Only the
- * Communities screen's switcher reads it now (#3295).
- */
-const PHONE_QUERY = '(max-width: 699.98px)';
-
-function usePhone(): boolean {
-  const [phone, setPhone] = useState(false);
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return undefined;
-    const mq = window.matchMedia(PHONE_QUERY);
-    const apply = () => setPhone(mq.matches);
-    apply();
-    mq.addEventListener('change', apply);
-    return () => mq.removeEventListener('change', apply);
-  }, []);
-  return phone;
-}
-
 export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const { text, subtitle } = useStoreState(headerTitleStore);
   const { slug, tab, subTab, name, iconUrl, iconEmoji } = useStoreState(improveStore);
@@ -137,7 +114,6 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   // app's name opens it, and so does the Communities screen's All chip.
   const { switcher } = useStoreState(communityScopeStore);
   const switcherOpen = !!switcher;
-  const phone = usePhone();
 
   const onSession = tab === 'dev' && subTab === 'sessions';
   const sessionPill = onSession && life ? <MergeStatusPill life={life} /> : null;
@@ -156,8 +132,8 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';
   // At every width (#3295): the Workshop draws no chip of its own any more.
   const appSwitch = onWorkshop;
-  // The Communities screen on a phone: the title is its all-apps chip.
-  const allAppsSwitcher = screen === 'workshop-screen' && phone;
+  // The Communities screen, at every width: the title is its All switcher.
+  const allAppsSwitcher = screen === 'workshop-screen';
   const showTile = inApp;
 
   /* `.app-icon-tile` + `data-icon` draw the box, and this call site adds no
@@ -190,10 +166,8 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
       <span className="inline-flex items-center gap-2 max-w-full align-middle">
         {appSwitch ? null : tile}
         {allAppsSwitcher ? (
-          /* THE ALL-APPS CHIP, in the bar (#3271). The same control as the
-             screen's own `#workshop-scope` — the grid, "All" and the ⌄ —
-             opening the same panel, which still drops down at the top of the
-             screen, right under this bar. */
+          /* THE ALL SWITCHER, in the bar (#3271, at every width since #852):
+             the grid, "All" and the ⌄, opening Your communities. */
           <button
             id="header-scope-switch"
             type="button"

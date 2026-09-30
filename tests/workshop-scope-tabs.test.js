@@ -58,14 +58,12 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const HTML = read('public/index.html');
-const CHROME = read('frontend/src/features/workshop/workshop-chrome.tsx');
 const SCREEN = read('frontend/src/features/workshop/index.tsx');
 
 const SCOPE = read('frontend/src/features/workshop/community-scope.ts');
 const SWITCHER = read('frontend/src/features/workshop/community-switcher.tsx');
 
 const screen = loadTsx('frontend/src/features/workshop/index.tsx');
-const chrome = loadTsx('frontend/src/features/workshop/workshop-chrome.tsx');
 
 const app = (slug, working, needs) => ({ slug, name: slug, working, needs });
 
@@ -124,7 +122,6 @@ test('All items, the plus and now the tabs are gone; Needs you is a row (#3051)'
   for (const id of ['workshop-tabs', 'workshop-tab-all', 'workshop-tab-empty', 'workshop-plus',
     'workshop-plus-change', 'workshop-plus-issue', 'workshop-plus-create', 'workshop-picker',
     'workshop-tab-status', 'workshop-tab-needs', 'workshop-total-working', 'workshop-total-needs']) {
-    assert.ok(!CHROME.includes(`id="${id}"`), `#${id} is not rendered`);
     assert.ok(!SCREEN.includes(`id="${id}"`), `#${id} is not on the screen either`);
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is not in the shipped shell`);
   }
@@ -134,12 +131,10 @@ test('All items, the plus and now the tabs are gone; Needs you is a row (#3051)'
   assert.ok(!SCREEN.includes('filterRows'), 'the screen does not filter the app list');
   const store = read('frontend/src/features/workshop/workshop-store.js');
   assert.match(store, /^\s*tab: 'status',/m, 'the list is the default, and the prerender');
-  assert.doesNotMatch(store, /scopeOpen/, 'the chip opens Your communities, whose flag is its own store\'s (#852)');
+  assert.doesNotMatch(store, /scopeOpen/, 'Your communities keeps its own open flag (#852)');
   assert.doesNotMatch(store, /itemsError|^\s*items:/m, 'the items read left with the pane it filled');
-  // THE CHIP OPENS THE SWITCHER, the same one the tab and the header open.
-  assert.match(CHROME, /export const ALL_APPS_SCOPE_ID = 'workshop-scope';/);
-  assert.match(CHROME, /onClick=\{\(e\) => toggleSwitcher\('list', e\.currentTarget\)\}/);
-  assert.doesNotMatch(CHROME, /WorkshopPicker|AppWorkshopScope|app-scope-store/, 'the panel is gone');
+  // The chip's module went with the chip and its panel (#852).
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/workshop/workshop-chrome.tsx')));
 });
 
 test('the Needs you row opens the feed over the list without redrawing it', () => {
@@ -182,19 +177,19 @@ test('the Needs you row totals every project, and says nothing over a zero', () 
     'a row read from data is not in a cold document');
 });
 
-test('#3051: the all-apps screen wears the All chip, which opens Your communities (#852)', () => {
-  // #2759 took it off while the screen was only the list of your apps. The
-  // owner asked for it back as "All apps" (#3051); it opens the switcher now.
-  assert.match(SCREEN, /<AllAppsScope open=\{!!switcher\} \/>/);
-  assert.match(HTML, /<button id="workshop-scope" type="button"[^>]*aria-haspopup="dialog" aria-expanded="false" aria-controls="community-switcher"/,
-    'it ships closed in the cold document, naming the switcher');
+test('#3051, #852: "All" is the header\'s at every width, and opens Your communities', () => {
+  // #2759 took the all-apps chip off while the screen was only the list of
+  // your apps; the owner asked for it back as "All apps" (#3051), leading the
+  // page. #852 puts it in the bar at every width, where a phone already had
+  // it (#3271): the bar is what says where you are.
+  assert.doesNotMatch(SCREEN, /AllAppsScope|id="workshop-scope"/);
+  assert.ok(!HTML.includes('id="workshop-scope"'), 'no chip in the cold document');
   assert.ok(!HTML.includes('id="community-switcher"'), 'and the switcher is behind a press');
-  const html = renderToHtml(createElement(chrome.AllAppsScope, { open: false }));
-  assert.match(html, />All</, 'the word All (#3277)');
-  assert.match(html, /aria-label="All your communities, or open one"/, 'and what All means, to a screen reader');
-  // The chip's row leads the screen, so it carries the header's notch
-  // clearance; the legend line that sat under it is gone.
-  assert.match(SCREEN, /<div className="px-4 pt-5 pb-2 flex flex-wrap items-center gap-x-3 gap-y-2">\n\s*<AllAppsScope/);
+  const html = renderHeader({ screen: 'workshop-screen' });
+  assert.match(html, /<button id="header-scope-switch" type="button" class="[^"]*" data-community-switch="" aria-haspopup="dialog" aria-expanded="false" aria-controls="community-switcher" aria-label="All your communities, or open one">/);
+  assert.match(html, /<span id="header-title-name" class="min-w-0 truncate">All<\/span>/, 'the word All (#3277)');
+  // The page still steps down past the header's notch before its first row.
+  assert.match(SCREEN, /<div className="pt-5" aria-hidden="true" \/>/);
   assert.doesNotMatch(SCREEN, /<p className="px-4 pt-1 pb-2 flex flex-wrap/);
 });
 
@@ -220,7 +215,7 @@ test('#3363: the order is the screen\'s own, from one shared module', () => {
 /** A store that holds one state and never changes, for a static render. */
 const fixed = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
 
-test('#852: a project page leads with its tabs, or on the Workshop page its back bar; no panel of its own', () => {
+test('#852: a project page leads with its tabs, and All items with its way back under them; no panel of its own', () => {
   const WORKSHOP_PATH = 'frontend/src/features/dev-board/workshop/workshop.tsx';
   const real = loadTsx('frontend/src/features/dev-board/card/cards-store.ts');
   const page = (tab) => {
@@ -230,8 +225,8 @@ test('#852: a project page leads with its tabs, or on the Workshop page its back
     });
     return renderToHtml(createElement(mod.DevWorkshop, {}));
   };
-  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all"><div class="dev-ws-tabs dev-ws-band" data-ws-band=""/);
-  assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop"><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
+  assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">/);
+  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">[\s\S]*?<\/div><\/div><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
   const ws = read(WORKSHOP_PATH);
   assert.doesNotMatch(ws, /AppWorkshopScope|useScopeInline|scopeFitsInline|data-ws-scope-inline|SCOPE_INLINE_/);
   const css = read('public/css/app.css');
@@ -240,11 +235,11 @@ test('#852: a project page leads with its tabs, or on the Workshop page its back
 });
 
 /** #header-title as rendered on an app route, with the stores it reads fixed. */
-function renderHeader({ viewMode = 'workshop', subTab = 'forum' } = {}) {
+function renderHeader({ viewMode = 'workshop', subTab = 'forum', screen = 'app-view' } = {}) {
   const mod = loadTsx('frontend/src/features/header/header-title.tsx', {
     stubs: {
       './header-title-store.js': { headerTitleStore: fixed({ text: 'Recipe Box', subtitle: '' }) },
-      '../nav/nav-store.js': { navStore: fixed({ screen: 'app-view' }) },
+      '../nav/nav-store.js': { navStore: fixed({ screen }) },
       '../improve/improve-store.js': {
         improveStore: fixed({ tab: 'dev', subTab, name: 'Recipe Box', iconUrl: null, iconEmoji: '🍲' }),
       },
@@ -281,10 +276,8 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
   assert.doesNotMatch(kanban, /header-app-switch/);
   assert.match(kanban, /<span id="header-app-tile"[^>]*>[\s\S]*?<\/span><\/span><span class="min-w-0 flex items-baseline gap-1\.5"><span id="header-title-name" class="min-w-0 truncate">Recipe Box<\/span>/);
 
-  // The phone flag stays for the Communities screen's switcher (#3271), and
-  // is still settled in an EFFECT, false first, so the hydrating render is
-  // the prerender's whatever the window is.
-  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && phone;/);
-  assert.match(header, /const \[phone, setPhone\] = useState\(false\);/);
-  assert.match(header, /const PHONE_QUERY = '\(max-width: 699\.98px\)';/);
+  // No width anywhere in it now: the Communities screen's "All" is the
+  // bar's at every width too (#852).
+  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
+  assert.doesNotMatch(header, /PHONE_QUERY|usePhone/);
 });

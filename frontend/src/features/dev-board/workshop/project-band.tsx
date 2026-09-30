@@ -1,5 +1,8 @@
 /**
- * A project's four tabs: Hub · Chat · Needs you · All items.
+ * A project's four tabs: Hub · Discussion · Needs you · Workshop.
+ *
+ * All items is a page under the Workshop (its "See all"), with a way back,
+ * so while it is up the Workshop tab stays lit.
  *
  * TWO PLACES, ONE CONTROL. On a phone they are a BAND under the header, in
  * the community's colour, continuing it (./workshop.tsx renders it at the
@@ -18,15 +21,20 @@ import type { KeyboardEvent, ReactNode } from 'react';
 
 import { createStore } from '../../../lib/plain-store.js';
 
-export type ProjectTabKey = 'status' | 'chat' | 'workshop' | 'needs' | 'all';
+export type ProjectTabKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all';
 
-/** The four tabs, in the band's order. The Workshop is a page, not a tab. */
+/** The four tabs, in the band's order. All items is the Workshop's page. */
 export const PROJECT_TABS: ReadonlyArray<{ key: ProjectTabKey; label: string }> = [
   { key: 'status', label: 'Hub' },
-  { key: 'chat', label: 'Chat' },
+  { key: 'discussion', label: 'Discussion' },
   { key: 'needs', label: 'Needs you' },
-  { key: 'all', label: 'All items' },
+  { key: 'workshop', label: 'Workshop' },
 ];
+
+/** The tab lit for a page: All items is the Workshop's. */
+export function litTab(tab: ProjectTabKey): ProjectTabKey {
+  return tab === 'all' ? 'workshop' : tab;
+}
 
 export interface ProjectTabsState {
   /** The project whose page is up, or null when none is. */
@@ -34,13 +42,11 @@ export interface ProjectTabsState {
   tab: ProjectTabKey;
   /** Votes waiting on you here: Needs you's count. */
   owed: number;
-  /** All items' search or filters are on (#2915). */
+  /** All items' search or filters are on (#2915): a dot on the Workshop tab. */
   filtered: boolean;
-  /** The community's colour, for the count's ink. */
-  color: string | null;
 }
 
-const INITIAL: ProjectTabsState = { slug: null, tab: 'status', owed: 0, filtered: false, color: null };
+const INITIAL: ProjectTabsState = { slug: null, tab: 'status', owed: 0, filtered: false };
 
 export const projectTabsStore = createStore(INITIAL);
 
@@ -55,27 +61,26 @@ export function requestProjectTab(slug: string, tab: ProjectTabKey): void {
 /**
  * The tabs. A tablist with roving focus: the arrows move between tabs, and
  * the selected one is the one Tab reaches. Needs you carries how many votes
- * wait on you; All items a dot while its search or filters are on, which
- * narrow that tab alone.
+ * wait on you; the Workshop a dot while All items' search or filters are on
+ * (#2915), which narrow that page alone.
  *
  * In the page (`inHeader` false) it keeps the old strip's box, `.dev-ws-tabs`
- * around a `.dev-ws-tabtrack`, because the pinned pane head and the grouping
- * ear on All items are measured against those two (useEarInset,
- * usePinnedStrip).
+ * around a `.dev-ws-tabtrack`. Its colour is the root's `--community-tint`,
+ * which the header sets (features/header/community-tint.ts).
  */
-export function ProjectBand({ tab, owed, filtered, color, onTab, barRef, inHeader = false }: {
+export function ProjectBand({ tab, owed, filtered, onTab, barRef, inHeader = false }: {
   tab: ProjectTabKey;
   owed: number;
   filtered: boolean;
-  color: string;
   onTab: (key: ProjectTabKey) => void;
   barRef?: (el: HTMLElement | null) => void;
   inHeader?: boolean;
 }): ReactNode {
+  const lit = litTab(tab);
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
     if (!step) return;
-    const at = PROJECT_TABS.findIndex((t) => t.key === tab);
+    const at = PROJECT_TABS.findIndex((t) => t.key === lit);
     const next = PROJECT_TABS[(Math.max(0, at) + step + PROJECT_TABS.length) % PROJECT_TABS.length];
     e.preventDefault();
     onTab(next.key);
@@ -84,7 +89,7 @@ export function ProjectBand({ tab, owed, filtered, color, onTab, barRef, inHeade
   const list = (
     <div className="dev-ws-tabtrack" role="tablist" aria-label="Project" onKeyDown={onKeyDown}>
       {PROJECT_TABS.map((t) => {
-        const on = tab === t.key;
+        const on = lit === t.key;
         return (
           <button
             key={t.key}
@@ -100,7 +105,7 @@ export function ProjectBand({ tab, owed, filtered, color, onTab, barRef, inHeade
             {t.key === 'needs' && owed > 0 ? (
               <span className="dev-ws-ctab-count" data-ws-tab-count="">{owed > 99 ? '99+' : owed}</span>
             ) : null}
-            {t.key === 'all' && filtered ? (
+            {t.key === 'workshop' && filtered ? (
               <>
                 <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
                 <span className="sr-only"> (filtered)</span>
@@ -113,7 +118,7 @@ export function ProjectBand({ tab, owed, filtered, color, onTab, barRef, inHeade
   );
   if (inHeader) {
     return (
-      <div className="header-project-tabs" style={{ ['--community-tint' as string]: color }}>
+      <div className="header-project-tabs">
         {list}
       </div>
     );
@@ -123,7 +128,6 @@ export function ProjectBand({ tab, owed, filtered, color, onTab, barRef, inHeade
       ref={barRef}
       className="dev-ws-tabs dev-ws-band"
       data-ws-band=""
-      style={{ ['--community-tint' as string]: color }}
     >
       {list}
     </div>

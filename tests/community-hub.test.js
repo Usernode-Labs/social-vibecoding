@@ -71,43 +71,51 @@ test('the bar reads Home, Discover, Messages, Communities, you — Messages in t
   assert.match(STORE, /communities: state\.conversations\.filter\(\(item\) => item\.kind === 'channel' && item\.unreadCount > 0\)\.length\s*\+ state\.discussions\.filter\(\(item\) => item\.section !== 'more' && \(item\.unreadCount \|\| 0\) > 0\)\.length,/);
 });
 
-test('a project page is four tabs, Hub, Chat, Needs you and All items, and one page, the Workshop (#852)', () => {
+test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with All items the Workshop\'s page (#852)', () => {
   const { pageParent, pageTitle } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  const { PROJECT_TABS } = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
-  assert.deepEqual(PROJECT_TABS.map((t) => [t.key, t.label]),
-    [['status', 'Hub'], ['chat', 'Chat'], ['needs', 'Needs you'], ['all', 'All items']]);
-  assert.equal(pageParent('workshop'), 'status', 'the Workshop page goes back to the hub');
-  assert.deepEqual(['needs', 'workshop', 'all', 'chat'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Chat']);
-  // The band, or the Workshop page's way back.
-  assert.match(LANDER, /const railNode = tab === 'workshop' \? \(/);
-  assert.match(LANDER, /<PageBack\s+label="Hub"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  const band = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
+  assert.deepEqual(band.PROJECT_TABS.map((t) => [t.key, t.label]),
+    [['status', 'Hub'], ['discussion', 'Discussion'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
+  assert.equal(band.litTab('all'), 'workshop', 'the Workshop tab stays lit over All items');
+  assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
+  assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
+  // The band on every page; All items adds its way back under it.
+  assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
+  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
   // The hub's order, as agreed: the hero (who is here, what it is, what you
-  // can do, the fortnight), what landed since your last visit, the votes you
-  // owe, the chat's last lines (or Share it, for Just you), your work, and
-  // Start a new change.
-  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'chat' ? ("));
+  // can do, the fortnight), what landed since your last visit, Needs you (a
+  // quiet line when no vote is owed, #3408), the discussion's last two
+  // messages (or Share it, for Just you), your work, and Start a new change.
+  // One column at every width.
+  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'discussion' ? ("));
   const order = ['<CommunityCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard', 'data-ws-start-change'].map((x) => hub.indexOf(x));
   assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, votes, chat, Share it, your work, Start a new change');
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, Needs you, discussion, Share it, your work, Start a new change');
+  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
+    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408)');
   assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
-    'the summary card is the way to the Workshop page, week by week');
-  assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('chat'\)\} \/>/,
-    'the chat is a preview whose Open is the Chat tab');
+    'the summary card\'s Week by week is the Workshop tab');
+  assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
+    'the discussion is a preview whose Open is the Discussion tab');
   assert.match(hub, /\{v\.mine && v\.mine\.rows\.length \? \(\s*<YourWorkCard/, 'your work only when you have some');
-  assert.doesNotMatch(hub, /<WorkshopDoor|<NothingToVote|data-ws-since=""/, 'no doors, and the since list is the Workshop page\'s');
-  // Chat is the channel whole; All items ends with the approval rules.
-  assert.match(LANDER, /\{tab === 'chat' \? \(\s*<ProjectChat slug=\{slug\}/);
-  const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
-  assert.ok(all.indexOf('data-ws-pane=""') < all.indexOf('<ApprovalRules'), 'the approval rules at All items\' foot');
-  // The Workshop page: your work in full, the since list by week, All items
+  assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
+  assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
+  // Discussion is the channel whole.
+  assert.match(LANDER, /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
+  // The Workshop tab: your work in full, the since list by week, All items
   // with See all.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
   assert.ok(w('data-ws-mine=""') < w('data-ws-since=""') && w('data-ws-since=""') < w('data-ws-dashboard=""'));
   assert.doesNotMatch(ws, /<ApprovalRules/);
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
-  // `?ws=chat` is a deep link like the others.
-  assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'chat', 'workshop', 'needs', 'all'\],/);
+  // All items leads with the approval rules, above the categories.
+  const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
+  assert.ok(all.indexOf('<ApprovalRules') >= 0 && all.indexOf('<ApprovalRules') < all.indexOf('data-ws-pane=""'),
+    'the approval rules above the categories');
+  // `?ws=discussion` is a deep link like the others.
+  assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all'\],/);
 });
 
 test('the hub\'s channel card shows the last messages, what is new, and the way in', () => {
@@ -141,28 +149,49 @@ test('the hub\'s channel card shows the last messages, what is new, and the way 
   assert.match(homeroom, /<a href="#messages\/1" class="dev-ws-hub-open/);
   assert.doesNotMatch(homeroom, /data-ws-channel-archive|dev-ws-hub-archive|Earlier project discussion/,
     'the channel card links to no archive');
+  // THE HUB'S PREVIEW (#852): the card's own look, its last two messages,
+  // no composer, and how many more are unread above them, opening the
+  // Discussion tab rather than the room.
+  const five = [1, 2, 3, 4, 5].map((n) => ({ id: n, content: `m${n}`, created_at: '2026-09-20T10:00:00Z', by: 'ada' }));
+  const preview = renderToHtml(createElement(ChannelCard, {
+    slug: 'garden', name: 'Garden', compact: true, onOpen: () => {},
+    data: community({ channel: { ...community().channel, recent: five, unread_count: 7, post_url: '/api/apps/garden/messages' } }),
+  }));
+  assert.match(preview, /data-ws-channel="preview"/);
+  assert.match(preview, /<span class="dev-ws-head-title">Discussion<\/span>/);
+  assert.deepEqual([...preview.matchAll(/class="dev-ws-hub-msg-text">([^<]*)</g)].map((m) => m[1]), ['m4', 'm5'], 'the last two');
+  assert.match(preview, /<button type="button" class="dev-ws-hub-more-unread un-touch-target" data-ws-channel-more-unread="5">5 more unread messages<\/button>/,
+    'seven unread, two of them shown');
+  assert.ok(preview.indexOf('data-ws-channel-more-unread') < preview.indexOf('data-ws-channel-recent'), 'above the messages');
+  assert.match(preview, /<button type="button" class="dev-ws-hub-open un-touch-target" data-ws-channel-open="">Open/, 'Open is the tab');
+  assert.doesNotMatch(preview, /data-ws-channel-compose|data-ws-channel-unread/, 'no composer, and the count is the line, not a pill');
+  const { moreUnread } = loadTsx(HUB);
+  assert.equal(moreUnread(2, 2), 0, 'nothing more to say when both unread are on screen');
+  assert.equal(moreUnread(0, 2), 0);
   // Nothing to draw without a record, or for a viewer who may not talk here.
   assert.equal(renderToHtml(createElement(ChannelCard, { slug: 'garden', name: 'Garden', data: null })), '');
   assert.equal(renderToHtml(createElement(ChannelCard, { slug: 'garden', name: 'Garden', data: community({ channel: null }) })), '');
 });
 
 test('Needs you opens the queue and counts the votes owed', () => {
-  const { NeedsCard, owesVote } = loadTsx(HUB);
+  const { NeedsCard } = loadTsx(HUB);
   const row = (key, title, who) => ({ t: 'card', key, card: { title: { text: title } }, who, kind: 'vote' });
   const needs = renderToHtml(createElement(NeedsCard, {
     queue: [row('a', 'Dark mode', 'ada'), row('b', 'Tags', 'lin'), row('c', 'Export', 'kai')],
     canPost: true,
     onOpen: () => {},
   }));
-  assert.match(needs, /<button type="button" class="dev-ws-hub-row dev-ws-hub-votes" data-ws-hub-needs-open="">/);
-  assert.match(needs, />3 votes waiting on you</);
+  assert.match(needs, /<span class="dev-ws-head-title">Needs you<\/span><span class="dev-ws-head-n">3 to vote<\/span>/);
+  assert.match(needs, /<span class="dev-ws-hub-needs-title">Dark mode<\/span><span class="dev-ws-hub-needs-sub">from @ada · and 2 more<\/span>/);
   assert.doesNotMatch(needs, /Join to vote/);
   const outsider = renderToHtml(createElement(NeedsCard, { queue: [row('a', 'Dark mode', 'ada')], canPost: false, onOpen: () => {} }));
   assert.match(outsider, /Join to vote on these\./);
-  // No vote owed, nothing on the hub: the Needs you tab says so for itself.
+  assert.doesNotMatch(needs, /data-ws-hub-needs-none/, 'the door says nothing about an empty queue: it is not drawn then');
+  // #3408: no vote owed, no card. One quiet line says so.
+  const { NothingToVote, owesVote } = loadTsx(HUB);
   assert.equal(owesVote([]), false);
-  assert.equal(renderToHtml(createElement(NeedsCard, { queue: [], canPost: true, onOpen: () => {} })), '');
-  assert.equal(loadTsx(HUB).NothingToVote, undefined, 'no quiet line in its place any more');
+  const none = renderToHtml(createElement(NothingToVote, { queue: [], onOpen: () => {} }));
+  assert.equal(none, '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
 
   // Members & activity is the hero's since #3268: pinned in
   // tests/community-hub-details.test.js.

@@ -39,16 +39,15 @@ export function HeaderProjectTabs() {
   const tabs = useStoreState(projectTabsStore);
   const { slug } = useStoreState(improveStore) as { slug: string | null };
   const { screen } = useStoreState(navStore) as { screen: string | null };
-  // The page is up, about the app the header is naming, and not on the
-  // Workshop page, which leads with its own way back instead of tabs.
-  if (!wide || !tabs.slug || tabs.slug !== slug || screen !== 'app-view' || tabs.tab === 'workshop') return null;
+  // The page is up, about the app the header is naming. On All items, the
+  // Workshop's page, the Workshop tab stays lit (./project-band.tsx litTab).
+  if (!wide || !tabs.slug || tabs.slug !== slug || screen !== 'app-view') return null;
   return (
     <ProjectBand
       inHeader
       tab={tabs.tab}
       owed={tabs.owed}
       filtered={tabs.filtered}
-      color={tabs.color || '#2a2e34'}
       onTab={(key) => requestProjectTab(tabs.slug as string, key)}
     />
   );

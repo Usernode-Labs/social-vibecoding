@@ -1,11 +1,13 @@
 /**
- * The project page's Chat tab: the community's channel, whole, in place.
+ * The project page's Discussion tab: the community's channel, whole, in
+ * place.
  *
- * The hub shows the channel's last two lines and a way in (./hub-cards.tsx
- * ChannelCard, compact). The way in used to leave the page for
- * `#messages/app/<slug>`; it is a tab of the page now, so a person reading
- * the hub and a person talking in the room are on the same page with the
- * same coloured header, and Back is the tab strip rather than a screen swap.
+ * The hub shows the discussion's last two messages and a way in
+ * (./hub-cards.tsx ChannelCard, compact). The way in used to leave the page
+ * for `#messages/app/<slug>`; it is a tab of the page now, so a person
+ * reading the hub and a person talking in the room are on the same page with
+ * the same coloured header, and Back is the tab strip rather than a screen
+ * swap.
  *
  * ── The same room, mounted the way Messages mounts it ─────────────────
  *
@@ -22,8 +24,9 @@
  * Its channel is #general, which is a conversation of the Messages store
  * rather than an app chat, and has no pane that can be mounted elsewhere
  * (the general chat's ids are global, and Messages owns that one). So its
- * Chat tab is the channel card in full, composer and all, with the way to
- * the room itself. So is any project whose channel the viewer may not read.
+ * Discussion tab is the channel card in full, composer and all, with the way
+ * to the room itself. So is any project whose channel the viewer may not
+ * read.
  */
 
 import { useEffect, useRef, type ReactNode } from 'react';
@@ -31,7 +34,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import type { CommunityPayload } from './community-card';
 import { ChannelCard } from './hub-cards';
 
-export function ProjectChat({ slug, name, data }: {
+export function ProjectDiscussion({ slug, name, data }: {
   slug: string;
   name: string;
   data: CommunityPayload | null;
@@ -68,11 +71,11 @@ export function ProjectChat({ slug, name, data }: {
   if (!embeddable) {
     return channel
       ? <ChannelCard slug={slug} name={name} data={data} />
-      : <p className="dev-ws-week-note" data-ws-chat-none="">This project has no channel you can read.</p>;
+      : <p className="dev-ws-week-note" data-ws-discussion-none="">This project has no discussion you can read.</p>;
   }
   return (
-    <section className="dev-ws-chat" data-ws-chat="" aria-label={`${name} chat`}>
-      <div ref={host} className="dev-ws-chat-host" />
+    <section className="dev-ws-discussion" data-ws-discussion="" aria-label={`${name} discussion`}>
+      <div ref={host} className="dev-ws-discussion-host" />
     </section>
   );
 }

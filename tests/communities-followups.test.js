@@ -76,12 +76,13 @@ test('#3270: the feed reads the owed populations for member projects only, newes
   assert.ok(route.DEMO_NEEDS_FEED.some((it) => it.kind === 'governance'));
 });
 
-test('#3271: on a phone the Communities screen\'s header is its all-apps chip', () => {
+test('#3271, #852: the Communities screen\'s header is its All switcher, at every width', () => {
   const header = read('frontend/src/features/header/header-title.tsx');
-  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && phone;/);
+  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
   assert.match(header, /id="header-scope-switch"[\s\S]{0,400}aria-controls="community-switcher"[\s\S]{0,200}onClick=\{\(e\) => toggleSwitcher\('header', e\.currentTarget\)\}/,
-    'the same switcher the in-page chip opens: Your communities (#852)');
-  const css = read('public/css/app.css');
-  assert.match(css, /@media \(max-width: 699\.98px\) \{\s*#workshop-screen #workshop-scope \{ display: none; \}\s*\}/,
-    'and the in-page chip steps aside at the same width');
+    'it opens Your communities (#852)');
+  assert.doesNotMatch(header, /usePhone|PHONE_QUERY/, 'no width in it any more');
+  // The in-page chip is gone: the bar is the one place it lives.
+  assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /AllAppsScope|id="workshop-scope"/);
+  assert.doesNotMatch(read('public/css/app.css'), /#workshop-scope\b/);
 });

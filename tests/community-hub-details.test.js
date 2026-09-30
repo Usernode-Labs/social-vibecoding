@@ -128,24 +128,28 @@ test('#3276: the hero\'s rows wrap instead of running past a phone\'s edge', () 
 });
 
 test('Needs you counts the votes you owe, not the requests nobody has claimed', () => {
-  const { NeedsCard, owesVote } = loadTsx(HUB);
+  const { NeedsCard } = loadTsx(HUB);
   const row = (key, title, kind) => ({ t: 'card', key, card: { title: { text: title } }, who: 'ada', kind });
   const mixed = renderToHtml(createElement(NeedsCard, {
-    queue: [row('c1', 'Fix login', 'claim'), row('v1', 'Dark mode', 'vote'), row('v2', 'Tags', 'vote')],
+    queue: [row('c1', 'Fix login', 'claim'), row('v1', 'Dark mode', 'vote'), row('c2', 'Tags', 'claim')],
     canPost: true,
     onOpen: () => {},
   }));
-  assert.match(mixed, /data-ws-hub-needs-votes="2"/);
-  assert.match(mixed, /<span class="dev-ws-hub-votes-text">2 votes waiting on you<\/span><span class="dev-ws-hub-votes-cta">Vote<\/span>/,
-    'one row: the count in words, and Vote (#852)');
-  // Requests alone owe no vote, so the hub says nothing: the Needs you tab
-  // carries its own count, and a zero says nothing there either.
+  assert.match(mixed, /data-ws-hub-needs-votes="1"/);
+  assert.match(mixed, /<span class="dev-ws-head-n">1 to vote<\/span>/);
+  assert.match(mixed, /<span class="dev-ws-hub-needs-title">Dark mode<\/span>/, 'the first VOTE leads, not the first row');
+  assert.doesNotMatch(mixed, /Fix login/);
+  // #3408: requests alone owe no vote, so the hub draws no card, only the
+  // line, and its count of requests is the way into the queue.
+  const { NothingToVote, owesVote } = loadTsx(HUB);
   const claims = [row('c1', 'Fix login', 'claim'), row('c2', 'Tags', 'claim')];
   assert.equal(owesVote(claims), false, 'requests alone owe no vote');
   assert.equal(owesVote([...claims, row('v1', 'Dark mode', 'vote')]), true);
-  assert.equal(renderToHtml(createElement(NeedsCard, { queue: claims, canPost: true, onOpen: () => {} })), '');
-  const outsider = renderToHtml(createElement(NeedsCard, { queue: [row('v1', 'Dark mode', 'vote')], canPost: false, onOpen: () => {} }));
-  assert.match(outsider, /1 vote waiting on you[\s\S]*data-ws-hub-needs-join="">Join to vote on these\./);
+  const claimsOnly = renderToHtml(createElement(NothingToVote, { queue: claims, onOpen: () => {} }));
+  assert.match(claimsOnly, /^<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on · <button type="button" class="dev-ws-link un-touch-target" data-ws-hub-needs-requests="">2 requests nobody has picked up<\/button><\/p>$/);
+  assert.doesNotMatch(claimsOnly, /dev-ws-head-n|Needs you/, 'no card, no count');
+  const one = renderToHtml(createElement(NothingToVote, { queue: [claims[0]], onOpen: () => {} }));
+  assert.match(one, />1 request nobody has picked up</);
 });
 
 test('the channel card\'s composer sends to the room and re-reads the hub', () => {

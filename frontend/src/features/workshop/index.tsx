@@ -91,8 +91,6 @@ import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
-import { AllAppsScope } from './workshop-chrome';
-import { communityScopeStore } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import {
   groupRows, orderRows, SECTION_LIMIT, sectionFold, type Audience,
@@ -417,8 +415,6 @@ export function WorkshopScreen() {
     feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
-  // Whether "Your communities" is open, for the All chip's aria-expanded.
-  const { switcher } = useStoreState(communityScopeStore);
   // ONE PAGE: the list of your projects, with Needs you as a row at its top
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
@@ -460,32 +456,20 @@ export function WorkshopScreen() {
             word twice, an inch apart, on the two screens that had been made
             to agree about what a title IS. The bar is the title, which is
             what it is for on every other screen in the shell. */}
-        {/* THE SCOPE CHIP (#3051, reversing #2759 on the owner's request).
-            #2759 took it off because this screen was then only the list of
-            your apps, and a chip whose panel listed them again repeated the
-            page. It came back with the app Workshop's questions read across
-            all of your apps, and "All apps" is what says so: the same chip an
-            app's Workshop wears with that app's name (./workshop-chrome.tsx),
-            at its other end.
+        {/* THE ALL SWITCHER IS THE HEADER'S, at every width (#852): the bar's
+            title on this screen is "All ⌄" (#header-scope-switch,
+            features/header/header-title.tsx), which opens Your communities.
+            It led the page as a chip of its own, #workshop-scope (#3051), and
+            on a phone the header was already it (#3271); a control that says
+            where you are belongs in the bar that says it everywhere else.
 
-            THE LEGEND UNDER IT IS GONE. It named the two things a row counts
-            and totalled them ("You are working on 2 · Votes waiting on you
-            3"). Your own work moved to Profile's Your changes, and the votes
-            total is the Needs you row's title now, drawn only when it is not
-            zero, so the line had nothing left to say that a row did not. */}
-        {/* `pt-5` CLEARS THE HEADER'S NOTCH (#2718 review). The bar is
+            `pt-5` CLEARS THE HEADER'S NOTCH (#2718 review). The bar is
             `rounded-b-2xl -mb-2`, so every screen root starts 8px UNDER its
             bottom edge and whatever leads a screen has to step down past it:
             the 8 the notch owes plus 12 of air, which is what Messages' own
-            first element steps down by. The chip's row leads (#3051), so it
-            carries that step. */}
-        {/* THE ALL APPS CHIP leads the screen, and its row carries the
-            header notch clearance (`pt-5`, see above). It says what the
-            screen is about, all of your projects, and its panel is the way
-            into one. */}
-        <div className="px-4 pt-5 pb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <AllAppsScope open={!!switcher} />
-        </div>
+            first element steps down by. The chip's row carried that step; the
+            spacer below does now. */}
+        <div className="pt-5" aria-hidden="true" />
         {/* ONE PAGE, NO TABS. The screen had two, Current status and Needs
             you (#3051), over a line of totals. What you are working
             on moved to your profile (Your changes), which left Current status

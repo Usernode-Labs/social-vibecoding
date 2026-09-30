@@ -23,10 +23,11 @@
  * ── The switcher ───────────────────────────────────────────────────────
  *
  * "Your communities": All communities first, then each community you are in,
- * then "Join or start a community". It opens from the tab pressed while it is
- * already lit, from the community's name and ⌄ in the coloured header, and
- * from the Communities list's own header. `openSwitcher(from)` says where, so
- * a wide window can hang the menu off whatever opened it.
+ * then "Join or start a community". It opens from the phone's tab pressed
+ * while it is already lit, from the community's name and ⌄ in the coloured
+ * header, and from the header's "All ⌄" on the Communities list.
+ * `openSwitcher(from)` says where, so a wide window can hang the menu off
+ * whatever opened it.
  *
  * ── Island rules ───────────────────────────────────────────────────────
  *
@@ -53,7 +54,8 @@ export interface CommunityInfo {
   lastActiveAt?: string | null;
 }
 
-export type SwitcherFrom = 'tab' | 'rail' | 'header' | 'list';
+/** Where the switcher was opened from: the phone's tab, or the header. */
+export type SwitcherFrom = 'tab' | 'header';
 
 export interface CommunityScopeState {
   /** The community the tab is on, or null for All communities. */

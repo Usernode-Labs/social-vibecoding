@@ -79,12 +79,11 @@ import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../c
 import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
-import { useCommunityColor } from '../../../lib/community-color';
 import { describe as describeCommunity } from '../../workshop/community-scope';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
-import { ChannelCard, NeedsCard, YourWorkCard } from './hub-cards';
-import { ProjectChat } from './project-chat';
+import { ChannelCard, NeedsCard, NothingToVote, owesVote, YourWorkCard } from './hub-cards';
+import { ProjectDiscussion } from './project-discussion';
 import { ProjectBand, projectTabsStore, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
 import { PageBack } from './page-back';
@@ -133,24 +132,25 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
 /**
  * THE PAGES OF A PROJECT: four tabs under its coloured header, and one page.
  *
- *   Hub · Chat · Needs you · All items
+ *   Hub · Discussion · Needs you · Workshop
  *
  * The HUB is the community's page: who is here and who it is for, what you
  * can do (Open app, Invite, the ⋯, Joined), how lively it has been, what
- * landed since you were last here, the votes waiting on you, the last lines
- * of its chat, your work, and Start a new change. CHAT is its channel,
- * whole. NEEDS YOU is one decision per screen, and ALL ITEMS the whole
- * board, with the approval rule every change goes through at its foot.
+ * landed since you were last here, Needs you, the discussion's last two
+ * messages, your work, and Start a new change. DISCUSSION is its channel,
+ * whole. NEEDS YOU is one decision per screen. The WORKSHOP is your work in
+ * full, what moved since your last visit filed under each week, and All
+ * items' numbers, whose See all opens ALL ITEMS: the whole board, with the
+ * approval rule every change goes through above its categories. All items is
+ * the one page, with its way back to the Workshop, and the Workshop tab stays
+ * lit over it.
  *
  * The tabs came back as a BAND in the community's colour, continuing the
  * header, rather than the pill the hub once shared with the Workshop: the
  * hub then read as one of two peers, and a second Workshop. Here the hub is
- * the first of four places in one community, and the colour says which.
- *
- * THE WORKSHOP is the one page left, behind the since card's "Week by week":
- * your work in full, what moved since your last visit filed under each week,
- * and All items' numbers. It leads with a way back to the hub. The keys and
- * the `?ws=` deep links are the ones the tabs and doors had.
+ * the first of four places in one community, and the colour says which. The
+ * keys and the `?ws=` deep links are the ones the tabs and doors had, and
+ * `discussion`.
  */
 
 /**
@@ -159,39 +159,20 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
  */
 export function freshTab(): TabKey | null {
   const tab = callAppView('_workshopTab');
-  return tab === 'status' || tab === 'chat' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
+  return tab === 'status' || tab === 'discussion' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
 }
 
-/** Where a page's back button goes. The Workshop is the only page, and it is the hub's. */
-export function pageParent(_tab: TabKey): TabKey {
-  return 'status';
+/** Where a page's back button goes: All items to the Workshop, the rest to the hub. */
+export function pageParent(tab: TabKey): TabKey {
+  return tab === 'all' ? 'workshop' : 'status';
 }
 
-/** A page's own title, in its back bar. */
+/** A page's own title. */
 export function pageTitle(tab: TabKey): string {
   if (tab === 'needs') return 'Needs you';
   if (tab === 'all') return 'All items';
-  if (tab === 'chat') return 'Chat';
+  if (tab === 'discussion') return 'Discussion';
   return 'Workshop';
-}
-
-/**
- * THE COMMUNITY'S COLOUR, on the page's chrome while it is up: the header
- * above the band paints itself from `--community-tint` on the root
- * (app.css, "The project's colour"). Set on mount and on a change of colour,
- * and taken off when the page goes, so no other screen inherits it.
- */
-function useHeaderTint(color: string | null): void {
-  useEffect(() => {
-    if (!color || typeof document === 'undefined') return undefined;
-    const root = document.documentElement;
-    root.style.setProperty('--community-tint', color);
-    root.setAttribute('data-community-tint', '');
-    return () => {
-      root.style.removeProperty('--community-tint');
-      root.removeAttribute('data-community-tint');
-    };
-  }, [color]);
 }
 
 // The shared ago ladder (#1808) — this file used to carry its own, with a
@@ -2979,13 +2960,11 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
 /**
  * The grouping strip — "By category" / "By stage".
  *
- * ONE NODE, RENDERED IN ONE OF TWO PLACES. Below 768px it is a row of
- * the pane's sticky head, full width, as it has always been. From 768px up it
- * moves into `.dev-ws-ear` — a surface hanging off the pane's top-right
- * corner, beside the lander's tab pill — and app.css shrinks it to its labels
- * there. Rendered in ONE place at a time rather than twice with one hidden:
- * `[data-ws-group]` is what the declared checks and `querySelector` reach
- * for, and a hidden twin is the copy they would find first.
+ * THE PANE HEAD'S FIRST ROW, at every width (#852). From 768px up it used to
+ * hang off the pane's top-right corner as an "ear", level with the tab pill;
+ * the tabs moved into the header, so there is no pill to sit beside and the
+ * strip leads the head everywhere, as it always did on a phone. Written once:
+ * `[data-ws-group]` is what the declared checks and `querySelector` reach for.
  */
 function GroupStrip({ group }: { group: string }): ReactNode {
   return (
@@ -3023,19 +3002,6 @@ function GroupStrip({ group }: { group: string }): ReactNode {
  */
 const WIDE_QUERY = '(min-width: 700px)';
 
-/**
- * The OTHER breakpoint, and it is deliberately not that one.
- *
- * From 768px up the grouping strip leaves the pane head and sits beside the
- * tab pill as an ear on the pane's top-right corner (app.css, "The grouping
- * strip as an EAR"). 768 rather than 700 because the reading column tops out
- * at 760px there: above it the row has exactly one appearance — a 444px pill,
- * a 233px ear, 83px of air — at every width, and below it the two would close
- * on each other through a 60px band before the rail breakpoint took the pill
- * away. Those three numbers are measured, not chosen.
- */
-const EAR_QUERY = '(min-width: 768px)';
-
 /** `matchMedia` where there is one — the vm the tests render in has none. */
 function matchesQuery(query: string): boolean {
   return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
@@ -3071,189 +3037,62 @@ function useMediaFlag(query: string): boolean {
 }
 
 /**
- * The air between the tab pill and the ear, once the ear claims the rest.
+ * Everything `useStripInsets` publishes, so the teardown cannot miss one.
  *
- * The two surfaces are level and adjacent, so this is the seam between them
- * rather than a layout gap — the same 10px the ear spends on its own
- * horizontal padding, so the distance from the pill to the first label reads
- * as one step.
+ * WHERE THE PANE HEAD COMES TO REST, under the pinned strip, and where the
+ * band behind the pinned strip reaches (QA 2026-09-24 Q7): offsets from the
+ * strip's own edges to the pane's, zero on By category, where the strip and
+ * the pane share the reading column, and negative on By stage, where the pane
+ * goes full-bleed and the band has to cover the board columns either side.
  */
-const EAR_GAP_PX = 10;
+const STRIP_PROPS = ['--dev-ws-head-top', '--dev-ws-band-left', '--dev-ws-band-right'];
 
-/**
- * Everything `useEarInset` publishes, so the teardown cannot miss one.
- *
- * They are all derived from the same measurement and all read by app.css; a
- * stale one left on the host would be inherited by the next crossing, which
- * is why this is a list rather than four remove calls written out.
- */
-const EAR_PROPS = ['--dev-ws-ear-left', '--dev-ws-group-w', '--dev-ws-head-top'];
-
-/**
- * QA 2026-09-24 Q7: where the pinned strip's band reaches, as offsets from the
- * nav's own edges to the pane's. Zero on By category, where the nav and the
- * pane are the same reading column; negative on By stage, where the pane goes
- * full-bleed and the band has to cover the board columns either side of the
- * column, or the cards scroll past the strip in plain view. Cleared with the
- * ear's below the breakpoint, and on a tab with no pane, so the band falls
- * back to the nav's own width there.
- */
-const BAND_PROPS = ['--dev-ws-band-left', '--dev-ws-band-right'];
-
-/** The ear's own horizontal padding (`padding: 5px 10px`, app.css). */
-const EAR_PAD_X = 10;
-
-/** The column gap between the tab strip and the pane below it (`.dev-ws`). */
+/** The column gap between the strip and the pane below it (`.dev-ws`). */
 const WS_GAP_PX = 10;
 
 /**
- * The narrowest the ear is allowed to be, which is what its labels need.
+ * Measure the strip against the pane on All items, from 700px up, where the
+ * strip is sticky and the pane head pins under it.
  *
- * Measured: "By category" + "By stage" plus the rail's padding come to 233px.
- * The clamp matters at the bottom of the ear's range — just above 768px the
- * pill is 444px of a 760px column, so the honest answer for `left` would
- * leave the ear 306px, but a longer translation of either label (or a user
- * font scale) narrows that fast. Past the clamp the ear stops growing
- * leftward and keeps its content rather than crushing it; `right: 0` is never
- * given up, so the pane's right edge is still tracked.
+ * THE EAR IS GONE (#852). The grouping tabs used to hang off the pane's top
+ * right corner, level with the tab pill, which took four more measurements
+ * (the ear's left bound, its tabs' width) and a clip on the pane's outline.
+ * They are the pane head's first row now at every width, as they always were
+ * on a phone, so only the two facts the pinned header still needs are
+ * measured: how tall the strip is, and how far the pane reaches past it.
+ *
+ * NO DEPENDENCY ARRAY, deliberately: this runs after every render, because a
+ * grouping switch moves the pane's edges (By stage is full-bleed) and a
+ * centred column can move without changing size, which a ResizeObserver does
+ * not report. The observer covers what changes between renders.
  */
-const EAR_MIN_PX = 240;
-
-/**
- * WHY THE SURFACE MAY GROW AND THE LABELS MAY NOT.
- *
- * The ear's right edge is the pane's, in CSS (`right: 0` on a child of the
- * head), so on By stage — where the pane goes full-bleed — the surface grows
- * with it. For one round it was measured off the tab strip's column instead,
- * to stop it "shifting right with the pane growth"; that held the ear at a
- * fixed 306px and needed three more custom properties to put the pane's
- * outline back to the right of it.
- *
- * What makes the simpler anchor work now is that the TABS no longer share the
- * surface (`flex: 0 0 auto`, app.css). Sharing it is what made a full-bleed
- * pane produce 268px and 348px tabs — a title bar with a label in it — and
- * what the retired width cap existed to prevent. With the labels hugging at
- * the surface's left end, the control sits at the same coordinates under
- * either grouping and only the surface behind it changes width, so there is
- * nothing left for a cap to catch.
- *
- * The cost is deliberate: on By category the labels no longer fill their
- * surface, leaving empty ear to the right of "By stage".
- */
-
-/**
- * Stretch the ear leftward to meet the tab pill.
- *
- * The ear used to hug its two labels, which left a wide band of dead space
- * between it and the pill — 83px at the narrow end and the same at every
- * width, because both boxes were content-sized inside a column that tops out
- * at 760px. It now spans from just clear of the pill to the pane's right
- * edge, and the two tabs share that width (`flex: 1 1 0` in app.css).
- *
- * WHY THIS IS MEASURED RATHER THAN WRITTEN IN CSS. The pill is
- * `.dev-ws-tabtrack` inside `.dev-ws-tabs`, and the ear is a child of the
- * pane: different subtrees, so no selector can hand one the other's width.
- * The nav is left-aligned on the same reading column as the pane (see the
- * `justify-content: flex-start` note in app.css), which is what makes the
- * pill's right edge the ear's left bound in the first place — but its width
- * is three text labels, so only a measurement knows it.
- *
- * NO FEEDBACK LOOP HERE, unlike the filter strip's measurement: the ear is
- * absolutely positioned and therefore out of flow, so its width cannot
- * change the pill's or the pane's. The observer watches the two boxes it
- * reads and writes a property neither of them consults.
- *
- * The value lands as a custom property on `.dev-ws` and is inherited by the
- * ear, so React renders no style of its own — the same rule the rest of the
- * shell follows for anything written at runtime.
- */
-function useEarInset(
+function useStripInsets(
   bar: HTMLElement | null,
   hostRef: React.RefObject<HTMLDivElement | null>,
-  earUp: boolean,
+  enabled: boolean,
 ): void {
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
-    // Down at phone width the strip is back in the pane head and the ear does
-    // not exist. Clear the property rather than leave a stale number on the
-    // host for the next crossing to inherit.
-    if (!earUp || !bar) {
-      for (const k of EAR_PROPS) host.style.removeProperty(k);
-      for (const k of BAND_PROPS) host.style.removeProperty(k);
-      return undefined;
-    }
-    const track = bar.querySelector<HTMLElement>('.dev-ws-tabtrack');
     const pane = host.querySelector<HTMLElement>('[data-ws-pane]');
-    if (!track || !pane) {
-      for (const k of BAND_PROPS) host.style.removeProperty(k);
+    if (!enabled || !bar || !pane) {
+      for (const k of STRIP_PROPS) host.style.removeProperty(k);
       return undefined;
     }
     const measure = () => {
-      const t = track.getBoundingClientRect();
       const n = bar.getBoundingClientRect();
       const p = pane.getBoundingClientRect();
-      if (!t.width || !n.width || !p.width) return;
-      // ONE NUMBER LEFT. The ear's right edge is the pane's, in CSS, so only
-      // its left bound needs measuring: reach the pill, unless that would
-      // leave the surface narrower than the two labels — then stop and let
-      // the seam widen instead. `right` and the two the pane's outline used
-      // to need went with the column anchoring that produced them.
-      const wanted = Math.max(0, t.right - p.left + EAR_GAP_PX);
-      const left = Math.min(wanted, Math.max(0, p.width - EAR_MIN_PX));
-      host.style.setProperty('--dev-ws-ear-left', `${Math.round(left)}px`);
-      // HOW WIDE THE TABS ARE, and it is the same number under both
-      // groupings — which is the whole point. They fill the ear on By
-      // category, where the surface stops at the reading column; on By stage
-      // the SURFACE grows with the full-bleed pane and the tabs keep the size
-      // they had, rather than stretching to 268px apiece or shrinking to their
-      // labels.
-      //
-      // So it is measured to the NAV's right edge rather than the pane's. The
-      // nav keeps the reading column in both groupings and the ear's left edge
-      // sits beside the pill in both, so this is one width: 286px at 1280,
-      // whether the ear around it is 306px or 562px.
-      const groupW = Math.max(0, Math.round(n.right - (p.left + left) - EAR_PAD_X * 2));
-      host.style.setProperty('--dev-ws-group-w', `${groupW}px`);
-      // WHERE THE HEAD COMES TO REST, which is under the pinned tab strip
-      // rather than at the top of the scroller. Both stick, so the offset has
-      // to be the strip's own height — three text labels and a glyph, so a
-      // measurement again rather than a literal — plus the column gap between
-      // them. Pinned too high, the head would slide under the strip; too low
-      // and a band of the list shows through between the two.
+      if (!n.width || !p.width) return;
       host.style.setProperty('--dev-ws-head-top', `${Math.round(n.height) + WS_GAP_PX}px`);
-      // The band behind the pinned strip spans the PANE, not the nav (see
-      // BAND_PROPS). Offsets from the nav's edges, which is the box the
-      // band's pseudo-element is positioned in.
       host.style.setProperty('--dev-ws-band-left', `${Math.round(p.left - n.left)}px`);
       host.style.setProperty('--dev-ws-band-right', `${Math.round(n.right - p.right)}px`);
     };
     measure();
-    if (typeof ResizeObserver !== 'function') return undefined;
+    if (typeof ResizeObserver === 'undefined') return undefined;
     const ro = new ResizeObserver(measure);
-    ro.observe(track);
-    // The pane too: By category is the reading column and By stage is the
-    // full-bleed card, so the right edge this is measured back from moves
-    // when the grouping does.
+    ro.observe(bar);
     ro.observe(pane);
     return () => ro.disconnect();
-    // NO DEPENDENCY ARRAY, deliberately: this runs after EVERY render, and a
-    // narrow one is what broke it. With `[bar, hostRef, earUp]` the effect
-    // could not re-run on a grouping switch, so the number measured against
-    // the 760px column — where the pane's left edge is 260 at 1280 — was
-    // still in force once By stage made the pane full-bleed and moved that
-    // edge to 4. The ear then began 250px further left than it should and
-    // overlapped the tab pill.
-    //
-    // It is also what covers a pane or a pill that arrives AFTER the first
-    // run (the observer is attached to whatever is there at the time) and any
-    // viewport change the observed boxes do not register, since a centred
-    // column can MOVE without changing size and a ResizeObserver reports
-    // size alone.
-    //
-    // The cost is one observer teardown and setup per render of the Workshop,
-    // which re-renders on data changes rather than on a timer. Correctness
-    // over that: the version with deps shipped a visible bug.
   });
 }
 
@@ -3277,7 +3116,7 @@ function useEarInset(
  * frame's own scroller, or the document on a touch browser); a capturing
  * listener on the document hears a scroll from either.
  *
- * The attribute is written straight onto the host, like useEarInset's
+ * The attribute is written straight onto the host, like useStripInsets's
  * properties: it changes on scroll, and a React state for it would re-render
  * the whole Workshop, board included, on the frame the strip sticks.
  */
@@ -3417,15 +3256,12 @@ export function DevWorkshop(): ReactNode {
   // the kanban view model only when the stage pane is up. See
   // ./group-mode-store.ts.
   const group = useWorkshopGroup();
-  // Where the grouping strip renders: beside the tab pill from 768px up, in
-  // the pane's sticky head below it. See `EAR_QUERY` and `GroupStrip`.
-  const earUp = useMediaFlag(EAR_QUERY);
-  // ...and how wide it is: from just clear of the pill to the pane's right
-  // edge, which only a measurement knows. See `useEarInset`.
-  useEarInset(bar, hostRef, earUp);
-  // QA 2026-09-24 Q7: whether the strip is pinned, for app.css's band behind
-  // it. Only where the strip is sticky at all. See `usePinnedStrip`.
+  // Where the strip is sticky at all (700px up): the pane head pins under
+  // it, at an offset only a measurement knows (`useStripInsets`), and
+  // app.css draws a band behind it while it is pinned (`usePinnedStrip`,
+  // QA 2026-09-24 Q7).
   const stripSticks = useMediaFlag(WIDE_QUERY);
+  useStripInsets(bar, hostRef, stripSticks);
   usePinnedStrip(bar, hostRef, stripSticks, tab);
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
@@ -3513,16 +3349,12 @@ export function DevWorkshop(): ReactNode {
   const community = useCommunity(v.slug || '');
   // Looking in rather than taking part: the hub says "Recently" to them.
   const outsider = !!community && !community.is_member;
-  // THE COMMUNITY'S COLOUR (lib/community-color.ts): dapp.json's own, else
-  // one read off its icon, else its name's swatch, always dark enough for
-  // white text. The header, the band and Open app wear it. The improve
-  // store is the header's own record of the app, so it is read only once it
-  // is about this project, not the one the page was last pointed at.
+  // The improve store is the header's own record of the app, read only once
+  // it is about this project, not the one the page was last pointed at.
+  // THE COMMUNITY'S COLOUR is the header's (../../header/community-tint.ts):
+  // it sets `--community-tint` on the root, and the band and Open app wear
+  // that property, so the page works nothing out a second time.
   const own = !!v.slug && app.slug === v.slug;
-  const color = useCommunityColor(own ? {
-    color: app.iconColor, iconUrl: app.iconUrl, iconEmoji: app.iconEmoji, key: v.slug as string,
-  } : null);
-  useHeaderTint(own && !v.loading ? color : null);
   // The votes waiting on you: the band's Needs you count, the hub's row,
   // and the Communities tab's badge and switcher (features/workshop/
   // community-scope.ts), which learn it from here while the page is up.
@@ -3539,9 +3371,9 @@ export function DevWorkshop(): ReactNode {
   // which is up and what they count, and nothing once the page has gone.
   useEffect(() => {
     if (!v.slug || v.loading) return undefined;
-    projectTabsStore.set({ slug: v.slug, tab, owed, filtered: !!v.meta.filtered && tab !== 'all', color });
+    projectTabsStore.set({ slug: v.slug, tab, owed, filtered: !!v.meta.filtered && tab !== 'all' });
     return undefined;
-  }, [v.slug, v.loading, tab, owed, v.meta.filtered, color]);
+  }, [v.slug, v.loading, tab, owed, v.meta.filtered]);
   useEffect(() => () => { projectTabsStore.set({ slug: null }); }, []);
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
@@ -3554,32 +3386,35 @@ export function DevWorkshop(): ReactNode {
   // EmptyNote.
   const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped);
 
-  /* ── The band, or the Workshop page's back bar ──
+  /* ── The band, and on All items its back bar ──
      The four tabs in the community's colour (ProjectBand), leading the
-     markup so focus order and reading order agree. The Workshop is a page,
-     not a tab, so it leads with its way back to the hub instead; both keep
-     the strip's measured box (`.dev-ws-tabs` > `.dev-ws-tabtrack`). */
-  const railNode = tab === 'workshop' ? (
-    <div ref={setBar} className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
-      <div className="dev-ws-tabtrack">
-        <PageBack
-          label="Hub"
-          title={pageTitle(tab)}
-          onBack={() => openTab(pageParent(tab))}
-        />
-      </div>
-    </div>
-  ) : (
+     markup so focus order and reading order agree; the Workshop tab stays
+     lit over All items. All items is a page of the Workshop, so under the
+     band it leads with its way back there. The bar the pinned pane head and
+     its band are measured against (`setBar`) is that back bar on All items,
+     where the pane is, and the band everywhere else; both keep the strip's
+     box (`.dev-ws-tabs` > `.dev-ws-tabtrack`). */
+  const band = (
     <ProjectBand
       tab={tab}
       owed={owed}
       // #2915: not while All items is up, where the search box says so.
       filtered={!!v.meta.filtered && tab !== 'all'}
-      color={color}
       onTab={openTab}
-      barRef={setBar}
+      barRef={tab === 'all' ? undefined : setBar}
     />
   );
+  const pageBar = tab === 'all' ? (
+    <div ref={setBar} className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
+      <div className="dev-ws-tabtrack">
+        <PageBack
+          label="Workshop"
+          title={pageTitle(tab)}
+          onBack={() => openTab(pageParent(tab))}
+        />
+      </div>
+    </div>
+  ) : null;
 
   // The Workshop page's since list, filed by week. A first visit has no
   // baseline and so nothing new, but the weeks and their lines are still
@@ -3595,7 +3430,8 @@ export function DevWorkshop(): ReactNode {
       className="dev-ws"
       data-ws-tab={tab}
     >
-      {railNode}
+      {band}
+      {pageBar}
       {/* Everything but the bar lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
           beneath it while you scroll, so the content needs a bar's worth of
@@ -3622,7 +3458,6 @@ export function DevWorkshop(): ReactNode {
           slug={slug}
           name={app.name || undefined}
           canOpenApp={!actions.selfHosted}
-          color={color}
           menu={(
             <DevPlusMenu
               illustrationApp={actions.illustrationApp}
@@ -3657,27 +3492,24 @@ export function DevWorkshop(): ReactNode {
       ) : null}
 
       {/* ── The hub, top to bottom: what landed, what is owed, the room, yours ──
-          What landed since you were last here, in a sentence or two, with
-          the way to it week by week (the Workshop page); the votes waiting
-          on you, one row, when there are any; the chat's last two lines and
-          its tab, or, for a project that is just yours and has nobody to
-          talk to yet, the Share it card, which is how it grows; your own
-          work, two rows and the rest in place; and Start a new change. See
-          ./since-summary-card.tsx and ./hub-cards.tsx. */}
+          One column at every width. What landed since you were last here,
+          in a sentence or two, with the way to it week by week (the Workshop
+          tab); Needs you when a vote is owed (a quiet line when none is,
+          #3408); the discussion's last two messages and its tab, or, for a
+          project that is just yours and has nobody to talk to yet, the Share
+          it card, which is how it grows; your own work, two rows and the
+          rest in place; and Start a new change. See ./since-summary-card.tsx
+          and ./hub-cards.tsx. */}
       {slug ? (
         <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} onMore={() => openTab('workshop')} />
       ) : null}
-      {/* THE SIDE COLUMN on a wide window: what is owed and what is being
-          said, beside the hero and your work (app.css). On a phone the
-          wrapper draws no box and these are rows of the one column, in this
-          order. */}
-      <div className="dev-ws-hub-side">
-        <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
-        {slug && community?.audience !== 'solo' ? (
-          <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('chat')} />
-        ) : null}
-        {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
-      </div>
+      {owesVote(v.queue)
+        ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
+        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
+      {slug && community?.audience !== 'solo' ? (
+        <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('discussion')} />
+      ) : null}
+      {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
       {v.mine && v.mine.rows.length ? (
         <YourWorkCard
           rows={v.mine.rows}
@@ -3706,16 +3538,15 @@ export function DevWorkshop(): ReactNode {
       </>
       ) : null}
 
-      {/* ── CHAT: the community's channel, whole ── (./project-chat.tsx) */}
-      {tab === 'chat' ? (
-        <ProjectChat slug={slug} name={app.name || community?.name || slug} data={community} />
+      {/* ── DISCUSSION: the community's channel, whole ── (./project-discussion.tsx) */}
+      {tab === 'discussion' ? (
+        <ProjectDiscussion slug={slug} name={app.name || community?.name || slug} data={community} />
       ) : null}
 
-      {/* ── THE WORKSHOP PAGE: your work, what changed, what is open ──
-          Everything that was the Workshop tab and the hub's catch-up, as one
-          page behind the hub's door: your own work in full, what moved since
-          your last visit filed under each week's summary, and All items'
-          numbers and its one line (whose head opens All items itself). */}
+      {/* ── THE WORKSHOP TAB: your work, what changed, what is open ──
+          Your own work in full, what moved since your last visit filed under
+          each week's summary, and All items' numbers and its one line (whose
+          head opens All items, the page under this tab). */}
       {tab === 'workshop' ? (
       <>
       {/* ── Lately in this project ──
@@ -3977,6 +3808,10 @@ export function DevWorkshop(): ReactNode {
           tab; its body is what may be empty (see EmptyNote). */}
       {tab === 'all' ? (
         <>
+          {/* ── Approval rules: how a change gets in ──
+              Above the categories they govern (#852). It was the hero's last
+              line, then the Workshop page's foot. */}
+          {slug ? <ApprovalRules slug={slug} /> : null}
           {/* ── The two ways to read the same board ──────────────────────
               The eyebrow here used to say "12 categories" and nothing else:
               a count of a grouping the viewer had no say in. The grouping is
@@ -4007,34 +3842,15 @@ export function DevWorkshop(): ReactNode {
               with the switch also gives the head a title bar — the two-state
               choice, then the tools for whichever state you picked. */}
           <div className="dev-ws-pane-head">
-          {/* THE EAR, on a wide window: the grouping strip on its own surface
-              at the pane's top-right corner, level with the tab pill.
+            {/* THE GROUPING LEADS THE HEAD, at every width (#852). It sat
+                beside the tab pill on a wide window, as an ear on the pane's
+                top-right corner; with the tabs in the header there is no pill
+                to sit beside, so it is the head's first row everywhere, as it
+                always was on a phone.
 
-              A CHILD OF THE HEAD, not of the pane, and that is what makes it
-              travel. The head PINS while the list scrolls under it, and the
-              ear hangs off the head's top edge (`bottom: 100%`) — so an ear
-              anchored to the pane would have scrolled away and left the
-              pinned controls with their own grouping tabs gone. The head is
-              positioned, so it is the containing block; unscrolled, its top
-              edge IS the pane's top edge, which is why this reads exactly as
-              it did when the pane owned it.
-
-              Rendered only when it is up, so the strip below is the same one
-              node moved rather than a second copy of it. */}
-          {earUp ? (
-            <div className="dev-ws-ear" data-ws-ear="">
-              <GroupStrip group={group} />
-            </div>
-          ) : null}
-          {/* NO TITLE LINE HERE. The head used to open with an "All items"
-              eyebrow, on the argument that the tabs named the CHOICE without
-              naming what the choice was being made about. The selected TAB
-              says it — it is the thing reading "All items", right above this
-              — so the eyebrow was the same word twice, one line apart, and
-              the head now leads with the tools. */}
-          {/* The strip's narrow home. Above the breakpoint it is in the ear
-              instead — one node, two places. */}
-          {earUp ? null : <GroupStrip group={group} />}
+                NO TITLE LINE HERE. The back bar above names the page, "All
+                items", so an eyebrow would be the same words twice. */}
+            <GroupStrip group={group} />
             {/* The search and the filters. NOT the ⋯: that is the hub's, in
                 its hero, so the row draws none of its own. */}
             <DevActionsRow
@@ -4116,10 +3932,6 @@ export function DevWorkshop(): ReactNode {
           )}
           </div>
           </section>
-          {/* ── Approval rules: how a change gets in ──
-              The foot of All items, under the work it governs. It was the
-              hero's last line, then the Workshop page's. */}
-          {slug ? <ApprovalRules slug={slug} /> : null}
         </>
       ) : null}
 

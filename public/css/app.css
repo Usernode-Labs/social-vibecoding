@@ -15788,10 +15788,9 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    stacking context (sticky at `z-index: 30` above 700px), so the menu's own
    `z-30` counts only inside it — and the pane head, which pins at `z-index:
    31` wide and 20 narrow, painted over the menu's rows on All items. Only
-   while it is open: at rest the ear, which hangs into the strip's band from
-   the head, has to stay on top of the strip or its two tabs cannot be
-   clicked (see "the ear outranks the nav"). A click there while the menu is
-   up lands on the strip and dismisses the menu, like any outside click. */
+   while it is open: at rest the head keeps its place above the strip. A
+   click there while the menu is up lands on the strip and dismisses the
+   menu, like any outside click. */
 .dev-ws-tabs:has(#dev-plus-menu:not(.hidden)) { z-index: 32; }
 /* THE MARKER. Every number it uses is measured off the live tab (see
    workshop.tsx), so this rule carries no geometry — which is what lets it
@@ -15914,14 +15913,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
     height: var(--ws-fit);
     min-height: var(--ws-fit);
   }
-}
-/* ON A PHONE THE HEADER IS THE CHIP on the Communities screen (#3271), as it
-   is on an app's Workshop at every width (#2768, #3295): the header's title
-   is the all-apps chip there (#header-scope-switch,
-   features/header/header-title.tsx), and its panel still opens in the
-   chip's row, which the tabs now lead. */
-@media (max-width: 699.98px) {
-  #workshop-screen #workshop-scope { display: none; }
 }
 /* ═══════════════════════════════════════════════════════════════════════
    NEEDS YOU: A FEED OF DECISIONS. One item per screen, the rail of
@@ -16757,33 +16748,37 @@ a.dev-ws-hero-pending {
 .dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar-on { opacity: 1; }
 
 /* ── The project's colour: its header and its tabs ─────────────────────
-   A project page wears its community's colour (lib/community-color.ts:
-   dapp.json's `icon.color`, else one read off its icon, always dark enough
-   for white text), so which community you are in reads before any word
-   does. workshop.tsx puts it on <html> as `--community-tint` while the page
-   is up (`data-community-tint`), and two surfaces paint it:
+   Inside a project, the bar wears its community's colour (lib/community-
+   color.ts: dapp.json's `icon.color`, else one read off its icon, always dark
+   enough for white text), so which community you are in reads before any
+   word does. The header puts it on <html> as `--community-tint` while the
+   app view is up (`data-community-tint`, features/header/community-tint.ts),
+   on the project's page and in the running app alike, and holds it across a
+   switch from one community to the next.
 
-   THE HEADER. Its fill is the faked-glass layer ("FAKED GLASS" below), whose
-   tint is `--fake-glass-tint`; an opaque tint covers the washes, so the bar
-   is the colour, flat. Its controls re-ink white through the same tokens
-   the app-tone rules move (--brand-*), and its rounded foot squares off, so
-   the band under it reads as the same surface continued.
-
-   Scoped to the Workshop lander (`#dev-workshop > .dev-ws`) as well as the
-   attribute: a card or a session opened under the project is a page of its
-   own, and it keeps the ordinary bar. */
-html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="platform"] #dev-workshop > .dev-ws) #platform-header {
+   THE HEADER. On the project's pages its fill is the faked-glass layer
+   ("FAKED GLASS" below), whose tint is `--fake-glass-tint`; an opaque tint
+   covers the washes, so the bar is the colour, flat. In the running app the
+   bar has no layer (it takes the app's tone, #1945), so the colour is its
+   own background. Its controls re-ink white through the same tokens the
+   app-tone rules move (--brand-*), and its rounded foot squares off: on the
+   project's pages the band continues it, and over the app a coloured bar
+   with a notch reads as a tab rather than an edge. */
+html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
   --fake-glass-tint: var(--community-tint);
   --brand-ink: #fff;
   --brand-tint: rgba(255, 255, 255, .16);
   --brand-line: rgba(255, 255, 255, .32);
+  background-color: var(--community-tint);
   color: #fff;
   clip-path: inset(0);
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
 }
-html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="platform"] #dev-workshop > .dev-ws) #platform-header #header-app-tile {
+html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile {
   box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55);
 }
-/* THE BAND: Hub, Chat, Needs you, All items, under the header, in its
+/* THE BAND: Hub, Discussion, Needs you, Workshop, under the header, in its
    colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)
    for the two hooks that measure it, and bleeds to the column's edges and
    up under the header's overlap (`-mb-2` on the bar, plus the body's own
@@ -16791,24 +16786,33 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
    the tabs' underline. */
 .dev-ws-tabs.dev-ws-band {
   margin: -18px -12px 0;
-  padding: 8px 16px 0;
+  padding: 8px 14px 0;
   background: var(--community-tint, #2a2e34);
   gap: 0;
 }
+/* The four spread across the band, so a phone fits them whole ("Needs you"
+   with its count is the widest); the track scrolls rather than clipping on
+   the narrowest. */
 .dev-ws-band .dev-ws-tabtrack {
-  display: flex; align-items: stretch; gap: 22px;
-  min-width: 0; overflow-x: auto; scrollbar-width: none;
+  display: flex; align-items: stretch; justify-content: space-between; gap: 10px;
+  flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none;
 }
 .dev-ws-band .dev-ws-tabtrack::-webkit-scrollbar { display: none; }
 .dev-ws-ctab {
   position: relative; flex: none;
-  display: inline-flex; align-items: center; gap: 6px;
+  display: inline-flex; align-items: center; gap: 5px;
   height: 42px; padding: 0 1px;
   border: 0; background: none;
   color: rgba(255, 255, 255, .72);
-  font: inherit; font-size: 15px; font-weight: 600; white-space: nowrap;
+  font: inherit; font-size: 14.5px; font-weight: 600; white-space: nowrap;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
+}
+/* The narrowest phones take the labels half a point down and the gaps in. */
+@media (max-width: 379.98px) {
+  .dev-ws-tabs.dev-ws-band { padding-left: 10px; padding-right: 10px; }
+  .dev-ws-band .dev-ws-tabtrack { gap: 4px; }
+  .dev-ws-band .dev-ws-ctab { font-size: 13px; gap: 4px; }
 }
 .dev-ws-ctab[aria-selected="true"] { color: #fff; }
 .dev-ws-ctab[aria-selected="true"]::after {
@@ -16867,33 +16871,15 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
   .dev-ws-hero .dev-ws-hero-member .dev-ws-join-pop { transform-origin: calc(100% - 32px) 0; }
 }
 
-/* ── The hub's rows (hub-cards.tsx) ──
-   VOTES WAITING ON YOU: one row, a ballot on the accent's tint, the count
-   in words, and Vote. */
-.dev-ws-hub-row.dev-ws-hub-votes { flex-direction: row; align-items: center; gap: 12px; }
-.dev-ws-hub-votes-tile {
-  flex: none; width: 36px; height: 36px; border-radius: 10px;
-  display: grid; place-items: center;
-  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
-}
-.dev-ws-hub-votes-glyph { width: 20px; height: 20px; }
-.dev-ws-hub-votes-text { flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 650; color: var(--text-primary); }
-.dev-ws-hub-votes-cta {
-  flex: none; display: inline-flex; align-items: center;
-  height: 30px; padding: 0 14px; border-radius: 999px;
-  background: var(--accent); color: #fff; font-size: 13.5px; font-weight: 650;
-}
-/* THE CHAT'S LAST TWO LINES: one line each, who and what, and Open. */
-.dev-ws-hub-channel-compact .dev-ws-hub-msgs { gap: 8px; }
-.dev-ws-hub-channel-compact .dev-ws-hub-msg { align-items: center; }
-.dev-ws-hub-channel-compact .dev-ws-hub-msg > span.min-w-0 { display: flex; align-items: baseline; gap: 6px; }
-.dev-ws-hub-channel-compact .dev-ws-hub-msg-head { flex: 0 1 auto; min-width: 0; max-width: 45%; }
-.dev-ws-hub-channel-compact .dev-ws-hub-msg-by { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dev-ws-hub-channel-compact .dev-ws-hub-msg-head time { display: none; }
-.dev-ws-hub-channel-compact .dev-ws-hub-msg-text {
-  flex: 1 1 auto; min-width: 0;
-  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  -webkit-line-clamp: unset;
+/* ── The hub's discussion preview (hub-cards.tsx) ──
+   The channel card's own look, cut to its last two messages with no
+   composer, and above them how many more are unread, as a line that opens
+   the Discussion tab. The accent: it is a number that asks for you. */
+.dev-ws-hub-more-unread {
+  align-self: flex-start;
+  padding: 0; border: 0; background: none;
+  color: var(--accent); font: inherit; font-size: 13.5px; font-weight: 600;
+  cursor: pointer;
 }
 /* The way to the rest of what landed, week by week. */
 .dev-ws-since-card-more { align-self: flex-start; font-size: 13.5px; font-weight: 600; }
@@ -16908,112 +16894,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
 @media (hover: hover) {
   .dev-ws-start-change:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 }
-/* THE HUB IN TWO COLUMNS on a wide window: the hero, what landed, your work
-   and Start a new change down the reading column, and beside them what is
-   owed and what is being said (`.dev-ws-hub-side`). The side spans every
-   row the main column fills, so neither column waits on the other's
-   heights. On a phone the side draws no box and its cards are rows of the
-   one column, in the order the markup gives them. */
-.dev-ws-hub-side { display: contents; }
-@media (min-width: 1100px) {
-  .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
-    display: grid; align-content: start;
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
-    grid-template-rows: repeat(8, auto);
-    column-gap: 16px; row-gap: 10px;
-  }
-  .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { grid-column: 1; min-width: 0; }
-  .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hub-side {
-    grid-column: 2; grid-row: 1 / -1; align-self: start;
-    display: flex; flex-direction: column; gap: 10px;
-  }
-}
-/* ── "Your communities" (features/workshop/community-switcher.tsx) ──
-   The switcher behind the Communities tab: a sheet from the floor on a
-   phone (the kit's own when it adopts it; this scrim and panel when not),
-   and a menu hung off whatever opened it on a wide window. Rows are the
-   shell's 15 over 13, each community's tile at 40px, and the one you are on
-   is tinted in its colour with a tick (set inline, since the colour is the
-   community's). */
-.community-switcher-scrim {
-  position: fixed; inset: 0; z-index: 60;
-  background: rgba(0, 0, 0, .32);
-  display: flex; align-items: flex-end;
-}
-.community-switcher {
-  box-sizing: border-box;
-  display: flex; flex-direction: column;
-  background: var(--dc-sheet);
-  color: var(--text-primary);
-}
-.community-switcher-sheet {
-  width: 100%; max-height: 82dvh;
-  padding: 6px 8px calc(12px + var(--platform-safe-bottom, 0px));
-  border-radius: 22px 22px 0 0;
-  box-shadow: 0 -8px 30px rgba(0, 0, 0, .18);
-}
-.community-switcher-grab {
-  align-self: center; flex: none;
-  width: 36px; height: 5px; margin: 2px 0 8px; border-radius: 3px;
-  background: var(--border, rgba(0, 0, 0, .15));
-}
-.community-switcher-menu {
-  position: fixed; z-index: 60;
-  width: 340px; max-height: min(70vh, 560px);
-  padding: 6px;
-  border-radius: 16px;
-  box-shadow: 0 0 0 1px var(--app-sheet-line), 0 14px 40px rgba(0, 0, 0, .18);
-}
-.community-switcher-head { padding: 8px 12px 6px; }
-.community-switcher-title { margin: 0; font-size: 17px; font-weight: 700; line-height: 22px; }
-.community-switcher-menu .community-switcher-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
-.community-switcher-list {
-  display: flex; flex-direction: column; gap: 2px;
-  min-height: 0; overflow-y: auto; overscroll-behavior: contain;
-}
-.community-switcher-row {
-  display: flex; align-items: center; gap: 12px;
-  width: 100%; min-height: 60px; padding: 8px 12px; box-sizing: border-box;
-  border: 0; border-radius: 14px; background: transparent;
-  color: inherit; font: inherit; text-align: left; cursor: pointer;
-  -webkit-tap-highlight-color: transparent;
-}
-.community-switcher-menu .community-switcher-row { min-height: 52px; border-radius: 10px; }
-@media (hover: hover) {
-  .community-switcher-row:not([aria-current="true"]):hover { background: var(--bg-secondary); }
-}
-.community-switcher-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-.community-switcher-tile {
-  flex: none; width: 40px; height: 40px; overflow: hidden;
-  display: grid; place-items: center;
-  border-radius: 11px; font-size: 20px; font-weight: 700;
-}
-.community-switcher-menu .community-switcher-tile { width: 34px; height: 34px; border-radius: 9px; font-size: 17px; }
-.community-switcher-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
-/* An emoji tile's glyph at the tile's own size, not the launcher's. */
-.community-switcher-tile > span, .platform-tab-tile > span { font-size: inherit; line-height: 1; }
-.platform-tab-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
-.community-switcher-tile-all { background: #1f2329; color: #fff; }
-.dark .community-switcher-tile-all { background: #3a3f47; }
-.community-switcher-tile-add {
-  background: transparent; color: var(--text-muted);
-  box-shadow: inset 0 0 0 1.5px var(--app-sheet-line);
-}
-.community-switcher-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
-.community-switcher-name {
-  font-size: 15px; font-weight: 650; line-height: 20px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.community-switcher-sub { font-size: 13px; line-height: 17px; color: var(--text-muted); }
-.community-switcher-waiting {
-  flex: none; height: 22px; padding: 0 8px; border-radius: 999px;
-  display: inline-flex; align-items: center;
-  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
-  font-size: 12px; font-weight: 650; white-space: nowrap;
-}
-.community-switcher-tick { flex: none; width: 20px; display: grid; place-items: center; color: var(--text-primary); }
-.community-switcher-note { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--text-muted); }
-
 /* ON A WIDE WINDOW THE TABS ARE THE HEADER'S (header-project-tabs.tsx): one
    coloured row, the community's name and then its tabs, so the band under
    it is not drawn. White on the colour; the tab you are on is a pill of
@@ -17031,22 +16911,12 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
   .header-project-tabs .dev-ws-ctab:focus-visible { border-radius: 999px; }
   /* No band, so the page starts under the header as any other does. */
   #dev-body:has(> #dev-workshop > .dev-ws > .dev-ws-band) { padding-top: 14px; }
-  /* ALL ITEMS' EAR (the grouping tabs) hung level with the old tab pill, in
-     the strip's row above the pane. With the tabs in the header that row is
-     gone, so the pane steps down by the ear's height and the ear hangs in
-     the room it leaves, at the pane's top-right corner, hugging its two
-     tabs (nothing measures it now: the band it was measured against is not
-     drawn). */
-  .dev-ws:has(> .dev-ws-band) [data-ws-pane]:has(.dev-ws-ear) { margin-top: 44px; }
-  .dev-ws:has(> .dev-ws-band) .dev-ws-ear { left: auto; }
-  .dev-ws:has(> .dev-ws-band) .dev-ws-ear .dev-ws-group { width: auto; }
-  .dev-ws:has(> .dev-ws-band) .dev-ws-pane:has(.dev-ws-ear)::before { content: none; }
 }
-/* THE CHAT TAB (project-chat.tsx): the channel's own pane, as tall as the
-   screen leaves it, so its composer sits above the tab bar and its stream
-   scrolls inside it rather than the page. */
-.dev-ws-chat { display: flex; flex-direction: column; height: calc(100dvh - 210px); min-height: 380px; }
-.dev-ws-chat-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+/* THE DISCUSSION TAB (project-discussion.tsx): the channel's own pane, as
+   tall as the screen leaves it, so its composer sits above the tab bar and
+   its stream scrolls inside it rather than the page. */
+.dev-ws-discussion { display: flex; flex-direction: column; height: calc(100dvh - 210px); min-height: 380px; }
+.dev-ws-discussion-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
 .dev-ws-hero-spark-tip {
   position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6;
@@ -17174,19 +17044,19 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
      surface the cards already use — the same reason tabs.tsx's track is white
      rather than the recessed grey a control gets on a card. */
 
-  /* EVERYTHING PINS UP HERE, as one band: the tab strip with the "+" at its
-     end, the ear hanging off the head's top edge, and the head itself with
-     the search and the filters. The controls belong WITH the list you are
+  /* EVERYTHING PINS UP HERE, as one band: the tab strip (on All items, its
+     back bar) and the head under it, with the grouping, the search and the
+     filters. The controls belong WITH the list you are
      narrowing, so they stay reachable however far down it you are.
 
      THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
      it comes to rest: under the pinned strip, at the strip's measured height
      plus the column gap. `top: 0` would slide it under the strip.
 
-     ABOVE THE STRIP IN PAINT ORDER, because the ear is the head's child and
-     sits in the strip's own band. The head's `z-index: 20` made it a stacking
-     context, so the ear's 31 counted only INSIDE the head and the strip's 30
-     covered it.
+     ABOVE THE STRIP IN PAINT ORDER at rest. The grouping tabs used to hang
+     from the head into the strip's band as an "ear" (gone with #852), which
+     is where the 31 came from; it is kept so the head and the strip keep the
+     one order the "+" menu's rule below is written against.
 
      Scoped by `#dev-workshop`: the base rule is `.dev-ws-pane-head` six
      hundred lines BELOW this block, and on equal specificity the later one
@@ -17237,12 +17107,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
     top: 0;
     /* QA 2026-09-24 Q7: ABOVE THE CARDS, BELOW THE HEAD. Pinned with no
        z-index, the strip sat at the floor of the stacking order, and the
-       pane (`position: relative` from 768px, see the ear) and its cards come
-       later in the tree, so everything that scrolled up past it painted over
+       pane and its cards come later in the tree, so everything that scrolled up past it painted over
        the tabs and took their clicks: the three tabs and the "+" went under
-       the list. 30 puts it over the list and under the pane head's 31, which
-       is what the ear needs: the ear lives in the head and hangs into this
-       band, and it has to stay on top of the nav's box to be clickable. The
+       the list. 30 puts it over the list and under the pane head's 31. The
        open "+" menu still lifts the strip to 32 (above). */
     z-index: 30;
     max-width: none;
@@ -17290,14 +17157,13 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
   #dev-body:has(> #dev-workshop) { padding-top: 10px; }
   /* QA 2026-09-24 Q7: THE BAND BEHIND THE PINNED STRIP. With the strip on top
      of the list, the pill itself is opaque, but the air around it was not:
-     the gap to the ear, the column gap down to the pane head and, on By
-     stage, the board columns either side of the reading column all showed
+     the column gap down to the pane head and, on By stage, the board columns either side of the reading column all showed
      the cards scrolling underneath, between the controls. So once the strip
      is pinned (`data-ws-pinned`, set by workshop.tsx's usePinnedStrip) a
      band runs behind it, from the scroller's top down to where the head pins
      (`--dev-ws-head-top`) and across the PANE's width (`--dev-ws-band-*`,
-     measured by useEarInset), and the strip, the ear and the head read as
-     one pinned header.
+     measured by useStripInsets), and the strip and the head read as one
+     pinned header.
 
      SOLID, NOT FROSTED. The frost cannot blur anything here: this whole
      column sits inside the dev frame's `.dc-lift`, which has a
@@ -17309,18 +17175,12 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
      opaque colour, which is what the fallback below the frost rules already
      uses where there is no backdrop-filter at all.
 
-     ONLY WHILE PINNED. At rest the pill sits on the page and the ear hangs
-     off the pane beside it; a band there would swallow the ear's shape.
+     ONLY WHILE PINNED. At rest the bar sits on the page, and a band there
+     would draw a slab of sheet colour around it for nothing.
 
      Behind the nav's own content (`z-index: -1` inside the strip's stacking
-     context), so the pill and the "+" draw over it. Where there is an ear
-     the band STOPS at it (`--dev-ws-ear-left`, the ear's left edge measured
-     from the pane's) and the ear, pinned, takes the same solid fill and
-     drops its outline: the two tile the row. The band must not run under the
-     ear, because the open "+" menu lifts the strip above the head (32, above)
-     and a band there would then cover the ear's two tabs. The pinned ear's
-     rounded corner and the head's are squared: a curve there left a notch
-     the cards showed through. */
+     context), so the bar draws over it. The pinned head's rounded top-left
+     corner is squared: a curve there left a notch the cards showed through. */
   .dev-ws-tabs::before {
     content: '';
     position: absolute;
@@ -17333,21 +17193,13 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
     pointer-events: none;
     visibility: hidden;
   }
-  .dev-ws:has(.dev-ws-ear) > .dev-ws-tabs::before { right: auto; width: var(--dev-ws-ear-left, 100%); }
   .dev-ws[data-ws-pinned] > .dev-ws-tabs::before { visibility: visible; }
-  .dev-ws[data-ws-pinned] .dev-ws-ear {
-    background-color: var(--dc-sheet);
-    backdrop-filter: none; -webkit-backdrop-filter: none;
-    box-shadow: none;
-    border-top-left-radius: 0;
-  }
   .dev-ws[data-ws-pinned] .dev-ws-pane-head {
     background-color: var(--dc-sheet);
     border-top-left-radius: 0;
   }
   /* THE TRACK HOLDS THE PILL AND THE "+", 6px apart, and draws neither
-     (#2934): it hugs the two so the ear's measured inset, read off its right
-     edge, still clears the "+". The surface is the phone rule's two items at
+     (#2934): it hugs the two. The surface is the phone rule's two items at
      this width's metrics — a 2px ring in the raised sheet, no hairline — so
      the pill is 36px as the track was, and the "+" a 36px circle beside it. */
   .dev-ws-tabtrack {
@@ -17370,8 +17222,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
   .dev-ws-tab-dot { order: 0; margin: 0 0 0 6px; transform: none; }
   /* The tab list hugs its three segments, and the "+" is the track's last
      item: a 32px round button, the tabs' own height, in its own circle after
-     the pill — Current status · Needs you · All items   + — and the ear's
-     measured inset, read off the track's right edge, clears it. */
+     the pill — Current status · Needs you · All items   +. */
   .dev-ws-tablist { flex: 0 0 auto; }
   .dev-ws-plus-btn { width: 32px; height: 32px; }
   .dev-ws-plus-glyph { width: 18px; height: 18px; }
@@ -17735,162 +17586,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
   box-shadow: inset 0 0 0 1px var(--lit-line);
 }
 
-/* ── The grouping strip as an EAR on the pane's top-right corner ───────
-   From 768px up the strip leaves the pane head and sits beside the lander's
-   own tab pill, on a surface of its own that joins the card below it. Two
-   controls on one row, each answering its own question: the pill picks WHICH
-   of the three destinations, the ear picks how the board under it is read.
-
-   768px, and not the 700px the tab bar uses. The reading column tops out at
-   760px from 768 up (`#dev-workshop { max-width: 760px }` plus `#dev-body`'s
-   4px sides), so above this width the row has exactly one appearance: a
-   444px pill, a 233px ear and 83px of air between them, at 768 and at 2560
-   alike. Below it the column is the viewport and the two would close on each
-   other through a 60px band before the rail breakpoint took the pill away
-   altogether — a cramped range nobody designed. Measured, not chosen: those
-   three numbers are what the strip and the pill actually are.
-
-   IT HANGS OFF THE PANE, NOT OFF THE NAV, and that is the whole reason it is
-   absolutely positioned rather than a third flex item in `.dev-ws-tabs`. On
-   By stage the pane runs edge to edge while the nav keeps the reading column
-   (see "The stage pane runs edge to edge" below), so an ear in the nav would
-   detach from the card's corner the moment you switched panes. `right: 0`
-   against the pane tracks whichever width the pane currently has.
-
-   `bottom: 100%` ABUTS, it does not overlap. The pane's fill is
-   semi-transparent over a backdrop-filter, so an ear lapping over the head
-   would stack two frosted layers and draw the lighter band the pane's own
-   note is about — the same fill on the same backdrop, edge to edge, is what
-   makes them one surface. The ear is 46px tall for the same reason the sum
-   works out: 36px of strip plus its 5px padding is the pill's height, and
-   the 10px it reaches past that is `.dev-ws`'s column gap, so its bottom
-   edge lands exactly on the pane's top edge.
-
-   THE RING IS THREE-SIDED. `.dev-ws-pane`'s hairline is a single inset
-   shadow all the way round; a fourth side here would draw a line across the
-   join and split the ear from the card again.
-
-   It does NOT pin. The pane head is sticky and this is not in it: scroll the
-   board and the ear leaves with the tab pill it sits beside, which is the
-   row it now belongs to. The head keeps the search and the filters, which
-   are the controls you reach for mid-scroll; the "+" closes the tab strip,
-   which pins on its own. */
-@media (min-width: 768px) {
-  /* Scoped by `:has()` so a pane without an ear is untouched. The vote
-     sheet is absolutely positioned against its own local wrapper
-     (`.dev-ws-row`), and the "+" menu is not in the pane at all any more (it
-     hangs off `.dev-ws-plus`, in the tab strip), so this containing block
-     takes nothing away from either. */
-  .dev-ws-pane:has(.dev-ws-ear) { position: relative; }
-  /* NO LINE BETWEEN THE EAR AND THE PANE. The pane's ring is one inset
-     shadow, so its top side used to run the full width — straight under the
-     ear, which is what made the ear read as a pill resting on a card rather
-     than part of it. A shadow cannot be drawn on part of a side, so the ring
-     gives up its TOP here and the pseudo-element below puts it back, clipped
-     to stop where the ear starts.
-
-     Covering it was the other candidate and is worse: the ear's fill is
-     semi-transparent over a backdrop-filter, so a 1px overlap leaves the line
-     dimmed and smeared rather than gone — and two of these fills stacked is
-     the lighter band the pane's own note is about. */
-  .dev-ws-pane:has(.dev-ws-ear) {
-    box-shadow:
-      inset 1px 0 0 var(--app-sheet-line),
-      inset -1px 0 0 var(--app-sheet-line),
-      inset 0 -1px 0 var(--app-sheet-line);
-  }
-  /* ONE SEGMENT: the run to the LEFT of the ear. There was a second one for
-     the run to its right, for the round when the ear was anchored to the tab
-     strip's column and the pane continued past it on By stage. The surface
-     reaches the pane's right edge again, so there is never anything to the
-     right of it and the corner below is squared unconditionally. */
-  .dev-ws-pane:has(.dev-ws-ear)::before {
-    content: '';
-    position: absolute; inset: 0;
-    /* `inherit` carries the squared top-right corner below with it, so the
-       line follows the rounded top-LEFT corner and nothing else. */
-    border-radius: inherit;
-    box-shadow: inset 0 1px 0 var(--app-sheet-line);
-    /* Stop at the ear. The same measured offset the ear is positioned by, so
-       the two cannot disagree about where that is; with the property unset
-       (no ResizeObserver, or the frame before the measurement) the clip is
-       the whole width and the top line is simply continuous, which is the
-       pre-ear appearance rather than a broken one. */
-    /* Plus the 1px the ear's own left edge occupies: the ear draws that side
-       as an INSET shadow, so its line sits in [left, left+1] and a clip that
-       stopped at `left` exactly left a one-pixel notch between the two. */
-    clip-path: inset(0 calc(100% - var(--dev-ws-ear-left, 100%) - 1px) 0 0);
-    pointer-events: none;
-  }
-  .dev-ws-ear {
-    position: absolute; bottom: 100%;
-    /* THE SURFACE REACHES THE PANE'S RIGHT EDGE, in both groupings — so on By
-       stage, where the pane goes full-bleed, the ear grows with it. It was
-       anchored to the tab strip's column for one round, which kept the ear a
-       fixed 306px and stopped it following the pane; the surface follows the
-       pane again and the TABS are what stay put (see the strip's rule below).
-       Nothing measured: the ear is a child of the head, whose right edge is
-       the pane's. */
-    right: 0;
-    /* ABOVE THE NAV, or the strip is decorative. `.dev-ws-tabs` is
-       `z-index: 30` for its phone life as a floating bar, and up here it is
-       back in flow spanning the whole reading column — the same column the
-       pane has — so its box covers the band the ear hangs in. Positioned with
-       a z-index against an ear with none, it won every hit test: both
-       `elementFromPoint` probes at the buttons' centres returned
-       `.dev-ws-tabs`, and clicking either grouping did nothing at all. The
-       nav paints no fill of its own here (the pill is `.dev-ws-tabtrack`
-       inside it), so this changes hit-testing and not the picture. */
-    z-index: 31;
-    /* STRETCHED TO MEET THE PILL. The custom property is measured and
-       published on `.dev-ws` by `useEarInset` (workshop.tsx) — the pill lives
-       in a different subtree, so no selector can hand this one its width. The
-       `auto` fallback is the content-hugging ear, which is what renders for
-       the frame before the measurement lands and in any browser without a
-       ResizeObserver. */
-    left: var(--dev-ws-ear-left, auto);
-    padding: 5px 10px;
-    border-radius: 22px 22px 0 0;
-    box-shadow:
-      inset 0 1px 0 var(--app-sheet-line),
-      inset 1px 0 0 var(--app-sheet-line),
-      inset -1px 0 0 var(--app-sheet-line);
-  }
-  /* THE TABS FILL THE EAR, AND KEEP THAT SIZE WHEN THE EAR GROWS. Two earlier
-     cuts each got half of this: sharing the surface (`flex: 1 1 0` with no
-     width) made each tab 268px on a full-bleed By stage pane, and hugging
-     their labels left them adrift in a wide surface and SMALLER than they had
-     been on By category.
-
-     So the GROUP carries a measured width and the tabs divide it. The width is
-     taken to the NAV's right edge, which keeps the reading column under both
-     groupings, so it is one number: the tabs fill the ear on By category,
-     where the surface ends at that same edge, and stay exactly that size on By
-     stage, where the surface grows past it. Measured at 1280: 286px, whether
-     the ear around it is 306px or 562px.
-
-     A FLEX ROW, and that part is load-bearing: as a BLOCK box the ear made
-     `justify-content` inert and `.dev-ws-group` — itself a flex container, and
-     block-level inside a block — stretched to the ear's full width. The tabs
-     hugged their labels inside it, so what grew was the PILL around them, and
-     measuring the tabs is what hid it. `flex-start` puts the group at the
-     surface's left end, so the empty ear on By stage falls to its right. */
-  .dev-ws-ear { display: flex; justify-content: flex-start; align-items: center; }
-  .dev-ws-ear .dev-ws-group { width: var(--dev-ws-group-w, auto); }
-  .dev-ws-ear .dev-ws-group-tab { flex: 1 1 0; }
-  /* Square where the two meet, so the ear and the card read as one surface
-     rather than a pill resting on a rounded corner. */
-  .dev-ws-pane:has(.dev-ws-ear) > .dev-ws-pane-head {
-    border-top-right-radius: 0;
-  }
-  /* AND THE PANE'S OWN CORNER WITH IT. Squaring the head alone left the
-     pane's 22px ring curving away inside the ear's straight right edge, which
-     is what read as the ear being "slightly inset" — the two right edges
-     measure flush to the pixel, but the pane's outline turned the corner 22px
-     before the ear's did. Square, they are one edge. */
-  .dev-ws-pane:has(.dev-ws-ear) { border-top-right-radius: 0; }
-}
-
 /* ── The working pane ──────────────────────────────────────────────────
    The controls, the switch and the thing they act on, as one card — the same
    sheet the "Where the app is" and "What needs you" strips above it wear, so
@@ -17927,7 +17622,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
    `overflow: visible` on the pane is load-bearing: the vote sheet is
    absolutely positioned in this subtree, and sticky does not work under a
    clipping ancestor. */
-.dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear {
+.dev-ws-pane-head, .dev-ws-pane-body {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
@@ -17950,11 +17645,11 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
    with rows sliding CRISPLY under the pinned head is the rendering fault the
    frost prevents — not a slightly flatter bar. Both halves go opaque together,
    because they must stay the same colour as each other above all. */
-/* SOLID, ALL THREE TOGETHER, on every platform. The body scrolls under the
-   sticky head, so with no blur the head has to be opaque; and the head, the
-   body and the ear read as one pane, so staying the same colour as each
-   other matters more than the body's translucency. */
-.dev-ws-pane-head, .dev-ws-pane-body, .dev-ws-ear { background-color: var(--dc-sheet-solid); }
+/* SOLID, BOTH TOGETHER, on every platform. The body scrolls under the
+   sticky head, so with no blur the head has to be opaque; and the head and
+   the body read as one pane, so staying the same colour as each other
+   matters more than the body's translucency. */
+.dev-ws-pane-head, .dev-ws-pane-body { background-color: var(--dc-sheet-solid); }
 /* Inside the pane the toolbar is a plain row: the frame's own `px-3 pt-2`
    placed it against the scroller's edge, and here the pane supplies both. */
 .dev-ws-pane .dev-ws-pane-head #dev-actions { padding: 0; }
@@ -17997,15 +17692,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="plat
    the same pair at reading width — the strip in particular reads as pulled
    apart rather than as a segmented pair. So the head still spans the pane, as
    a pinned edge must, while what sits IN it keeps the reading column. */
-/* THE EAR IS EXEMPT, and the note above says why the rest is not: a two-tab
-   strip stretched across 1200px reads as pulled apart. That objection is
-   about the TABS, and they no longer stretch — they hug at the surface's left
-   end, so the surface behind them is free to follow the pane's width without
-   pulling the control apart. Left in the bound, the ear took `max-width:
-   740px` against a `left`/`right` pair that wanted 562, and an
-   over-constrained box keeps `left`: its right edge overshot the pane's by
-   178px at 1280. */
-#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > *:not(.dev-ws-ear) {
+#dev-workshop:has(.dev-ws-board) .dev-ws-pane-head > * {
   /* 760px is the reading column; the 20px is the head's own left+right
      padding. Bounding to the column's OUTER width instead made the controls
      20px wider on By stage than on By category — a toolbar that grew slightly
@@ -18922,24 +18609,29 @@ html.un-ios {
   justify-content: center;
 }
 
-/* THE COMMUNITIES TAB'S FACE (tab-bar.tsx CommunityTabFace). A square ring,
-   an app tile's own shape, around the community the tab is on (its colour)
-   or, on All communities, a dark tile with the people glyph (the tab's own
-   ink, so it lights with the tab). The ring is what says it switches. */
+/* THE COMMUNITIES TAB'S FACE (tab-bar.tsx CommunityTabFace). On the phone's
+   bar, a square ring, an app tile's own shape, around the community the tab
+   is on (in its colour) or, on All communities, the tab's own people glyph
+   (in the tab's ink, so it lights with the tab). The ring is what says the
+   tab switches. The desktop rail draws no ring: its row goes back to All
+   communities, and the header's name is the switcher there. */
 .platform-tab-ring {
-  width: 26px; height: 26px; box-sizing: border-box; flex: none;
+  width: 28px; height: 28px; box-sizing: border-box; flex: none;
   display: inline-grid; place-items: center;
   border-radius: 9px;
   box-shadow: inset 0 0 0 2px var(--ring, currentColor);
 }
+.platform-tab-ring-all .platform-tab-glyph { width: 18px; height: 18px; }
 .platform-tab-tile {
-  width: 18px; height: 18px; border-radius: 5px; overflow: hidden;
+  width: 20px; height: 20px; border-radius: 6px; overflow: hidden;
   display: grid; place-items: center;
-  font-size: 11px; font-weight: 700; line-height: 1;
+  font-size: 12px; font-weight: 700; line-height: 1;
 }
-.platform-tab-ring-all .platform-tab-tile { background: #1f2329; color: #fff; }
-.platform-tab-ring-all .platform-tab-glyph { width: 13px; height: 13px; stroke-width: 2.2; }
-.dark .platform-tab-ring-all .platform-tab-tile { background: #3a3f47; }
+@media (min-width: 768px) {
+  .platform-tab-ring { width: auto; height: auto; border-radius: 0; box-shadow: none; }
+  .platform-tab-ring-all .platform-tab-glyph { width: 22px; height: 22px; }
+  .platform-tab-tile { width: 22px; height: 22px; }
+}
 /* THE VOTES IT IS WAITING ON YOU FOR: the accent, because it asks for you.
    The quiet unread-channels count gives way to it on the same glyph. */
 .platform-tab-votes {

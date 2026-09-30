@@ -80,7 +80,8 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import {
-  communityScopeStore, hydrateCommunityScope, shortName, toggleSwitcher, warmCommunities, type CommunityInfo,
+  communityScopeStore, goToCommunity, hydrateCommunityScope, shortName, toggleSwitcher, warmCommunities,
+  type CommunityInfo,
 } from '../workshop/community-scope';
 import { CommunitySwitcher } from '../workshop/community-switcher';
 import { navStore } from './nav-store.js';
@@ -204,11 +205,13 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
 /**
  * THE COMMUNITIES TAB'S FACE: the community it is on, or All communities.
  *
- * A square ring, the shape of an app's own tile, around either that
- * community's tile in its colour (features/workshop/community-scope.ts says
- * which; lib/community-color.ts what colour) or, on All communities, a dark
- * tile with the people glyph. The ring is what says the tab can be switched:
- * press it while it is lit and "Your communities" opens.
+ * On the phone's bar, a square ring, the shape of an app's own tile, around
+ * either that community's tile, in its colour (features/workshop/
+ * community-scope.ts says which; lib/community-color.ts what colour), or, on
+ * All communities, the tab's own people glyph. The ring is what says the tab
+ * can be switched: press it while it is lit and "Your communities" opens.
+ * The desktop rail draws no ring (app.css): there the row goes back to All
+ * communities, and the header's name is the switcher.
  *
  * All communities is THE PRERENDER: the scope arrives from localStorage and
  * app.js after the first paint, so the shipped markup and the first client
@@ -217,13 +220,11 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
 function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
   const color = useCommunityColor(info
     ? { color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.slug }
-    : null, '#1f2329');
+    : null);
   if (!info) {
     return (
       <span className="platform-tab-ring platform-tab-ring-all" aria-hidden="true">
-        <span className="platform-tab-tile">
-          <UserGroupIcon className="platform-tab-glyph" aria-hidden="true" />
-        </span>
+        <UserGroupIcon className="platform-tab-glyph" aria-hidden="true" />
       </span>
     );
   }
@@ -779,16 +780,24 @@ export function PlatformTabs() {
       event.preventDefault();
       return;
     }
-    // THE LIT COMMUNITIES TAB OPENS "YOUR COMMUNITIES" (../workshop/
-    // community-switcher.tsx) rather than popping to the list: the tab is a
-    // community now, and pressing it again is how you change which. A sheet
-    // on a phone; on a wide window a menu beside the rail's row.
+    // THE LIT COMMUNITIES TAB. On a phone it opens "Your communities"
+    // (../workshop/community-switcher.tsx) rather than popping to the list:
+    // the tab is a community now, and pressing it again is how you change
+    // which. On the desktop rail it goes back to All communities, the list,
+    // as a sidebar row does; the header's name is the switcher there.
     if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
-      event.preventDefault();
       let wide = false;
       try { wide = window.matchMedia('(min-width: 768px)').matches; } catch { wide = false; }
-      toggleSwitcher(wide ? 'rail' : 'tab', event.currentTarget);
-      return;
+      if (!wide) {
+        event.preventDefault();
+        toggleSwitcher('tab', event.currentTarget);
+        return;
+      }
+      if (scope.slug) {
+        event.preventDefault();
+        goToCommunity(null);
+        return;
+      }
     }
     if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
       event.preventDefault();
