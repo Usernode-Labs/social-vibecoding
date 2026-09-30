@@ -106,8 +106,8 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole.
   assert.match(LANDER, /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
-  // The Workshop tab: your work (its first three, #852 review), All items
-  // with See all, then the since list by week.
+  // The Workshop tab: the approval rules, your work (its first three, #852
+  // review), All items with See all, then the since list by week.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
   assert.ok(w('data-ws-mine=""') < w('data-ws-dashboard=""') && w('data-ws-dashboard=""') < w('data-ws-since=""'),
@@ -116,10 +116,12 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
   assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
-  // The approval rules are the Workshop page's foot (#3487), not the head of
-  // All items, where they sat for a round.
-  assert.ok(w('<ApprovalRules') > w('data-ws-since=""'), 'the approval rules close the Workshop page');
-  assert.match(ws, /\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\s*<\/>/, 'as its last section');
+  // The approval rules are the Workshop page's head (#3528): the page's foot
+  // for a round (#3487), and not the head of All items, where they sat before.
+  assert.ok(w('<ApprovalRules') >= 0 && w('<ApprovalRules') < w('<WorkshopNotices') && w('<ApprovalRules') < w('data-ws-mine=""'),
+    'the approval rules open the Workshop page');
+  assert.match(ws, /<>\s*\{\/\*[\s\S]*?\*\/\}\s*\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}/, 'as its first section');
+  assert.equal(ws.split('<ApprovalRules').length - 1, 1, 'and only there');
   const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
   assert.ok(!all.slice(0, all.indexOf('data-ws-pane=""')).includes('<ApprovalRules'), 'and All items no longer leads with them');
   // `?ws=discussion` is a deep link like the others.

@@ -3582,13 +3582,20 @@ export function DevWorkshop(): ReactNode {
         <ProjectDiscussion slug={slug} name={app.name || community?.name || slug} data={community} />
       ) : null}
 
-      {/* ── THE WORKSHOP TAB: your work, what is open, what changed ──
-          Your own work (its first three, the rest behind a reveal), All
-          items' numbers and its one line (whose head opens All items, the
-          page under this tab), and what moved since your last visit filed
-          under each week's summary. */}
+      {/* ── THE WORKSHOP TAB: how a change gets in, your work, what is open,
+          what changed ──
+          The approval rules, your own work (its first three, the rest behind
+          a reveal), All items' numbers and its one line (whose head opens All
+          items, the page under this tab), and what moved since your last
+          visit filed under each week's summary. */}
       {tab === 'workshop' ? (
       <>
+      {/* ── Approval rules: how a change gets in ──
+          The Workshop page's head (#3528): the rule every change on the page
+          below is held to, read before the work it governs. It was the hero's
+          last line, the head of All items for a round (#852), then this
+          page's foot (#3487). */}
+      {slug ? <ApprovalRules slug={slug} /> : null}
       {/* ── Lately in this project ──
           What changed about the project itself — this week's card, and
           settings changed in the last week — which used to be lines in its
@@ -3840,11 +3847,6 @@ export function DevWorkshop(): ReactNode {
           ) : null}
         </section>
       ) : null}
-
-      {/* ── Approval rules: how a change gets in ──
-          The Workshop page's foot (#3487). It was the hero's last line, then
-          this foot, then the head of All items for a round (#852). */}
-      {slug ? <ApprovalRules slug={slug} /> : null}
       </>
       ) : null}
 

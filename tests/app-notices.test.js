@@ -118,7 +118,9 @@ test('the panel: nothing to say draws nothing; otherwise the card first, then ea
   // Loaded in an effect, so the first render is nothing.
   assert.match(read(PANEL), /const \[notices, setNotices\] = useState<Notices \| null>\(null\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(lander, /\{tab === 'workshop' \? \(\n\s*<>\n[\s\S]{0,400}\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'at the head of the Workshop tab');
+  // At the head of the Workshop tab, straight under the approval rules that
+  // open it (#3528).
+  assert.match(lander, /\{tab === 'workshop' \? \(\n\s*<>\n[\s\S]{0,600}\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\n\s*\{\/\*[^]{0,400}?\*\/\}\n\s*\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'at the head of the Workshop tab');
 });
 
 test('a door to a project\'s hub opens the hub; a page opened again reads the tab last shown', () => {
