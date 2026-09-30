@@ -1244,3 +1244,19 @@ test('an invitee counts once, for the first invite they took, and only once they
   assert.deepEqual(out.map((c) => c.sourceKey), ['invitee:21', 'invitee:22']);
   assert.deepEqual(out.map((c) => c.description), ['@ana joined by your invite', 'Somebody joined by your invite']);
 });
+
+test('the two state measures credit once each, under a fixed key, whenever the state began', async () => {
+  const pool = {
+    async query(text) {
+      if (text === scorer.MEASURE_SQL.COMMUNITY_JOINED) return { rows: [{ user_id: 7, joined_at: new Date(NOW - 90 * DAY) }] };
+      if (text === scorer.MEASURE_SQL.COMMUNITY_APP_CREATED) return { rows: [{ user_id: 7, created_at: null }] };
+      return { rows: [] };
+    },
+  };
+  const joined = await scorer.loadCandidates(pool, 'COMMUNITY_JOINED', { startMs: NOW - DAY, endMs: NOW + DAY }, {});
+  assert.deepEqual(joined.map((c) => [c.userId, c.sourceKey, c.description]), [[7, 'community', 'Joined a community']]);
+  assert.equal(joined[0].activityAt, iso(NOW - 90 * DAY), 'a membership from before the season keeps its own date');
+  const made = await scorer.loadCandidates(pool, 'COMMUNITY_APP_CREATED', { startMs: NOW - DAY, endMs: NOW + DAY }, {});
+  assert.deepEqual(made.map((c) => [c.userId, c.sourceKey, c.description]), [[7, 'community-app', 'Created an app for a community']]);
+  assert.ok(made[0].activityAt, 'a missing date still stamps the credit');
+});
