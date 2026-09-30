@@ -50,6 +50,7 @@ import {
   setListCollapsed,
   setShowMoreChannels,
   syncChrome,
+  followPlatformSlug,
   setFilter,
   typingUsers,
   useChannelHandles,
@@ -1942,6 +1943,8 @@ export function MessagesScreen() {
     if (!snap.route.open || !window.App?.user) return;
     void Promise.resolve(Improve.loadSessions()).catch(() => {});
   }, [snap.route.open]);
+  // #3407: and again when #general's hub becomes known (store.ts).
+  useEffect(() => followPlatformSlug(), []);
   useEffect(() => { if (snap.route.open) syncChrome(); },
     // The DISCUSSION's two facts belong here for the same reason the
     // conversation's title does: on a phone this is what names the thread in

@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
+import { platformSlug, subscribePlatformSlug } from './channel-hub';
 import type { AppDiscussion, InboxFilter } from './inbox';
 import type {
   ConversationDetail,
@@ -833,10 +834,21 @@ export function channelHub(): string | null {
     ? state.active
     : state.conversations.find((item) => item.id === id) || null;
   if (!row || row.kind !== 'channel') return null;
-  const platform = (typeof window !== 'undefined'
-    ? (window as unknown as { PlatformTarget?: { slug?: () => string | null } }).PlatformTarget?.slug?.()
-    : null) || null;
+  // The same read the pane's own disc draws from (channel-hub.ts), so the
+  // header's arrow and the disc name one hub.
+  const platform = typeof window !== 'undefined' ? platformSlug() : null;
   return platform ? `#app/${encodeURIComponent(platform)}/workshop` : '#communities';
+}
+
+/**
+ * #general's hub is found late on a cold load (#3407): the platform's slug
+ * lands after the header was set, and the disc in the pane hears it through
+ * PlatformTarget.onSlug. This keeps the header's arrow hearing the same
+ * thing, so the two never point at different places. Returns the
+ * unsubscribe; the screen holds it for as long as it is mounted.
+ */
+export function followPlatformSlug(): () => void {
+  return subscribePlatformSlug(() => { if (state.route.open) syncChrome(); });
 }
 
 export function syncChrome(): void {

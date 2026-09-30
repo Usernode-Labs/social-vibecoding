@@ -173,3 +173,75 @@ test('a project\'s channel: _landOnHub first, then the hub\'s address', async ()
     assert.equal(win.location.hash, '#app/whiteboard/workshop');
   });
 });
+
+// THE HEADER'S ARROW AND THE PANE'S DISC NAME ONE HUB. The header's arrow is
+// syncChrome's (store.ts channelHub); on a cold #general it was set to
+// Communities and nothing re-ran it when the slug landed. EXECUTED against the
+// real store and PlatformTarget: open #general slugless, then publish the slug
+// the way App.loadVersion does.
+test('a cold #general: the header arrow follows the slug to the hub, with the disc', async () => {
+  const GENERAL = 5;
+  const backIcons = [];
+  const landed = [];
+  const prev = { window: globalThis.window, fetch: globalThis.fetch, localStorage: globalThis.localStorage };
+  globalThis.window = {
+    location: { hash: `#messages/${GENERAL}`, search: '' },
+    addEventListener() {}, removeEventListener() {}, dispatchEvent() {},
+    matchMedia: () => ({ matches: true, addEventListener() {}, removeEventListener() {} }),
+    innerWidth: 1280,
+    AppView: { _landOnHub: (s) => landed.push(s) },
+    App: {
+      user: { id: 1, username: 'me' },
+      setBackIcon: (kind, href) => backIcons.push([kind, href]),
+      setHeaderTitle() {},
+    },
+    Notifications: { markConversationRead() {}, markConversationThreadRead() {} },
+  };
+  globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
+  const general = { id: GENERAL, kind: 'channel', title: 'general', channelKey: 'general', membershipStatus: 'member', memberCount: 3, members: [] };
+  globalThis.fetch = async (url) => {
+    const address = String(url);
+    const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
+    if (address === `/api/conversations/${GENERAL}`) return json({ conversation: general });
+    if (address.startsWith(`/api/conversations/${GENERAL}/messages?`)) return json({ messages: [], next_before: null });
+    if (address.startsWith('/api/conversations')) return json({ conversations: [general] });
+    if (address.startsWith('/api/platform/about') || address.startsWith('/api/version')) return json(null, 500);
+    return json({ discussions: [] });
+  };
+  try {
+    const { PlatformTarget } = loadTsx('frontend/src/features/app-context/platform-target.js');
+    const store = loadTsx('frontend/src/features/messages/store.ts');
+    const HUB = loadTsx('frontend/src/features/messages/channel-hub.ts');
+    const unfollow = store.followPlatformSlug();
+    store.route(GENERAL, null, null, {});
+    for (let i = 0; i < 5; i += 1) await new Promise((r) => setTimeout(r, 5));
+    store.syncChrome();
+    assert.deepEqual(backIcons.at(-1), ['arrow', '#communities'], 'slugless: the arrow goes to Communities');
+    assert.equal(HUB.generalHubBack(HUB.platformSlug()).label, 'Communities', '…and so does the disc');
+
+    window.App._lastVersionInfo = { sha: 'abc', selfAppSlug: 'homeroom' };
+    PlatformTarget.notifySlug();
+    assert.deepEqual(backIcons.at(-1), ['arrow', '#app/homeroom/workshop'], 'the arrow hears the slug');
+    const disc = HUB.generalHubBack(HUB.platformSlug());
+    assert.equal(disc.label, 'Homeroom');
+    disc.onBack();
+    assert.equal(window.location.hash, backIcons.at(-1)[1], 'the disc goes where the arrow goes');
+    assert.deepEqual(landed, ['homeroom']);
+
+    unfollow();
+    const before = backIcons.length;
+    window.App._lastVersionInfo = { sha: 'abd', selfAppSlug: 'other' };
+    PlatformTarget.notifySlug();
+    assert.equal(backIcons.length, before, 'an unmounted screen is not re-synced');
+  } finally {
+    for (const [key, value] of Object.entries(prev)) {
+      if (value === undefined) delete globalThis[key]; else globalThis[key] = value;
+    }
+  }
+});
+
+test('the Messages screen follows the slug for as long as it is mounted', () => {
+  assert.match(SCREEN, /useEffect\(\(\) => followPlatformSlug\(\), \[\]\);/);
+  assert.match(read('frontend/src/features/messages/store.ts'),
+    /export function followPlatformSlug\(\): \(\) => void \{\s*return subscribePlatformSlug\(\(\) => \{ if \(state\.route\.open\) syncChrome\(\); \}\);/);
+});
