@@ -211,7 +211,7 @@ test('no route interpolates a raw username into a branch name', () => {
   }
 });
 
-test('every dev-branch mint goes through devBranchName', () => {
+test('every dev-branch mint goes through the branch-names module', () => {
   // #1350 redistributed these. The interactive session route no longer
   // mints at all — its branch is created on the first turn — so the count
   // dropped from four to the three headless creation paths that have no
@@ -232,9 +232,89 @@ test('every dev-branch mint goes through devBranchName', () => {
     const mints = src.match(/const branchName = [^;]+;/g) || [];
     assert.equal(mints.length, count, `${rel}: expected ${count} branch mints`);
     for (const mint of mints) {
-      assert.match(mint, /branchNames\.devBranchName\(/, `unrouted branch mint: ${mint}`);
+      assert.match(
+        mint, /branchNames\.devBranchName(FromTitle)?\(/,
+        `unrouted branch mint: ${mint}`
+      );
     }
   }
+});
+
+// ── #3229: the title-aware mint ─────────────────────────────────────────
+
+test('devBranchNameFromTitle names the branch after the title', () => {
+  const name = branchNames.devBranchNameFromTitle('Fix the login redirect', 'evan', 1782044362714);
+  assert.equal(name, 'dev/fix-the-login-redirect-1782044362714');
+  assert.ok(branchNames.isValidBranchName(name));
+});
+
+test('devBranchNameFromTitle strips the headless-title prefix', () => {
+  // Clones inherit the "#N · issue title" display shape (headlessTitle);
+  // the leading number must not become a meaningless branch segment.
+  const name = branchNames.devBranchNameFromTitle('#42 · Fix imports from foo.js', 'evan', 1782044362714);
+  assert.equal(name, 'dev/fix-imports-from-foo.js-1782044362714');
+  assert.ok(branchNames.isValidBranchName(name));
+});
+
+test('devBranchNameFromTitle falls back to the username shape for empty and unusable titles', () => {
+  const ts = 1782044362714;
+  for (const title of ['', '   ', null, undefined, '🎉🚀✨', '🤷‍♀️!!', '中文标题只有汉字']) {
+    const name = branchNames.devBranchNameFromTitle(title, 'evan', ts);
+    assert.equal(
+      name, branchNames.devBranchName('evan', ts),
+      `title ${JSON.stringify(title)} must fall back to the username shape`
+    );
+    assert.ok(branchNames.isValidBranchName(name));
+  }
+});
+
+test('devBranchNameFromTitle truncates a long title to a valid ref', () => {
+  const long = 'Fix the login redirect. It sends people to the dashboard instead of back to the page they came from';
+  const name = branchNames.devBranchNameFromTitle(long, 'evan', 1782044362714);
+  assert.ok(branchNames.isValidBranchName(name), `${name} must be pushable`);
+  // The 64-char segment cut lands at a word boundary the sanitizer's
+  // own edge-trim chose; it keeps the `.` from "redirect." (legal mid-
+  // segment) and ends on a word, not on `-` or `.`.
+  assert.match(name, /^dev\/fix-the-login-redirect\.?-it-sends-people-to-the-dashboard-instead-\d+$/);
+});
+
+test('devBranchNameFromTitle always emits a name isValidBranchName accepts', () => {
+  const hostile = [
+    '', '   ', null, undefined,
+    'Fix the login redirect', 'UPPER CASE TITLE', 'punctuation! everywhere?',
+    'emoji 🎉 only', '中文标题', 'a.'.repeat(60), '-leading-dash', 'trailing-dot.',
+    'x'.repeat(500),
+  ];
+  for (const title of hostile) {
+    const name = branchNames.devBranchNameFromTitle(title, 'koenigup@gmail.com', 1782044362714);
+    assert.ok(
+      branchNames.isValidBranchName(name),
+      `devBranchNameFromTitle(${JSON.stringify(title)}) produced unpushable ${JSON.stringify(name)}`
+    );
+    assert.ok(name.startsWith('dev/'), `${name} must stay under dev/`);
+  }
+});
+
+test('the mints route through devBranchNameFromTitle and the auto-issue site stays put', () => {
+  // ensureSessionBranch (the deferred first-turn mint) and the clone
+  // route both name the branch after the work now. The auto-issue mint
+  // keeps its own meaningful name — it is not derived from a title.
+  const lifecycle = read('src/services/session-lifecycle.js');
+  assert.match(
+    lifecycle, /branchNames\.devBranchNameFromTitle\(\s*titleSource/,
+    'ensureSessionBranch must mint through devBranchNameFromTitle'
+  );
+
+  const sessions = read('src/routes/sessions.js');
+  const mints = sessions.match(/const branchName = branchNames\.[^;]+;/g) || [];
+  assert.equal(
+    mints.filter((m) => /devBranchNameFromTitle/.test(m)).length, 1,
+    'only the clone route mints title-derived names in sessions.js'
+  );
+  assert.equal(
+    mints.filter((m) => /devBranchName\(`auto-issue-/.test(m)).length, 1,
+    'the auto-issue mint keeps its meaningful devBranchName'
+  );
 });
 
 test('the push proxy validates through the shared module, not a local regex', () => {
