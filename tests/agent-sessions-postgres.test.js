@@ -875,12 +875,14 @@ test('a turn left behind by its process is ended once, with a note the screen of
     await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'dead' });
     assert.equal(await end(false), true);
 
+    // Acquire the conversation first, then dispatch its coding job, as the
+    // real flow does. A job already on record correctly refuses a new lease.
+    assert.equal(await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'building' }), true);
     // A build the dead turn dispatched is restart recovery's to hand back.
     const { rows: [change] } = await client.query(
       `INSERT INTO chat_sessions (app_id, user_id, status, agent_session_id, active_turn) VALUES (3, 7, 'active', $1, '{"phase":"executing"}') RETURNING id`,
       [session.id]);
     await client.query('UPDATE agent_sessions SET active_change_id = $2 WHERE id = $1', [session.id, change.id]);
-    await agentSessions.acquireTurnLease(client, { agentSessionId: session.id, userId: 7, turnId: 'building' });
     await client.query(
       `UPDATE agent_sessions SET active_turn = active_turn || jsonb_build_object('renewedAt', NOW() - make_interval(secs => $2)) WHERE id = $1`,
       [session.id, agentSessions.TURN_LEASE_STALE_SECONDS + 30]);
