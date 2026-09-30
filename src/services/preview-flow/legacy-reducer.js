@@ -3,6 +3,45 @@
 const { enablingCondition } = require('./enabling-conditions');
 const { isPreparationRequest, isResourceAction } = require('./actions');
 
+// A cleanup pass proves absence at its observation boundary, not termination
+// of an external creator. Isolated attempts can request a fresh pass later.
+function requestCleanupDecision(state, action) {
+  const resource = state.resource;
+  const reconciling = resource.cleanupCompleted;
+  let reason = 'cleanup_requested';
+  if (reconciling) reason = 'cleanup_reconciliation_requested';
+  else if (resource.cleanupStarted) reason = 'cleanup_resumed';
+
+  // A fresh isolated observation is new work. Replaying the same action keeps
+  // its key; a later scan must not reuse a completed effect's identity.
+  const effectKey = resource.intent.attemptId
+    ? `${action.flowId}:cleanup:${action.actionId}`
+    : `${action.flowId}:cleanup`;
+
+  const decision = {
+    accepted: true,
+    reason,
+    flow: state.flow,
+    projection: 'unchanged',
+    effects: [{
+      type: 'CleanupPreview',
+      effectKey,
+      causedBy: action.actionId,
+      sessionId: action.sessionId,
+      flowId: action.flowId,
+      intent: resource.intent,
+    }],
+  };
+
+  if (reconciling || !resource.cleanupStarted) {
+    decision.resourceChange = {
+      flowId: action.flowId,
+      cleanup: reconciling ? 'reconcile' : 'start',
+    };
+  }
+  return decision;
+}
+
 // No clock, ID allocation, SQL, service calls or dispatch in this module.
 // The captured state/action/facts reproduce a decision after its row changes.
 function reduceLegacy(state, action, facts) {
@@ -45,24 +84,7 @@ function reduceLegacy(state, action, facts) {
       };
     }
 
-    const decision = {
-      accepted: true,
-      reason: resource.cleanupStarted ? 'cleanup_resumed' : 'cleanup_requested',
-      flow: state.flow,
-      projection: 'unchanged',
-      effects: [{
-        type: 'CleanupPreview',
-        effectKey: `${action.flowId}:cleanup`,
-        causedBy: action.actionId,
-        sessionId: action.sessionId,
-        flowId: action.flowId,
-        intent: resource.intent,
-      }],
-    };
-    if (!resource.cleanupStarted) {
-      decision.resourceChange = { flowId: action.flowId, cleanup: 'start' };
-    }
-    return decision;
+    return requestCleanupDecision(state, action);
   }
 
   if (isPreparationRequest(action)) {
@@ -134,5 +156,4 @@ function reduceLegacy(state, action, facts) {
   return decision;
 }
 
-
-module.exports = { reduceLegacy };
+module.exports = { reduceLegacy, requestCleanupDecision };

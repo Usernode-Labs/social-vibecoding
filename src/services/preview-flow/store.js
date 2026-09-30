@@ -186,6 +186,9 @@ function createPreviewFlow(pool, {
         if (resourceChange?.cleanup === 'start') {
           await client.query('UPDATE preview_flow_resources SET cleanup_started_at = NOW() WHERE flow_id = $1',
             [resourceChange.flowId]);
+        } else if (resourceChange?.cleanup === 'reconcile') {
+          await client.query(`UPDATE preview_flow_resources SET cleanup_completed_at = NULL, cleanup_disposition = NULL
+            WHERE flow_id = $1`, [resourceChange.flowId]);
         } else if (resourceChange?.cleanup === 'complete') {
           await client.query(`UPDATE preview_flow_resources SET cleanup_completed_at = NOW(), cleanup_disposition = $2
             WHERE flow_id = $1`, [resourceChange.flowId, resourceChange.disposition]);

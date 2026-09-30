@@ -105,6 +105,54 @@ test('candidate guards keep preparation, activation permission and serving obser
   assert.equal(reduceCandidate({ ...state, retainedPublishedAttempts: 2 }, prepare, {}).reason, 'consumer_retirement_required');
 });
 
+test('completed isolated cleanup authorizes another observation while frozen B1 traces keep their original result', () => {
+  const flowId = randomUUID();
+  const intent = candidateResources({ appRuntime: 'docker' }, 1, randomUUID());
+  const state = {
+    session: null,
+    flow: null,
+    preview: null,
+    binding: null,
+    resource: {
+      flowId,
+      sessionId: 1,
+      intent,
+      receipt: null,
+      published: false,
+      cleanupStarted: true,
+      cleanupCompleted: true,
+      disposition: 'removed',
+    },
+  };
+  const action = parseAction(request('RequestPreviewCleanup', { flowId }));
+  const before = structuredClone(state);
+  const decision = reduceCandidate(state, action, {});
+  assert.deepEqual(state, before);
+  assert.equal(decision.reason, 'cleanup_reconciliation_requested');
+  assert.deepEqual(decision.resourceChange, { flowId, cleanup: 'reconcile' });
+  assert.equal(decision.effects[0].type, 'CleanupPreview');
+  assert.equal(decision.effects[0].effectKey, `${flowId}:cleanup:${action.actionId}`);
+  assert.deepEqual(reduceCandidate(state, action, {}), decision, 'replaying a request retains its effect identity');
+  const next = reduceCandidate(state, { ...action, actionId: randomUUID() }, {});
+  assert.notEqual(next.effects[0].effectKey, decision.effects[0].effectKey, 'a later observation is new work');
+
+  assert.deepEqual(replayDecision({ reducer_version: 3, pre_state: state, action, facts: {} }), {
+    accepted: true,
+    reason: 'cleanup_already_completed',
+    flow: null,
+    projection: 'unchanged',
+    disposition: 'removed',
+    effects: [],
+  });
+  assert.equal(reduceCandidate(state, { ...action, flowId: randomUUID() }, {}).reason, 'resource_missing');
+  assert.equal(reduceCandidate({ ...state, binding: { desired: { attemptId: intent.attemptId } } }, action, {}).reason,
+    'resource_bound');
+  assert.equal(reduceCandidate({ ...state, resource: { ...state.resource, published: true } }, action, {}).reason,
+    'consumer_retirement_required');
+  const legacy = { ...state, resource: { ...state.resource, intent: { ...intent, attemptId: undefined } } };
+  assert.equal(reduceCandidate(legacy, action, {}).reason, 'cleanup_already_completed');
+});
+
 test('native isolated candidates and activation recovery on real PostgreSQL', { skip: !databaseUrl }, async t => {
   const root = new Pool({ connectionString: databaseUrl });
   const schema = `preview_candidate_test_${process.pid}`;
@@ -130,6 +178,14 @@ test('native isolated candidates and activation recovery on real PostgreSQL', { 
     await pool.query(migration);
     await pool.query(migration);
 
+    // Upgrade the earlier pending-only queue index, then replay boot migration.
+    await pool.query(`CREATE INDEX preview_flow_resources_pending_queue_idx
+      ON preview_flow_resources (cleanup_queue_position)
+      WHERE cleanup_completed_at IS NULL AND intent IS NOT NULL`);
+    const recoveryIndexMigration = source.match(/DROP INDEX IF EXISTS preview_flow_resources_pending_queue_idx;[\s\S]*?CREATE INDEX IF NOT EXISTS preview_flow_resources_recovery_queue_idx[\s\S]*?;/)[0];
+    await pool.query(recoveryIndexMigration);
+    await pool.query(recoveryIndexMigration);
+
     for (const runtimeKind of ['docker', 'kubernetes']) {
       await t.test(runtimeKind, async t => {
         const config = {
@@ -143,8 +199,15 @@ test('native isolated candidates and activation recovery on real PostgreSQL', { 
         const session = { id: 1, app_id: 1, status: 'active', source: 'cli_handoff' };
         const owner = createPreviewFlow(pool);
         const guard = createGuard();
+        // Advisory locks are database-wide, whereas fixture tables are scoped
+        // by schema. Give this fixture's resources the same scope so concurrent
+        // test files cannot make a sweep skip their unrelated session 1.
+        const withResourceUse = (runtimeConfig, kind, sessionId, run, options) =>
+          guard.withResourceUse(runtimeConfig, kind, `${schema}:${sessionId}`, run, options);
         const resources = new Map();
         const clones = new Set();
+        const imageTags = new Set();
+        const checkouts = new Set();
         let serving;
         let mutations;
         let routeError;
@@ -160,14 +223,21 @@ test('native isolated candidates and activation recovery on real PostgreSQL', { 
             if (routeError) throw routeError;
           },
         };
-        const activation = createActivation({ routes, lock: guard.withResourceUse, verify: async (_config, intent, flowId, receipt) => {
+        const activation = createActivation({ routes, lock: withResourceUse, verify: async (_config, intent, flowId, receipt) => {
           assert.equal(resources.get(intent.runtimeName)?.uid, receipt.physicalId);
           assert.equal(resources.get(intent.runtimeName)?.flowId, flowId);
         } });
         t.mock.method(require('../src/services/preview-flow/activation'), 'recover', activation.recover);
         t.mock.method(bindingAdapters, 'inspect', routes.inspect);
         t.mock.method(docker, 'execFileAsync', async (command, args) => {
-          if (command === 'rm' || args[0] === 'image') return { stdout: '' };
+          if (command === 'rm') {
+            checkouts.delete(args.at(-1));
+            return { stdout: '' };
+          }
+          if (args[0] === 'image') {
+            imageTags.delete(args.at(-1));
+            return { stdout: '' };
+          }
           const object = resources.get(args.at(-1));
           if (!object) throw new Error('No such container');
           return { stdout: JSON.stringify({ Id: object.uid, Config: { Labels: { [FLOW_LABEL]: object.flowId } } }) };
@@ -195,7 +265,7 @@ test('native isolated candidates and activation recovery on real PostgreSQL', { 
         core.listNamespacedPod = async () => ({ items: [] });
         t.mock.method(kubernetes, '_getClients', () => ({ core, apps }));
         const cleanup = createCleanup({
-          lock: guard.withResourceUse,
+          lock: withResourceUse,
           db: { dropDatabase: async (name, options) => {
             assert.equal(options.strict, true);
             clones.delete(name);
@@ -209,6 +279,8 @@ test('native isolated candidates and activation recovery on real PostgreSQL', { 
             VALUES (1, 1, 'active', 'cli_handoff', $1, 'https://old.example.test', 'old-serving', $1)`, [HEAD]);
           resources.clear();
           clones.clear();
+          imageTags.clear();
+          checkouts.clear();
           resources.set('old-serving', { uid: 'old-physical', flowId: 'old-owner' });
           clones.add('old-clone');
           serving = { target: 'old-serving', token: '0', uid: runtimeKind === 'docker' ? null : 'ingress-uid' };
@@ -219,7 +291,7 @@ test('native isolated candidates and activation recovery on real PostgreSQL', { 
         }
 
         async function build(_config, _session, _app, head, options) {
-          return guard.withResourceUse(config, STAGING_BUILD_LOCK, 1, async () => {
+          return withResourceUse(config, STAGING_BUILD_LOCK, 1, async () => {
             const intent = options.candidate.intent;
             await options.beforeBuild(intent);
             assert.equal((await owner.read(1)).preview.runtimeName, serving.target);
@@ -470,6 +542,227 @@ test('native isolated candidates and activation recovery on real PostgreSQL', { 
             WHERE desired->>'activationId' IS DISTINCT FROM observed->>'activationId'`);
           assert.equal(Number(pending.rows[0].count), 31);
         });
+
+        for (const protection of ['external-binding', 'flow-owner', 'physical-identity']) {
+          await t.test(`reconciliation rechecks ${protection} before removing a reappeared runtime or clone`, async () => {
+            await reset();
+            const candidate = await prepare(pool, async () => ({ accepted: true, reason: 'test-candidate-only' }));
+            const historical = await owner.read(1);
+            const intent = historical.resource.intent;
+            const receipt = historical.resource.receipt;
+            await cleanup.sweep({ pool, config });
+            assert.equal(resources.has(intent.runtimeName), false);
+
+            resources.set(intent.runtimeName, {
+              uid: protection === 'physical-identity' ? 'replacement-physical-id' : receipt.physicalId,
+              flowId: protection === 'flow-owner' ? randomUUID() : candidate.identity.flowId,
+            });
+            clones.add(intent.dbName);
+            if (protection === 'external-binding') serving = { ...serving, target: intent.runtimeName };
+            assert.deepEqual(await cleanup.sweep({ pool, config }), [{ pending: true }]);
+            assert.ok(resources.has(intent.runtimeName), 'changed ownership cannot authorize deletion');
+            assert.ok(clones.has(intent.dbName), 'a potentially live consumer protects the clone too');
+            assert.equal((await owner.read(1)).resource.cleanupCompleted, false);
+
+            serving = { ...serving, target: 'old-serving' };
+            resources.set(intent.runtimeName, { uid: receipt.physicalId, flowId: candidate.identity.flowId });
+            await cleanup.sweep({ pool, config });
+            assert.equal(resources.has(intent.runtimeName), false);
+            assert.equal(clones.has(intent.dbName), false);
+            assert.ok(resources.has('old-serving'));
+          });
+        }
+
+        for (const boundary of ['authorization', 'authorization-commit-ack', 'completion']) {
+          await t.test(`retired attempt reconciliation survives ${boundary} failure`, async () => {
+            await reset();
+            const admission = await owner.apply(request('RequestCandidatePreview', {
+              headSha: HEAD,
+              startedStatus: 'active',
+            }));
+            const flow = admission.decision.flow;
+            const intent = candidateResources(config, 1, flow.attemptId);
+            await owner.recordIntent(1, flow.id, intent, { credentialEnc: 'encrypted-reservation' });
+            await cleanup.sweep({ pool, config });
+            resources.set(intent.runtimeName, { uid: randomUUID(), flowId: flow.id });
+            clones.add(intent.dbName);
+
+            const actionType = boundary === 'completion' ? 'PreviewCleanupCompleted' : 'RequestPreviewCleanup';
+            let authorizationInserted = false;
+            const faulty = failOnce(pool, (sql, params) => {
+              const matchingTrace = sql.startsWith('INSERT INTO preview_flow_decisions')
+                && JSON.parse(params[4]).type === actionType;
+              if (matchingTrace) authorizationInserted = true;
+              return boundary === 'authorization-commit-ack'
+                ? sql === 'COMMIT' && authorizationInserted
+                : matchingTrace;
+            }, boundary === 'authorization-commit-ack');
+            const result = await cleanup.sweep({ pool: faulty, config });
+            assert.deepEqual(result, [{ pending: true }]);
+            const resource = (await pool.query('SELECT * FROM preview_flow_resources WHERE flow_id = $1', [flow.id])).rows[0];
+            assert.equal(!!resource.cleanup_completed_at, boundary === 'authorization',
+              'a committed reconciliation stays pending after acknowledgment loss');
+            assert.equal(resources.has(intent.runtimeName), boundary !== 'completion');
+            assert.equal(clones.has(intent.dbName), boundary !== 'completion');
+
+            await cleanup.sweep({ pool, config });
+            assert.equal(resources.has(intent.runtimeName), false);
+            assert.equal(clones.has(intent.dbName), false);
+            assert.ok((await pool.query('SELECT cleanup_completed_at FROM preview_flow_resources WHERE flow_id = $1', [flow.id]))
+              .rows[0].cleanup_completed_at);
+            assert.equal(serving.target, 'old-serving');
+          });
+        }
+
+        for (const blockage of ['busy', 'failing']) {
+          await t.test(`completed tombstones rotate fairly while the oldest batch stays ${blockage}`, async () => {
+            await reset();
+            const entries = [];
+            for (let sessionId = 2; sessionId <= 32; sessionId++) {
+              await pool.query(`INSERT INTO chat_sessions (id, app_id, status, source, checks_commit_sha)
+                VALUES ($1, 1, 'active', 'cli_handoff', $2)`, [sessionId, HEAD]);
+              const admission = await owner.apply({ ...request('RequestCandidatePreview', {
+                headSha: HEAD,
+                startedStatus: 'active',
+              }), sessionId });
+              const flow = admission.decision.flow;
+              const intent = candidateResources(config, sessionId, flow.attemptId);
+              entries.push({ sessionId, flowId: flow.id, intent });
+              await owner.recordIntent(sessionId, flow.id, intent, { credentialEnc: 'encrypted-reservation' });
+            }
+            await cleanup.sweep({ pool, config, limit: 100 });
+            const completed = (await pool.query(`SELECT session_id, cleanup_completed_at FROM preview_flow_resources
+              ORDER BY cleanup_queue_position`)).rows;
+            assert.equal(completed.length, 31);
+            assert.ok(completed.every(row => row.cleanup_completed_at));
+            const oldest = new Set(completed.slice(0, 25).map(row => row.session_id));
+            const oldClones = new Set(entries.filter(entry => oldest.has(entry.sessionId)).map(entry => entry.intent.dbName));
+            for (const entry of entries) {
+              resources.set(entry.intent.runtimeName, { uid: randomUUID(), flowId: entry.flowId });
+              clones.add(entry.intent.dbName);
+            }
+
+            let blocked = true;
+            const attempted = [];
+            const fairCleanup = createCleanup({
+              lock: async (runtimeConfig, kind, sessionId, run, options) => {
+                attempted.push(sessionId);
+                if (blocked && blockage === 'busy' && oldest.has(sessionId)) return { skipped: true, busy: true };
+                return withResourceUse(runtimeConfig, kind, sessionId, run, options);
+              },
+              db: { dropDatabase: async name => {
+                if (blocked && blockage === 'failing' && oldClones.has(name)) throw new Error('Clone drop remains unavailable');
+                clones.delete(name);
+              } },
+            });
+            const first = await fairCleanup.sweep({ pool, config });
+            assert.equal(first.length, 25);
+            assert.ok(first.every(result => blockage === 'busy' ? result.busy : result.pending));
+            attempted.length = 0;
+            await fairCleanup.sweep({ pool, config });
+            const later = entries.filter(entry => !oldest.has(entry.sessionId));
+            assert.equal(later.length, 6);
+            assert.ok(later.every(entry => attempted.includes(entry.sessionId)));
+            assert.ok(later.every(entry => !resources.has(entry.intent.runtimeName) && !clones.has(entry.intent.dbName)));
+            assert.ok(entries.filter(entry => oldest.has(entry.sessionId)).every(entry => clones.has(entry.intent.dbName)),
+              'older obligations remain recoverable');
+
+            blocked = false;
+            await fairCleanup.sweep({ pool, config, limit: 100 });
+            assert.deepEqual([...clones], ['old-clone']);
+            assert.deepEqual([...resources.keys()], ['old-serving']);
+          });
+        }
+
+        if (runtimeKind === 'kubernetes') {
+          await t.test('successive delayed Secret, Service and Deployment creation reopens the same tombstone', async t => {
+            await reset();
+            const admission = await owner.apply(request('RequestCandidatePreview', {
+              headSha: HEAD,
+              startedStatus: 'active',
+            }));
+            const flow = admission.decision.flow;
+            const intent = candidateResources(config, 1, flow.attemptId);
+            await owner.recordIntent(1, flow.id, intent, { credentialEnc: 'encrypted-reservation' });
+            const objects = new Map();
+            const deleted = [];
+            for (const [api, kind] of [[apps, 'Deployment'], [core, 'Service'], [core, 'Secret']]) {
+              t.mock.method(api, `readNamespaced${kind}`, async () => {
+                if (!objects.has(kind)) throw Object.assign(new Error('Not found'), { code: 404 });
+                return objects.get(kind);
+              });
+              t.mock.method(api, `deleteNamespaced${kind}`, async ({ body }) => {
+                assert.equal(body.preconditions.uid, objects.get(kind).metadata.uid);
+                objects.delete(kind);
+                deleted.push(kind);
+              });
+            }
+            await cleanup.sweep({ pool, config });
+            for (const kind of ['Secret', 'Service', 'Deployment']) {
+              // Each API create finishes after a different successful absence
+              // observation. A single extra scan or grace period is insufficient.
+              objects.set(kind, { metadata: { uid: randomUUID(), labels: { [FLOW_LABEL]: flow.id } } });
+              clones.add(intent.dbName);
+              await cleanup.sweep({ pool, config });
+              assert.equal(objects.size, 0);
+              assert.equal(clones.has(intent.dbName), false);
+              assert.equal(deleted.at(-1), kind);
+            }
+            assert.deepEqual(deleted, ['Secret', 'Service', 'Deployment']);
+            assert.ok(resources.has('old-serving'));
+          });
+        }
+
+        for (const deleteSession of [false, true]) {
+          await t.test(`late external creation is reconciled after absence${deleteSession ? ' and session deletion' : ' and successor activation'}`, async () => {
+            await reset();
+            const admission = await owner.apply(request('RequestCandidatePreview', {
+              headSha: HEAD,
+              startedStatus: 'active',
+            }));
+            const flow = admission.decision.flow;
+            const intent = candidateResources(config, 1, flow.attemptId);
+            await owner.recordIntent(1, flow.id, intent, { credentialEnc: 'encrypted-reservation' });
+
+            // The external system accepted creation, but the requesting process
+            // died before acknowledgment. Its resource lock no longer proves
+            // that the external operation ended. Control completion explicitly.
+            let finishCreation;
+            const externalCreation = new Promise(resolve => { finishCreation = resolve; }).then(() => {
+              clones.add(intent.dbName);
+              checkouts.add(intent.checkoutDir);
+              if (runtimeKind === 'docker') imageTags.add(intent.imageName);
+              resources.set(intent.runtimeName, { uid: randomUUID(), flowId: flow.id });
+            });
+
+            if (deleteSession) await pool.query('DELETE FROM chat_sessions WHERE id = 1');
+            await cleanup.sweep({ pool, config });
+            const absent = (await pool.query('SELECT * FROM preview_flow_resources WHERE flow_id = $1', [flow.id])).rows[0];
+            assert.ok(absent.cleanup_completed_at, 'first pass reports observed absence');
+            assert.equal(resources.has(intent.runtimeName), false);
+
+            const successor = deleteSession ? null : await prepare();
+            finishCreation();
+            await externalCreation;
+            assert.ok(resources.has(intent.runtimeName), 'external creation completes after cleanup settled');
+            assert.ok(clones.has(intent.dbName));
+
+            await cleanup.sweep({ pool, config: { ...config, nativePreviewAttempts: false } });
+            assert.equal(resources.has(intent.runtimeName), false, 'retired attempt remains discoverable');
+            assert.equal(clones.has(intent.dbName), false, 'late clone belongs to the same cleanup tombstone');
+            assert.equal(checkouts.has(intent.checkoutDir), false);
+            assert.equal(imageTags.has(intent.imageName), false);
+            assert.ok(resources.has('old-serving'));
+            if (successor) {
+              assert.equal(serving.target, successor.result.runtimeName);
+              assert.ok(resources.has(successor.result.runtimeName));
+              assert.equal((await owner.read(1)).preview.runtimeName, successor.result.runtimeName);
+            }
+            const decisions = await owner.trace(1);
+            assert.ok(decisions.some(entry => entry.decision.reason === 'cleanup_reconciliation_requested'));
+            for (const entry of decisions) assert.deepEqual(replayDecision(entry), entry.decision);
+          });
+        }
 
         await t.test('interrupted preparation is abandoned rather than adopted from clone existence', async () => {
           await reset();

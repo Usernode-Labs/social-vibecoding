@@ -9614,6 +9614,8 @@ CREATE TABLE IF NOT EXISTS preview_flow_resources (
   clone_prepared BOOLEAN NOT NULL DEFAULT FALSE,
   published_at TIMESTAMPTZ,
   cleanup_started_at TIMESTAMPTZ,
+  -- For isolated attempts this is the last successful absence observation,
+  -- not proof that an external creator ended. Retain and reconcile the row.
   cleanup_completed_at TIMESTAMPTZ,
   cleanup_disposition TEXT CHECK (cleanup_disposition IN ('removed', 'replaced')),
   -- Durable queue order, separate from execution identity. Selection assigns
@@ -9624,9 +9626,11 @@ CREATE TABLE IF NOT EXISTS preview_flow_resources (
 );
 ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS clone_credential_enc TEXT;
 ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS clone_prepared BOOLEAN NOT NULL DEFAULT FALSE;
-CREATE INDEX IF NOT EXISTS preview_flow_resources_pending_queue_idx
+DROP INDEX IF EXISTS preview_flow_resources_pending_queue_idx;
+CREATE INDEX IF NOT EXISTS preview_flow_resources_recovery_queue_idx
   ON preview_flow_resources (cleanup_queue_position)
-  WHERE cleanup_completed_at IS NULL AND intent IS NOT NULL;
+  WHERE intent IS NOT NULL
+    AND (cleanup_completed_at IS NULL OR intent->>'attemptId' IS NOT NULL);
 CREATE TABLE IF NOT EXISTS preview_action_receipts (
   -- Cleanup decisions and original receipts must outlive their aggregate,
   -- just like the resource obligation. IDs must never be recycled.

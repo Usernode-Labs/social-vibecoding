@@ -70,8 +70,65 @@ services; per-attempt registry/cache-tag garbage collection is not established.
 That retention policy must be resolved before enabling this beyond the experiment.
 Already accepted external creation commands can finish after process death;
 there is no durable execution receipt proving their termination in this slice.
+Completed isolated cleanup rows therefore remain discoverable tombstones, as
+described below.
 
 Run `node scripts/test-preview-flow.js` with `PREVIEW_FLOW_TEST_DATABASE_URL` set to a
 **disposable** PostgreSQL database. The optional real-Caddy test is
 `PREVIEW_CADDY_TEST_IMAGE=<local image or digest> node --test tests/preview-caddy-live.test.js`;
 it creates and removes its own container and publishes no ports.
+
+## Delayed creation after observed absence
+
+An external create can finish after its caller dies and releases the resource
+lock. Cleanup can observe absence, commit completion, and then see resources
+appear later. B1 previously excluded completed rows from recovery, leaving those
+resources without an owner. That was an introduced cleanup regression.
+
+For **isolated unpublished attempts**, retain the immutable intent and revisit it
+through the bounded, rotating cleanup queue. Session deletion and disabled
+admission do not stop discovery. A completed pass records absence at that moment;
+it does not prove external creation ended. A fresh `RequestPreviewCleanup` makes
+a guarded decision, returns `CleanupPreview`, and atomically clears prior
+completion with its receipt/trace. Retirement stays marked. A new
+`PreviewCleanupCompleted` records the next absence observation. Version 4 captures
+this policy; frozen versions 1/2/3 replay their original decisions. Retrying an
+original action ID returns its original receipt, not new permission. Each fresh
+isolated cleanup action has its own effect key; replay retains that key, while a
+later observation does not reuse completed work's identity.
+
+Every pass rechecks serving/consumer protection, the external binding, flow label
+and physical runtime identity before removal. Docker uses immutable container IDs;
+Kubernetes uses UID preconditions and confirmed object/Pod absence. Unique clone,
+checkout and Docker-tag cleanup follow runtime cleanup. Changed ownership defers
+deletion and preserves the record for retry or operator reconciliation. Published
+predecessors stay protected. Late facts cannot restore a retired attempt's
+preparation or activation authority.
+
+Real PostgreSQL regressions first failed on both runtime lanes: external creation
+was delayed until after cleanup committed absence, then completed after successor
+activation or session deletion. Later recovery now removes the retired runtime,
+clone, checkout and Docker tag while preserving the successor. Kubernetes tests
+also create Secret, Service and Deployment after successive completed passes.
+Tests cover authorization rollback, lost commit acknowledgment, failed completion
+persistence and recovery; changed binding, flow owner and physical identity; and
+31 completed tombstones with the oldest 25 busy or repeatedly failing. Later six
+resources get a turn, and older obligations succeed when released. Runtime/route
+transports are fixtures, not new live-cluster or Docker-daemon evidence.
+
+This is **eventual reconciliation**, not creator-termination proof. Late resources
+may exist until another successful pass. Recovery, its database and stored
+namespace must remain available, and ownership checks must succeed. No timeout
+or fixed number of absent scans permits forgetting an isolated intent. Tombstones
+remain indefinitely, adding recurring scans and traces. Safe compaction and
+external creation settlement remain rollout requirements; Kubernetes build/job
+and registry/cache retention retain their existing owners/limits. Out-of-protocol
+name reuse or late route writes are not fenced by this change.
+
+The default-off experiment, published-attempt limit and existing locks remain.
+No caller migration or generic executor was added. **B2 remains the next mandatory
+architectural deliverable:** extract the smallest useful reusable decision
+foundation and demonstrate a distinct second workflow without copying transaction,
+deduplication or tracing machinery. C0 must evaluate execution outside the web
+process, fair recoverable scheduling, external creation settlement and safe
+retention/compaction, with domain permission kept in actions/reducers.

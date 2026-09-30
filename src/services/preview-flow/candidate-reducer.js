@@ -1,7 +1,7 @@
 'use strict';
 
-const { reduceLegacy } = require('./legacy-reducer');
-const { nativeHeadCondition } = require('./enabling-conditions');
+const { reduceLegacy, requestCleanupDecision } = require('./legacy-reducer');
+const { nativeHeadCondition, enablingCondition } = require('./enabling-conditions');
 const { isResourceAction } = require('./actions');
 
 function activationPending(binding) {
@@ -157,6 +157,15 @@ function reduceCandidate(state, action, facts) {
     // published predecessors, including the legacy resource handed over first.
     if (resource.published && (attemptId || isolatedBinding)) {
       return rejection(state, 'consumer_retirement_required');
+    }
+
+    if (attemptId && resource.cleanupCompleted && action.type === 'RequestPreviewCleanup') {
+      const condition = enablingCondition(state, action);
+      if (condition) return rejection(state, condition);
+      // Retained locators are a tombstone. Absence cannot prove that creation
+      // accepted before a crash will not finish later. Authorize another pass;
+      // the executor must still recheck the external binding and physical owner.
+      return requestCleanupDecision(state, action);
     }
   }
 

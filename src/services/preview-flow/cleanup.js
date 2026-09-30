@@ -131,11 +131,15 @@ function createCleanup({
     // death cannot pin the oldest batch at the front. A database sequence orders
     // new arrivals/retries without relying on clocks or a process-local cursor.
     // This statement locks only resource rows; it never then locks a session.
+    // Completed isolated attempts remain tombstones: absence is an observation,
+    // not proof that all external creation ended. Revisit them fairly, even
+    // after aggregate deletion or disabled admission. No time-based expiry.
     // The publication filter only avoids unnecessary attempts. Retirement is
     // authorized again under aggregate/resource locks, after this selection.
     const { rows: obligations } = await pool.query(`WITH candidates AS (
       SELECT r.flow_id FROM preview_flow_resources r LEFT JOIN chat_sessions s ON s.id = r.session_id
-        WHERE r.cleanup_completed_at IS NULL AND r.intent IS NOT NULL
+        WHERE r.intent IS NOT NULL
+          AND (r.cleanup_completed_at IS NULL OR r.intent->>'attemptId' IS NOT NULL)
           AND NOT (r.published_at IS NOT NULL
             AND s.staging_url IS NOT DISTINCT FROM r.receipt->>'stagingUrl'
             AND s.staging_runtime_kind IS NOT DISTINCT FROM r.receipt->>'runtimeKind'
