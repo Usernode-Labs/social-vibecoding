@@ -3,11 +3,11 @@
 /**
  * Fleet maintenance campaign API (services/fleet-maintenance.js).
  *
- * - GET  /api/campaigns                      — list campaigns w/ counts
- *                                              (any signed-in user; the
- *                                              dashboard is read-open,
- *                                              like proposal cards)
- * - GET  /api/campaigns/:id                  — one campaign + per-app rows
+ * - GET  /api/campaigns                      — admin: list campaigns w/
+ *                                              counts
+ * - GET  /api/campaigns/:id                  — admin: one campaign + per-app
+ *                                              rows (private apps included,
+ *                                              so never read-open)
  * - POST /api/campaigns/:id/merge-green      — admin: force-merge every
  *                                              campaign proposal whose
  *                                              checks pass
@@ -24,6 +24,12 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const fleetMaintenance = require('../services/fleet-maintenance');
+
+// A campaign or app id from the path, or null when it is not a positive
+// integer — answered as 404 rather than handed to Postgres as a bad cast.
+function positiveId(raw) {
+  return /^[1-9]\d{0,9}$/.test(String(raw)) && Number(raw) <= 2147483647 ? Number(raw) : null;
+}
 
 function campaignRoutes(config) {
   const router = Router();
@@ -50,6 +56,9 @@ function campaignRoutes(config) {
 
   router.get('/api/campaigns', async (req, res) => {
     try {
+      if (!req.user?.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
       const { rows } = await pool.query(
         `SELECT mc.id, mc.issue_id, mc.title, mc.status, mc.created_at, mc.completed_at,
                 u.username AS created_by_username,
@@ -74,7 +83,12 @@ function campaignRoutes(config) {
 
   router.get('/api/campaigns/:id', async (req, res) => {
     try {
-      const status = await fleetMaintenance.campaignStatus(pool, req.params.id);
+      if (!req.user?.isAdmin) {
+        return res.status(403).json({ error: 'Admin access required' });
+      }
+      const id = positiveId(req.params.id);
+      if (!id) return res.status(404).json({ error: 'Campaign not found' });
+      const status = await fleetMaintenance.campaignStatus(pool, id);
       if (!status) return res.status(404).json({ error: 'Campaign not found' });
       res.json({ campaign: status });
     } catch (err) {
@@ -88,7 +102,9 @@ function campaignRoutes(config) {
       if (!req.user?.canAdminWrite) {
         return res.status(403).json({ error: 'Full admin access required' });
       }
-      const status = await fleetMaintenance.campaignStatus(pool, req.params.id);
+      const id = positiveId(req.params.id);
+      if (!id) return res.status(404).json({ error: 'Campaign not found' });
+      const status = await fleetMaintenance.campaignStatus(pool, id);
       if (!status) return res.status(404).json({ error: 'Campaign not found' });
       log.info('campaigns', 'Merge-green requested', {
         campaignId: status.id, by: req.user.username,
@@ -111,9 +127,10 @@ function campaignRoutes(config) {
       if (!req.user?.canAdminWrite) {
         return res.status(403).json({ error: 'Full admin access required' });
       }
-      const retried = await fleetMaintenance.retryCampaignApp(
-        config, pool, req.params.id, req.params.appId
-      );
+      const id = positiveId(req.params.id);
+      const appId = positiveId(req.params.appId);
+      if (!id || !appId) return res.status(404).json({ error: 'Campaign app not found' });
+      const retried = await fleetMaintenance.retryCampaignApp(config, pool, id, appId);
       if (!retried) {
         return res.status(409).json({ error: 'App is not in a retryable state (failed/skipped)' });
       }
