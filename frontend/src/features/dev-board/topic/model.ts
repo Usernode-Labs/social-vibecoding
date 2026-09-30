@@ -407,7 +407,11 @@ export interface StepRow {
   /** The ledger row's material: the sentence, the roster, the checks, the ops. */
   row?: LedgerRow | null;
   /** The vote step's bar and tally: the same counts the card's pill reads. */
-  vote?: { yes: number; no: number; majority: number; pill: StatusPillState | null } | null;
+  vote?: {
+    yes: number; no: number; majority: number; pill: StatusPillState | null;
+    /** #3234: "Needs N, was M when voting opened", or null when it has not moved. */
+    was?: string | null;
+  } | null;
 }
 
 /** The steps sheet: the strip's own headline over its rows, expanded. */

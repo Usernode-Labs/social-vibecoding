@@ -186,6 +186,22 @@ test('the steps sheet is the strip expanded: its headline and count, one row per
   assert.match(html, /<li class="dev-step dev-step-pending" data-note="github" data-req-gate="github" data-req-state="pending"><span class="dev-step-mark dev-step-mark-pending" aria-hidden="true">·<\/span><span class="dev-step-label">GitHub accepts the merge<\/span><span class="dev-step-actor">automatic<\/span><\/li>/);
 });
 
+// #3234: the threshold counts active members live, so it can move while the
+// vote is open. The vote step says so beside the counts when it has; a row
+// whose number has not moved, or that predates the stamp, says nothing.
+test('the vote step notes the threshold it opened with only when that has moved', () => {
+  const av = context();
+  const note = (item) => plain(render(av, item).v.body.steps).rows[0].vote.was;
+  assert.equal(note({ ...PR, votes_required_at_promote: 2 }), null, 'same number: nothing');
+  assert.equal(note({ ...PR, votes_required_at_promote: null }), null, 'older proposal: nothing');
+  assert.equal(note({ ...PR, votes_required_at_promote: 1 }), 'Needs 2, was 1 when voting opened');
+  assert.equal(note({ ...PR, votes_required_at_promote: 1, approvals_required: 2 }), null,
+    '"at least N" is a fixed count');
+  const { html } = render(av, { ...PR, votes_required_at_promote: 1 });
+  assert.match(html, /<span class="dev-step-vote-tally">Yes 1 · No 0<\/span><span class="dev-step-vote-was">Needs 2, was 1 when voting opened<\/span>/);
+  assert.doesNotMatch(render(av, PR).html, /dev-step-vote-was/);
+});
+
 test('a failing check sits under the blocked Checks step with its door, and the sync row keeps its sentence under the merge step', () => {
   const av = context();
   const item = {

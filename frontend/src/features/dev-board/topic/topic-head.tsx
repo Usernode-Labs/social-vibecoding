@@ -1077,6 +1077,7 @@ function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
       <span className="dev-step-vote-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
       {v.pill ? <StatusPill s={v.pill} inline /> : null}
       <span className="dev-step-vote-tally">{`Yes ${v.yes} · No ${v.no}`}</span>
+      {v.was ? <span className="dev-step-vote-was">{v.was}</span> : null}
     </div>
   );
 }
