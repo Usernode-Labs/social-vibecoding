@@ -451,6 +451,15 @@ export function proposalsView(data, now = Date.now()) {
       href: key === 'inProgress' ? `#app/${slug}/dev/sessions/${id}` : `#app/${slug}/dev/proposals/${id}`,
       title: row.title || 'Change',
       meta: [app, where].filter(Boolean).join(' · '),
+      // The project's own icon leads the row, so one list across every
+      // project still reads project by project (#3364). In app-card.js's
+      // field names, which is what AppIconContent draws from.
+      app: {
+        slug: row.appSlug,
+        name: app,
+        icon_emoji: row.appIconEmoji || null,
+        icon_url: row.appIconUrl || null,
+      },
       at: Date.parse(row.at || '') || 0,
     };
   };

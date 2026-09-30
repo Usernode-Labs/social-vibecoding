@@ -301,7 +301,7 @@ const MY_PROPOSALS_SQL = `
       FROM items it
   )
   SELECT r.section, r.session_id, r.title, r.status, r.at,
-         a.slug AS app_slug, a.name AS app_name
+         a.slug AS app_slug, a.name AS app_name, a.icon_emoji, a.icon_image_id
     FROM ranked r
     JOIN apps a ON a.id = r.app_id
    WHERE r.rn <= $2
@@ -315,6 +315,8 @@ function shapeProposalRow(r) {
     title: r.title,
     appSlug: r.app_slug,
     appName: r.app_name,
+    appIconEmoji: r.icon_emoji || null,
+    appIconUrl: appIconUrl(r.icon_image_id),
     status: r.status,
     at: r.at ? new Date(r.at).toISOString() : null,
   };
@@ -368,6 +370,8 @@ function withDemoProposals(proposals, selfApp, now = Date.now()) {
       title: d.title,
       appSlug: selfApp.slug,
       appName: selfApp.name || selfApp.slug,
+      appIconEmoji: selfApp.icon_emoji || null,
+      appIconUrl: appIconUrl(selfApp.icon_image_id),
       status: d.status,
       at: new Date(now).toISOString(),
     }));
