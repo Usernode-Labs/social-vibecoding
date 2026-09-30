@@ -247,10 +247,20 @@ function issueCollabGuard(pool) {
         [id]
       );
       if (!rows.length) return next();
-      if (!(await checkAppAccess(pool, rows[0], req.user, guardLevelFor(req)))) {
-        return res.status(404).json({ error: 'Issue not found' });
+      const level = guardLevelFor(req);
+      if (await checkAppAccess(pool, rows[0], req.user, level)) return next();
+      // #3410: a write refused only by the collab bar on a project the
+      // caller can SEE must not read "Issue not found" — the open issue
+      // they tried to vote on is on their screen, served by the same view
+      // level that just passed. Say the refusal plainly instead. A caller
+      // who fails even the view level keeps the existence-hiding 404.
+      if (level !== 'view' && await checkAppAccess(pool, rows[0], req.user, 'view')) {
+        return res.status(403).json({
+          error: 'You can view this project, but only its collaborators can take part in it.',
+          code: 'collab_required',
+        });
       }
-      return next();
+      return res.status(404).json({ error: 'Issue not found' });
     } catch (err) {
       log.error('app-access', 'issue guard failed', { id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });

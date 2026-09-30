@@ -5,7 +5,12 @@
 //      other method keeps the 'collab' bar.
 //   2. sessionCollabGuard / issueCollabGuard over HTTP — on a
 //      collab-private + view-public app a non-collaborator passes GET but
-//      404s on POST; on a fully view-private app both 404.
+//      is refused on POST; on a fully view-private app both 404. On the
+//      ISSUE guard the refused write says so plainly (#3410): a viewer
+//      without the collab bar can see the open issue they tried to vote
+//      on, so the answer is 403 "only its collaborators can take part",
+//      never the misleading "Issue not found". The session guard keeps
+//      its 404 on both sides (its routes were not part of that report).
 //   3. ws.handleMessage — mutating message types (chat/edit/react/typing)
 //      from a non-collaborator are dropped before any write; a member's
 //      chat message still reaches the INSERT.
@@ -93,7 +98,13 @@ test('sessionCollabGuard: fully view-private app 404s reads and writes', async (
 
 test('issueCollabGuard: same read/write split as the session guard', async () => {
   assert.equal((await fetch(`${base}/api/issues/1/thing`)).status, 200);
-  assert.equal((await fetch(`${base}/api/issues/1/thing`, { method: 'POST' })).status, 404);
+  // #3410: the refused write names the real rule, not a missing issue.
+  const post = await fetch(`${base}/api/issues/1/thing`, { method: 'POST' });
+  assert.equal(post.status, 403);
+  assert.equal((await post.json()).error,
+    'You can view this project, but only its collaborators can take part in it.');
+  // A viewer who cannot see the app at all keeps the existence-hiding 404,
+  // on reads and writes alike.
   assert.equal((await fetch(`${base}/api/issues/2/thing`)).status, 404);
   assert.equal((await fetch(`${base}/api/issues/2/thing`, { method: 'POST' })).status, 404);
 });
