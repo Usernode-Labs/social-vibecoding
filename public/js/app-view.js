@@ -4368,6 +4368,9 @@ const AppView = {
     // drawing its ledger rows below.
     const gated = (card.extra || []).find((x) => x && x.t === 'requirements' && x.gates && x.gates.length);
     if (gated) return AppView._gateStepsView(item, body, gated);
+    // A draft has no gates yet, but the same path ahead of it.
+    if (['active', 'paused'].includes(item.status)) return AppView._draftStepsView(item, body);
+    // A merged or closed change keeps its ledger rows below.
     const d = body.details || null;
     const rows = d && Array.isArray(d.ledger) ? d.ledger.slice() : [];
     const take = (keys) => {
@@ -4500,6 +4503,82 @@ const AppView = {
     return { headline: req.headline, detail: null, done: req.done, total: req.total, rows, simple: true };
   },
 
+  // ── A draft's steps ──────────────────────────────────────────────
+  // A change still under way is not in the merge gate yet, so it has no
+  // recording. Its steps are the path it will take, read off its own
+  // columns: Submitted for review (its own step, the author's), then the gates
+  // a proposal shows — Votes and Merge not reached yet, No conflicts with
+  // main and Checks as they stand now. Drawn by _gateStepsView, so a draft
+  // and a proposal read alike; the headline follows the same rule
+  // (_summarizeRequirements). The Submit for review button is the hero
+  // band's, so the step does not repeat it.
+  _draftGates(item) {
+    const submission = AppView.changeSubmissionState(item);
+    const fresh = AppView._freshnessOf(item);
+    const cs = item.check_state;
+    const clean = item.integration_merges_clean === true || fresh.mergeability === 'clean';
+    const conflict = item.integration_merges_clean === false || fresh.mergeability === 'conflict';
+    const previewFailed = !item.staging_url && !!item.staging_error;
+    // Checks deferred behind a conflict are not running: not reached yet.
+    const checks = (cs === 'failing' || cs === 'error' || previewFailed) ? 'blocked'
+      : (cs === 'passing' || cs === 'skipped') ? 'done'
+        : (cs === 'pending' && item.check_phase !== 'deferred') ? 'active' : 'pending';
+    return [
+      // Named as the state it reaches, like "No conflicts with main", so it
+      // does not read as a second copy of the hero's Submit for review button.
+      { key: 'review', label: 'Submitted for review', actor: 'author', state: submission.kind === 'pending' ? 'active' : 'waiting', detail: null },
+      { key: 'approvals', label: 'Votes', actor: 'group', state: 'pending', detail: null },
+      // A conflict is not the draft's turn yet: the platform resolves it once
+      // the change is up for a vote. The owner may still sync it now.
+      { key: 'integration', label: 'No conflicts with main', actor: 'auto', state: clean && !conflict ? 'done' : 'pending', detail: null, conflict },
+      { key: 'checks', label: 'Checks', actor: 'author', state: checks, detail: null },
+      { key: 'github', label: 'Merge', actor: 'auto', state: 'pending', detail: null },
+    ];
+  },
+  _draftStepsView(item, body) {
+    const mine = !!(typeof App !== 'undefined' && App.user && Number(item.user_id) === Number(App.user.id));
+    const viewer = { isAuthor: mine, isAdmin: false, hasVoted: true };
+    const gates = AppView._draftGates(item);
+    const submission = AppView.changeSubmissionState(item);
+    const fresh = AppView._freshnessOf(item);
+    const lineOf = (g) => {
+      if (g.key === 'review') {
+        if (submission.kind === 'pending') return 'Submitting…';
+        return mine ? (submission.short || null) : 'Not submitted yet';
+      }
+      if (g.key === 'integration') {
+        if (g.state === 'done') return null;
+        if (g.conflict) {
+          const n = Array.isArray(item.integration_conflict_paths) && item.integration_conflict_paths.length
+            ? item.integration_conflict_paths.length : (Array.isArray(fresh.files) ? fresh.files.length : 0);
+          return n ? `Conflict in ${n} file${n === 1 ? '' : 's'}` : 'Conflict with main';
+        }
+        return 'Not measured yet';
+      }
+      if (g.key === 'checks') {
+        if (item.check_state === 'pending' && item.check_phase === 'deferred') return 'Runs after the sync';
+        if (g.state === 'pending' && !item.check_state) return 'Not run yet';
+        return AppView._checksLine(g, item, false);
+      }
+      return null;
+    };
+    const s = AppView._summarizeRequirements(gates, viewer);
+    const view = AppView._gateStepsView(item, body, {
+      headline: s.headline, done: s.done, total: s.total,
+      gates: gates.map((g) => ({ key: g.key, label: g.label, actor: g.actor, state: g.state, note: lineOf(g), action: null })),
+    });
+    // The owner may sync a conflicting draft now, rather than after it is up
+    // for a vote; nobody else gets the button, and a clean draft needs none.
+    const syncable = mine && !AppView.readOnly && item.source !== 'imported' && AppView._headHome(item) === 'app_repo';
+    const integration = view.rows.find((r) => r.gate === 'integration');
+    if (integration && syncable && gates.find((g) => g.key === 'integration').conflict) {
+      const busy = AppView._changeActions.get(Number(item.id));
+      integration.actions.push({ key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main',
+        disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] } });
+    }
+    return view;
+  },
+
   // Who voted, for the Votes step: the names, not the count (the status pill
   // carries that). Null while there is nothing to say.
   _voteNamesLine(roster) {
@@ -4587,17 +4666,22 @@ const AppView = {
     // reader would care. The server stays authoritative for the few things it
     // still refuses (nothing committed yet, an agent turn still running), and
     // says why in its own words when it does.
-    const ready = (note, tone = 'ok') => ({ kind: 'ready', note, tone });
+    // `short` is the same fact in a few words: the draft's "Submit for
+    // review" step line (_draftStepsView).
+    const ready = (note, tone = 'ok', short = 'Ready') => ({ kind: 'ready', note, tone, short });
     if (item.check_state === 'failing') {
-      return ready('Its checks are failing. You can submit it now; it can merge only after a fix passes them.', 'warn');
+      return ready('Its checks are failing. You can submit it now; it can merge only after a fix passes them.', 'warn',
+        'Ready · checks must pass before it merges');
     }
     if (item.check_state === 'error') {
-      return ready('Its checks could not run. You can submit it now; it can merge only once they run and pass.', 'warn');
+      return ready('Its checks could not run. You can submit it now; it can merge only once they run and pass.', 'warn',
+        'Ready · checks must run before it merges');
     }
     // A managed change's uploaded commit is not its revision until the agent
     // submits it; the server refuses to put it up for review before then.
     if (item.source === 'cli_handoff' && item.proposal_state === 'uploaded') {
-      return ready('A commit was uploaded but has not been submitted for checks yet. Ask the agent to submit it first.', 'mute');
+      return ready('A commit was uploaded but has not been submitted for checks yet. Ask the agent to submit it first.', 'mute',
+        'The agent has not submitted its commit yet');
     }
     // #2379 — a change with nothing on its branch is not a change yet. The
     // server refuses it ("no committed code on its branch yet"); say so here
@@ -4613,14 +4697,17 @@ const AppView = {
         ? item.proposal_state === 'draft'
         : !item.pr_number && !item.staging_url && !item.check_state;
       if (levelWithMain || nothingPushed) {
-        return ready('There are no committed changes to submit yet. Ask the agent to make a change first.', 'mute');
+        return ready('There are no committed changes to submit yet. Ask the agent to make a change first.', 'mute',
+          'Nothing committed yet');
       }
     }
     if (item.check_state === 'passing' && !item.staging_url) {
-      return ready('Ready to submit for review. Its preview was closed while idle; submitting rebuilds it and runs the checks again.');
+      return ready('Ready to submit for review. Its preview was closed while idle; submitting rebuilds it and runs the checks again.', 'ok',
+        'Ready · submitting rebuilds the preview');
     }
     if (item.check_state === 'passing') return ready('Ready to submit for review.');
-    return ready('You can submit it now. Its checks keep running, and it can merge only once they pass.');
+    return ready('You can submit it now. Its checks keep running, and it can merge only once they pass.', 'ok',
+      item.check_phase === 'deferred' ? 'Ready · checks run after the sync' : 'Ready · checks are still running');
   },
   _completeChangeView(item, card, body) {
     const mine = !!(App.user && Number(item.user_id) === Number(App.user.id));

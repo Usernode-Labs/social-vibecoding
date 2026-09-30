@@ -328,7 +328,7 @@ test('buttons only for whoever can clear the step: Sync with main is the author�
   assert.deepEqual(syncOf(context({ id: 9, username: 'jo' }), stuck({ state: 'blocked', actor: 'author' })), [], 'not for somebody else');
 });
 
-test('before review the page is the same shape: the change’s own status in the eyebrow, and the ledger as the steps with no gates yet', () => {
+test('before review the page is the same shape: the change’s own status in the eyebrow, and the steps it will take', () => {
   const av = context();
   const mine = { ...PR, user_id: 42, status: 'active', pr_number: null, pr_url: null, mergeRequirements: undefined, shared_at: null, spec_md: '# Spec' };
   const { v, html } = render(av, mine, 'session');
@@ -337,15 +337,65 @@ test('before review the page is the same shape: the change’s own status in the
   assert.equal(v.body.hero.status, 'Private change');
   assert.equal(v.body.hero.verb, 'started');
   assert.match(html, /<span class="dev-ws-eyebrow dev-topic-hero-eyebrow">Change · Private change<\/span>/);
+  // The draft's own step, then the gates it will meet once it is up for a
+  // vote, drawn the way a proposal's are: one short line each, and no
+  // ledger sentences under "Where it stands".
   const s = plain(v.body.steps);
-  assert.equal(s.headline, 'Where it stands');
-  assert.equal(s.total, null);
-  assert.ok(s.rows.every((r) => !r.gate), 'no gates before review: every row is the ledger’s');
-  assert.ok(s.rows.some((r) => r.key === 'review'), 'the submission state is one of them');
-  assert.match(html, />Submit for review</);
+  assert.equal(s.simple, true);
+  assert.equal(s.headline, 'Waiting on you');
+  assert.deepEqual([s.done, s.total], [2, 5]);
+  assert.deepEqual(s.rows.map((r) => [r.key, r.state, r.label, r.line]), [
+    ['review', 'waiting', 'Submitted for review', 'Ready'],
+    ['votes', 'pending', 'Votes', null],
+    ['mergeability', 'done', 'No conflicts with main', null],
+    ['checks', 'done', 'Checks', 'All 1 passed'],
+    ['github', 'pending', 'Merge', null],
+  ]);
+  assert.doesNotMatch(html, /Where it stands|dev-ledger-text/);
+  // The one Submit for review is the hero's button; the step does not repeat it.
+  assert.equal((html.match(/>Submit for review</g) || []).length, 1);
   assert.match(html, />Continue building</);
   // The spec stands in for the technical half, behind the ⋯ row.
   assert.ok(av._cardMenuItems(v.card.rail.menuKey).some((a) => a.label === 'Technical details'));
+});
+
+test('a draft’s steps: who is waiting, what the checks are doing, and Sync with main only for the owner of a conflicting draft', () => {
+  const draft = { ...PR, user_id: 42, status: 'active', pr_number: null, pr_url: null, mergeRequirements: undefined, shared_at: '2026-09-12T12:00:00Z' };
+  const steps = (av, item) => plain(render(av, item, 'session').v.body.steps);
+  const row = (s, gate) => s.rows.find((r) => r.gate === gate);
+  const owner = context();
+  const other = context({ id: 9, username: 'jo' });
+  // Somebody else reads whose turn it is, not the author's readiness note.
+  const theirs = steps(other, draft);
+  assert.equal(theirs.headline, 'Waiting on the author');
+  assert.equal(row(theirs, 'review').line, 'Not submitted yet');
+  // A run in progress opens Checks by itself; nothing else spins.
+  const running = steps(owner, { ...draft, check_state: 'pending', check_phase: 'testing', test_results: [] });
+  assert.equal(row(running, 'checks').state, 'active');
+  assert.equal(row(running, 'checks').run.open, true);
+  assert.equal(row(running, 'review').line, 'Ready · checks are still running');
+  // A conflict: the checks wait for the sync, and the owner may sync now.
+  const conflicted = { ...draft, check_state: 'pending', check_phase: 'deferred', test_results: [],
+    freshness: { mergeability: 'conflict', behindBy: 5, mergeabilityFiles: ['a.js', 'b.js'], checkedAt: '2026-09-18T12:00:00Z' } };
+  const c = steps(owner, conflicted);
+  assert.deepEqual([row(c, 'integration').state, row(c, 'integration').line], ['pending', 'Conflict in 2 files']);
+  assert.deepEqual(row(c, 'integration').actions.map((a) => a.label), ['Sync with main']);
+  assert.deepEqual([row(c, 'checks').state, row(c, 'checks').line], ['pending', 'Runs after the sync']);
+  assert.deepEqual(row(steps(other, conflicted), 'integration').actions, [], 'nobody else gets the button');
+  assert.deepEqual(row(steps(owner, draft), 'integration').actions, [], 'a clean draft needs none');
+  // Nothing pushed yet says so, and the checks have not run.
+  const empty = steps(owner, { ...draft, staging_url: null, check_state: null, test_results: [], freshness: null });
+  assert.equal(row(empty, 'review').line, 'Nothing committed yet');
+  assert.equal(row(empty, 'checks').line, 'Not run yet');
+  // A failed run is the Checks step's, with its door and its re-run; no
+  // separate row trails after the steps.
+  const failing = steps(owner, { ...draft, check_state: 'failing',
+    test_results: [{ name: 'Home loads', path: '/', status: 'fail', failureReason: 'Expected app, received login' }] });
+  assert.equal(row(failing, 'checks').state, 'blocked');
+  assert.equal(row(failing, 'checks').run.open, true);
+  assert.ok(row(failing, 'checks').actions.some((a) => /re-run/i.test(a.label)));
+  assert.equal(row(failing, 'review').line, 'Ready · checks must pass before it merges');
+  assert.deepEqual(failing.rows.map((r) => r.gate), ['review', 'approvals', 'integration', 'checks', 'github']);
 });
 
 test('the picture: verified shots keeps its card, a run under way is one line with the spinner, a failed one keeps its strip', () => {

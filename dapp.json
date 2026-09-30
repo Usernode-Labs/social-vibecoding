@@ -4947,9 +4947,9 @@
       "expectText": "Open proposal card"
     },
     {
-      "name": "#2327: an author can edit an underway proposal title",
+      "name": "#2327: an author can edit an underway proposal title; the draft's steps are the path it will take, its own Submitted for review step first",
       "path": "/?demo=1&conversation=discussion#app/usernode-2d5619/dev/proposals/990101",
-      "expectSelector": ".dev-topic-hero button[aria-label=\"Edit title\"]",
+      "expectSelector": ".dev-topic:has(.dev-step[data-note=\"review\"][data-req-state=\"waiting\"] ~ [data-note=\"votes\"] ~ [data-note=\"mergeability\"] ~ [data-note=\"checks\"] ~ [data-note=\"github\"]) .dev-topic-hero button[aria-label=\"Edit title\"]",
       "expectText": "Your in-progress session"
     },
     {
