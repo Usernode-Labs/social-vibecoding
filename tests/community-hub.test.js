@@ -235,3 +235,32 @@ test('#general needs the Homeroom community to post in; Homeroom\'s old channel 
   assert.match(route2, /if \(app\.slug === config\.selfAppSlug\) \{\s*const general = await communities\.generalChannelSummary\(pool, req\.user\?\.id\);/);
   assert.doesNotMatch(route2, /archive_href/, 'the hub names no archive (#3406)');
 });
+
+test('#852 review: Homeroom\'s Discussion is #general itself, and a project\'s own is a fitted pane', () => {
+  // #general is a conversation of Messages, which the page cannot mount (its
+  // thread reads Messages' one route, and its composer's ids are global), so
+  // the tab, the hub card's doors and a deep link all go to it there.
+  const { discussionElsewhere } = loadTsx('frontend/src/features/dev-board/workshop/project-discussion.tsx');
+  const general = { channel: { handle: 'general', href: '#messages/1', post_url: '/api/conversations/1/messages' } };
+  assert.equal(discussionElsewhere(general), '#messages/1', '#general is elsewhere: its thread in Messages');
+  assert.equal(discussionElsewhere({ channel: { handle: 'garden', href: '#messages/app/garden' } }), null,
+    'an app\'s own channel is mounted in place');
+  assert.equal(discussionElsewhere({ channel: null }), null, 'no channel, nowhere to go');
+  assert.equal(discussionElsewhere(null), null);
+  assert.match(LANDER, /const elsewhere = next === 'discussion' \? discussionElsewhere\(community\) : null;\s*if \(elsewhere\) \{ openDiscussionElsewhere\(elsewhere\); return; \}/,
+    'the tab and the hub card\'s Open go there rather than turning the page');
+  const PD = read('frontend/src/features/dev-board/workshop/project-discussion.tsx');
+  assert.match(PD, /callAppView\('_setWorkshopTab', 'status'\);/, 'and the page reopens on its hub after');
+  // A cold `?ws=discussion` is a door rather than a forward: forwarding raced
+  // the router on a fresh load, and a pushed forward would trap Back.
+  assert.doesNotMatch(PD, /location\.replace/);
+  assert.match(PD, /data-ws-discussion-open=""\s*onClick=\{\(\) => openDiscussionElsewhere\(elsewhere\)\}/);
+  // A project's own channel fills the reading area like Needs you: no guessed
+  // height, the chain may shrink it, and the composer's tab-bar reserve is not
+  // taken twice.
+  const CSS = read('public/css/app.css');
+  assert.doesNotMatch(CSS, /\.dev-ws-discussion \{[^}]*calc\(100dvh - 210px\)/);
+  assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\] \{ min-height: 0; \}/);
+  assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="discussion"\] \{\s*height: var\(--ws-fit\);/);
+  assert.match(CSS, /\.dev-ws-discussion \.platform-safe-bar \{ padding-bottom: 0\.5rem !important; \}/);
+});
