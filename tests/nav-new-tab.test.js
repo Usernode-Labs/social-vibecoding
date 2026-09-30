@@ -37,7 +37,6 @@ const browseJs = read('frontend/src/features/apps/browse.js');
 const browseListTsx = read('frontend/src/features/apps/browse-list.tsx');
 const browseDetailTsx = read('frontend/src/features/apps/browse-detail.tsx');
 const devChatJs = read('frontend/src/features/dev-chat/dev-chat.js');
-const chatFrameTsx = read('frontend/src/features/dev-board/chat-frame.tsx');
 const topicFrameTsx = read('frontend/src/features/dev-board/topic-frame.tsx');
 const sessionHeaderTsx = read('frontend/src/features/dev-chat/session-header.tsx');
 const topicBackTsx = read('frontend/src/features/dev-board/topic/topic-back.tsx');
@@ -343,16 +342,11 @@ for (const a of ANCHORS) {
   });
 }
 
-// The dev general-chat back link (#1084 chunk G) is GONE, and staying gone is
-// the contract now:
-test('the app-wide dev chat carries no back control any more', () => {
-  // Streamlined Concept: the general chat is the ACTIVITY screen — a
-  // first-class destination with its own hash, named by the header's title
-  // tab and left through the eye button or the app-context sheet. A back
-  // bar over it would be a second navigation system.
-  assert.ok(!/dev-chat-back/.test(chatFrameTsx),
-    'chat-frame.tsx: the back anchor is retired');
-});
+// The dev general-chat back LINK (#1084 chunk G) is gone, but #3407 put the
+// page head back on the channel: the same dev-ws-page-back disc the Needs
+// you page has, pointing at the project's hub, carried by a real <a> so the
+// browser owns cmd/ctrl-click. The old "no back control any more" contract
+// is retired for this file deliberately.
 
 // The dev session's back control is the PLATFORM HEADER's #back-btn now
 // (Streamlined Concept): renderDevView's session branch calls
@@ -452,13 +446,14 @@ test('a topic page has exactly one back control: the chip, and no header arrow (
 });
 
 test('no other in-page back control is left anywhere in the Dev area', () => {
-  // The three retired one at a time and each left the others in place, so the
-  // count is the assertion: a surface growing its own is the shape of this
-  // regression, not any single id coming back. The topic chip (#2916) is the
-  // one in-page back the Dev area has, it lives in topic/topic-back.tsx, and
-  // it replaced the header's arrow on those routes rather than joining it.
-  for (const [name, src] of [['chat-frame.tsx', chatFrameTsx],
-    ['topic-frame.tsx', topicFrameTsx], ['session-header.tsx', sessionHeaderTsx]]) {
+  // The surfaces retired one at a time and each left the others in place, so
+  // the count is the assertion: a surface growing its own is the shape of
+  // this regression, not any single id coming back. The topic chip (#2916)
+  // lives in topic/topic-back.tsx and replaced the header's arrow on those
+  // routes; the channel's page head (#3407) is the second in-page back the
+  // Dev area has, in chat-frame.tsx, so it is out of this loop.
+  for (const [name, src] of [['topic-frame.tsx', topicFrameTsx],
+    ['session-header.tsx', sessionHeaderTsx]]) {
     assert.ok(!/id="d(c|ev)-[a-z-]*back"/.test(src),
       `${name} must carry no in-page back control — the header, or on a topic the chip, has it`);
     assert.ok(!/dev-topic-back/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')),

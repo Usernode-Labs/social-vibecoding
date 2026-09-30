@@ -327,6 +327,31 @@ test('the other legacy-owned leaves render empty or constant, never live', () =>
     '#dev-section ships empty, so it needs no constant string to keep React out');
 });
 
+test('#3407: the channel page carries the project\'s page head above its host', () => {
+  // The full-screen channel is a level inside the project's hub, so it gets
+  // the same dev-ws-pagehead the Needs you page has: the round chevron disc
+  // in .px-4.pb-2 wrapper, the project's name over the title "Channel".
+  // It sits ABOVE the host, which stays the legacy module's untouched leaf.
+  const headAt = CHAT_FRAME.indexOf('dev-ws-pagehead');
+  const hostAt = CHAT_FRAME.indexOf('<div id="dev-chat-body"');
+  assert.ok(headAt !== -1 && hostAt !== -1 && headAt < hostAt,
+    'the page head renders above #dev-chat-body');
+  // A real anchor with a real target, so cmd/ctrl-click is the browser's
+  // (tests/nav-new-tab.test.js's contract); the address is the project's hub.
+  assert.match(CHAT_FRAME, /className="dev-ws-page-back un-touch-target"\n\s+href=\{href\}/,
+    'the back control is an <a> whose href is the hub address');
+  assert.match(CHAT_FRAME, /dev-ws-pagehead-over">\{name \|\| slug\}<\/span>/,
+    'the over line is the project\'s name, falling back to its slug');
+  assert.match(CHAT_FRAME, /<h2 className="dev-ws-pagehead-title">Channel<\/h2>/,
+    'the page\'s name is "Channel"');
+  // The hub, not the tab that page was last left on: the plain click calls
+  // the established _landOnHub helper before following the href.
+  assert.match(CHAT_FRAME, /win\.AppView\?\._landOnHub\?\.\(slug\);\n\s+window\.location\.hash = hubHref\(slug\);/,
+    'a plain click lands on the hub before following the href');
+  // No project, no head: it must never point nowhere.
+  assert.match(CHAT_FRAME, /href && slug \? \(/, 'the head waits for a slug');
+});
+
 test('#2786: the Workshop draws no locked-app banner', () => {
   // "Anyone can build on this app. A change goes live once the group votes it
   // in and an admin approves it." sat above every locked app's card list. It
