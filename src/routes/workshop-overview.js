@@ -287,13 +287,19 @@ const ITEMS_SQL = `
 // proposal's summary, or a group decision's description), who asked, the
 // tally so far, and the approval epoch a vote must carry (#2038). Bounded to
 // NEEDS_FEED_MAX; the tab says so when it stops there.
+//
+// The words are the Description sheet's as well since #3488 (the feed is a
+// project's own NeedsFeed now, which renders them in full there), so they
+// are cut at NEEDS_FEED_SUMMARY_MAX rather than at a card's length. A
+// summary is a few paragraphs; the cap is for the one that is not.
 const NEEDS_FEED_MAX = 60;
+const NEEDS_FEED_SUMMARY_MAX = 2000;
 
 const NEEDS_FEED_SQL = `
   WITH owed AS (
     SELECT 'proposal'::text AS kind, cs.app_id, cs.id,
            COALESCE(NULLIF(cs.pr_title, ''), NULLIF(cs.session_title, ''))::text AS title,
-           LEFT(COALESCE(cs.pr_summary_md, ''), 700)::text AS summary,
+           LEFT(COALESCE(cs.pr_summary_md, ''), ${NEEDS_FEED_SUMMARY_MAX})::text AS summary,
            u.username::text AS author,
            cs.pr_number AS number,
            cs.approval_epoch AS epoch,
@@ -309,7 +315,7 @@ const NEEDS_FEED_SQL = `
      WHERE ${OWED_PROPOSALS_WHERE}
     UNION ALL
     SELECT 'governance', i.app_id, i.id, i.title::text,
-           LEFT(COALESCE(i.description, ''), 700)::text,
+           LEFT(COALESCE(i.description, ''), ${NEEDS_FEED_SUMMARY_MAX})::text,
            u.username::text, NULL::int, NULL::int, i.created_at,
            NULL::int, NULL::int
       FROM issues i

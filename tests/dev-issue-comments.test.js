@@ -165,3 +165,50 @@ test('a long comment is clamped to four lines, with a control to expand it', () 
   assert.match(short, /<div class="dev-feed-msg-text dev-issue-body line-clamp-4"><p>hi<\/p><\/div>/);
   assert.doesNotMatch(short, /<button/);
 });
+
+test('#3490: Homeroom bot\'s spec comment splits into its sentence and the spec', () => {
+  const code = APP_VIEW.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  const fn = code.match(/\n {2}_botSpecOf\(c\) \{([\s\S]*?)\n {2}\},/);
+  assert.ok(fn, '_botSpecOf() found');
+  const AppView = { _isBotCommentAuthor: (a) => a === 'usernode-bot' };
+  const botSpecOf = (c) => vm.runInNewContext(`(function (c) {${fn[1]}})(c)`, { AppView, c });
+  // Exactly what the bot writes (services/homeroom-bot-live.js), not a copy.
+  const live = require('../src/services/homeroom-bot-live');
+  const body = live.specCommentText('# Fix the banner\n\n## User-facing changes\n\nIt blends in.\n\n## Design\n\nOne card.');
+  const got = botSpecOf({ author: 'usernode-bot', body });
+  assert.equal(got.title, 'Fix the banner');
+  assert.match(got.lead, /^Homeroom bot wrote a spec for this request and is building it now\./);
+  assert.doesNotMatch(got.lead, /details|summary/, 'the markers are gone, not shown as text');
+  assert.equal(got.body, '## User-facing changes\n\nIt blends in.\n\n## Design\n\nOne card.');
+  assert.equal(botSpecOf({ author: 'ada', body }), null, 'a person\'s comment stays as they wrote it');
+  assert.equal(botSpecOf({ author: 'usernode-bot', body: 'Thanks for the report.' }), null);
+
+  // Both renderers use it: the request page's thread renders the spec as a
+  // spec (paragraph semantics), and the Workshop row's preview names it.
+  const view = code.match(/_issueCommentsView\(comments, truncated, htmlUrl\) \{([\s\S]*?)\n {2}\},/)[1];
+  assert.match(view, /DevChat\.renderMarkdown\(str, \{ breaks: false \}\)/);
+  assert.match(view, /bodyHtml: renderMd\(spec \? spec\.lead : \(c\.body \|\| ''\)\),\n\s*spec: spec \? \{ title: spec\.title, html: renderSpec\(spec\.body\) \} : null,/);
+  const feed = code.match(/_feedCommentsHtml\(comments\) \{([\s\S]*?)\n {2}\},/)[1];
+  assert.match(feed, /const spec = AppView\._botSpecOf\(c\);/);
+  assert.match(feed, /escapeHtml\(spec\.title \? `The spec: \$\{spec\.title\}` : 'The spec'\)/);
+});
+
+test('#3490: the spec is drawn as a spec, folded under its title, outside the comment\'s clamp', () => {
+  const html = render({
+    comments: [comment({
+      author: 'usernode-bot', bot: true, bodyHtml: '<p class="dc-p">Homeroom bot wrote a spec.</p>',
+      spec: { title: 'Fix the banner', html: '<h4 class="dc-h4">Design</h4><p class="dc-p">One card.</p>' },
+    })],
+  });
+  assert.match(html, /<div class="dev-feed-msg-text dev-issue-body line-clamp-4"><p class="dc-p">Homeroom bot wrote a spec\.<\/p><\/div><details class="dev-issue-spec" data-issue-spec="">/,
+    'the sentence is the comment, and the spec follows it, not inside its clamp');
+  assert.match(html, /<summary class="dev-issue-spec-head"><span class="dev-issue-spec-text"><span class="dev-issue-spec-kicker">The spec<\/span><span class="dev-issue-spec-title">Fix the banner<\/span><\/span>/);
+  assert.match(html, /<div class="dc-spec-viewer-body dev-issue-spec-body"><h4 class="dc-h4">Design<\/h4><p class="dc-p">One card\.<\/p><\/div><\/details>/,
+    'the spec viewer\'s own typography');
+  assert.doesNotMatch(html, /<details[^>]* open/, 'folded, as GitHub folds it');
+  // An ordinary comment is unchanged.
+  assert.doesNotMatch(render({ comments: [comment()] }), /dev-issue-spec/);
+  const src = read(COMMENTS);
+  assert.match(src, /const openSpecs = new Set<string>\(\);/, 'an opened spec survives the host\'s remount');
+  assert.match(src, /useState\(\(\) => openSpecs\.has\(id\)\)/);
+});

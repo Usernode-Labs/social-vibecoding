@@ -4445,7 +4445,8 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   // OPEN CARD. The item is the whole screen, so the card's own page is a row
   // under More; the href rides on the trigger and app-view.js reads it.
   assert.match(WORKSHOP, /data-card-menu-open=\{cardHref \|\| undefined\}/);
-  assert.match(WORKSHOP, /const cardHref = row \? openHref\(slug, row\.card\) : null;/);
+  // #3488: the row's own project, on the Communities screen's feed.
+  assert.match(WORKSHOP, /const cardHref = row \? openHref\(rowSlug\(row, slug\), row\.card\) : null;/);
   const appView = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf8');
   assert.match(appView, /trigger\.dataset\.cardMenuOpen/);
   // The row is part of the ONE descriptor list every reader of the menu

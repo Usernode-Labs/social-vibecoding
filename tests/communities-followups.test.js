@@ -25,29 +25,63 @@ const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 const route = require('../src/routes/workshop-overview');
 
-test('#3270: the feed card helpers say what a card shows and where it goes', () => {
+test('#3270, #3488: the feed\'s rows are a project\'s own Needs you rows, each carrying its project', () => {
   const reel = loadTsx('frontend/src/features/workshop/needs-reel.tsx');
   const app = { slug: 'my garden', name: 'Garden', icon_url: null, icon_emoji: null };
-  assert.equal(reel.reelHref({ kind: 'proposal', id: 8, app }), '#app/my%20garden/dev/proposals/8');
-  assert.equal(reel.reelHref({ kind: 'governance', id: 9, app }), '#app/my%20garden/dev/governance/9');
   assert.equal(reel.plainSummary('## What\n\n- Adds **rating** sort\n- See [the docs](https://x.y)\n\n```js\nx()\n```'),
     'What Adds rating sort See the docs', 'a paragraph, not a document');
   assert.equal(reel.plainSummary(null), '');
-  assert.equal(reel.tallyLine({ yes: 2, no: 1 }), '2 yes · 1 no');
-  assert.equal(reel.tallyLine({ yes: 3, no: 0 }), '3 yes', 'a zero says nothing');
-  assert.equal(reel.tallyLine({ yes: 0, no: 0 }), '');
-  assert.equal(reel.tallyLine({ yes: null, no: null }), '');
+  const [change, decision, unrevised] = reel.reelRows([
+    { kind: 'proposal', id: 8, title: 'Sort', summary: '**Adds** a sort', author: 'ada', number: 12, epoch: 3, at: null, yes: 2, no: 1, app },
+    { kind: 'governance', id: 9, title: '', summary: null, author: null, number: null, epoch: null, at: null, yes: null, no: null, app },
+    { kind: 'proposal', id: 10, title: 'Tags', summary: null, author: null, number: null, epoch: null, at: null, yes: 0, no: 0, app },
+  ], (md) => `<p>${md}</p>`);
+  // A change: the platform's own vote, with the approval epoch the server
+  // checks (#2038), exactly as _cardVoteButtonSpecs builds it.
+  assert.deepEqual(change.yes.act, { fn: 'castVote', args: [8, 'yes', 3] });
+  assert.deepEqual(change.no.act, { fn: 'castVote', args: [8, 'no', 3] });
+  assert.deepEqual(unrevised.yes.act.args, [10, 'yes'], 'no epoch, no third argument');
+  assert.equal(change.kind, 'vote');
+  assert.equal(change.card.attrs['data-proposal-row'], '8');
+  assert.equal(change.summary, 'Adds a sort');
+  assert.equal(change.descriptionHtml, '<p>**Adds** a sort</p>', 'the sheet renders the Markdown itself');
+  assert.deepEqual(change.askAbout, { kind: 'proposal', ref: 8 });
+  assert.deepEqual(change.thread, { type: 'session', ref: 8 });
+  assert.deepEqual(change.tally, { yes: 2, no: 1 });
+  assert.equal(change.app, app);
+  assert.equal(change.card.rail.menuKey, '', 'the ⋯ is Open card alone, which an empty key still reaches');
+  // A group decision: no pair, so its vote sheet opens its page.
+  assert.equal(decision.yes, null);
+  assert.equal(decision.no, null);
+  assert.equal(decision.card.attrs['data-gov-row'], '9');
+  assert.equal(decision.card.title.text, 'A group decision');
+  assert.deepEqual(decision.askAbout, { kind: 'gov', ref: 9 });
+  assert.deepEqual(decision.thread, { type: 'governance', ref: 9 });
 });
 
-test('#3270: a change is voted on its card with the platform\'s own vote and its epoch', () => {
+test('#3488: one feed for both Needs you screens, addressed per row', () => {
   const src = read('frontend/src/features/workshop/needs-reel.tsx');
-  assert.match(src, /ok = !!\(await view\.castVote\(item\.id, vote, item\.epoch\)\);/,
-    'AppView.castVote: the approval epoch, the line on a No, the Join on a refusal');
-  assert.match(src, /setVoted\(\(v\) => \(\{ \.\.\.v, \[key\]: vote \}\)\);\s*next\(/, 'the card stays and says so, and the feed moves on');
-  assert.match(src, /scroll-snap|role="feed"/);
+  assert.match(src, /import \{ NeedsFeed \} from '\.\.\/dev-board\/workshop\/workshop';/);
+  assert.match(src, /<NeedsFeed\s+rows=\{rows\}[\s\S]*?doneLabel="Back to your communities"\s+renderApp=\{ReelApp\}/);
+  assert.match(src, /callAppView\('_cardMenuInit'\);/, 'the ⋯ works when this screen is the first opened');
+  const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(lander, /export function NeedsFeed\(/);
+  // Every address the feed builds is the ROW's project on this screen.
+  assert.match(lander, /function rowSlug\(row: QueueRow, slug: string\): string \{\n\s*return row\.app && row\.app\.slug \? row\.app\.slug : slug;/);
+  assert.match(lander, /const cardHref = row \? openHref\(rowSlug\(row, slug\), row\.card\) : null;/);
+  assert.match(lander, /\/api\/apps\/\$\{encodeURIComponent\(rowSlug\(row, slug\)\)\}\/workshop\/ask\/thread/);
+  assert.match(lander, /\/api\/apps\/\$\{encodeURIComponent\(rowSlug\(sending, slug\)\)\}\/workshop\/ask`/,
+    'an answer is asked of the project the row was in when it was sent');
+  assert.match(lander, /<FeedThread slug=\{rowSlug\(row, slug\)\}/);
+  // The keys answer only while the feed is on screen: it stays mounted under
+  // a hidden screen, where V then Y would cast a vote nobody saw.
+  assert.match(lander, /const feed = scrollRef\.current;\n\s*if \(!feed \|\| !feed\.offsetParent\) return;\n\s*const k = e\.key;/);
+  // A group decision's vote sheet opens its page instead of two dead buttons.
+  assert.match(lander, /\{row\.yes \|\| row\.no \|\| !cardHref \? \([\s\S]*?<a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href=\{cardHref\}>Open to decide<\/a>/);
   const css = read('public/css/app.css');
-  assert.match(css, /\.workshop-reel \{[^}]*scroll-snap-type: y mandatory;/);
-  assert.match(css, /\.workshop-reel-card \{[^}]*flex: 0 0 100%;[^}]*scroll-snap-align: start;/, 'one card per screen');
+  assert.match(css, /\.workshop-needs-feed \{[^}]*height: calc\(100dvh - 180px - var\(--browser-banner-h, 0px\)\);[^}]*display: flex; flex-direction: column;/);
+  assert.match(css, /\.workshop-needs-feed \.dev-ws-keys \{ right: 102px; \}/, 'the legend clears the rail');
+  assert.doesNotMatch(css, /\.workshop-reel-card|\.workshop-reel-yes|\.workshop-reel-decide/, 'the old cards\' rules went with them');
 });
 
 test('#3270: the feed reads the owed populations for member projects only, newest first, bounded', () => {
