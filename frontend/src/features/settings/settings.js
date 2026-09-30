@@ -2953,6 +2953,14 @@
           '$' + ((b.byokSpentCents || 0) / 100).toFixed(2);
         document.getElementById('settings-spend-platform').textContent =
           '$' + ((b.spentCents || 0) / 100).toFixed(2) + ' of $' + ((b.limitCents || 0) / 100).toFixed(2);
+        // #3230: the weekly reset in the viewer's own clock, UTC on hover.
+        const reset = document.getElementById('settings-spend-reset');
+        const RT = window.ResetTime;
+        if (reset && RT) {
+          const cadence = b.capWindow === 'daily' ? 'daily' : 'weekly';
+          reset.textContent = `Resets ${RT.resetWhen(cadence, { at: b.resetsAt })}.`;
+          reset.title = RT.resetUtc(cadence, { at: b.resetsAt });
+        }
         block.classList.remove('hidden');
       } catch {}
     },

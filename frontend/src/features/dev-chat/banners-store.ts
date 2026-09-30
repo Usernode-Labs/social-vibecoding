@@ -82,6 +82,8 @@ export interface CreditsBannerView {
   leadTagged: boolean;
   /** The reset sentence, in its own `[data-credits-reset]` span, or null. */
   reset: string | null;
+  /** The reset's exact UTC instant, as that span's `title` (#3230). */
+  resetTitle?: string | null;
   /** Everything after the reset span. */
   tail: string;
   /** `CreditOptions.bannerActionsHtml`'s markup, carried whole. */

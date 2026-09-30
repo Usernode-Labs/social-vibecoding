@@ -18,6 +18,11 @@
 (function (root) {
   'use strict';
 
+  function localReset(text) {
+    var RT = typeof window !== 'undefined' && window.ResetTime;
+    return RT ? RT.localizeResetText(text) : text;
+  }
+
   function num(v) {
     var n = parseInt(v, 10);
     return Number.isFinite(n) ? n : 0;
@@ -100,6 +105,18 @@
     if (secs < 3600) return 'measured ' + Math.round(secs / 60) + ' minutes ago';
     if (secs < 7200) return 'measured an hour ago';
     return 'measured ' + Math.round(secs / 3600) + ' hours ago';
+  }
+
+  // #3232 — how long the checks run in flight has been going, as the pill's
+  // own words ("12 min"). checks_checked_at is stamped when a run starts
+  // (the proposal page reads it as "Started 12 minutes ago"), so a pending
+  // row's stamp is the run's start. Under a minute, missing, unparseable or
+  // in the future (clock skew) says nothing: zero is not worth a word.
+  function runningForOf(p) {
+    var t = p && p.checks_checked_at ? Date.parse(p.checks_checked_at) : NaN;
+    if (!Number.isFinite(t)) return '';
+    var mins = Math.floor((Date.now() - t) / 60000);
+    return mins >= 1 ? mins + ' min' : '';
   }
 
   function esc(s) {
@@ -191,8 +208,9 @@
     if (status === 'promoted' && served.indexOf('budget') !== -1) {
       return descriptor('integrating', 'Waiting on shared budget', 'amber', false, {
         votes: votes,
-        title: 'This proposal needs merging with main, but the platform\u2019s shared '
-          + 'token budget is spent for today. It resumes after the midnight UTC reset.',
+        // #3230: the reset in the viewer's own clock where ResetTime is loaded.
+        title: localReset('This proposal needs merging with main, but the platform\u2019s shared '
+          + 'token budget is spent for today. It resumes after the midnight UTC reset.'),
       });
     }
 
@@ -315,7 +333,11 @@
       });
     }
     if (check === 'pending') {
-      return descriptor('checks_running', 'Checks running…', 'neutral', true, {
+      // A run that has been going a while says for how long, so "pending for
+      // twenty minutes" reads as a number rather than as a hang (#3232).
+      var runningFor = runningForOf(p);
+      return descriptor('checks_running',
+        runningFor ? 'Checks running · ' + runningFor : 'Checks running…', 'neutral', true, {
         votes: votes,
         title: 'Automated tests are still running on the staging build. Merge is blocked until they pass.',
       });
