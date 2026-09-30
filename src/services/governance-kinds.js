@@ -5,11 +5,11 @@
 // The `issues` table holds two populations that have nothing to do with one
 // another, and the only column separating them is `kind`:
 //
-//   GOVERNANCE — the five kinds below. A decision the group votes on: a
+//   GOVERNANCE — the six kinds below. A decision the group votes on: a
 //     secret change, a rename, a propose-to-close, a maintenance campaign, a
-//     featured illustration. These are the rows the board draws its `gov`
-//     cards from, and the only rows in the table that anybody is waiting to
-//     vote on.
+//     featured illustration, an icon change. These are the rows the board
+//     draws its `gov` cards from, and the only rows in the table that anybody
+//     is waiting to vote on.
 //
 //   `general` — a TWIN row, written beside the GitHub issue whenever a
 //     feature request is filed through the platform (the create path in
@@ -49,6 +49,7 @@ const GOVERNANCE_KINDS = Object.freeze([
   'close_issue',
   'maintenance_campaign',
   'featured_illustration',
+  'icon_change',
 ]);
 
 // Same guard as services/pr-vote-revision.js: these fragments are pasted into
