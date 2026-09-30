@@ -204,6 +204,10 @@ test('the endpoint lists yours then more, one row per app, never an app the view
     'an app gone view-private drops out for a non-member, favorite or no favorite');
   assert.match(ROUTE, /NOT a\.self_hosted OR \$2::boolean/,
     'and the platform’s own app keeps its admin gate');
+  assert.match(ROUTE, /WHERE a\.moderation_suspended_at IS NULL\s+AND \(NOT a\.self_hosted/,
+    'an app suspended by moderation refuses to open, so it is no discussion either');
+  assert.match(ROUTE, /AND view_visibility = 'public' AND NOT self_hosted\s+AND moderation_suspended_at IS NULL/,
+    'nor a staging demo row');
   assert.match(ROUTE, /SELECT DISTINCT ON \(m\.app_id\)/, 'one row per app');
   assert.match(ROUTE, /ORDER BY m\.app_id, m\.created_at DESC, m\.id DESC/,
     'the id tiebreak matters: created_at defaults to NOW() and two messages '
