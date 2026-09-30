@@ -67,6 +67,7 @@ import {
   initialOf,
 } from './profile-store.js';
 import { pushDismissible } from '../../lib/back-stack';
+import { sourceRect } from './avatar-crop';
 import {
   act as actOnFriend,
   announceFriendsChanged,
@@ -104,6 +105,17 @@ const Profile = {
   // what the store carries.
   _pendingAvatar: null,
   _pendingAvatarUrl: null,
+
+  // THE PHOTO BEING POSITIONED (#3525). A chosen file no longer goes straight
+  // to `_prepareAvatar`: it opens "Position your photo"
+  // (./avatar-crop-dialog.tsx) over the editor, and only Use photo stages it.
+  // `_cropFile` is the File while that step is up; the store carries what the
+  // step renders (`cropSource`: its object URL and decoded size), for the
+  // same reason `_pendingAvatar` stays out of it. `_releaseCropBack` is the
+  // step's own claim on the Back button, pushed above the editor's, so Back
+  // cancels the step and leaves the editor open.
+  _cropFile: null,
+  _releaseCropBack: null,
 
   // THE EDITOR'S CLAIM ON THE BACK BUTTON, and what Back leaves behind
   // (QA 2026-09-24 Q16). Back used to walk past the open editor to the entry
@@ -675,6 +687,10 @@ const Profile = {
     Profile._draft = keepDraft && typeof source === 'function' && user.username
       ? { username: user.username, ...source() }
       : null;
+    // The positioning step goes first (#3525): its claim on Back is above
+    // the editor's, and only the top record may be spent. Navigating for the
+    // reason the editor's own release is, just below.
+    Profile._endAvatarCrop({ navigating: true });
     // Navigating, because several closes here are the first half of a link
     // (Email & recovery, Open public page, leaving the screen): the record is
     // spent a task later, and only if nothing moved (lib/back-stack.ts).
@@ -702,13 +718,97 @@ const Profile = {
     profileStore.set({ pendingAvatarUrl: null, pendingRemove: false });
   },
 
-  /** Stage a chosen file. Throws a user-facing message when it cannot be used. */
-  async stageAvatar(file) {
-    const blob = await Profile._prepareAvatar(file);
+  /**
+   * Stage a chosen file, cut to `crop` (source pixels, `{ x, y, size }`) or,
+   * without one, to the centred square. Throws a user-facing message when it
+   * cannot be used.
+   */
+  async stageAvatar(file, crop = null) {
+    const blob = await Profile._prepareAvatar(file, crop);
+    Profile._stageBlob(blob);
+  },
+
+  _stageBlob(blob) {
     Profile._clearPendingAvatar();
     Profile._pendingAvatar = blob;
     Profile._pendingAvatarUrl = URL.createObjectURL(blob);
     profileStore.set({ pendingAvatarUrl: Profile._pendingAvatarUrl, pendingRemove: false });
+  },
+
+  // ── positioning a new photo (#3525) ─────────────────────────────────
+  //
+  // Choose, position, Use photo, Save. The file is checked and decoded here
+  // once, for its size (the dialog's arithmetic is in source pixels and has
+  // to know the picture's shape before its first frame), and again by
+  // `_prepareAvatar` when it is used. A second decode of one photo is cheap
+  // beside uploading the wrong part of it.
+
+  /**
+   * Open "Position your photo" for a chosen file. Throws a user-facing message
+   * when the file cannot be used, and then nothing opens.
+   */
+  async beginAvatarCrop(file) {
+    Profile._checkAvatarType(file);
+    const image = await Profile._decodeImage(file);
+    const width = image.width;
+    const height = image.height;
+    if (image.close) image.close();
+    if (!(Math.min(width, height) > 0)) throw new Error('That image could not be read.');
+    // The editor closed while the file was decoding: there is nothing left
+    // for the step to open over.
+    if (!profileStore.get().sheetOpen) return;
+    Profile._endAvatarCrop();
+    Profile._cropFile = file;
+    profileStore.set({ cropSource: { url: URL.createObjectURL(file), width, height } });
+    Profile._releaseCropBack = pushDismissible(() => {
+      Profile._releaseCropBack = null;
+      Profile._endAvatarCrop();
+      return true;
+    });
+  },
+
+  /**
+   * Use photo: stage the file cut to `crop` and close the step. Throws a
+   * user-facing message when it cannot be prepared, having closed the step so
+   * the message shows under the editor's Photo group, where photo errors
+   * always have. A step cancelled while this ran (Back, Escape) wins: what it
+   * prepared is dropped rather than staged behind the viewer's back.
+   */
+  async acceptAvatarCrop(crop) {
+    const file = Profile._cropFile;
+    if (!file) return false;
+    let blob;
+    try {
+      blob = await Profile._prepareAvatar(file, crop);
+    } catch (err) {
+      if (Profile._cropFile === file) Profile._endAvatarCrop();
+      throw err;
+    }
+    if (Profile._cropFile !== file) return false;
+    Profile._endAvatarCrop();
+    Profile._stageBlob(blob);
+    return true;
+  },
+
+  /** Cancel: the step closes, and whatever was staged before it stays. */
+  cancelAvatarCrop() {
+    Profile._endAvatarCrop();
+  },
+
+  _endAvatarCrop({ navigating = false } = {}) {
+    const release = Profile._releaseCropBack;
+    Profile._releaseCropBack = null;
+    if (release) release(navigating ? { navigating: true } : undefined);
+    Profile._cropFile = null;
+    const source = profileStore.get().cropSource;
+    if (!source) return;
+    // The store first, the URL after. Closing the dialog leaves a copy of its
+    // card to play the exit (lib/kit-surface.ts, leaveSnapshot), and that
+    // copy's <img> resolves the same URL as it is made; revoked first, it
+    // failed to load and logged a console error. _dismissSheet releases the
+    // staged photo's URL in the same order.
+    profileStore.set({ cropSource: null });
+    try { URL.revokeObjectURL(source.url); } catch (_) {}
   },
 
   /** Stage a deletion. Nothing reaches the server until Save. */
@@ -738,42 +838,122 @@ const Profile = {
   // navigation never opens. Pure UI state with no writes, so deliberately
   // NOT staging-gated: the "before" side is shot against production and an
   // env-gated link would starve it forever.
+  //
+  // ?shot=profile-photo (#3525) goes one step further: the editor, and over
+  // it "Position your photo" with the sample picture below. The step is only
+  // ever reached by choosing a file, which neither a declared check nor the
+  // shots agent can do (it has no file chooser), so this is the only way
+  // either sees the state. Still no writes: the sample is staged only if
+  // someone presses Use photo, and uploaded only if they then press Save,
+  // exactly as a real pick would be.
   _maybeOpenShot() {
     if (Profile._shotFired) return;
     let shot = null;
     try {
       shot = new URLSearchParams(location.search).get('shot');
     } catch (err) { /* ignore */ }
-    if (shot !== 'profile-edit') return;
+    if (shot !== 'profile-edit' && shot !== 'profile-photo') return;
     const d = Profile._data;
     if (!d || d.signedOut || d.error) return;
     Profile._shotFired = true;
     Profile.showEditSheet();
+    if (shot === 'profile-photo') void Profile._openSamplePhoto();
   },
 
-  // Centre-crop to a square, downscale to AVATAR_MAX_PX, then re-encode
-  // until it fits the byte budget — the same loop screenshot-select.js
-  // uses. This is not an optimisation: the server ships no image decoder,
-  // so an un-shrunk 12 MP phone photo would simply be refused.
-  async _prepareAvatar(file) {
-    if (!/^image\/(png|jpeg|webp)$/.test(file.type || '')) {
+  async _openSamplePhoto() {
+    try {
+      const file = await Profile._samplePhotoFile();
+      if (file) await Profile.beginAvatarCrop(file);
+    } catch (err) {
+      console.warn('[profile] sample photo failed:', err);
+    }
+  },
+
+  // The picture ?shot=profile-photo opens with: drawn here rather than
+  // shipped, so the link needs no asset, and drawn the same way every time,
+  // so the before and after shots of it are comparable. Landscape, with the
+  // figure well right of centre, which is the case the step exists for: the
+  // old centred square cut the figure in half.
+  _samplePhotoFile() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 960;
+    canvas.height = 640;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return Promise.resolve(null);
+    const sky = ctx.createLinearGradient(0, 0, 0, 640);
+    sky.addColorStop(0, '#9fb4ff');
+    sky.addColorStop(1, '#fde2c8');
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, 960, 640);
+    ctx.fillStyle = '#fff4b8';
+    ctx.beginPath();
+    ctx.arc(170, 150, 70, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#7cc49a';
+    ctx.beginPath();
+    ctx.ellipse(250, 700, 520, 240, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#4f9a74';
+    ctx.beginPath();
+    ctx.ellipse(820, 720, 480, 260, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // The figure: shoulders, then a head over them, then its hair.
+    ctx.fillStyle = '#3b4fd8';
+    ctx.beginPath();
+    ctx.ellipse(740, 640, 170, 190, 0, Math.PI, 0);
+    ctx.fill();
+    ctx.fillStyle = '#f2c29b';
+    ctx.beginPath();
+    ctx.arc(740, 340, 95, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#5a3a26';
+    ctx.beginPath();
+    ctx.arc(740, 322, 98, Math.PI, 0);
+    ctx.fill();
+    return new Promise((resolve) => {
+      canvas.toBlob((blob) => {
+        resolve(blob ? new File([blob], 'sample-photo.png', { type: 'image/png' }) : null);
+      }, 'image/png');
+    });
+  },
+
+  _checkAvatarType(file) {
+    if (!/^image\/(png|jpeg|webp)$/.test((file && file.type) || '')) {
       throw new Error('Choose a PNG, JPEG or WebP image.');
     }
+  },
+
+  // Cut the square the viewer positioned (#3525), downscale it to
+  // AVATAR_MAX_PX, then re-encode until it fits the byte budget — the same
+  // loop screenshot-select.js uses. This is not an optimisation: the server
+  // ships no image decoder, so an un-shrunk 12 MP phone photo would simply be
+  // refused.
+  //
+  // `crop` is the positioning step's square in this image's own pixels. It is
+  // re-fitted to the bitmap decoded HERE (`sourceRect`: whole pixels, inside
+  // the image) rather than trusted, so a stale or hand-built one can never
+  // draw past an edge. Without one it is the centred square, which is what
+  // every photo got before the step existed and what the step opens on.
+  async _prepareAvatar(file, crop = null) {
+    Profile._checkAvatarType(file);
     const bitmap = await Profile._decodeImage(file);
     const side = Math.min(bitmap.width, bitmap.height);
     if (!side) throw new Error('That image could not be read.');
-    const target = Math.min(side, Profile.AVATAR_MAX_PX);
+    const rect = crop
+      ? sourceRect(crop, bitmap.width, bitmap.height)
+      : {
+        x: Math.floor((bitmap.width - side) / 2),
+        y: Math.floor((bitmap.height - side) / 2),
+        size: side,
+      };
+    const target = Math.min(rect.size, Profile.AVATAR_MAX_PX);
 
     let canvas = document.createElement('canvas');
     canvas.width = target;
     canvas.height = target;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('That image could not be processed here.');
-    ctx.drawImage(
-      bitmap,
-      Math.floor((bitmap.width - side) / 2), Math.floor((bitmap.height - side) / 2),
-      side, side, 0, 0, target, target
-    );
+    ctx.drawImage(bitmap, rect.x, rect.y, rect.size, rect.size, 0, 0, target, target);
     if (bitmap.close) bitmap.close();
 
     const toBlob = (c, type, q) => new Promise((res) => c.toBlob(res, type, q));
@@ -796,9 +976,17 @@ const Profile = {
     return blob;
   },
 
+  // `imageOrientation: 'from-image'` because the positioning step draws the
+  // file with an <img>, which always honours a JPEG's EXIF rotation. A bitmap
+  // decoded without it (the old default) is a sideways picture with its width
+  // and height swapped, and the square the viewer chose would be cut from the
+  // wrong place. An engine that does not know the option throws, and the
+  // <img> decode below honours the rotation the same way the step does.
   async _decodeImage(file) {
     if (typeof createImageBitmap === 'function') {
-      try { return await createImageBitmap(file); } catch (_) { /* fall through */ }
+      try {
+        return await createImageBitmap(file, { imageOrientation: 'from-image' });
+      } catch (_) { /* fall through */ }
     }
     return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(file);

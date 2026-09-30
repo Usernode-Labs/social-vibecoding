@@ -57,6 +57,10 @@ import { createStore } from '../../lib/plain-store.js';
  * @property {any} user          — a snapshot of App.user, taken by the controller
  * @property {string|null} pendingAvatarUrl — object URL of a staged photo
  * @property {boolean} pendingRemove        — the staged change is a deletion
+ * @property {{url: string, width: number, height: number}|null} cropSource
+ *   — the chosen photo while "Position your photo" is up (#3525): its object
+ *   URL and decoded size. The File itself stays on Profile, as the staged
+ *   Blob does.
  * @property {boolean} sheetOpen
  * @property {string} publicStatus
  * @property {boolean} publishing
@@ -73,6 +77,7 @@ export const profileStore = createStore(/** @type {ProfileState} */ ({
   user: null,
   pendingAvatarUrl: null,
   pendingRemove: false,
+  cropSource: null,
   sheetOpen: false,
   publicStatus: '',
   publishing: false,
