@@ -403,6 +403,58 @@ test('every generated title loses to a hand-chosen one', async () => {
   }
 });
 
+// ---- #3518: the Homeroom bot's build seed ----
+
+// The first message of every build session the bot opens
+// (homeroom-bot-live.js buildAndPropose): the issue on its own line, the
+// triage's plan under it.
+const BOT_SEED = 'Build issue #3233: Quota notifications are cryptic codes\n\n'
+  + 'Edit the app_quota_changed row in notifications.js so it reads as a sentence. '
+  + 'Keep the fallback line for a detail that is not two numbers.';
+
+test('parseIssueSeed peels the Homeroom bot\'s build seed too (#3518)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    const seed = subject.parseIssueSeed(BOT_SEED);
+    assert.equal(seed.number, 3233);
+    assert.equal(seed.title, 'Quota notifications are cryptic codes', 'the title line alone');
+    assert.match(seed.body, /^Edit the app_quota_changed row/, 'the plan is the body, not part of the title');
+    // An issue fetch that fell back to "Issue #N" still names something,
+    // and a seed with no plan under it still parses.
+    assert.equal(subject.parseIssueSeed('Build issue #7: Issue #7\n\n').title, 'Issue #7');
+    assert.equal(subject.parseIssueSeed('Build issue #7: Sort by date').body, '');
+    // The card's own seed is unchanged by the second wrapper.
+    assert.equal(subject.parseIssueSeed(ISSUE_SEED).title, 'Add claimed issues to workshop current work');
+    // Only at the very start, and only with a number.
+    assert.equal(subject.parseIssueSeed('Please build issue #7: sort'), null);
+    assert.equal(subject.parseIssueSeed('Build issue: sort the list'), null);
+  } finally {
+    restore();
+  }
+});
+
+test('the bot\'s deterministic name is the issue, not "Build issue N:" and a severed plan (#3518)', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    // Before: `Build issue 3233: Quota notifications are cryptic codes Edit
+    // the app…`, the title every bot proposal on the platform carried.
+    assert.equal(subject.deterministicTitle(BOT_SEED), 'Quota notifications are cryptic codes');
+    assert.doesNotMatch(subject.deterministicTitle(BOT_SEED), /Build issue|3233|Edit the/);
+    // An issue title past the cap is still cut the way #2500 cuts one: at a
+    // word, and only the title, never the plan run into it.
+    const long = subject.deterministicTitle(`Build issue #9: ${'Accepted proposals scored one point versus '
+      + 'a hundred and fifty with no reason given anywhere'}\n\nShow the reason.`);
+    assert.ok(long.length <= 72, long);
+    assert.equal(long, 'Accepted proposals scored one point versus a hundred and fifty with no…');
+    // The model is handed the issue title as its own signal, and the plan.
+    const prepared = subject.titleInputsFromRequests([BOT_SEED]);
+    assert.equal(prepared.issueTitle, 'Quota notifications are cryptic codes');
+    assert.doesNotMatch(prepared.requests[0], /Build issue/);
+  } finally {
+    restore();
+  }
+});
+
 // ---- #2500: the shared turn-end hook ----
 
 test('titleAtTurnEnd re-titles from history, and names a first turn from its ask', async () => {
@@ -1065,6 +1117,43 @@ test('a deterministic PR title never carries the issue-card scaffolding (#2500)'
     assert.doesNotMatch(githubCalls[0].opts.title, /Please implement GitHub issue/);
     // The seeded linkage is what puts `Closes #N` in the body (#2537).
     assert.match(githubCalls[0].opts.body, /^Closes #2496$/m);
+  } finally {
+    restore();
+  }
+});
+
+// #3518: the pull request the Homeroom bot's promotion opens is named by the
+// same deterministic draft when the spec gave it no name of its own, so the
+// seed's scaffolding must not reach it there either.
+test('a deterministic PR title for a bot build never carries "Build issue N:" (#3518)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadPrMetadataWithStubs({ githubCalls });
+  try {
+    const ask = 'Build issue #3233: Quota notifications are cryptic codes\n\n'
+      + 'Edit the app_quota_changed row in notifications.js so it reads as a sentence.';
+    const pool = prMetadataMockPool();
+    pool.query = async function query(sql, params) {
+      this.queries.push({ sql, params });
+      if (/FROM chat_session_messages/i.test(sql)) return { rows: [{ role: 'user', content: ask, metadata: {} }] };
+      if (/FROM chat_session_specs/i.test(sql)) return { rows: [] };
+      if (/FROM chat_sessions\b/i.test(sql)) {
+        return { rows: [{ spec_md: '', linked_issues: [3233], pr_linked_issues_applied: [], testing_md: null, testing_path: null, pr_testing_applied: null }] };
+      }
+      return { rows: [] };
+    };
+    const session = {
+      id: 14, branch_name: 'dev/homeroom_bot-s14', pr_number: null,
+      agent_backend: 'codex_openrouter', session_title: 'Homeroom bot: #3233 Quota notifications are cryptic codes',
+    };
+    await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: ask, ccSummary: '', username: 'homeroom_bot',
+    });
+    assert.equal(githubCalls[0].type, 'create');
+    assert.equal(githubCalls[0].opts.title, 'Quota notifications are cryptic codes');
+    // The issue is where the proposal says it is: in Addresses, and in the
+    // body's closing line.
+    assert.match(githubCalls[0].opts.body, /^Closes #3233$/m);
   } finally {
     restore();
   }
