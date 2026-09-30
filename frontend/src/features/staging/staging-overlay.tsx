@@ -335,7 +335,7 @@ export function StagingOverlay(): ReactNode {
             className="hidden min-h-[44px] px-4 py-2 text-sm font-medium"
             onClick={() => stagingHandlers.onRetry?.()}
           >
-            Retry sign-in
+            {state.loaderRetryLabel}
           </Button>
         </div>
       </div>

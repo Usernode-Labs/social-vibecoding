@@ -20340,6 +20340,17 @@ const AppView = {
     // lives in the `rebuilding` branch below, where it is actually true.
     AppView._setStagingLoader(true, { title: 'Opening preview…', sub: '' });
     staging.setHandlers({ onBack: () => AppView.closeStagingOverlay() });
+    // #3413: every terminal failure below covers the page with the loader, so
+    // the card's own "Retry preview" (swapToStagingForSession → this function)
+    // sits unreachable under it. Offer the same action inside the loader: re-
+    // enter this open with the same arguments. Mirrors the card's gate —
+    // read-only viewers get no Retry preview there (#866: the ensure POST is
+    // collab-gated), so they get none here either. A stale closure no-ops.
+    const retry = readOnly ? null : () => {
+      if (loadId === AppView._stagingLoadId && AppView._stagingSameApp(opts, slug)) {
+        return AppView.ensureStaging(sessionId, fallbackUrl, testing, opts);
+      }
+    };
 
     let data;
     try {
@@ -20353,11 +20364,11 @@ const AppView = {
       const res = await fetch(endpoint, readOnly ? undefined : { method: 'POST' });
       data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.');
+        AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.', retry);
         return;
       }
     } catch {
-      AppView._showStagingUnavailable(loadId, 'Network error while rebuilding the preview. Try again in a moment.');
+      AppView._showStagingUnavailable(loadId, 'Network error while rebuilding the preview. Try again in a moment.', retry);
       return;
     }
     // Backed out while we waited on the POST.
@@ -20388,7 +20399,9 @@ const AppView = {
       };
       AppView._showStagingUnavailable(
         loadId,
-        unavailableCopy[data.reason] || 'This preview isn’t available right now.'
+        unavailableCopy[data.reason] || 'This preview isn’t available right now.',
+        // A demo environment can never rebuild, so a retry would only loop.
+        data.reason === 'demo' ? null : retry
       );
       return;
     }
@@ -20404,7 +20417,7 @@ const AppView = {
         + 'from the session’s latest changes. This usually takes 20–60 seconds.',
     });
     AppView._pendingStagingPreview = {
-      sessionId, slug, jump, testing, dock, loadId,
+      sessionId, slug, jump, testing, dock, loadId, retry,
       app: opts && opts.app ? opts.app : null,
       readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
     };
@@ -20422,14 +20435,26 @@ const AppView = {
 
   // #439: terminal loader state when a rebuild can't proceed (no changes,
   // demo env, build failure). Shows the reason in the existing loader with
-  // the back button already wired by ensureStaging.
-  _showStagingUnavailable(loadId, message) {
+  // the back button already wired by ensureStaging. #3413: `retry` (or null)
+  // puts a "Retry preview" button under the reason.
+  _showStagingUnavailable(loadId, message, retry = null) {
     if (loadId !== AppView._stagingLoadId) return;
     AppView._pendingStagingPreview = null;
     AppView._setStagingLoader(true, {
       title: 'Preview unavailable',
       sub: message,
+      ...AppView._offerStagingPreviewRetry(retry),
     });
+  },
+
+  // #3413: wire the loader's retry button to `retry` and return the loader
+  // fields that show it, labelled for a preview rather than a sign-in. With
+  // no `retry` (read-only viewer, demo) it returns nothing and the loader
+  // keeps its plain terminal state.
+  _offerStagingPreviewRetry(retry) {
+    if (typeof retry !== 'function') return {};
+    AppView._staging().setHandlers({ onRetry: retry });
+    return { retry: true, retryLabel: 'Retry preview' };
   },
 
   // #439: called by the staging_ready / staging_failed WS handlers when a
@@ -20449,6 +20474,7 @@ const AppView = {
       AppView._setStagingLoader(true, {
         title: 'Preview couldn’t be rebuilt',
         sub: error || 'The staging build failed. See the dev chat for details.',
+        ...AppView._offerStagingPreviewRetry(pending.retry),
       });
       return;
     }
@@ -21059,8 +21085,9 @@ const AppView = {
       el.style.height = `${Math.round(rect.height)}px`;
     },
     setUrlLabel(text) { this._setText('staging-url-label', text || ''); },
-    setLoader(visible, { title, sub, retry = false } = {}) {
+    setLoader(visible, { title, sub, retry = false, retryLabel } = {}) {
       this._setHidden('staging-retry-btn', !visible || !retry);
+      this._setText('staging-retry-btn', retryLabel || 'Retry sign-in');
       this._setHidden('staging-loader', !visible);
       if (title !== undefined) this._setText('staging-loader-title', title);
       if (sub !== undefined) this._setText('staging-loader-sub', sub);
@@ -21195,8 +21222,10 @@ const AppView = {
   // it alone. The old truthiness check made '' a no-op, which would leave a
   // previous state's sub-line (the rebuild estimate, the checks note)
   // stranded under a title that no longer matches it.
-  _setStagingLoader(visible, { title, sub, retry = false } = {}) {
-    AppView._staging().setLoader(visible, { title, sub, retry });
+  // #3413: `retryLabel` names the retry button; omitted, it reads
+  // "Retry sign-in" (swapToStaging's token failure).
+  _setStagingLoader(visible, { title, sub, retry = false, retryLabel } = {}) {
+    AppView._staging().setLoader(visible, { title, sub, retry, retryLabel });
   },
 
   // #816: retry schedule for the fallback readiness poll below.
