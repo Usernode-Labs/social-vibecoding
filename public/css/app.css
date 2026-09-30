@@ -16193,13 +16193,89 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    over it and the tab bar under it. Each item leads with the project it
    belongs to, its tile and its name, a door to its hub. */
 .workshop-needs-feed {
-  /* The page head and the header over it (116px), and the phone's tab bar
-     under it, measured against a project's own feed, which ends at the same
-     line. A browser's "Get the app" banner pushes the page down by its own
-     height, so that comes off as well. */
-  height: calc(100dvh - 180px - var(--browser-banner-h, 0px)); min-height: 360px;
+  /* NO HEIGHT HERE ANY MORE (#3516): the phone takes it from the flex chain
+     below and the desktop from its own rule after that. `min-height` is the
+     floor for both: a feed shorter than this is not usable, and on a window
+     that short the screen scrolls instead. */
+  min-height: 360px;
   margin: 4px 16px 0;
   display: flex; flex-direction: column;
+}
+/* ON A PHONE THE FEED ENDS WHERE #workshop-screen'S CLEARANCE BEGINS (#3516).
+
+   It was `height: calc(100dvh - 180px - var(--browser-banner-h, 0px))`: the
+   page head and the header over it (116px) and a 56px tab bar with 8px of air
+   under it, measured once in a browser with no insets and nothing parked. Three
+   things at the foot of a phone were not in that number, and each one put the
+   feed's foot under the bar:
+
+   - THE PARKED APP'S STRIP. `--platform-tabs-h` counts it (52px more) the
+     moment an app is parked; this number never did. Measured at 390x844 with
+     an app parked: the feed ran to 828px against a strip whose top was at
+     736 in a phone browser, and to 827 against 716 in the installed layout,
+     so the rail's Try it and More and the item's caption sat under the
+     strip and the bar.
+   - THE INSTALLED APP'S INSETS. An iPhone install reserves the status bar
+     at the top (`--platform-safe-top`, 47-62px) and the bar spends part of
+     the home indicator at the foot (`--platform-tabs-inset`). Nothing
+     parked, the feed still ended 60px under the bar there.
+   - THE "GET THE APP" BANNER in a phone browser. `--browser-banner-h` is
+     declared only on `html[data-browser-scroller]` routes, and this screen is
+     not one (browser-scroll.ts `PAGES`): its root scrolls itself in every
+     layout, so the token read 0 here while the banner pushed the page 48px
+     down.
+
+   And the foot could not be scrolled into view. `.dev-ws-needs-scroll` is
+   `overscroll-behavior: contain`, so a drag on the feed moves between items
+   and never reaches the screen behind it; only a drag on the page head moved
+   the page.
+
+   SO NO ARITHMETIC: THE SCROLLER'S OWN CLEARANCE BOUNDS IT. #workshop-screen
+   is a flex child of the fixed-height body column in both layouts, so it has
+   a definite height, and it carries `.platform-safe-scroll`, whose padding is
+   `max(--platform-tabs-h, --platform-safe-bottom)`: the tab bar, the parked
+   strip when there is one and the home indicator, each counted once, by the
+   same token every other screen clears them with. While the feed is up the
+   screen, its column and the pane become a flex chain and the feed takes
+   what is left above that padding, less `--ws-gap` of air — the line a
+   project's own Needs you deck ends on (`.dev-ws`'s `--ws-area`), whatever
+   the header, the insets, the banner or the strip add up to. The same
+   mechanism the project page uses in the installed layout (see "The lander
+   fills what is left of the scroller"), for the same reason: nothing here
+   depends on a header height being accurate.
+
+   `flex-shrink: 0` on every link, never `min-height: 0`. On a window too
+   short for the 360px floor the column must stay its content's height and
+   make the screen scroll: a link allowed to shrink leaves the feed
+   overflowing it, and a scroller's block-end padding follows its in-flow
+   children, not a descendant that overflows one, so the clearance would
+   reserve nothing (#3053 is the same trap on a project page).
+
+   `:not(.hidden)` on the root is load-bearing. The needs pane stays mounted
+   while you are on another screen, and an id-specific `display` here would
+   otherwise outrank Tailwind's `.hidden` and draw Communities over it.
+   `width: 100%` on the column because auto margins on a flex column's cross
+   axis shrink an item to its content (`#dev-workshop` above has the same
+   note); `max-w-2xl mx-auto` still caps and centres it. Its `pb-8` gives way
+   to `--ws-gap`, which is the air this line has always had above the bar.
+
+   Below 768px only: from there the bar is a rail down the side, nothing is
+   parked at the foot (the strip gives way to Recents), and the rule below
+   keeps the desktop's own line. */
+@media (max-width: 767.98px) {
+  #workshop-screen:not(.hidden):has(> div > [data-workshop-pane="needs"]) {
+    display: flex; flex-direction: column;
+  }
+  #workshop-screen > div:has(> [data-workshop-pane="needs"]) {
+    flex: 1 0 auto; width: 100%;
+    display: flex; flex-direction: column;
+    padding-bottom: var(--ws-gap);
+  }
+  #workshop-screen [data-workshop-pane="needs"] {
+    flex: 1 0 auto;
+    display: flex; flex-direction: column;
+  }
+  #workshop-screen [data-workshop-pane="needs"] > .workshop-needs-feed { flex: 1 0 0px; }
 }
 @media (min-width: 768px) {
   /* No tab bar: the stage runs to 8px off the floor, as a project's does, so
