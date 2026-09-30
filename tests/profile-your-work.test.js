@@ -102,6 +102,62 @@ test('Your changes: in progress (either kind, newest first), then merged, then c
   assert.equal(proposalsView({ proposals: { inProgress: [], merged: [] } }).empty, true);
 });
 
+test('Your changes: one list across projects, each row led by its project\'s icon (#3364)', () => {
+  const profile = require('../src/routes/profile');
+  // The server carries the icon beside the name; an image id that is not a
+  // plain id never becomes a URL.
+  assert.match(profile.MY_PROPOSALS_SQL, /a\.slug AS app_slug, a\.name AS app_name, a\.icon_emoji, a\.icon_image_id/);
+  const shaped = profile.shapeProposals([
+    { section: 'inProgress', session_id: 1, title: 'A', app_slug: 'run-club', app_name: 'Run Club', icon_emoji: '🏃', icon_image_id: null, status: 'active', at: null },
+    { section: 'merged', session_id: 2, title: 'B', app_slug: 'whiteboard', app_name: 'Whiteboard', icon_emoji: null, icon_image_id: 'abc_1', status: 'merged', at: null },
+    { section: 'merged', session_id: 3, title: 'C', app_slug: 'odd', app_name: 'Odd', icon_emoji: null, icon_image_id: '../x', status: 'merged', at: null },
+  ]).proposals;
+  assert.deepEqual([shaped.inProgress[0].appIconEmoji, shaped.inProgress[0].appIconUrl], ['🏃', null]);
+  assert.deepEqual(shaped.merged.map((r) => r.appIconUrl), ['/app-icons/abc_1', null]);
+  const demo = profile.withDemoProposals({ openForVote: [], inProgress: [], merged: [], closed: [] },
+    { slug: 'usernode-2d5619', name: 'Homeroom', icon_emoji: '🏠', icon_image_id: null }, NOW);
+  assert.equal(demo.inProgress[0].appIconEmoji, '🏠');
+
+  // The view hands each row its project in app-card.js's field names.
+  const { proposalsView } = loadTsx(STORE);
+  const view = proposalsView({
+    proposals: {
+      inProgress: [
+        { sessionId: 1, title: 'Dark mode', appSlug: 'run-club', appName: 'Run Club', appIconEmoji: '🏃', at: '2026-09-23T10:00:00Z' },
+      ],
+      openForVote: [
+        { sessionId: 2, title: 'Lasso', appSlug: 'whiteboard', appName: 'Whiteboard', appIconUrl: '/app-icons/abc', at: '2026-09-22T10:00:00Z' },
+      ],
+    },
+  }, NOW);
+  assert.equal(view.sections.length, 1, 'both projects share the one In progress group');
+  assert.deepEqual(view.sections[0].rows.map((r) => r.app), [
+    { slug: 'run-club', name: 'Run Club', icon_emoji: '🏃', icon_url: null },
+    { slug: 'whiteboard', name: 'Whiteboard', icon_emoji: null, icon_url: '/app-icons/abc' },
+  ]);
+
+  // The screen draws the tile ahead of each row: emoji, image, or the letter.
+  const mod = loadTsx(SCREEN);
+  mod.profileProposalsStore.set({
+    open: true, kind: 'changes', error: false,
+    data: { changes: { proposals: {
+      inProgress: [
+        { sessionId: 1, title: 'Dark mode', appSlug: 'run-club', appName: 'Run Club', appIconEmoji: '🏃', at: '2026-09-23T10:00:00Z' },
+        { sessionId: 3, title: 'Tags', appSlug: 'notes', appName: 'Notes', at: '2026-09-21T10:00:00Z' },
+      ],
+      openForVote: [
+        { sessionId: 2, title: 'Lasso', appSlug: 'whiteboard', appName: 'Whiteboard', appIconUrl: '/app-icons/abc', at: '2026-09-22T10:00:00Z' },
+      ],
+    } } },
+  });
+  const out = renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
+  assert.equal((out.match(/data-profile-work-group=/g) || []).length, 1);
+  assert.match(out, /data-icon="emoji" data-profile-work-app="run-club" title="Run Club" aria-hidden="true">[\s\S]*?🏃/);
+  assert.match(out, /data-icon="image" data-profile-work-app="whiteboard" title="Whiteboard" aria-hidden="true"><img src="\/app-icons\/abc"/);
+  assert.match(out, /data-icon="letter" data-profile-work-app="notes" title="Notes" aria-hidden="true">N</);
+  mod.profileProposalsStore.set({ open: false, kind: 'changes', data: {}, error: false });
+});
+
 test('Your requests: open, then done, each opening the request', () => {
   const { requestsView } = loadTsx(STORE);
   const view = requestsView({
