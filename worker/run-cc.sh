@@ -148,8 +148,9 @@ fi
 # requires the separate authoritative system context. Fail before invoking
 # Claude if the host omitted it or failed to materialize it; there is no
 # reduced-context fallback that could silently drop platform rules. An
-# OpenRouter build carries the full conventions block in its prompt instead,
-# exactly as a Codex build does, so the system file is optional there.
+# OpenRouter build may have none: the dev chat sends the handbook here for an
+# OpenRouter model too (sessions.js openRouterBuildPrompts), but the Homeroom
+# bot's builds work from the repository's own instructions alone.
 if { [ "$MODE" = "build" ] || [ "$MODE" = "shots" ]; } && [ -z "$SYSTEM_PROMPT_FILE" ] \
     && [ "$AGENT_PROVIDER" != "openrouter" ]; then
   die "SYSTEM_PROMPT_FILE required for $MODE mode"
