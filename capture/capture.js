@@ -1340,6 +1340,175 @@ async function gotoTestDocument(page, url) {
   return response;
 }
 
+// ── Render health: the platform's own reading of every checked page ──────
+//
+// A declared check asks whether an element or some text is present. Neither
+// notices a page that lost its stylesheet: the markup is all still there.
+// That is how an app shipped `/tailwind.css → 204` in a feature proposal and
+// lost every layout utility in production for days (Sheep countrr #38):
+// a 204 is not an error, so nothing reached the console either, and every
+// check passed.
+//
+// So each checked document is also read for two facts no dapp.json setting
+// can switch off, reported beside the check's own verdict (never folded into
+// it) and judged in one platform row by src/services/render-health.js:
+//
+//   * its same-origin stylesheets — one that fails, answers 204/205, or
+//     comes back with an empty body. Cross-origin sheets (a font CDN) are
+//     not the app's to serve, and a flaky third party must not fail it;
+//     nor are the platform-hosted prefixes (/usernode-native/ and friends),
+//     which the edge answers before the app sees them and which the
+//     asset-route check already covers as the platform's own problem.
+//   * whether it renders anything visible at all — text, an image, a
+//     canvas, a form control, a background image — in the viewport.
+const RENDER_STYLESHEET_BODY_MS = 3000;
+const RENDER_BLANK_RECHECK_MS = 1000;
+const RENDER_MAX_STYLESHEETS = 5;
+
+const RENDER_PLATFORM_PREFIXES = ['/usernode-bridge/', '/usernode-native/', '/usernode-tailwind/'];
+
+// The app's own path for a same-origin URL it serves itself, else null.
+function sameOriginPath(url, documentUrl) {
+  try {
+    const u = new URL(url);
+    if (u.origin !== new URL(documentUrl).origin) return null;
+    return RENDER_PLATFORM_PREFIXES.some((p) => u.pathname.startsWith(p)) ? null : u.pathname;
+  } catch { return null; }
+}
+
+// '' for a usable stylesheet, otherwise what was wrong with it.
+function stylesheetProblem({ status = 0, bytes = null, failed = '' } = {}) {
+  if (failed) return `did not load (${failed})`;
+  if (status >= 400) return `answered HTTP ${status}`;
+  if (status === 204 || status === 205) return `answered ${status} with no content`;
+  if (bytes === 0) return 'came back empty';
+  return '';
+}
+
+// Collects the document's stylesheet outcomes as the page loads them. Body
+// sizes are read only when the headers do not already say.
+function makeStylesheetWatch(documentUrl) {
+  const pending = [];
+  const readBytes = async (resp) => {
+    const headers = typeof resp.headers === 'function' ? (resp.headers() || {}) : {};
+    const declared = headers['content-length'];
+    if (declared != null && /^\d+$/.test(String(declared))) return Number(declared);
+    if (typeof resp.buffer !== 'function') return null;
+    let timer;
+    try {
+      const buf = await Promise.race([
+        resp.buffer(),
+        new Promise((resolve) => { timer = setTimeout(() => resolve(null), RENDER_STYLESHEET_BODY_MS); }),
+      ]);
+      return buf ? buf.length : null;
+    } catch { return null; } finally { clearTimeout(timer); }
+  };
+  return {
+    onResponse(resp) {
+      const req = typeof resp.request === 'function' ? resp.request() : null;
+      if (!req || typeof req.resourceType !== 'function' || req.resourceType() !== 'stylesheet') return;
+      const pathname = sameOriginPath(resp.url(), documentUrl);
+      if (!pathname) return;
+      const status = resp.status();
+      // A redirect hop is not the sheet; its final response follows.
+      if (status >= 300 && status < 400) return;
+      pending.push((async () => {
+        const bytes = (status >= 200 && status < 300 && status !== 204 && status !== 205)
+          ? await readBytes(resp) : null;
+        return { path: pathname, problem: stylesheetProblem({ status, bytes }) };
+      })());
+    },
+    onRequestFailed(req) {
+      if (typeof req.resourceType !== 'function' || req.resourceType() !== 'stylesheet') return;
+      const pathname = sameOriginPath(req.url(), documentUrl);
+      if (!pathname) return;
+      const failure = typeof req.failure === 'function' ? req.failure() : null;
+      // Aborted is the page navigating away mid-load (the cold-cohort
+      // fallback's about:blank hop), not the server failing the sheet.
+      if (failure && /ERR_ABORTED/.test(String(failure.errorText || ''))) return;
+      pending.push(Promise.resolve({
+        path: pathname,
+        problem: stylesheetProblem({ failed: (failure && failure.errorText) || 'request failed' }),
+      }));
+    },
+    // Distinct problems seen so far, bounded.
+    async problems() {
+      const settled = await Promise.all(pending.slice());
+      const seen = new Set();
+      const out = [];
+      for (const s of settled) {
+        if (!s || !s.problem) continue;
+        const key = `${s.path}\n${s.problem}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({ path: s.path, problem: s.problem });
+        if (out.length >= RENDER_MAX_STYLESHEETS) break;
+      }
+      return out;
+    },
+  };
+}
+
+// Runs IN the page (serialized by page.evaluate), never in node. True when
+// anything visible sits in the viewport.
+function pageShowsSomethingInPage() {
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0;
+  const vh = window.innerHeight || document.documentElement.clientHeight || 0;
+  const onScreen = (r) => r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
+  const shown = (el) => {
+    const cs = window.getComputedStyle(el);
+    return cs.display !== 'none' && cs.visibility !== 'hidden' && Number(cs.opacity) !== 0;
+  };
+  const graphic = 'img,svg,canvas,video,iframe,object,embed,input,button,select,textarea';
+  for (const el of document.querySelectorAll(graphic)) {
+    if (shown(el) && onScreen(el.getBoundingClientRect())) return true;
+  }
+  const root = document.body || document.documentElement;
+  if (!root) return false;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let node;
+  let n = 0;
+  while ((node = walker.nextNode()) && n < 20000) {
+    n += 1;
+    if (!node.nodeValue || !node.nodeValue.trim()) continue;
+    const parent = node.parentElement;
+    if (!parent || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE)$/.test(parent.tagName) || !shown(parent)) continue;
+    range.selectNodeContents(node);
+    if (onScreen(range.getBoundingClientRect())) return true;
+  }
+  let m = 0;
+  for (const el of root.querySelectorAll('*')) {
+    if ((m += 1) > 5000) break;
+    const cs = window.getComputedStyle(el);
+    if (cs.backgroundImage && cs.backgroundImage !== 'none' && shown(el)
+      && onScreen(el.getBoundingClientRect())) return true;
+  }
+  return false;
+}
+
+// true / false, or null when the page could not be asked.
+async function pageShowsSomething(page) {
+  try {
+    const shows = await page.evaluate(pageShowsSomethingInPage);
+    return typeof shows === 'boolean' ? shows : null;
+  } catch { return null; }
+}
+
+// The render-health reading of the document as it stands. A blank reading is
+// taken twice, a moment apart, so a screen still painting its first frame is
+// not called empty.
+async function readRenderHealth(page, stylesheets, { recheckMs = RENDER_BLANK_RECHECK_MS } = {}) {
+  let shows = await pageShowsSomething(page);
+  if (shows === false) {
+    await sleep(recheckMs);
+    shows = await pageShowsSomething(page);
+  }
+  let sheets = [];
+  try { sheets = await stylesheets.problems(); } catch { sheets = []; }
+  return { v: 1, stylesheets: sheets, blank: shows === false };
+}
+
 // #47: run the declared tests for ONE route against the staging build.
 // Navigates once, collects console errors / uncaught exceptions / failed
 // loads (the #381 baseline) for that load, then evaluates each check's
@@ -1488,6 +1657,11 @@ async function runTestGroup(browser, group, opts) {
     for (const ev of ['request', 'response', 'requestfinished', 'requestfailed']) {
       on(ev, () => { activity.bump(); netActivity.bump(); });
     }
+    // Render health: the document's same-origin stylesheets, as they load.
+    const stylesheets = makeStylesheetWatch(lead.url);
+    on('response', (resp) => { try { stylesheets.onResponse(resp); } catch { /* not a sheet we can read */ } });
+    on('requestfailed', (req) => { try { stylesheets.onRequestFailed(req); } catch { /* ignore */ } });
+    const renderRecheckMs = Number.isFinite(o.renderRecheckMs) ? o.renderRecheckMs : RENDER_BLANK_RECHECK_MS;
 
     try {
       const resp = await gotoTestDocument(page, lead.url);
@@ -1616,6 +1790,12 @@ async function runTestGroup(browser, group, opts) {
         : consoleErrors.slice(0, sharedErrorCount).concat(consoleErrors.slice(cohortFrom));
       const errorCount = cohortErrors.length;
 
+      // Render health for this cohort's screen. Not read for a document that
+      // failed to load — that is already the verdict — and never part of it:
+      // the platform judges it in its own row.
+      const render = loadFailure ? null
+        : await readRenderHealth(page, stylesheets, { recheckMs: renderRecheckMs });
+
       // The presence verdicts settled above, plus the console-error rule.
       for (const t of cohort.tests) {
         let failureReason = loadFailure || presence.get(t) || '';
@@ -1629,6 +1809,7 @@ async function runTestGroup(browser, group, opts) {
           name: t.name, path: t.path,
           consoleErrors: t.allowConsoleErrors ? [] : cohortErrors,
           failureReason: pass ? '' : failureReason,
+          ...(render ? { render } : {}),
         });
       }
     }
@@ -1963,4 +2144,4 @@ if (require.main === module) {
 // file whose BEHAVIOUR (how many navigations it makes, whether it starts a
 // recording) is the thing under test, and it takes its page from the browser
 // it is handed, so a fake browser exercises it without Chromium.
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };
+module.exports = { stylesheetProblem, makeStylesheetWatch, pageShowsSomethingInPage, readRenderHealth, parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, parseReady, waitForScenarioReady, mediaEnabled, resolveTests, captureTarget, runTests, runTestGroup, groupTestsByUrl, groupTestsByDocument, groupTests, cohortsOf, hashGroupCap, waitForQuiet, makeActivityClock, makeConsoleErrorSink, settleQuietMs, settleMaxMs, assertMaxMs, poolSize, testTimeoutMs, testsDeadlineMs, setFrameSink, CHROMIUM_LAUNCH_ARGS };

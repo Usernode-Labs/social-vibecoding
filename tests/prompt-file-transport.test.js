@@ -93,7 +93,7 @@ test('hosted Claude references system build guidance while local and Codex share
   assert.equal(local.browserGuidance, IN_LOOP_BROWSER_GUIDANCE);
   assert.equal(
     crypto.createHash('sha256').update(localText).digest('hex'),
-    '2d33bc686d8ae4c2b5de08358078cd9503522891162926343c98be19b0ad905a',
+    'df23834071c27331c2cdb3d4638688d52df79667ff239a5c9d4eceb8121799e8',
     'the non-system-prompt backends retain their exact reviewed guidance',
   );
   assert.match(localText, /falls back to the home page and records that\n\s+default/);

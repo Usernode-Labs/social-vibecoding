@@ -486,7 +486,7 @@ exit 1
     '',
     '[mcp_servers.playwright]',
     'command = "/usr/local/bin/mcp-server-playwright"',
-    'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "/home/node/.usernode-playwright.json"]',
+    'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "/home/node/.usernode-playwright.json", "--output-dir", "/tmp/usernode-playwright-output"]',
     'startup_timeout_sec = 30',
     'tool_timeout_sec = 60',
     '',
