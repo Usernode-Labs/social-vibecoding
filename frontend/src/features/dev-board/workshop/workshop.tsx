@@ -51,7 +51,6 @@ import {
   ChatBubbleTailIcon,
   CheckIcon,
   ChevronDownIcon,
-  ChevronLeftIcon,
   ChevronRightIcon,
   ChevronUpIcon,
   DescriptionIcon,
@@ -82,8 +81,9 @@ import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
-import { ChannelCard, NeedsCard, WorkshopDoor, YourWorkCard } from './hub-cards';
+import { ChannelCard, NeedsCard, NothingToVote, owesVote, WorkshopDoor, YourWorkCard } from './hub-cards';
 import { SinceSummaryCard } from './since-summary-card';
+import { PageBack } from './page-back';
 import { readAskStream } from './ask-stream';
 import {
   commitDistance,
@@ -3275,34 +3275,6 @@ function usePinnedStrip(
   }, [bar, hostRef, enabled, tab]);
 }
 
-/**
- * A page's head: the way back, and the page's name under where it goes back
- * to ("Homeroom" over "Workshop"). The back is a disc of its own rather than
- * a chevron in the header, because the header's slot is the project's own
- * (see App._backSlotFor), and this is a level inside it. The name is the
- * page's one heading.
- */
-function PageBack({ label, title, onBack }: { label: string; title: string; onBack: () => void }): ReactNode {
-  return (
-    <div className="dev-ws-pagehead" data-ws-pagehead="">
-      <button
-        type="button"
-        className="dev-ws-page-back un-touch-target"
-        data-ws-page-back=""
-        aria-label={`Back to ${label}`}
-        title={`Back to ${label}`}
-        onClick={onBack}
-      >
-        <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
-      </button>
-      <div className="dev-ws-pagehead-text">
-        <span className="dev-ws-pagehead-over">{label}</span>
-        <h2 className="dev-ws-pagehead-title">{title}</h2>
-      </div>
-    </div>
-  );
-}
-
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   // THE OPEN APP'S NAME AND ARTWORK, for the hero and the channel below. The
@@ -3627,7 +3599,8 @@ export function DevWorkshop(): ReactNode {
       {/* ── The hub, top to bottom: what landed, yours, the room, the doors ──
           What landed since you were last here, in a sentence or two, then
           your own work when you have some, then the channel, then a door to
-          Needs you when something waits and one to the Workshop. See
+          Needs you when a vote is owed (a quiet "Nothing more to vote on"
+          line when none is) and one to the Workshop. See
           ./since-summary-card.tsx and ./hub-cards.tsx. */}
       {slug ? <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} /> : null}
       {v.mine && v.mine.rows.length ? (
@@ -3645,7 +3618,9 @@ export function DevWorkshop(): ReactNode {
           card, and a Share it card at the foot instead, which is how it
           grows (./community-card.tsx ShareItCard). */}
       {slug && community?.audience !== 'solo' ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
-      {v.queue.length ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} /> : null}
+      {owesVote(v.queue)
+        ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
+        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
       <WorkshopDoor open={v.dashboard ? v.dashboard.open : 0} filtered={!!v.meta.filtered} onOpen={() => openTab('workshop')} />
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
       </>

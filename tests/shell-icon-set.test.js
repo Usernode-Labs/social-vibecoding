@@ -309,9 +309,11 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     // exported and still drawn: the Workshop toolbar's "+" menu offers
     // "New change" with it, behind that menu's own state.
     'M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z',
-    // SparklesIcon LEFT this list when the header menu button traded the
-    // Homeroom "H" tile for a sparkle: #platform-mark-btn renders on every
-    // route, so the glyph is in the cold document.
+    // SparklesIcon came back to this list with #3358: #platform-mark-btn
+    // draws the Homeroom mark again (#3318 had swapped it for a sparkle), and
+    // every other sparkle (Messages' agent rows, the Workshop rail, a
+    // session's header) renders after mount.
+    'M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z',
     // THE MESSAGE ACTIONS (#2387): the hover bar's smile and reply arrow, the
     // ⋯ menu's thread, copy, link, envelope, flag and struck circle, and the
     // emoji picker's heart and cup tabs. Every one draws only once a row is

@@ -86,7 +86,8 @@ test('a project page is its hub, with doors to the Workshop and Needs you; All i
   const order = ['<CommunityCard', '<SinceSummaryCard', '<YourWorkCard', '<ChannelCard', '<NeedsCard', '<WorkshopDoor'].map((s) => hub.indexOf(s));
   assert.ok(order.every((n) => n >= 0), 'all six on the hub');
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, your work, channel, Needs you, Workshop');
-  assert.match(hub, /\{v\.queue\.length \? <NeedsCard /, 'Needs you only when something waits');
+  assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
+    'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408)');
   assert.match(hub, /\{v\.mine && v\.mine\.rows\.length \? \(\s*<YourWorkCard/, 'your work only when you have some');
   assert.doesNotMatch(hub, /data-ws-since=""/, 'the since list is the Workshop page\'s now');
   // The Workshop page: your work in full, the since list by week, All items
@@ -149,9 +150,12 @@ test('Needs you opens the queue and counts the votes owed', () => {
   assert.doesNotMatch(needs, /Join to vote/);
   const outsider = renderToHtml(createElement(NeedsCard, { queue: [row('a', 'Dark mode', 'ada')], canPost: false, onOpen: () => {} }));
   assert.match(outsider, /Join to vote on these\./);
-  const none = renderToHtml(createElement(NeedsCard, { queue: [], canPost: true, onOpen: () => {} }));
-  assert.match(none, /data-ws-hub-needs-open="" disabled=""/);
-  assert.match(none, /Nothing is waiting on you\./);
+  assert.doesNotMatch(needs, /data-ws-hub-needs-none/, 'the door says nothing about an empty queue: it is not drawn then');
+  // #3408: no vote owed, no card. One quiet line says so.
+  const { NothingToVote, owesVote } = loadTsx(HUB);
+  assert.equal(owesVote([]), false);
+  const none = renderToHtml(createElement(NothingToVote, { queue: [], onOpen: () => {} }));
+  assert.equal(none, '<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on.</p>');
 
   // Members & activity is the hero's since #3268: pinned in
   // tests/community-hub-details.test.js.
