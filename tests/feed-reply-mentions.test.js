@@ -181,6 +181,30 @@ test('the list is the group chat’s endpoint, fetched once per app and shared',
   }
 });
 
+test('a full list that cannot fill a prefix is widened by a prefix lookup; a 429 is not kept', async () => {
+  const api = ta();
+  const full = Array.from({ length: api.MENTION_FULL_LIST }, (_, i) => `member_${i}`);
+  assert.equal(api.needsPrefixLookup(full, 'qu'), true, 'nobody in the capped list starts with qu');
+  assert.equal(api.needsPrefixLookup(full, ''), false, 'a bare @ shows the list as it is');
+  assert.equal(api.needsPrefixLookup(full, 'member'), false, 'a prefix the list fills is not asked');
+  assert.equal(api.needsPrefixLookup(['alice'], 'qu'), false, 'a list below the cap is complete');
+  assert.deepEqual(api.mergeMentionNames(['alice', 'bob'], ['bob', 'quiet']), ['alice', 'bob', 'quiet']);
+  // The lookup goes through lib/prefix-lookup.ts (stale answers dropped,
+  // failures not remembered) against the same endpoint with ?q=.
+  assert.match(TYPEAHEAD, /prefixLookup\(async \(query: string\) => \{\s*const res = await fetch\(`\$\{mentionSuggestionsPath\(slug\)\}\?q=\$\{encodeURIComponent\(query\)\}`\);\s*if \(!res\.ok\) throw/);
+
+  const realFetch = globalThis.fetch;
+  try {
+    api.resetMentionCache();
+    globalThis.fetch = async () => ({ ok: false, status: 429, json: async () => ({}) });
+    assert.deepEqual(await api.loadMentionCandidates('busy'), []);
+    assert.equal(api.cachedMentionCandidates('busy'), null, 'a rate-limited answer is asked again, not kept as nobody');
+  } finally {
+    globalThis.fetch = realFetch;
+    api.resetMentionCache();
+  }
+});
+
 test('Escape closes; the arrows move; Enter and Tab take the highlighted row', () => {
   const { menuKeyFor } = ta();
   assert.equal(menuKeyFor('Escape'), 'close');

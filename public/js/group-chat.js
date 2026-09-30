@@ -3972,8 +3972,17 @@ const MentionAutocomplete = {
   // Cache freshness: a stale list only means a just-joined user isn't
   // suggested yet, which is fine. Re-fetch when older than this.
   CACHE_TTL_MS: 2 * 60 * 1000,
+  // The server caps the whole list at this many (src/routes/chat.js). A list
+  // that long may have left somebody out, so a prefix it cannot fill is also
+  // asked of the server by what was typed (?q=), as the hub's channel box
+  // does (#3361).
+  FULL_LIST: 500,
+  PREFIX_DEBOUNCE_MS: 150,
 
   _cacheBySlug: new Map(), // slug -> { users: [username...], fetchedAt }
+  _prefixBySlug: new Map(), // slug -> Map(lowercased prefix -> [username...])
+  _prefixTimer: null,
+  _prefixAsked: null, // `${slug}\n${prefix}` of the lookup in flight or due
   _input: null,
   _slug: null,
   _menu: null,
@@ -4044,6 +4053,8 @@ const MentionAutocomplete = {
         ? users.map((u) => (u && u.username) || '').filter(Boolean)
         : [];
       MentionAutocomplete._cacheBySlug.set(slug, { users: names, fetchedAt: Date.now() });
+      // What prefix lookups found is as old as the list it widened.
+      MentionAutocomplete._prefixBySlug.delete(slug);
       // If the user already has an open `@token` while we were fetching,
       // refresh the menu now that we have data.
       if (MentionAutocomplete._input === document.activeElement) MentionAutocomplete._sync();
@@ -4052,7 +4063,55 @@ const MentionAutocomplete = {
 
   _candidates() {
     const c = MentionAutocomplete._cacheBySlug.get(MentionAutocomplete._slug);
-    return (c && c.users) || [];
+    const whole = (c && c.users) || [];
+    const asked = MentionAutocomplete._prefixBySlug.get(MentionAutocomplete._slug);
+    if (!asked || !asked.size) return whole;
+    // The whole list first (its order is the server's: friends, then the
+    // people who have spoken), then anybody a prefix lookup found beyond it.
+    const seen = new Set(whole);
+    const out = whole.slice();
+    for (const names of asked.values()) {
+      for (const name of names) if (!seen.has(name)) { seen.add(name); out.push(name); }
+    }
+    return out;
+  },
+
+  // The whole list is capped and this prefix did not fill the menu from it:
+  // ask the server for the people matching what has been typed. Debounced;
+  // an answer is used only if the token under the caret is still the one
+  // asked about, and a refusal or failure (a 429 included) is not
+  // remembered, so a later keystroke asks again.
+  _maybeLookup(query, shown) {
+    const slug = MentionAutocomplete._slug;
+    const c = MentionAutocomplete._cacheBySlug.get(slug);
+    if (!slug || !query || !c || c.users.length < MentionAutocomplete.FULL_LIST) return;
+    if (shown >= MentionAutocomplete.MAX_RESULTS) return;
+    const key = query.toLowerCase();
+    const asked = MentionAutocomplete._prefixBySlug.get(slug);
+    if (asked && asked.has(key)) return;
+    const id = `${slug}\n${key}`;
+    if (MentionAutocomplete._prefixAsked === id) return;
+    clearTimeout(MentionAutocomplete._prefixTimer);
+    MentionAutocomplete._prefixAsked = id;
+    MentionAutocomplete._prefixTimer = setTimeout(async () => {
+      MentionAutocomplete._prefixTimer = null;
+      let names = null;
+      try {
+        const res = await fetch(`/api/apps/${slug}/mention-suggestions?q=${encodeURIComponent(query)}`);
+        if (res.ok) {
+          const { users } = await res.json();
+          names = Array.isArray(users) ? users.map((u) => (u && u.username) || '').filter(Boolean) : [];
+        }
+      } catch { /* offline / transient — the next keystroke asks again */ }
+      if (MentionAutocomplete._prefixAsked === id) MentionAutocomplete._prefixAsked = null;
+      if (!names) return;
+      // Stale: the person has typed on, or moved to another room, since.
+      const token = MentionAutocomplete._detectToken();
+      if (MentionAutocomplete._slug !== slug || !token || token.query.toLowerCase() !== key) return;
+      if (!MentionAutocomplete._prefixBySlug.has(slug)) MentionAutocomplete._prefixBySlug.set(slug, new Map());
+      MentionAutocomplete._prefixBySlug.get(slug).set(key, names);
+      MentionAutocomplete._sync();
+    }, MentionAutocomplete.PREFIX_DEBOUNCE_MS);
   },
 
   // Detect an active mention token immediately before the caret.
@@ -4088,6 +4147,7 @@ const MentionAutocomplete = {
     const token = MentionAutocomplete._detectToken();
     if (!token) { MentionAutocomplete.close(); return; }
     const items = MentionAutocomplete._filter(token.query);
+    MentionAutocomplete._maybeLookup(token.query, items.length);
     if (!items.length) { MentionAutocomplete.close(); return; }
     MentionAutocomplete._tokenStart = token.start;
     MentionAutocomplete._items = items;

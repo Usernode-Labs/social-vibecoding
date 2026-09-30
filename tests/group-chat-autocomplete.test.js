@@ -177,3 +177,111 @@ test('the module publishes and positions; it no longer paints', () => {
       `${name} still opens and closes it`);
   }
 });
+
+// ── The whole list is capped: a prefix it cannot fill is asked by name ──
+//
+// GET /api/apps/:slug/mention-suggestions answers at most 500 people, so in a
+// larger community a quiet member late in its order is not in the list the
+// room's composer caches. When the list is full and a prefix does not fill
+// the menu from it, the composer asks the same endpoint with ?q= (as the hub's
+// channel box does since #3361) and merges the answer — unless the token
+// under the caret has moved on by the time it lands.
+
+function loadMentionAutocomplete({ fetchImpl }) {
+  const vm = require('node:vm');
+  const start = gcJs.indexOf('const MentionAutocomplete = {');
+  const end = gcJs.indexOf('\n};\n', start);
+  const src = gcJs.slice(start, end + 3);
+  const timers = [];
+  const input = { value: '', selectionStart: 0, selectionEnd: 0 };
+  const ctx = {
+    fetch: fetchImpl,
+    document: { activeElement: input },
+    setTimeout: (fn) => { timers.push(fn); return timers.length; },
+    clearTimeout: (id) => { if (id) timers[id - 1] = null; },
+    Map, Set, RegExp, Date, Array, encodeURIComponent,
+  };
+  vm.createContext(ctx);
+  const MA = vm.runInContext(`${src}\nMentionAutocomplete`, ctx);
+  const shown = [];
+  MA._render = () => { MA._open = true; shown.push(MA._items.slice()); };
+  MA.close = () => { MA._open = false; MA._items = []; };
+  MA._input = input;
+  MA._slug = 'big';
+  const type = (text) => {
+    input.value = text;
+    input.selectionStart = input.selectionEnd = text.length;
+    MA._sync();
+  };
+  const runTimers = async () => {
+    const due = timers.splice(0).filter(Boolean);
+    for (const fn of due) await fn();
+  };
+  return { MA, type, runTimers, shown, input };
+}
+
+const fullList = () => Array.from({ length: 500 }, (_, i) => `member_${String(i).padStart(3, '0')}`);
+const ok = (users) => ({ ok: true, status: 200, json: async () => ({ users: users.map((username) => ({ username })) }) });
+
+test('a full list that cannot fill a prefix asks the server by that prefix and merges the answer', async () => {
+  const calls = [];
+  const { MA, type, runTimers } = loadMentionAutocomplete({
+    fetchImpl: async (url) => { calls.push(url); return ok(['quiet_member']); },
+  });
+  MA._cacheBySlug.set('big', { users: fullList(), fetchedAt: Date.now() });
+
+  type('hi @qu');
+  assert.equal(MA._open, false, 'nobody in the whole list starts with qu');
+  await runTimers();
+  assert.deepEqual(calls, ['/api/apps/big/mention-suggestions?q=qu']);
+  assert.deepEqual([...MA._items], ['quiet_member'], 'the member late in the order is offered');
+
+  // Remembered: the same prefix again costs no request.
+  type('hi @q');
+  type('hi @qu');
+  await runTimers();
+  assert.equal(calls.filter((u) => u.endsWith('?q=qu')).length, 1);
+
+  // A list below the cap is complete, and is never widened.
+  const small = loadMentionAutocomplete({ fetchImpl: async (url) => { calls.push(url); return ok([]); } });
+  small.MA._cacheBySlug.set('big', { users: ['alice'], fetchedAt: Date.now() });
+  const before = calls.length;
+  small.type('@qu');
+  await small.runTimers();
+  assert.equal(calls.length, before);
+});
+
+test('an answer for a prefix no longer under the caret is dropped; a 429 is not remembered', async () => {
+  let release;
+  const calls = [];
+  const { MA, type, runTimers, input } = loadMentionAutocomplete({
+    fetchImpl: (url) => {
+      calls.push(url);
+      return new Promise((resolve) => { release = resolve; });
+    },
+  });
+  MA._cacheBySlug.set('big', { users: fullList(), fetchedAt: Date.now() });
+
+  type('@qu');
+  const pending = runTimers();
+  // The person types on before the answer lands.
+  input.value = '@qx';
+  input.selectionStart = input.selectionEnd = 3;
+  release(ok(['quiet_member']));
+  await pending;
+  assert.equal(MA._candidates().includes('quiet_member'), false, 'the stale answer is not merged');
+  assert.equal(MA._open, false);
+
+  // A refused lookup (the route is rate limited) degrades silently and is
+  // asked again on the next keystroke rather than cached as nobody.
+  const limited = loadMentionAutocomplete({
+    fetchImpl: async (url) => { calls.push(url); return { ok: false, status: 429, json: async () => ({}) }; },
+  });
+  limited.MA._cacheBySlug.set('big', { users: fullList(), fetchedAt: Date.now() });
+  limited.type('@zz');
+  await limited.runTimers();
+  assert.equal(limited.MA._prefixBySlug.size, 0);
+  limited.type('@zz');
+  await limited.runTimers();
+  assert.equal(calls.filter((u) => u.endsWith('?q=zz')).length, 2);
+});
