@@ -550,6 +550,62 @@ test('the release mail promises the code only on the arm that sends one (#1548)'
   assert.doesNotMatch(returning.html, /6-digit code/);
 });
 
+test('the release mail is the "you\'re in" welcome, with its list and sign-off', () => {
+  const m = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/?signup=1&t=tok', hasAccount: false,
+  });
+  assert.equal(m.subject, "You're in. Welcome to Homeroom");
+  for (const part of [m.text, m.html]) {
+    assert.match(part, /AI app-building, now multiplayer\./);
+    assert.match(part, /Vibecode apps solo or with a friend\./);
+    assert.match(part, /Suggest, preview, and vote on changes\./);
+    assert.match(part, /Evan from Homeroom/);
+  }
+  assert.ok(m.text.includes('https://x.invalid/?signup=1&t=tok'), 'the link is in the text part');
+  // The preview line is hidden and comes before the logo, whose alt text
+  // would otherwise be what the inbox shows.
+  const pre = m.html.indexOf("Here's how to get started.");
+  assert.ok(pre > -1 && pre < m.html.indexOf('<img '), 'preheader leads the body');
+  assert.match(m.html, /display:none[^"]*">AI app-building, now multiplayer\. Here's how/);
+});
+
+test('the release mail offers mobile steps only for a published store link', () => {
+  const IOS = 'https://testflight.apple.com/join/abc';
+  const ANDROID = 'https://play.google.com/store/apps/details?id=x';
+  const both = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/?login=1', hasAccount: true, mobile: { ios: IOS, android: ANDROID },
+  });
+  assert.match(both.text, /Want to test Homeroom on mobile\?/);
+  assert.ok(both.text.includes(`Open the Homeroom invite (${IOS}).`));
+  assert.ok(both.text.includes(`Open the Homeroom testing link (${ANDROID}) while signed into Google Play`));
+  assert.ok(both.html.includes(`<a href="${IOS}"`));
+  assert.ok(both.html.includes(`<a href="${ANDROID.replace(/&/g, '&amp;')}"`));
+
+  const iosOnly = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/?login=1', hasAccount: true, mobile: { ios: IOS, android: null },
+  });
+  assert.match(iosOnly.text, /iPhone/);
+  assert.doesNotMatch(iosOnly.text, /Android|Google Play/);
+
+  // No published listing (or a failed lookup): no mobile section at all,
+  // rather than steps that point nowhere.
+  for (const mobile of [undefined, null, { ios: null, android: null }]) {
+    const none = templates.buildMessage('waitlist_released', {
+      url: 'https://x.invalid/?login=1', hasAccount: true, mobile,
+    });
+    assert.doesNotMatch(none.text, /on mobile|TestFlight|Google Play/);
+    assert.doesNotMatch(none.html, /on mobile|TestFlight|Google Play/);
+  }
+});
+
+test('the release mail escapes an admin-set store link', () => {
+  const m = templates.buildMessage('waitlist_released', {
+    url: 'https://x.invalid/?login=1', hasAccount: true,
+    mobile: { ios: 'https://t.invalid/"><script>x</script>', android: null },
+  });
+  assert.doesNotMatch(m.html, /<script>/);
+});
+
 test('every kind renders subject, text and html with no leaked undefined', () => {
   const payloads = {
     otp: { code: '123456' },
