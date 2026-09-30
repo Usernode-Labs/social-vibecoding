@@ -461,6 +461,8 @@ test('an open, idle session with no messages shows its empty state', () => {
   assert.equal(h.t.state().empty, true);
   assert.match(html, /id="dc-empty-state"/);
   assert.match(html, /What should this session change\?/);
+  // #3370: the hint above the pane already says this, so no second copy.
+  assert.doesNotMatch(html, /dc-empty-text|Describe it in the box below/);
 });
 
 test('the empty state goes the moment there is a message, a run, or no session', () => {
