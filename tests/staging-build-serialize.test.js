@@ -115,6 +115,8 @@ function loadStaging({
     getHostPort: async () => null,
   });
 
+  // Reload the Docker adapter against this test's collaborators as well.
+  delete require.cache[ids.applicationRuntime];
   if (runtimeKind === 'kubernetes') {
     stub(ids.applicationRuntime, {
       mode: () => runtimeKind,
@@ -128,7 +130,8 @@ function loadStaging({
         events.push(['deploy']);
         return {
           runtimeKind,
-          runtimeName: `sv-preview-${options.app.id}-s${options.sessionId}`,
+          runtimeName: options.runtimeName || `sv-preview-${options.app.id}-s${options.sessionId}`,
+          ...(options.createOnly ? { physicalId: 'deployment-uid' } : {}),
           hostname: 'preview.example.test',
           url: 'https://preview.example.test',
         };
@@ -141,14 +144,14 @@ function loadStaging({
     stagingDbName: (slug, u, hash) => `app_${slug}_staging_${u}_${hash.substring(0, 6)}`,
     databaseExists: existsImpl,
     dropDatabase: async (name) => { events.push(['drop', name]); if (dropImpl) await dropImpl(name); },
-    cloneDatabase: async (sourceDb, targetDb) => {
+    cloneDatabase: async (sourceDb, targetDb, options) => {
       // The slow, kill-sensitive step. Extract sessionId back out of the
       // target name (staging_s<id>_<hash>) for the event log.
       const sid = Number(/staging_s(\d+)_/.exec(targetDb)?.[1] || 0);
       events.push(['clone', sid, targetDb]);
       bump(sid, +1);
       try {
-        if (cloneImpl) return await cloneImpl(sourceDb, targetDb);
+        if (cloneImpl) return await cloneImpl(sourceDb, targetDb, options);
         await new Promise((r) => setTimeout(r, cloneDelayMs));
         return { password: 'pw' };
       } finally { bump(sid, -1); }
@@ -199,6 +202,79 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
       assert.equal(result.runtimeKind, runtimeKind);
       assert.equal(intent.dbName, 'app_widget_staging_s7_aaaaaa');
       assert.equal(intent.namespace, runtimeKind === 'kubernetes' ? 'test-apps' : null);
+    } finally {
+      restore();
+    }
+  });
+}
+
+for (const runtimeKind of ['docker', 'kubernetes']) {
+  test(`${runtimeKind}: isolated preparation retains serving resources and reports readiness before activation`, async () => {
+    const attemptId = randomUUID();
+    const config = { jwtSecret: 's', appRuntime: runtimeKind, kubernetes: { appNamespace: 'test-apps' } };
+    const intent = require('../src/services/preview-flow/candidate-resources').candidateResources(config, 7, attemptId);
+    let cloned = false;
+    let marked = false;
+    const { subject, deployments, events, queries, restore } = loadStaging({
+      runtimeKind,
+      cloneImpl: async (_source, target, options) => {
+        assert.equal(target, intent.dbName);
+        assert.deepEqual(options, { viaTemplate: true, password: '1'.repeat(48), createOnly: true });
+        cloned = true;
+        return { password: options.password };
+      },
+    });
+    try {
+      const headSha = 'a'.repeat(40);
+      const result = await subject.buildAndDeployStaging(config,
+        { ...mkSession(7), staging_runtime_name: 'old-serving' }, mkApp, headSha, {
+          previewFlow: { flowId: randomUUID(), generation: 1, headSha },
+          candidate: {
+            intent,
+            password: '1'.repeat(48),
+            onClonePrepared: async () => { assert.equal(cloned, true); marked = true; },
+            onPreparationFailed: async () => assert.fail('Preparation should succeed'),
+          },
+          beforeBuild: async reserved => assert.deepEqual(reserved, intent),
+          consumePrepared: async result => {
+            assert.equal(marked, true);
+            assert.equal(result.runtimeName, intent.runtimeName);
+            assert.equal(result.attemptId, attemptId);
+            assert.ok(result.physicalId);
+          },
+        });
+      assert.equal(result.runtimeName, intent.runtimeName);
+      assert.equal(events.some(event => event[0] === 'drop'), false);
+      assert.equal(queries.some(query => /SET staging_url/.test(query.sql)), false);
+      if (runtimeKind === 'kubernetes') {
+        assert.equal(deployments[0].internalOnly, true);
+        assert.equal(deployments[0].createOnly, true);
+      } else {
+        assert.equal(deployments[0].replaceExisting, false);
+        assert.deepEqual(deployments[0].aliases, []);
+      }
+    } finally {
+      restore();
+    }
+  });
+
+  test(`${runtimeKind}: isolated preparation defers partial failures to the owner under the resource lock`, async () => {
+    const config = { jwtSecret: 's', appRuntime: runtimeKind, kubernetes: { appNamespace: 'test-apps' } };
+    const intent = require('../src/services/preview-flow/candidate-resources').candidateResources(config, 7, randomUUID());
+    const { subject, deployments, restore } = loadStaging({ runtimeKind, existsImpl: async () => true });
+    let cleanupCalls = 0;
+    try {
+      const headSha = 'a'.repeat(40);
+      await assert.rejects(subject.buildAndDeployStaging(config, mkSession(7), mkApp, headSha, {
+        previewFlow: { flowId: randomUUID(), generation: 1, headSha },
+        candidate: {
+          intent,
+          password: '1'.repeat(48),
+          onPreparationFailed: async () => { cleanupCalls++; },
+        },
+      }), /already exists/);
+      assert.equal(cleanupCalls, 1);
+      assert.equal(deployments.length, 0);
     } finally {
       restore();
     }

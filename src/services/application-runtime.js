@@ -17,12 +17,29 @@ function productionRef(config, app) {
 // `onProgress(image)` reports the image build as it goes, in the runtime's
 // own terms: kpack lifecycle phases with their times on kubernetes, the
 // builder's step counter on docker. See each module for the shape.
-async function build(config, { app, revision, environment, sessionId, sourceDir, dockerImage, onProgress = null }) {
+async function build(config, {
+  app,
+  revision,
+  environment,
+  sessionId,
+  sourceDir,
+  dockerImage,
+  onProgress = null,
+  attemptId = null,
+}) {
   if (mode(config) === 'docker') {
     await docker.buildImage(sourceDir, dockerImage, { GIT_SHA: revision }, { onProgress });
     return { runtimeKind: 'docker', imageRef: dockerImage, buildRef: null };
   }
-  return kubernetes.createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress });
+  return kubernetes.createBuild(config, {
+    app,
+    revision,
+    environment,
+    sessionId,
+    sourceDir,
+    onProgress,
+    attemptId,
+  });
 }
 
 async function cleanupFailedBuilds(config) {
@@ -60,24 +77,26 @@ function dnsAlias({ environment, sessionId, dockerName }) {
 
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
-  port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false,
+  port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false, createOnly = false,
   command = [],
 }) {
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
     if (!name) throw new Error('Docker deployment requires a runtime name');
-    await docker.stopAndRemove(name).catch(() => {});
+    if (!createOnly) await docker.stopAndRemove(name).catch(() => {});
     const alias = internalOnly ? null : dnsAlias({ environment, sessionId, dockerName: name });
-    await docker.runContainer(name, {
+    const physicalId = await docker.runContainer(name, {
       image: imageRef, env, port, memory, cpus, labels,
       aliases: alias ? [alias] : [],
       command,
+      ...(createOnly ? { replaceExisting: false } : {}),
     });
     await docker.waitForHealthy(name, port, '/health');
     if (internalOnly) {
       return {
         runtimeKind: 'docker', runtimeName: name, imageRef,
         hostname: name, url: `http://${name}:${port}`,
+        ...(createOnly ? { physicalId } : {}),
       };
     }
     const hostname = environment === 'production'
@@ -97,7 +116,7 @@ async function deploy(config, {
     return { runtimeKind: 'docker', runtimeName: name, imageRef, hostname, url };
   }
   return kubernetes.deployApplication(config, {
-    app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly,
+    app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly, createOnly,
     command,
   });
 }

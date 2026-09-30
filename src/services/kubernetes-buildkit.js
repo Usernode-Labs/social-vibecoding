@@ -395,7 +395,7 @@ async function reusableJob(cfg, clients, { appId, revision, recipe }) {
 // line, exactly what services/docker.js reports for its BuildKit build, so
 // staging's per-step timing works unchanged. The Job's own `[buildkit] ...`
 // lines come through as `phase: 'source'` with no step counter.
-async function createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }, runtime) {
+async function createBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null, attemptId = null }, runtime) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
@@ -410,15 +410,16 @@ async function createBuild(config, { app, revision, environment, sessionId, sour
     throw err;
   }
   const repository = `${cfg.repositoryPrefix}/${runtime.dnsName(app.slug)}`;
-  const cacheRef = `${cfg.cacheRepositoryPrefix}/${runtime.dnsName(app.slug)}:buildkit-cache`;
+  const cacheRef = `${cfg.cacheRepositoryPrefix}/${runtime.dnsName(app.slug)}:${attemptId ? `attempt-${attemptId}` : 'buildkit-cache'}`;
   const recipe = recipeOf(cfg, dockerfile);
-  const tag = `${repository}:git-${revision}-${recipe}`;
+  const tag = attemptId ? `${repository}:attempt-${attemptId}` : `${repository}:git-${revision}-${recipe}`;
   const suffix = sessionId ? `s${sessionId}-` : '';
-  const name = runtime.dnsName(`bk-${app.id}-${suffix}${revision.slice(0, 12)}-${recipe}`);
+  const name = attemptId ? `bk-p-${attemptId.replace(/-/g, '')}`
+    : runtime.dnsName(`bk-${app.id}-${suffix}${revision.slice(0, 12)}-${recipe}`);
   const clients = runtime.getClients();
   const { batch, core } = clients;
 
-  const previous = await reusableJob(cfg, clients, { appId: app.id, revision, recipe });
+  const previous = attemptId ? null : await reusableJob(cfg, clients, { appId: app.id, revision, recipe });
   if (previous) {
     return {
       buildRef: `${cfg.buildkitNamespace}/${previous.job.metadata.name}`,

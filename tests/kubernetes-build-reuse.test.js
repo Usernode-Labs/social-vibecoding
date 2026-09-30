@@ -23,7 +23,7 @@ function previous(name = 'previous', finished = '2026-09-10T10:00:00Z') {
       latestImage: `registry.test/apps/demo@${digest('c')}`, stack: { id: 'stack' } },
   };
 }
-async function build(pages, { config = cfg, listError = null } = {}) {
+async function build(pages, { config = cfg, listError = null, attemptId = null } = {}) {
   const created = [], lists = [];
   kubernetes._setClientsForTest({ custom: {
     async listNamespacedCustomObject(request) {
@@ -37,7 +37,7 @@ async function build(pages, { config = cfg, listError = null } = {}) {
         latestImage: `registry.test/apps/demo@${digest('d')}` } };
     },
   } });
-  const result = await kubernetes.createBuild(config, { app, revision, environment: 'staging', sessionId: 42 });
+  const result = await kubernetes.createBuild(config, { app, revision, environment: 'staging', sessionId: 42, attemptId });
   return { body: created[0], lists, result };
 }
 test.afterEach(() => kubernetes._setClientsForTest(null));
@@ -159,4 +159,15 @@ test('concurrent sessions independently reuse the same completed immutable image
     app, revision, environment: 'staging', sessionId,
   })));
   assert.ok(results.every(r => r.reused && r.imageRef === b.status.latestImage));
+});
+
+test('native attempts have separate mutable build names, output tags and registry caches', async () => {
+  const firstId = require('node:crypto').randomUUID();
+  const secondId = require('node:crypto').randomUUID();
+  const first = await build([{ items: [] }], { attemptId: firstId });
+  const second = await build([{ items: [] }], { attemptId: secondId });
+  assert.notEqual(first.body.metadata.name, second.body.metadata.name);
+  assert.notEqual(first.body.spec.tags[0], second.body.spec.tags[0]);
+  assert.notEqual(first.body.spec.cache.registry.tag, second.body.spec.cache.registry.tag);
+  assert.ok(first.body.spec.tags[0].endsWith(':attempt-' + firstId));
 });

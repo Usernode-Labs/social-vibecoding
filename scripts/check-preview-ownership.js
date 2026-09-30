@@ -66,6 +66,7 @@ function checkDecisionOwnership(inventory) {
   const writers = [
     ...collectWriters(inventory, { table: 'preview_flows', columns: ['state'] }),
     ...collectWriters(inventory, { table: 'preview_flow_heads', columns: ['flow_id'] }),
+    ...collectWriters(inventory, { table: 'preview_bindings', columns: ['desired', 'observed'] }),
     ...collectWriters(inventory, {
       table: 'preview_flow_resources',
       columns: ['published_at', 'cleanup_started_at', 'cleanup_completed_at', 'cleanup_disposition'],

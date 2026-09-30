@@ -5,6 +5,7 @@ const {
   parseAction,
   runtimeReceipt,
   resourceIntent,
+  candidateReceipt,
   isResourceAction,
 } = require('./actions');
 const { reduce, REDUCER_VERSION } = require('./reducer');
@@ -14,7 +15,7 @@ function normalizeSha(value) {
   return value ? String(value).toLowerCase() : null;
 }
 
-function snapshot(sessionRow, flowRow, resourceRow) {
+function snapshot(sessionRow, flowRow, resourceRow, bindingRow, retainedPublishedAttempts) {
   return {
     session: sessionRow ? {
       id: sessionRow.id,
@@ -29,6 +30,7 @@ function snapshot(sessionRow, flowRow, resourceRow) {
       headSha: flowRow.head_sha,
       startedStatus: flowRow.started_status,
       state: flowRow.state,
+      ...(flowRow.attempt_id ? { attemptId: flowRow.attempt_id } : {}),
     } : null,
     resource: resourceRow ? {
       flowId: resourceRow.flow_id,
@@ -39,7 +41,10 @@ function snapshot(sessionRow, flowRow, resourceRow) {
       cleanupStarted: !!resourceRow.cleanup_started_at,
       cleanupCompleted: !!resourceRow.cleanup_completed_at,
       disposition: resourceRow.cleanup_disposition,
+      clonePrepared: !!resourceRow.clone_prepared,
     } : null,
+    retainedPublishedAttempts,
+    binding: bindingRow ? { desired: bindingRow.desired, observed: bindingRow.observed } : null,
     preview: sessionRow ? {
       stagingUrl: sessionRow.staging_url,
       containerId: sessionRow.staging_container_id,
@@ -89,7 +94,11 @@ async function readState(client, sessionId, { lock = false, resourceFlowId = nul
     resourceRow = resourceResult.rows[0];
   }
 
-  return snapshot(sessionRow, flowRow, resourceRow);
+  const binding = await client.query('SELECT * FROM preview_bindings WHERE session_id = $1', [sessionId]);
+  const retained = await client.query(`SELECT COUNT(*) AS count FROM preview_flow_resources
+    WHERE session_id = $1 AND intent->>'attemptId' IS NOT NULL
+      AND published_at IS NOT NULL AND cleanup_completed_at IS NULL`, [sessionId]);
+  return snapshot(sessionRow, flowRow, resourceRow, binding.rows[0], Number(retained.rows[0].count));
 }
 
 function hashJson(value) {
@@ -143,6 +152,8 @@ function createPreviewFlow(pool, {
         });
       }
       const facts = { newFlowId: newId() };
+      if (action.type === 'RequestCandidatePreview') facts.newAttemptId = newId();
+      if (action.type === 'RequestPreviewActivation') facts.newActivationId = newId();
       const decision = reduce(state, action, facts);
 
       if (decision.accepted) {
@@ -154,14 +165,15 @@ function createPreviewFlow(pool, {
         }
 
         if (flow && flow.id !== state.flow?.id) {
-          await client.query(`INSERT INTO preview_flows (id, session_id, generation, head_sha, started_status, state)
-            VALUES ($1, $2, $3, $4, $5, $6)`, [
+          await client.query(`INSERT INTO preview_flows (id, session_id, generation, head_sha, started_status, state, attempt_id)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`, [
             flow.id,
             action.sessionId,
             flow.generation,
             flow.headSha,
             flow.startedStatus,
             flow.state,
+            flow.attemptId || null,
           ]);
           await client.query(`INSERT INTO preview_flow_heads (session_id, flow_id)
             VALUES ($1, $2) ON CONFLICT (session_id) DO UPDATE SET flow_id = EXCLUDED.flow_id`,
@@ -179,6 +191,23 @@ function createPreviewFlow(pool, {
             WHERE flow_id = $1`, [resourceChange.flowId, resourceChange.disposition]);
         }
 
+        if (decision.bindingChange) {
+          await client.query(`INSERT INTO preview_bindings (session_id, desired, observed)
+            VALUES ($1, $2, $3) ON CONFLICT (session_id) DO UPDATE
+            SET desired = EXCLUDED.desired, observed = EXCLUDED.observed`, [
+            action.sessionId,
+            JSON.stringify(decision.bindingChange.desired),
+            JSON.stringify(decision.bindingChange.observed),
+          ]);
+        }
+
+        if (action.type === 'PreviewCandidatePrepared') {
+          const recorded = candidateReceipt.parse(state.resource?.receipt);
+          if (hashJson(recorded) !== hashJson(action.receipt)) {
+            throw new Error('Candidate preparation requires its recorded immutable runtime receipt');
+          }
+        }
+
         // Check failure bookkeeping shares this transaction with retirement.
         if (decision.checkFailure) {
           const stored = await persistFailure(client, action);
@@ -187,13 +216,21 @@ function createPreviewFlow(pool, {
           }
         }
 
-        if (decision.projection === 'publish') {
+        if (decision.projection === 'publish' || decision.projection === 'publish_candidate') {
           // Resource observation must already have committed. A rejected
           // publication or transaction failure cannot erase cleanup identity.
           const resource = await client.query('SELECT receipt FROM preview_flow_resources WHERE flow_id = $1', [action.flowId]);
           // JSONB changes object key order: validate into canonical field order.
-          if (!resource.rows.length || hashJson(runtimeReceipt.parse(resource.rows[0].receipt)) !== hashJson(action.receipt)) {
+          if (decision.projection === 'publish' && (!resource.rows.length
+              || hashJson(runtimeReceipt.parse(resource.rows[0].receipt)) !== hashJson(action.receipt))) {
             throw new Error('PreviewReady requires the recorded immutable runtime receipt');
+          }
+          if (decision.projection === 'publish_candidate') {
+            const recorded = candidateReceipt.parse(resource.rows[0]?.receipt);
+            const published = candidateReceipt.parse({ ...decision.receipt, stagingUrl: recorded.stagingUrl });
+            if (hashJson(recorded) !== hashJson(published)) {
+              throw new Error('Activation requires the recorded immutable runtime receipt');
+            }
           }
           const receipt = decision.receipt;
           await client.query(`UPDATE chat_sessions SET staging_url = $1, staging_container_id = $2,
@@ -242,8 +279,19 @@ function createPreviewFlow(pool, {
     }
   }
 
-  async function recordIntent(sessionId, flowId, input) {
+  async function recordIntent(sessionId, flowId, input, { credentialEnc = null } = {}) {
     const intent = resourceIntent.parse(input);
+
+    if (intent.attemptId) {
+      if (!credentialEnc) throw new Error('Candidate clone credential must be reserved before creation');
+      const { rows } = await pool.query(`INSERT INTO preview_flow_resources (flow_id, session_id, intent, clone_credential_enc)
+        SELECT id, session_id, $3::jsonb, $4 FROM preview_flows
+        WHERE id = $1 AND session_id = $2 AND attempt_id = $5
+        ON CONFLICT (flow_id) DO NOTHING RETURNING flow_id`,
+        [flowId, sessionId, JSON.stringify(intent), credentialEnc, intent.attemptId]);
+      if (!rows.length) throw new Error('Candidate attempt already reserved or no longer belongs to this flow');
+      return intent;
+    }
 
     const { rows } = await pool.query(`INSERT INTO preview_flow_resources (flow_id, session_id, intent)
       SELECT id, session_id, $3::jsonb FROM preview_flows WHERE id = $1 AND session_id = $2
@@ -259,24 +307,32 @@ function createPreviewFlow(pool, {
   }
 
   async function recordRuntime(sessionId, flowId, input) {
-    const receipt = runtimeReceipt.parse(input);
+    const receipt = input.attemptId ? candidateReceipt.parse(input) : runtimeReceipt.parse(input);
 
     // An observation is historical, so it may be recorded for a superseded
     // flow. This grants no permission to publish or to remove a shared runtime.
     const { rows } = await pool.query(`INSERT INTO preview_flow_resources (flow_id, session_id, receipt)
       SELECT id, session_id, $3::jsonb FROM preview_flows
       WHERE id = $1 AND session_id = $2 AND head_sha = $4
+        AND ($5::uuid IS NULL OR attempt_id = $5)
       ON CONFLICT (flow_id) DO UPDATE SET receipt = EXCLUDED.receipt
       WHERE (preview_flow_resources.receipt IS NULL OR preview_flow_resources.receipt = EXCLUDED.receipt)
         AND (preview_flow_resources.intent IS NULL OR
           (preview_flow_resources.intent->>'runtimeKind' = EXCLUDED.receipt->>'runtimeKind'
            AND preview_flow_resources.intent->>'runtimeName' = EXCLUDED.receipt->>'runtimeName'))
       RETURNING flow_id`,
-      [flowId, sessionId, JSON.stringify(receipt), receipt.commitSha]);
+      [flowId, sessionId, JSON.stringify(receipt), receipt.commitSha, receipt.attemptId || null]);
     if (!rows.length) {
       throw new Error('Runtime observation has a missing flow, wrong head, or conflicting receipt');
     }
     return receipt;
+  }
+
+  async function markClonePrepared(sessionId, flowId) {
+    const { rows } = await pool.query(`UPDATE preview_flow_resources SET clone_prepared = TRUE
+      WHERE flow_id = $1 AND session_id = $2 AND clone_credential_enc IS NOT NULL
+        AND cleanup_started_at IS NULL RETURNING flow_id`, [flowId, sessionId]);
+    if (!rows.length) throw new Error('Clone completion no longer belongs to a usable attempt');
   }
 
   async function trace(sessionId) {
@@ -302,7 +358,7 @@ function createPreviewFlow(pool, {
     }
   }
 
-  return { apply, recordIntent, recordRuntime, trace, read };
+  return { apply, recordIntent, recordRuntime, markClonePrepared, trace, read };
 }
 
 module.exports = { createPreviewFlow };

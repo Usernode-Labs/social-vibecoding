@@ -9572,11 +9572,28 @@ CREATE TABLE IF NOT EXISTS preview_flows (
   generation BIGINT NOT NULL CHECK (generation > 0 AND generation <= 9007199254740991),
   head_sha TEXT NOT NULL CHECK (head_sha ~ '^[a-f0-9]{40}$'),
   started_status TEXT NOT NULL CHECK (started_status IN ('active', 'paused')),
-  state TEXT NOT NULL CHECK (state IN ('preparing', 'ready', 'failed', 'cleared', 'superseded')),
+  state TEXT NOT NULL CHECK (state IN ('preparing', 'candidate', 'activating', 'ready', 'failed', 'cleared', 'superseded')),
+  attempt_id UUID,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (session_id, generation),
   UNIQUE (session_id, id)
 );
+ALTER TABLE preview_flows ADD COLUMN IF NOT EXISTS attempt_id UUID;
+CREATE UNIQUE INDEX IF NOT EXISTS preview_flows_attempt_id_unique ON preview_flows (attempt_id);
+ALTER TABLE preview_flows DROP CONSTRAINT IF EXISTS preview_flows_state_check;
+ALTER TABLE preview_flows ADD CONSTRAINT preview_flows_state_check
+  CHECK (state IN ('preparing', 'candidate', 'activating', 'ready', 'failed', 'cleared', 'superseded'));
+
+CREATE TABLE IF NOT EXISTS preview_bindings (
+  -- Keep an uncertain activation visible after aggregate deletion. Session IDs
+  -- are not recycled; cleanup must establish external binding ownership first.
+  session_id INTEGER PRIMARY KEY,
+  desired JSONB,
+  observed JSONB,
+  recovery_queue_position BIGINT GENERATED ALWAYS AS IDENTITY
+);
+COMMENT ON TABLE preview_bindings IS 'staging:private';
+
 CREATE TABLE IF NOT EXISTS preview_flow_heads (
   session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
   flow_id UUID NOT NULL,
@@ -9593,6 +9610,8 @@ CREATE TABLE IF NOT EXISTS preview_flow_resources (
   session_id INTEGER NOT NULL CHECK (session_id > 0),
   intent JSONB,
   receipt JSONB,
+  clone_credential_enc TEXT,
+  clone_prepared BOOLEAN NOT NULL DEFAULT FALSE,
   published_at TIMESTAMPTZ,
   cleanup_started_at TIMESTAMPTZ,
   cleanup_completed_at TIMESTAMPTZ,
@@ -9603,6 +9622,8 @@ CREATE TABLE IF NOT EXISTS preview_flow_resources (
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (intent IS NOT NULL OR receipt IS NOT NULL)
 );
+ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS clone_credential_enc TEXT;
+ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS clone_prepared BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS preview_flow_resources_pending_queue_idx
   ON preview_flow_resources (cleanup_queue_position)
   WHERE cleanup_completed_at IS NULL AND intent IS NOT NULL;

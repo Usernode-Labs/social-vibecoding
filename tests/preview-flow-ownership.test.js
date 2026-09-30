@@ -18,6 +18,7 @@ test('preview projection writers match the reviewed shrinking legacy inventory',
 
 test('supersession and retirement writes belong to the action store; queue scheduling remains in execution', () => {
   for (const text of [
+    'UPDATE preview_bindings SET desired = $1, observed = $2 WHERE session_id = $3',
     "UPDATE preview_flows SET state = 'superseded' WHERE id = $1",
     'INSERT INTO preview_flow_heads (session_id, flow_id) VALUES ($1,$2)',
     'UPDATE preview_flow_resources SET published_at = NOW() WHERE flow_id = $1',

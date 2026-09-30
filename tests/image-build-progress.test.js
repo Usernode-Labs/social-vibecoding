@@ -177,7 +177,7 @@ test('the staging build hands image progress on once a second, keeps the last on
   const src = read('src/services/staging.js');
   assert.match(src, /onProgress: imageProgress\.report,/);
   assert.match(src, /if \(reportedPhases\) timings\.imagePhases = reportedPhases;/);
-  assert.match(read('src/services/application-runtime.js'), /kubernetes\.createBuild\(config, \{ app, environment, sessionId, revision, sourceDir, onProgress \}\)|kubernetes\.createBuild\(config, \{ app, revision, environment, sessionId, sourceDir, onProgress \}\)/);
+  assert.match(read('src/services/application-runtime.js'), /kubernetes\.createBuild\(config, \{\s*app,\s*revision,\s*environment,\s*sessionId,\s*sourceDir,\s*onProgress,\s*attemptId,/);
   const build = visuals.buildProgressFromTimings({ imageBuildMs: 184000, imagePhases: [{ name: 'restore', ms: 20000 }, { name: 'build', ms: 121000.4 }, { name: 'export', ms: 35000 }] });
   assert.deepEqual(build.steps[0], { key: 'image_build', ms: 184000, phases: [{ name: 'restore', ms: 20000 }, { name: 'build', ms: 121000 }, { name: 'export', ms: 35000 }] });
 });

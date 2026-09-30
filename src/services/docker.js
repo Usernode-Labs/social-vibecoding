@@ -288,7 +288,7 @@ function containerHostname(name) {
 
 async function runContainerInner(name, {
   image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS, labels = {},
-  aliases = [], command = [],
+  aliases = [], command = [], replaceExisting = true,
 }) {
   if (!Array.isArray(command) || command.some((part) => typeof part !== 'string' || !part)) {
     throw new Error('Container command must be an array of non-empty strings');
@@ -362,7 +362,7 @@ async function runContainerInner(name, {
     // retry just makes runContainer self-healing so a stray name never
     // bricks a deploy. Force-remove and try exactly once more.
     const msg = String((err && (err.stderr || err.message)) || '');
-    if (/is already in use/i.test(msg)) {
+    if (replaceExisting && /is already in use/i.test(msg)) {
       log.warn('docker', 'Container name in use; removing stale container and retrying', { name });
       await execFileAsync('docker', ['rm', '-f', name], { timeout: 10000 }).catch(() => {});
       const { stdout } = await execFileAsync('docker', args, { timeout: 60000 });

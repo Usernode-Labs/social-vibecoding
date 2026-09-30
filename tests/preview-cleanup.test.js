@@ -36,17 +36,17 @@ test('cleanup recovery runs at startup and independently of auto-pause, skips ov
   };
   const cleanup = createCleanup();
   await cleanup.start({ pool, config: { sessionAutopauseIdleMs: 0 } });
-  assert.equal(queries, 1);
+  assert.equal(queries, 2);
   gate = deferred();
   t.mock.timers.tick(60000);
   await Promise.resolve();
-  assert.equal(queries, 2);
+  assert.equal(queries, 3);
   t.mock.timers.tick(120000);
-  assert.equal(queries, 2, 'no overlapping census while a sweep is in flight');
+  assert.equal(queries, 3, 'no overlapping census while a sweep is in flight');
   gate.resolve();
   await cleanup.stop();
   t.mock.timers.tick(60000);
-  assert.equal(queries, 2);
+  assert.equal(queries, 4);
 });
 
 test('server starts native resource recovery under leader duties and drains it before the pool closes', () => {
@@ -71,7 +71,7 @@ test('native cleanup across Docker and Kubernetes with independent PostgreSQL re
       staging_container_id TEXT, staging_runtime_kind TEXT, staging_runtime_name TEXT,
       staging_image_ref TEXT, staging_build_ref TEXT, staging_commit_sha TEXT, last_activity_at TIMESTAMPTZ)`);
     const source = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-    for (const table of ['preview_flows', 'preview_flow_heads', 'preview_flow_resources',
+    for (const table of ['preview_flows', 'preview_bindings', 'preview_flow_heads', 'preview_flow_resources',
       'preview_action_receipts', 'preview_flow_decisions']) {
       await pool.query(source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\n\\);`))[0]);
     }

@@ -282,7 +282,7 @@ function stagingConnectionLimit() {
 // app_<slug>_staging_s<sessionId>_<tag> — the shape stagingDbName() builds.
 // The ceiling is for previews only: cloneDatabase also serves app forks,
 // whose target is a real production database and must stay uncapped.
-const STAGING_CLONE_DB_RE = /^app_[a-z0-9_]+_staging_s\d+_([0-9a-f]{6}|latest)$/;
+const STAGING_CLONE_DB_RE = /^(?:app_[a-z0-9_]+_staging_s\d+_([0-9a-f]{6}|latest)|app_p_s\d+_[0-9a-f]{32})$/;
 const SHOTS_CLONE_DB_RE = /^app_[a-z0-9_]+_(?:shots|evidence)_[0-9a-f]{12}_[bh]$/;
 
 function isStagingCloneDb(name) {
@@ -320,9 +320,16 @@ async function applyStagingConnectionLimit(dbName, { execute = execInDb } = {}) 
 // template — a redacted copy kept warm on the server and refreshed at most
 // every STAGING_DB_TEMPLATE_MAX_AGE_MS — with a file-level CREATE DATABASE
 // … TEMPLATE, instead of dumping and restoring the live source on every
-// build. Falls back to the direct path on any template failure, so a
-// preview build can only ever be as slow as before, never blocked.
-async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
+// build. Legacy callers fall back to direct cloning on template failure.
+// Create-only attempts abandon a partially created target instead of replacing it.
+async function cloneDatabase(sourceDb, targetDb, {
+  viaTemplate = false,
+  password = null,
+  createOnly = false,
+} = {}) {
+  if (password !== null && !/^[a-f0-9]{48}$/.test(password)) {
+    throw new Error('Clone credential must be a reserved 48-character hex password');
+  }
   if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneDatabase: unsafe identifiers ${sourceDb}/${targetDb}`);
   }
@@ -336,9 +343,10 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
       });
       if (!ensured) return null;
       try {
-        const result = await cloneFromTemplate(ensured.template, targetDb);
+        const result = await cloneFromTemplate(ensured.template, targetDb, { password, createOnly });
         return { ...result, via: 'template', templateRefreshed: ensured.refreshed, templateStale: ensured.stale };
       } catch (err) {
+        if (createOnly) throw err;
         log.warn('db-manager', 'Clone from staging template failed — cloning directly', {
           sourceDb, targetDb, template: ensured.template, err: err.message,
         });
@@ -355,7 +363,7 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
       return viaTmpl;
     }
   }
-  const direct = await cloneDatabaseDirect(sourceDb, targetDb);
+  const direct = await cloneDatabaseDirect(sourceDb, targetDb, password, createOnly);
   // Both clone paths converge here so the ceiling is set once, after the
   // copy rather than before it: pg_restore opens its own connections, and a
   // ceiling that applied mid-restore would cap the restore itself (#1771).
@@ -363,12 +371,12 @@ async function cloneDatabase(sourceDb, targetDb, { viaTemplate = false } = {}) {
   return { ...direct, via: 'direct', templateRefreshed: false };
 }
 
-async function cloneDatabaseDirect(sourceDb, targetDb) {
+async function cloneDatabaseDirect(sourceDb, targetDb, reservedPassword = null, createOnly = false) {
   log.info('db-manager', 'Cloning database', { sourceDb, targetDb });
 
-  // Drop any prior clone (and its role) before cloning fresh. The
-  // dropDatabase below also takes care of the role.
-  await dropDatabase(targetDb, { strict: true });
+  // Legacy clones replace their target and role. An isolated attempt creates
+  // them once: existence is a conflict, not permission to drop and retry.
+  if (!createOnly) await dropDatabase(targetDb, { strict: true });
 
   // Create the per-clone role first so we can hand it the fresh clone
   // as OWNER. No need to terminate the source's connections any more —
@@ -378,7 +386,7 @@ async function cloneDatabaseDirect(sourceDb, targetDb) {
   if (!SAFE_IDENT.test(targetRole)) {
     throw new Error(`cloneDatabase: unsafe target role ${targetRole}`);
   }
-  const password = generatePassword();
+  const password = reservedPassword || generatePassword();
   await execInDb(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
 
   // Copy the source into the clone with a logical pg_dump | pg_restore
@@ -707,7 +715,15 @@ function templateIdle(sourceDb) {
 }
 
 // The fast clone: a file copy of the template, handed to a fresh role.
-async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000, onProgress = null } = {}) {
+async function cloneFromTemplate(templateDb, targetDb, {
+  queryTimeoutMs = 30_000,
+  onProgress = null,
+  password: reservedPassword = null,
+  createOnly = false,
+} = {}) {
+  if (reservedPassword !== null && !/^[a-f0-9]{48}$/.test(reservedPassword)) {
+    throw new Error('Clone credential must be a reserved 48-character hex password');
+  }
   if (!SAFE_IDENT.test(templateDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`cloneFromTemplate: unsafe identifiers ${templateDb}/${targetDb}`);
   }
@@ -717,11 +733,13 @@ async function cloneFromTemplate(templateDb, targetDb, { queryTimeoutMs = 30_000
     throw new Error(`cloneFromTemplate: unsafe roles ${templateRole}/${targetRole}`);
   }
   const startedAt = Date.now();
-  const password = generatePassword();
+  const password = reservedPassword || generatePassword();
   await withDatabaseConnection('usernode', async (execute) => {
     const admin = (sql, opts) => execute('usernode', sql, opts);
-    onProgress?.('drop_target');
-    await dropDatabase(targetDb, { strict: true, execute: admin });
+    if (!createOnly) {
+      onProgress?.('drop_target');
+      await dropDatabase(targetDb, { strict: true, execute: admin });
+    }
     onProgress?.('create_role');
     await admin(`CREATE ROLE ${targetRole} LOGIN PASSWORD '${password}'`);
     onProgress?.('copy_template');

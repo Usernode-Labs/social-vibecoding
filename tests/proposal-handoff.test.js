@@ -347,6 +347,11 @@ function makeHarness() {
         const row = state.previewResources[params[0]];
         return { rows: row ? [row] : [] };
       }
+      if (/SELECT COUNT\(\*\) AS count FROM preview_flow_resources/.test(text)) {
+        const count = Object.values(state.previewResources).filter(resource =>
+          resource.intent?.attemptId && resource.published_at && !resource.cleanup_completed_at).length;
+        return { rows: [{ count: String(count) }] };
+      }
       if (/SELECT \* FROM preview_flow_resources/.test(text)) {
         const row = state.previewResources[params[0]];
         return { rows: row ? [row] : [] };

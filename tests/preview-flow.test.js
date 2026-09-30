@@ -212,7 +212,7 @@ test('preview flow transactions across independent PostgreSQL connections', { sk
       first_check_failure_at TIMESTAMPTZ, last_check_failure_at TIMESTAMPTZ,
       check_next_retry_at TIMESTAMPTZ, check_error_notified_at TIMESTAMPTZ);`);
     const source = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
-    for (const table of ['preview_flows', 'preview_flow_heads', 'preview_flow_resources',
+    for (const table of ['preview_flows', 'preview_bindings', 'preview_flow_heads', 'preview_flow_resources',
       'preview_action_receipts', 'preview_flow_decisions']) {
       const sql = source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\n\\);`));
       assert.ok(sql, table);

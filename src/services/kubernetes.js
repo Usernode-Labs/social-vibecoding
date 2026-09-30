@@ -264,7 +264,7 @@ async function createBuild(config, params) {
 // phases: [{ name, ms }], detail }` — which lifecycle phase (init container)
 // is running, how long the finished ones took, and the last line the running
 // phase printed. Best-effort throughout; a status read that fails is skipped.
-async function createKpackBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null }) {
+async function createKpackBuild(config, { app, revision, environment, sessionId, sourceDir, onProgress = null, attemptId = null }) {
   if (!/^[a-f0-9]{40}$/i.test(revision || '')) {
     throw new Error('Kubernetes builds require a full 40-character Git commit SHA');
   }
@@ -274,7 +274,7 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
   const cfg = requireBuildConfig(config);
   const suffix = sessionId ? `s${sessionId}-` : '';
   const repository = `${cfg.repositoryPrefix}/${dnsName(app.slug)}`;
-  const cacheTag = `${cfg.cacheRepositoryPrefix}/${dnsName(app.slug)}:cache`;
+  const cacheTag = `${cfg.cacheRepositoryPrefix}/${dnsName(app.slug)}:${attemptId ? `attempt-${attemptId}` : 'cache'}`;
   // Both staging and production images need production frontend artifacts.
   // Explicit kpack env takes precedence over npm-install's development layer
   // environment. Paketo still installs build dependencies in its separate
@@ -306,8 +306,9 @@ async function createKpackBuild(config, { app, revision, environment, sessionId,
   const recipe = crypto.createHash('sha256')
     .update(JSON.stringify({ builder: cfg.builderImage, env: buildEnv }))
     .digest('hex').slice(0, 12);
-  const buildName = dnsName(`sv-${app.id}-${suffix}${revision.slice(0, 12)}-${recipe}`);
-  const tag = `${repository}:git-${revision}-${recipe}`;
+  const buildName = attemptId ? `sv-p-${attemptId.replace(/-/g, '')}`
+    : dnsName(`sv-${app.id}-${suffix}${revision.slice(0, 12)}-${recipe}`);
+  const tag = attemptId ? `${repository}:attempt-${attemptId}` : `${repository}:git-${revision}-${recipe}`;
   const body = {
     apiVersion: 'kpack.io/v1alpha2',
     kind: 'Build',
@@ -797,7 +798,7 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
 // production apps pass nothing and keep the 1-CPU limit they always had.
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
-  labels: extraLabels = {}, runtimeName = null, internalOnly = false,
+  labels: extraLabels = {}, runtimeName = null, internalOnly = false, createOnly = false,
   command = [],
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
@@ -818,16 +819,20 @@ async function deployApplication(config, {
   require('./caddy').assertAppHostname(hostname, cfg.platformDomain);
   const { core, apps, networking } = getClients();
 
-  await upsert(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
+  const put = createOnly
+    ? (api, _read, create, _replace, ns, body) => api[create]({ namespace: ns, body })
+    : upsert;
+
+  await put(core, 'readNamespacedSecret', 'createNamespacedSecret', 'replaceNamespacedSecret', namespace, {
     apiVersion: 'v1', kind: 'Secret',
     metadata: { name: secretName, namespace, labels: resourceLabels },
     type: 'Opaque', stringData: Object.fromEntries(Object.entries(env || {}).map(([key, value]) => [key, String(value)])),
   });
-  await upsert(core, 'readNamespacedService', 'createNamespacedService', 'replaceNamespacedService', namespace, {
+  await put(core, 'readNamespacedService', 'createNamespacedService', 'replaceNamespacedService', namespace, {
     apiVersion: 'v1', kind: 'Service', metadata: { name, namespace, labels: resourceLabels },
     spec: { selector: selectorLabels, ports: [{ name: 'http', port: 3000, targetPort: 3000 }], type: 'ClusterIP' },
   });
-  const deployed = await upsert(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
+  const deployed = await put(apps, 'readNamespacedDeployment', 'createNamespacedDeployment', 'replaceNamespacedDeployment', namespace, {
     apiVersion: 'apps/v1', kind: 'Deployment', metadata: { name, namespace, labels: resourceLabels },
     spec: {
       replicas: 1,
@@ -911,7 +916,7 @@ async function deployApplication(config, {
     // A failed preview has no serving value but its declared CPU limit still
     // consumes ResourceQuota. Production keeps its prior ReplicaSet for a
     // recoverable rollout; previews are disposable and are rebuilt on retry.
-    if (environment !== 'production') {
+    if (!createOnly && environment !== 'production') {
       await deleteApplication(config, name).catch((cleanupErr) => {
         log.warn('kubernetes', 'Failed preview cleanup failed', {
           namespace, name, err: cleanupErr.message,
@@ -922,6 +927,7 @@ async function deployApplication(config, {
   }
   return {
     runtimeKind: 'kubernetes', runtimeName: name, imageRef,
+    ...(createOnly ? { physicalId: deployed?.metadata?.uid } : {}),
     hostname: internalOnly ? `${name}.${namespace}.svc` : hostname,
     url: internalOnly ? `http://${name}.${namespace}.svc:3000` : `https://${hostname}`,
   };
@@ -2297,7 +2303,7 @@ module.exports = {
   _terminalPodFailureDetailsForTest: terminalPodFailureDetails,
   _normalizeDeploymentForTest: normalizeDeployment,
   _quantityNumberForTest: quantityNumber,
-  PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend,
+  PLATFORM_ASSET_PREFIXES, PLATFORM_ASSET_NAME, ensurePlatformAssetBackend, appIngressManifest,
   _appIngressManifestForTest: appIngressManifest,
   _ingressWithPlatformAssetRoutesForTest: ingressWithPlatformAssetRoutes,
   _reconcilePlatformAssetIngressesForTest: reconcilePlatformAssetIngresses,

@@ -17,6 +17,8 @@ if (!databaseUrl) {
     '--test-force-exit',
     '--test-timeout=180000',
     'tests/preview-flow.test.js',
+    'tests/preview-candidate.test.js',
+    'tests/preview-binding-adapters.test.js',
     'tests/preview-cleanup.test.js',
     'tests/preview-flow-ownership.test.js',
     'tests/preview-lifecycle.test.js',

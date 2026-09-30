@@ -566,3 +566,20 @@ test('the deployed app container is seen ready within seconds of answering /heal
   assert.equal(container.readinessProbe.periodSeconds, 2);
   assert.equal(container.livenessProbe.periodSeconds, 15);
 });
+
+test('native attempts never reuse a successful Job and isolate output and cache tags', async () => {
+  const runs = [];
+  for (const attemptId of [require('node:crypto').randomUUID(), require('node:crypto').randomUUID()]) {
+    const { clients, state } = fakeCluster();
+    const result = await buildkit.createBuild(config(), {
+      app, revision, environment: 'staging', sessionId: 42,
+      sourceDir: sourceTree(['Dockerfile']), attemptId,
+    }, runtimeWith(clients));
+    assert.equal(state.lists.length, 0);
+    assert.equal(result.reused, undefined);
+    assert.ok(result.requestedTag.endsWith(':attempt-' + attemptId));
+    runs.push(state.jobs[0]);
+  }
+  assert.notEqual(runs[0].metadata.name, runs[1].metadata.name);
+  assert.notDeepEqual(runs[0].spec.template.spec.containers[0].env, runs[1].spec.template.spec.containers[0].env);
+});

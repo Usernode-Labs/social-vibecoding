@@ -326,7 +326,7 @@ test('the preview build asks for the template and records how the clone went', (
   const fs = require('node:fs');
   const path = require('node:path');
   const staging = fs.readFileSync(path.join(__dirname, '..', 'src/services/staging.js'), 'utf8');
-  assert.match(staging, /dbManager\.cloneDatabase\(prodDbName, stagingDbNameStr, \{ viaTemplate: true \}\)/);
+  assert.match(staging, /dbManager\.cloneDatabase\(prodDbName, stagingDbNameStr, \{\s*viaTemplate: true,/);
   assert.match(staging, /timings\.cloneVia = cloned\.via \|\| 'direct';/);
   assert.match(staging, /if \(cloned\.templateStale\) timings\.templateRefreshQueued = true;/);
   const visuals = fs.readFileSync(path.join(__dirname, '..', 'src/services/visuals.js'), 'utf8');
@@ -426,4 +426,39 @@ test('strict database existence lookup propagates failure rather than authorizin
     await assert.rejects(fixture.dbManager.databaseExists('app_demo', { strict: true }), /boom/);
     await assert.rejects(fixture.dbManager.databaseExists('unsafe-name', { strict: true }), /unsafe/);
   } finally { fixture.restore(); }
+});
+
+for (const viaTemplate of [false, true]) {
+  test(`create-only clone (${viaTemplate ? 'template' : 'direct'}) reserves the credential without dropping a target`, async () => {
+    const { dbManager, calls, restore } = loadDbManager({ templateComment: fresh() });
+    try {
+      const target = 'app_p_s1_' + 'a'.repeat(32);
+      const password = 'b'.repeat(48);
+      const result = await dbManager.cloneDatabase('app_demo', target, { viaTemplate, createOnly: true, password });
+      assert.equal(result.password, password);
+      assert.ok(sqls(calls).some(sql => sql.includes(`CREATE ROLE ${target}_owner LOGIN PASSWORD '${password}'`)));
+      assert.ok(!sqls(calls).some(sql => sql.includes(`DROP DATABASE IF EXISTS ${target}`)));
+      assert.equal(dbManager.isStagingCloneDb(target), true);
+    } finally {
+      restore();
+    }
+  });
+}
+
+test('a failed create-only template clone is abandoned without destructive fallback', async () => {
+  const { dbManager, calls, restore } = loadDbManager({
+    templateComment: fresh(), failOn: /CREATE DATABASE app_p_s/,
+  });
+  try {
+    await assert.rejects(dbManager.cloneDatabase('app_demo', 'app_p_s1_' + 'a'.repeat(32), {
+      viaTemplate: true, createOnly: true, password: 'b'.repeat(48),
+    }), /boom/);
+    assert.equal(dumps(calls).length, 0);
+    assert.ok(!sqls(calls).some(sql => /DROP DATABASE IF EXISTS app_p_s/.test(sql)));
+    await assert.rejects(dbManager.cloneFromTemplate('app_demo_staging_template', 'app_p_s1_' + 'a'.repeat(32), {
+      password: "invalid'credential",
+    }), /credential/);
+  } finally {
+    restore();
+  }
 });

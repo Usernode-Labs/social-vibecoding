@@ -14,6 +14,18 @@ async function prepareNativePreview({
   build,
   cleanup = require('./cleanup').underBuildLock,
 }) {
+  if (require('./activation').enabled(config)) {
+    return require('./candidate-native').prepareCandidatePreview({
+      pool,
+      session,
+      app,
+      config,
+      headSha,
+      build,
+      cleanup,
+    });
+  }
+
   const owner = createPreviewFlow(pool);
 
   // Handoff submissions/rechecks historically rebuild even on the same SHA.

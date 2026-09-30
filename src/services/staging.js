@@ -179,7 +179,7 @@ async function buildAndDeployStaging(config, session, app, commitHash, options =
   const run = () => withResourceUse(config, STAGING_BUILD_LOCK, key, async () => {
     if (options.beforeBuild) {
       const runtimeKind = applicationRuntime.mode(config);
-      await options.beforeBuild({
+      await options.beforeBuild(options.candidate?.intent || {
         runtimeKind,
         runtimeName: runtimeKind === 'docker'
           ? `usernode-staging-${app.slug}--${session.id}`
@@ -189,7 +189,15 @@ async function buildAndDeployStaging(config, session, app, commitHash, options =
       });
     }
 
-    const result = await buildAndDeployStagingInner(config, session, app, commitHash, options);
+    let result;
+    try {
+      result = await buildAndDeployStagingInner(config, session, app, commitHash, options);
+    } catch (error) {
+      // The candidate owner consumes its persisted intent before this resource
+      // lock is released. Legacy failure cleanup remains inside the old adapter.
+      if (options.candidate) await options.candidate.onPreparationFailed();
+      throw error;
+    }
 
     // The native publication/cleanup consumer runs before a successor may
     // replace this runtime or its clone, in Docker as well as Kubernetes.
@@ -323,8 +331,9 @@ function makeImageProgressReporter(config, session, timings, startedAt, now = ()
 }
 
 async function buildAndDeployStagingInner(config, session, app, commitHash, options = {}) {
-  const containerName = `usernode-staging-${app.slug}--${session.id}`;
-  const imageName = `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
+  const candidate = options.candidate;
+  const containerName = candidate?.intent.runtimeName || `usernode-staging-${app.slug}--${session.id}`;
+  const imageName = candidate?.intent.imageName || `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
 
   log.info('staging', 'Building staging', { sessionId: session.id, app: app.slug });
 
@@ -341,7 +350,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     if (!owner || !repo) throw new Error('Could not parse repo URL');
 
     const cloneUrl = await github.getCloneUrl(owner, repo);
-    const cloneDir = `/tmp/usernode-staging-${session.id}`;
+    const cloneDir = candidate?.intent.checkoutDir || `/tmp/usernode-staging-${session.id}`;
 
     // Whether the caller pinned a concrete commit. 'latest' (and any falsy
     // value) keeps the historical "build the current branch tip" behaviour
@@ -503,14 +512,17 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     ], { timeout: 5000 });
     const resolvedRevision = (revisionOut || '').trim();
     const prodDbName = dbManager.appDbName(app.slug);
-    const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
+    const stagingDbNameStr = candidate?.intent.dbName || dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
     // Retries may address the database of a still-serving preview. Only
     // overlap a clone when its target is confirmed absent; otherwise keep
     // the old image-before-clone ordering. A failed lookup is not absence.
     let parallelPreparation = false;
     try {
-      parallelPreparation = !await dbManager.databaseExists(stagingDbNameStr, { strict: true });
+      const exists = await dbManager.databaseExists(stagingDbNameStr, { strict: true });
+      if (candidate && exists) throw new Error('Candidate clone already exists; abandon this attempt rather than overwrite it');
+      parallelPreparation = !exists;
     } catch (err) {
+      if (candidate) throw err;
       log.warn('staging', 'Database lookup failed; preparing preview sequentially', { sessionId: session.id, err: err.message });
     }
     const imageBuildStartedAt = Date.now();
@@ -526,6 +538,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
         result = await applicationRuntime.build(config, {
           app, revision: resolvedRevision, environment: 'staging', sessionId: session.id,
           sourceDir: cloneDir, dockerImage: imageName, onProgress: imageProgress.report,
+          ...(candidate ? { attemptId: candidate.intent.attemptId } : {}),
         });
         return result;
       } finally {
@@ -544,7 +557,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
       if (imageFinished) reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
       try {
         // Each clone retains its own role/password and template redaction.
-        const cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, { viaTemplate: true });
+        const cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, {
+          viaTemplate: true,
+          ...(candidate ? { password: candidate.password, createOnly: true } : {}),
+        });
         timings.cloneVia = cloned.via || 'direct';
         if (cloned.templateRefreshed) timings.templateRefreshed = true;
         if (cloned.templateStale) timings.templateRefreshQueued = true;
@@ -576,6 +592,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     } finally {
       await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     }
+    if (candidate) await candidate.onClonePrepared();
     const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, cloned.password);
 
     // 4. Stop existing staging container if any. Short grace: a preview
@@ -585,7 +602,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     // deterministic and the deploy below reconciles it. But it is no longer
     // SILENT (#851) — a resource that resists removal is still worth surfacing.
     await require('./preview-lifecycle').current()?.check();
-    if (applicationRuntime.mode(config) === 'docker' && (session.staging_runtime_name || session.staging_container_id)) {
+    if (!candidate && applicationRuntime.mode(config) === 'docker' && (session.staging_runtime_name || session.staging_container_id)) {
       const runtimeName = session.staging_runtime_name || session.staging_container_id;
       const stopped = await applicationRuntime.remove(config, {
         runtimeKind: session.staging_runtime_kind || 'docker',
@@ -655,6 +672,11 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
       memory: docker.STAGING_MEMORY,
       cpus: docker.STAGING_CPUS,
       labels: runtimeLabels,
+      ...(candidate ? {
+        runtimeName: candidate.intent.runtimeName,
+        internalOnly: true,
+        createOnly: true,
+      } : {}),
     });
     timings.healthMs = Date.now() - healthStartedAt;
     const { hostname, url: stagingUrl } = deployed;
@@ -706,6 +728,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
       containerId: deployed.runtimeKind === 'docker' ? deployed.runtimeName : null,
       runtimeKind: deployed.runtimeKind,
       runtimeName: deployed.runtimeName,
+      ...(candidate ? { physicalId: deployed.physicalId, attemptId: candidate.intent.attemptId } : {}),
       imageRef: build.imageRef,
       buildRef: build.buildRef,
       // The commit this preview is of, as recorded on the row above; the
@@ -724,7 +747,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     // than swallowed, same reasoning as step 4 above (#851).
     // Kubernetes deploys reconcile deterministic resource names on retry;
     // Docker needs an explicit by-name cleanup after a partial start.
-    if (applicationRuntime.mode(config) === 'docker') {
+    if (!candidate && applicationRuntime.mode(config) === 'docker') {
       const cleaned = await docker.stopAndRemove(containerName, {
         stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
       }).catch((e) => ({ removed: false, error: e.message })) || {};

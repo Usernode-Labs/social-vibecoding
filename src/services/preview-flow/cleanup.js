@@ -22,14 +22,16 @@ function createCleanup({
 
     // The reducer decides retirement under the aggregate/resource transaction;
     // this executor only consumes accepted work and reports observed completion.
-    const { decision } = await owner.apply({
+    const { decision, current: authorized } = await owner.apply({
       type: 'RequestPreviewCleanup',
       actionId: randomUUID(),
       sessionId,
       flowId,
     });
     if (!decision.accepted) {
-      if (decision.reason === 'resource_published') return { protected: true };
+      if (['resource_published', 'resource_bound', 'consumer_retirement_required'].includes(decision.reason)) {
+        return { protected: true };
+      }
       throw new Error(`Preview cleanup not authorized: ${decision.reason}`);
     }
 
@@ -46,6 +48,33 @@ function createCleanup({
         appNamespace: intent.namespace,
       },
     };
+    if (intent.attemptId) {
+      // SQL permission does not prove that an out-of-band route writer has not
+      // attached this candidate. Unknown external ownership defers all deletion.
+      const { rows: apps } = await pool.query(`SELECT a.* FROM apps a
+        JOIN chat_sessions s ON s.app_id = a.id WHERE s.id = $1`, [sessionId]);
+      if (apps.length) {
+        const bindings = require('./binding-adapters');
+        const binding = await bindings.inspect(runtimeConfig, bindings.bindingRef(runtimeConfig, apps[0], sessionId));
+        if (binding.target === intent.runtimeName) throw new Error('Candidate still has an external serving binding');
+      } else if (authorized.binding?.desired || authorized.binding?.observed) {
+        throw new Error('Deleted aggregate retains an unresolved serving binding');
+      }
+      await require('./candidate-runtime').removeCandidate(runtimeConfig, intent, flowId, authorized.resource?.receipt);
+      await db.dropDatabase(intent.dbName, { strict: true });
+      await require('./candidate-runtime').removeCandidateImage(intent);
+      if (intent.checkoutDir) await require('../docker').execFileAsync('rm', ['-rf', intent.checkoutDir]);
+      const completion = await owner.apply({
+        type: 'PreviewCleanupCompleted',
+        actionId: randomUUID(),
+        sessionId,
+        flowId,
+        disposition: 'removed',
+      });
+      if (!completion.decision.accepted) throw new Error(`Candidate cleanup completion rejected: ${completion.decision.reason}`);
+      return { disposition: 'removed' };
+    }
+
     const runtimeState = await runtime.inspect(runtimeConfig, intent);
     if (!runtimeState || runtimeState.status === 'unknown') {
       throw new Error('Cannot establish preview runtime ownership');
@@ -84,6 +113,14 @@ function createCleanup({
   }
 
   async function sweep({ pool, config, limit = 25 }) {
+    const activation = require('./activation');
+    // The admission flag must not disable the owner of already accepted work.
+    try {
+      await activation.recover({ pool, config, limit });
+    } catch (error) {
+      log.warn('preview-activation', 'Recovery scan failed; cleanup obligations remain independent', { err: error.message });
+    }
+
     const requestedLimit = Number(limit);
     const batchSize = Number.isFinite(requestedLimit)
       ? Math.max(1, Math.min(100, Math.trunc(requestedLimit)))

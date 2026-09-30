@@ -23,6 +23,9 @@ const resourceIntent = z.object({
   runtimeName: z.string().min(1).max(255),
   dbName: z.string().min(1).max(63),
   namespace: z.string().min(1).max(63).nullable(),
+  attemptId: z.string().uuid().optional(),
+  checkoutDir: z.string().min(1).max(255).optional(),
+  imageName: z.string().min(1).max(255).optional(),
 }).strict().superRefine((value, ctx) => {
   if ((value.runtimeKind === 'docker' && value.namespace !== null)
       || (value.runtimeKind === 'kubernetes' && value.namespace === null)) {
@@ -33,7 +36,7 @@ const resourceIntent = z.object({
   }
 });
 
-const runtimeReceipt = z.object({
+const runtimeReceiptFields = {
   commitSha: sha,
   stagingUrl: z.string().url().max(512),
   runtimeKind: z.enum(['docker', 'kubernetes']),
@@ -41,22 +44,56 @@ const runtimeReceipt = z.object({
   containerId: z.string().min(1).max(128).nullable(),
   imageRef: z.string().min(1).max(1024),
   buildRef: z.string().min(1).max(1024).nullable(),
-}).strict().superRefine((value, ctx) => {
+};
+
+function validateRuntimeTuple(value, ctx) {
   if (value.runtimeKind === 'docker' && value.containerId !== value.runtimeName) {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'Docker receipt must identify its container',
-    });
+    ctx.addIssue({ code: 'custom', message: 'Docker receipt must identify its container' });
   }
   if (value.runtimeKind === 'kubernetes' && value.containerId !== null) {
-    ctx.addIssue({
-      code: 'custom',
-      message: 'Kubernetes receipt cannot identify a Docker container',
-    });
+    ctx.addIssue({ code: 'custom', message: 'Kubernetes receipt cannot identify a Docker container' });
   }
-});
+}
+
+const runtimeReceipt = z.object(runtimeReceiptFields).strict().superRefine(validateRuntimeTuple);
+const candidateReceipt = z.object({
+  ...runtimeReceiptFields,
+  attemptId: z.string().uuid(),
+  physicalId: z.string().min(1).max(128),
+}).strict().superRefine(validateRuntimeTuple);
+
+const routeObservation = z.object({
+  target: z.string().min(1).max(255).nullable(),
+  token: z.string().min(1).max(255).nullable(),
+  uid: z.string().min(1).max(128).nullable(),
+}).strict();
 
 const actionSchema = z.discriminatedUnion('type', [
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('RequestCandidatePreview'),
+    ...preparationRequestFields,
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('PreviewCandidatePrepared'),
+    ...executionIdentityFields,
+    receipt: candidateReceipt,
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('RequestPreviewActivation'),
+    ...executionIdentityFields,
+    expected: routeObservation,
+    stagingUrl: z.string().url().max(512),
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('PreviewActivationObserved'),
+    ...executionIdentityFields,
+    activationId: z.string().uuid(),
+    observation: routeObservation,
+  }).strict(),
   z.object({
     ...actionEnvelopeFields,
     type: z.literal('RequestPreview'),
@@ -117,6 +154,8 @@ module.exports = {
   parseAction,
   runtimeReceipt,
   resourceIntent,
+  candidateReceipt,
+  routeObservation,
   isPreparationRequest,
   isResourceAction,
 };

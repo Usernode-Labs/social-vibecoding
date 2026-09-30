@@ -114,6 +114,9 @@ const DENIED_TABLES = new Set([
 ]);
 
 const DENIED_COLUMNS = {
+  preview_flow_resources: [
+    'clone_credential_enc', // reserved preview database password, encrypted but still a secret
+  ],
   users: [
     'password',
     'anthropic_key_enc',
