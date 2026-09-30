@@ -5,6 +5,12 @@
 // message." — as Messages' own store already does. The thrown fetch used to
 // skip the rollback and leave the placeholder beside the toast.
 //
+// Over the live connection the same holds: a delete the server refuses is
+// answered to this socket as `delete_error` (src/services/ws.js), which puts
+// the message back and rejects deleteMessage's promise — the rejection the
+// transcript's menu already turns into that toast. Its `chat_delete`
+// resolves it; a frame about another id changes nothing.
+//
 // Run with: node --test tests/group-chat-delete-rollback.test.js
 
 'use strict';
@@ -83,4 +89,60 @@ test('a delete that succeeds keeps the placeholder', async () => {
   assert.equal(GroupChat.messages[0].deleted, true);
   assert.equal(GroupChat.messages[0].content, '');
   assert.equal(renders(), 0);
+});
+
+// The socket is open: the delete goes over it and waits for the answer.
+function openSocket(GroupChat) {
+  const sent = [];
+  GroupChat.ws = { readyState: 1, send: (raw) => sent.push(JSON.parse(raw)) };
+  return sent;
+}
+
+test('a socket delete the server refuses puts the message back and rejects', async () => {
+  const { GroupChat, fetches, renders } = loadGroupChat(() => Promise.reject(new Error('no fetch expected')));
+  const sent = openSocket(GroupChat);
+  const pending = GroupChat.deleteMessage(42);
+  assert.deepEqual(sent, [{ type: 'delete', id: 42 }]);
+  assert.equal(GroupChat.messages[0].deleted, true, 'the placeholder shows at once');
+  GroupChat.handleIncoming({ type: 'delete_error', id: 42, code: 'not_author' });
+  await assert.rejects(pending, /Delete failed \(not_author\)/);
+  assert.deepEqual(fetches, []);
+  assert.equal(GroupChat.messages[0].deleted, false);
+  assert.equal(GroupChat.messages[0].content, 'hello there');
+  assert.equal(renders(), 1);
+});
+
+test('a delete_error about another id changes nothing', async () => {
+  const { GroupChat, renders } = loadGroupChat(() => Promise.reject(new Error('no fetch expected')));
+  openSocket(GroupChat);
+  const pending = GroupChat.deleteMessage(42);
+  let settled = false;
+  pending.then(() => { settled = true; }, () => { settled = true; });
+  GroupChat.handleIncoming({ type: 'delete_error', id: 7, code: 'not_author' });
+  await new Promise((r) => setImmediate(r));
+  assert.equal(settled, false);
+  assert.equal(GroupChat.messages[0].deleted, true);
+  assert.equal(renders(), 0);
+  GroupChat.handleIncoming({ type: 'chat_delete', id: 42 });
+  await pending;
+});
+
+test('a socket delete the server confirms keeps the placeholder and resolves', async () => {
+  const { GroupChat, renders } = loadGroupChat(() => Promise.reject(new Error('no fetch expected')));
+  openSocket(GroupChat);
+  const pending = GroupChat.deleteMessage(42);
+  GroupChat.handleIncoming({ type: 'chat_delete', id: 42 });
+  await pending;
+  // A late refusal for it no longer applies.
+  GroupChat.handleIncoming({ type: 'delete_error', id: 42, code: 'not_found' });
+  assert.equal(GroupChat.messages[0].deleted, true);
+  assert.equal(renders(), 0);
+});
+
+test('a socket delete nobody answers settles quietly', async () => {
+  const { GroupChat } = loadGroupChat(() => Promise.reject(new Error('no fetch expected')));
+  openSocket(GroupChat);
+  GroupChat.DELETE_SETTLE_MS = 5;
+  await GroupChat.deleteMessage(42);
+  assert.equal(GroupChat.messages[0].deleted, true);
 });
