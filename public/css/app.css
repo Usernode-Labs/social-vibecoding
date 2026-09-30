@@ -16882,6 +16882,29 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   padding: 18px 8px 0;
   background: var(--community-tint, #2a2e34);
   gap: 0;
+  /* STICKY, BELOW THE HEADER (#3522). The band is the page's navigation, so
+     it stays put while the cards scroll under it. The header paints its own
+     bottom 10px OVER the band (-18px of margin against the header's -mb-2),
+     so the band's own top edge starts 18px BELOW the scroller's top and that
+     is the offset it must rest at. The scroller starts under the header, so
+     "the header's foot in the scroller's own coordinates" is the header's
+     height (the same tokens every fixed surface under it reads), MINUS the
+     18px the band already gives up. Browser-banner strips above the header
+     and the installed app's status-bar reservation ride along, as they do
+     for everything else pinned under the header.
+     ABOVE THE PANE. The pane and its cards come later in the tree, so they
+     would paint over an unranked sticky bar and take its clicks — the same
+     fault the wide strip's 30 fixed (QA 2026-09-24 Q7); 32 sits over the pane
+     and, on a wide window, level with the pill strip's own 30/31/32 ladder
+     while the wide rule's background: none below keeps the page's own look. */
+  position: sticky;
+  top: calc(
+    var(--browser-banner-h, 0px)
+    + var(--platform-header-h, 56px)
+    + var(--platform-safe-top, 0px)
+    - 18px
+  );
+  z-index: 32;
 }
 /* FOUR EQUAL CELLS, each label centred in its own (#852 review): the whole
    cell is the tap target, a quarter of the band each. They hugged their
@@ -16914,6 +16937,21 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 /* The narrowest phones take the labels a point down. */
 @media (max-width: 379.98px) {
   .dev-ws-band .dev-ws-ctab { font-size: 13px; }
+}
+/* All items' back bar is the measured bar on that page, so it pins where the
+   band does: the page's way back scrolls away with the page no more than the
+   tabs themselves do (#3522). The band's overlap arithmetic is the same one —
+   the header draws its bottom 10px over this bar's top too — so the offset
+   and the stacking level are shared rather than second-guessed here. */
+.dev-ws-tabs.dev-ws-pagebar {
+  position: sticky;
+  top: calc(
+    var(--browser-banner-h, 0px)
+    + var(--platform-header-h, 56px)
+    + var(--platform-safe-top, 0px)
+    - 18px
+  );
+  z-index: 32;
 }
 .dev-ws-ctab[aria-selected="true"] { color: #fff; }
 .dev-ws-ctab[aria-selected="true"]::after {
@@ -17290,6 +17328,9 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      Scoped by `#dev-workshop`: the base rule is `.dev-ws-pane-head` six
      hundred lines BELOW this block, and on equal specificity the later one
      wins — a bare-class override here would apply to nothing. */
+  /* The measured offset is the phone's too now (#3522): the band is sticky
+     at every width, so the head's resting place under it is the same number
+     wherever the band pins. */
   #dev-workshop .dev-ws-pane-head {
     top: var(--dev-ws-head-top, 0px);
     z-index: 31;

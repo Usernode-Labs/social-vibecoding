@@ -3108,8 +3108,9 @@ const STRIP_PROPS = ['--dev-ws-head-top', '--dev-ws-band-left', '--dev-ws-band-r
 const WS_GAP_PX = 10;
 
 /**
- * Measure the strip against the pane on All items, from 700px up, where the
- * strip is sticky and the pane head pins under it.
+ * Measure the strip against the pane wherever the bar is sticky, so the pane
+ * head pins under it at the measured offset (all widths now — the band and
+ * the back bar are sticky on a phone too, #3522).
  *
  * THE EAR IS GONE (#852). The grouping tabs used to hang off the pane's top
  * right corner, level with the tab pill, which took four more measurements
@@ -3126,13 +3127,12 @@ const WS_GAP_PX = 10;
 function useStripInsets(
   bar: HTMLElement | null,
   hostRef: React.RefObject<HTMLDivElement | null>,
-  enabled: boolean,
 ): void {
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
     const pane = host.querySelector<HTMLElement>('[data-ws-pane]');
-    if (!enabled || !bar || !pane) {
+    if (!bar || !pane) {
       for (const k of STRIP_PROPS) host.style.removeProperty(k);
       return undefined;
     }
@@ -3154,17 +3154,18 @@ function useStripInsets(
 }
 
 /**
- * QA 2026-09-24 Q7: IS THE TAB STRIP PINNED?
+ * QA 2026-09-24 Q7: IS THE TAB BAR PINNED?
  *
- * Above 700px the strip is `position: sticky` at the scroller's top, and the
- * pane head pins under it. What scrolled past them showed: the strip had no
- * z-index, so the pane (positioned, and later in the tree) painted OVER it and
- * the tabs went under the cards, and the air around the pill (the gap to the
- * ear, the 10px down to the head, the board columns either side of the column
- * on By stage) had nothing behind it. app.css now stacks the strip above the
- * cards and draws a band behind it, but only while it is pinned: at rest the
- * pill sits on the page beside the ear, and a band there would swallow the
- * ear's shape.
+ * The bar is `position: sticky` — the four-tab band on the page, the back bar
+ * on All items — and the pane head pins under it, at every width now (#3522):
+ * on a phone the band used to scroll away with the page. What scrolled past
+ * them showed: the strip had no z-index, so the pane (positioned, and later in
+ * the tree) painted OVER it and the tabs went under the cards, and the air
+ * around the pill (the gap to the ear, the 10px down to the head, the board
+ * columns either side of the column on By stage) had nothing behind it.
+ * app.css now stacks the bar above the cards and draws a band behind it, but
+ * only while it is pinned: at rest the pill sits on the page beside the ear,
+ * and a band there would swallow the ear's shape.
  *
  * Pinned means the tab body has started to slide up under the strip: at rest
  * the body starts one column gap below it, and it only comes closer once the
@@ -3180,13 +3181,12 @@ function useStripInsets(
 function usePinnedStrip(
   bar: HTMLElement | null,
   hostRef: React.RefObject<HTMLDivElement | null>,
-  enabled: boolean,
   tab: string,
 ): void {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
-    if (!enabled || !bar || typeof document === 'undefined') {
+    if (!bar || typeof document === 'undefined') {
       host.removeAttribute('data-ws-pinned');
       return undefined;
     }
@@ -3210,7 +3210,7 @@ function usePinnedStrip(
       if (frame) cancelAnimationFrame(frame);
       host.removeAttribute('data-ws-pinned');
     };
-  }, [bar, hostRef, enabled, tab]);
+  }, [bar, hostRef, tab]);
 }
 
 export function DevWorkshop(): ReactNode {
@@ -3315,13 +3315,12 @@ export function DevWorkshop(): ReactNode {
   // the kanban view model only when the stage pane is up. See
   // ./group-mode-store.ts.
   const group = useWorkshopGroup();
-  // Where the strip is sticky at all (700px up): the pane head pins under
+  // The bar is sticky at every width now (#3522): the pane head pins under
   // it, at an offset only a measurement knows (`useStripInsets`), and
   // app.css draws a band behind it while it is pinned (`usePinnedStrip`,
   // QA 2026-09-24 Q7).
-  const stripSticks = useMediaFlag(WIDE_QUERY);
-  useStripInsets(bar, hostRef, stripSticks);
-  usePinnedStrip(bar, hostRef, stripSticks, tab);
+  useStripInsets(bar, hostRef);
+  usePinnedStrip(bar, hostRef, tab);
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.

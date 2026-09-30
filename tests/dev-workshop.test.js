@@ -3633,10 +3633,19 @@ test('while the "+" menu is open the strip outranks the pane head, and only then
   const headZ = Number(/#dev-workshop \.dev-ws-pane-head \{[^}]*z-index: (\d+)/.exec(decls)[1]);
   assert.ok(32 > headZ, 'above the head while open');
   // At rest nothing raises the strip: the head keeps its place above it.
+  // #3522: the band and the back bar now carry 32 of their own, because the
+  // pane paints over an unranked sticky bar and they have to stay over it.
+  // The open-menu rule stays the only thing that lifts the wide strip past
+  // the head.
   const raised = [...decls.matchAll(/([^{}]*\.dev-ws-tabs[^{}]*)\{[^}]*z-index: (\d+)/g)]
-    .filter((m) => /\.dev-ws-tabs(?![-\w])/.test(m[1]) && Number(m[2]) >= 31);
-  assert.deepEqual(raised.map((m) => m[1].trim()), ['.dev-ws-tabs:has(#dev-plus-menu:not(.hidden))'],
-    'the one rule that lifts the strip past the head is the open-menu rule');
+    .filter((m) => /\.dev-ws-tabs(?![-\w])/.test(m[1]) && Number(m[2]) >= 31)
+    .map((m) => m[1].trim());
+  for (const sel of ['.dev-ws-tabs.dev-ws-band', '.dev-ws-tabs.dev-ws-pagebar']) {
+    assert.ok(raised.includes(sel), `${sel} is ranked above the pane`);
+  }
+  const others = raised.filter((sel) => !['.dev-ws-tabs.dev-ws-band', '.dev-ws-tabs.dev-ws-pagebar'].includes(sel));
+  assert.deepEqual(others, ['.dev-ws-tabs:has(#dev-plus-menu:not(.hidden))'],
+    'the open-menu rule is still the only other lift');
 });
 
 test('the "+" is re-wired when the toolbar changes surface', () => {
@@ -5122,6 +5131,13 @@ test('the pinned strip stays above the list, on a solid band (QA 2026-09-24 Q7)'
   assert.match(rail[1], /z-index: 30;/, 'the strip has a stacking level of its own');
   const headZ = Number(/#dev-workshop \.dev-ws-pane-head \{[^}]*z-index: (\d+)/.exec(decls)[1]);
   assert.ok(headZ > 30, 'and stays under the head');
+  // #3522: the band and the back bar pin over the pane at every width, so
+  // their 32 sits above the wide strip's 30 and the head's 31. The wide rule
+  // restyles the band's look but does not lower its level.
+  const bandZ = Number(/\.dev-ws-tabs\.dev-ws-band \{[^}]*z-index: (\d+)/.exec(CSS.replace(/\n\s*\+?\s*var\(--platform/g, ' var(--platform').replace(/\n\s*- 18px/g, ' - 18px').replace(/\n\s*\);/g, ');'))[1]);
+  const pagebarZ = Number(/\.dev-ws-tabs\.dev-ws-pagebar \{[^}]*z-index: (\d+)/.exec(CSS.replace(/\n\s*\+?\s*var\(--platform/g, ' var(--platform').replace(/\n\s*- 18px/g, ' - 18px').replace(/\n\s*\);/g, ');'))[1]);
+  assert.equal(bandZ, 32, 'the band paints over the pane');
+  assert.equal(pagebarZ, 32, 'so does the back bar');
   // The band: behind the strip's content, only while pinned, down to where
   // the head rests and across the pane (measured).
   const band = /\.dev-ws-tabs::before \{([^}]*)\}/.exec(decls);
@@ -5144,8 +5160,61 @@ test('the pinned strip stays above the list, on a solid band (QA 2026-09-24 Q7)'
     'hears the dev frame\'s scroller and the document alike');
   assert.match(body, /host\.toggleAttribute\('data-ws-pinned', pinned\)/, 'written on the host, not as state');
   assert.match(body, /host\.removeAttribute\('data-ws-pinned'\)/, 'and taken off again on teardown');
-  assert.match(WORKSHOP, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);/);
-  assert.match(WORKSHOP, /const stripSticks = useMediaFlag\(WIDE_QUERY\);/, 'only where the strip is sticky at all');
+  // #3522: the bar is sticky at every width, so the hooks are not gated on
+  // the breakpoint any more — the call is the same everywhere.
+  assert.match(WORKSHOP, /usePinnedStrip\(bar, hostRef, tab\);/);
+});
+
+test('#3522: the community band sticks below the platform header at every width', () => {
+  // The four tabs (and, on All items, the way back under them) are the page's
+  // navigation. On a phone they used to scroll away with the page, the pane
+  // head's own pinning stopped with them, and the pinned band never drew.
+  // The band keeps its community tint and paints over the pane; the pane head
+  // pins the measured gap under it, at the same offsets the wide layout
+  // already publishes.
+  const band = /\.dev-ws-tabs\.dev-ws-band \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(band, 'the band is restyled');
+  assert.match(band[1], /position: sticky;/);
+  assert.match(band[1], /top: calc\(\n?\s*var\(--browser-banner-h, 0px\)\s*\+\s*var\(--platform-header-h, 56px\)\s*\+\s*var\(--platform-safe-top, 0px\)\s*- 18px\n?\s*\);/);
+  assert.match(band[1], /z-index: 32;/, 'the band paints over the pane');
+  assert.match(band[1], /background: var\(--community-tint, #2a2e34\);/,
+    'and keeps its colour, so cards scroll under it');
+
+  // All items' back bar is the measured bar on that page, so it gets the same
+  // treatment, not a second idea of it.
+  const pagebar = /\.dev-ws-tabs\.dev-ws-pagebar \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(pagebar, 'the back bar is restyled');
+  assert.match(pagebar[1], /position: sticky;/);
+  assert.match(pagebar[1], /top: calc\(\n?\s*var\(--browser-banner-h, 0px\)\s*\+\s*var\(--platform-header-h, 56px\)\s*\+\s*var\(--platform-safe-top, 0px\)\s*- 18px\n?\s*\);/);
+  assert.match(pagebar[1], /z-index: 32;/);
+
+  // The pane head already pins; what is new is that it pins under the band
+  // wherever the band does, so the wide rule below cannot be the only place
+  // the measured offset lands.
+  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS);
+  assert.ok(wide, 'the wide-screen block exists');
+  const decls = wide[1].replace(/\/\*[\s\S]*?\*\//g, '');
+  const head = /\n  #dev-workshop \.dev-ws-pane-head \{([\s\S]*?)\n  \}/.exec(decls);
+  assert.ok(head, 'the wide pane-head rule is still there');
+  assert.match(head[1], /top: var\(--dev-ws-head-top, 0px\);/);
+  assert.match(head[1], /z-index: 31;/);
+  assert.match(CSS, /#dev-workshop \.dev-ws-pane-head \{\s*top: var\(--dev-ws-head-top, 0px\);\s*z-index: 31;\s*\}/,
+    'the measured offset applies at every width, not only above 700px');
+
+  // The hooks stop gating on the width: the band is sticky everywhere, so the
+  // pane head and the pinned band work wherever it does.
+  assert.doesNotMatch(WORKSHOP, /const stripSticks = useMediaFlag\(WIDE_QUERY\);/,
+    'the hooks are not gated on the width any more');
+  assert.match(WORKSHOP, /useStripInsets\(bar, hostRef\);/);
+  assert.match(WORKSHOP, /usePinnedStrip\(bar, hostRef, tab\);/);
+  const insets = WORKSHOP.slice(WORKSHOP.indexOf('function useStripInsets('));
+  const insetsBody = insets.slice(0, insets.indexOf('\n}\n'));
+  assert.ok(!/enabled: boolean/.test(insetsBody), 'useStripInsets takes no enabled flag');
+  assert.match(insetsBody, /if \(!bar \|\| !pane\) \{/, 'and clears its properties where there is nothing to measure');
+  const pinned = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
+  const pinnedBody = pinned.slice(0, pinned.indexOf('\n}\n'));
+  assert.ok(!/enabled: boolean/.test(pinnedBody), 'usePinnedStrip takes no enabled flag');
+  assert.match(pinnedBody, /if \(!bar \|\| typeof document === 'undefined'\) \{/, 'and clears its flag where there is no bar');
 });
 
 test('the Needs-you card is marked voted only once the server has the vote (QA 2026-09-24 Q3)', () => {
