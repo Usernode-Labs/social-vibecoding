@@ -19,6 +19,14 @@
  * lowered until white text on it passes 4.5:1. That is also what keeps a
  * colour a project sets from making its own page unreadable.
  *
+ * A colour READ off an icon, an emoji or a name is fitted tighter (#3523,
+ * `SOFT`): chroma at most 0.07 and lightness at most 0.50, a dusky version of
+ * the hue that flavours the header rather than flooding it. The icon's own
+ * brightest hue at 0.15 made a header as loud as the icon, which is right for
+ * a 40px tile and too much for a band across the screen. A colour a project
+ * SETS keeps the looser fit (`SET`): the group voted for that colour, and the
+ * fit's only job there is that white text stays readable on it.
+ *
  * ── Why the browser, and what it costs ─────────────────────────────────
  *
  * The icon is already on the page (the tile draws it), from the same origin,
@@ -108,14 +116,29 @@ export function contrastWithWhite(hex: string): number {
   return 1.05 / (luminance(lin) + 0.05);
 }
 
+/** How far a fitted colour may go: its chroma and its lightness, at most. */
+export interface FitCaps { C: number; L: number }
+
+/** A colour dapp.json sets: readable behind white, otherwise as voted. */
+export const SET: FitCaps = { C: 0.15, L: 0.62 };
+
 /**
- * The colour a page can wear behind white text: the same hue, chroma capped
- * at 0.15 and lightness at 0.62, then lowered until white passes 4.5:1 (4.6,
- * for rounding's sake), pulling chroma in wherever the colour leaves sRGB.
+ * A colour read off an icon, an emoji or a name (#3523): a flavour of the hue
+ * rather than the hue at full strength. Chosen side by side against the
+ * looser caps over the swatches and a spread of saturated icon colours: the
+ * hues stay told apart, and none of them reads as neon.
  */
-export function fitLch(L0: number, C0: number, h: number): string {
-  let L = Math.min(L0, 0.62);
-  const C = Math.min(C0, 0.15);
+export const SOFT: FitCaps = { C: 0.07, L: 0.50 };
+
+/**
+ * The colour a page can wear behind white text: the same hue, chroma and
+ * lightness capped (`SET` unless told otherwise), then lowered until white
+ * passes 4.5:1 (4.6, for rounding's sake), pulling chroma in wherever the
+ * colour leaves sRGB.
+ */
+export function fitLch(L0: number, C0: number, h: number, caps: FitCaps = SET): string {
+  let L = Math.min(L0, caps.L);
+  const C = Math.min(C0, caps.C);
   for (let i = 0; i < 240; i += 1) {
     let c = C;
     let lin = fromLch(L, c, h);
@@ -127,11 +150,11 @@ export function fitLch(L0: number, C0: number, h: number): string {
 }
 
 /** `fitLch` for a hex colour; null for anything that is not one. */
-export function fitForWhiteText(hex: string | null | undefined): string | null {
+export function fitForWhiteText(hex: string | null | undefined, caps: FitCaps = SET): string | null {
   const rgb = parseHex(hex);
   if (!rgb) return null;
   const [L, a, b] = rgbToLab(rgb[0], rgb[1], rgb[2]);
-  return fitLch(L, Math.hypot(a, b), Math.atan2(b, a));
+  return fitLch(L, Math.hypot(a, b), Math.atan2(b, a), caps);
 }
 
 /** A swatch for a key, the way a person's is picked (FNV-1a, then mixed). */
@@ -180,12 +203,15 @@ export function deriveFromPixels(data: ArrayLike<number>): string | null {
     sw += C; sL += L * C; sa += a * C; sb += b * C;
   }
   const a = sa / sw; const b = sb / sw;
-  return fitLch(sL / sw, Math.hypot(a, b), Math.atan2(b, a));
+  return fitLch(sL / sw, Math.hypot(a, b), Math.atan2(b, a), SOFT);
 }
 
 /* ── the answer for a project ──────────────────────────────────────── */
 
-const CACHE_PREFIX = 'communityColor:v1:';
+/* v2 (#3523): a reading is stored FITTED, and the fit for a read colour got
+   softer, so a v1 reading would keep the old, louder colour on every device
+   that had one. */
+const CACHE_PREFIX = 'communityColor:v2:';
 const memo = new Map<string, string>();
 
 function cacheKey(src: ColorSource): string | null {
@@ -217,7 +243,7 @@ export function communityColorNow(src: ColorSource): string | null {
   const set = fitForWhiteText(src.color);
   if (set) return set;
   const key = cacheKey(src);
-  if (!key) return fitForWhiteText(swatchFor(src.key)) || GRAPHITE;
+  if (!key) return fitForWhiteText(swatchFor(src.key), SOFT) || GRAPHITE;
   return typeof window === 'undefined' ? null : readCache(key);
 }
 

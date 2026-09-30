@@ -51,9 +51,36 @@ test('an icon lends its dominant hue; a black-and-white one lends none', () => {
 test('with no icon, the name picks a swatch, the same one every time', () => {
   assert.equal(color.swatchFor('garden'), color.swatchFor('garden'));
   const now = color.communityColorNow({ key: 'garden' });
-  assert.equal(now, color.fitForWhiteText(color.swatchFor('garden')));
+  assert.equal(now, color.fitForWhiteText(color.swatchFor('garden'), color.SOFT), 'fitted as a read colour (#3523)');
   // A set colour wins over everything else, icon or not.
   assert.equal(color.communityColorNow({ key: 'x', color: '#2e6660', iconEmoji: '🧩' }), '#2e6660');
+});
+
+test('#3523: a colour read off an icon or a name flavours the header; a colour a project sets keeps its own', () => {
+  const lch = (hex) => {
+    const [L, a, b] = color.rgbToLab(...color.parseHex(hex));
+    return { L, C: Math.hypot(a, b) };
+  };
+  // Saturated icons, every hue round the wheel: dusky, never neon, and
+  // still readable behind white.
+  for (const rgb of [[229, 57, 53], [67, 160, 71], [253, 216, 53], [142, 36, 170], [0, 172, 193], [251, 140, 0], [30, 136, 229], [236, 64, 122]]) {
+    const read = color.deriveFromPixels(px(rgb, 64));
+    const { L, C } = lch(read);
+    assert.ok(C <= color.SOFT.C + 0.005, `${read} (from ${rgb}) has chroma ${C.toFixed(3)}`);
+    assert.ok(L <= color.SOFT.L + 0.005, `${read} (from ${rgb}) has lightness ${L.toFixed(3)}`);
+    assert.ok(color.contrastWithWhite(read) >= 4.5);
+  }
+  // The same hue, only quieter: a red icon still reads red.
+  const red = color.parseHex(color.deriveFromPixels(px([229, 57, 53], 64)));
+  assert.ok(red[0] > red[1] && red[0] > red[2], 'the hue survives');
+  // A name's swatch is a read colour too.
+  assert.ok(lch(color.communityColorNow({ key: 'garden' })).C <= color.SOFT.C + 0.005);
+  // A set colour is fitted only for white text: dapp.json's is the group's
+  // choice (and Homeroom's own is left as it is, above).
+  assert.equal(color.communityColorNow({ key: 'x', color: '#c0532f' }), color.fitForWhiteText('#c0532f', color.SET));
+  assert.ok(lch(color.fitForWhiteText('#c0532f')).C > color.SOFT.C, 'the set fit is the looser one');
+  // Readings are cached fitted, so the softer fit moved the cache on.
+  assert.match(fs.readFileSync(path.join(ROOT, 'frontend/src/lib/community-color.ts'), 'utf8'), /const CACHE_PREFIX = 'communityColor:v2:';/);
 });
 
 test('dapp.json\'s icon.color reaches the page: manifest, column, list and app reads, store', () => {
