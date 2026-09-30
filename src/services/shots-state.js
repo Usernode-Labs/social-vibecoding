@@ -60,9 +60,34 @@ const RENAMED_CODES = Object.freeze({
 
 // A rollout interrupts runs through no fault of the proposal. The recovery
 // sweep (services/shots-gc.js retryInterrupted) starts the same head again
-// under this trigger, at most this many times per head.
+// under this trigger.
+//
+// Two budgets, because the two causes are not alike. Production redeploys
+// on every merge, and on a busy day merges land every few minutes, which is
+// shorter than a run: a proposal can lose run after run to rollouts that
+// say nothing about it. The shutdown handler records those as
+// `interruptedBy: 'shutdown'` (SHUTDOWN_INTERRUPTION), and they count only
+// against MAX_INTERRUPTED_RETRIES, the ceiling on automatic retries of any
+// cause. An interruption nothing explained (a crash, a SIGKILL, a heartbeat
+// that simply stopped) could be the run itself taking the process down, so
+// those keep the original, tighter budget: MAX_UNEXPLAINED_RETRIES retries,
+// after which the run is a failure a person has to retry.
 const INTERRUPTED_RETRY_TRIGGER = 'interrupted-retry';
-const MAX_INTERRUPTED_RETRIES = 2;
+const MAX_INTERRUPTED_RETRIES = 6;
+const MAX_UNEXPLAINED_RETRIES = 2;
+const SHUTDOWN_INTERRUPTION = 'shutdown';
+const SHUTDOWN_INTERRUPTED_REASON = 'Homeroom restarted while these before & after shots were being taken. You can take them again.';
+
+// Whether an interrupted run gets another automatic retry, from the two
+// counts every loader selects beside the run (see the `interrupted_retries`
+// and `unexplained_interruptions` subqueries in getForSession,
+// shots-view.getForSessions and shots-gc.retryInterrupted, which must agree
+// with this). A loader that did not count them cannot promise a retry.
+function interruptedRetryAllowed({ interrupted_retries: retries, unexplained_interruptions: unexplained } = {}) {
+  if (retries == null || unexplained == null) return false;
+  return Number(retries) < MAX_INTERRUPTED_RETRIES
+    && Number(unexplained) <= MAX_UNEXPLAINED_RETRIES;
+}
 
 function currentCode(code) {
   if (typeof code !== 'string' || !code.includes('evidence')) return code;
@@ -374,8 +399,7 @@ function runSummary(row, artifactSummary = []) {
     // exactly, so a run interrupted under the old name is not retried.
     automaticRetryPending: row.state === 'failed'
       && row.failure_code === 'shots_run_interrupted'
-      && row.interrupted_retries != null
-      && Number(row.interrupted_retries) < MAX_INTERRUPTED_RETRIES,
+      && interruptedRetryAllowed(row),
     planHash: row.plan_hash || null,
     // One result per declared change: ready (with the shots agent's note
     // on what its shots leave out, if any), or skipped with the reason
@@ -539,6 +563,21 @@ async function transitionRun(pool, runId, nextState, rawPatch = {}) {
 
     const sets = ['state = $2', 'updated_at = NOW()'];
     const values = [runId, nextState];
+    // `traceMerge` adds keys to the stored trace instead of replacing it:
+    // the shutdown handler tags an interruption without wiping the
+    // diagnostics the run had already written.
+    if (Object.prototype.hasOwnProperty.call(patch, 'traceMerge')) {
+      const merge = patch.traceMerge;
+      delete patch.traceMerge;
+      if (merge && typeof merge === 'object' && !Array.isArray(merge)) {
+        if (Object.prototype.hasOwnProperty.call(patch, 'traceSummary')) {
+          patch.traceSummary = { ...(patch.traceSummary || {}), ...merge };
+        } else {
+          values.push(JSON.stringify(merge));
+          sets.push(`trace_summary = COALESCE(trace_summary, '{}'::jsonb) || $${values.length}::jsonb`);
+        }
+      }
+    }
     for (const [key, column] of Object.entries(PATCH_COLUMNS)) {
       if (!Object.prototype.hasOwnProperty.call(patch, key)) continue;
       let value = patch[key];
@@ -825,7 +864,11 @@ async function getForSession(pool, sessionId, { headSha = null } = {}) {
             -- Its automatic retries, so the view can say one is coming.
             (SELECT COUNT(*) FROM shot_runs retry
               WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
-                AND retry.trigger = 'interrupted-retry')::int AS interrupted_retries
+                AND retry.trigger = 'interrupted-retry')::int AS interrupted_retries,
+            (SELECT COUNT(*) FROM shot_runs crash
+              WHERE crash.session_id = r.session_id AND crash.head_sha = r.head_sha
+                AND crash.failure_code = 'shots_run_interrupted'
+                AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions
        FROM shot_runs r
       WHERE r.session_id = $1 ${headClause}
         AND r.state NOT IN ('stale','cancelled')
@@ -941,6 +984,10 @@ module.exports = {
   currentCode,
   INTERRUPTED_RETRY_TRIGGER,
   MAX_INTERRUPTED_RETRIES,
+  MAX_UNEXPLAINED_RETRIES,
+  SHUTDOWN_INTERRUPTION,
+  SHUTDOWN_INTERRUPTED_REASON,
+  interruptedRetryAllowed,
   STATES,
   TRANSITIONS,
   TERMINAL_STATES,

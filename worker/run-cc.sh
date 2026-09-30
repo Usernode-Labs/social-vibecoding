@@ -427,8 +427,11 @@ if [ "$MODE" = "shots" ]; then
   while [ ! -f "$SHOTS_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
   [ -f "$SHOTS_PROXY_READY" ] || die "shots origin proxy failed to start"
   echo "__USERNODE_PHASE__ shots_browser_bootstrap"
+  # On failure the bootstrap writes one credential-free line naming the
+  # persona, side, stage and cause; it becomes the run's failure reason.
+  export SHOTS_BOOTSTRAP_FAILURE_FILE="$SHOTS_TMP/browser-bootstrap.failure"
   node /usr/local/bin/shots-browser-bootstrap.js \
-    || die "shots browser authentication failed"
+    || die "$(head -c 300 "$SHOTS_BOOTSTRAP_FAILURE_FILE" 2>/dev/null | tr -d '\r\n' | grep . || echo 'shots browser authentication failed')"
   unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN
   BROWSER_MCP_CONFIG="$SHOTS_TMP/mcp.json"
   node /usr/local/bin/write-shots-mcp-config.js "$BROWSER_MCP_CONFIG" \

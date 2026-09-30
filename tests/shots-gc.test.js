@@ -93,6 +93,7 @@ test('a rollout-interrupted run is retried on its current head, a bounded number
   const reruns = [];
   const schedules = [];
   const result = await gc.retryInterrupted({ shots: { execute: true } }, pool, {
+    isShuttingDown: () => false,
     stateService: {
       rerunSameHead: async (_pool, runId, options) => {
         reruns.push({ runId, trigger: options.trigger });
@@ -115,9 +116,18 @@ test('a rollout-interrupted run is retried on its current head, a bounded number
   assert.match(sql, /r\.failure_code = 'shots_run_interrupted'/);
   assert.match(sql, /JOIN shot_runs r ON r\.id = cs\.shots_run_id/);
   assert.match(sql, /cs\.status NOT IN \('merged', 'archived'\)/);
-  assert.match(sql, /prior\.trigger = \$3\) < \$4/);
-  assert.deepEqual(params.slice(2), ['interrupted-retry', gc.MAX_INTERRUPTED_RETRIES]);
-  assert.equal(gc.MAX_INTERRUPTED_RETRIES, 2);
+  // Two budgets: any cause against the ceiling, and interruptions the
+  // shutdown handler did not explain against the original, tighter one.
+  assert.match(sql, /retry\.trigger = 'interrupted-retry'\)::int AS interrupted_retries/);
+  assert.match(sql, /COALESCE\(crash\.trace_summary->>'interruptedBy', ''\) <> 'shutdown'\)::int AS unexplained_interruptions/);
+  assert.match(sql, /n\.interrupted_retries < \$3/);
+  assert.match(sql, /n\.unexplained_interruptions <= \$4/);
+  // Each retry of a head waits twice as long as the last, up to a cap.
+  assert.match(sql, /LEAST\(\$5::bigint, \$1::bigint \* POWER\(2, n\.interrupted_retries\)::bigint\)/);
+  assert.deepEqual(params.slice(2),
+    [gc.MAX_INTERRUPTED_RETRIES, gc.MAX_UNEXPLAINED_RETRIES, gc.MAX_RETRY_DELAY_MS]);
+  assert.equal(gc.MAX_INTERRUPTED_RETRIES, 6);
+  assert.equal(gc.MAX_UNEXPLAINED_RETRIES, 2, 'a crash keeps the original budget');
 
   const disabled = await gc.retryInterrupted({ shots: { execute: false } }, {
     query: async () => { throw new Error('must not query while shots is disabled'); },
@@ -274,4 +284,17 @@ test('cleanup of an interrupted run also removes what the previous release named
     dbManager.dropDatabase = saved.drop;
     dbManager.releasePreparedCloneSource = saved.release;
   }
+});
+
+test('a draining process neither retries interrupted runs nor recovers unstarted ones', async () => {
+  const pool = { query: async () => { throw new Error('must not query while shutting down'); } };
+  const schedule = async () => { throw new Error('must not schedule while shutting down'); };
+  const config = { shots: { execute: true } };
+  assert.deepEqual(await gc.retryInterrupted(config, pool, { isShuttingDown: () => true, schedule }),
+    { examined: 0, scheduled: 0 });
+  assert.deepEqual(await gc.recoverUnstarted(config, pool, { isShuttingDown: () => true, schedule }),
+    { examined: 0, scheduled: 0 });
+  // The default reads the process-wide flag the shutdown handler sets.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/shots-gc.js'), 'utf8');
+  assert.equal((src.match(/isShuttingDown = lifecycle\.isShuttingDown/g) || []).length, 2);
 });
