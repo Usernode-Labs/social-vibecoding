@@ -1757,6 +1757,12 @@ const GroupChat = {
   // Delete one of your own messages. Over the socket when it is open (the
   // same path an edit takes), else the REST route; the row turns into its
   // placeholder at once, and the server's `chat_delete` confirms it.
+  //
+  // A REST delete that does not go through — refused, or the fetch itself
+  // throws (offline) — puts the message back before rethrowing, so the
+  // caller's "Couldn't delete" toast is not shown beside a placeholder.
+  // (A delete the server refuses over the socket is only logged there; no
+  // frame comes back, so that path cannot roll back.)
   async deleteMessage(id) {
     const slug = GroupChat.appSlug;
     if (!slug || !id) return;
@@ -1767,13 +1773,22 @@ const GroupChat = {
       GroupChat.ws.send(JSON.stringify({ type: 'delete', id: Number(id) }));
       return;
     }
-    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(id)}`, {
-      method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' },
-    });
-    if (!res.ok) {
+    const restore = () => {
       for (const [m, copy] of before) Object.assign(m, copy, { deleted: false });
       GroupChat.render();
       if (GroupChat.activeThread) GroupChat.renderThread();
+    };
+    let res;
+    try {
+      res = await fetch(`/api/apps/${encodeURIComponent(slug)}/messages/${Number(id)}`, {
+        method: 'DELETE', credentials: 'same-origin', headers: { Accept: 'application/json' },
+      });
+    } catch (err) {
+      restore();
+      throw err;
+    }
+    if (!res.ok) {
+      restore();
       throw new Error(`Delete failed (${res.status})`);
     }
   },
