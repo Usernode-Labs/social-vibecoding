@@ -3,7 +3,7 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type Chan
 import { ArrowUpIcon, ArrowUpTrayIcon, PaperClipIcon, PlusIcon } from '@/components/ui/icons';
 import * as api from './api';
 import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, setReply, takePendingShare, useMessagesSnapshot } from './store';
-import type { MessageAttachment, SharedObjectReference } from './types';
+import type { ConversationUser, MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
@@ -110,13 +110,49 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
     notifyTyping(false);
   }, [conversationId]);
 
-  const mention = useMemo(() => {
+  // The `@word` being typed at the caret, or undefined when there is none.
+  const mentionPrefix = useMemo(() => {
     const cursor = inputRef.current?.selectionStart ?? value.length;
-    const prefix = value.slice(0, cursor).match(/(?:^|\s)@([^\s@]*)$/)?.[1];
-    if (prefix === undefined) return null;
+    return value.slice(0, cursor).match(/(?:^|\s)@([^\s@]*)$/)?.[1];
+  }, [value]);
+
+  // #3361: a channel's roster is counted, not loaded (the server's
+  // serializeConversation), so `active.members` is empty there and `@`
+  // offered nobody. A channel asks the server for the people matching what
+  // has been typed instead, a beat after the last keystroke, and remembers
+  // each answer for this conversation. Groups and DMs keep reading their
+  // loaded roster below, exactly as before.
+  const isChannel = active?.kind === 'channel';
+  const channelLookups = useRef(new Map<string, ConversationUser[]>());
+  const [channelPeople, setChannelPeople] = useState<{ conversationId: number; users: ConversationUser[] }>({ conversationId: 0, users: [] });
+  useEffect(() => { channelLookups.current = new Map(); }, [conversationId]);
+  useEffect(() => {
+    if (!isChannel || !conversationId || mentionPrefix === undefined) return undefined;
+    const key = mentionPrefix.toLowerCase();
+    const known = channelLookups.current.get(key);
+    if (known) { setChannelPeople({ conversationId, users: known }); return undefined; }
+    let live = true;
+    const timer = window.setTimeout(() => {
+      api.getMentionCandidates(conversationId, mentionPrefix)
+        .then((users) => {
+          channelLookups.current.set(key, users);
+          if (live) setChannelPeople({ conversationId, users });
+        })
+        .catch(() => { /* no list is the old behaviour; the next keystroke asks again */ });
+    }, 120);
+    return () => { live = false; window.clearTimeout(timer); };
+  }, [isChannel, conversationId, mentionPrefix]);
+
+  const mention = useMemo(() => {
+    if (mentionPrefix === undefined) return null;
+    const prefix = mentionPrefix.toLowerCase();
+    if (isChannel) {
+      const people = channelPeople.conversationId === conversationId ? channelPeople.users : [];
+      return orderFriendsFirst(people.filter((member) => member.username.toLowerCase().startsWith(prefix)), friendIds).slice(0, 6);
+    }
     return orderFriendsFirst((active?.members || []).filter((member) => member.status === 'member'
-      && member.username.toLowerCase().startsWith(prefix.toLowerCase())), friendIds).slice(0, 6);
-  }, [active?.members, value, friendIds]);
+      && member.username.toLowerCase().startsWith(prefix)), friendIds).slice(0, 6);
+  }, [active?.members, isChannel, channelPeople, conversationId, mentionPrefix, friendIds]);
 
   // #2783: `#` offers the viewer's channels — #general and their apps' —
   // and inserts `#handle`, which every chat renders as a link to it. Only a

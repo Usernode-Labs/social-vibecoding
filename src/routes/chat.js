@@ -1137,7 +1137,8 @@ function chatRoutes(config) {
   //   1. distinct authors of this app's chat messages,
   //   2. the app's active users (same definition that gates voting,
   //      so suggestions match who can actually act on a mention),
-  //   3. the app creator.
+  //   3. the app creator,
+  //   4. the members of the app's community (#3361), after the three above.
   // De-duplicated, alphabetical, capped. The client caches this once per
   // app mount and filters by prefix locally; usernames are returned in
   // canonical casing so the inserted @mention renders correctly. Auth is
@@ -1175,25 +1176,41 @@ function chatRoutes(config) {
       // #2386: the viewer's friends lead, flagged `friend: true`. Every
       // caller filters this list by prefix in the order it arrives, so the
       // order is the whole benefit.
+      // #3361: and the project's community members, who are the people
+      // this channel is FOR — somebody who joined but has not spoken yet
+      // was not offered at all. Members come after the people above (who
+      // have spoken, are active or made it), so a large public community
+      // cannot push those people out of the cap. Not on the platform's own project, whose
+      // community is every account: its channel is #general now, which
+      // answers from GET /api/conversations/:id/mention-candidates by prefix
+      // instead of listing everybody here.
       const { rows } = await pool.query(
-        `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name,
+        `WITH engaged AS (
+           SELECT unnest($2::int[]) AS user_id
+           UNION
+           SELECT m.user_id FROM chat_messages m
+            WHERE m.app_id = $1 AND m.user_id IS NOT NULL
+         ), members AS (
+           SELECT cm.user_id FROM community_members cm
+             JOIN apps a ON a.community_id = cm.community_id
+            WHERE a.id = $1 AND NOT $4::boolean
+         )
+         SELECT u.username, LOWER(u.username) AS sort_name,
                 EXISTS (SELECT 1 FROM friendships f
                          WHERE f.status = 'accepted'
                            AND f.user_low_id = LEAST(u.id, $3::int)
-                           AND f.user_high_id = GREATEST(u.id, $3::int)) AS friend
+                           AND f.user_high_id = GREATEST(u.id, $3::int)) AS friend,
+                u.id IN (SELECT user_id FROM engaged) AS engaged
            FROM users u
           WHERE NOT EXISTS (
                   SELECT 1 FROM user_blocks blocked
                    WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = u.id
                 )
-            AND (u.id = ANY($2::int[])
-             OR u.id IN (
-               SELECT m.user_id FROM chat_messages m
-                WHERE m.app_id = $1 AND m.user_id IS NOT NULL
-             ))
-          ORDER BY friend DESC, sort_name
+            AND (u.id IN (SELECT user_id FROM engaged)
+             OR u.id IN (SELECT user_id FROM members))
+          ORDER BY friend DESC, engaged DESC, sort_name
           LIMIT 500`,
-        [appId, ids, req.user.id]
+        [appId, ids, req.user.id, !!app.self_hosted]
       );
 
       res.json({

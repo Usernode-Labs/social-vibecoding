@@ -636,6 +636,86 @@ async function listThread(pool, user, conversationId, rootId, { before = null, l
   };
 }
 
+// GET /api/conversations/:id/mention-candidates (#3361). The composer's `@`
+// list for a conversation whose roster is not loaded: a channel, which
+// serializeConversation COUNTS because its roster is everybody.
+//
+// WHO MAY ASK is exactly who may read the messages: the same
+// loadMembership + canReadConversation pair listMessages and listThread
+// answer with, so a person who cannot open the room (not a member of a
+// group, a DM they are not in, a direct chat across a block) gets the same
+// null — a 404 — and learns nothing about who is in it.
+//
+// WHO IS OFFERED is the conversation's accepted members, which in a channel
+// is everyone who can read it and is exactly who a channel @mention notifies
+// (sendMessage). Never the viewer, never anybody blocked in either
+// direction, never an invitee. Bounded: a prefix of at most
+// MENTION_QUERY_MAX mention characters, LIKE-escaped, and at most
+// MENTION_CANDIDATES_MAX rows. Friends lead, then whoever spoke here most
+// recently (read off the room's last MENTION_RECENT_WINDOW messages in the
+// same statement, so there is no per-person lookup), then A to Z. The
+// projection is the public identity every message row already carries: id,
+// username and avatar.
+const MENTION_QUERY_MAX = 32;
+const MENTION_CANDIDATES_DEFAULT = 8;
+const MENTION_CANDIDATES_MAX = 25;
+const MENTION_RECENT_WINDOW = 1000;
+
+function mentionQuery(raw) {
+  if (typeof raw !== 'string') return '';
+  return raw.trim().replace(/^@/, '').slice(0, MENTION_QUERY_MAX);
+}
+
+function mentionLimit(raw) {
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 1) return MENTION_CANDIDATES_DEFAULT;
+  return Math.min(n, MENTION_CANDIDATES_MAX);
+}
+
+async function mentionCandidates(pool, user, conversationId, { q = '', limit } = {}) {
+  const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
+  if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
+  const query = mentionQuery(q);
+  // Only mention characters can be part of a handle the server notifies,
+  // so anything else matches nobody rather than widening the search.
+  if (query && !/^[A-Za-z0-9_]+$/.test(query)) return [];
+  const escaped = query.replace(/([\\%_])/g, '\\$1');
+  const { rows } = await pool.query(
+    `WITH recent AS (
+       SELECT w.sender_id, MAX(w.id) AS last_id
+         FROM (SELECT m.sender_id, m.id FROM conversation_messages m
+                WHERE m.conversation_id = $1 AND m.sender_id IS NOT NULL
+                  AND m.deleted_at IS NULL AND m.msg_type = 'message'
+                ORDER BY m.id DESC LIMIT ${MENTION_RECENT_WINDOW}) w
+        GROUP BY w.sender_id
+     )
+     SELECT u.id, u.username, ua.id AS avatar_id,
+            EXISTS (SELECT 1 FROM friendships f
+                     WHERE f.status = 'accepted'
+                       AND f.user_low_id = LEAST(u.id, $2::int)
+                       AND f.user_high_id = GREATEST(u.id, $2::int)) AS friend
+       FROM conversation_members cm
+       JOIN users u ON u.id = cm.user_id
+       LEFT JOIN user_avatars ua ON ua.user_id = u.id
+       LEFT JOIN recent r ON r.sender_id = u.id
+      WHERE cm.conversation_id = $1 AND cm.status = 'member'
+        AND u.id <> $2
+        AND LOWER(u.username) LIKE LOWER($3) || '%' ESCAPE '\\'
+        AND NOT EXISTS (SELECT 1 FROM user_blocks b
+                         WHERE (b.blocker_id = $2 AND b.blocked_user_id = u.id)
+                            OR (b.blocker_id = u.id AND b.blocked_user_id = $2))
+      ORDER BY friend DESC, r.last_id DESC NULLS LAST, LOWER(u.username), u.id
+      LIMIT $4`,
+    [conversationId, user.id, escaped, mentionLimit(limit)]
+  );
+  return rows.map((row) => ({
+    id: row.id,
+    username: row.username,
+    avatarUrl: row.avatar_id ? `/avatars/${row.avatar_id}` : null,
+    ...(row.friend ? { friend: true } : {}),
+  }));
+}
+
 async function conversationRow(db, user, conversationId) {
   const { rows } = await db.query(
     `SELECT c.id, c.kind, c.title, c.status, c.created_by, c.created_at, c.updated_at, c.deleted_peer,
@@ -1955,6 +2035,7 @@ module.exports = {
   addMembers,
   leave,
   removeMember,
+  mentionCandidates,
   mentionsUsername,
   ensureChannelMemberships,
   sendMessage,

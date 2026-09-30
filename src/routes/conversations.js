@@ -18,6 +18,7 @@ const {
   conversationInviteLimiter,
   conversationReactionLimiter,
   conversationReportLimiter,
+  userDirectoryLimiter,
 } = require('../middleware/rate-limits');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
@@ -261,6 +262,27 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
       return thread ? res.json(thread) : sendNotFound(res);
     } catch (err) {
       log.error('conversations', 'thread list failed', { id, rootId, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #3361: the `@` list for a conversation whose roster the client does not
+  // hold — a channel, which is counted, not loaded. `?q=` is a username
+  // prefix and `?limit=` at most 25. The service answers null exactly when
+  // listMessages would (same membership + read check), so a room the caller
+  // cannot read is the same 404 either way. A per-keystroke typeahead over
+  // people, so it shares the user-directory searches' per-user bucket.
+  router.get('/api/conversations/:id/mention-candidates', userDirectoryLimiter, async (req, res) => {
+    let id = conversations.strictId(req.params.id);
+    if (!id) return sendNotFound(res);
+    try {
+      if (isDemo(req)) id = await stagingMessages.resolveLegacyLink(pool, req.user, id);
+      const users = await conversations.mentionCandidates(pool, req.user, id, {
+        q: req.query.q, limit: req.query.limit,
+      });
+      return users ? res.json({ users }) : sendNotFound(res);
+    } catch (err) {
+      log.error('conversations', 'mention candidates failed', { id, err: err.message });
       return res.status(500).json({ error: 'Internal server error' });
     }
   });

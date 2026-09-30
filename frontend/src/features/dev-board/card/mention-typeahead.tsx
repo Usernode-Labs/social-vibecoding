@@ -201,7 +201,7 @@ export interface MentionTypeahead {
   /** Replace the active `@token` with `@username ` through `onChange`. */
   accept: (username: string) => void;
   /** True when an open list owned the key (and consumed it). */
-  onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => boolean;
+  onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => boolean;
   /** Start the app's list loading, so it is warm by the first `@`. */
   warm: () => void;
   onCompositionStart: () => void;
@@ -209,13 +209,20 @@ export interface MentionTypeahead {
 }
 
 export function useMentionTypeahead({
-  slug, inputRef, value, onChange,
+  slug, inputRef, value, onChange, lookup,
 }: {
   slug: string;
-  inputRef: RefObject<HTMLTextAreaElement | null>;
+  inputRef: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
   /** The controlled value; the caret is restored once it has been written. */
   value: string;
   onChange: (next: string) => void;
+  /**
+   * #3361: ask for the people matching what has been typed, instead of the
+   * app's whole list. For a room whose people are everybody (#general, on
+   * Homeroom's own hub), where one list per app would be the platform.
+   * Answers are remembered per prefix while the field is mounted.
+   */
+  lookup?: (query: string) => Promise<string[]>;
 }): MentionTypeahead {
   const [items, setItems] = useState<string[]>([]);
   const [active, setActive] = useState(-1);
@@ -224,6 +231,7 @@ export function useMentionTypeahead({
   const tokenStart = useRef(-1);
   const composing = useRef(false);
   const pendingCaret = useRef<number | null>(null);
+  const looked = useRef(new Map<string, string[]>());
 
   const close = useCallback(() => {
     tokenStart.current = -1;
@@ -249,17 +257,31 @@ export function useMentionTypeahead({
       // The top row is highlighted whenever the set changes, as the chat's is.
       setActive(0);
     };
+    if (lookup) {
+      const caret = el.selectionStart;
+      const token = caret == null ? null : detectMentionToken(el.value, caret);
+      if (!token) { close(); return; }
+      const key = token.query.toLowerCase();
+      const known = looked.current.get(key);
+      if (known) { apply(known); return; }
+      void lookup(token.query).then((found) => {
+        looked.current.set(key, found);
+        apply(found);
+      }, () => close());
+      return;
+    }
     const names = cachedMentionCandidates(slug);
     if (names) { apply(names); return; }
     close();
     const caret = el.selectionStart;
     if (caret == null || !detectMentionToken(el.value, caret)) return;
     void loadMentionCandidates(slug).then(apply);
-  }, [slug, inputRef, close]);
+  }, [slug, inputRef, close, lookup]);
 
   const warm = useCallback(() => {
+    if (lookup) return;
     if (!cachedMentionCandidates(slug)) void loadMentionCandidates(slug);
-  }, [slug]);
+  }, [slug, lookup]);
 
   const accept = useCallback((username: string) => {
     const el = inputRef.current;
@@ -295,7 +317,7 @@ export function useMentionTypeahead({
     setBelow(room < host.offsetHeight + 8);
   }, [items]);
 
-  const onKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>): boolean => {
+  const onKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>): boolean => {
     if (!items.length) return false;
     const key = menuKeyFor(e.key);
     if (!key) return false;

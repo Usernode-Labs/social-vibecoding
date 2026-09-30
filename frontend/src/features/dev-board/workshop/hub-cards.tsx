@@ -45,12 +45,13 @@
  * useCommunity) and draw nothing until it has answered.
  */
 
-import { useState, type FormEvent, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type FormEvent, type ReactNode } from 'react';
 
 import { ArrowUpIcon, BoardIcon, ChevronDownIcon, ChevronRightIcon } from '@/components/ui/icons';
 import { agoStamp } from '../../../lib/timestamp';
 import { swatchFor } from '../../messages/format';
 import { CardRowView } from '../card/fold';
+import { FeedMentionMenu, useMentionTypeahead } from '../card/mention-typeahead';
 import type { DevWorkshopView, ListRow } from '../card/model';
 import { reloadCommunity, type CommunityPayload } from './community-card';
 
@@ -131,15 +132,39 @@ export function ChannelCard({ slug, name, data }: {
   );
 }
 
+/** The #general conversation a hub composer posts to, or null for an app's own chat. */
+export function conversationIdFromPostUrl(url: string): number | null {
+  const m = /^\/api\/conversations\/([1-9]\d*)\/messages$/.exec(url);
+  return m ? Number(m[1]) : null;
+}
+
 /**
  * The channel card's foot: one line, sent where the room's own composer
  * sends it. A sent message clears the box and re-reads the hub, so it shows
  * up among the last few above; a refusal keeps the draft and says why.
+ *
+ * #3361: `@` offers people here as it does in the room itself. An app's
+ * channel reads the app's list (GET /api/apps/:slug/mention-suggestions,
+ * which the room's own composer uses); #general, on Homeroom's own hub,
+ * asks its conversation by prefix (GET /api/conversations/:id/mention-
+ * candidates), because its people are everybody. Either answers only a
+ * viewer who may read that room.
  */
 function HubComposer({ slug, url, placeholder }: { slug: string; url: string; placeholder: string }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+  const conversationId = conversationIdFromPostUrl(url);
+  const lookup = useCallback(async (query: string): Promise<string[]> => {
+    const res = await fetch(`/api/conversations/${conversationId}/mention-candidates?q=${encodeURIComponent(query)}&limit=8`);
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => null);
+    return Array.isArray(data?.users) ? data.users.map((u: any) => String((u && u.username) || '')).filter(Boolean) : [];
+  }, [conversationId]);
+  const mention = useMentionTypeahead({
+    slug, inputRef, value: text, onChange: setText, lookup: conversationId ? lookup : undefined,
+  });
   const send = async (e: FormEvent) => {
     e.preventDefault();
     const content = text.trim();
@@ -169,6 +194,7 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
   return (
     <form className="dev-ws-hub-compose" data-ws-channel-compose="" onSubmit={(e) => { void send(e); }}>
       <input
+        ref={inputRef}
         type="text"
         className="dev-ws-hub-compose-input"
         data-ws-channel-input=""
@@ -177,7 +203,15 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
         maxLength={4000}
         value={text}
         disabled={busy}
-        onChange={(e) => { setText(e.target.value); if (error) setError(''); }}
+        onChange={(e) => { setText(e.target.value); if (error) setError(''); mention.sync(); }}
+        onSelect={mention.sync}
+        onFocus={mention.warm}
+        onBlur={mention.close}
+        onCompositionStart={mention.onCompositionStart}
+        onCompositionEnd={mention.onCompositionEnd}
+        // An open list owns the arrows, Enter, Tab and Escape, so Enter
+        // picks the person instead of sending "@be".
+        onKeyDown={(e) => { if (!e.nativeEvent.isComposing) mention.onKeyDown(e); }}
       />
       <button
         type="submit"
@@ -189,6 +223,13 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
         <ArrowUpIcon className="w-4 h-4" aria-hidden="true" />
       </button>
       {error ? <p className="dev-ws-hub-compose-error" role="alert" data-ws-channel-error="">{error}</p> : null}
+      <FeedMentionMenu
+        items={mention.items}
+        active={mention.active}
+        below={mention.below}
+        menuRef={mention.menuRef}
+        onPick={mention.accept}
+      />
     </form>
   );
 }

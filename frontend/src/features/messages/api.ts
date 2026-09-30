@@ -287,6 +287,16 @@ export async function getConversation(id: number): Promise<ConversationDetail> {
   return normalizeConversation(pick(data, 'conversation') ?? data);
 }
 
+// #3361: the `@` list for a conversation whose roster the client does not
+// hold — a channel, whose members the server counts rather than loads. A
+// username prefix in, at most `limit` people out (friends first, then whoever
+// spoke there last), from exactly the people who can read the room.
+export async function getMentionCandidates(id: number, prefix: string, limit = 8): Promise<ConversationUser[]> {
+  const q = encodeURIComponent(prefix.slice(0, 32));
+  const data = record(await request<unknown>(`/api/conversations/${id}/mention-candidates?q=${q}&limit=${limit}`));
+  return array(pick(data, 'users')).map(normalizeUser).filter((user) => user.id);
+}
+
 export async function createConversation(body: { kind: 'direct'; userId: number } | { kind: 'group'; title: string; memberIds: number[] }): Promise<ConversationDetail> {
   const payload = body.kind === 'direct'
     ? { kind: 'direct', user_id: body.userId }

@@ -4144,6 +4144,21 @@
     },
     {
       "source": "src/routes/conversations.js",
+      "method": "GET",
+      "path": "/api/conversations/:id/mention-candidates",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "messages.get.conversations.item.mention.candidates.fd74b264",
+      "domain": "messages",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "conversation",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#messages/:id"
+    },
+    {
+      "source": "src/routes/conversations.js",
       "method": "POST",
       "path": "/api/conversations/:id/messages",
       "expression": null,
