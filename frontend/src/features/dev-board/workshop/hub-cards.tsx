@@ -219,11 +219,10 @@ export function ReelThumb(): ReactNode {
  * was. The queue also carries requests nobody has claimed, which are the
  * group's to pick up rather than yours to answer, so they are not counted
  * here: a card that said 14 where two votes were owed read as a backlog
- * with your name on it. They are named under it when they are all there is.
+ * with your name on it.
  *
- * A DOOR, and only while something waits: the lander draws it when the
- * queue has anything in it, so a hub with nothing owed spends no row on
- * saying so.
+ * A DOOR, and only while a vote is owed (#3408): with none, the lander draws
+ * NothingToVote below instead, one quiet line rather than a card.
  */
 export function NeedsCard({ queue, canPost, onOpen }: {
   queue: DevWorkshopView['queue'];
@@ -231,13 +230,12 @@ export function NeedsCard({ queue, canPost, onOpen }: {
   onOpen: () => void;
 }): ReactNode {
   const votes = queue.filter((row) => row.kind === 'vote');
-  const claims = queue.length - votes.length;
   const first = votes.find((row) => row.t === 'card') || null;
   const count = votes.length;
   const title = first && first.t === 'card' ? first.card.title.text || first.card.title.title : '';
   return (
     <section className="dev-ws-strip dev-ws-hub-needs" data-ws-hub-needs="" data-ws-hub-needs-votes={String(count)}>
-      <button type="button" className="dev-ws-hub-row dev-ws-hub-door" onClick={onOpen} data-ws-hub-needs-open="" disabled={!queue.length}>
+      <button type="button" className="dev-ws-hub-row dev-ws-hub-door" onClick={onOpen} data-ws-hub-needs-open="">
         <ReelThumb />
         <span className="dev-ws-hub-door-text">
           <span className="dev-ws-head">
@@ -253,20 +251,41 @@ export function NeedsCard({ queue, canPost, onOpen }: {
                 {count > 1 ? `and ${count - 1} more` : ''}
               </span>
             </span>
-          ) : (
-            <span className="dev-ws-week-note" data-ws-hub-needs-none="">
-              {claims
-                ? `No votes owed. ${plural(claims, 'request', 'requests')} nobody has picked up.`
-                : 'Nothing is waiting on you.'}
-            </span>
-          )}
+          ) : null}
         </span>
-        {queue.length ? <ChevronRightIcon className="dev-ws-hub-chev" aria-hidden="true" /> : null}
+        <ChevronRightIcon className="dev-ws-hub-chev" aria-hidden="true" />
       </button>
       {count && !canPost ? (
         <p className="dev-ws-hub-needs-join" data-ws-hub-needs-join="">Join to vote on these.</p>
       ) : null}
     </section>
+  );
+}
+
+/** Whether the queue holds a vote the viewer owes: the hub's Needs you door
+    is drawn only then. */
+export const owesVote = (queue: DevWorkshopView['queue']): boolean => queue.some((row) => row.kind === 'vote');
+
+/**
+ * NO VOTE OWED (#3408): in the Needs you card's place, one quiet line that
+ * says so, instead of a card whose whole content was that nothing waits.
+ * Requests nobody has picked up are still the Needs you page's rows, so when
+ * there are some the line names them, and that phrase is the way in.
+ */
+export function NothingToVote({ queue, onOpen }: {
+  queue: DevWorkshopView['queue'];
+  onOpen: () => void;
+}): ReactNode {
+  const claims = queue.filter((row) => row.kind !== 'vote').length;
+  return (
+    <p className="dev-ws-week-note" data-ws-hub-needs-none="">
+      {claims ? 'Nothing more to vote on · ' : 'Nothing more to vote on.'}
+      {claims ? (
+        <button type="button" className="dev-ws-link un-touch-target" onClick={onOpen} data-ws-hub-needs-requests="">
+          {`${plural(claims, 'request', 'requests')} nobody has picked up`}
+        </button>
+      ) : null}
+    </p>
   );
 }
 
