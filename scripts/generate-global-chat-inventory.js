@@ -87,6 +87,11 @@ const PATH_EXEMPTIONS = [
 // response would be both misleading and unsafe.
 const REVIEWED_ROUTE_EXEMPTIONS = [
   {
+    matches: (route) => route.source === 'src/routes/sessions.js' && route.method === 'POST'
+      && ['/api/sessions/:id/fork', '/api/sessions/:id/clone-headless'].includes(route.path),
+    reason: 'retired with classic dev sessions (#2779): a fork answers 410, and cloning a run is left to the hosted connector',
+  },
+  {
     matches: (route) => route.source === 'server.js'
       && ['/sw.js', '/shell/release.json'].includes(route.path),
     reason: 'generated service-worker and asset manifest delivery, not an interactive control',
@@ -166,14 +171,14 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'test-only mock control unavailable in normal production Classic mode',
   },
   {
-    matches: (route) => route.source === 'src/routes/visual-evidence.js'
-      && route.path === '/api/apps/:slug/proposals/:sessionId/evidence/diagnostics',
+    matches: (route) => route.source === 'src/routes/shots.js'
+      && route.path === '/api/apps/:slug/proposals/:sessionId/shots/diagnostics',
     reason: 'proposal-owner troubleshooting export for local replay, not a Classic user control',
   },
   {
-    matches: (route) => route.source === 'src/routes/visual-evidence.js'
-      && route.path === '/api/apps/:slug/proposals/:sessionId/evidence/diagnostics/:artifactId',
-    reason: 'private binary comparison image represented by proposal evidence diagnostics',
+    matches: (route) => route.source === 'src/routes/shots.js'
+      && route.path === '/api/apps/:slug/proposals/:sessionId/shots/diagnostics/:artifactId',
+    reason: 'private binary comparison image represented by proposal shots diagnostics',
   },
   {
     matches: (route) => route.source === 'src/routes/waitlist-connect.js',

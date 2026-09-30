@@ -55,6 +55,17 @@ test('the mark\'s Continue rows: agent sessions only, newest first, paused like 
   assert.deepEqual(rows.map((r) => r.activity), ['working', null, 'done'], 'each with the lists\' mark');
 });
 
+test('each Agent sessions row says the app it is on and where it stands, under its title', () => {
+  const { rows } = model.continueRows([
+    conversation({ id: 1, lastActivityAt: '2026-09-24T12:00:00Z', activeChange: { appSlug: 'run', appName: 'Run Club', status: 'active', title: 'x' } }),
+    conversation({ id: 2, lastActivityAt: '2026-09-24T11:00:00Z', focusApp: { slug: 'run', name: 'Run Club' }, activeChange: { appSlug: 'run', status: 'promoted', title: 'y' } }),
+    conversation({ id: 3, lastActivityAt: '2026-09-24T10:00:00Z', focusApp: null, activeChange: { appSlug: null, status: 'active', title: 'z' } }),
+  ]);
+  assert.deepEqual(rows.map((r) => r.sub), ['Run Club · in progress', 'Run Club · in vote', 'In progress'],
+    'the change\'s app, else the one it started from; alone, where it stands');
+  assert.equal(model.agentSub('Notes', 'Agent session'), 'Notes · agent session');
+});
+
 test('the mark\'s Continue rows: every app\'s sessions, the five newest, and whether there are more', () => {
   // Not only the app the menu is open on: another app's session, one whose
   // change names no app, and one with only a focus app are all yours.
@@ -139,17 +150,22 @@ test('#3071: a menu row writes its address before the menu closes, so closing ca
   assert.match(sheet, /setMessagesFilter\('agents'\);\s*followThenDismiss\(e, '#messages'\);/, 'and "Show more"');
 });
 
-test('the mark\'s menu: the app\'s own rows first, then Continue, after mount only, with "Show more" when there are more', () => {
+test('the mark\'s menu: the app\'s own rows first, then Agent sessions, the sessions after mount only, with "Show more" when there are more', () => {
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /const continuing = mounted && view === 'menu'\s*\? continueRows\(agentSessions \|\| \[\]\)\s*: \{ rows: \[\], more: false \};/,
     'never in the prerender (the hydrating render matches it), and not keyed on the app');
   assert.match(sheet, /if \(open && window\.App\?\.user\) void loadAgentSessions\(\);/,
     'for any signed-in viewer: the flag never hides a conversation that exists');
   const at = (id) => sheet.indexOf(`id="${id}"`);
-  assert.ok(at('app-menu-row-workshop') < at('app-menu-row-discussion')
-    && at('app-menu-row-discussion') < at('app-menu-row-about')
-    && at('app-menu-row-about') < at('app-menu-continue'),
-    'Go to workshop, the discussion and About are the app\'s section; Continue follows them');
+  assert.ok(at('app-menu-row-workshop') < at('app-menu-row-about')
+    && at('app-menu-row-about') < at('app-menu-sessions')
+    && at('app-menu-sessions') < at('improve-row-new-session')
+    && at('improve-row-new-session') < at('app-menu-continue'),
+    'Go to community and About are the app\'s section; Agent sessions follow, led by Start a new change');
+  assert.match(sheet, /<div className=\{SECTION\}>Agent sessions<\/div>/, 'it was "Continue"');
+  assert.doesNotMatch(sheet, />Continue</);
+  // Each session says what app it is on and where it stands, under its title.
+  assert.match(sheet, /label=\{row\.title\}\s+sub=\{row\.sub\}/);
   assert.match(sheet, /\{continuing\.more \? \(\s*<MenuRow\s+id="app-menu-continue-all"[\s\S]{0,200}label="Show more"[\s\S]{0,200}setMessagesFilter\('agents'\)/,
     'only when there are more, and it opens Messages\' Agents list');
   assert.doesNotMatch(sheet, /See all sessions/);
@@ -226,8 +242,8 @@ test('new work at the cap pauses the user\'s least recently used session instead
   const sessions = read('src/routes/sessions.js');
   const create = sessions.slice(sessions.indexOf("router.post('/api/apps/:slug/sessions'"));
   assert.match(create.slice(0, 6000), /sessionLifecycle\.freeUserSlot\(\{ pool, userId: req\.user\.id \}\)/);
-  assert.equal((sessions.match(/sessionLifecycle\.freeUserSlot\(/g) || []).length, 4,
-    'create, clone, fork and resume all free a slot the same way');
+  assert.equal((sessions.match(/sessionLifecycle\.freeUserSlot\(/g) || []).length, 3,
+    'create, clone and resume all free a slot the same way (fork is retired, #2779)');
   assert.match(read('src/routes/proposal-handoff.js'), /sessionLifecycle\.freeUserSlot\(/);
   assert.match(read('src/services/connector-limits.js'), /lifecycle\.freeUserSlot\(\{ pool, userId: user\.id \}\)/);
 });

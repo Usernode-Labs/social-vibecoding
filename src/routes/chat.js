@@ -203,7 +203,7 @@ function stagingMockGeneralStream(appId) {
 // issue 900008's Discussion), so they must not depend on nobody having typed
 // there. The empty-transcript rule above assumed a check sees an untouched
 // database, but a preview is a live, shared stack: a reviewer trying the
-// composer on the demo issue, or an evidence replay doing the same, leaves one
+// composer on the demo issue, or a shots run doing the same, leaves one
 // real row, and from then on every load of that preview answered with that row
 // alone and the chip check failed on proposals that never touched it. A thread
 // listed here keeps its mock rows on every first page in demo mode and shows

@@ -337,6 +337,11 @@ export type ListRow =
     /** Arrived since the viewer's last Workshop visit — the "new" marker. */
     fresh?: boolean;
     /**
+     * When the row last moved (epoch ms), on the since list's rows only: the
+     * Workshop page files each one under the week it moved in.
+     */
+    at?: number;
+    /**
      * The voter-facing plain-language summary (`pr_summary_md`), on vote rows
      * only. Null when the proposal has none — a legacy one, or a summary pass
      * that failed — and the deck says so rather than leaving a gap.
@@ -445,6 +450,12 @@ export interface DevWorkshopView {
     /** An issue's body as one plain run, the claim item's sub-hero. */
     body?: string | null;
     /**
+     * The Description sheet's body: a proposal's summary or an issue's
+     * body, rendered and sanitised where it was built (app-view.js). Empty
+     * when there is none.
+     */
+    descriptionHtml?: string;
+    /**
      * The item's picture: the first before/after capture pair the checks
      * shot, one still per side. Null when there is none, and the feed then
      * leaves the space under the summary empty rather than faking one.
@@ -456,9 +467,32 @@ export interface DevWorkshopView {
       after: string | null;
       beforeWebm: string | null;
       afterWebm: string | null;
-      /** Authenticated evidence URLs rather than legacy public artifact ids. */
+      /** Authenticated shots URLs rather than legacy public artifact ids. */
       protected?: boolean;
       claim?: string;
+      /**
+       * A before & after run's own screens, when it worked them out
+       * (services/shots-diff.js): each side's shot and the areas that
+       * differ, in the shot's pixels, numbered by declared change (0 is a
+       * difference no change accounts for). The feed draws one, outlined.
+       */
+      screens?: {
+        viewport: string;
+        width: number;
+        before: { url: string; height: number };
+        after: { url: string; height: number };
+        regions: {
+          n: number;
+          b: number[] | null;
+          a: number[] | null;
+          bMark: number[] | null;
+          aMark: number[] | null;
+        }[];
+        /** The changes this screen shows, by number. */
+        changes: number[];
+      }[];
+      /** Every declared change, numbered as its outlines are. */
+      changes?: { n: number; text: string }[];
     } | null;
   })[];
   /** Proposals awaiting THIS viewer's vote — pinned above the themes. */

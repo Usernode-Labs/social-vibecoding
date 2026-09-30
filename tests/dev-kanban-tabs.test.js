@@ -304,7 +304,7 @@ test('tab counts mirror the column header counts', () => {
   assert.equal(tabCount(html, 'inreview'), '1');
   assert.equal(tabCount(html, 'done'), '3');
   // Same numbers in the (desktop-only) column headings.
-  assert.match(html, /Issues <span[^>]*>· 2<\/span>/);
+  assert.match(html, /Requests <span[^>]*>· 2<\/span>/, 'the Issues column is "Requests" (UI overhaul)');
   assert.match(html, /Done <span[^>]*>· 3<\/span>/);
 });
 

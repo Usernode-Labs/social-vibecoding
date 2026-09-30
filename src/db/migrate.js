@@ -10506,6 +10506,18 @@ async function seedStagingImportedPrProposal(pool, config) {
   const headSha1 = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
   const branch1 = 'staging-fixture/imported-pr';
   let id1;
+  // #2722: an advisory "Content rules" flag rides on this passing proposal so
+  // the staging preview shows the row without calling the reviewer. Advisory,
+  // so check_state stays 'passing'.
+  const fixture1Results = JSON.stringify([
+    { name: 'loads with no console errors', status: 'pass' },
+    {
+      index: -5, name: 'Content rules', path: 'proposal diff', status: 'fail', advisory: true,
+      consoleErrors: [], summary: '',
+      failureReason: 'Flagged: Violence in src/staging-demo/game.js. Staging demo: the demo game shows a cartoon sword fight.',
+      reviewedSha: headSha1,
+    },
+  ]);
   {
     const { rows: have } = await pool.query(
       'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
@@ -10524,11 +10536,11 @@ async function seedStagingImportedPrProposal(pool, config) {
             '[staging fixture] Imported PR — feature from an external contributor',
             'In plain terms: an outside contributor built this on GitHub and it was imported here so the group can vote on it.',
             'promoted', 'imported', $4, 'octo-contributor',
-            'passing', '[{"name":"loads with no console errors","status":"pass"}]'::jsonb,
+            'passing', $6::jsonb,
             $4, NOW() - INTERVAL '10 minutes',
             $5, NOW() - INTERVAL '12 minutes', NOW() - INTERVAL '12 minutes')
          RETURNING id`,
-        [appId, importer.id, branch1, headSha1, votesRequired]
+        [appId, importer.id, branch1, headSha1, votesRequired, fixture1Results]
       );
       id1 = rows[0].id;
     } else {
@@ -10536,9 +10548,10 @@ async function seedStagingImportedPrProposal(pool, config) {
         `UPDATE chat_sessions
             SET source = 'imported', imported_pr_head_sha = $2,
                 imported_pr_author = 'octo-contributor', check_state = 'passing',
-                checks_commit_sha = $2, checks_checked_at = NOW()
+                checks_commit_sha = $2, checks_checked_at = NOW(),
+                test_results = $3::jsonb
           WHERE id = $1`,
-        [id1, headSha1]
+        [id1, headSha1, fixture1Results]
       );
     }
     // A yes vote or two so the tally pill fills.

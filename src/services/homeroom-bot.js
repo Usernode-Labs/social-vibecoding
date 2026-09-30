@@ -175,6 +175,13 @@ const BACKOFF_BASE_MS = 2 * 60 * 1000;
 const BACKOFF_CEILING_MS = 60 * 60 * 1000;
 // How far past one turn's budget a claimed queue row counts as abandoned.
 const STALE_CLAIM_MARGIN_SECONDS = 10 * 60;
+// A build on the platform's own repository gets this many times a build's
+// clocks, its spec's and its build turn's (#3396). The repository is far
+// larger than any app's: its specs ran past 10 minutes, and a build ran out
+// of time on its 92nd model request, in the middle of the test run the
+// repository's own instructions ask for, having spent $0.29. Time, not
+// money, is what those builds run out of.
+const PLATFORM_BUILD_TIME_FACTOR = 2;
 
 // Bounds on what a verdict may carry into the ledger.
 const MAX_FIELD_CHARS = 4000;
@@ -1782,8 +1789,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
 // up to a turn's budget; run inline it held up the rest of its app's batch,
 // and one of the loop's few slots with it. So a ready verdict only QUEUES
 // its build (build_queued_at on its run), and this lane drains that queue
-// with a concurrency of its own: `buildConcurrency` builds at once, at most
-// one per app, so one busy board cannot take every slot. Each build is its
+// with a concurrency of its own: `buildConcurrency` builds at once, shared
+// between apps in turns, so one busy board cannot starve another, but a
+// slot no other app wants is not left idle either. Each build is its
 // own session on its own temporary worker, so builds side by side share
 // nothing but the bot's weekly allowance, which every drain checks first.
 //
@@ -1842,6 +1850,16 @@ function shadowBuildSkipReason(settings, app, config = {}) {
   return null;
 }
 
+/**
+ * The clocks for one build of `app`: the build turn's, from the turn
+ * budget, and the spec's, from its own cap. The platform gets
+ * PLATFORM_BUILD_TIME_FACTOR times both.
+ */
+function buildBudgets(app, config, turnBudgetMs) {
+  const factor = isPlatformRepo(app, config) ? PLATFORM_BUILD_TIME_FACTOR : 1;
+  return { turnBudgetMs: turnBudgetMs * factor, specBudgetMs: live.SPEC_TURN_MAX_MS * factor };
+}
+
 function shadowBuildsApply(settings, app, config = {}) {
   return shadowBuildSkipReason(settings, app, config) === null;
 }
@@ -1870,11 +1888,17 @@ async function queueShadowBuild(pool, runId) {
 
 /**
  * Builds a finished process never recorded. One still in this process is
- * left alone whatever its age; one past a turn's budget and margin is put
- * back in the queue, or recorded failed once it has had its attempts.
+ * left alone whatever its age; one past the longest a build can take (a
+ * platform build's spec and build turn, #3396) and a margin is put back in
+ * the queue, or recorded failed once it has had its attempts. The one bound
+ * serves every app: waiting longer on an abandoned app build holds no slot
+ * in this process, while a shorter bound would recycle a platform build that
+ * is still running.
  */
 async function releaseStaleBuilds(pool, settings) {
-  const seconds = (Number(settings?.turnSeconds) || DEFAULTS.turnSeconds) + STALE_CLAIM_MARGIN_SECONDS;
+  const turnSeconds = Number(settings?.turnSeconds) || DEFAULTS.turnSeconds;
+  const seconds = PLATFORM_BUILD_TIME_FACTOR * (turnSeconds + live.SPEC_TURN_MAX_MS / 1000)
+    + STALE_CLAIM_MARGIN_SECONDS;
   const { rows } = await pool.query(
     `UPDATE homeroom_bot_runs
         SET build_at = CASE WHEN build_attempts < $3 THEN NULL ELSE build_at END,
@@ -1884,6 +1908,12 @@ async function releaseStaleBuilds(pool, settings) {
       WHERE build_queued_at IS NOT NULL AND build_at IS NOT NULL AND build_ok IS NULL
         AND build_at < NOW() - make_interval(secs => $1)
         AND NOT (id = ANY($2::int[]))
+        -- A build whose worker outlived a restart is restart recovery's to
+        -- finish (#3401): its session still carries the turn in flight.
+        AND NOT EXISTS (
+          SELECT 1 FROM chat_sessions cs
+           WHERE cs.id = homeroom_bot_runs.build_session_id AND cs.active_turn IS NOT NULL
+        )
       RETURNING id, build_ok`,
     [seconds, [...buildsInFlight.keys()], MAX_BUILD_ATTEMPTS],
   );
@@ -1896,29 +1926,35 @@ async function releaseStaleBuilds(pool, settings) {
   return rows.length;
 }
 
-// The oldest queued build of each app with none under way, oldest first,
-// claimed in one statement. `$2` is the paused apps: a paused app's builds
-// wait with its triage.
+// The free slots, dealt to apps in turns, claimed in one statement. An
+// app's queued builds are numbered oldest first, starting after the builds
+// it already has under way; the claim takes the lowest numbers, so every
+// app with a build waiting gets one slot before any app gets a second, and
+// an app alone in the queue takes every free slot. Ties go to the build
+// queued first. `$2` is the paused apps: a paused app's builds wait with
+// its triage.
 const CLAIM_BUILDS_SQL = `WITH building AS (
-    SELECT DISTINCT app_id FROM homeroom_bot_runs
+    SELECT app_id, COUNT(*)::int AS n FROM homeroom_bot_runs
      WHERE build_queued_at IS NOT NULL AND build_at IS NOT NULL AND build_ok IS NULL
-  ), heads AS (
-    SELECT DISTINCT ON (r.app_id) r.id, r.build_queued_at
+     GROUP BY app_id
+  ), queued AS (
+    SELECT r.id, r.build_queued_at,
+           COALESCE(b.n, 0)
+             + ROW_NUMBER() OVER (PARTITION BY r.app_id ORDER BY r.build_queued_at, r.id) AS turn
       FROM homeroom_bot_runs r
       JOIN apps a ON a.id = r.app_id
+      LEFT JOIN building b ON b.app_id = r.app_id
      WHERE r.build_queued_at IS NOT NULL AND r.build_at IS NULL AND r.build_ok IS NULL
        AND a.status = 'running' AND a.repo_url IS NOT NULL
        AND NOT (a.slug = ANY($2::text[]))
-       AND r.app_id NOT IN (SELECT app_id FROM building)
-     ORDER BY r.app_id, r.build_queued_at, r.id
   ), picked AS (
-    SELECT id FROM heads ORDER BY build_queued_at, id LIMIT $1
+    SELECT id FROM queued ORDER BY turn, build_queued_at, id LIMIT $1
   )
   UPDATE homeroom_bot_runs r
      SET build_at = NOW(), build_attempts = r.build_attempts + 1
     FROM picked
    WHERE r.id = picked.id AND r.build_at IS NULL
-  RETURNING r.id, r.app_id, r.issue_number, r.build_note`;
+  RETURNING r.id, r.app_id, r.issue_number, r.build_note, r.build_spec_md`;
 
 /** A build error the platform, not the model, produced. */
 function isInfraBuildError(error) {
@@ -1944,12 +1980,16 @@ function noteBuildFault(error, now = Date.now()) {
  */
 async function shadowBuild({
   pool, config, bot, app, repo, issueNumber, issue, seed, parsed, runId,
-  turnBudgetMs, model, deps,
+  turnBudgetMs, model, deps, presetSpec = null,
 }) {
   const { limits, managedOpenRouter } = deps;
   const built = await live.buildAndPropose({
     pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-    turnBudgetMs, model, deps, propose: false,
+    ...buildBudgets(app, config, turnBudgetMs), model, deps, presetSpec,
+    onSession: (session) => pool.query(
+      'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [runId, session.id],
+    ),
+    propose: false,
   });
   if (built.costUsd > 0) {
     try {
@@ -1981,7 +2021,11 @@ async function shadowBuild({
       WHERE id = $1`,
     [runId, !!built.ok, built.branchName || null, built.sha || null,
       Number.isFinite(built.commits) ? built.commits : null,
-      built.ok ? null : clip(built.error || 'unknown', MAX_ERROR_CHARS),
+      // A spec that failed is noted even on a build that went ahead from
+      // the plan; build_ok says which it was (#3396).
+      built.ok
+        ? (built.specNote ? clip(built.specNote, MAX_ERROR_CHARS) : null)
+        : clip([built.error || 'unknown', built.specNote].filter(Boolean).join('; '), MAX_ERROR_CHARS),
       built.costUsd ?? null, built.sessionId || null, built.specMd || null],
   );
   log.info('homeroom-bot', 'Shadow build', {
@@ -2058,7 +2102,7 @@ async function runQueuedBuild(pool, config, { bot, claim, settings, deps = {} })
   );
   return shadowBuild({
     pool, config, bot, app, repo, issueNumber, issue, seed,
-    parsed: { buildNote: claim.build_note }, runId, turnBudgetMs,
+    parsed: { buildNote: claim.build_note }, runId, turnBudgetMs, presetSpec: claim.build_spec_md || null,
     model: config.openrouterDefaultCodexModel || null,
     deps: {
       worker, agentTurn, limits, managedOpenRouter, sessions, activeWorkers, sessionLifecycle, github,
@@ -2159,6 +2203,211 @@ function wakeBuilds() {
   if (!buildLaneOn || !loopConfig) return false;
   scheduleBuilds(loopConfig, 0);
   return true;
+}
+
+// ── After a restart ──────────────────────────────────────────────────────
+//
+// A platform redeploy restarts the server, not the worker: a build's worker
+// is its own Pod, and its turn runs detached with a journal. Restart
+// recovery (server.js adoptOrphanWorker → resumeDetachedTurn) follows that
+// journal to the end, as it does a person's turn. What it does NEXT is the
+// dev-chat tail: a draft PR, a staging preview, a wrap-up and a
+// notification, none of which a shadow build may leave. So recovery hands
+// the bot's own turns back here instead (#3401), the way Mayor's
+// handBackAfterRecovery takes back its conversations, and the bot records
+// what the turn did on the run it belongs to.
+//
+// Which sessions: the bot's, while `active`, which is every bot turn except
+// a follow-up on a proposal the group is voting on. That session is
+// `promoted`, and a person's recovery (the PR and staging updated) is the
+// right end for it.
+
+/** True when restart recovery should hand this session to the bot. */
+function isRecoveredBotSession(session) {
+  return !!session
+    && session.username === live.BOT_USERNAME
+    && session.user_is_synthetic === true
+    && session.status === 'active';
+}
+
+/** The build run a session is the build of, while it is still under way. */
+async function runOfSession(pool, sessionId) {
+  const { rows } = await pool.query(
+    `SELECT id, app_id, issue_number, build_attempts
+       FROM homeroom_bot_runs
+      WHERE build_session_id = $1 AND build_at IS NOT NULL AND build_ok IS NULL
+      ORDER BY id DESC LIMIT 1`,
+    [sessionId],
+  );
+  return rows[0] || null;
+}
+
+/**
+ * When the bot's own clock ends a recovered turn: its start plus the budget
+ * the turn had (a build's or a spec's, the platform's doubled), or null to
+ * leave it unbounded (no start on record).
+ */
+async function recoveryDeadline(pool, config, session, activeTurn) {
+  const startedAt = toMs(activeTurn?.startedAt);
+  if (!startedAt) return null;
+  const settings = await readSettings(pool);
+  const turnMs = 1000 * clampInt(settings?.turnSeconds, DEFAULTS.turnSeconds, MIN_TURN_SECONDS, MAX_TURN_SECONDS);
+  const budgets = buildBudgets({ repo_url: session.repo_url }, config, turnMs);
+  const run = await runOfSession(pool, session.id);
+  if (!run) return startedAt + turnMs; // a triage turn: one turn's budget
+  return startedAt + (activeTurn.mode === 'scout'
+    ? Math.min(budgets.turnBudgetMs, budgets.specBudgetMs)
+    : budgets.turnBudgetMs);
+}
+
+/** Put a run back in the queue without spending an attempt: a restart is not the build's failure. */
+async function handBackRun(pool, runId, why) {
+  await pool.query(
+    `UPDATE homeroom_bot_runs
+        SET build_at = NULL, build_attempts = GREATEST(build_attempts - 1, 0), build_session_id = NULL
+      WHERE id = $1 AND build_ok IS NULL`,
+    [runId],
+  );
+  log.info('homeroom-bot', 'Handed a build back to the queue after a restart', { runId, why });
+  wakeBuilds();
+}
+
+/** A build session is archived once its run is recorded; the triage session rests paused. */
+async function putAwayRecoveredSession(pool, session, { archive }) {
+  if (archive) {
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'archived', archived_at = NOW()
+        WHERE id = $1 AND status IN ('active', 'paused')`,
+      [session.id],
+    ).catch(() => {});
+    return;
+  }
+  await pool.query(
+    "UPDATE chat_sessions SET status = 'paused', last_activity_at = NOW() WHERE id = $1 AND status = 'active'",
+    [session.id],
+  ).catch(() => {});
+}
+
+/** Both turns of a build session are the build's cost, as on the live path. */
+async function sessionCostUsd(pool, sessionId) {
+  const { rows } = await pool.query(
+    'SELECT SUM(estimated_cost_usd)::float8 AS cost FROM agent_turns WHERE session_id = $1',
+    [sessionId],
+  );
+  const cost = Number(rows[0]?.cost);
+  return Number.isFinite(cost) ? cost : null;
+}
+
+/** A recovered turn's cost, debited from the bot's allowance as the live path debits a build. */
+async function debitRecovered(pool, session, costUsd, deps = {}) {
+  if (!(costUsd > 0)) return;
+  try {
+    const managedOpenRouter = deps.managedOpenRouter || require('./openrouter-managed-keys');
+    const limits = deps.limits || require('./limits');
+    if (await managedOpenRouter.usesIncludedKey(pool, session.user_id)) {
+      await limits.recordSpend(pool, session.user_id, Math.round(costUsd * 1e6) / 1e4, { byok: false });
+    }
+  } catch (err) {
+    log.warn('homeroom-bot', 'Recovered turn spend debit failed', { sessionId: session.id, err: err.message });
+  }
+}
+
+/**
+ * A recovered turn of the bot's, finished. `result` is what the journal
+ * replay returned; `timedOut` says the bot's clock, re-armed by recovery,
+ * ended it. Never throws on the run's account: recovery clears the turn
+ * record whatever this does.
+ *
+ *   - a build turn: recorded on its run, built or failed, as shadowBuild
+ *     records one, and its cost debited from the allowance;
+ *   - a spec turn: the spec kept on the run, and the run put back in the
+ *     queue, where its build starts from that spec; a spec that found the
+ *     request impossible is recorded as such;
+ *   - a turn no build run owns (a triage): nothing to record; the queue
+ *     row it held is released and triaged again.
+ */
+async function finishRecoveredTurn({ pool, session, activeTurn, result = {}, timedOut = false, deps = {} }) {
+  const run = await runOfSession(pool, session.id);
+  if (!run) {
+    await putAwayRecoveredSession(pool, session, { archive: false });
+    log.info('homeroom-bot', 'Recovered a bot turn no build owns; left for the queue', { sessionId: session.id });
+    return 'released';
+  }
+  const note = ' (finished after a restart)';
+  if (activeTurn?.mode === 'scout') {
+    const read = timedOut ? { ok: false, error: 'the spec ran past its time limit' } : live.readSpec(result.lastResultText);
+    await putAwayRecoveredSession(pool, session, { archive: true });
+    const specCostUsd = await sessionCostUsd(pool, session.id);
+    await debitRecovered(pool, session, specCostUsd, deps);
+    if (read.blocked) {
+      await pool.query(
+        `UPDATE homeroom_bot_runs SET build_ok = FALSE, build_error = $2, build_cost_usd = $3
+          WHERE id = $1 AND build_ok IS NULL`,
+        [run.id, clip(read.error + note, MAX_ERROR_CHARS), specCostUsd],
+      );
+      wakeBuilds();
+      return 'blocked';
+    }
+    if (read.ok) {
+      await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [run.id, read.specMd]);
+    }
+    await handBackRun(pool, run.id, read.ok ? 'the spec is written; the build goes on from it' : read.error);
+    return 'requeued';
+  }
+
+  const built = result.pushOk === true && Number(result.ahead) > 0 && !timedOut;
+  const error = built ? null
+    : timedOut ? `the build ran past its time limit${note}`
+      : `the build produced no change to propose${note}`;
+  const costUsd = await sessionCostUsd(pool, session.id);
+  await pool.query(
+    `UPDATE homeroom_bot_runs r
+        SET build_ok = $2, build_branch = $3, build_sha = $4, build_commits = $5,
+            build_error = $6, build_cost_usd = $7,
+            build_spec_md = COALESCE(r.build_spec_md, (SELECT spec_md FROM chat_sessions WHERE id = $8))
+      WHERE r.id = $1 AND r.build_ok IS NULL`,
+    [run.id, built, built ? session.branch_name || null : null, result.sha || null,
+      built ? Number(result.ahead) : null, error, costUsd, session.id],
+  );
+  await putAwayRecoveredSession(pool, session, { archive: true });
+  await debitRecovered(pool, session, costUsd, deps);
+  log.info('homeroom-bot', 'Recorded a shadow build that finished after a restart', {
+    runId: run.id, sessionId: session.id, ok: built, commits: result.ahead ?? null, costUsd,
+  });
+  wakeBuilds();
+  return built ? 'shadow_built' : 'shadow_failed';
+}
+
+/**
+ * A bot turn recovery could not follow: the worker is gone, or the journal
+ * replay failed. The run goes back in the queue unspent; the session is put
+ * away. The caller clears the turn record.
+ */
+async function abandonRecoveredTurn({ pool, session, why }) {
+  const run = await runOfSession(pool, session.id);
+  if (run) await handBackRun(pool, run.id, why);
+  await putAwayRecoveredSession(pool, session, { archive: !!run });
+  return run ? 'requeued' : 'released';
+}
+
+/**
+ * Hold a lane slot for a build recovery is finishing, so the lane does not
+ * start more than `buildConcurrency` builds beside it. Resolves with the
+ * recovery's own outcome.
+ */
+async function holdSlotDuringRecovery(pool, sessionId, recovery) {
+  let run = null;
+  try { run = await runOfSession(pool, sessionId); } catch (_) { run = null; }
+  if (!run || buildsInFlight.has(run.id)) return recovery;
+  const promise = Promise.resolve(recovery).finally(() => {
+    buildsInFlight.delete(run.id);
+    wakeBuilds();
+  });
+  buildsInFlight.set(run.id, {
+    appId: run.app_id, issueNumber: run.issue_number, startedAt: new Date().toISOString(),
+    promise: promise.catch(() => null), recovered: true,
+  });
+  return promise;
 }
 
 /**
@@ -2538,7 +2787,7 @@ async function actOnVerdict({
     };
     const built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-      turnBudgetMs, model, deps, onSpec,
+      ...buildBudgets(app, config, turnBudgetMs), model, deps, onSpec,
     });
     if (built.specMd) {
       await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [runId, built.specMd])
@@ -2908,6 +3157,7 @@ const RUNS_SQL = `SELECT r.id, r.issue_number, r.mode, r.verdict, r.determined, 
             r.proposal_session_id,
             r.build_ok, r.build_branch, r.build_sha, r.build_commits, r.build_error,
             r.build_cost_usd::float8 AS build_cost_usd, r.build_at, r.build_queued_at, r.build_spec_md,
+            r.build_session_id,
             a.slug AS app_slug, a.name AS app_name, a.repo_url, u.username AS rated_by
        FROM homeroom_bot_runs r
        JOIN apps a ON a.id = r.app_id
@@ -2955,6 +3205,8 @@ const EXPORT_COLUMNS = Object.freeze([
   'build_cost_usd', 'build_at', 'build_queued_at',
   // The spec the build worked from, live or shadow.
   'build_spec_md',
+  // #3385: the build's session, to look a build up by.
+  'build_session_id',
 ]);
 
 /** One run as the values of EXPORT_COLUMNS, in that order. */
@@ -3288,6 +3540,13 @@ module.exports = {
   buildLaneSummary,
   shadowBuildSkipReason,
   isPlatformRepo,
+  buildBudgets,
+  PLATFORM_BUILD_TIME_FACTOR,
+  isRecoveredBotSession,
+  recoveryDeadline,
+  finishRecoveredTurn,
+  abandonRecoveredTurn,
+  holdSlotDuringRecovery,
   isInfraBuildError,
   wakeBuilds,
   MAX_BUILD_CONCURRENCY,

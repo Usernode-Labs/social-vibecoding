@@ -32,8 +32,10 @@ const CONVENTIONS = fs.readFileSync(
 );
 
 // The excerpt has to survive a host model that may truncate the work order,
-// and it is background guidance — generous, but not unbounded.
-const MAX_ESSENTIALS_BYTES = 6 * 1024;
+// and it is background guidance — generous, but not unbounded. Raised from
+// 6 KB for rule 11, the content rules (#2722): an offline agent must not
+// build what keeps an app from rating "None".
+const MAX_ESSENTIALS_BYTES = 7 * 1024;
 
 test('the work-order markers exist in app-conventions.md, exactly once each', () => {
   const begins = CONVENTIONS.split(prompts.WORK_ORDER_BEGIN).length - 1;
@@ -78,6 +80,8 @@ test('the excerpt covers what an offline agent gets wrong, in priority order', (
   assert.match(essentials, /USERNODE_PLATFORM_API_V1_URL/);
   assert.match(essentials, /never a hardcoded host/);
   assert.match(essentials, /SIGTERM/);
+  assert.match(essentials, /Content rules/);
+  assert.match(essentials, /loot boxes/);
 });
 
 test('the excerpt states the vendoring rule without claiming a check enforces it', () => {
@@ -285,23 +289,23 @@ test('the work order separates manual testing routes from interaction evidence',
   assert.match(order, /do not add a screenshot-only route/);
   assert.doesNotMatch(order, /query param handled at boot/);
 
-  // The agent declares what changed and how a user reaches that exact state;
-  // Homeroom explores once, then deterministically proves the pair twice.
-  assert.match(order, /visualEvidence/);
-  assert.match(order, /record_visual_evidence_intent/);
+  // The agent declares what changed and how a person reaches that exact
+  // state; Homeroom's shots agent takes the before/after shots.
+  assert.match(order, /shots/);
+  assert.match(order, /declare_visible_changes/);
   assert.match(order, /helper is not exposed[\s\S]*documented version-1 object directly/,
     'a connector without the helper still documents the supported v1 input path');
-  assert.match(order, /user-visible claim/);
-  assert.match(order, /real interaction steps/);
-  assert.match(order, /bounded plan/);
-  assert.match(order, /replays\s+it\s+twice\s+against\s+exact\s+base\s+and\s+head\s+revisions/);
+  assert.match(order, /before\/after shots/);
+  assert.match(order, /declared\s+changes/);
+  assert.match(order, /report that blocker/);
+  assert.doesNotMatch(order, /replay|bounded plan/i, 'no replay plan is asked for any more');
 
   // The submission response distinguishes a malformed manual route from the
   // evidence lifecycle instead of silently replacing either with '/'.
   assert.match(order, /testingPathsRejected/);
-  assert.match(order, /visualEvidenceAccepted/);
-  assert.match(order, /visualEvidenceState/);
-  assert.match(order, /visualEvidenceNextStep/);
+  assert.match(order, /visibleChangesAccepted/);
+  assert.match(order, /shotsState/);
+  assert.match(order, /shotsNextStep/);
 });
 
 test('the work order says the checks gate merge and how to clear them', () => {
@@ -321,10 +325,13 @@ test('the work order says the checks gate merge and how to clear them', () => {
   assert.match(step7, /do not call `prepare_work`/);
   // Evidence is revision-scoped and can fail honestly; no generic home-page
   // screenshot is allowed to masquerade as proof of an unreachable state.
-  assert.match(step7, /visualEvidence/);
-  assert.match(step7, /structured claim and flow were accepted/);
+  assert.match(step7, /shots/);
+  assert.match(step7, /check that your declared changes were accepted/);
   assert.match(step7, /wait for `verified`/);
-  assert.match(step7, /`failed` includes a specific recovery reason/);
+  assert.match(step7, /`shotResults` says why any change was skipped/);
+  assert.match(step7, /`failed` includes a specific reason/);
+  assert.match(step7, /a ready change's `note` says what its shots leave out/);
+  assert.match(step7, /fix `steps` or `hints` rather than accepting a partial pair/);
   assert.match(step7, /does not substitute a home-page screenshot/);
   assert.doesNotMatch(step7, /captureDefaultedToRoot/);
 });
@@ -359,7 +366,7 @@ test('every addition sits above the appendix, and none brings a fence', () => {
   for (const marker of [
     'get_platform_conventions',
     'testingPaths',
-    'visualEvidence',
+    'shots',
     '7. THEN CHECK THE CHECKS',
   ]) {
     const at = order.indexOf(marker);

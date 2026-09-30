@@ -379,8 +379,8 @@ function listChildren(html) {
 
 test('#workshop-list holds the empty card, then one section per audience, in order', () => {
   // THE LIST IS A WRAPPER NOW (communities). Its children are the empty
-  // card and up to three SECTIONS — Communities, Groups, Just you — each a
-  // SectionHeader over a GroupedList of its own. The declared checks select
+  // card and up to three SECTIONS — Public communities, Private communities,
+  // Just you — each a SectionHeader over a GroupedList of its own. The declared checks select
   // through it with DESCENDANT combinators (`#workshop-list
   // a[data-workshop-app=…]`) and name the sections by attribute, so what this
   // pins is the tree they resolve against.
@@ -406,7 +406,7 @@ test('#workshop-list holds the empty card, then one section per audience, in ord
   assert.match(kids[0].attrs.class || '', /\bhidden\b/, 'and hidden while there are rows');
   assert.deepEqual(kids.slice(1).map((k) => [k.tag, k.attrs['data-workshop-section']]),
     [['section', 'open'], ['section', 'invited'], ['section', 'solo']],
-    'Communities, Groups, Just you — the order a person reaches for them');
+    'Public communities, Private communities, Just you — the order a person reaches for them');
 
   const out = html();
   for (const [section, slug] of [['open', 'staging-demo-your-app'], ['invited', 'staging-demo-long-name'], ['solo', 'staging-demo-emoji-icon']]) {
@@ -414,7 +414,7 @@ test('#workshop-list holds the empty card, then one section per audience, in ord
     const row = out.indexOf(`data-workshop-app="${slug}"`);
     assert.ok(at >= 0 && row > at, `${slug} is drawn inside the ${section} section`);
   }
-  for (const label of ['Communities', 'Groups', 'Just you']) {
+  for (const label of ['Public communities', 'Private communities', 'Just you']) {
     assert.match(out, new RegExp(`<span>${label}</span>`), `the ${label} header is drawn`);
   }
   assert.match(out, /data-workshop-audience="invited"/, 'each row says its audience');
@@ -489,7 +489,7 @@ test('rows go most recently active first; undated ones last, in the server\'s or
 test('groupRows: three sections in order, empty ones left out, an unknown audience read as open', () => {
   const { groupRows, SECTIONS, SECTION_LIMIT } = loadTsx('frontend/src/features/workshop/index.tsx');
   assert.deepEqual(SECTIONS.map((s) => [s.key, s.label]),
-    [['open', 'Communities'], ['invited', 'Groups'], ['solo', 'Just you']]);
+    [['open', 'Public communities'], ['invited', 'Private communities'], ['solo', 'Just you']]);
   assert.equal(SECTION_LIMIT, 3, 'three most recent, then "Show N more"');
   const out = groupRows([
     { slug: 'a', audience: 'solo', last_active_at: '2026-09-02T00:00:00Z', working: 0, needs: 0 },
@@ -499,7 +499,7 @@ test('groupRows: three sections in order, empty ones left out, an unknown audien
   ]);
   assert.deepEqual(out.map((s) => [s.key, s.rows.map((r) => r.slug)]),
     [['open', ['c', 'b']], ['solo', ['d', 'a']]],
-    'no Groups section when there are no groups, and a row is never dropped');
+    'no Private communities section when there are none, and a row is never dropped');
 });
 
 test('a section shows its three most recent and folds the rest under "Show N more"', () => {
@@ -515,7 +515,7 @@ test('a section shows its three most recent and folds the rest under "Show N mor
   assert.match(html, /<button[^>]*data-workshop-more="open"[^>]*aria-expanded="false"/,
     'the fold is a button row of the same card, never an anchor');
   assert.match(html, />Show 2 more</);
-  assert.match(html, /aria-label="5 in Communities"/, 'the header counts the whole section');
+  assert.match(html, /aria-label="5 in Public communities"/, 'the header counts the whole section');
 });
 
 test('"Show N more" reveals five at a time, then folds back (#3269)', () => {
@@ -897,38 +897,49 @@ test('#3051: rows group by app and section, and the demo agrees with the demo co
     'real rows win, as they do for the counts');
 });
 
-test('#3051: each tab lists its items under each of your apps, in the list\'s order', () => {
+test('the Needs you row names the communities waiting on you, and the tabs are gone', () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
-  const rows = [
+  const src = read('frontend/src/features/workshop/index.tsx');
+  const rows = (names) => names.map((name, i) => ({ slug: `s${i}`, name, working: 0, needs: 1 }));
+  assert.equal(mod.needsApps([
     { slug: 'owed', name: 'Owed', working: 0, needs: 7 },
-    { slug: 'mine', name: 'Mine', working: 1, needs: 0 },
-    { slug: 'quiet', name: 'Quiet', working: 0, needs: 0 },
-  ];
-  const item = (kind, id) => ({ kind, id, title: `#${id}`, status: 'promoted', at: null });
-  const items = {
-    owed: { working: [], needs: [item('proposal', 1), item('governance', 2)] },
-    mine: { working: [item('session', 3)], needs: [] },
-    // An app that is NOT one of yours: the endpoint answers for every app the
-    // viewer can see, and the screen keeps to the rows /api/apps called yours.
-    stranger: { working: [item('session', 9)], needs: [item('proposal', 9)] },
-  };
-  const needs = mod.groupItems(rows, items, 'needs');
-  assert.deepEqual(needs.map((g) => [g.app.slug, g.items.length, g.more]), [['owed', 2, 5]],
-    'the bounded read left five of seven out, and the tab says so');
-  const status = mod.groupItems(rows, items, 'status');
-  assert.deepEqual(status.map((g) => [g.app.slug, g.items.length, g.more]), [['mine', 1, 0]]);
-
-  assert.equal(mod.itemHref('my app', item('proposal', 1)), '#app/my%20app/dev/proposals/1');
-  assert.equal(mod.itemHref('x', item('governance', 2)), '#app/x/dev/governance/2');
-  assert.equal(mod.itemHref('x', item('session', 3)), '#app/x/dev/sessions/3');
-  assert.equal(mod.itemCaption(item('governance', 2), 'needs'), 'Group decision waiting on your vote');
-  assert.equal(mod.itemCaption({ ...item('session', 3), status: 'paused' }, 'status'), 'Your change, paused');
-  assert.doesNotMatch(read('frontend/src/features/workshop/index.tsx'), /—'|'[^'\n]*—[^'\n]*'/,
-    'no em dash in the screen\'s copy');
+    { slug: 'quiet', name: 'Quiet', working: 2, needs: 0 },
+    { slug: 'bare', working: 0, needs: 1 },
+  ]), 'Owed, bare', 'only the communities that owe a vote, by name (the slug when there is none)');
+  assert.equal(mod.needsApps(rows(['A', 'B', 'C', 'D', 'E'])), 'A, B, C and 2 more');
+  // One page: no Current status | Needs you strip, no summary legend, and no
+  // list of your own items under the communities (Profile's Your changes).
+  assert.doesNotMatch(src, /id="workshop-tab-(status|needs)"/);
+  assert.doesNotMatch(src, /id="workshop-total-(working|needs)"/);
+  assert.doesNotMatch(src, /\/api\/workshop\/items/, 'the screen no longer reads the items');
+  assert.match(src, /data-workshop-needs-open=""/);
+  assert.match(src, /title=\{`\$\{totals\.needs\} \$\{totals\.needs === 1 \? 'vote' : 'votes'\} waiting on you`\}/);
+  assert.match(src, /onClick=\{\(\) => workshopController\.setTab\('needs'\)\}/, 'the row opens the feed');
+  assert.match(src, /data-workshop-needs-back=""/, 'and the feed has a way back');
+  assert.doesNotMatch(src, /—'|'[^'\n]*—[^'\n]*'/, 'no em dash in the screen\'s copy');
 
   assert.equal(mod.tabFromQuery('?demo=1&ws=needs'), 'needs');
   assert.equal(mod.tabFromQuery('?ws=all'), null, 'All items is an app\'s own tab, not this screen\'s');
   assert.equal(mod.tabFromQuery(''), null);
+});
+
+test('the Needs you row is drawn only while a vote waits on you', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
+  mod.workshopStore.set({
+    open: true, error: false, tab: 'status', scopeOpen: false,
+    rows: [{ slug: 'garden', name: 'Garden', working: 0, needs: 2 }, { slug: 'swap', name: 'Swap', working: 1, needs: 1 }],
+    feed: null, feedError: false, feedCapped: false,
+  });
+  let out = html();
+  assert.match(out, /data-workshop-needs-door=""/);
+  assert.match(out, /3 votes waiting on you/);
+  assert.match(out, /Garden, Swap/);
+  assert.match(out, />Review</);
+  mod.workshopStore.set({ rows: [{ slug: 'swap', name: 'Swap', working: 1, needs: 0 }] });
+  out = html();
+  assert.doesNotMatch(out, /data-workshop-needs-door=/, 'nothing to say, so no row');
+  mod.workshopStore.set({ open: false, tab: 'status', rows: null, feed: null, feedError: false });
 });
 
 test('#3270: the Needs you pane is one feed, every project mixed, one card per screen', () => {
@@ -939,7 +950,7 @@ test('#3270: the Needs you pane is one feed, every project mixed, one card per s
     at: null, yes: 1, no: 0, app: { slug, name: slug.toUpperCase(), icon_url: null, icon_emoji: null }, ...extra,
   });
   mod.workshopStore.set({
-    open: true, error: false, tab: 'needs', scopeOpen: false, itemsError: false, items: {},
+    open: true, error: false, tab: 'needs', scopeOpen: false,
     rows: [{ slug: 'garden', name: 'Garden', working: 0, needs: 2 }, { slug: 'swap', name: 'Swap', working: 0, needs: 1 }],
     feed: [card('proposal', 8, 'garden'), card('governance', 9, 'swap'), card('proposal', 7, 'garden')],
     feedError: false, feedCapped: false,
@@ -962,10 +973,10 @@ test('#3270: the Needs you pane is one feed, every project mixed, one card per s
   mod.workshopStore.set({ feed: null, feedError: true });
   out = html();
   assert.match(out.slice(out.indexOf('data-workshop-pane="needs"')), /data-needs-error=""/);
-  mod.workshopStore.set({ open: false, tab: 'status', rows: null, items: null, itemsError: false, feed: null, feedError: false });
+  mod.workshopStore.set({ open: false, tab: 'status', rows: null, feed: null, feedError: false });
 });
 
-test('#3051: the controller reads the items alongside, and survives losing them', async () => {
+test('#3270: the controller reads the Needs you feed alongside, and survives losing it', async () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const { workshopController, workshopStore } = mod;
   const priorWindow = global.window;
@@ -975,26 +986,19 @@ test('#3051: the controller reads the items alongside, and survives losing them'
     const answers = new Map([
       ['/api/apps', { ok: true, json: async () => ({ apps: [{ slug: 'a', name: 'A', is_member: true }] }) }],
       ['/api/workshop/counts', { ok: true, json: async () => ({ counts: { a: { working: 0, needs: 1 } } }) }],
-      ['/api/workshop/items', { ok: true, json: async () => ({ items: { a: { working: [], needs: [{ kind: 'proposal', id: 1 }] } } }) }],
       ['/api/workshop/needs-feed', { ok: true, json: async () => ({ items: [{ kind: 'proposal', id: 1, app: { slug: 'a' } }], max: 60 }) }],
     ]);
     const asked = [];
     global.fetch = async (url) => { asked.push(url); return answers.get(url) || { ok: false, json: async () => ({}) }; };
     await workshopController.open();
-    assert.ok(asked.includes('/api/workshop/items'), 'the items are read with the other two');
-    assert.equal(workshopStore.get().itemsError, false);
-    assert.equal(workshopStore.get().items.a.needs.length, 1);
-    assert.ok(asked.includes('/api/workshop/needs-feed'), 'and the Needs you feed with them (#3270)');
+    assert.ok(!asked.includes('/api/workshop/items'), 'your own items are Profile\'s now, not this screen\'s');
+    assert.ok(asked.includes('/api/workshop/needs-feed'), 'the Needs you feed is read with the other two (#3270)');
     assert.equal(workshopStore.get().feed.length, 1);
     assert.equal(workshopStore.get().feedCapped, false);
 
-    answers.set('/api/workshop/items', { ok: false, json: async () => ({}) });
-    await workshopController.reload();
-    assert.equal(workshopStore.get().error, false, 'losing the items is not the error card');
-    assert.equal(workshopStore.get().itemsError, true, 'the tabs say so instead');
     answers.set('/api/workshop/needs-feed', { ok: false, json: async () => ({}) });
     await workshopController.reload();
-    assert.equal(workshopStore.get().error, false, 'losing the feed is not the error card either');
+    assert.equal(workshopStore.get().error, false, 'losing the feed is not the error card');
     assert.equal(workshopStore.get().feedError, true);
     assert.deepEqual(workshopStore.get().rows.map((r) => r.slug), ['a']);
     workshopController.close();

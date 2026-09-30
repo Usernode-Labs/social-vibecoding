@@ -1337,9 +1337,32 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // in the same section via :has(), and the card's description as
   // expectText; its name and path are unchanged.
   //
+  // 820 → 821: +1 (welcome messages): Admin → Welcome messages, a new
+  // route (#admin/welcome-dm) with nothing already declared on it to fold
+  // into. It pins the section's intro with its form and its "Recently
+  // welcomed" card loaded beside it. At the floor, so MAX_DECLARED_TESTS
+  // went 840 → 850 in the same change (services/app-manifest.js), leaving
+  // 29 slots.
+  //
+  // 821 → 824: +3 (the hub with doors): the hub's since-your-last-visit
+  // summary card, its door to the Workshop page, and the Workshop page's
+  // Approval rules (with its back bar folded into the same check). The rest
+  // of the change was REWRITTEN in place: every "+"/tab-strip check now pins
+  // the hero's ⋯ or the page it moved to, and the since list's week headings
+  // are folded into its existing Clear / Show older check.
+  //
+  // 824 → 826: +2 (the UI overhaul's other pages): the Your work screen's
+  // Your changes and Your requests views, new routes with nothing declared
+  // on them to fold into. The rest was REWRITTEN in place: the menu's
+  // "Give feedback" / "New change" checks pin Ask for a change and Start a
+  // new change; the dialog's pin its new words; Communities' tab checks pin
+  // the Needs you page; Me's "More" check pins Your work beside it, the
+  // Your contributions check pins the Your work rows, and the Friends check
+  // opens its card.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 820);
+  checkCap.assertPinned(DAPP.tests.length, 826);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
@@ -1614,10 +1637,11 @@ test('the declared checks follow the two rows and the row’s last line', () => 
   const byName = (re) => DAPP.tests.find((t) => re.test(t.name));
   assert.match(byName(/Underway column names the exact state/).expectSelector, /\.dev-card-facts \.dev-badge\[data-work-state="paused"\]/);
   // The Needs-you feed: the deck became a feed, and the check walks to the rail's Vote
-  // control; a second check pins the item's own order (title, then the
-  // sentence, then the caption) with the same `+`/`~` direction.
+  // control; a second check pins the item's own order (who and when, then
+  // the title, then the sentence, then the caption) with the same `+`/`~`
+  // direction.
   assert.match(byName(/Needs-you tab is a feed of one decision per screen/).expectSelector, /\[data-ws-needs\] > \[data-ws-rail\] > button\[data-ws-rail-btn="vote"\]/);
-  assert.match(byName(/leads with its title, then the sentence a voter reads/).expectSelector, /\.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption > \.dev-ws-item-by/);
+  assert.match(byName(/leads with who and when, then its title, then the sentence a voter reads/).expectSelector, /> \.dev-ws-item-by \+ \.dev-ws-item-title \+ \.dev-ws-item-summary ~ \.dev-ws-item-caption"?$/);
   assert.match(byName(/Closes-#N rides the meta line as a tag/).expectSelector, /\.dev-card-meta > \.dev-badge\[data-issue-chip\]/);
   assert.match(byName(/facts are a row of their own under the status row/).expectSelector, /\.dev-card-status ~ \.dev-card-badges\.dev-card-facts > \.dev-badge/);
   assert.match(byName(/a card title wraps in full/).expectSelector, /\.dev-card-title:not\(\.dev-card-title-clamp\):not\(\[title\]\)/);

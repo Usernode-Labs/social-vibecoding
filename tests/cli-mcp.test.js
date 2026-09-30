@@ -639,7 +639,7 @@ test('proposal MCP tools call the native handoff lifecycle through promotion', a
         head_sha: 'b'.repeat(40),
         history: [{ id: 's3', kind: 'summary', content: 'Verified it.', phase: 'test' }],
         tests: [{ command: 'npm test', status: 'passed', summary: 'Green.' }],
-        visual_evidence: {
+        visible_changes: {
           version: 1,
           impact: 'ui',
           rationale: 'The proposal adds a new review panel.',
@@ -727,7 +727,7 @@ test('proposal MCP tools call the native handoff lifecycle through promotion', a
       headSha: 'b'.repeat(40),
       history: [{ id: 's3', kind: 'summary', content: 'Verified it.', phase: 'test' }],
       tests: [{ command: 'npm test', status: 'passed', summary: 'Green.' }],
-      visualEvidence: {
+      visibleChanges: {
         version: 1,
         impact: 'ui',
         rationale: 'The proposal adds a new review panel.',

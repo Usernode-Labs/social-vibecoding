@@ -1703,11 +1703,14 @@ const App = {
           // Same retry shape, and for the same reason, as the two above: the
           // dialog's own open-time reset decides the destination row, so a
           // pose that lands before it is wiped. What the check asserts is
-          // the hint being VISIBLE, so that is what this waits for.
+          // the app option LIVE and named, with nothing chosen (the row asks
+          // by its label now; the hint under it is only a refusal), so that
+          // is what this waits for.
           let chooseTries = App.IMPROVE_SHOT_TRIES;
           const poseChoice = () => {
-            const hint = document.getElementById('feedback-target-hint');
-            if (hint && !hint.classList.contains('hidden')) return;
+            const app = document.getElementById('feedback-target-app');
+            const name = document.getElementById('feedback-target-app-name');
+            if (app && !app.disabled && name && name.textContent === 'Example App') return;
             try { App._simulateFeedbackTargetChoice?.('Example App'); } catch (e) { /* ignore */ }
             if (--chooseTries > 0) setTimeout(poseChoice, App.IMPROVE_SHOT_INTERVAL_MS);
           };
@@ -4126,12 +4129,14 @@ const App = {
         App.navigateToLeaderboard('challenges', null);
         return;
       }
-      if (parts[0] === 'profile' && parts[1] === 'proposals') {
-        // Your proposals (#5310) — a drill-in from Profile's own rows, not
-        // a username. Must come before the generic profile branch below,
+      if (parts[0] === 'profile' && App.PROFILE_WORK[parts[1]]) {
+        // Your work (UI overhaul): Your changes (#profile/your-changes, and
+        // #profile/proposals, its address as "Your proposals" #5310), Your
+        // requests and Your votes — drill-ins from Profile's own rows, not
+        // usernames (see PROFILE_WORK). Must come before the generic profile branch below,
         // which otherwise treats parts[1] as a username to view.
         App.setChromeless(false);
-        App.navigateToProfileProposals();
+        App.navigateToProfileProposals(App.PROFILE_WORK[parts[1]]);
         return;
       }
       if (parts[0] === 'profile') {
@@ -4422,10 +4427,14 @@ const App = {
         }
         if (tab === 'dev') {
           const sec = parts[3] || null;
+          if (sec === 'sessions' && parts[4] === 'new') {
+            // #2779: the retired classic unsent change (#2241).
+            App.openNewChangeAsAgentSession(slug);
+            return;
+          }
           if (sec === 'sessions' && parts[4]) {
             subTab = 'sessions';
-            // #2241: `new` is the unsent change (see _normalizeTab).
-            ref = parts[4] === 'new' ? 'new' : (parseInt(parts[4]) || null);
+            ref = parseInt(parts[4]) || null;
           } else if (sec === 'chat') {
             // Full-screen general chat (also where legacy group-chat
             // links land — the old Chat sub-tab's original meaning).
@@ -5616,16 +5625,31 @@ const App = {
     if (window.Profile?.close) Profile.close();
   },
 
-  // Show the "Your proposals" screen (#5310) — every proposal-carrying dev
-  // session the viewer has ever started, across every project, grouped by
-  // status. Reached from Profile's #profile-row-proposals row
+  // Show the Your work screen (UI overhaul; it was "Your proposals", #5310)
+  // on one of its three views — Your changes, Your requests or Your votes. Reached from Profile's #profile-row-proposals row
   // (frontend/src/features/profile/account-panel.tsx), a drill-in exactly
   // like navigateToLeaderboard, so it follows that method's shape: exit
   // every sibling root screen, then hand off to the screen's own
   // Workshop-style controller (window.UsernodeReact.profileProposals),
   // registered inline by frontend/src/features/profile/my-proposals.tsx.
-  navigateToProfileProposals() {
-    if (App._inProfileProposals && window.UsernodeReact?.profileProposals?.isOpen?.()) {
+  // The addresses of Profile's "Your work" rows, and the view each opens.
+  // Hyphenated because a username is [A-Za-z0-9_] (services/usernames.js),
+  // so none of these can be somebody's #profile/<username> page, which a
+  // bare "votes" or "requests" could have been. `proposals` is the old
+  // address of Your changes, which a person named that has lost since #5310.
+  PROFILE_WORK: {
+    proposals: 'changes',
+    'your-changes': 'changes',
+    'your-requests': 'requests',
+    'your-votes': 'votes',
+  },
+  PROFILE_WORK_TITLES: {
+    changes: 'Your changes', requests: 'Your requests', votes: 'Your votes',
+  },
+
+  navigateToProfileProposals(kind = 'changes') {
+    const view = App.PROFILE_WORK_TITLES[kind] ? kind : 'changes';
+    if (App._inProfileProposals && window.UsernodeReact?.profileProposals?.isOpen?.(view)) {
       return;
     }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
@@ -5638,14 +5662,17 @@ const App = {
     if (App._inBrowse) App._exitBrowse();
     if (App._inWorkshop) App._exitWorkshop();
     const screen = document.getElementById('profile-proposals-screen');
+    // Already on the screen, on another of its views: a change of list, not
+    // an entry, so there is nothing to slide in.
+    const switching = App._inProfileProposals;
     App._inProfileProposals = true;
-    window.UsernodeReact?.profileProposals?.open?.();
+    window.UsernodeReact?.profileProposals?.open?.(view);
     PlatformUI.transition(() => {
       if (leavingApp) AppView.close();
       App._showOnlyScreen('profile-proposals-screen');
       App._enterScreenChrome();
-      App.setHeaderTitle('Your proposals');
-    }, { type: App._entryTransition(fromIframe ? 'none' : 'push', screen) });
+      App.setHeaderTitle(App.PROFILE_WORK_TITLES[view]);
+    }, { type: App._entryTransition(switching || fromIframe ? 'none' : 'push', screen) });
   },
 
   // State-only (#979) — see _exitLeaderboard.
@@ -6213,6 +6240,39 @@ const App = {
   _exitGlobalChat() {
     App._inGlobalChat = false;
     window.UsernodeReact?.globalChat?.deactivate?.();
+  },
+
+  // #2779: /app/<slug>/dev/sessions/new was the classic unsent-change
+  // screen (#2241). Classic sessions are no longer created, so that address
+  // — a bookmark, Back, a link an older page wrote — opens an unsent agent
+  // session focused on the app instead, at the address New change uses. The
+  // history entry is REPLACED, so Back does not land on the old address and
+  // bounce straight forward again. The side panel's own document keeps its
+  // `agent/new`, the one form of that address its route table knows.
+  //
+  // An unsent conversation already on screen at that address would not be
+  // routed again, and the hint would wait for the next one; the controller's
+  // own start applies it in place instead (it re-routes the same address).
+  openNewChangeAsAgentSession(slug) {
+    const agentSession = window.UsernodeReact?.agentSession;
+    const hint = slug ? { slug, entry: 'app' } : null;
+    const next = App.embeddedPanel ? '#agent/new' : '#messages/agent/new';
+    const showingDraft = !App.embeddedPanel && !!agentSession?.isOpen?.()
+      && agentSession?.currentId?.() === 'new';
+    try {
+      // From the root, not beside the clean /app/<slug>/… path it came in on.
+      history.replaceState(history.state, '', App._rootUrl(next));
+    } catch (_) {
+      agentSession?.prepareDraft?.(hint);
+      window.location.hash = next;
+      return;
+    }
+    if (showingDraft && typeof agentSession.start === 'function') {
+      agentSession.start(hint);
+      return;
+    }
+    agentSession?.prepareDraft?.(hint);
+    App.restoreFromHash();
   },
 
   // #2779: an agent session's own screen. The same pair as Global Chat's:

@@ -36,24 +36,13 @@ import { createStore } from '../../lib/plain-store.js';
  */
 
 /**
- * @typedef {object} WorkshopItem  One row behind a count (#3051).
- * @property {'session'|'proposal'|'governance'} kind
- * @property {number} id
- * @property {string} title
- * @property {string} status
- * @property {string|null} at
- */
-
-/**
  * @typedef {object} WorkshopState
  * @property {boolean} open   The router has this screen on show.
  * @property {WorkshopRow[]|null} rows  Null until the first load answers.
  * @property {boolean} error The load failed; the screen offers a retry.
- * @property {'status'|'needs'} tab  Which of the two tabs is showing (#3051).
+ * @property {'status'|'needs'} tab  The list, or the Needs you page its top
+ *   row opens (#3051 made these two tabs; they are one page and its door now).
  * @property {boolean} scopeOpen  The All apps chip's panel is open (#3051).
- * @property {Record<string, {working: WorkshopItem[], needs: WorkshopItem[]}>|null} items
- *   GET /api/workshop/items, keyed by slug. Null until it answers.
- * @property {boolean} itemsError  That read failed; the tabs say so.
  * @property {Array<object>|null} feed  GET /api/workshop/needs-feed: every
  *   decision owed by the viewer across their projects, newest first, which
  *   the Needs you tab draws as one feed (#3270). Null until it answers.
@@ -62,9 +51,8 @@ import { createStore } from '../../lib/plain-store.js';
  */
 
 /**
- * `tab: 'status'` and `scopeOpen: false` are the prerender too: the Current
- * status pane showing, the Needs you pane `hidden`, the chip's panel not
- * rendered at all.
+ * `tab: 'status'` and `scopeOpen: false` are the prerender too: the list
+ * showing, the Needs you page `hidden`, the chip's panel not rendered at all.
  *
  * @type {WorkshopState}
  */
@@ -74,8 +62,6 @@ const INITIAL = {
   error: false,
   tab: 'status',
   scopeOpen: false,
-  items: null,
-  itemsError: false,
   feed: null,
   feedError: false,
   feedCapped: false,

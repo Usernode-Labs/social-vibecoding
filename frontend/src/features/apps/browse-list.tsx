@@ -28,7 +28,7 @@ import type { ReactNode } from 'react';
 import { CheckIcon, PlusIcon } from '@/components/ui/icons';
 import { ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Button } from '@/components/ui/button';
-import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
+import { AppIconContent, AppIconLink, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type RowView = {
   app: Record<string, any>;
@@ -88,11 +88,11 @@ function Row({ view, headingSays }: {
     if (!node) return;
     const nav = (window as any).NavLink;
     const hrefFor = (e: MouseEvent) => {
-      if ((e.target as Element)?.closest?.('.browse-add-btn')) return null;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return null;
       return controller()?.rowHref(view) ?? null;
     };
     const activate = (e: MouseEvent) => {
-      if ((e.target as Element)?.closest?.('.browse-add-btn')) return;
+      if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return;
       controller()?.openRow(view);
     };
     if (nav) nav.wireModified(node, hrefFor, activate);
@@ -119,16 +119,15 @@ function Row({ view, headingSays }: {
       titleClassName="browse-row-title"
       subtitleClassName="browse-row-meta"
       leading={(
-        <div
+        <AppIconLink
+          nested
+          slug={view.demo ? null : view.slug}
+          name={view.name}
           className="app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-lg"
           data-icon={appIconKind(view.app)}
-          // The same slug-derived identity tint the launcher grid draws. An
-          // app that is a lilac tile on Home was a blank white square here,
-          // which is the one thing a launcher icon must never be: different
-          // per screen. app.css turns the attribute into the colour.
         >
           <AppIconContent app={view.app} />
-        </div>
+        </AppIconLink>
       )}
       title={(
         <span className="flex items-center gap-1.5 min-w-0">

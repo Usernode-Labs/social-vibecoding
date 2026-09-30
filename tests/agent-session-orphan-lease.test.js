@@ -101,7 +101,7 @@ test('a recovered build on the active change is the conversation\'s running disp
 });
 
 test('a change busy only with its visual change preview is not the coding agent working', () => {
-  const deps = { isChangeBusy: () => true, activeTurnMode: (changeId) => (changeId === 50 ? 'evidence' : 'build') };
+  const deps = { isChangeBusy: () => true, activeTurnMode: (changeId) => (changeId === 50 ? 'shots' : 'build') };
   assert.equal(agentTurn.recoveredRunState(3, 50, deps), null, 'the conversation shows the capture instead');
   assert.deepEqual(agentTurn.recoveredRunState(3, 51, deps), { phase: 'cc', stopping: false, changeId: 51 });
 });

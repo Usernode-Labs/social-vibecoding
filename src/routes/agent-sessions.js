@@ -3,10 +3,10 @@
 // Agent sessions (#2779, spec: docs/agent-sessions.md): the HTTP surface.
 //
 // Every route is owner-scoped: another user's session answers 404, never
-// 403, so ids are not enumerable. Only CREATING a session is gated on the
-// experimental flag (req.user.agentSessionsEnabled). A user who turns the
-// flag off keeps their existing conversations, the same way turning it on
-// leaves their classic sessions alone.
+// 403, so ids are not enumerable. Any signed-in user may start one: the
+// experimental per-user flag is retired, and new work starts here for
+// everyone (POST /api/apps/:slug/sessions takes only the Mayor's start_change
+// now). Classic sessions that already exist keep working as they did.
 //
 // The conversation's data (create, list, read, rename, archive, its
 // transcript), and since step 3b its Mayor: a turn streamed over SSE, its
@@ -153,9 +153,6 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // creating one would resolve it, and nothing written. New change opens this
   // state; the row only exists once the first message is sent.
   router.get('/api/agent-sessions/draft', requireUser, async (req, res) => {
-    if (!req.user.agentSessionsEnabled) {
-      return res.status(403).json({ error: 'Agent sessions are not turned on for your account.' });
-    }
     const q = req.query || {};
     const hint = {};
     if (q.slug) hint.slug = String(q.slug);
@@ -166,7 +163,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
       const draft = await agentSessions.previewDraft(pool, { user: req.user, hint: Object.keys(hint).length ? hint : null });
       return res.json({ draft });
     } catch (err) {
-      return sendError(res, err, 'Preview agent session');
+      return sendError(res, err, 'Shots agent session');
     }
   });
 
@@ -174,9 +171,6 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // Called on the FIRST message of a New change, carrying the model the
   // viewer picked while it was unsent (`agent`, see resolveChoice).
   router.post('/api/agent-sessions', requireUser, agentSessionCreateLimiter, async (req, res) => {
-    if (!req.user.agentSessionsEnabled) {
-      return res.status(403).json({ error: 'Agent sessions are not turned on for your account.' });
-    }
     const body = req.body || {};
     if (typeof body !== 'object' || Array.isArray(body)) {
       return res.status(400).json({ error: 'Body must be an object.' });

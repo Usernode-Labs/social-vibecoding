@@ -37,7 +37,7 @@ import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
 import { ArrowRightShortIcon } from '@/components/ui/icons';
 
-import { AppIconContent, AppPills, appIconKind, hasAppPills } from './app-card-view';
+import { AppIconContent, AppIconLink, AppPills, appIconKind, hasAppPills } from './app-card-view';
 
 type ContributorRowView = {
   who: string;
@@ -206,12 +206,14 @@ function Ready({ view }: { view: Extract<DetailView, { state: 'ready' }> }): Rea
   return (
     <>
       <div className="flex items-start gap-4">
-        <div
+        <AppIconLink
+          slug={view.canOpen ? view.slug : null}
+          name={view.name}
           className="app-icon-tile w-16 h-16 shrink-0 rounded-2xl overflow-hidden flex items-center justify-center font-bold text-2xl"
           data-icon={appIconKind(view.app)}
         >
           <AppIconContent app={view.app} />
-        </div>
+        </AppIconLink>
         <div className="min-w-0 flex-1">
           <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100 break-words">{view.name}</h2>
           <p className="text-xs font-mono text-zinc-500 dark:text-zinc-500 break-all">{view.slug}</p>

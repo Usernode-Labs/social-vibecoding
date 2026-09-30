@@ -180,8 +180,11 @@ const Profile = {
     // than leaving it to come back over the next visit to your own.
     if (targetUsername) {
       Profile._feedbackRequested = false;
+      Profile._friendsRequested = false;
       Profile._dismissFeedback();
+      Profile._dismissFriends();
     } else if (Profile._takeFeedbackRoute()) Profile._feedbackRequested = true;
+    else if (Profile._takeFriendsRoute()) Profile._friendsRequested = true;
     // One entry into #profile reaches here TWICE: popstate and hashchange both
     // run restoreFromHash, and the second run finds the screen mounted and
     // goes through App._routeMountedProfile, which opens it again. That used
@@ -200,11 +203,13 @@ const Profile = {
     // A cached profile is on screen already, so the list can open over it now
     // rather than after four requests; otherwise it waits for the load.
     Profile._maybeOpenFeedback();
+    Profile._maybeOpenFriends();
     const token = ++Profile._loadToken;
     await Profile._load(token);
     if (Profile._open && token === Profile._loadToken && !Profile._targetUsername) {
       Profile._maybeOpenShot();
       Profile._maybeOpenFeedback();
+      Profile._maybeOpenFriends();
     }
   },
 
@@ -221,8 +226,10 @@ const Profile = {
     Profile._targetUsername = null;
     Profile._loadToken++;
     Profile._feedbackRequested = false;
+    Profile._friendsRequested = false;
     Profile._dismissSheet();
     Profile._dismissFeedback();
+    Profile._dismissFriends();
     Profile._render();
   },
 
@@ -304,18 +311,24 @@ const Profile = {
       // like the two above: a failure draws "could not be loaded" there and
       // leaves the rest of the screen alone.
       //
-      // The viewer's own feedback (#3186) is the "Your feedback" row's line
-      // and the list it opens, so opening the list costs no request of its
-      // own. Non-fatal the same way: the row falls back to its plain line and
-      // the list says it could not be loaded.
+      // The viewer's own feedback (#3186) is the list `#profile?feedback`
+      // opens (the feedback challenge's page links to it), so opening the
+      // list costs no request of its own. Non-fatal the same way: the list
+      // says it could not be loaded.
+      //
+      // Your requests and Your votes (UI overhaul) are two of "Your work"'s
+      // lines: how many requests are open and done, and the latest vote.
+      // Non-fatal too: a row whose read failed says what is behind it.
       const demo = Profile._demoQuery();
-      const [ranking, summary, ownerPublicProfile, friends, feedback] = await Promise.all([
+      const [ranking, summary, ownerPublicProfile, friends, feedback, requests, votes] = await Promise.all([
         Profile._fetchJson('/challenges-api/me/ranking?season_id=active'),
         Profile._fetchJson(`/api/me/summary${demo}`).catch(() => null),
         Profile._fetchJson('/api/me/public-profile').catch(() => null),
         // The friends client carries `?demo=1` itself.
         listFriends().catch(() => null),
         Profile._fetchJson(`/api/feedback/mine${demo}`).catch(() => null),
+        Profile._fetchJson(`/api/me/requests${demo}`).catch(() => null),
+        Profile._fetchJson('/api/me/history?type=votes&limit=1').catch(() => null),
       ]);
 
       // Written before the staleness check: a load that finished after the
@@ -330,6 +343,8 @@ const Profile = {
         ownerPublicProfile,
         friends,
         feedback,
+        requests,
+        votes,
       };
       if (username) Profile._ownCache = { username, data };
       if (token !== Profile._loadToken || Profile._targetUsername) return;
@@ -557,17 +572,65 @@ const Profile = {
 
   /** Whether the address asks for the list; takes the ask off it if so. */
   _takeFeedbackRoute() {
+    return Profile._takeSheetAsk('feedback');
+  },
+
+  /** Whether `#profile?<name>` asks for that card; takes the ask off it if so. */
+  _takeSheetAsk(name) {
     let hash = '';
     try { hash = String(location.hash || ''); } catch (_) { return false; }
     const m = /^#profile\/?\?(.*)$/.exec(hash);
     if (!m) return false;
     let asked = false;
-    try { asked = new URLSearchParams(m[1]).has('feedback'); } catch (_) { return false; }
+    try { asked = new URLSearchParams(m[1]).has(name); } catch (_) { return false; }
     if (!asked) return false;
     try {
       history.replaceState(history.state, '', `${location.pathname}${location.search}#profile`);
     } catch (_) { /* the list still opens; only the address keeps the ask */ }
     return true;
+  },
+
+  // ── Friends, as a card over Me (UI overhaul) ─────────────────────────
+  //
+  // Friends was a section under Me's rows (#2386); it is a row now, and this
+  // opens the same section as a card (./friends-sheet.tsx), the way Your
+  // feedback opens above, with the same claim on the back button and its own
+  // address, `#profile?friends`. Its lists are the load's, so opening it is a
+  // store push.
+  _friendsRequested: false,
+  _releaseFriends: null,
+
+  showFriends() {
+    if (profileStore.get().friendsOpen) return;
+    profileStore.set({ friendsOpen: true });
+    Profile._releaseFriends = pushDismissible(() => {
+      Profile._releaseFriends = null;
+      Profile._dismissFriends();
+      return true;
+    });
+  },
+
+  _dismissFriends() {
+    // Navigating, as _dismissFeedback is: a friend's name is a link to their
+    // page, and leaving the screen closes the card too.
+    const release = Profile._releaseFriends;
+    Profile._releaseFriends = null;
+    if (release) release({ navigating: true });
+    if (profileStore.get().friendsOpen) profileStore.set({ friendsOpen: false });
+  },
+
+  /** Whether the address asks for the Friends card; takes the ask off it if so. */
+  _takeFriendsRoute() {
+    return Profile._takeSheetAsk('friends');
+  },
+
+  _maybeOpenFriends() {
+    if (!Profile._friendsRequested || !Profile._open || Profile._targetUsername) return;
+    const d = Profile._data;
+    if (!d) return; // still loading: the post-load call opens it
+    Profile._friendsRequested = false;
+    if (d.signedOut || d.error || d.publicProfile || d.publicNotFound) return;
+    Profile.showFriends();
   },
 
   _maybeOpenFeedback() {

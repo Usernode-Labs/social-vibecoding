@@ -123,6 +123,12 @@ const SUMMARY_COUNTS_SQL = `
          COUNT(*) FILTER (WHERE cs.status IN (
            'active', 'paused', 'promoted', 'merging', 'merged', 'archived'
          ))::int AS proposals_total,
+         -- Your changes' "2 in progress" on Me (UI overhaul): the same two
+         -- buckets GET /api/me/proposal-history files as in progress and
+         -- open for a vote.
+         COUNT(*) FILTER (WHERE cs.status IN (
+           'active', 'paused', 'promoted', 'merging'
+         ))::int AS in_progress,
          (SELECT COUNT(*)::int
             FROM pr_kudos pk
             JOIN chat_sessions ks ON ks.id = pk.session_id
@@ -211,6 +217,7 @@ function shapeSummary({ counts, contributions, challenges }) {
     merged: Number(c.merged) || 0,
     apps: Number(c.apps) || 0,
     proposalsTotal: Number(c.proposals_total) || 0,
+    inProgress: Number(c.in_progress) || 0,
     kudos: (Number(c.direct_kudos) || 0) + (Number(c.bounty_kudos) || 0),
     memberSince: c.member_since ? new Date(c.member_since).toISOString() : null,
     challenges: {
@@ -365,6 +372,135 @@ function withDemoProposals(proposals, selfApp, now = Date.now()) {
     }));
   }
   return result;
+}
+
+// ── GET /api/me/requests ────────────────────────────────────────────────
+//
+// "Your requests" on Me (UI overhaul; it was "Your feedback", #3186): every
+// request the viewer asked for, whichever way they asked. Two ways in, one
+// list:
+//
+//   - the Ask for a change dialog, recorded in feedback_reports once the
+//     request exists (a platform request has no app_id there: it is the
+//     self-hosted app's, the repository it was filed into, matched by name);
+//   - a project's board, which records it in `issues` (kind 'general').
+//
+// One request can be in both, so the list is DISTINCT per app and number.
+//
+// WHERE EACH ONE STANDS, from what this platform itself records, because a
+// request's open/closed state lives on GitHub and in a short-lived cache
+// that cannot be trusted to say "closed" (see MY_FEEDBACK_SQL in
+// routes/feedback.js). What IS recorded here:
+//
+//   shipped   a merged change that named it (chat_sessions.linked_issues);
+//   closed    a close-request proposal the members voted through
+//             (issues kind 'close_issue', applied);
+//   underway  a change in progress or up for a vote that names it;
+//   waiting   none of those.
+//
+// So "Done" is shipped or closed, and a request somebody closed on GitHub
+// by hand stays under Open until one of those is true. Bounded by
+// MY_REQUESTS_LIMIT, newest first; the two counts are over the whole set.
+const MY_REQUESTS_LIMIT = 50;
+
+const MY_REQUESTS_SQL = `
+  WITH self_app AS (
+    SELECT id, repo_url FROM apps WHERE self_hosted = TRUE ORDER BY id ASC LIMIT 1
+  ),
+  filed AS (
+    SELECT fr.created_at, fr.title, fr.issue_number AS number,
+           COALESCE(fr.app_id, (
+             SELECT s.id FROM self_app s
+              WHERE fr.target = 'platform'
+                AND lower(regexp_replace(regexp_replace(COALESCE(s.repo_url, ''), '^.*github\\.com/', ''), '(\\.git)?/*$', ''))
+                  = lower(COALESCE(fr.issue_owner, '') || '/' || regexp_replace(COALESCE(fr.issue_repo, ''), '\\.git$', ''))
+           )) AS app_id
+      FROM feedback_reports fr
+     WHERE fr.user_id = $1 AND fr.issue_number IS NOT NULL
+    UNION ALL
+    SELECT i.created_at, i.title, i.github_issue_number, i.app_id
+      FROM issues i
+     WHERE i.created_by = $1 AND i.kind = 'general' AND i.github_issue_number IS NOT NULL
+  ),
+  mine AS (
+    SELECT DISTINCT ON (f.app_id, f.number) f.app_id, f.number, f.title, f.created_at
+      FROM filed f
+     WHERE f.app_id IS NOT NULL
+     ORDER BY f.app_id, f.number, f.created_at ASC
+  ),
+  standing AS (
+    SELECT m.number, m.title, m.created_at,
+           a.slug AS app_slug, a.name AS app_name, a.self_hosted,
+           EXISTS (SELECT 1 FROM chat_sessions cs
+                    WHERE cs.app_id = m.app_id AND cs.status = 'merged'
+                      AND m.number = ANY(cs.linked_issues)) AS shipped,
+           EXISTS (SELECT 1 FROM issues c
+                    WHERE c.app_id = m.app_id AND c.kind = 'close_issue' AND c.status = 'closed'
+                      AND c.payload ? 'appliedAt'
+                      AND c.payload->>'issueNumber' = m.number::text) AS closed,
+           EXISTS (SELECT 1 FROM chat_sessions cs
+                    WHERE cs.app_id = m.app_id
+                      AND cs.status IN ('active', 'paused', 'promoted', 'merging')
+                      AND m.number = ANY(cs.linked_issues)) AS underway
+      FROM mine m
+      JOIN apps a ON a.id = m.app_id
+  )
+  SELECT s.*,
+         COUNT(*) OVER () AS total,
+         COUNT(*) FILTER (WHERE s.shipped OR s.closed) OVER () AS done
+    FROM standing s
+   ORDER BY s.created_at DESC NULLS LAST, s.number DESC
+   LIMIT $2
+`;
+
+// Pure (exported for tests): the rows → the response body.
+function shapeRequests(rows) {
+  const list = Array.isArray(rows) ? rows : [];
+  const first = list[0] || {};
+  const requests = list.map((r) => {
+    const n = Number(r.number);
+    return {
+      number: Number.isSafeInteger(n) && n > 0 ? n : null,
+      title: r.title ? String(r.title) : null,
+      appSlug: r.app_slug || null,
+      // The platform's own requests are Homeroom's, whatever the row is named.
+      appName: r.self_hosted ? 'Homeroom' : (r.app_name || r.app_slug || null),
+      createdAt: r.created_at ? new Date(r.created_at).toISOString() : null,
+      state: r.shipped ? 'shipped' : r.closed ? 'closed' : r.underway ? 'underway' : 'waiting',
+    };
+  });
+  const total = Number(first.total) || 0;
+  const done = Number(first.done) || 0;
+  return {
+    requests,
+    open: Math.max(0, total - done),
+    done,
+    ...(total > requests.length ? { truncated: true } : {}),
+  };
+}
+
+// Staging-only ?demo=1 rows, the same mock requests GET /api/feedback/mine
+// shows (routes/feedback.js DEMO_FEEDBACK), one in each standing so every
+// kind of line is on screen. REAL DATA WINS: rows of the viewer's own are
+// left alone.
+const DEMO_REQUESTS = [
+  { number: 900006, days: 0, state: 'waiting', title: '[Mock] Voting buttons need a clearer disabled state' },
+  { number: 900003, days: 2, state: 'underway', title: '[Mock] Topic cards overflow on narrow phones' },
+  { number: 900002, days: 9, state: 'shipped', title: '[Mock] Add a keyboard shortcut for voting' },
+];
+
+function withDemoRequests(body, selfApp, now = Date.now()) {
+  if (!selfApp || body.requests.length) return body;
+  const requests = DEMO_REQUESTS.map((d) => ({
+    number: d.number,
+    title: d.title,
+    appSlug: selfApp.slug,
+    appName: 'Homeroom',
+    createdAt: new Date(now - d.days * 86400000).toISOString(),
+    state: d.state,
+  }));
+  const done = requests.filter((r) => r.state === 'shipped' || r.state === 'closed').length;
+  return { requests, open: requests.length - done, done };
 }
 
 // Pure (exported for tests): validate an uploaded avatar body.
@@ -1070,6 +1206,28 @@ function profileRoutes(config) {
     }
   });
 
+  // ── GET /api/me/requests ─────────────────────────────────────────────
+  //
+  // "Your requests" on Me. See MY_REQUESTS_SQL above for the two ways a
+  // request is recorded and where each one stands.
+  router.get('/api/me/requests', requireUser, async (req, res) => {
+    try {
+      const { rows } = await pool.query(MY_REQUESTS_SQL, [req.user.id, MY_REQUESTS_LIMIT]);
+      let body = shapeRequests(rows);
+      if (IS_STAGING && req.query.demo === '1') {
+        const { rows: selfRows } = await pool.query(SELF_APP_SQL);
+        body = withDemoRequests(body, selfRows[0] || null);
+      }
+      res.set('Cache-Control', 'no-store');
+      return res.json(body);
+    } catch (err) {
+      log.error('profile', 'Me requests read failed', {
+        userId: req.user.id, err: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // ── GET /api/me/proposal-history ─────────────────────────────────────
   //
   // "Your proposals" screen: every proposal the viewer has started, in up
@@ -1111,6 +1269,11 @@ module.exports = {
   shapeProposals,
   withDemoProposals,
   DEMO_PROPOSALS,
+  MY_REQUESTS_SQL,
+  MY_REQUESTS_LIMIT,
+  shapeRequests,
+  withDemoRequests,
+  DEMO_REQUESTS,
   MY_PROPOSALS_SQL,
   PROPOSALS_PER_BUCKET,
   MAX_DISPLAY_NAME,

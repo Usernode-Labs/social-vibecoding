@@ -216,14 +216,15 @@ test('every dev-branch mint goes through devBranchName', () => {
   // mints at all — its branch is created on the first turn — so the count
   // dropped from four to the three headless creation paths that have no
   // "first message" to defer to (auto-issue, clone, fork), plus the one in
-  // session-lifecycle.js that the deferred path uses.
+  // session-lifecycle.js that the deferred path uses. #2779 retired the
+  // fork with classic sessions, which left two.
   //
   // The assertion that matters is unchanged and is the second one: a mint
   // anywhere in these files must route through the sanitizer. The counts
   // are here so that DELETING a mint is a deliberate act rather than a way
   // to make this test pass.
   const expected = {
-    'src/routes/sessions.js': 3,
+    'src/routes/sessions.js': 2,
     'src/services/session-lifecycle.js': 1,
   };
   for (const [rel, count] of Object.entries(expected)) {

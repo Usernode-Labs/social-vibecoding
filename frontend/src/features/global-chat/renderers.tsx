@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 
 import { ChevronDownIcon } from '@/components/ui/icons';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { GlobalChatSettingsEditor } from '../settings/sections/global-chat';
 import { DevelopmentAISettingsEditor } from './development-settings-editor';
 
@@ -288,7 +288,7 @@ function directItemActions(
     const proposalId = first(item, ['proposalId', 'proposal_id', 'id', 'sessionId', 'session_id'], 80);
     if (proposalId) return [
       itemAction('Details', `Open ${targetLabel}`, 'proposal.detail', { appSlug: slug, proposalId }, 'inline'),
-      itemAction('Change preview', `Visual change preview for ${targetLabel}`, 'proposal.evidence', { appSlug: slug, proposalId }, 'inline'),
+      itemAction('Before & after', `Before & after for ${targetLabel}`, 'proposal.shots', { appSlug: slug, proposalId }, 'inline'),
     ];
   }
   if (result.renderer === 'session') {
@@ -721,12 +721,14 @@ function ItemRow({
       data-expanded={selectionAction ? undefined : expanded || undefined}
     >
       {showAppIcon ? (
-        <div
+        <AppIconLink
+          slug={text(item.slug || item.app_slug, 255)}
+          name={text(item.name, 255)}
           className="app-icon-tile global-chat-app-icon shrink-0 overflow-hidden flex items-center justify-center text-lg font-bold"
           data-icon={appIconKind(item)}
         >
           <AppIconContent app={item} />
-        </div>
+        </AppIconLink>
       ) : null}
       <div className="min-w-0 flex-1">
         <button
@@ -849,6 +851,9 @@ function ClientActionResult({ result }: { result: GlobalChatResult }) {
   const actionState = snapshot.clientActionStates[result.id];
   const navigation = action.transport === 'navigation';
   const localSetting = action.transport === 'local_setting';
+  // #2779: development work opens an agent session with the task in its box;
+  // the bare address would open one without them, so it is not offered.
+  const agentHandoff = action.transport === 'agent_session_handoff';
   return (
     <div className="global-chat-inline-actions global-chat-client-action">
       <button
@@ -857,9 +862,9 @@ function ClientActionResult({ result }: { result: GlobalChatResult }) {
         disabled={actionState === 'running' || actionState === 'done'}
         onClick={() => void runGlobalChatClientAction(result)}
       >
-        {actionState === 'running' ? 'Applying…' : actionState === 'done' ? 'Done' : navigation ? 'Open in Classic' : localSetting ? 'Apply' : 'Open'}
+        {actionState === 'running' ? 'Applying…' : actionState === 'done' ? 'Done' : navigation ? 'Open in Classic' : localSetting ? 'Apply' : agentHandoff ? 'Open agent session' : 'Open'}
       </button>
-      {!navigation && result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button> : null}
+      {!navigation && !agentHandoff && result.classicPath ? <button type="button" onClick={() => closeGlobalChat(result.classicPath)}>Open in Classic</button> : null}
     </div>
   );
 }

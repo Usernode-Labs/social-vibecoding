@@ -45,3 +45,18 @@ export function requestSeed(hint: AgentHint | null | undefined): string {
     ? `Work on request #${request.number}: "${request.title}"`
     : `Work on request #${request.number}`;
 }
+
+// A handed-over message is the user's own request (Global Chat's task) or
+// one the platform wrote (Explore's), so it is kept whole, up to the length
+// a turn accepts (MAX_MESSAGE_CHARS in src/routes/agent-sessions.js).
+const MESSAGE_MAX = 20000;
+
+/**
+ * The first message an unsent conversation offers: the one its entry point
+ * handed over (the hint's `message`), else a request's (requestSeed), else ''.
+ */
+export function draftSeed(hint: AgentHint | null | undefined): string {
+  const message = typeof hint?.message === 'string' ? hint.message.trim() : '';
+  if (message) return message.length > MESSAGE_MAX ? message.slice(0, MESSAGE_MAX) : message;
+  return requestSeed(hint);
+}

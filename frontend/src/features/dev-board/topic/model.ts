@@ -442,12 +442,12 @@ export interface TopicBody {
    */
   build?: { kind: 'owner' | 'published'; label: string } | null;
   /**
-   * The visual evidence, as "What changes for you" reads it: the claims as
+   * The before & after shots, as "What changes for you" reads it: the claims as
    * bullets and the run's state as one strip. A verified run keeps the
    * before/after card in `actions.visuals` instead, which leads with the
    * claims itself.
    */
-  evidence?: {
+  shots?: {
     state: string;
     verified: boolean;
     /**
@@ -456,6 +456,12 @@ export interface TopicBody {
      * spin, and it keeps the panel so its reason and retry control show.
      */
     notStarted: boolean;
+    /**
+     * A restart interrupted the run and the recovery sweep starts it again
+     * by itself (`automaticRetryPending` in the shots view): shown as under
+     * way, not as a failure.
+     */
+    retrying?: boolean;
     label: string;
     sentence: string;
     claims: string[];

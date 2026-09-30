@@ -134,10 +134,10 @@ import {
 } from './spec-layout';
 import { openFocusedApp } from './open-app';
 import { isEmbeddedPanel } from '../../lib/side-panel-mode';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { ProposeButton } from './propose-confirm';
 import { readUnsent, writeUnsent } from './unsent';
-import { draftRequest, requestSeed, type DraftRequest } from './request-seed';
+import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
@@ -182,8 +182,10 @@ function appInitial(name: string | null | undefined) {
   return (name || '?').trim().charAt(0).toUpperCase() || '?';
 }
 
-function AppMark({ name, iconUrl, iconEmoji }: {
+function AppMark({ name, slug, iconUrl, iconEmoji }: {
   name: string | null | undefined;
+  /** When set, the mark opens that app (#3365). */
+  slug?: string | null;
   iconUrl?: string | null;
   iconEmoji?: string | null;
 }) {
@@ -193,19 +195,24 @@ function AppMark({ name, iconUrl, iconEmoji }: {
   if (iconUrl || iconEmoji) {
     const record = { name: name || '?', icon_url: iconUrl, icon_emoji: iconEmoji };
     return (
-      <span
-        aria-hidden="true"
+      <AppIconLink
+        slug={slug}
+        name={name}
         data-icon={appIconKind(record as never)}
         className="app-icon-tile h-5 w-5 shrink-0 overflow-hidden rounded-md text-[11px]"
       >
         <AppIconContent app={record as never} />
-      </span>
+      </AppIconLink>
     );
   }
   return (
-    <span aria-hidden="true" className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-violet-600 text-[11px] font-semibold text-white">
+    <AppIconLink
+      slug={slug}
+      name={name}
+      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-violet-600 text-[11px] font-semibold text-white"
+    >
       {appInitial(name)}
-    </span>
+    </AppIconLink>
   );
 }
 
@@ -308,6 +315,7 @@ function SessionBar({ session, about, embedded, action }: {
         {about?.focusApp ? (
           <AppMark
             name={about.focusApp.name}
+            slug={about.focusApp.selfHosted ? null : about.focusApp.slug}
             iconUrl={about.focusApp.iconUrl}
             iconEmoji={about.focusApp.iconEmoji}
           />
@@ -1248,7 +1256,7 @@ const CAPTURE_STEPS: Record<string, string> = {
 };
 
 /**
- * The active change's visual change preview while it is captured: after the
+ * The active change's before/after shots while they are taken: after the
  * coding agent finished, Homeroom records before-and-after captures of the
  * proposal, and that is not the coding agent working. Stop ends it; the
  * proposal's Rerun starts it again.
@@ -1334,7 +1342,7 @@ function EmptyState({ about, request }: { about: About; request: DraftRequest | 
       <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">New agent session</h3>
       <p className="mt-1 max-w-sm text-sm text-zinc-600 dark:text-zinc-300">
         {app ? <>Started from <strong>{app}</strong>. </> : null}
-        Ask for a change on any app. The Mayor plans it, builds it, and puts it up for a vote when you say so.
+        Start a change on any app. The Mayor plans it, builds it, and puts it up for a vote when you say so.
       </p>
     </section>
   );
@@ -1601,11 +1609,12 @@ function Composer({ id }: { id: string }) {
   };
 
   // The conversation's unsent text, back after a reload or a switch. An
-  // unsent conversation started from a request (Start work) offers that
-  // request's first message when nothing was typed (./request-seed.ts),
-  // from the hint, so it is kept only once edited and never turns up in a
-  // later New change. A new hint is a new start, even on the same address.
-  const seed = target === 'new' ? requestSeed(snapshot.draft?.hint) : '';
+  // unsent conversation started from a request (Start work), or handed a
+  // message (Global Chat, Explore), offers that first message when nothing
+  // was typed (./request-seed.ts), from the hint, so it is kept only once
+  // edited and never turns up in a later New change. A new hint is a new
+  // start, even on the same address.
+  const seed = target === 'new' ? draftSeed(snapshot.draft?.hint) : '';
   const hint = snapshot.draft?.hint;
   useEffect(() => {
     if (target == null) return;
@@ -1910,7 +1919,7 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
         {active ? (
           <div className="rounded-2xl bg-zinc-50 p-3 dark:bg-zinc-800/60" data-agent-session-active-change>
             <div className="flex items-start gap-2">
-              <AppMark name={active.appName} />
+              <AppMark name={active.appName} slug={active.appSlug} />
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-zinc-900 dark:text-zinc-100">{active.title || changeRef(active)}</p>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400">{active.appName || active.appSlug} · {changeRef(active)}{active.prNumber ? ` (change ${active.id})` : ''}</p>
@@ -1959,7 +1968,7 @@ export function ChangesDrawer({ session }: { session: AgentSession }) {
             <ul className="divide-y divide-zinc-200 dark:divide-zinc-800">
               {others.map((change) => (
                 <li key={change.id} className="flex items-center gap-2 py-2" data-agent-session-earlier-change={change.id}>
-                  <AppMark name={change.appName} />
+                  <AppMark name={change.appName} slug={change.appSlug} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-zinc-900 dark:text-zinc-100">{change.title || changeRef(change)}</p>
                     <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">{change.appName || change.appSlug} · {changeRef(change)}</p>

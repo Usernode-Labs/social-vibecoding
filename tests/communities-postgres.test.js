@@ -129,7 +129,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
     let m = await communities.getMembership(pool, a, joiner.id);
     assert.equal(m.is_member, false);
     assert.equal(m.audience, 'open');
-    assert.equal(m.audience_label, 'Community');
+    assert.equal(m.audience_label, 'Public community');
     await communities.join(pool, a, joiner.id);
     m = await communities.getMembership(pool, a, joiner.id);
     assert.equal(m.is_member, true);
@@ -227,7 +227,7 @@ test('communities against the full PostgreSQL schema', { timeout: 180000 }, asyn
       let got = await call('GET', `/api/apps/${a.slug}/community`);
       assert.equal(got.status, 200);
       assert.equal(got.body.is_member, false);
-      assert.equal(got.body.audience_label, 'Community');
+      assert.equal(got.body.audience_label, 'Public community');
       assert.deepEqual(got.body.members.map((m) => m.username), [owner.username]);
       assert.deepEqual(got.body.approval, { policy: 'anyone', approvals_required: null, electorate: 1, required: 1 });
       assert.deepEqual(got.body.channel, {

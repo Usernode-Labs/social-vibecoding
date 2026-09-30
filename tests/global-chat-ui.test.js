@@ -185,7 +185,9 @@ test('authoritative results never execute model HTML and retain exact Classic es
 });
 
 test('app results reuse the platform icon primitive for images, emoji, and fallback letters', () => {
-  assert.match(renderers, /AppIconContent, appIconKind/);
+  assert.match(renderers, /AppIconContent, AppIconLink, appIconKind/);
+  // #3365: the tile opens the app it names.
+  assert.match(renderers, /<AppIconLink\s+slug=\{text\(item\.slug \|\| item\.app_slug, 255\)\}/);
   assert.match(renderers, /result\.renderer === 'app'/);
   assert.match(renderers, /<AppIconContent app=\{item\} \/>/);
   assert.match(renderers, /data-icon=\{appIconKind\(item\)\}/);
@@ -212,6 +214,9 @@ test('the browser transport uses authenticated POST SSE and same-origin client a
   assert.match(store, /\['GET', 'POST', 'PUT', 'PATCH', 'DELETE'\]\.includes\(method\)/);
   assert.match(store, /transport === 'development_handoff'/);
   assert.match(store, /action\.transport === 'local_setting'/);
+  // #2779: Start development work opens an unsent agent session with the task.
+  assert.match(store, /action\.transport === 'agent_session_handoff'/);
+  assert.match(store, /agentSession\?\.prepareDraft\(hint\)[\s\S]{0,200}closeGlobalChat\('#messages\/agent\/new'\)/);
   assert.match(store, /drainResponse\(response\.body\)/);
   assert.match(api, /\/turn-status/);
   assert.match(api, /\/cancel/);

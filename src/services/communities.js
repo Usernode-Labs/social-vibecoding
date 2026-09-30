@@ -16,9 +16,9 @@
 //   still decides whether you may be here at all, and this decides whether
 //   you have joined.
 //
-//   AUDIENCE. Who a community is for: 'solo' (Just you), 'invited' (Group)
-//   or 'open' (Community). Derived from the app, never stored — see
-//   audienceSql.
+//   AUDIENCE. Who a community is for: 'solo' (Just you), 'invited' (Private
+//   community) or 'open' (Public community). Derived from the app, never
+//   stored — see audienceSql.
 //
 // The vote THRESHOLD counts active MEMBERS: services/active-users.js
 // intersects its activity rule with this table, so the people a proposal
@@ -33,8 +33,8 @@ const AUDIENCES = Object.freeze(['open', 'invited', 'solo']);
 // What each audience is called on screen. Internal names stay internal:
 // "community" is the container, and people see it as one of these.
 const AUDIENCE_LABELS = Object.freeze({
-  open: 'Community',
-  invited: 'Group',
+  open: 'Public community',
+  invited: 'Private community',
   solo: 'Just you',
 });
 

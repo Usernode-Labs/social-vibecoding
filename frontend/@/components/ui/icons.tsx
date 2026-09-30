@@ -526,6 +526,14 @@ export const NewspaperIcon = stroked(
  */
 export const ListLinesIcon = stroked('ListLinesIcon', 'M4 6h16M4 12h16M4 18h16');
 
+/**
+ * Lines of text, the last one short: the Needs-you rail's Description, the
+ * way a short video's player marks the words under it. Bars3Icon's grid and
+ * rhythm with the third line cut to where a paragraph ends, so it reads as
+ * text rather than as a menu.
+ */
+export const DescriptionIcon = stroked('DescriptionIcon', 'M4 6h16M4 12h16M4 18h10');
+
 export const TerminalIcon = stroked(
   'TerminalIcon',
   'M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z',

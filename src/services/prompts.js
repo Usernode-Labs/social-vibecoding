@@ -112,8 +112,8 @@ function getWorkOrderEssentials() {
 
 // ── Section index — the connector's conventions lookup ──────────────────
 //
-// The offline excerpt above is ~4 KB of the document's 116 KB. It is what a
-// work order can afford to carry, and it is deliberately the nine rules an
+// The offline excerpt above is ~6 KB of the document's 116 KB. It is what a
+// work order can afford to carry, and it is deliberately the eleven rules an
 // agent working blind gets WORST. It is not the native UI kit's component
 // list, the LLM proxy's request shape, or the `secrets` declaration format —
 // and an agent that needs one of those still has nowhere to read it, because

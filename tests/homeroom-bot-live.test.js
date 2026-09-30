@@ -464,6 +464,10 @@ function buildHarness({ result = { pushOk: true, ahead: 1, sha: 'a'.repeat(40) }
         calls.modes.push(opts.mode);
         if (opts.mode === 'scout') return { lastResultText: spec };
         calls.exec = { id, opts };
+        if (hang && opts.onProgress) {
+          for (const line of ['Reading public/app.js', 'Running: npm test', 'Running: npm test',
+            'Waiting on a command for 540s: npm start', 'Waiting on a command for 600s: npm start']) opts.onProgress(line);
+        }
         return result;
       },
       stopTurn(id) { calls.stopped.push(id); release(); return Promise.resolve(); },
@@ -495,7 +499,10 @@ const BUILD_ARGS = {
 test('a ready request is built in a session of its own and proposed', async () => {
   const h = buildHarness();
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
-  assert.deepEqual(out, { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.05 });
+  assert.deepEqual(out, {
+    ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.05,
+    specNote: 'no spec (the spec turn returned nothing); the build worked from the plan',
+  }, 'this harness writes no spec, and the result says so');
 
   const insert = h.calls.queries.find((q) => /INSERT INTO chat_sessions/.test(q.sql));
   assert.match(insert.sql, /ELSE ARRAY\[\$3::int\] END, TRUE/, 'the issue is linked, so the PR says Closes #12');
@@ -545,6 +552,9 @@ test('a build is held to the same wall clock as a triage turn', async (t) => {
   const out = await running;
   assert.deepEqual(h.calls.stopped, [5001]);
   assert.match(out.error, /ran past its time limit/);
+  // #3385: what it was waiting on, the last three distinct progress lines.
+  assert.equal(out.error, 'the build ran past its time limit; last activity: Running: npm test | '
+    + 'Waiting on a command for 540s: npm start | Waiting on a command for 600s: npm start');
   assert.deepEqual(h.calls.promoted, [], 'a stopped build is never proposed');
 });
 

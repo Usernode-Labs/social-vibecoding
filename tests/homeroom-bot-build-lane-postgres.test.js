@@ -1,7 +1,8 @@
 'use strict';
 
 // The Homeroom bot's shadow-build lane, executed against the FULL PostgreSQL
-// schema: the claim (one build per app, oldest first, paused apps waiting,
+// schema: the claim (slots dealt to apps in turns, oldest first, an idle
+// slot filled by an app already building, paused apps waiting,
 // never more than the free slots), the release of a build an earlier process
 // never finished, the supersede, the backfill's "latest verdict is ready"
 // and the dashboard's counts. The builds themselves are stubbed; everything
@@ -113,7 +114,7 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     return { ok: true, sessionId: null, branchName: `dev/b-${args.app.slug}-${args.issueNumber}`, sha: 'a'.repeat(40), commits: 1, costUsd: 0.01 };
   };
 
-  await t.test('the claim: one per app, oldest first, the free slots only, paused apps waiting', async () => {
+  await t.test('the claim: one per app before any gets a second, oldest first, the free slots only, paused apps waiting', async () => {
     bot._resetForTests();
     const todo1 = await run(todo, 1, { queuedAgo: 300 });
     const todo2 = await run(todo, 2, { queuedAgo: 200 });
@@ -123,7 +124,7 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     const first = await bot.drainBuilds(pool, {}, deps());
     assert.equal(first.started, 2);
     await waitFor(() => gates.has('todo#1') && gates.has('notes#3'), 'both claimed builds should start');
-    assert.deepEqual(builtFor.sort(), ['notes#3', 'todo#1'], 'todo#2 waits behind todo#1; the paused app waits');
+    assert.deepEqual(builtFor.sort(), ['notes#3', 'todo#1'], 'notes#3 goes ahead of the older todo#2, todo\'s second; the paused app waits');
     assert.equal((await row(todo1)).build_attempts, 1);
     assert.equal((await row(todo2)).build_at, null);
     assert.equal((await row(paused4)).build_at, null);
@@ -148,6 +149,39 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     assert.equal((await row(todo2)).build_ok, true);
   });
 
+  await t.test('an app alone in the queue fills every idle slot; a newcomer goes ahead of its next', async () => {
+    bot._resetForTests();
+    builtFor.length = 0;
+    const todo5 = await run(todo, 5, { queuedAgo: 300 });
+    const todo6 = await run(todo, 6, { queuedAgo: 200 });
+    const todo7 = await run(todo, 7, { queuedAgo: 150 });
+
+    const first = await bot.drainBuilds(pool, {}, deps());
+    assert.equal(first.started, 2, 'no other app wants a slot, so todo takes both');
+    await waitFor(() => gates.has('todo#5') && gates.has('todo#6'), 'both of todo\'s oldest builds should start');
+    assert.equal((await row(todo7)).build_at, null, 'the third waits for a slot');
+
+    const notes8 = await run(notes, 8, { queuedAgo: 10 });
+    gates.get('todo#5')();
+    await waitFor(() => !bot._buildsInFlightForTests().includes(todo5), 'the completed build should release its slot');
+    const next = await bot.drainBuilds(pool, {}, deps());
+    assert.equal(next.started, 1);
+    await waitFor(() => gates.has('notes#8'), 'notes\' first build should take the free slot');
+    assert.equal((await row(todo7)).build_at, null, 'todo already has one under way, so the newer notes#8 goes first');
+
+    gates.get('todo#6')();
+    await waitFor(() => !bot._buildsInFlightForTests().includes(todo6), 'the completed build should release its slot');
+    const last = await bot.drainBuilds(pool, {}, deps());
+    assert.equal(last.started, 1);
+    await waitFor(() => gates.has('todo#7'), 'todo#7 should start once a slot is free');
+    gates.get('notes#8')();
+    gates.get('todo#7')();
+    await bot._awaitBuildsForTests();
+    for (const id of [todo5, todo6, todo7, notes8]) assert.equal((await row(id)).build_ok, true);
+    // Out of the way of the dashboard counts below.
+    await pool.query('DELETE FROM homeroom_bot_runs WHERE id = ANY($1::int[])', [[todo5, todo6, todo7, notes8]]);
+  });
+
   await t.test('a closed issue is skipped with its reason, and not built', async () => {
     bot._resetForTests();
     const closed = await run(notes, 99, { queuedAgo: 10 });
@@ -168,6 +202,21 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     const once = await run(todo, 30, { queuedAgo: 5000, buildAgo: 4000, attempts: 1 });
     const twice = await run(notes, 31, { queuedAgo: 5000, buildAgo: 4000, attempts: 2 });
     const fresh = await run(paused, 32, { queuedAgo: 60, buildAgo: 30, attempts: 1 });
+    // Past one turn and the margin (660s), but inside the longest a build
+    // can take: a platform build's doubled spec and turn (#3396), 1920s.
+    const platformLong = await run(paused, 33, { queuedAgo: 2000, buildAgo: 1500, attempts: 1 });
+    // Long past any bound, but its worker outlived a restart and recovery
+    // still owns the turn (#3401): the session carries it in flight.
+    const recovering = await run(paused, 34, { queuedAgo: 9000, buildAgo: 8000, attempts: 1 });
+    const { rows: [owner] } = await pool.query(
+      `INSERT INTO users (username, password) VALUES ('recovery-owner', 'x') RETURNING id`,
+    );
+    const { rows: [inFlight] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, status, active_turn)
+       VALUES ($1, $2, 'active', '{"mode":"build","journal":"/j.log"}'::jsonb) RETURNING id`,
+      [paused.id, owner.id],
+    );
+    await pool.query('UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [recovering, inFlight.id]);
     // Paused apps never start, so this pass only releases.
     await setting(bot.KEY_SHADOW_BUILDS, 'on');
     await setting(bot.KEY_BUILD_CONCURRENCY, '1');
@@ -182,9 +231,11 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     assert.equal(r2.build_ok, false);
     assert.equal(r2.build_error, 'interrupted: the build never finished');
     assert.notEqual((await row(fresh)).build_at, null, 'one inside its time is left alone');
+    assert.notEqual((await row(platformLong)).build_at, null, 'a platform build on its doubled clocks is left alone');
+    assert.notEqual((await row(recovering)).build_at, null, 'a build restart recovery is finishing is left to it');
     await setting(bot.KEY_BUILD_CONCURRENCY, '2');
     await setting('homeroom_bot_turn_seconds', '1200');
-    await pool.query('UPDATE homeroom_bot_runs SET build_queued_at = NULL, build_at = NULL WHERE id = ANY($1::int[])', [[once, fresh]]);
+    await pool.query('UPDATE homeroom_bot_runs SET build_queued_at = NULL, build_at = NULL WHERE id = ANY($1::int[])', [[once, fresh, platformLong, recovering]]);
   });
 
   await t.test('the supersede drops only a queued, unstarted build of the same issue', async () => {

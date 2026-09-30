@@ -17,7 +17,7 @@ test('Kubernetes platform image contains PostgreSQL tools but no Docker CLI', ()
 
 test('Kubernetes hosted-app evidence image declares a numeric non-root user', () => {
   const dockerfile = read('capture/Dockerfile');
-  // The evidence fixture deliberately runs this image through
+  // The shots fixture deliberately runs this image through
   // deployApplication(), whose pod security context sets runAsNonRoot without
   // runAsUser. Kubernetes cannot resolve a symbolic image user such as
   // `node` before startup, even when that account is non-root in /etc/passwd.
@@ -130,13 +130,13 @@ test('Kubernetes gives the platform a heap ceiling that fits its memory limit', 
   assert.ok(heapMb <= limitMb * 0.8, 'leaves room outside the heap for buffers, code and stacks');
 });
 
-test('Kubernetes enables visual evidence by default with one explicit kill switch', () => {
+test('Kubernetes enables before & after shots by default with one explicit kill switch', () => {
   const platform = read('deploy/helm/social-vibecoding-platform/templates/platform.yaml');
   const values = read('deploy/helm/social-vibecoding-platform/values.yaml');
-  assert.match(values, /visualEvidenceV2Enabled: true/);
+  assert.match(values, /shotsEnabled: true/);
   assert.match(platform,
-    /name: VISUAL_EVIDENCE_V2_ENABLED, value: \{\{ \.Values\.platform\.visualEvidenceV2Enabled \| quote \}\}/);
-  assert.doesNotMatch(platform, /visualEvidenceV2Enabled \| default true/,
+    /name: SHOTS_ENABLED, value: \{\{ \.Values\.platform\.shotsEnabled \| quote \}\}/);
+  assert.doesNotMatch(platform, /shotsEnabled \| default true/,
     'Helm default treats boolean false as empty and would defeat the kill switch');
 });
 

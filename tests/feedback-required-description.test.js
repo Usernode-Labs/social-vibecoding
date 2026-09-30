@@ -39,21 +39,22 @@ const MARKUP_TEXT = fs.readFileSync(MARKUP_PATH, 'utf8');
 // The exact copy. Asserted as a literal in both halves on purpose: the
 // declared dapp.json check matches on this text, so a reword that only
 // touched one of the two would go green here and fail the merge gate.
-const MESSAGE = 'Please add a description.';
+const MESSAGE = 'Please say what should change.';
 
 // ── Half one: the requirement is in the shipped document ─────────────
 
-test('the description field carries a label, a required marker and aria-required', () => {
+test('the description field is asked for by its label, and carries aria-required', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
 
+  // "What should change?" (UI overhaul; it was "Description*"): a question
+  // that says what to write and is plainly the one thing the request needs,
+  // so the asterisk went with the old words. The declared check selects the
+  // field through the label it follows.
   const label = html.match(/<label[^>]*id="feedback-text-label"[^>]*>(.*?)<\/label>/s);
   assert.ok(label, '#feedback-text-label is in the document');
-  assert.match(label[1], /Description/, 'it reads "Description"');
-  assert.match(
-    label[1],
-    /id="feedback-text-required"/,
-    'the required marker is INSIDE the label — the declared check selects it through that anchor'
-  );
+  assert.match(label[1], /What should change\?/, 'it asks "What should change?"');
+  assert.doesNotMatch(html, /id="feedback-text-required"/, 'no asterisk');
+  assert.match(html, /<\/label><textarea[^>]*id="feedback-text"/, 'the field follows its label');
 
   const textarea = html.match(/<textarea[^>]*id="feedback-text"[^>]*>/);
   assert.ok(textarea, '#feedback-text is in the document');
@@ -81,7 +82,7 @@ test('the inline error node ships empty and hidden', () => {
   );
 });
 
-test('the title field is labelled optional, so the asterisk reads as a rule', () => {
+test('the title field is labelled optional', () => {
   const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
   const label = html.match(/<label[^>]*id="feedback-title-label"[^>]*>(.*?)<\/label>/s);
   assert.ok(label, '#feedback-title-label is in the document');
@@ -152,9 +153,10 @@ test('both declared checks exist and match the shipped ids and copy', () => {
   const declared = manifest.tests || [];
 
   const marker = declared.find((t) => t.expectSelector
-    && t.expectSelector.includes('#feedback-text-required'));
-  assert.ok(marker, 'the required marker is covered');
+    && t.expectSelector.includes('#feedback-text-label + #feedback-text[aria-required="true"]'));
+  assert.ok(marker, 'the required field and its question are covered');
   assert.equal(marker.path, '/?shot=feedback');
+  assert.equal(marker.expectText, 'What should change?');
 
   const error = declared.find((t) => t.path === '/?shot=feedback-required');
   assert.ok(error, 'the empty submit is covered');

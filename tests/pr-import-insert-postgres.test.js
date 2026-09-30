@@ -89,7 +89,7 @@ const DDL = `
   )`;
 
 // The same 18-element parameter shape the handler binds ($9 is the immutable
-// GitHub base SHA recorded for exact-revision visual evidence; $11 is the head
+// GitHub base SHA recorded for exact-revision before & after shots; $11 is the head
 // repository #1196 records, which is what decides whether the proposal's head
 // is in the author's fork or in the app's own repository; $15 is the request
 // the work order was prepared from, #1217; $16 is the pull request's body,

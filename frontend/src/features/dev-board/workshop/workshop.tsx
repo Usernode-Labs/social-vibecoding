@@ -48,23 +48,22 @@ import { Button } from '@/components/ui/button';
 import {
   ArrowUpIcon,
   BallotIcon,
-  BoardIcon,
   ChatBubbleTailIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   ChevronUpIcon,
+  DescriptionIcon,
   EllipsisHorizontalIcon,
   HandRaisedIcon,
-  NewspaperIcon,
   PlayIcon,
   SparklesIcon,
   SpeechCheckIcon,
   Squares2X2Icon,
-  UserGroupIcon,
 } from '@/components/ui/icons';
 
+import { Html } from '../../../lib/html';
 import { agoStamp } from '../../../lib/timestamp';
 import { useStoreState } from '../../../lib/use-store-state';
 import { Improve } from '../../improve/improve-controller.js';
@@ -76,14 +75,15 @@ import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { CardRowView, callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
-import type { DevCardModel, DevWorkshopView, WorkshopTheme } from '../card/model';
+import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
-import { CommunityCard, useCommunity } from './community-card';
+import { ApprovalRules, CommunityCard, ShareItCard, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
-import { ChannelCard, NeedsCard } from './hub-cards';
+import { ChannelCard, NeedsCard, WorkshopDoor, YourWorkCard } from './hub-cards';
+import { SinceSummaryCard } from './since-summary-card';
 import { readAskStream } from './ask-stream';
 import {
   commitDistance,
@@ -99,58 +99,50 @@ export type SortKey = 'people' | 'activity' | 'open';
 type TabKey = 'status' | 'workshop' | 'needs' | 'all';
 
 /**
- * "Since your last visit", as a length rather than a disclosure.
+ * "Since your last visit", week by week, on the Workshop page.
  *
- * Three, because that is what fits above the fold beside the panes around it
- * and because a returning member's question is "did anything happen", which
- * three rows answer. The step is the same number so each press pays the same
- * scroll. There is no "show fewer", for the reason the week walk gives: this
- * is one pane with a way to ask for more, not a thing being opened and shut.
+ * It used to be two things on two tabs: the hub's list of what moved since
+ * you were last here, and the Workshop tab's walk of weekly summaries. They
+ * answer one question, so they are one list now: each WEEK is a heading
+ * with its summary line, and what moved in it is nested under it, new
+ * first and what you have already seen folded into one row.
  *
- * #2183: the button no longer leaves when the new rows run out. The list it
- * walks is the WHOLE activity list, newest first, and the baseline is only a
- * line across it: above the line is what moved since the reader was last
- * here, below it is what they have already seen. `Show older` reveals three
- * more of the new rows while there are any, then crosses the line under a
- * "Seen before" mark and keeps going — so a quiet visit, or a visit just
- * after Clear, still has somewhere to look. It disables, rather than leaves,
- * when the rows it can draw are exhausted: a control that is sometimes there
- * is a control nobody learns to reach for. That is the notifications
- * sheet's split between Unread and the archive that holds what was read,
- * on one list instead of two tabs.
+ * Three new rows a week are on screen and the rest of that week's are one
+ * press away ("N more new"), because the question a returning member asks
+ * is "did anything happen", which three rows answer. The weeks that hold
+ * something new are open on arrival; `Show older` steps back one week at a
+ * time from there, past what is loaded down to the project's first week
+ * (#3293), whose heading and line are the history even where no row is.
+ *
+ * #2183 carries over: the baseline is only a line across one list, so a
+ * quiet visit, or a visit just after Clear, still has somewhere to look
+ * (the seen rows, folded under their week), and `Show older` disables
+ * rather than leaves when there is nothing further back.
  */
 const SINCE_FIRST = 3;
-const SINCE_STEP = 3;
+
+/** The since list with nothing in it: a first visit's, which still has weeks. */
+const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
+  baseline: 0, through: 0, total: 0, shipped: 0, opened: 0, proposed: 0, rows: [], seen: { total: 0, rows: [] },
+};
 
 /**
- * The lander's two tabs: the project's HUB and its WORKSHOP.
+ * THE PAGES OF A PROJECT: its HUB, and three pages that open from it.
  *
- * The hub is the community's page — who it is for, its channel, what needs
- * you, who is here, what moved since your last visit. The Workshop is what
- * is being built — your own work in full, and All items. They sit at the TOP
- * of the page, as one segmented control (the prototype's "Community hub |
- * Workshop"), with the "+" after them.
+ * The hub is the community's page: the hero, what landed since you were last
+ * here, your work, the channel, and a door each to Needs you and the
+ * Workshop. Anything longer than a glance is a page with a way back:
  *
- * NEEDS YOU AND ALL ITEMS ARE PAGES, NOT TABS. They were the second and third
- * tabs; now each opens from its card — Needs you from the hub, All items
- * from the Workshop — and the tab it belongs to stays lit while it is up,
- * with a way back above it. Their `?ws=` deep links still land on them.
+ *   - Workshop, from its door: your work in full, since your last visit week
+ *     by week, All items' summary, and the approval rules;
+ *   - Needs you, from its door: one decision per screen;
+ *   - All items, from the Workshop's All items card: the whole board.
  *
- * The hub's label says what kind of hub it is — Community hub, Group hub,
- * or plain Hub for a project that is just yours — once the community record
- * has said; plain Hub until then.
+ * There is no tab strip any more. The hub and the Workshop were two tabs,
+ * and the hub read as a second Workshop, seven cards long; with doors it is
+ * short enough to take in, and each page is where its door says. The keys
+ * and the `?ws=` deep links are the ones the tabs had.
  */
-const TABS: { key: TabKey; label: string; Icon: typeof NewspaperIcon }[] = [
-  { key: 'status', label: 'Hub', Icon: UserGroupIcon },
-  { key: 'workshop', label: 'Workshop', Icon: BoardIcon },
-];
-
-/** The hub tab's label for a community's audience. */
-export function hubLabel(audience: string | null | undefined): string {
-  if (audience === 'open') return 'Community hub';
-  if (audience === 'invited') return 'Group hub';
-  return 'Hub';
-}
 
 /**
  * The tab the page should open on now (AppView._workshopTab: a `?ws=` link,
@@ -161,10 +153,16 @@ export function freshTab(): TabKey | null {
   return tab === 'status' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
 }
 
-/** Which of the two tabs is lit while `tab` is up: a page lights its parent. */
-export function litTab(tab: TabKey): 'status' | 'workshop' {
-  if (tab === 'needs' || tab === 'status') return 'status';
-  return 'workshop';
+/** Where a page's back button goes: All items to the Workshop, the rest to the hub. */
+export function pageParent(tab: TabKey): TabKey {
+  return tab === 'all' ? 'workshop' : 'status';
+}
+
+/** A page's own title, in its back bar. */
+export function pageTitle(tab: TabKey): string {
+  if (tab === 'needs') return 'Needs you';
+  if (tab === 'all') return 'All items';
+  return 'Workshop';
 }
 
 // The shared ago ladder (#1808) — this file used to carry its own, with a
@@ -433,8 +431,8 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
 /**
  * The no-items note, drawn where the items would have been.
  *
- * Two screens say it — the status tab over its strips, and the All items pane
- * under its toolbar — and the second of those is the fix for #2090. The pane
+ * Two screens say it — the hub under its hero, and the All items pane under
+ * its toolbar — and the second of those is the fix for #2090. The pane
  * used to be gated on having a theme to draw, so a search that matched
  * nothing unmounted the whole pane: the grouping tabs, the "+", and the
  * toolbar whose host the search field lives in. The one control that could
@@ -448,33 +446,37 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * stopped being true: the "+" was only in All items' search row, so on
  * Current status it pointed at nothing on screen, and it has had no propose
  * row since New change moved to Improve (#1490) and then to the Homeroom
- * menu's New change button (#2740 review) — an owner decision this note does
- * not undo. The "+" is at the end of the tab strip on every tab now, so the
- * note names what it holds, and sends "start a change" to the button that
+ * menu (#2740 review), where it is "Start a new change" under Agent sessions
+ * since the UI overhaul — an owner decision this note does not undo. The "+"
+ * became the hero's ⋯, on the hub, so the note names what it holds (and, on
+ * All items, where it is), and sends "make one yourself" to the row that
  * does it, by the name the header gives that menu ("Homeroom menu", the
  * mark's own aria-label).
  *
- * Gated on the same facts as what it names: "import a PR" only where the "+"
+ * Gated on the same facts as what it names: "import a PR" only where the ⋯
  * carries that row (`canCollaborate`), and nothing to press at all for a
- * read-only viewer, whose "+" holds Fork alone and whose menu has no New
- * change (both from `AppView.readOnly`, the flag the menu's New change and
- * the "+"'s writable rows are each gated on).
+ * read-only viewer, whose ⋯ holds Fork alone and whose menu has no Start a
+ * new change (both from `AppView.readOnly`, the flag that row and the ⋯'s
+ * writable rows are each gated on).
  *
- * UNDER THE START-HERE BANNER it stops at the "+". On Current status an empty
+ * UNDER THE START-HERE BANNER it stops at the ⋯. On the hub an empty
  * board is nearly always an app nobody has started, and #2573's banner right
- * above the note carries its own New change button — so sending the reader
+ * above the note carries its own Start a new change button — so sending the reader
  * to the Homeroom menu for the same button would be the note talking past
  * the screen it is on. All items has no banner, so there it says the whole
  * thing.
  */
-function EmptyNote({ filtered, loadFailed, underStartHere = false }: {
+function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false }: {
   filtered: boolean;
   loadFailed: boolean;
   underStartHere?: boolean;
+  /** Drawn on the hub, under the hero whose ⋯ it names. */
+  onHub?: boolean;
 }): ReactNode {
   const { readOnly, canCollaborate } = useDevActions();
-  const adds = canCollaborate ? ' to file an issue or import a PR' : ' to file an issue';
-  const start = underStartHere ? '.' : '; to start a change, use New change in the Homeroom menu.';
+  const where = onHub ? '' : ' on the hub';
+  const adds = canCollaborate ? ' to ask for a change or import a PR' : ' to ask for a change';
+  const start = underStartHere ? '.' : '; to make one yourself, use Start a new change in the Homeroom menu.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       {filtered ? (
@@ -485,8 +487,8 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false }: {
           {readOnly ? 'Nothing on the board yet.' : (
             <>
               {'Nothing on the board yet. Press '}
-              <span className="font-medium text-violet-700 dark:text-violet-400">+</span>
-              {adds + start}
+              <span className="font-medium text-violet-700 dark:text-violet-400">⋯</span>
+              {where + adds + start}
             </>
           )}
         </>
@@ -515,10 +517,10 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false }: {
  * The search and filters narrow All items alone now (#2915) and the count is
  * the whole app's, so the two conditions above are the whole claim.
  *
- * ── Why the button is not a second "New change" ─────────────────────────
+ * ── Why the button is not a second "Start a new change" ─────────────────
  *
- * It is `Improve.startSession()`, the one the Improve panel's own New change
- * row calls — imported, not re-implemented, so the navigate-then-create
+ * It is `Improve.startSession()`, the one the Homeroom menu's Start a new
+ * change row calls (it was the Improve panel's New change) — imported, not re-implemented, so the navigate-then-create
  * sequence that entry point owns (features/improve/improve-controller.js)
  * can never drift from this copy of it. The gate is the same store field the
  * panel gates that row on, for the same reason: a viewer who may not start a
@@ -550,7 +552,7 @@ function StartHereBanner(): ReactNode {
           className="self-start"
           onClick={() => Improve.startSession()}
         >
-          New change
+          Start a new change
         </Button>
       )}
     </section>
@@ -804,142 +806,176 @@ function weekRange(startMs: number, endMs: number, live?: boolean): string {
   return `${weekDate(startMs)} – ${weekDate(endMs - 86400000)}`;
 }
 
+type CardRow = Extract<ListRow, { t: 'card' }>;
+
+/** One week of the since list: its heading, its line, and what moved in it. */
+export interface SinceWeek {
+  key: string;
+  /** "This week" for the live window; '' for the rest, which are their dates. */
+  title: string;
+  startMs: number;
+  endMs: number;
+  live: boolean;
+  /** The week's summary (the digest's line for it), or '' where there is none. */
+  line: string;
+  counts: Dash['weeks'][number]['counts'];
+  /** Moved since the viewer's last visit, newest first. */
+  fresh: CardRow[];
+  /** Moved before it, which they have seen. */
+  seen: CardRow[];
+}
+
+const WEEK_MS = 7 * 86400000;
+
+/** The Monday 00:00 UTC a moment falls in: the weeks' own anchor (AppView._weekStart). */
+export function mondayUtc(ms: number): number {
+  const d = new Date(ms);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - ((d.getUTCDay() + 6) % 7) * 86400000;
+}
+
 /**
- * The weeks, as a walk backwards from now.
+ * The since list, filed by week, newest week first.
  *
- * All three windows used to be drawn at once, and three was the whole
- * history the lander could hold: a reader who wanted the week before last
- * had nowhere to go, and a reader who wanted none of them still paid three
- * cards of vertical space before reaching the board.
- *
- * So NOTHING is drawn until it is asked for, and each press reveals the
- * next-oldest window BELOW the stack, with the control moving down with it.
- * The live window is behind the first press like every other: what the pane
- * always shows is the lead paragraph above this walk, which is a sentence
- * about now rather than a window. It grew upwards first, on the
- * reasoning that a column of dated cards reads oldest-at-the-top like any
- * timeline. It does, but this is not a timeline being read: it is one card
- * with a way to ask for more, and growing upwards pushed the card you were
- * looking at further down the screen on every press. Downwards, the present
- * stays where it is and the history unrolls under it.
- *
- * `Open issues` used to be the default entry, and it was never a week — so
- * the first press of "Show past week" revealed THIS week, which is not a
- * past week. It is the pane's lead paragraph now, above this walk and
- * outside it, and the button's label is true on every press.
- *
- * The walk ends where the server's lines end, and SAYS SO. It used to end
- * at last week whatever the project's age, because the model writes two
- * windows and nothing wrote a third; the server now derives every older
- * week from what landed in it and sends `firstWeek`, the Monday the project
- * began (#3293), so a walk pressed to its end has reached the start and says
- * when that was. Without `firstWeek` (the history could not be read, a
- * cache from before it) "as far back as the summary goes" is the weaker
- * statement and the true one: a fact about the summary's reach, not a claim
- * about the project's age.
- *
- * The control does not leave when the walk is spent: it stays, DISABLED,
- * which is the reveal controls' convention (#2183, `.dev-ws-reveal:disabled`)
- * — a button that vanishes reads as one that broke, and the note under it
- * says why there is nothing more.
+ * The weeks are the digest's (`dashboard.weeks`, back to the project's
+ * first), each with its line, whether or not anything in the list moved in
+ * it: a week's heading and line are its history. A row whose week the
+ * digest has no line for (a week in which nothing landed, which the digest
+ * skips, or a board with no digest at all) gets a heading of its own dates
+ * and no line. Rows file by `at`, the moment they moved, clamped to now so a
+ * server clock a moment ahead cannot open a week that has not started.
  */
-export function WeekWalk({ weeks, firstWeek, note, shown, onMore }: {
-  weeks: Dash['weeks'];
-  firstWeek: number | null;
-  /** Why the summary is what it is, when something is wrong with it. */
-  note?: string;
-  /**
-   * How many windows are open. CONTROLLED, and owned by the pane: the way
-   * back out of the walk ("Hide past weeks") is anchored to the lead block
-   * ABOVE this component — the one thing that does not move as the walk
-   * grows — so the pane is the only place that can hold the count for both
-   * controls to read.
-   *
-   * It retires a test-only `initialShown` prop that existed because this
-   * state used to be internal and `renderToStaticMarkup` can neither run an
-   * effect nor dispatch a press. A controlled component needs no such seam:
-   * a test renders it at whatever count it wants to assert.
-   */
-  shown: number;
-  /** One more window, oldest-ward. */
-  onMore: () => void;
+export function sinceWeeks(
+  since: NonNullable<DevWorkshopView['since']>,
+  weeks: Dash['weeks'] | null | undefined,
+  nowMs: number,
+): SinceWeek[] {
+  const byStart = new Map<number, SinceWeek>();
+  const thisMonday = mondayUtc(nowMs);
+  for (const w of weeks || []) {
+    const start = mondayUtc(w.startMs);
+    if (byStart.has(start)) continue;
+    byStart.set(start, {
+      key: w.key,
+      title: w.title,
+      startMs: start,
+      endMs: w.endMs,
+      live: w.key === 'thisWeek',
+      line: w.line || '',
+      counts: w.counts || null,
+      fresh: [],
+      seen: [],
+    });
+  }
+  const file = (row: ListRow, side: 'fresh' | 'seen') => {
+    if (row.t !== 'card') return;
+    const at = Math.min(Number(row.at) || nowMs, nowMs);
+    const start = mondayUtc(at);
+    let week = byStart.get(start);
+    if (!week) {
+      const live = start >= thisMonday;
+      week = {
+        key: `week:${start}`,
+        title: live ? 'This week' : '',
+        startMs: start,
+        endMs: live ? nowMs : start + WEEK_MS,
+        live,
+        line: '',
+        counts: null,
+        fresh: [],
+        seen: [],
+      };
+      byStart.set(start, week);
+    }
+    week[side].push(row);
+  };
+  for (const row of since.rows) file(row, 'fresh');
+  for (const row of since.seen.rows) file(row, 'seen');
+  return [...byStart.values()].sort((a, b) => b.startMs - a.startMs);
+}
+
+/** How many weeks the list opens with: every week holding something new, and at least one. */
+export function sinceWeeksOpen(weeks: SinceWeek[]): number {
+  let last = -1;
+  weeks.forEach((w, i) => { if (w.fresh.length) last = i; });
+  return Math.min(weeks.length, Math.max(1, last + 1));
+}
+
+/**
+ * One week of the since list: its heading (ONE NAMED WINDOW, THE REST
+ * DATED, as the walk had it: "This week" wears its range as a gloss, every
+ * other week is its dates), its summary line, and under them what moved in
+ * it, nested so the rows read as the line's evidence. The seen rows are one
+ * row, "Seen before", until it is pressed.
+ */
+export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, allNew, onAllNew, seenOpen, onSeen }: {
+  week: SinceWeek;
+  slug: string;
+  canPost: boolean;
+  openKey: string | null;
+  onToggleRow: (key: string) => void;
+  allNew: boolean;
+  onAllNew: () => void;
+  seenOpen: boolean;
+  onSeen: () => void;
 }): ReactNode {
-  if (!weeks.length) return null;
-  const drawn = weeks.slice(0, shown);
-  const more = weeks.length - drawn.length;
-  // Not "the oldest card IS the first week": a project's first weeks often
-  // land nothing, and a week that held nothing has no card, so the walk can
-  // be complete with its last card later than the Monday it began. The
-  // server sends `firstWeek` only beside a complete history, so spent plus
-  // set is the beginning.
-  const atStart = !more && !!firstWeek;
+  const fresh = allNew ? week.fresh : week.fresh.slice(0, SINCE_FIRST);
+  const moreNew = week.fresh.length - fresh.length;
+  const row = (r: CardRow) => (
+    <CardRowView
+      key={r.key}
+      row={r}
+      slug={slug}
+      canPost={canPost}
+      open={openKey === r.key}
+      onToggle={() => onToggleRow(r.key)}
+    />
+  );
   return (
-    <div className="dev-ws-cards" data-ws-cards="">
-      {drawn.map((w) => (
-        <article key={w.key} className="dev-ws-card" data-ws-card={w.key}>
-          <h4 className="dev-ws-card-title">
-            {/* ONE NAMED WINDOW, THE REST DATED. A window with a title keeps
-                it and wears its range as a gloss; every other window IS its
-                dates, and the range takes the heading slot. "Last week" and
-                "3 weeks ago" are both relative counts a reader decodes
-                against today, and the second is arithmetic nobody should be
-                asked to do — a range is an absolute fact that stays true
-                however deep the walk goes. */}
-            {w.title
-              ? (
-                <>
-                  {w.title}
-                  {w.startMs ? (
-                    <span className="dev-ws-card-range">
-                      {weekRange(w.startMs, w.endMs, w.key === 'thisWeek')}
-                    </span>
-                  ) : null}
-                </>
-              )
-              : <span className="dev-ws-card-dates">{weekRange(w.startMs, w.endMs)}</span>}
-          </h4>
-          {/* What the window COST and what it PAID, where the server can
-              stand behind the figure. Drawn small: it is a footnote to the
-              tiles above, not a second dashboard. A window the server has
-              written no count for draws none rather than a zero. */}
-          {w.counts ? (
-            <p className="dev-ws-card-counts" data-ws-card-counts="">
-              <span className="dev-ws-card-count">
-                <CheckIcon className="dev-ws-card-count-ic" aria-hidden="true" />
-                <b>{w.counts.partial && w.counts.closed ? `${w.counts.closed}+` : w.counts.closed}</b>
-                {w.counts.closed === 1 ? 'change landed' : 'changes landed'}
-              </span>
-            </p>
+    <div className="dev-ws-since-week" data-ws-since-week={week.key}>
+      <h4 className="dev-ws-since-week-head">
+        {week.title ? (
+          <>
+            {week.title}
+            <span className="dev-ws-card-range">{weekRange(week.startMs, week.endMs, week.live)}</span>
+          </>
+        ) : <span className="dev-ws-card-dates">{weekRange(week.startMs, week.endMs)}</span>}
+        {/* What landed in the whole week, where the server can stand behind
+            the figure: a footnote to the line, not a second count of the list. */}
+        {week.counts && week.counts.closed ? (
+          <span className="dev-ws-since-week-n">
+            {week.counts.partial ? `${week.counts.closed}+` : week.counts.closed} landed
+          </span>
+        ) : null}
+      </h4>
+      {week.line ? <p className="dev-ws-since-week-line" data-ws-since-week-line="">{week.line}</p> : null}
+      {week.fresh.length || week.seen.length ? (
+        <div className="dev-ws-since-nest">
+          {fresh.map(row)}
+          {moreNew > 0 ? (
+            <button type="button" className="dev-ws-since-fold dev-ws-since-fold-new" data-ws-since-more-new="" onClick={onAllNew}>
+              <span className="dev-ws-since-fold-label">{moreNew} more new</span>
+              <ChevronRightIcon className="dev-ws-since-fold-chev" aria-hidden="true" />
+            </button>
           ) : null}
-          <p className="dev-ws-card-line">{w.line}</p>
-        </article>
-      ))}
-      {note ? <p className="dev-ws-digest-note" data-ws-digest-note="">{note}</p> : null}
-      <button
-        type="button"
-        className="dev-ws-reveal dev-ws-week-more un-touch-target"
-        data-ws-week-more=""
-        disabled={!more}
-        onClick={onMore}
-      >
-        {/* Pointing DOWN, because that is where the window it reveals
-            appears — under the card you are reading, not above it. */}
-        <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-        Show past week
-      </button>
-      {/* The walk's floor. `atStart` is the project's BEGINNING, which the
-          server names with `firstWeek` beside a complete history (#3293), so
-          the note says when that was rather than only that the walk is
-          over. Without it the weaker statement is the true one and can
-          always be made: this is as far as the SUMMARY reaches, which is not
-          a claim about the project's age. */}
-      {atStart && firstWeek ? (
-        <p className="dev-ws-week-note" data-ws-week-start="">
-          {`This project started the week of ${weekDate(firstWeek)}.`}
-        </p>
-      ) : null}
-      {!more && !atStart ? (
-        <p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the summary goes.</p>
+          {week.seen.length && !seenOpen ? (
+            <button type="button" className="dev-ws-since-fold" data-ws-since-seen-fold="" onClick={onSeen}>
+              <CheckIcon className="dev-ws-since-fold-check" aria-hidden="true" />
+              <span className="dev-ws-since-fold-label">
+                {week.fresh.length ? `${week.seen.length} more you have seen` : `${week.seen.length} you have seen`}
+              </span>
+              <ChevronDownIcon className="dev-ws-since-fold-chev" aria-hidden="true" />
+            </button>
+          ) : null}
+          {week.seen.length && seenOpen ? (
+            <>
+              <div className="dev-ws-since-seen" data-ws-since-seen="">
+                <span className="dev-ws-since-seen-label">Seen before</span>
+                <span className="dev-ws-since-seen-n">{week.seen.length}</span>
+              </div>
+              {week.seen.map(row)}
+            </>
+          ) : null}
+        </div>
       ) : null}
     </div>
   );
@@ -1094,7 +1130,7 @@ function sinceWords(s: NonNullable<DevWorkshopView['since']>): string {
  * ═══════════════════════════════════════════════════════════════════════ */
 
 type QueueRow = Extract<DevWorkshopView['queue'][number], { t: 'card' }>;
-type SheetKind = 'vote' | 'ask' | 'comments';
+type SheetKind = 'vote' | 'description' | 'ask' | 'comments';
 type Side = 'before' | 'after';
 
 /** One turn in the ask box. `pending` is the answer still being written. */
@@ -1112,45 +1148,61 @@ function askMsgClass(m: AskMsg): string {
   return 'dev-ws-ask-msg dev-ws-ask-ai';
 }
 
-/** The status pill's tone as a caption chip. Complete literals, as above. */
+/**
+ * A fact's tone, twice: as a chip on the Description sheet and as one word
+ * of the card's facts line. Complete literals, as above.
+ */
 function chipTone(tone: string | undefined): string {
   switch (tone) {
     case 'ok': return 'dev-ws-chip dev-ws-chip-ok';
     case 'progress': return 'dev-ws-chip dev-ws-chip-progress';
     case 'warn': case 'attention': return 'dev-ws-chip dev-ws-chip-warn';
     case 'blocked': case 'reject': return 'dev-ws-chip dev-ws-chip-blocked';
+    case 'info': return 'dev-ws-chip dev-ws-chip-info';
     default: return 'dev-ws-chip';
   }
 }
+function factTone(tone: string | undefined): string {
+  switch (tone) {
+    case 'ok': return 'dev-ws-fact dev-ws-fact-ok';
+    case 'progress': return 'dev-ws-fact dev-ws-fact-progress';
+    case 'warn': case 'attention': return 'dev-ws-fact dev-ws-fact-warn';
+    case 'blocked': case 'reject': return 'dev-ws-fact dev-ws-fact-blocked';
+    default: return 'dev-ws-fact';
+  }
+}
 
-/**
- * The caption's chips: what the card's status pill says, the tally, and the
- * category or priority when one is set. Four at most — this is a caption,
- * not the card's badge band, and the rail already says a vote is owed.
- */
 /** The key legend for an item of this kind: the keys it answers to. */
 function legendFor(kind: QueueRow['kind'] | 'done'): Array<[string[], string]> {
   const keys: Array<[string[], string]> = [[['↑', '↓'], 'move']];
   // The end card answers to the move keys alone.
   if (kind === 'done') return keys;
   if (kind === 'vote') keys.push([['V'], 'vote']);
-  keys.push([['A'], 'ask'], [['C'], 'comments']);
+  keys.push([['D'], 'description'], [['A'], 'ask'], [['C'], 'comments']);
   if (kind === 'vote') keys.push([['T'], 'try it']);
   keys.push([['M'], 'more']);
   return keys;
 }
 
-function chipsFor(row: QueueRow, voted: string | null): { key: string; cls: string; text: string }[] {
-  const out: { key: string; cls: string; text: string }[] = [];
+/**
+ * The item's facts: how you voted, where the vote stands, what the card's
+ * status pill says, and the category or priority when one is set. Four at
+ * most. The card sets them as ONE line at its foot (they were a row of
+ * chips, two rows on a phone, under a by-line that looked like one more
+ * numbered change); the Description sheet has them in full, as chips.
+ */
+type Fact = { key: string; tone: string | undefined; text: string };
+function factsFor(row: QueueRow, voted: string | null): Fact[] {
+  const out: Fact[] = [];
   const st = row.card.pill ? row.card.pill.state : null;
   if (row.kind === 'vote' && st) {
-    if (voted) out.push({ key: 'voted', cls: 'dev-ws-chip dev-ws-chip-ok', text: `You voted ${voted}` });
-    if (st.label && !/^Vote\b/.test(st.label)) out.push({ key: 'state', cls: chipTone(st.tone), text: st.label });
-    out.push({ key: 'tally', cls: 'dev-ws-chip', text: `${st.yes} of ${st.majority} yes` });
+    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
+    out.push({ key: 'tally', tone: undefined, text: `${st.yes} of ${st.majority} yes` });
+    if (st.label && !/^Vote\b/.test(st.label)) out.push({ key: 'state', tone: st.tone, text: st.label });
   }
   for (const b of row.card.badges) {
     if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority') && b.label.text) {
-      out.push({ key: b.key, cls: 'dev-ws-chip dev-ws-chip-info', text: b.label.text });
+      out.push({ key: b.key, tone: 'info', text: b.label.text });
     }
   }
   return out.slice(0, 4);
@@ -1177,8 +1229,8 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-function visualSrc(id: string, protectedEvidence = false): string {
-  return protectedEvidence ? id : `/visuals/${id}`;
+function visualSrc(id: string, protectedShots = false): string {
+  return protectedShots ? id : `/visuals/${id}`;
 }
 
 /**
@@ -1190,10 +1242,10 @@ function visualSrc(id: string, protectedEvidence = false): string {
  * sized, they are identical, or the change covers most of the page (a theme,
  * a redesign), where a crop would frame nothing.
  */
-async function diffPair(before: string | null, after: string | null, protectedEvidence = false): Promise<Geo> {
+async function diffPair(before: string | null, after: string | null, protectedShots = false): Promise<Geo> {
   const [a, b] = await Promise.all([
-    before ? loadImage(visualSrc(before, protectedEvidence)) : Promise.resolve(null),
-    after ? loadImage(visualSrc(after, protectedEvidence)) : Promise.resolve(null),
+    before ? loadImage(visualSrc(before, protectedShots)) : Promise.resolve(null),
+    after ? loadImage(visualSrc(after, protectedShots)) : Promise.resolve(null),
   ]);
   const main = b || a;
   if (!main) throw new Error('no still');
@@ -1301,8 +1353,38 @@ function BeforeAfter({ v, near, onFull }: {
       style = { width: w, height: h, transform: `translate(${(view.w - w * scale) / 2}px, ${(view.h - h * scale) / 2}px) scale(${scale})` };
     }
   }
+  // The switch and the way out sit in a bar ABOVE the picture, never on it:
+  // laid over the still they covered the very corner a change often is.
   return (
     <div className="dev-ws-media" data-ws-media="">
+      <div className="dev-ws-media-bar">
+        {v.before && v.after ? (
+          <div className="dev-ws-seg" role="group" aria-label="Before or after">
+            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
+            <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
+          </div>
+        ) : (
+          <span className="dev-ws-seg dev-ws-seg-one">{v.after ? 'After' : 'Before'}</span>
+        )}
+      <button
+        type="button"
+        className="dev-ws-media-full"
+        data-before-png={v.before || undefined}
+        data-after-png={v.after || undefined}
+        data-before-webm={v.beforeWebm || undefined}
+        data-after-webm={v.afterWebm || undefined}
+        data-path={v.path}
+        data-viewport={v.mobile ? 'mobile' : undefined}
+        data-side={side}
+        data-shots={v.protected ? 'true' : undefined}
+        data-before-url={v.protected ? (v.before || undefined) : undefined}
+        data-head-url={v.protected ? (v.after || undefined) : undefined}
+        data-claim={v.protected ? (v.claim || v.path) : undefined}
+        onClick={(e) => onFull(e.currentTarget)}
+      >
+        {cropped ? 'Cropped · Full page ↗' : 'Full page ↗'}
+      </button>
+      </div>
       <div className="dev-ws-media-view" ref={viewRef}>
         {id && style ? (
           <img
@@ -1316,32 +1398,163 @@ function BeforeAfter({ v, near, onFull }: {
         {spot ? <span className="dev-ws-media-spot" style={spot} aria-hidden="true" /> : null}
         {geo ? null : <span className="dev-ws-media-wait" aria-hidden="true" />}
       </div>
-      <button
-        type="button"
-        className="dev-ws-media-full"
-        data-before-png={v.before || undefined}
-        data-after-png={v.after || undefined}
-        data-before-webm={v.beforeWebm || undefined}
-        data-after-webm={v.afterWebm || undefined}
-        data-path={v.path}
-        data-viewport={v.mobile ? 'mobile' : undefined}
-        data-side={side}
-        data-evidence={v.protected ? 'true' : undefined}
-        data-before-url={v.protected ? (v.before || undefined) : undefined}
-        data-head-url={v.protected ? (v.after || undefined) : undefined}
-        data-claim={v.protected ? (v.claim || v.path) : undefined}
-        onClick={(e) => onFull(e.currentTarget)}
+    </div>
+  );
+}
+
+type ShotScreen = NonNullable<NonNullable<QueueRow['visuals']>['screens']>[number];
+type Box = { x: number; y: number; w: number; h: number };
+
+const isPhoneScreen = (screen: ShotScreen) => /phone|mobile/i.test(screen.viewport);
+
+/**
+ * The screen this reader sees: a phone's on a phone, a desktop one on a wide
+ * window, whichever the run has when it has only one.
+ */
+function pickScreen(screens: ShotScreen[], wide: boolean): ShotScreen | null {
+  return screens.find((s) => (wide ? !isPhoneScreen(s) : isPhoneScreen(s))) || screens[0] || null;
+}
+
+/** A region's rectangle on one side: its box, or a line where it begins. */
+function regionRect(region: ShotScreen['regions'][number], side: Side): { box: Box; line: boolean } | null {
+  const box = side === 'before' ? region.b : region.a;
+  if (box && box.length === 4) return { box: { x: box[0], y: box[1], w: box[2], h: box[3] }, line: false };
+  const mark = side === 'before' ? region.bMark : region.aMark;
+  if (region.n > 0 && mark && mark.length === 3) return { box: { x: mark[0], y: mark[1], w: mark[2], h: 0 }, line: true };
+  return null;
+}
+
+/**
+ * The item's picture when its before & after run worked out its screens:
+ * ONE screen, at the reader's own size, cropped to the areas the run found
+ * different and outlined there, numbered as the declared changes are (the
+ * proposal's own card draws the same outlines, services/shots-diff.js). The
+ * changes it shows are listed under it in a line or two each; the full words
+ * are in the Description sheet. Tap the picture, or the switch above it, to
+ * flip between after and before.
+ *
+ * The outlines are drawn in the VIEW's pixels over the scaled still, not
+ * inside it, so a line and a number stay crisp at any scale. Nothing loads
+ * until the item is in view or next to it (`near`).
+ */
+function ShotsPicture({ v, near, wide }: {
+  v: NonNullable<QueueRow['visuals']>;
+  near: boolean;
+  wide: boolean;
+}): ReactNode {
+  const viewRef = useRef<HTMLDivElement>(null);
+  const [side, setSide] = useState<Side>('after');
+  const [view, setView] = useState({ w: 0, h: 0 });
+  useLayoutEffect(() => {
+    const el = viewRef.current;
+    if (!el || typeof ResizeObserver !== 'function') return undefined;
+    const measure = () => setView((cur) => (
+      cur.w === el.clientWidth && cur.h === el.clientHeight ? cur : { w: el.clientWidth, h: el.clientHeight }
+    ));
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const screen = pickScreen(v.screens || [], wide);
+  if (!screen) return null;
+  const W = screen.width;
+  const H = Math.max(screen.before.height, screen.after.height);
+  // The crop: every outlined area on either side, so a flip never moves it.
+  const rects = screen.regions.flatMap((r) => [regionRect(r, 'before'), regionRect(r, 'after')])
+    .filter((r): r is { box: Box; line: boolean } => !!r);
+  let place: { scale: number; tx: number; ty: number } | null = null;
+  if (view.w && view.h) {
+    const pad = 16;
+    const x0 = rects.length ? Math.max(0, Math.min(...rects.map((r) => r.box.x)) - pad) : 0;
+    const y0 = rects.length ? Math.max(0, Math.min(...rects.map((r) => r.box.y)) - pad) : 0;
+    const x1 = rects.length ? Math.min(W, Math.max(...rects.map((r) => r.box.x + r.box.w)) + pad) : W;
+    const y1 = rects.length ? Math.min(H, Math.max(...rects.map((r) => r.box.y + Math.max(r.box.h, 2))) + pad) : H;
+    const box = { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+    const scale = Math.min(1, view.w / box.w, view.h / box.h);
+    const sw = W * scale;
+    const sh = H * scale;
+    const tx = sw <= view.w ? (view.w - sw) / 2 : Math.max(view.w - sw, Math.min(0, view.w / 2 - (box.x + box.w / 2) * scale));
+    const ty = sh <= view.h ? (view.h - sh) / 2 : Math.max(view.h - sh, Math.min(0, view.h / 2 - (box.y + box.h / 2) * scale));
+    place = { scale, tx, ty };
+  }
+  const flip = () => setSide((s) => (s === 'after' ? 'before' : 'after'));
+  const shown = new Set(screen.changes);
+  const changes = (v.changes || []).filter((c) => shown.has(c.n));
+  const sideShot = (which: Side) => {
+    const shot = which === 'before' ? screen.before : screen.after;
+    return (
+      <span
+        key={which}
+        className={which === 'before' ? 'dev-ws-shot-side dev-ws-shot-before' : 'dev-ws-shot-side dev-ws-shot-after'}
+        style={place ? { width: W, height: shot.height, transform: `translate(${place.tx}px, ${place.ty}px) scale(${place.scale})` } : undefined}
       >
-        {cropped ? 'Cropped to the change · Full page ↗' : 'Full page ↗'}
-      </button>
-      {v.before && v.after ? (
+        {near && place ? <img src={shot.url} alt={which === 'after' ? 'After the change' : 'Before the change'} draggable={false} /> : null}
+      </span>
+    );
+  };
+  const outlines = (which: Side) => (place ? screen.regions.map((r, k) => {
+    const rect = regionRect(r, which);
+    if (!rect) return null;
+    const p = place as { scale: number; tx: number; ty: number };
+    const style = {
+      left: rect.box.x * p.scale + p.tx,
+      top: rect.box.y * p.scale + p.ty,
+      width: rect.box.w * p.scale,
+      height: rect.line ? 0 : rect.box.h * p.scale,
+    };
+    const cls = rect.line
+      ? (which === 'before' ? 'dev-ws-shot-mark dev-ws-shot-on-before' : 'dev-ws-shot-mark dev-ws-shot-on-after')
+      : r.n > 0
+        ? (which === 'before' ? 'dev-ws-shot-box dev-ws-shot-on-before' : 'dev-ws-shot-box dev-ws-shot-on-after')
+        : (which === 'before' ? 'dev-ws-shot-box dev-ws-shot-box-other dev-ws-shot-on-before' : 'dev-ws-shot-box dev-ws-shot-box-other dev-ws-shot-on-after');
+    // The number sits on the outline's corner, pulled back inside the
+    // picture when the outline meets its edge, so it is never cut in half.
+    const badge = {
+      left: Math.max(-9, 2 - style.left),
+      top: Math.min(Math.max(-9, 2 - style.top), view.h - 22 - style.top),
+    };
+    return (
+      <span key={`${which}-${k}`} className={cls} style={style} aria-hidden="true">
+        {r.n > 0 ? <span className="dev-ws-shot-n" style={badge}>{r.n}</span> : null}
+      </span>
+    );
+  }) : null);
+  const size = isPhoneScreen(screen) ? 'Phone' : screen.viewport.charAt(0).toUpperCase() + screen.viewport.slice(1);
+  return (
+    <div className="dev-ws-media dev-ws-media-shots" data-ws-media="" data-ws-shots="" data-side={side}>
+      <div className="dev-ws-media-bar">
         <div className="dev-ws-seg" role="group" aria-label="Before or after">
-          <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
-          <button type="button" className="dev-ws-seg-btn" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
+          <button type="button" className="dev-ws-seg-btn dev-ws-seg-before" aria-pressed={side === 'before'} onClick={() => setSide('before')}>Before</button>
+          <button type="button" className="dev-ws-seg-btn dev-ws-seg-after" aria-pressed={side === 'after'} onClick={() => setSide('after')}>After</button>
         </div>
-      ) : (
-        <span className="dev-ws-seg dev-ws-seg-one">{v.after ? 'After' : 'Before'}</span>
-      )}
+        <span className="dev-ws-media-size">{size}</span>
+      </div>
+      <div
+        className="dev-ws-media-view"
+        ref={viewRef}
+        role="button"
+        tabIndex={0}
+        aria-label={side === 'after' ? 'Show before the change' : 'Show after the change'}
+        onClick={flip}
+        onKeyDown={(e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } }}
+      >
+        {sideShot('before')}
+        {sideShot('after')}
+        {outlines('before')}
+        {outlines('after')}
+        {near && place ? null : <span className="dev-ws-media-wait" aria-hidden="true" />}
+      </div>
+      {changes.length ? (
+        <ol className="dev-ws-shot-changes">
+          {changes.map((c) => (
+            <li key={c.n} className="dev-ws-shot-change">
+              <span className="dev-ws-shot-n">{c.n}</span>
+              <span className="dev-ws-shot-text">{c.text}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
     </div>
   );
 }
@@ -1349,13 +1562,43 @@ function BeforeAfter({ v, near, onFull }: {
 /* ── One item of the feed ────────────────────────────────────────────── */
 
 /**
+ * Who and when, for an item: a proposal's author, or an issue's number and
+ * who filed it. On the card it sits over the title, where it reads as the
+ * author; at the foot, its round avatar looked like one more numbered change
+ * beside the picture's. The Description sheet draws the same line.
+ */
+function ItemBy({ row }: { row: QueueRow }): ReactNode {
+  const isVote = row.kind === 'vote';
+  return (
+    <p className="dev-ws-item-by">
+      {row.who ? (
+        <span className="dev-ws-item-avatar" style={{ background: swatchFor(row.who) }} aria-hidden="true">
+          {row.who.slice(0, 1).toUpperCase()}
+        </span>
+      ) : null}
+      <span>
+        {isVote ? (
+          <>{row.who ? <b>{row.who}</b> : 'Proposed'}{row.ago ? ` · ${row.who ? 'proposed ' : ''}${row.ago}` : ''}</>
+        ) : (
+          <>
+            {row.number != null ? <b>{`#${row.number}`}</b> : null}
+            {row.who ? <>{row.number != null ? ' · filed by ' : 'Filed by '}<b>{row.who}</b></> : null}
+            {row.ago ? ` · ${row.ago}` : ''}
+          </>
+        )}
+      </span>
+    </p>
+  );
+}
+
+/**
  * memo(): the feed holds the Ask sheet's draft and its streamed answer, so it
  * renders on every keystroke and every token of an answer, and none of that
  * is any item's business. Every prop is a primitive, a row off the publish,
- * or a callback the feed keeps stable (`openFull`), so an item renders again
- * only when something it draws changed.
+ * or a callback the feed keeps stable (`openFull`, `onDescribe`), so an item
+ * renders again only when something it draws changed.
  */
-const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull }: {
+const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull, onDescribe, railClear }: {
   row: QueueRow;
   index: number;
   count: number;
@@ -1368,20 +1611,53 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   swipe: boolean;
   slug: string;
   onFull: (el: HTMLElement) => void;
+  /** Opens the Description sheet, which the facts line is a door to. */
+  onDescribe: () => void;
+  /**
+   * On a phone, how far down the item the rail's first button starts (0
+   * until measured, and on a wide window, where the rail stands beside the
+   * card). Above it the by-line and title take the item's full width.
+   */
+  railClear: number;
 }): ReactNode {
   const isVote = row.kind === 'vote';
   const href = openHref(slug, row.card);
   const title = row.card.title.text || row.card.title.title;
-  const chips = chipsFor(row, voted);
+  const facts = factsFor(row, voted);
   const summary = isVote ? row.summary : (row.body || null);
   const pct = Math.max(2, Math.round(((index + 1) / Math.max(1, count)) * 100));
+  // A run that worked out its screens IS the summary: the picture takes the
+  // paragraph's room, and the words are one tap away in Description.
+  const shots = !!(row.visuals && row.visuals.screens && row.visuals.screens.length);
+  // THE HEAD TAKES THE FULL WIDTH WHEN IT ENDS ABOVE THE RAIL. The rail sits
+  // at the item's foot on a phone, so on most screens the by-line, title and
+  // summary are nowhere near it, and keeping its lane free only wrapped them
+  // early. Measured laid out wide, before paint, in two steps: the summary
+  // too if it ends above the rail ('all'), else the title alone ('title'),
+  // else the item keeps the lane (a short screen, a long title).
+  const itemRef = useRef<HTMLElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const summaryRef = useRef<HTMLParagraphElement>(null);
+  const [head, setHead] = useState<'all' | 'title' | 'none'>('all');
+  useLayoutEffect(() => { setHead('all'); }, [railClear, title, summary, shots]);
+  useLayoutEffect(() => {
+    if (!railClear || head === 'none') return;
+    const item = itemRef.current;
+    const last = head === 'all' ? (summaryRef.current || titleRef.current) : titleRef.current;
+    if (!item || !last) return;
+    if (last.getBoundingClientRect().bottom - item.getBoundingClientRect().top > railClear - 12) {
+      setHead(head === 'all' ? 'title' : 'none');
+    }
+  });
   return (
     <section
+      ref={itemRef}
       className="dev-ws-item"
       data-ws-item={row.key}
       data-ws-kind={row.kind}
       data-ws-tint={tint}
       data-ws-swipeable={swipe ? '' : undefined}
+      data-ws-head={railClear && head !== 'none' ? head : undefined}
     >
       <div className="dev-ws-item-progress" aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
       <div className="dev-ws-item-top">
@@ -1395,41 +1671,26 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
         )}
         <span className="dev-ws-item-of">{`${index + 1} / ${count}`}</span>
       </div>
+      <ItemBy row={row} />
       {/* The title is the headline and the door to the full card: its own
           page, with the checks, the thread and every affordance the card
           has. Same route the Board's rows open. */}
-      <h2 className="dev-ws-item-title">{href ? <a href={href}>{title}</a> : title}</h2>
-      {summary ? (
-        <p className="dev-ws-item-summary">{summary}</p>
+      <h2 className="dev-ws-item-title" ref={titleRef}>{href ? <a href={href}>{title}</a> : title}</h2>
+      {shots ? null : summary ? (
+        <p className="dev-ws-item-summary" ref={summaryRef}>{summary}</p>
       ) : (
-        <p className="dev-ws-item-summary dev-ws-item-nosummary">
+        <p className="dev-ws-item-summary dev-ws-item-nosummary" ref={summaryRef}>
           {isVote ? 'No plain-language summary was written for this change.' : 'This issue has no description.'}
         </p>
       )}
-      {row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} /> : <div className="dev-ws-item-spacer" aria-hidden="true" />}
+      {shots && row.visuals ? <ShotsPicture v={row.visuals} near={near} wide={wide} />
+        : row.visuals ? <BeforeAfter v={row.visuals} near={near} onFull={onFull} />
+          : <div className="dev-ws-item-spacer" aria-hidden="true" />}
       <div className="dev-ws-item-caption">
-        <p className="dev-ws-item-by">
-          {row.who ? (
-            <span className="dev-ws-item-avatar" style={{ background: swatchFor(row.who) }} aria-hidden="true">
-              {row.who.slice(0, 1).toUpperCase()}
-            </span>
-          ) : null}
-          <span>
-            {isVote ? (
-              <>{row.who ? <b>{row.who}</b> : 'Proposed'}{row.ago ? ` · ${row.who ? 'proposed ' : ''}${row.ago}` : ''}</>
-            ) : (
-              <>
-                {row.number != null ? <b>{`#${row.number}`}</b> : null}
-                {row.who ? <>{row.number != null ? ' · filed by ' : 'Filed by '}<b>{row.who}</b></> : null}
-                {row.ago ? ` · ${row.ago}` : ''}
-              </>
-            )}
-          </span>
-        </p>
-        {chips.length ? (
-          <div className="dev-ws-item-chips">
-            {chips.map((c) => <span key={c.key} className={c.cls}>{c.text}</span>)}
-          </div>
+        {facts.length ? (
+          <button type="button" className="dev-ws-item-facts" data-ws-facts="" aria-haspopup="dialog" onClick={onDescribe}>
+            {facts.map((f) => <span key={f.key} className={factTone(f.tone)}>{f.text}</span>)}
+          </button>
         ) : null}
       </div>
       {/* The swipe's two hints, last so the item's reading order is
@@ -1782,7 +2043,10 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const endScrollRef = useRef<boolean>(endOnOpen);
   const moreRef = useRef<HTMLButtonElement>(null);
   const commentsRef = useRef<HTMLDivElement>(null);
+  const railRef = useRef<HTMLElement>(null);
   const wide = useMediaFlag(WIDE_QUERY);
+  // How far down an item the rail starts, on a phone (see FeedItem's head).
+  const [railClear, setRailClear] = useState(0);
 
   // Keyed by row, so moving to the next proposal does not carry the last
   // one's conversation with it.
@@ -2078,14 +2342,44 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   });
   useSwipeVote(scrollRef, !wide, swipeHandle);
 
+  /**
+   * Where the rail starts, measured down from the top of the item in view:
+   * the items fill the scroller, so the scroller's top is theirs. Again when
+   * the rail changes (an issue has no Try it) or anything resizes. Nothing on
+   * a wide window, where the rail stands beside the card.
+   */
+  useLayoutEffect(() => {
+    const rail = railRef.current;
+    const sc = scrollRef.current;
+    if (wide || !rail || !sc || typeof ResizeObserver !== 'function') {
+      setRailClear(0);
+      return undefined;
+    }
+    const measure = () => {
+      const v = Math.round(rail.getBoundingClientRect().top - sc.getBoundingClientRect().top);
+      setRailClear((cur) => (cur === v ? cur : Math.max(0, v)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(rail);
+    ro.observe(sc);
+    return () => ro.disconnect();
+  }, [wide, row ? row.key : null, row ? row.kind : null]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const preview = row ? (row.card.rail.preview || row.card.actionPreview || null) : null;
   const canTry = !!(preview && preview.state === 'live');
   const tryIt = () => {
     if (preview && preview.state === 'live') callAppView('swapToStagingForSession', preview.sessionId, preview.url);
   };
+  // The facts line on a card opens the Description sheet. Stable, like
+  // openFull below, so handing it to the memo()'d items costs no render.
+  const describe = useCallback(() => {
+    setLeaving(null);
+    setSheet('description');
+  }, []);
   // Stable, so the memo()'d items it is handed to skip a render of the feed.
   const openFull = useCallback((el: HTMLElement) => callAppView(
-    el.dataset.evidence === 'true' ? 'openEvidenceComparison' : 'openVisualComparison',
+    el.dataset.shots === 'true' ? 'openShotsComparison' : 'openVisualComparison',
     el,
   ), []);
   const menuKey = row ? row.card.rail.menuKey : undefined;
@@ -2098,6 +2392,8 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   const shown = row ? (sheet || leaving) : null;
   const leavingAttr = !sheet && leaving ? { 'data-ws-leaving': '' } : {};
   const commentCount = row ? (row.card.chatCount || 0) : 0;
+  const descFacts = row ? factsFor(row, voted) : [];
+  const descChanges = row && row.visuals && row.visuals.changes ? row.visuals.changes : [];
 
   /**
    * The keys. Every one is also a button on the rail, so nothing is ONLY a
@@ -2119,6 +2415,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       if ((k === 'v' || k === 'V') && row.kind === 'vote') { toggleSheet('vote'); return; }
       if ((k === 'y' || k === 'Y') && sheet === 'vote') { answer('yes'); return; }
       if ((k === 'n' || k === 'N') && sheet === 'vote') { answer('no'); return; }
+      if (k === 'd' || k === 'D') { toggleSheet('description'); return; }
       if (k === 'a' || k === 'A') { toggleSheet('ask'); return; }
       if (k === 'c' || k === 'C') { toggleSheet('comments'); return; }
       if ((k === 't' || k === 'T') && canTry) { tryIt(); return; }
@@ -2319,6 +2616,8 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             swipe={!wide && canSwipeVote(r) && !answered[r.key]}
             slug={slug}
             onFull={openFull}
+            onDescribe={describe}
+            railClear={wide ? 0 : railClear}
           />
         ))}
         {/* ALWAYS, after the last item: the swipe past the end lands here.
@@ -2334,7 +2633,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       </div>
 
       {row ? (
-        <aside className="dev-ws-rail" data-ws-rail="" aria-label="This item">
+        <aside className="dev-ws-rail" data-ws-rail="" aria-label="This item" ref={railRef}>
           {row.kind === 'vote' ? (
             <button
               type="button"
@@ -2361,6 +2660,21 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
               <span className="dev-ws-rail-lab">Take it</span>
             </button>
           )}
+          {/* Everything the card leaves out, the way a short video's words
+              open under it: the summary, the changes in their own words and
+              the facts in full. Second, because it is read before a vote. */}
+          <button
+            type="button"
+            className="dev-ws-rail-btn dev-ws-rail-description"
+            data-ws-rail-btn="description"
+            aria-haspopup="dialog"
+            aria-expanded={sheet === 'description'}
+            onClick={() => toggleSheet('description')}
+          >
+            <span className="dev-ws-rail-ic"><DescriptionIcon aria-hidden="true" /></span>
+            <span className="dev-ws-rail-lab">Description</span>
+            <kbd className="dev-ws-rail-key" aria-hidden="true">D</kbd>
+          </button>
           <button
             type="button"
             className="dev-ws-rail-btn dev-ws-rail-comments"
@@ -2565,6 +2879,53 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
           ) : null}
           {!row.thread && row.commentsFor == null ? <p className="dev-ws-ask-hint">No comments yet.</p> : null}
+        </div>
+      </section>
+      </div>
+      ) : null}
+
+      {/* ── Description: what the card leaves out ──
+          The title, who and when, the facts as chips, the declared changes
+          in their own words, and the summary as its own page renders it. */}
+      {row && shown === 'description' ? (
+      <div className="dev-ws-sheet-modal dev-ws-sheet-description" data-ws-sheet="description" role="dialog" aria-label="Description" {...leavingAttr}>
+      <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
+      <section className="dev-ws-sheet-card" data-ws-description="">
+        <span className="dev-ws-sheet-handle" aria-hidden="true" />
+        <div className="dev-ws-sheet-head">
+          <span><span className="dev-ws-sheet-title">Description</span></span>
+          <button type="button" className="dev-ws-sheet-x" onClick={closeSheet}>Close</button>
+        </div>
+        <div className="dev-ws-sheet-body">
+          <h3 className="dev-ws-desc-title">{row.card.title.text || row.card.title.title}</h3>
+          <ItemBy row={row} />
+          {descFacts.length ? (
+            <div className="dev-ws-item-chips">
+              {descFacts.map((f) => <span key={f.key} className={chipTone(f.tone)}>{f.text}</span>)}
+            </div>
+          ) : null}
+          {descChanges.length ? (
+            <div className="dev-ws-desc-part">
+              <h4 className="dev-ws-desc-head">What changes</h4>
+              <ol className="dev-ws-shot-changes dev-ws-desc-changes">
+                {descChanges.map((c) => (
+                  <li key={c.n} className="dev-ws-shot-change">
+                    <span className="dev-ws-shot-n">{c.n}</span>
+                    <span>{c.text}</span>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          ) : null}
+          <div className="dev-ws-desc-part">
+            <h4 className="dev-ws-desc-head">{row.kind === 'vote' ? 'Summary' : 'The issue'}</h4>
+            {row.descriptionHtml ? (
+              <Html className="dev-ws-desc-body" html={row.descriptionHtml} />
+            ) : (
+              <p className="dev-ws-ask-hint">{row.kind === 'vote' ? 'No plain-language summary was written for this change.' : 'This issue has no description.'}</p>
+            )}
+          </div>
+          {cardHref ? <a className="dev-ws-desc-open" href={cardHref}>{row.kind === 'vote' ? 'Open the proposal' : 'Open the issue'}</a> : null}
         </div>
       </section>
       </div>
@@ -2915,120 +3276,30 @@ function usePinnedStrip(
 }
 
 /**
- * THE SLIDING SELECTION MARKER.
- *
- * The selected tab used to draw its own fill, so the selection jumped between
- * tabs. One element draws it now, and it MEASURES the selected tab rather than
- * being told where to go — which is what lets a single implementation cover
- * both bars: the phone's pill has three equal-width 58px tabs, the desktop
- * strip has content-width 32px ones, and neither geometry is written down
- * here. Every number comes off the live element.
- *
- * `useLayoutEffect`, not `useEffect`: the marker is positioned from a
- * measurement, and a paint between the two is a visible flash of it in the
- * wrong place.
- *
- * THREE THINGS RE-MEASURE IT, and each has actually moved the tabs:
- *   - the tab changing, which is the point;
- *   - a ResizeObserver on the bar, which covers a rotation, a window drag
- *     across the 700px breakpoint, and a late webfont reflowing the labels;
- *   - the portal remount, because crossing that breakpoint tears the bar out
- *     of one parent and into another, and the old offsets belong to neither.
- *
- * ── ONLY ONE OF THE THREE IS WORTH ANIMATING ───────────────────────────
- *
- * `slide` is the difference, and it is why the box carries a fourth field
- * that is not a coordinate. These are OFFSETS INTO THE BAR, not screen
- * positions, so the bar moving or resizing re-expresses a tab that has not
- * budged — and the marker then animated across the strip to arrive exactly
- * where it already was. Switching the All-items pane between By category and
- * By stage did it every time: the two panes gave the nav two different
- * widths, and under the centred strip that alone moved the measurement 158px
- * for an unmoved tab. app.css takes that particular 158 away; this takes away
- * the whole CLASS of it, for the breakpoint crossing and the late webfont and
- * whatever moves under the bar next.
- *
- * So a measurement animates only when the SELECTION is what changed. Three
- * rules, and each is one line below:
- *   - unchanged geometry keeps the previous box identity, so the
- *     ResizeObserver's delivery on `observe()` cannot clear a slide that is
- *     still running;
- *   - a resize that DID move the numbers snaps, because the tab did not move;
- *   - the first measurement snaps too — there is no previous box, so there is
- *     nothing to have slid from. That is the placement the null-until-measured
- *     render is for, and it was animating anyway: `data-ws-marker-at` used to
- *     carry the transition and arrives in the same commit as the transform, so
- *     a cold open on All items slid the marker in from the nav's left edge at
- *     zero width. It lands instantly now, which is what that render always
- *     claimed.
- *
- * It returns `null` until the first measurement lands so the marker can render
- * hidden rather than at the left edge — otherwise it slides in from nowhere on
- * the first paint, which reads as a bug rather than a flourish.
+ * A page's head: the way back, and the page's name under where it goes back
+ * to ("Homeroom" over "Workshop"). The back is a disc of its own rather than
+ * a chevron in the header, because the header's slot is the project's own
+ * (see App._backSlotFor), and this is a level inside it. The name is the
+ * page's one heading.
  */
-interface TabMarkerBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  /** Whether moving to this box is a selection change, and so worth animating. */
-  slide: boolean;
-}
-
-function useTabMarker(
-  bar: HTMLElement | null,
-  tab: TabKey,
-): TabMarkerBox | null {
-  const [box, setBox] = useState<TabMarkerBox | null>(null);
-  useLayoutEffect(() => {
-    if (!bar) return;
-    const measure = (selectionChanged: boolean) => {
-      const el = bar.querySelector<HTMLElement>('[data-ws-tab-btn][aria-selected="true"]');
-      if (!el) return;
-      // offsetLeft/Top resolve against the nearest positioned ancestor, which
-      // is the bar itself — see app.css, where it is the containing block at
-      // both widths precisely so these numbers mean what they look like.
-      setBox((prev) => {
-        const next = { x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight };
-        if (prev && prev.x === next.x && prev.y === next.y
-          && prev.w === next.w && prev.h === next.h) return prev;
-        return { ...next, slide: !!prev && selectionChanged };
-      });
-    };
-    // The effect's own run is the tab having changed — it depends on `tab`.
-    // Everything the observer reports afterwards is the layout moving.
-    measure(true);
-    const ro = new ResizeObserver(() => measure(false));
-    ro.observe(bar);
-    // ...AND THE TAB LIST, which can resize while the bar does not: on a phone
-    // the "+" shares the row with it, so the "+" arriving or leaving (it is
-    // hidden for a read-only viewer of the self-hosted app) moves every tab
-    // inside a bar of unchanged size, and an observer on the bar alone would
-    // leave the marker where the tabs used to be.
-    const list = bar.querySelector<HTMLElement>('.dev-ws-tablist');
-    if (list) ro.observe(list);
-    // ...AND EACH TAB, which can resize while the list does not (#2915). The
-    // All items dot comes and goes with the search: on a phone the list is
-    // the pill's fixed width and the three tabs share it out, so the dot
-    // re-divides the tabs inside a list and a bar that both kept their size.
-    for (const el of bar.querySelectorAll<HTMLElement>('[data-ws-tab-btn]')) ro.observe(el);
-    return () => ro.disconnect();
-  }, [bar, tab]);
-  return box;
-}
-
-/**
- * The way back from a page to the tab it belongs to: Needs you to the hub,
- * All items to the Workshop. A row above the page rather than a chevron in
- * the header, because the header's slot is the project's own (see
- * App._backSlotFor), and this is a level inside one tab of it.
- */
-function PageBack({ label, onBack }: { label: string; onBack: () => void }): ReactNode {
+function PageBack({ label, title, onBack }: { label: string; title: string; onBack: () => void }): ReactNode {
   return (
-    <button type="button" className="dev-ws-page-back un-touch-target" data-ws-page-back="" onClick={onBack}>
-      <ChevronLeftIcon className="w-4 h-4" aria-hidden="true" />
-      {label}
-    </button>
+    <div className="dev-ws-pagehead" data-ws-pagehead="">
+      <button
+        type="button"
+        className="dev-ws-page-back un-touch-target"
+        data-ws-page-back=""
+        aria-label={`Back to ${label}`}
+        title={`Back to ${label}`}
+        onClick={onBack}
+      >
+        <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
+      </button>
+      <div className="dev-ws-pagehead-text">
+        <span className="dev-ws-pagehead-over">{label}</span>
+        <h2 className="dev-ws-pagehead-title">{title}</h2>
+      </div>
+    </div>
   );
 }
 
@@ -3041,12 +3312,6 @@ export function DevWorkshop(): ReactNode {
   const app = useStoreState(improveStore);
   const hostRef = useRef<HTMLDivElement>(null);
   const [sortKey, setSortKey] = useState<SortKey>('people');
-  // HOW FAR THE WEEK WALK IS OPEN, held here rather than inside WeekWalk
-  // because two controls read it and they sit on opposite sides of the
-  // walk: "Show past week" at its growing edge, and the way back out
-  // anchored to the lead block above it. Zero on arrival — every window,
-  // the live one included, is behind a press.
-  const [weeksShown, setWeeksShown] = useState(0);
   // Which themes are unfolded, keyed by id. The FIRST theme opens by
   // default: a lander whose every theme is shut is a list of headings.
   // Seeded once the first real publish lands, then the viewer's.
@@ -3063,13 +3328,15 @@ export function DevWorkshop(): ReactNode {
   const [openRows, setOpenRows] = useState<Record<string, string>>(
     () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
   );
-  // How many of "since your last visit" are drawn. It was a collapsed row you
-  // had to open; the first three are simply on screen now and the rest are a
-  // press away, which is the WeekWalk's bargain one pane down.
-  const [sinceShown, setSinceShown] = useState(SINCE_FIRST);
-  // #2183: how many of the rows the reader has ALREADY seen are drawn under
-  // the new ones. Zero until `Show older` has no new row left to reveal.
-  const [seenShown, setSeenShown] = useState(0);
+  // HOW FAR THE SINCE LIST IS OPEN, on the Workshop page (see SINCE_FIRST):
+  // the weeks past the ones it opens with, and which weeks have their extra
+  // new rows or their seen rows unfolded. Held here because Clear folds all
+  // of it back at once, and the legacy fillers re-run when any of it moves.
+  const [sinceExtra, setSinceExtra] = useState(0);
+  const [sinceAllNew, setSinceAllNew] = useState<Record<string, boolean>>({});
+  const [sinceSeen, setSinceSeen] = useState<Record<string, boolean>>({});
+  // Whether the hub's Your work shows every row or its first two.
+  const [workAll, setWorkAll] = useState(false);
   // Which of the three tabs is up. Seeded from the publish so a `?ws=` deep
   // link paints the right one on the FIRST frame rather than showing Current
   // status and then swapping — the same reason `openThemes` is seeded from
@@ -3091,11 +3358,9 @@ export function DevWorkshop(): ReactNode {
   // the prerendered page is unchanged; the publish is the fallback where
   // AppView is not there to ask.
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
-  const lit = litTab(tab);
-  const markerBox = useTabMarker(bar, lit);
-  // Moving between the tabs and the two pages under them, remembered the way
-  // a tab press always was (AppView._setWorkshopTab), and back to the top:
-  // a page opened from a card lower down should start at its own head.
+  // Moving between the hub and its pages, remembered the way a tab press
+  // always was (AppView._setWorkshopTab), and back to the top: a page opened
+  // from a door lower down should start at its own head.
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
@@ -3185,27 +3450,20 @@ export function DevWorkshop(): ReactNode {
     setOpenRows((cur) => (cur[scope] === key ? { ...cur, [scope]: '' } : { ...cur, [scope]: key }));
   };
 
-  // The since-list's two controls (#2183). `Show older` walks down the list:
-  // the rest of the new rows first, three a press, then the rows from before
-  // the baseline. `Clear` moves the baseline to now — AppView owns the stamp
-  // and its storage, and republishes — and folds the walk back to its start,
-  // so what the reader dismissed is under `Show older` rather than gone.
-  //
-  // #2240 widened WHEN it is offered, not what it does. With nothing new the
-  // baseline move is inert — the line is already past every row — so folding
-  // the walk is the whole of the press, and it stays one handler with one
-  // meaning: the list back as you found it.
-  const sinceMore = !!v.since
-    && (v.since.rows.length > sinceShown || v.since.seen.rows.length > seenShown);
-  const showOlder = () => {
-    if (!v.since) return;
-    if (v.since.rows.length > sinceShown) setSinceShown(sinceShown + SINCE_STEP);
-    else setSeenShown(seenShown + SINCE_STEP);
-  };
+  // The since list's controls (#2183). `Show older` steps back a week;
+  // `Clear` moves the baseline to now (AppView owns the stamp and its
+  // storage, and republishes) and folds everything back to how it opened, so
+  // what the reader dismissed is under its week's "seen" row rather than
+  // gone. #2240: it is live whenever there is something to fold, new rows
+  // or not.
+  const sinceUnfolded = sinceExtra > 0
+    || Object.values(sinceAllNew).some(Boolean)
+    || Object.values(sinceSeen).some(Boolean);
   const clearSince = () => {
     if (!v.since) return;
-    setSinceShown(SINCE_FIRST);
-    setSeenShown(0);
+    setSinceExtra(0);
+    setSinceAllNew({});
+    setSinceSeen({});
     setOpenRows((cur) => ({ ...cur, since: '' }));
     callAppView('_workshopClearSince', slug, v.since.through);
   };
@@ -3228,7 +3486,7 @@ export function DevWorkshop(): ReactNode {
   // A layout effect, so a merged card's kudos pill is in its band on the
   // card's first frame rather than popping in after it (dev-kanban.tsx has
   // the same note).
-  const openSig = `${Object.values(openRows).join('|')}|since:${sinceShown}|seen:${seenShown}`;
+  const openSig = `${Object.values(openRows).join('|')}|since:${sinceExtra}:${Object.keys(sinceAllNew).join(',')}:${Object.keys(sinceSeen).join(',')}|work:${workAll}`;
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -3252,152 +3510,36 @@ export function DevWorkshop(): ReactNode {
   // EmptyNote.
   const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped);
 
-  /* ── The three destinations ──
-     AT THE HEAD OF THE PAGE, AT EVERY WIDTH (#2767). Above 700px it is the
-     segmented control it has been; below it, it is the full-width pill under
-     the scope panel, where the header's app switcher drops it down.
+  /* ── The back bar, on a page ──
+     THE HUB HAS NO BAR. It is the project's page, and what it opens are
+     doors on it; a strip of tabs over it made the hub one of two peers, and
+     it read as a second Workshop. A page (the Workshop, Needs you, All items)
+     leads with a bar holding its way back and its name.
 
-     It used to float at the FOOT of a phone's window instead, `position:
-     fixed`, and to get there it was portalled out of this tree into an anchor
-     the shell kept outside the Dev frame's frost (whose `backdrop-filter`
-     makes it a containing block for fixed descendants). That portal is what
-     #2769 was: the anchor sits outside #app-view, so when the app view was
-     hidden for Messages, Discover or Me the pill stayed on screen over them.
-     In flow it is part of the Workshop's own subtree and leaves with it.
-
-     It LEADS the markup, so focus order and reading order agree at every
-     width: the nav is announced before the content it navigates.
-
-     ── The "+" closes the strip ──
-     Current status · Needs you · All items · +, on all three tabs: the
-     prototype's `wsTabs` ends its `.tabs` row with a `.tplus`, and the spec
-     puts "a plus at the end of the tab strip". It sat at the end of All
-     items' search row, so on the other two tabs there was no way to file an
-     issue or reach the app's settings — while their empty-state notes told
-     the viewer to press it. It is ONE node (`DevPlusMenu`, ../actions-row.tsx)
-     rendered here and nowhere else on this surface, which is what keeps
-     `#dev-plus-btn` / `#dev-plus-menu` unique for `_wirePlusMenu`.
-
-     It is the strip's last item, on the pill's row but in a circle of its
-     own a small gap after it (#2934), so it reads as a button rather than as
-     a fourth tab. The pill's material is drawn by the tab list and by the
-     "+"'s wrapper, not by the nav or the track, which is what opens the gap
-     without moving a node. At both widths it is drawn on the tabs' own
-     metrics and ink (app.css `.dev-ws-plus-btn`), so it reads as part of the
-     strip rather than as the violet floating action it was.
-
-     WHY THE TAB LIST MOVED IN A LEVEL. The nav carried `role="tablist"`, and
-     a tab list owns tabs: a menu button inside it is announced as a fourth
-     tab that selects nothing. So the three tabs sit in `.dev-ws-tablist`,
-     which carries the role and the name, and the "+" is its sibling. The
-     outer box is a plain container now, as a `div` — a `nav` without the
-     role would have added a landmark the page did not have. */
-  const railNode = (
-        <div
-          ref={setBar}
-          className="dev-ws-tabs"
-          data-ws-tabs=""
-        >
-          {/* THE SELECTION, drawn once and moved, rather than redrawn per tab.
-              It is `aria-hidden` and not focusable: `aria-selected` on the tab
-              is what announces the state, and a decorative box claiming it too
-              would say the same thing twice.
-
-              Rendered BEFORE the buttons so it paints behind them without a
-              z-index race — the tabs raise themselves one step in app.css and
-              this stays at the floor of the stacking context.
-
-              No inline style until it has been measured. `markerBox` is null
-              on the first render, so the element renders hidden and only
-              becomes visible once it knows where to be; otherwise it slides in
-              from the left edge on first paint, which reads as a bug rather
-              than a flourish.
-
-              TWO ATTRIBUTES, TWO QUESTIONS. `data-ws-marker-at` says the box
-              has been measured and is what the opacity waits for;
-              `data-ws-marker-slide` says this box is where the SELECTION
-              moved to, and is what app.css hangs the transition on. A
-              re-measure of the tab you are already on carries the first and
-              not the second, so it lands without replaying the slide — see
-              useTabMarker. */}
-          <span
-            className="dev-ws-tab-marker"
-            data-ws-tab-marker=""
-            aria-hidden="true"
-            {...(markerBox ? { 'data-ws-marker-at': '' } : {})}
-            {...(markerBox && markerBox.slide ? { 'data-ws-marker-slide': '' } : {})}
-            style={markerBox ? {
-              transform: `translate(${markerBox.x}px, ${markerBox.y}px)`,
-              width: `${markerBox.w}px`,
-              height: `${markerBox.h}px`,
-            } : undefined}
-          />
-          {/* The TRACK, separate from the nav, and `display: contents` on a
-              phone so the bar there is what it was: the nav itself is the
-              row, edge to edge, with the tab list and the "+" its two items.
-
-              Above 700px the two have different jobs. The nav is the POSITIONING
-              box — it inherits the 760px reading column and its centring, which
-              is what keeps the strip anchored to the same left edge whether the
-              pane beside it is the 760px category list or the full-bleed board.
-              The track hugs the pill and the "+": a segmented control spanning
-              the reading column would read as a header bar rather than as a
-              control, which is the same reason @/components/ui/tabs.tsx makes
-              SECTION_TABS_LIST `inline-flex`. Because the "+" is INSIDE the
-              track, the ear's measured inset (useEarInset reads the track's
-              right edge) clears it with no change of its own. */}
-          <div className="dev-ws-tabtrack">
-          {/* The tab list: the three tabs and nothing else — a real box at
-              both widths, so the role never sits on a `display: contents`
-              node, which some screen readers drop from the tree. */}
-          <div className="dev-ws-tablist" role="tablist" aria-label="Workshop sections">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              role="tab"
-              className="dev-ws-tab"
-              data-ws-tab-btn={t.key}
-              aria-selected={lit === t.key}
-              onClick={() => openTab(t.key)}
-            >
-              {/* The glyph is decoration over a label that is already there, so
-                  it is hidden from the accessibility tree rather than given a
-                  name of its own — otherwise every tab announces twice. Its
-                  size comes from the class, not a prop: icons.tsx has no size
-                  variant on purpose, and every other `.dev-ws-*` measurement
-                  lives in app.css beside its neighbours. */}
-              <t.Icon className="dev-ws-tab-glyph" aria-hidden="true" />
-              <span className="dev-ws-tab-label">{t.key === 'status' ? hubLabel(community?.audience) : t.label}</span>
-              {/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. They
-                  narrow that page alone, so from anywhere else a search the
-                  viewer typed there is out of sight, and this dot is what
-                  says it is still on. All items is a page under Workshop
-                  now, so the dot rides the Workshop tab, and leaves while
-                  All items itself is up.
-                  The dot is decoration; the words are for a screen reader,
-                  and they join the tab's name ("All items (filtered)") so
-                  the visible label still leads it. */}
-              {t.key === 'workshop' && v.meta.filtered && tab !== 'all' ? (
-                <>
-                  <span className="dev-ws-tab-dot" data-ws-tab-filtered="" aria-hidden="true" />
-                  <span className="sr-only"> (filtered)</span>
-                </>
-              ) : null}
-            </button>
-          ))}
-          </div>
-          <DevPlusMenu
-            illustrationApp={actions.illustrationApp}
-            canManageIllustration={actions.canManageIllustration}
-            selfHosted={actions.selfHosted}
-            readOnly={actions.readOnly}
-            canCollaborate={actions.canCollaborate}
-            showsMembers={actions.showsMembers}
-          />
-          </div>
-        </div>
+     THE BAR KEEPS THE STRIP'S BOX: `.dev-ws-tabs` with its track, which is
+     what the pinned header and the grouping ear on All items are measured
+     against (useEarInset, usePinnedStrip), so both keep working unchanged,
+     and the ear sits level with the back button where it sat level with the
+     tabs. It LEADS the markup, so focus order and reading order agree. */
+  const railNode = tab === 'status' ? null : (
+    <div ref={setBar} className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
+      <div className="dev-ws-tabtrack">
+        <PageBack
+          label={tab === 'all' ? 'Workshop' : (app.name || community?.name || slug)}
+          title={pageTitle(tab)}
+          onBack={() => openTab(pageParent(tab))}
+        />
+      </div>
+    </div>
   );
+
+  // The Workshop page's since list, filed by week. A first visit has no
+  // baseline and so nothing new, but the weeks and their lines are still
+  // the history, so they are drawn without the list's own controls.
+  const sinceList = v.since || EMPTY_SINCE;
+  const weeks = tab === 'workshop' ? sinceWeeks(sinceList, v.dashboard ? v.dashboard.weeks : null, Date.now()) : [];
+  const weeksOpen = Math.min(weeks.length, sinceWeeksOpen(weeks) + sinceExtra);
+  const firstWeek = v.dashboard ? v.dashboard.firstWeek : null;
 
   return (
     <div
@@ -3416,17 +3558,15 @@ export function DevWorkshop(): ReactNode {
           (#2837), and the owner asked for it in the header there too. So
           only the panel renders here, and only once it is open.
 
-          ABOVE THE RAIL in the markup, so the panel drops down over the tabs
-          rather than under them, right under the header that opened it. */}
+          ABOVE THE BAR in the markup, so the panel drops down over the page
+          rather than under it, right under the header that opened it. */}
       {slug ? <AppWorkshopScope slug={slug} /> : null}
       {railNode}
-      {/* Everything but the rail lives in here. It is what carries the
+      {/* Everything but the bar lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
-          beneath it while you scroll, so the content needs a rail's worth of
+          beneath it while you scroll, so the content needs a bar's worth of
           empty space at its end or the final card can never be read clear of
-          it. Putting that padding on the LANDER instead would push the rail
-          up off the bottom on a short tab, which is the thing that was just
-          fixed. Above 700px the bar is not sticky and overlays nothing, so
+          it. Above 700px the bar is not sticky and overlays nothing, so
           app.css takes the clearance back off. */}
       <div className="dev-ws-tabbody">
       {tab === 'status' ? (
@@ -3435,46 +3575,83 @@ export function DevWorkshop(): ReactNode {
           FIRST ON THE PAGE. A person arriving from Discover or a shared link
           met four numbers about the code before the thing's own name; the
           page now leads with identity, the way a profile does, and the
-          hub's own cards follow. See ./community-card.tsx. */}
+          hub's own cards follow. See ./community-card.tsx.
+
+          THE ⋯ IS THE HERO'S. It closed the tab strip, and with the strip
+          gone it sits beside Invite at the end of the members row: the
+          project's own menu, on the project's own card. It is ONE node
+          (`DevPlusMenu`, ../actions-row.tsx) rendered here and nowhere else
+          on this surface, which is what keeps `#dev-plus-btn` /
+          `#dev-plus-menu` unique for `_wirePlusMenu`; it wires itself on
+          mount, so arriving after the hero's read is no problem. */}
       {slug ? (
         <CommunityCard
           slug={slug}
           name={app.name || undefined}
           iconUrl={app.iconUrl}
           iconEmoji={app.iconEmoji}
+          canOpenApp={!actions.selfHosted}
+          menu={(
+            <DevPlusMenu
+              illustrationApp={actions.illustrationApp}
+              canManageIllustration={actions.canManageIllustration}
+              selfHosted={actions.selfHosted}
+              readOnly={actions.readOnly}
+              canCollaborate={actions.canCollaborate}
+              showsMembers={actions.showsMembers}
+              inHero
+            />
+          )}
         />
       ) : null}
       {/* #2573: ABOVE the empty note, because the two answer different
-          questions on the same screen. The note says what the board holds
-          and points at the "+"; this says what to do about an app nobody
-          has started on, and the product decision put it at the top of the
-          tab. See StartHereBanner for the three conditions. */}
+          questions on the same screen. The note says what the board holds;
+          this says what to do about an app nobody has started on, and the
+          product decision put it at the top of the page. See
+          StartHereBanner for the three conditions. */}
       {startHere ? <StartHereBanner /> : null}
       {v.emptyNote ? (
         <EmptyNote
           filtered={!!v.emptyNote.filtered}
           loadFailed={v.emptyNote.loadFailed}
           underStartHere={startHere}
+          onHub
         />
       ) : null}
 
-      {/* ── The hub's own cards: the channel, then what needs you ──
-          The channel lives on the hub now (Messages is people and agents),
-          then the Needs-you queue's head; Since your last visit stays at the
-          foot. Who is here and the 14-day trend are the hero's (#3268). See
-          ./hub-cards.tsx. */}
-      {slug ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
-      <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
-
+      {/* ── The hub, top to bottom: what landed, yours, the room, the doors ──
+          What landed since you were last here, in a sentence or two, then
+          your own work when you have some, then the channel, then a door to
+          Needs you when something waits and one to the Workshop. See
+          ./since-summary-card.tsx and ./hub-cards.tsx. */}
+      {slug ? <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} /> : null}
+      {v.mine && v.mine.rows.length ? (
+        <YourWorkCard
+          rows={v.mine.rows}
+          slug={slug}
+          canPost={canPost}
+          openKey={openRows.mine || null}
+          onToggleRow={(key) => toggleRow('mine', key)}
+          all={workAll}
+          onAll={() => setWorkAll(!workAll)}
+        />
+      ) : null}
+      {/* A project that is just yours has nobody to talk to yet: no channel
+          card, and a Share it card at the foot instead, which is how it
+          grows (./community-card.tsx ShareItCard). */}
+      {slug && community?.audience !== 'solo' ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
+      {v.queue.length ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} /> : null}
+      <WorkshopDoor open={v.dashboard ? v.dashboard.open : 0} filtered={!!v.meta.filtered} onOpen={() => openTab('workshop')} />
+      {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
       </>
       ) : null}
 
-      {/* ── THE WORKSHOP TAB: the board's summary, then your work in full ──
-          What the group is building, beside the hub: All items' numbers and
-          its one line, whose head opens All items itself, then the viewer's
-          own work in flight, in full. All items leads (#3299): the tab is
-          about what the group is building, and your share of it reads
-          against that whole rather than ahead of it. */}
+      {/* ── THE WORKSHOP PAGE: your work, what changed, what is open ──
+          Everything that was the Workshop tab and the hub's catch-up, as one
+          page behind the hub's door: your own work in full, what moved since
+          your last visit filed under each week's summary, All items' numbers
+          and its one line (whose head opens All items itself), and the
+          approval rule every change goes through. */}
       {tab === 'workshop' ? (
       <>
       {/* ── Lately in this project ──
@@ -3482,11 +3659,144 @@ export function DevWorkshop(): ReactNode {
           settings changed in the last week — which used to be lines in its
           channel. Only when there is something to say (./notices.tsx). */}
       {slug ? <WorkshopNotices slug={slug} /> : null}
-      {/* ── One pane: where the app is, and what moved while you were away ──
-          These were two strips asking one question. The description leads —
-          the app says what it is about the way a theme does — and the personal
-          line sits under it, because "what changed for me" only means anything
-          against "what this is". Both hooks ride on the one section now. */}
+      {/* ── Your work, in full ──
+          A returning member's own work gets a pane of its own: a
+          half-finished session of theirs was somewhere down inside a theme,
+          under a heading about the theme. It LEADS the Workshop page: the
+          hub shows its first two rows, and this is where its door goes. */}
+      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
+        <section className="dev-ws-strip" data-ws-mine="">
+          <div className="dev-ws-head">
+            <span className="dev-ws-head-title">Your work</span>
+            {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
+          </div>
+          <div className="dev-ws-lane" data-ws-lane="mine">
+            {/* #2182: the strip does not leave when the viewer has nothing
+                underway. It says so instead, so the pane keeps one shape
+                and the place your work will appear is always the same.
+
+                The way in is START A NEW CHANGE, by the name the Homeroom
+                menu gives it. This said "start something from the + button",
+                and the "+" has no propose row — starting a change is that
+                menu's, an owner decision (#2740 review) — so
+                the line sent a viewer to a menu that could not do what it
+                promised. A read-only viewer has neither door, so is told
+                the fact and nothing to press — and so is a viewer under the
+                start-here banner, whose Start a new change is at the top of this
+                very tab and whose board has no open item to pick up. */}
+            {!v.mine.rows.length ? (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
+                {actions.readOnly || startHere
+                  ? 'You have no work going on.'
+                  : 'You have no work going on. Pick up an open item in All items, or use Start a new change in the Homeroom menu.'}
+              </p>
+            ) : null}
+            {/* IN FULL on the Workshop tab: the whole of your own work is
+                on screen here, so nothing of it waits behind a reveal. */}
+            {v.mine.rows.map((row) => (row.t === 'card' ? (
+              <CardRowView
+                key={row.key}
+                row={row}
+                slug={slug}
+                canPost={canPost}
+                open={openRows.mine === row.key}
+                onToggle={() => toggleRow('mine', row.key)}
+              />
+            ) : null))}
+            {/* THE SAME CONTROL AS THE OTHER TWO. This was a left-aligned
+                grey pill (`gc-vote-btn`) while "Show past week" and "Show
+                older" — which do the identical thing one pane up and one
+                pane down — were centred muted text with a caret. Three
+                spellings of one gesture. It is `.dev-ws-reveal` now, and the
+                caret turns over when there is nothing left to reveal, which
+                is what that class already does for the since list.
+                Its hit area is `touch-target-32`, not the kit's 44px one the
+                other two carry (QA 2026-09-24 Q19): it sits 4px under the
+                last row, and a 44px box would take that row's bottom edge. */}
+
+          </div>
+        </section>
+      ) : null}
+
+      {/* ── Since your last visit, week by week ──
+          The hub's list of what moved and the walk of weekly summaries, as
+          one list (see SINCE_FIRST): each week's line, and what moved in it
+          under it. A person who has not joined reads "Recently", as does a
+          first visit, which has no last visit to be since. */}
+      {v.since || weeks.length ? (
+        <section className="dev-ws-strip" data-ws-since="">
+          {/* Clear rides the far end of the heading row, as "Mark all read"
+              rides the notifications sheet's title row: an action on the
+              list, drawn small, and disabled rather than absent when there is
+              nothing to fold so the row does not reflow. */}
+          <div className="dev-ws-since-head" data-ws-since-head="">
+            <span className="dev-ws-since-label">{v.since && !outsider ? 'Since your last visit' : 'Recently'}</span>
+            {v.since ? (
+              <>
+                {/* THE WHOLE POPULATION, not the page of it that is drawn. */}
+                <span className="dev-ws-since-n">{v.since.total}</span>
+                <button
+                  type="button"
+                  className="dev-ws-since-clear un-touch-target"
+                  data-ws-since-clear=""
+                  disabled={!v.since.rows.length && !sinceUnfolded}
+                  onClick={clearSince}
+                >
+                  Clear
+                </button>
+              </>
+            ) : null}
+          </div>
+          {v.since && v.since.rows.length ? (
+            <p className="dev-ws-since-sum" data-ws-since-sum="">{sinceWords(v.since)}</p>
+          ) : null}
+          {v.since && !v.since.rows.length ? (
+            <p className="dev-ws-week-note" data-ws-since-none="">
+              Nothing has changed since you were last here.
+            </p>
+          ) : null}
+          {weeks.slice(0, weeksOpen).map((w) => (
+            <SinceWeekBlock
+              key={w.key}
+              week={w}
+              slug={slug}
+              canPost={canPost}
+              openKey={openRows.since || null}
+              onToggleRow={(key) => toggleRow('since', key)}
+              allNew={!!sinceAllNew[w.key]}
+              onAllNew={() => setSinceAllNew((cur) => ({ ...cur, [w.key]: true }))}
+              seenOpen={!!sinceSeen[w.key]}
+              onSeen={() => setSinceSeen((cur) => ({ ...cur, [w.key]: true }))}
+            />
+          ))}
+          {/* ALWAYS DRAWN, and disabled rather than absent at the far end:
+              a control that is sometimes there is one nobody learns to reach
+              for. Pointing DOWN, at where the week it reveals appears. */}
+          <button
+            type="button"
+            className="dev-ws-reveal dev-ws-since-more un-touch-target"
+            data-ws-since-more=""
+            disabled={weeksOpen >= weeks.length}
+            onClick={() => setSinceExtra(sinceExtra + 1)}
+          >
+            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+            Show older
+          </button>
+          {/* The floor. `firstWeek` is the project's beginning, which the
+              server names beside a complete history (#3293), so the note
+              says when that was; without it, only that this is as far back
+              as the list reaches, and only once somebody has walked there. */}
+          {weeks.length && weeksOpen >= weeks.length && firstWeek ? (
+            <p className="dev-ws-week-note" data-ws-week-start="">
+              {`This project started the week of ${weekDate(firstWeek)}.`}
+            </p>
+          ) : null}
+          {weeks.length && weeksOpen >= weeks.length && !firstWeek && sinceExtra > 0 ? (
+            <p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the list goes.</p>
+          ) : null}
+        </section>
+      ) : null}
+
       {v.dashboard ? (
         <section
           className="dev-ws-strip"
@@ -3507,6 +3817,16 @@ export function DevWorkshop(): ReactNode {
               onClick={() => openTab('all')}
             >
               See all
+              {/* #2915: A SEARCH OR FILTER IS WAITING ON ALL ITEMS. It
+                  narrows that page alone, so from here it is out of sight,
+                  and this dot is what says it is still on. The dot is
+                  decoration; the words join the button's name. */}
+              {v.meta.filtered ? (
+                <>
+                  <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
+                  <span className="sr-only"> (filtered)</span>
+                </>
+              ) : null}
               <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
             </button>
           </div>
@@ -3551,286 +3871,29 @@ export function DevWorkshop(): ReactNode {
                   This is the very case it exists for: "no draft yet" and
                   "the call keeps failing" both leave the derived sentence up
                   there and are otherwise indistinguishable. */}
-              {!v.dashboard.weeks.length
-                && digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary)) ? (
-                  <p className="dev-ws-digest-note" data-ws-digest-note="">
-                    {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
-                  </p>
-                ) : null}
+
             </>
           ) : null}
-          {/* ── THE WAY BACK, anchored to the block that never moves ──
-              "Show past week" sits at the walk's growing edge and travels
-              down the pane with every press; a collapse beside it would do
-              the same, so the deeper you went the further both controls
-              would be from where you started. This one rides the LEAD
-              block, which is fixed however many windows are open, so there
-              is always one place to look for it.
-
-              DRAWN ONLY WHEN THERE IS SOMETHING TO HIDE, from the first
-              press. A control that collapses nothing is a dead control,
-              and the alternative — waiting for a second window — means
-              pressing twice before discovering there is a way back.
-
-              The cost, and it is a real one: the control is ABOVE the
-              windows, so a reader who has pressed several times and
-              scrolled down to an older week has to come back up for it.
-              That is the trade an anchor makes, and it beats a control
-              that is never in the same place twice. */}
-          {v.dashboard.weeks.length && weeksShown > 0 ? (
-            <div className="dev-ws-lead-foot">
-              <button
-                type="button"
-                className="dev-ws-lead-collapse"
-                data-ws-week-less=""
-                onClick={() => setWeeksShown(0)}
-              >
-                {/* The reveal's own caret, turned over: what it does is the
-                    inverse of the control it undoes, so it is the same mark
-                    pointing the other way rather than a second glyph. */}
-                <ChevronDownIcon className="dev-ws-lead-chev" aria-hidden="true" />
-                Hide past weeks
-              </button>
-            </div>
-          ) : null}
-          {/* The weeks, the live one on screen and the rest one press away.
-              The note about the summary rides INSIDE the walk (above "Show
-              past week"), with the card it is about — see WeekWalk. */}
-          {v.dashboard.weeks.length ? (
-            <WeekWalk
-              weeks={v.dashboard.weeks}
-              firstWeek={v.dashboard.firstWeek}
-              note={digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
-              shown={weeksShown}
-              onMore={() => setWeeksShown(weeksShown + 1)}
-            />
-          ) : null}
-          {/* ── The door to the general chat, at the foot of this pane ──
-              It had a section of its own: an eyebrow, a frosted surface and
-              a card inside it, all to carry one row whose only job is to
-              navigate somewhere else — and the card it held already draws
-              its own surface, so it was a card inside a card inside a
-              section. It belongs HERE because it is the same subject: this
-              pane says where the app is, and this is where people are
-              talking about it. None of it is about you, which is what the
-              pane below is for.
-
-              It keeps no pill of its own. A rounded capsule on a rounded
-              pane is a shape inside a shape, and this pane already has an
-              internal rhythm — hairline, block, hairline — that the weeks
-              above it use. The row joins that rhythm. */}
-          {/* …AND IT IS NOT HERE ANY MORE (#2718 review). "General discussion
-              for <app>" sat at the foot of this pane, which is the pane about
-              WHERE THE APP IS — and a door out to a chat screen is not a fact
-              about where the app is. It had a second home from the moment
-              Messages became the platform's one inbox: the app's discussion
-              is a row there, in the list somebody looking for "what was said"
-              actually opens, beside the people and the agent chats. One
-              destination, one place that offers it.
-
-              The card MODEL stays published (app-view.js
-              `_discussionCardModel`) because the board's own surfaces draw
-              from it; what goes is this screen's copy of the door. */}
-        </section>
-      ) : null}
-
-      {/* ── Yours, in its own pane ──
-          A returning member's own work gets a pane of its own: a
-          half-finished session of theirs was somewhere down inside a theme,
-          under a heading about the theme. It sits UNDER All items since
-          #3299 — the board's summary leads the tab, and this pane follows
-          it. */}
-      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
-        <section className="dev-ws-strip" data-ws-mine="">
-          <div className="dev-ws-head">
-            <span className="dev-ws-head-title">What you are working on</span>
-            {v.mine.count ? <span className="dev-ws-head-n">{v.mine.count}</span> : null}
-          </div>
-          <div className="dev-ws-lane" data-ws-lane="mine">
-            {/* #2182: the strip does not leave when the viewer has nothing
-                underway. It says so instead, so the pane keeps one shape
-                and the place your work will appear is always the same.
-
-                The way in is NEW CHANGE, by the name the Homeroom menu
-                gives it. This said "start something from the + button",
-                and the "+" has no propose row — starting a change is that
-                menu's New change, an owner decision (#2740 review) — so
-                the line sent a viewer to a menu that could not do what it
-                promised. A read-only viewer has neither door, so is told
-                the fact and nothing to press — and so is a viewer under the
-                start-here banner, whose New change is at the top of this
-                very tab and whose board has no open item to pick up. */}
-            {!v.mine.rows.length ? (
-              <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
-                {actions.readOnly || startHere
-                  ? 'You have no work going on.'
-                  : 'You have no work going on. Pick up an open item in All items, or start a change with New change in the Homeroom menu.'}
-              </p>
-            ) : null}
-            {/* IN FULL on the Workshop tab: the whole of your own work is
-                on screen here, so nothing of it waits behind a reveal. */}
-            {v.mine.rows.map((row) => (row.t === 'card' ? (
-              <CardRowView
-                key={row.key}
-                row={row}
-                slug={slug}
-                canPost={canPost}
-                open={openRows.mine === row.key}
-                onToggle={() => toggleRow('mine', row.key)}
-              />
-            ) : null))}
-            {/* THE SAME CONTROL AS THE OTHER TWO. This was a left-aligned
-                grey pill (`gc-vote-btn`) while "Show past week" and "Show
-                older" — which do the identical thing one pane up and one
-                pane down — were centred muted text with a caret. Three
-                spellings of one gesture. It is `.dev-ws-reveal` now, and the
-                caret turns over when there is nothing left to reveal, which
-                is what that class already does for the since list.
-                Its hit area is `touch-target-32`, not the kit's 44px one the
-                other two carry (QA 2026-09-24 Q19): it sits 4px under the
-                last row, and a 44px box would take that row's bottom edge. */}
-
-          </div>
-        </section>
-      ) : null}
-      </>
-      ) : null}
-
-      {tab === 'status' ? (
-      <>
-      {/* ── What moved while you were away ──
-          SHOWN, not offered. It was one collapsed line — the label, the count
-          and a caret — on the reasoning that most visits do not need the
-          fact. What that produced was a strip nobody opened: the count said
-          something had moved and the rows saying WHAT were behind a press,
-          so the one thing on the lander addressed to this reader personally
-          was also the only thing they had to ask for.
-
-          So the pane is open and the LENGTH is what is bargained instead,
-          the way the week walk one pane up bargains its history: the newest
-          three on screen, the rest under a button that reveals three more
-          each press. Same control, same chevron, pointing down at what it
-          is about to show. Since #2183 the button stays once the new rows
-          are out and goes on down into what the reader has already seen,
-          and a Clear on the heading moves the line between the two up to
-          now — see the note on SINCE_FIRST. */}
-      {v.since ? (
-        <section className="dev-ws-strip" data-ws-since="">
-          {/* NOT A BUTTON ANY MORE. It opens nothing, so it must not look
-              like it does — a row that reads as tappable and is not is worse
-              than a plain heading. The label and the count keep their
-              classes; the caret went with the press. Clear rides the far
-              end of the same row, as "Mark all read" rides the notifications
-              sheet's title row: an action on the list, drawn small, and
-              disabled rather than absent when there is nothing to clear so
-              the row does not reflow.
-
-              #2240: "nothing to clear" IS NOT "no new rows". `Show older` is
-              live on a quiet day by design, and it walks straight across the
-              baseline into what the reader has already seen — so the one
-              state with the most on screen to fold was the one state where
-              Clear was dead, because new rows were the only thing it gated
-              on. It is live while there is a walk below the line too. */}
-          <div className="dev-ws-since-head" data-ws-since-head="">
-            {/* "RECENTLY" FOR SOMEONE WHO HAS NOT JOINED. "Your last visit"
-                is a member's phrase: a person looking in from Discover reads
-                it as a claim about them. The rows are the same, measured from
-                the same per-viewer line, so Clear stays and does what it
-                does. */}
-            <span className="dev-ws-since-label">{outsider ? 'Recently' : 'Since your last visit'}</span>
-            {/* THE WHOLE POPULATION, not the page of it that is drawn.
-                `rows` is capped at WORKSHOP_SINCE_MAX, so on a busy week the
-                head said 30 over a list the reader could keep revealing. */}
-            <span className="dev-ws-since-n">{v.since.total}</span>
-            <button
-              type="button"
-              className="dev-ws-since-clear un-touch-target"
-              data-ws-since-clear=""
-              disabled={!v.since.rows.length && !seenShown}
-              onClick={clearSince}
-            >
-              Clear
-            </button>
-          </div>
-          {/* WHAT MOVED, IN WORDS — under the heading that gives it an
-              antecedent. This was a green `N shipped since` pill on the
-              DASHBOARD pane's head, four blocks up the page: a sentence
-              fragment whose object was missing, next to numbers about the
-              board rather than about you. `sinceWords` has been in this file
-              since the strip was written and had no caller; it says all
-              three of what landed, what opened and what was proposed, where
-              the pill said one. */}
-          {v.since.rows.length ? (
-            <p className="dev-ws-since-sum" data-ws-since-sum="">{sinceWords(v.since)}</p>
-          ) : null}
-          {v.since.rows.slice(0, sinceShown).map((row) => (row.t === 'card' ? (
-            <CardRowView
-              key={row.key}
-              row={row}
-              slug={slug}
-              canPost={canPost}
-              open={openRows.since === row.key}
-              onToggle={() => toggleRow('since', row.key)}
-            />
-          ) : null))}
-          {/* An empty pane would be a heading over nothing, and "nothing
-              moved" is a fact worth one line — it is the answer to the
-              question the heading asks. */}
-          {v.since.rows.length ? null : (
-            <p className="dev-ws-week-note" data-ws-since-none="">
-              Nothing has changed since you were last here.
+          {/* Why the lines are what they are, when something is wrong with
+              them: no draft yet, or the call keeps failing. It rode the
+              walk while there was one; it is about every line on the page. */}
+          {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary)) ? (
+            <p className="dev-ws-digest-note" data-ws-digest-note="">
+              {digestNote(v.meta, !!(v.dashboard.cards || v.dashboard.summary))}
             </p>
-          )}
-          {/* Below the line: rows from before the baseline, drawn only once
-              `Show older` has walked past the new ones, under a mark that
-              says which side of the line they are on. Same rows, same fold,
-              same one-open-at-a-time scope as the rows above. */}
-          {seenShown > 0 && v.since.seen.rows.length ? (
-            <>
-              <div className="dev-ws-since-seen" data-ws-since-seen="">
-                <span className="dev-ws-since-seen-label">Seen before</span>
-                <span className="dev-ws-since-seen-n">{v.since.seen.total}</span>
-              </div>
-              {v.since.seen.rows.slice(0, seenShown).map((row) => (row.t === 'card' ? (
-                <CardRowView
-                  key={row.key}
-                  row={row}
-                  slug={slug}
-                  canPost={canPost}
-                  open={openRows.since === row.key}
-                  onToggle={() => toggleRow('since', row.key)}
-                />
-              ) : null))}
-            </>
           ) : null}
-          {/* ALWAYS DRAWN. Disabled, not absent, once there is nothing left
-              to draw: the reader who cleared the list or arrived on a quiet
-              day is exactly the one who wants a way back into what they
-              already saw, and a control that is sometimes there is one
-              nobody learns to reach for. */}
-          <button
-            type="button"
-            className="dev-ws-reveal dev-ws-since-more un-touch-target"
-            data-ws-since-more=""
-            disabled={!sinceMore}
-            onClick={showOlder}
-          >
-            {/* Pointing DOWN, at where the rows it reveals appear — the
-                week walk's own reading of the same control. */}
-            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-            Show older
-          </button>
+          {/* THE WEEKS ARE NOT HERE ANY MORE. They were a walk under this
+              paragraph ("Show past week"), and Since your last visit was a
+              list on the hub: one question in two places. Each week's line
+              heads what moved in it now, in the since list above. */}
         </section>
       ) : null}
 
+      {/* ── Approval rules: how a change gets in ──
+          The last thing on the page, under the work it governs. It was the
+          hero's last line. */}
+      {slug ? <ApprovalRules slug={slug} /> : null}
       </>
-      ) : null}
-
-      {tab === 'needs' || tab === 'all' ? (
-        <PageBack
-          label={tab === 'needs' ? hubLabel(community?.audience) : 'Workshop'}
-          onBack={() => openTab(tab === 'needs' ? 'status' : 'workshop')}
-        />
       ) : null}
 
       {tab === 'needs' ? (
@@ -3843,7 +3906,6 @@ export function DevWorkshop(): ReactNode {
           onDone={() => openTab('status')}
         />
       ) : null}
-
       {/* WHENEVER THE TAB IS UP, not only while there is a theme to draw. This
           was `tab === 'all' && themes.length`, and the second half was #2090:
           a search that matched nothing emptied `themes`, the whole pane went
@@ -3868,13 +3930,12 @@ export function DevWorkshop(): ReactNode {
               The search and the filters used to sit in the frame's chrome
               above the scroller, two strips away from the list they narrow.
               (So did the "+", which is not a narrowing control: it adds to
-              the board and manages the app, so it closes the view-tab strip
-              on every tab instead — see the rail above.) They belong WITH
-              the list — and with the tab strip, because
+              the board and manages the app, so it is the hub's ⋯ now.) They
+              belong WITH the list — and with the back bar, because
               "which grouping" and "narrowed to what" are one question asked
               twice. Both pin together: filtering a long list is exactly what
-              you are doing when you are scrolled down, and a tab strip that
-              scrolled away would leave no way back to the other pane.
+              you are doing when you are scrolled down, and a bar that
+              scrolled away would leave no way back.
 
               THE TABS LEAD, and the order is the argument: they decide what
               the search is searching. With the search above them the control
@@ -3911,8 +3972,8 @@ export function DevWorkshop(): ReactNode {
           {/* The strip's narrow home. Above the breakpoint it is in the ear
               instead — one node, two places. */}
           {earUp ? null : <GroupStrip group={group} />}
-            {/* The search and the filters. NOT the "+": that closes the tab
-                strip above, on every tab, so the row draws none of its own. */}
+            {/* The search and the filters. NOT the ⋯: that is the hub's, in
+                its hero, so the row draws none of its own. */}
             <DevActionsRow
               illustrationApp={actions.illustrationApp}
               canManageIllustration={actions.canManageIllustration}
@@ -3994,6 +4055,7 @@ export function DevWorkshop(): ReactNode {
           </section>
         </>
       ) : null}
+
 
       </div>
     </div>

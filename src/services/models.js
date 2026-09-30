@@ -13,9 +13,10 @@
 // #800: Haiku 4.5 was removed from this allowlist — it is the weakest
 // tier for multi-step coding work. The platform still uses
 // `claude-haiku-4-5` DIRECTLY (not via this map) for cheap housekeeping
-// calls — session / PR / issue titling and progress estimates in
+// calls — session / issue titling and progress estimates in
 // src/services/llm.js, plus src/routes/auth.js — so those are
-// unaffected. Anyone who had it selected is coerced to DEFAULT_MODEL by
+// unaffected. PR titling moved to Sonnet 5.5 (llm.PR_METADATA_MODEL),
+// also called directly. Anyone who had it selected is coerced to DEFAULT_MODEL by
 // resolve() server-side and by DevChat._sanitizeStoredModel()
 // client-side.
 //

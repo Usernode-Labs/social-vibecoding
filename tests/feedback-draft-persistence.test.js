@@ -286,8 +286,11 @@ test('the destination is not restored (#2707)', () => {
   assert.equal(h.text(), 'Dragging a card scrolls the board back to the top.');
   assert.equal(h.el('feedback-target-app').getAttribute('aria-checked'), 'false');
   assert.equal(h.el('feedback-target-platform').getAttribute('aria-checked'), 'false');
-  // #2888: the question is asked again (Submit stays pressable and refuses
-  // with the row turned red until a destination is tapped).
+  // #2888: the question is asked again, quietly, by the row's own label
+  // (Post request stays pressable and refuses with the row turned red until
+  // a destination is tapped).
+  assert.equal(h.el('feedback-target-hint').classList.contains('hidden'), true, 'no refusal before a submit');
+  h.el('feedback-submit').fire('click');
   assert.equal(h.el('feedback-target-hint').classList.contains('hidden'), false, 'the person still has to choose');
 });
 

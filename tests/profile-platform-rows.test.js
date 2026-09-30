@@ -1,8 +1,9 @@
 'use strict';
 
-// The Me tab's "More" list: the navigation prototype's three rows —
-// Challenges & standings, Kudos, Settings — each with a line under it that
-// says what is behind it (`scrMe` in the prototype).
+// The Me tab's two lists of rows (UI overhaul): "Your work" (Your changes,
+// Your requests, Your votes) and "More" (Challenges & standings, Kudos,
+// Friends, Settings), each row with a line under it that says what is behind
+// it (`scrMe` in the prototype).
 //
 // #2718 made Challenges, Settings and the Admin console rows of the Profile
 // screen, with the native node / wallet / staking readouts and Log out under
@@ -40,10 +41,16 @@ function rowSource(src, id) {
 }
 
 const ROWS = [
+  // Your work: the three views of the Your work screen, at addresses no
+  // username can have (a username has no hyphen).
+  ['profile-row-proposals', '#profile/your-changes'],
+  ['profile-row-feedback', '#profile/your-requests'],
+  ['profile-row-votes', '#profile/your-votes'],
+  // More.
   ['profile-row-challenges', '#leaderboard/challenges'],
   ['profile-row-kudos', '#leaderboard/kudos'],
-  // #3186: the card over Me, by the address Profile.open() honours.
-  ['profile-row-feedback', '#profile?feedback'],
+  // The Friends card over Me, by the address Profile.open() honours.
+  ['profile-row-friends', '#profile?friends'],
   ['profile-row-settings', '#settings'],
 ];
 
@@ -60,9 +67,17 @@ test('the rows are anchors to their destinations', () => {
   }
 });
 
-test('in the prototype\'s order: Challenges & standings, Kudos, Your feedback, Settings', () => {
+test('in order: Your changes, requests, votes; then Challenges & standings, Kudos, Friends, Settings', () => {
   const order = ROWS.map(([id]) => CODE.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
+  assert.ok(CODE.indexOf('id="profile-work"') < CODE.indexOf('id="profile-more"'));
+  // Friends opens its card in place on a plain click; the browser keeps the rest.
+  assert.match(rowSource(CODE, 'profile-row-friends'), /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*Profile\.showFriends\(\);/);
+  const { validateUsername } = require('../src/services/usernames');
+  for (const [, href] of ROWS.filter(([id]) => /proposals|feedback|votes/.test(id))) {
+    const tail = href.split('/')[1];
+    assert.equal(validateUsername(tail).ok, false, `${tail} can never be somebody's username`);
+  }
 });
 
 test('the rows that moved to Settings are not on Me any more', () => {
@@ -74,15 +89,29 @@ test('the rows that moved to Settings are not on Me any more', () => {
 test('it renders the data\'s lines, and quiet fallbacks without them', () => {
   const mod = loadTsx('frontend/src/features/profile/account-panel.tsx');
   const html = renderToHtml(createElement(mod.MorePanel, {
-    rows: { challenges: 'Season 3 · rank #3 · 2 of 7 done', kudos: '3 received' },
+    rows: { challenges: 'Season 3 · rank #3 · 2 of 7 done', kudos: '3 received', friends: '1 request waiting' },
   }));
   assert.match(html, /id="profile-more"/);
   assert.match(html, /Challenges &amp; standings/);
   assert.match(html, /Season 3 · rank #3 · 2 of 7 done/);
-  assert.match(html, /3 received/);
+  assert.match(html, /Kudos on your changes/, 'the number is the stat card\'s; the row says what is behind it');
+  assert.match(html, /1 request waiting/);
   const bare = renderToHtml(createElement(mod.MorePanel, { rows: { challenges: null, kudos: null } }));
   assert.match(bare, /This season’s challenges and standings/, 'no data, no invented rank');
-  assert.match(bare, /Kudos on your proposals/, 'and no invented count');
+  assert.match(bare, /Only you can see your friends/, 'and no count of friends, ever');
+
+  const work = renderToHtml(createElement(mod.WorkPanel, {
+    rows: { changes: '9 merged · 2 in progress', requests: '2 open · 1 done', votes: 'Latest: Timer sounds' },
+  }));
+  assert.match(work, /id="profile-work"/);
+  assert.match(work, /Your work<\/h2>/);
+  for (const line of ['Your changes', '9 merged · 2 in progress', 'Your requests', '2 open · 1 done', 'Your votes', 'Latest: Timer sounds']) {
+    assert.ok(work.includes(line), line);
+  }
+  const quiet = renderToHtml(createElement(mod.WorkPanel, { rows: {} }));
+  for (const line of ['Everything you have started', 'What you asked for, and where it stands', 'The changes and decisions you voted on']) {
+    assert.ok(quiet.includes(line), line);
+  }
 });
 
 test('Settings\' line names the console only for the capability', () => {

@@ -18,15 +18,17 @@
  * `App._appBackHref` in public/js/app.js), so the two screens read as one
  * level and its drill-in rather than as two places that happen to link.
  *
- * ── The two tabs (#3051) ───────────────────────────────────────────────
+ * ── Needs you, one row and one page ────────────────────────────────────
  *
- * The owner asked for the app Workshop's own two questions here too, read
- * across all of your apps: an "All apps" scope chip at the head of the
- * screen, then Current status (the list above, plus the work you have in
- * flight, item by item under each app) and Needs you (the votes waiting on
- * you, item by item under each app). The items are the rows behind the two
- * counts, from GET /api/workshop/items, which reads the same five
- * populations through the same predicates; see its module header.
+ * #3051 put the app Workshop's own two questions here as two tabs, Current
+ * status and Needs you, with the work you had in flight listed item by item
+ * under the list. The tabs are gone. When a vote waits on you, the list
+ * opens with ONE row that says so ("3 votes waiting on you", and in which
+ * communities), and it opens the cross-community Needs you feed as a page
+ * with a way back (`?ws=needs` still deep-links it). Your own work in flight
+ * is Profile's Your changes now: this screen is where your communities are,
+ * and a list of your items under it was a second, longer answer to a
+ * question the row counts already ask.
  *
  * ── Your communities, in three sections ────────────────────────────────
  *
@@ -38,7 +40,8 @@
  * Home no longer takes it off this screen.
  *
  * They are grouped by AUDIENCE, in the order a person reaches for them:
- * Communities (open), Groups (invite-only, more than one person) and Just you.
+ * Public communities (open), Private communities (invite-only, more than one
+ * person) and Just you.
  * Inside each section the rows are by recency (`last_active_at`: your joining,
  * your last visit, the last thing that happened in its changes), and only the
  * three most recent show until "Show N more" is pressed. Recency rather than
@@ -53,8 +56,8 @@
  * requests per app, and at forty apps it is not a page. Its module header
  * documents the two populations and the one thing the "needs you" number
  * leaves out — the unclaimed GitHub issues at the tail of that deck, which
- * are not in Postgres — which is why this screen's own legend says "votes
- * waiting" rather than claiming the whole tab.
+ * are not in Postgres — which is why the Needs you row says "votes
+ * waiting" rather than claiming the whole of a project's Needs you.
  *
  * The COMMUNITY LIST is a second read, and deliberately a different one:
  * GET /api/apps filtered by `Home.isJoined`, the same predicate Discover's
@@ -80,10 +83,9 @@ import { flushSync } from 'react-dom';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  BallotIcon, HandRaisedIcon, LockIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
+  BallotIcon, ChevronLeftIcon, HandRaisedIcon, LockIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
 } from '@/components/ui/icons';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
 import { agoStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
@@ -124,8 +126,8 @@ type WorkshopRow = {
  * in), one person.
  */
 export const SECTIONS: ReadonlyArray<{ key: Audience; label: string; noun: string }> = [
-  { key: 'open', label: 'Communities', noun: 'Community' },
-  { key: 'invited', label: 'Groups', noun: 'Group' },
+  { key: 'open', label: 'Public communities', noun: 'Public community' },
+  { key: 'invited', label: 'Private communities', noun: 'Private community' },
   { key: 'solo', label: 'Just you', noun: 'Just you' },
 ];
 
@@ -161,16 +163,6 @@ function SectionGlyph({ audience }: { audience: Audience }) {
 }
 
 type Counts = Record<string, { working?: number; needs?: number } | undefined>;
-
-type WorkshopItem = {
-  kind: 'session' | 'proposal' | 'governance';
-  id: number;
-  title: string;
-  status: string;
-  at: string | null;
-};
-
-type Items = Record<string, { working?: WorkshopItem[]; needs?: WorkshopItem[] } | undefined>;
 
 type TabKey = 'status' | 'needs';
 
@@ -236,10 +228,10 @@ export function groupRows(rows: WorkshopRow[]): Array<{ key: Audience; label: st
  * "3 to vote" is cut before it says anything, so each audience gets the fact
  * that says the most about it:
  *
- *   Community / Group → how many people are in it ("12 members"). The order
- *     of the section already says which moved last.
- *   Just you          → when it last moved ("2h ago"). There is one member,
- *     and it is you.
+ *   Public / Private community → how many people are in it ("12 members").
+ *     The order of the section already says which moved last.
+ *   Just you                   → when it last moved ("2h ago"). There is one
+ *     member, and it is you.
  */
 export function rowSubtitle(row: WorkshopRow, now = Date.now()): string {
   if (row.audience !== 'solo') {
@@ -285,191 +277,13 @@ export function tabFromQuery(search: string): TabKey | null {
 }
 
 /**
- * Where an item opens: its own full-screen page inside its app, in the
- * spelling the app's board uses (features/dev-board/card/fold.tsx's
- * `openHref` / `sessionHref`). A hash route, so a tap routes in place and a
- * modified click opens a tab, like every other row here.
+ * The Needs you row's second line: which projects the votes are owed on,
+ * in list order, the first three by name and the rest as a count.
  */
-export function itemHref(slug: string, item: WorkshopItem): string {
-  const app = encodeURIComponent(slug);
-  if (item.kind === 'session') return `#app/${app}/dev/sessions/${item.id}`;
-  if (item.kind === 'governance') return `#app/${app}/dev/governance/${item.id}`;
-  return `#app/${app}/dev/proposals/${item.id}`;
-}
-
-/** The grey line under an item: what kind of thing it is, and when. */
-export function itemCaption(item: WorkshopItem, section: TabKey): string {
-  let what: string;
-  if (section === 'needs') {
-    what = item.kind === 'governance' ? 'Group decision waiting on your vote' : 'Change waiting on your vote';
-  } else if (item.kind === 'session') {
-    what = item.status === 'paused' ? 'Your change, paused' : 'Your change, in progress';
-  } else if (item.kind === 'governance') {
-    what = 'Your group decision, open for votes';
-  } else {
-    what = item.status === 'merging' ? 'Your change, merging' : 'Your change, up for a vote';
-  }
-  const when = item.at ? agoStamp(item.at).text : '';
-  return when ? `${what} · ${when}` : what;
-}
-
-/**
- * The item groups one tab draws: each of your apps that has something in
- * `section`, in the order the app list shows them, with its rows.
- *
- * Exported and pure so tests can drive it. `more` is how many of the app's
- * items the bounded read left out (GET /api/workshop/items returns the
- * newest few per app); it is read from the count the app's row already
- * carries, so the tab says "and 4 more" rather than silently stopping.
- */
-export function groupItems(
-  rows: WorkshopRow[],
-  items: Items,
-  section: TabKey,
-): Array<{ app: WorkshopRow; items: WorkshopItem[]; more: number }> {
-  const key = section === 'needs' ? 'needs' : 'working';
-  const out: Array<{ app: WorkshopRow; items: WorkshopItem[]; more: number }> = [];
-  for (const app of rows) {
-    const list = items[app.slug]?.[key] || [];
-    if (!list.length) continue;
-    const counted = section === 'needs' ? app.needs : app.working;
-    out.push({ app, items: list, more: Math.max(0, (counted || 0) - list.length) });
-  }
-  return out;
-}
-
-/**
- * One app's items under one tab: the app's name as a section label over a
- * card of item rows, the widget language's primary shape again.
- *
- * The label is the way into the app's own Workshop, where the rest of that
- * app's items are, so it is an anchor to the same address an app row uses.
- */
-function ItemGroup({ app, items, more, section }: {
-  app: WorkshopRow;
-  items: WorkshopItem[];
-  more: number;
-  section: TabKey;
-}) {
-  const workshopHref = `/app/${encodeURIComponent(app.slug)}/workshop`;
-  const go = (event: MouseEvent) => {
-    const win = window as any;
-    if (win.NavLink?.isNativeClick?.(event)) return;
-    event.preventDefault();
-    win.App?.navigateToApp?.(app.slug, 'dev');
-  };
-  return (
-    <section data-workshop-group={app.slug}>
-      {/* An app's name, not a label: normal case, at the row title's weight
-          and a step down in size, over its items. */}
-      <SectionHeader className="flex items-center gap-2 normal-case tracking-normal text-sm font-semibold text-zinc-700 dark:text-zinc-300">
-        <span
-          aria-hidden="true"
-          className="app-icon-tile w-6 h-6 shrink-0 rounded-lg overflow-hidden flex items-center justify-center text-xs font-bold"
-          data-icon={appIconKind(app as any)}
-        >
-          <AppIconContent app={app as any} />
-        </span>
-        <a href={workshopHref} onClick={go} className="min-w-0 truncate hover:underline">
-          {app.name || app.slug}
-        </a>
-      </SectionHeader>
-      <GroupedList tone="plane">
-        {items.map((item) => (
-          <ListRow
-            key={`${item.kind}-${item.id}`}
-            as="a"
-            href={itemHref(app.slug, item)}
-            data-workshop-item={item.kind}
-            leading={(
-              <span
-                aria-hidden="true"
-                className="w-11 h-11 shrink-0 rounded-xl flex items-center justify-center bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300"
-              >
-                {section === 'needs'
-                  ? <BallotIcon className="w-5 h-5" />
-                  : <HandRaisedIcon className="w-5 h-5" />}
-              </span>
-            )}
-            title={item.title || 'Untitled'}
-            titleClassName="font-semibold"
-            subtitle={itemCaption(item, section)}
-          />
-        ))}
-        {more > 0 ? (
-          <ListRow
-            as="a"
-            href={workshopHref}
-            onClick={go}
-            data-workshop-more={String(more)}
-            title={`${more} more in ${app.name || app.slug}`}
-            titleClassName="font-medium text-[0.9375rem] text-zinc-500 dark:text-zinc-400"
-          />
-        ) : null}
-      </GroupedList>
-    </section>
-  );
-}
-
-/**
- * A tab's item groups, or what stands in for them: skeletons while the read
- * is in flight, a quiet line when it failed or found nothing. Never the
- * apps' error card: the app list above is the screen's one hard dependency,
- * and it already has one.
- */
-function ItemPane({ rows, items, itemsError, section, emptyText, heading }: {
-  rows: WorkshopRow[] | null;
-  items: Items | null;
-  itemsError: boolean;
-  section: TabKey;
-  /** The line for "nothing here". Empty: say nothing at all. */
-  emptyText: string;
-  /**
-   * A label over the groups, for a pane where they follow something else
-   * (Current status: the app list). Given one, the pane is quiet while it
-   * loads too, because the list above is already drawing skeletons.
-   */
-  heading?: string;
-}): ReactNode {
-  const NOTE = 'px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400';
-  if (itemsError) {
-    return <p className={NOTE} data-workshop-items-error="">Couldn't load these items. Each project's own Workshop still has them.</p>;
-  }
-  if (!rows || !items) {
-    if (heading) return null;
-    return (
-      <SkeletonGroup label="Loading items">
-        <GroupedList className="mt-2" tone="plane">
-          {[0, 1].map((i) => (
-            <ListRow
-              key={i}
-              chevron={false}
-              leading={<Skeleton shape="block" className="w-11 h-11 rounded-xl" />}
-              title={<Skeleton className="max-w-[60%]" />}
-            />
-          ))}
-        </GroupedList>
-      </SkeletonGroup>
-    );
-  }
-  const groups = groupItems(rows, items, section);
-  if (!groups.length) {
-    return emptyText ? <p className={NOTE} data-workshop-items-empty="">{emptyText}</p> : null;
-  }
-  return (
-    <>
-      {/* Heavier than the app labels under it, so the two levels read
-          as a heading and its groups rather than as four equal labels. */}
-      {heading ? (
-        <SectionHeader className="font-semibold text-zinc-900 dark:text-zinc-100" data-workshop-items-heading="">
-          {heading}
-        </SectionHeader>
-      ) : null}
-      {groups.map((g) => (
-        <ItemGroup key={g.app.slug} app={g.app} items={g.items} more={g.more} section={section} />
-      ))}
-    </>
-  );
+export function needsApps(rows: WorkshopRow[]): string {
+  const names = rows.filter((row) => (row.needs || 0) > 0).map((row) => row.name || row.slug);
+  if (names.length <= 3) return names.join(', ');
+  return `${names.slice(0, 3).join(', ')} and ${names.length - 3} more`;
 }
 
 /**
@@ -559,13 +373,16 @@ function AppRow({ row }: { row: WorkshopRow }) {
         win.App?.navigateToApp?.(row.slug, 'dev');
       }}
       leading={(
-        <div
+        <AppIconLink
+          nested
+          slug={row.slug}
+          name={row.name}
           className={'app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden '
             + 'flex items-center justify-center font-bold text-lg'}
           data-icon={appIconKind(row as any)}
         >
           <AppIconContent app={row as any} />
-        </div>
+        </AppIconLink>
       )}
       title={row.name || row.slug}
       trailing={unread > 0 ? (
@@ -619,8 +436,9 @@ function RowSkeletons(): ReactNode {
  *
  * `SectionHeader` over `GroupedList` — the language's label-over-card shape,
  * the same pair Discover's tiers use. The header carries the count of the
- * whole section, not of the rows showing, so "Groups 5" over three rows is
- * what tells you there are two more before you find the button.
+ * whole section, not of the rows showing, so "Private communities 5" over
+ * three rows is what tells you there are two more before you find the
+ * button.
  *
  * THE FOLD IS A ROW OF THE CARD, not a link under it: the language's "Show
  * more" (Messages' channels, Discover's tiers) is the last row of the group it
@@ -668,34 +486,23 @@ export function WorkshopScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
-    tab: TabKey; scopeOpen: boolean; items: Items | null; itemsError: boolean;
+    tab: TabKey; scopeOpen: boolean;
     feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
-  // TWO TABS, READ ACROSS EVERY APP (#3051). #2718's review took the app
-  // Workshop's three tabs off this screen because up here they only FILTERED
-  // the list of apps by whether a number on a row was non-zero. These two
-  // are not filters over that list: Current status keeps the list, with its
-  // numbers, and adds the work you have in flight; Needs you is the votes
-  // waiting on you, item by item, grouped by app. Both are the app
-  // Workshop's own two questions asked of all your apps at once. (All items
-  // stays an app's own: every item of every app is not a page.)
+  // ONE PAGE: the list of your projects, with Needs you as a row at its top
+  // that opens the feed of votes owed across all of them (`tab: 'needs'`,
+  // also reached by `?ws=needs`), and a way back. See the markup below.
   const rows = state.rows ? orderRows(state.rows) : null;
   const sections = rows ? groupRows(rows) : null;
   const all = rows;
   // `#workshop-empty` keeps its ONE meaning — you have no apps at all — and
   // that is a contract rather than a nicety: dapp.json selects
   // `#workshop-empty.hidden` to prove the card is gone once the list has
-  // rows, so a tab that merely filters to nothing must not raise it. A tab
-  // with nothing in it says so in its own line below.
-  // The totals the legend prints. Across EVERY app, not the filtered tab:
-  // the question is "how much is there altogether", and an answer that moved
-  // when you changed tabs would be answering a different one. Null until the
-  // list has answered — see the legend's note.
-  // Nothing to total with no apps: the empty card below already says why the
-  // screen is bare, and "0 working on · 0 waiting on your vote" over it is the
-  // same nothing said twice, in the confident voice of a measurement.
-  const TOTAL = 'font-semibold text-zinc-900 dark:text-zinc-100';
+  // rows.
+  // The totals across EVERY project, for the Needs you row. Null until the
+  // list has answered, and with no projects at all: the empty card already
+  // says why the screen is bare.
   const totals = all && all.length > 0
     ? all.reduce((acc, row) => ({
       working: acc.working + (row.working || 0),
@@ -724,119 +531,75 @@ export function WorkshopScreen() {
             word twice, an inch apart, on the two screens that had been made
             to agree about what a title IS. The bar is the title, which is
             what it is for on every other screen in the shell. */}
-        {/* THE SCOPE CHIP IS BACK (#3051, reversing #2759 on the owner's
-            request). #2759 took it off because this screen was then only the
-            list of your apps, and a chip whose panel listed them again
-            repeated the page. The screen now has the app Workshop's two tabs
-            read across all of your apps, and "All apps" is what says so: the
-            same chip an app's Workshop wears with that app's name
-            (./workshop-chrome.tsx), at its other end. */}
-        {/* THE LEGEND NAMES THE TWO THINGS A ROW COUNTS. It began as the key
-            to two glyph pills on every row; the rows say their status in
-            words now (StatusLine), and this line is where the two are named
-            once and totalled, in the muted line the language uses under a
-            section label.
+        {/* THE SCOPE CHIP (#3051, reversing #2759 on the owner's request).
+            #2759 took it off because this screen was then only the list of
+            your apps, and a chip whose panel listed them again repeated the
+            page. It came back with the app Workshop's questions read across
+            all of your apps, and "All apps" is what says so: the same chip an
+            app's Workshop wears with that app's name (./workshop-chrome.tsx),
+            at its other end.
 
-            IT CARRIES THE TOTALS NOW (#2718). The design study put three
-            count cards at the top of this screen — "4 in vote / 2 working / 7
-            open issues" — and the question they answer is a fair one this
-            screen could not answer: the rows say which APPS need you, and
-            nowhere said how much there is altogether.
-
-            As numbers in the legend rather than as cards, because the legend
-            is already the line that explains these two glyphs, and a card
-            deck above a list whose every row carries the same two figures
-            would be the third telling of one fact. "Open issues" is not here:
-            /api/workshop/counts folds governance issues into `working`
-            alongside sessions and promoted proposals, so a third figure would
-            have to be invented rather than read.
-
-            Null until the list answers — the totals are a fact about the
-            rows, so they wait for the rows rather than printing a confident
-            zero over skeletons.
-
-            THE WORDS ARE NOT THE NUMBER'S TO CHANGE. This first shipped as
-            "2 working on" / "3 waiting on your vote", which reworded the
-            legend on the way past — and a declared check pins the phrase
-            "Votes waiting on you" on this screen, so it went red on the
-            platform's own run. The number is ADDITIVE: the legend says
-            exactly what it said before and gains a figure at the end. That is
-            also the better reading, because the glyph's name and its count
-            are two different things and the name is the one that has to be
-            legible cold. */}
+            THE LEGEND UNDER IT IS GONE. It named the two things a row counts
+            and totalled them ("You are working on 2 · Votes waiting on you
+            3"). Your own work moved to Profile's Your changes, and the votes
+            total is the Needs you row's title now, drawn only when it is not
+            zero, so the line had nothing left to say that a row did not. */}
         {/* `pt-5` CLEARS THE HEADER'S NOTCH (#2718 review). The bar is
             `rounded-b-2xl -mb-2`, so every screen root starts 8px UNDER its
             bottom edge and whatever leads a screen has to step down past it:
             the 8 the notch owes plus 12 of air, which is what Messages' own
-            first element steps down by. The chip's row leads again (#3051),
-            so it carries that step, and the legend under it sits close. */}
-        {/* THE ALL APPS CHIP AND THE TABS (#3051) lead the screen, and this
-            row carries the header notch clearance (`pt-5`, see above) the
-            legend carried while it led. The chip says what the tabs are
-            about, all of your apps, and its panel is the way into one. */}
+            first element steps down by. The chip's row leads (#3051), so it
+            carries that step. */}
+        {/* THE ALL APPS CHIP leads the screen, and its row carries the
+            header notch clearance (`pt-5`, see above). It says what the
+            screen is about, all of your projects, and its panel is the way
+            into one. */}
         <div className="px-4 pt-5 pb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
           <AllAppsScope
             apps={rows}
             open={state.scopeOpen}
             onToggle={(next) => workshopStore.set({ scopeOpen: next })}
           />
-          <Tabs value={state.tab} onValueChange={(v) => workshopController.setTab(v as TabKey)}>
-            {/* THE PROJECT PAGE'S STRIP, NOT THE BLACK PILL. A community's
-                own page switches Hub and Workshop on a raised track with the
-                selected tab lit (app.css .dev-ws-tablist / .dev-ws-tab), and
-                the screen that lists those communities switches its two
-                views the same way, so "where you are" is one look across
-                the tab. See .workshop-scope-tabs in app.css. */}
-            <TabsList className="workshop-scope-tabs" aria-label="Communities sections">
-              <TabsTrigger
-                id="workshop-tab-status"
-                type="button"
-                value="status"
-                data-workshop-tab="status"
-                className="workshop-scope-tab"
-                activeClassName="workshop-scope-tab-on"
-                inactiveClassName=""
-              >
-                Current status
-              </TabsTrigger>
-              <TabsTrigger
-                id="workshop-tab-needs"
-                type="button"
-                value="needs"
-                data-workshop-tab="needs"
-                className="workshop-scope-tab"
-                activeClassName="workshop-scope-tab-on"
-                inactiveClassName=""
-              >
-                Needs you
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
         </div>
-        {/* THE STATUS PANE IS HIDDEN, NOT UNMOUNTED, on the other tab:
-            #workshop-list is in the prerendered document (the id inventory
-            and three declared checks resolve against it), and a tab switch
-            must not throw the list's rows away to redraw them. The Needs you
-            pane is all client data, so it renders only while it is showing,
-            which keeps the cold document as small as it was.
+        {/* ONE PAGE, NO TABS. The screen had two, Current status and Needs
+            you (#3051), over a line of totals. What you are working
+            on moved to your profile (Your changes), which left Current status
+            holding only the list, so the list is the page, and Needs you is
+            one row at its top that opens the same feed, with a way back.
 
-            NO GLYPHS IN THE TABS, unlike the app Workshop's bottom rail: this
-            is the segmented strip @/components/ui/tabs draws on the
-            Leaderboard, a text control, and the chip beside it already
-            carries the one mark this row needs. */}
+            THE LIST IS HIDDEN, NOT UNMOUNTED, while the feed is up:
+            #workshop-list is in the prerendered document (the id inventory
+            and three declared checks resolve against it), and opening the
+            feed must not throw the list's rows away to redraw them. The feed
+            is all client data, so it renders only while it is showing, which
+            keeps the cold document as small as it was. */}
         <div data-workshop-pane="status" className={state.tab === 'status' ? '' : 'hidden'}>
-          <p className="px-4 pt-1 pb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-500 dark:text-zinc-500">
-            <span className="inline-flex items-center gap-1">
-              <HandRaisedIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              You are working on
-              {totals ? <b id="workshop-total-working" className={TOTAL}>{totals.working}</b> : null}
-            </span>
-            <span className="inline-flex items-center gap-1">
-              <SpeechCheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-              Votes waiting on you
-              {totals ? <b id="workshop-total-needs" className={TOTAL}>{totals.needs}</b> : null}
-            </span>
-          </p>
+          {/* NEEDS YOU, when something waits: how many votes are owed across
+              your projects, which projects, and the way to them. A zero says
+              nothing, so the row is not drawn over a quiet day. */}
+          {totals && totals.needs > 0 ? (
+            <section data-workshop-needs-door="" aria-labelledby="workshop-needs-heading">
+              <SectionHeader id="workshop-needs-heading">Needs you</SectionHeader>
+              <GroupedList tone="plane">
+                <ListRow
+                  as="button"
+                  data-workshop-needs-open=""
+                  onClick={() => workshopController.setTab('needs')}
+                  leading={(
+                    <span className="app-icon-tile w-11 h-11 shrink-0 rounded-xl flex items-center justify-center bg-violet-50 text-violet-700 dark:bg-violet-950/40 dark:text-violet-300">
+                      <SpeechCheckIcon className="w-5 h-5" aria-hidden="true" />
+                    </span>
+                  )}
+                  title={`${totals.needs} ${totals.needs === 1 ? 'vote' : 'votes'} waiting on you`}
+                  subtitle={needsApps(rows || [])}
+                  // "Review" is the row's affordance; a chevron beside it
+                  // would say the same thing twice.
+                  trailing={<span className="text-sm font-semibold text-violet-700 dark:text-violet-300">Review</span>}
+                  chevron={false}
+                />
+              </GroupedList>
+            </section>
+          ) : null}
           {/* `#workshop-list` IS A PLAIN WRAPPER, not the card. The pane has
               up to three cards, one per section (see Section above), so the
               list is the thing that holds them and each card is a
@@ -896,21 +659,29 @@ export function WorkshopScreen() {
                   <Section key={section.key} audience={section.key} label={section.label} rows={section.rows} />
                 ))}
           </div>
-          {/* The work you have in flight, item by item, under each app. Quiet
-              when there is none: the legend's total already says 0. */}
-          {state.error ? null : (
-            <ItemPane
-              rows={rows}
-              items={state.items}
-              itemsError={state.itemsError}
-              section="status"
-              emptyText=""
-              heading="What you are working on"
-            />
-          )}
         </div>
         {state.tab === 'needs' ? (
           <div data-workshop-pane="needs">
+            {/* The way back to the list, and the page's name: the project
+                page's own page head (app.css .dev-ws-pagehead). */}
+            <div className="px-4 pb-2">
+              <div className="dev-ws-pagehead">
+                <button
+                  type="button"
+                  className="dev-ws-page-back un-touch-target"
+                  data-workshop-needs-back=""
+                  aria-label="Back to Communities"
+                  title="Back to Communities"
+                  onClick={() => workshopController.setTab('status')}
+                >
+                  <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
+                </button>
+                <div className="dev-ws-pagehead-text">
+                  <span className="dev-ws-pagehead-over">Communities</span>
+                  <h2 className="dev-ws-pagehead-title">Needs you</h2>
+                </div>
+              </div>
+            </div>
             {/* ONE FEED, EVERYTHING MIXED (#3270): every decision owed by you
                 across your projects, one per screen, newest first — the
                 shape a project's own Needs you page has. See ./needs-reel.tsx. */}
@@ -962,14 +733,12 @@ export const workshopController = {
     workshopStore.set({ error: false });
     let apps: Array<Omit<WorkshopRow, 'working' | 'needs'>> | null = null;
     let counts: Counts = {};
-    let items: Items | null = null;
     let feed: NeedsFeedItem[] | null = null;
     let feedCapped = false;
     try {
-      const [appsRes, countsRes, itemsRes, feedRes] = await Promise.all([
+      const [appsRes, countsRes, feedRes] = await Promise.all([
         fetch(`/api/apps${demo}`),
         fetch(`/api/workshop/counts${demo}`).catch(() => null),
-        fetch(`/api/workshop/items${demo}`).catch(() => null),
         fetch(`/api/workshop/needs-feed${demo}`).catch(() => null),
       ]);
       if (appsRes.ok) {
@@ -987,14 +756,8 @@ export const workshopController = {
         const data = await countsRes.json().catch(() => null);
         if (data && data.counts && typeof data.counts === 'object') counts = data.counts;
       }
-      // THE ITEMS ARE OPTIONAL TOO, like the counts: losing them costs the
-      // two tabs' item lists (each says so in a line), never the screen.
-      if (itemsRes && itemsRes.ok) {
-        const data = await itemsRes.json().catch(() => null);
-        if (data && data.items && typeof data.items === 'object') items = data.items;
-      }
-      // The Needs you feed, optional in the same way: losing it costs that
-      // tab its cards (it says so), never the screen.
+      // The Needs you feed is optional like the counts: losing it costs the
+      // feed its cards (it says so), never the screen.
       if (feedRes && feedRes.ok) {
         const data = await feedRes.json().catch(() => null);
         if (data && Array.isArray(data.items)) {
@@ -1018,8 +781,6 @@ export const workshopController = {
     workshopStore.set({
       rows: joinCounts(apps, counts),
       error: false,
-      items: items || {},
-      itemsError: !items,
       feed: feed || [],
       feedError: !feed,
       feedCapped,
