@@ -57,6 +57,7 @@ import {
 } from './store';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
+import { backToPlatformHub, openChannelHub, usePlatformSlug } from './channel-hub';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
@@ -1051,29 +1052,6 @@ function FullWidthToggle() {
 }
 
 /**
- * A CHANNEL'S WAY BACK TO ITS HUB (#3407). A channel is a level inside its
- * community's hub — the hub's Channel card is its door — so its pane leads
- * with the same round chevron the hub's own pages (Needs you, the Workshop)
- * lead with. The header's arrow names the same place (store.ts channelHub);
- * this is the one in the page, where the reader already is.
- *
- * It is a door that says where it goes, so it lands on the hub itself, not
- * the tab that project page was last left on: AppView._landOnHub first, then
- * the hub's address (App._hubHref's spelling, the one Discover's rows follow).
- * #general is the Homeroom community's channel, whose hub is the platform
- * project's; before the shell knows that slug it goes back to Communities.
- */
-function openChannelHub(slug: string | null): void {
-  const win = window as unknown as { AppView?: { _landOnHub?: (slug: string) => void } };
-  if (slug) win.AppView?._landOnHub?.(slug);
-  window.location.hash = slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
-}
-
-function platformSlug(): string | null {
-  return (window as unknown as { PlatformTarget?: { slug?: () => string | null } }).PlatformTarget?.slug?.() || null;
-}
-
-/**
  * The sheet's title row: who this conversation is with, and its actions as
  * floating discs. No back control of its own — on a phone the platform
  * header's back arrow already points at the list (see syncChrome in
@@ -1094,6 +1072,9 @@ function ThreadHeader() {
   const menuWrapRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
+  // #3407: #general's hub is the platform project's, whose slug may land
+  // after this header first draws (channel-hub.ts), so it is watched.
+  const hubSlug = usePlatformSlug(active?.kind === 'channel');
   const closeMenu = () => setMenu(false);
   useDismiss(menu, [menuWrapRef], closeMenu);
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
@@ -1142,7 +1123,6 @@ function ThreadHeader() {
     catch (err) { ui.toast?.(err instanceof Error ? err.message : 'Couldn’t rename this group.'); }
   }
   const channel = active.kind === 'channel';
-  const hubSlug = channel ? platformSlug() : null;
   const invited = active.membershipStatus === 'invited';
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
@@ -1159,7 +1139,7 @@ function ThreadHeader() {
         : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
-      {channel ? <PageBackButton label={hubSlug ? 'Homeroom' : 'Communities'} onBack={() => openChannelHub(hubSlug)} data-channel-back="" /> : null}
+      {channel ? <PageBackButton label={hubSlug ? 'Homeroom' : 'Communities'} onBack={backToPlatformHub} data-channel-back="" /> : null}
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}

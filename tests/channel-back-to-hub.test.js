@@ -14,6 +14,10 @@
 //      a conversation's way back is the header's, to the list).
 //   3. IT IS A DOOR TO THE HUB: AppView._landOnHub, then the hub's address,
 //      so it lands on the hub rather than the tab the page was last left on.
+//   4. #GENERAL'S HUB IS FOUND LATE: on a cold load the platform's slug is
+//      not known when the header first draws, so the press reads it when
+//      pressed and the label waits on PlatformTarget's lookup (executed below
+//      against channel-hub.ts, not grepped).
 //
 // Run with: node --test tests/channel-back-to-hub.test.js
 
@@ -21,6 +25,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { loadTsx } = require('./lib/render-tsx');
 
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
@@ -54,16 +59,93 @@ test('a project\'s channel leads its header with the way back to its hub', () =>
 
 test('#general leads with the way back to the Homeroom hub; a conversation does not', () => {
   const header = fn(SCREEN, 'ThreadHeader');
-  assert.match(header, /const hubSlug = channel \? platformSlug\(\) : null;/);
+  // A hook, so before the header's early return; watched, not read once.
+  const hook = header.indexOf("const hubSlug = usePlatformSlug(active?.kind === 'channel');");
+  assert.ok(hook > 0 && hook < header.indexOf('if (!active) return null;'), 'the hook runs before the early return');
   assert.match(header,
-    /\{channel \? <PageBackButton label=\{hubSlug \? 'Homeroom' : 'Communities'\} onBack=\{\(\) => openChannelHub\(hubSlug\)\} data-channel-back="" \/> : null\}/);
+    /\{channel \? <PageBackButton label=\{hubSlug \? 'Homeroom' : 'Communities'\} onBack=\{backToPlatformHub\} data-channel-back="" \/> : null\}/);
   assert.equal((header.match(/<PageBackButton /g) || []).length, 1, 'only behind `channel`');
+  assert.match(SCREEN, /import \{ backToPlatformHub, openChannelHub, usePlatformSlug \} from '\.\/channel-hub';/);
 });
 
-test('it is a door to the hub: _landOnHub first, then the hub\'s address', () => {
-  const open = fn(SCREEN, 'openChannelHub');
-  const land = open.indexOf('win.AppView?._landOnHub?.(slug)');
-  const go = open.indexOf('window.location.hash = slug ? `#app/${encodeURIComponent(slug)}/workshop` : \'#communities\';');
-  assert.ok(land > 0 && go > land, 'lands on the hub, then navigates');
-  assert.match(fn(SCREEN, 'platformSlug'), /PlatformTarget\?\.slug\?\.\(\) \|\| null/);
+// EXECUTED: the module that decides where the disc goes, against a stubbed
+// window whose PlatformTarget knows nothing at first, the way a cold
+// `#messages/<general-id>` load finds it while /api/version is in flight.
+function withWindow(stub, run) {
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'window');
+  const prev = globalThis.window;
+  globalThis.window = stub;
+  const done = () => { if (had) globalThis.window = prev; else delete globalThis.window; };
+  let out;
+  try { out = run(); } catch (err) { done(); throw err; }
+  return Promise.resolve(out).finally(done);
+}
+
+function coldWindow() {
+  let slug = null;
+  let release;
+  const lookup = new Promise((resolve) => { release = resolve; });
+  const landed = [];
+  const win = {
+    location: { hash: '#messages/7' },
+    AppView: { _landOnHub: (s) => landed.push(s) },
+    PlatformTarget: { slug: () => slug, resolve: () => lookup },
+  };
+  return { win, landed, learn: (s) => { slug = s; release(); } };
+}
+
+test('a cold #general: Communities first, then the hub once the platform slug lands, and the press reads it then', async () => {
+  const HUB = loadTsx('frontend/src/features/messages/channel-hub.ts');
+  const { win, landed, learn } = coldWindow();
+  await withWindow(win, async () => {
+    const seen = [];
+    const cancel = HUB.watchPlatformSlug((s) => seen.push(s));
+    assert.equal(HUB.platformSlug(), null, 'nothing knows the slug at first draw');
+    assert.deepEqual(seen, [], 'the label waits on the lookup, it does not settle on null early');
+
+    learn('homeroom');
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(seen, ['homeroom'], 'the header hears the slug once the lookup settles');
+
+    // The press resolves the slug when pressed, not when the header drew.
+    HUB.backToPlatformHub();
+    assert.deepEqual(landed, ['homeroom'], 'lands on the hub first');
+    assert.equal(win.location.hash, '#app/homeroom/workshop');
+    cancel();
+  });
+});
+
+test('a press before anything knows the slug goes to Communities, without a hub landing', async () => {
+  const HUB = loadTsx('frontend/src/features/messages/channel-hub.ts');
+  const { win, landed } = coldWindow();
+  await withWindow(win, () => {
+    HUB.backToPlatformHub();
+    assert.deepEqual(landed, []);
+    assert.equal(win.location.hash, '#communities');
+  });
+});
+
+test('a cancelled watch stays quiet; a known slug is handed over at once', async () => {
+  const HUB = loadTsx('frontend/src/features/messages/channel-hub.ts');
+  const { win, learn } = coldWindow();
+  await withWindow(win, async () => {
+    const seen = [];
+    HUB.watchPlatformSlug((s) => seen.push(s))();
+    learn('homeroom');
+    await new Promise((r) => setTimeout(r, 0));
+    assert.deepEqual(seen, [], 'an unmounted header is not set');
+    const now = [];
+    HUB.watchPlatformSlug((s) => now.push(s));
+    assert.deepEqual(now, ['homeroom']);
+  });
+});
+
+test('a project\'s channel: _landOnHub first, then the hub\'s address', async () => {
+  const HUB = loadTsx('frontend/src/features/messages/channel-hub.ts');
+  const { win, landed } = coldWindow();
+  await withWindow(win, () => {
+    HUB.openChannelHub('whiteboard');
+    assert.deepEqual(landed, ['whiteboard']);
+    assert.equal(win.location.hash, '#app/whiteboard/workshop');
+  });
 });
