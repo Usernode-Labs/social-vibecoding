@@ -698,23 +698,23 @@
     {
       "source": "src/routes/topochain/admin/waitlist.js",
       "kind": "structural-template",
-      "fingerprint": "27d7dffe2bcda3d40d0a",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS c FROM waitlist_signups w ${where}`"
-    },
-    {
-      "source": "src/routes/topochain/admin/waitlist.js",
-      "kind": "structural-template",
-      "fingerprint": "74fc8edae7a6433dc149",
+      "fingerprint": "1bb7fab9edd7b565ffb1",
       "count": 1,
       "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.linked_user_id, w.answers, w.invited_by, (SELECT COUNT(*)::int FROM waitlist_signups c W"
     },
     {
       "source": "src/routes/topochain/admin/waitlist.js",
       "kind": "structural-template",
-      "fingerprint": "ec06fac62f43fe418af0",
+      "fingerprint": "467be03234670d53569c",
       "count": 1,
       "preview": "`SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at, w.answers, (SELECT COUNT(*)::int FROM waitlist_signups c WHERE c.invited_by = w.id) AS inv"
+    },
+    {
+      "source": "src/routes/topochain/admin/waitlist.js",
+      "kind": "structural-template",
+      "fingerprint": "9ed73e877a98d985dacd",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS c FROM waitlist_signups w ${countWhere.sql}`"
     },
     {
       "source": "src/routes/topochain/ingest.js",
