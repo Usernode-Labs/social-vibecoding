@@ -273,6 +273,8 @@ export function ProfileRoot(): ReactNode {
           publicStatus={state.publicStatus}
           publishing={state.publishing}
           previewOpen={state.previewOpen}
+          cropSource={state.cropSource}
+          pendingPhoto={state.pendingAvatarUrl ? 'new' : state.pendingRemove ? 'removed' : null}
         />
       ) : null}
       {/* #3186: "Your feedback", the list `#profile?feedback` opens. */}

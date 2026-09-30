@@ -1380,6 +1380,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // own feed there (#3488), and the comment-stamp check reads its stamps off
   // the request whose thread carries Homeroom bot's spec card (#3490).
   //
+  // 830 → 830: #3525 folded rather than added. "Position your photo", the
+  // step a chosen profile photo now opens over the editor, is reached only
+  // by picking a file, so ?shot=profile-photo opens it with a drawn sample.
+  // The #1285 editor check was REWRITTEN in place onto that link: the
+  // editor's inset-grouped rows and its disabled username row are still
+  // there under the step (inert while it is up), so it pins both, and reads
+  // the step's title. The plain ?shot=profile-edit link keeps the #982 check.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
   checkCap.assertPinned(DAPP.tests.length, 830);

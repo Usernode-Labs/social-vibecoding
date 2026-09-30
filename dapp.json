@@ -711,10 +711,10 @@
       "expectText": "Connect or change social accounts"
     },
     {
-      "name": "Edit profile is a scrolling card of inset-grouped rows (#1285)",
-      "path": "/?shot=profile-edit#profile",
-      "expectSelector": "#profile-edit-sheet .un-group .un-group-row #profile-edit-username[disabled]",
-      "expectText": "Change photo"
+      "name": "Edit profile is a card of inset-grouped rows, and a new photo is positioned in the circle first (#1285, #3525)",
+      "path": "/?shot=profile-photo#profile",
+      "expectSelector": "body:has(#profile-photo-crop-stage[role='application'] > img) #profile-edit-sheet[inert] .un-group .un-group-row #profile-edit-username[disabled]",
+      "expectText": "Position your photo"
     },
     {
       "name": "Profile: a bio with no spaces in it wraps inside the identity card (#1612)",
