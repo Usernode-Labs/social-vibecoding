@@ -16662,6 +16662,16 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @keyframes dev-ws-sheet-down { from { transform: none; } to { transform: translateY(100%); } }
 @keyframes dev-ws-scrim-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes dev-ws-scrim-out { from { opacity: 1; } to { opacity: 0; } }
+/* THE LEAVING SHEET STOPS TAKING TAPS (#3412). Closing a deck sheet and
+   opening the vote prompt happen in the same breath — answer() closes the
+   sheet and calls castVote, which presents the prompt — and the sheet stays
+   mounted for this exit, so for the ~220ms the fade runs a full-screen box
+   (its scrim fixed and transparent on the wide vote popover) sits over the
+   prompt's buttons. The kit releases its own surfaces at dismissal start for
+   exactly this reason (releaseInput in native.js); the attribute that starts
+   this exit releases this sheet the same way, card and scrim alike. A sheet
+   on its way out has nothing left to tap. */
+.dev-ws-sheet-modal[data-ws-leaving] { pointer-events: none; }
 @keyframes dev-ws-panel-in { from { opacity: 0; transform: translateX(28px); } to { opacity: 1; transform: none; } }
 @keyframes dev-ws-panel-out { from { opacity: 1; transform: none; } to { opacity: 0; transform: translateX(28px); } }
 @keyframes dev-ws-pop-in { from { opacity: 0; transform: translateX(10px) scale(.96); } to { opacity: 1; transform: none; } }
