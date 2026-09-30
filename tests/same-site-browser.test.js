@@ -302,6 +302,8 @@ function unsafeRoutes() {
   const ts = require('typescript');
   const routesDir = path.join(ROOT, 'src/routes');
   const found = [];
+  // child router factory -> the factory whose router mounts it (router.use).
+  found.mounts = new Map();
   for (const file of routeFiles(routesDir).sort()) {
     const text = fs.readFileSync(file, 'utf8');
     const rel = path.relative(routesDir, file).split(path.sep).join('/');
@@ -321,6 +323,12 @@ function unsafeRoutes() {
       ts.forEachChild(node, collect);
     };
     collect(sf);
+    const factoryOf = (node) => {
+      for (let n = node.parent; n; n = n.parent) {
+        if (ts.isFunctionDeclaration(n) && n.name) return n.name.text;
+      }
+      return null;
+    };
     const visit = (node) => {
       if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
         const verb = node.expression.name.text;
@@ -335,8 +343,14 @@ function unsafeRoutes() {
           const paths = literalPaths(ts, first, consts);
           const args = rest.map((arg) => arg.getText(sf));
           const names = paths || [first.getText(sf)];
-          for (const p of names) found.push({ key: `${rel} ${verb.toUpperCase()} ${p}`, method: verb, paths, route: p, args });
+          const factory = factoryOf(node);
+          for (const p of names) found.push({ key: `${rel} ${verb.toUpperCase()} ${p}`, method: verb, paths, route: p, args, file: rel, factory });
         } else if (onRouter && verb === 'use') {
+          for (const arg of node.arguments) {
+            if (ts.isCallExpression(arg) && ts.isIdentifier(arg.expression)) {
+              found.mounts.set(arg.expression.text, factoryOf(node));
+            }
+          }
           const inline = node.arguments.filter((arg) => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg));
           const answers = inline.some((fn) => fn.parameters.length === 2 || /\breq\.method\b/.test(fn.body.getText(sf)));
           if (answers) {
@@ -381,8 +395,29 @@ test('admin writes are guarded as a block, ahead of every admin router', () => {
   const mount = "app.use(['/api/admin', '/api/v4/admin'], require('./src/middleware/same-site-browser').sameOriginBrowserWrites);";
   const at = server.indexOf(mount);
   assert.ok(at > server.indexOf('app.use(authMiddleware(config));'), 'mounted after auth');
-  for (const router of ["require('./src/routes/account-deletion').accountDeletionRoutes(config)", 'contentReportRoutes(config)', 'adminRoutes(config)', 'topochainAdminRoutes(config)']) {
-    assert.ok(at < server.indexOf(`app.use(${router})`), `before ${router}`);
+  // Every router factory that declares an admin write, found by the
+  // inventory, reaches server.js through an app.use of its own or of the
+  // router that mounts it; that app.use must come after the block guard.
+  const routes = unsafeRoutes();
+  const factories = new Map();
+  for (const r of routes) {
+    if (r.paths && ADMIN_PREFIX.test(r.route)) factories.set(r.factory, r.file);
+  }
+  assert.ok(factories.size >= 10, 'the inventory found the admin routers');
+  const appUse = /^app\.use\((.*)$/gm;
+  const mountsInServer = [...server.matchAll(appUse)].map((m) => ({ index: m.index, text: m[1] }));
+  for (const [factory, file] of factories) {
+    assert.ok(factory, `${file}: an admin route declared outside a named router factory`);
+    let name = factory;
+    const chain = [];
+    let top = null;
+    while (name && !top) {
+      chain.push(name);
+      top = mountsInServer.find((m) => new RegExp(`\\b${name}\\(`).test(m.text)) || null;
+      if (!top) name = routes.mounts.get(name);
+    }
+    assert.ok(top, `${file}: ${chain.join(' <- ')} is not mounted by server.js`);
+    assert.ok(at < top.index, `${file}: ${chain.join(' <- ')} is mounted before the admin block guard`);
   }
 });
 
