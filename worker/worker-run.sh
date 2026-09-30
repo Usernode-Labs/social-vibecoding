@@ -79,6 +79,10 @@ clip() {
 : "${PAT:=}"
 : "${MODE:=warm}"
 
+# Session-branch integrity helpers: this checkout holds main and the
+# session's own branch only (see the file).
+. "$(dirname "$0")/session-branch.sh"
+
 # This marker belongs to this container's completed bootstrap, never its PVC.
 rm -f /tmp/usernode-worker-ready || die "cannot reset worker readiness"
 
@@ -202,31 +206,35 @@ if [ ! -d /home/node/workspace/.git ]; then
   # it tries `git submodule update --init` (denied by plan-mode
   # permissions) and then `gh api` (binary not installed in this
   # image), leaving the spec stage unable to inspect the actual code.
-  if ! CLONE_OUT="$(git clone --recurse-submodules --shallow-submodules "$CLONE_URL" . 2>&1)"; then
+  #
+  # `--single-branch`: the clone holds main and, fetched just below, this
+  # session's own branch. Other members' unmerged dev/* branches are not
+  # in it: an agent unsure where its edits had gone once found one with
+  # `git branch -a` and copied its commit into its own proposal
+  # (usernode-bot/sheep-countrr-a08857#34).
+  if ! CLONE_OUT="$(git clone --single-branch --recurse-submodules --shallow-submodules "$CLONE_URL" . 2>&1)"; then
     die "clone failed: $(clip "$CLONE_OUT")"
+  fi
+  if ! FETCH_OUT="$(usernode_fetch_session_refs)"; then
+    echo "__USERNODE_WARN__ fetch failed: $(clip "$FETCH_OUT")"
   fi
 
   echo "__USERNODE_PHASE__ checkout"
-  # The first checkout failing is EXPECTED (the branch usually doesn't
-  # exist on the remote yet), so only the second one's output is worth
-  # reporting.
-  if ! git checkout "$BRANCH" >/dev/null 2>&1; then
-    if ! CHECKOUT_OUT="$(git checkout -b "$BRANCH" 2>&1)"; then
-      die "checkout failed: $(clip "$CHECKOUT_OUT")"
-    fi
+  # GitHub's copy of the session branch when it has one, otherwise a new
+  # branch from main (session-branch.sh).
+  if ! CHECKOUT_OUT="$(usernode_checkout_session_branch)"; then
+    die "checkout failed: $(clip "$CHECKOUT_OUT")"
   fi
 else
   # Defensive: another wrapper invocation against an existing checkout.
   # Should be rare — only happens if MODE=warm is invoked twice without
   # tearing down the container, which the host doesn't do.
   echo "__USERNODE_PHASE__ checkout (existing)"
-  if ! FETCH_OUT="$(git fetch origin --quiet 2>&1)"; then
+  if ! FETCH_OUT="$(usernode_fetch_session_refs)"; then
     echo "__USERNODE_WARN__ fetch failed: $(clip "$FETCH_OUT")"
   fi
-  if ! git checkout "$BRANCH" >/dev/null 2>&1; then
-    if ! CHECKOUT_OUT="$(git checkout -b "$BRANCH" 2>&1)"; then
-      die "checkout failed: $(clip "$CHECKOUT_OUT")"
-    fi
+  if ! CHECKOUT_OUT="$(usernode_checkout_session_branch)"; then
+    die "checkout failed: $(clip "$CHECKOUT_OUT")"
   fi
 fi
 
@@ -235,10 +243,11 @@ fi
 # reached the template's .gitignore carry nothing that would stop it, so
 # each checkout's LOCAL exclude file (never committed, never pushed) gets
 # them on every bootstrap: the Playwright MCP's default output directory,
-# and the Playwright test runner's result and report directories. Only
-# untracked files are affected; a repository that already tracks one keeps
-# tracking it.
-for USERNODE_EXCLUDE in '.playwright-mcp/' 'test-results/' 'playwright-report/'; do
+# the Playwright test runner's result and report directories, and installed
+# dependencies (three apps had committed node_modules). Only untracked
+# files are affected; a repository that already tracks one keeps tracking
+# it.
+for USERNODE_EXCLUDE in '.playwright-mcp/' 'test-results/' 'playwright-report/' 'node_modules/'; do
   if ! grep -qxF "$USERNODE_EXCLUDE" .git/info/exclude 2>/dev/null; then
     { mkdir -p .git/info && printf '%s\n' "$USERNODE_EXCLUDE" >> .git/info/exclude; } \
       || echo "__USERNODE_WARN__ could not add $USERNODE_EXCLUDE to .git/info/exclude"
