@@ -61,6 +61,9 @@ function harness(initial, caches = memoryCaches()) {
   const clients = [];
   let failedPath = null;
   let offline = false;
+  // Per-request round trip, and the document's X-Platform-Build-Policy.
+  let latencyMs = 0;
+  let buildPolicy = null;
   let lockTail = Promise.resolve();
   const locks = { request: (_name, action) => {
     const run = lockTail.then(action); lockTail = run.catch(() => {}); return run;
@@ -69,10 +72,12 @@ function harness(initial, caches = memoryCaches()) {
     const url = new URL(typeof request === 'string' ? request : request.url, ORIGIN);
     requests.push(url.pathname);
     if (offline) throw new Error('offline');
+    if (latencyMs) await new Promise(resolve => setTimeout(resolve, latencyMs));
     const pathname = url.pathname.replace(/^\/b\/[a-f0-9]{40}/, '') || '/index.html';
     if (failedPath === pathname) return new Response('unavailable', { status: 503 });
     const headers = { 'x-platform-build': serving.revision,
       'x-platform-build-time': String(serving.revision.charCodeAt(0) * 1000) };
+    if (buildPolicy && pathname === '/index.html') headers['x-platform-build-policy'] = buildPolicy;
     try { return new Response(serving.read(pathname), { headers }); }
     catch { return new Response('missing', { status: 404 }); }
   };
@@ -116,6 +121,8 @@ function harness(initial, caches = memoryCaches()) {
     serve: next => { serving = next; },
     fail: pathname => { failedPath = pathname; },
     offline: value => { offline = value; },
+    latency: ms => { latencyMs = ms; },
+    policy: value => { buildPolicy = value; },
   };
 }
 

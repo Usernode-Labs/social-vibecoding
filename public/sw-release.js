@@ -211,12 +211,25 @@ function createShellReleaseCache({ manifest, storage, fetcher, worker, cryptoApi
     } catch (error) { return { ok: false, mismatch: /mismatch|another release/.test(error.message) }; }
   }
 
+  // A new build is served only after its release is staged: the document,
+  // then the manifest, then every changed asset, one round trip after
+  // another. The 200ms deadline cannot cover that on most real links, so a
+  // deployment that asks for the latest build (a staging preview, whose
+  // stable hostname keeps the previous build's worker installed) gets a
+  // longer wait once its document has arrived inside the deadline.
+  // Production sends no such header and keeps time-to-page: it may paint
+  // the previous build for one load.
+  const LATEST_BUILD_WAIT_MS = 4000;
+
   async function navigate(event) {
     const before = await current();
     const cached = await documentFor(before);
+    let documentArrived;
+    const arrived = new Promise(resolve => { documentArrived = resolve; });
     const fresh = (async () => {
       const response = await fetchFresh(event.request);
       if (!response.ok) throw new Error('Shell document unavailable');
+      documentArrived(response.headers.get('x-platform-build-policy') === 'latest');
       const revision = response.headers.get('x-platform-build');
       if (before && revision && revision === before.revision) return { response, release: before };
       if (cached && !canReplaceDocument(cached, response)) return { response: cached, release: before };
@@ -227,8 +240,15 @@ function createShellReleaseCache({ manifest, storage, fetcher, worker, cryptoApi
     })();
     event.waitUntil(fresh.then(() => cleanup()).catch(() => {}));
     let timer;
+    let settled = false;
     const fallback = cached ? new Promise(resolve => {
-      timer = setTimeout(() => resolve({ response: cached, release: before }), 200);
+      const serveCached = () => resolve({ response: cached, release: before });
+      timer = setTimeout(serveCached, 200);
+      arrived.then(latest => {
+        if (settled || !latest) return;
+        clearTimeout(timer);
+        timer = setTimeout(serveCached, LATEST_BUILD_WAIT_MS);
+      });
     }) : new Promise(() => {});
     let selected;
     try {
@@ -236,7 +256,7 @@ function createShellReleaseCache({ manifest, storage, fetcher, worker, cryptoApi
     } catch (err) {
       if (!cached) throw err;
       selected = { response: cached, release: before };
-    } finally { clearTimeout(timer); }
+    } finally { settled = true; clearTimeout(timer); }
     event.waitUntil(noteClient(event.resultingClientId || event.clientId, buildKey(selected.release)).catch(() => {}));
     return selected.response;
   }

@@ -26,6 +26,15 @@ not forcibly refreshed: drafts survive until the user accepts an update or
 navigates. A first visit still needs connectivity; unavailable old lazy chunks
 fail explicitly instead of receiving another revision's code.
 
+A navigation waits at most 200ms before painting the cached build. A new
+build takes several round trips (document, manifest, changed assets), so in
+production the first load after a deploy usually paints the previous build and
+the next load has the new one: time-to-page wins. A staging preview's document
+carries `X-Platform-Build-Policy: latest`. Its hostname is stable per session,
+so the worker from a reviewer's last visit answers the first open of a rebuilt
+preview. When that document arrives inside the deadline, the worker waits up
+to 4s for the new release instead of showing the previous build.
+
 Required checks always include `tests/shell-release.test.js`: generated
 identity, build wiring, warm upgrades, failed downloads, mixed-build responses,
 offline access, cached authentication, old tabs, cleanup, migration, activation
