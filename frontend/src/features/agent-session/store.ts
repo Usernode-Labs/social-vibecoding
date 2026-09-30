@@ -1581,6 +1581,20 @@ export async function renameCurrentSession() {
 }
 
 /**
+ * The one question archiving asks, wherever it is asked from: the bar's ⋯
+ * and a swipe on a row of the Homeroom menu's Agent sessions (#3515) do the
+ * same thing to the same session, so they say the same words. Resolves
+ * false, never undefined, when there is no kit to ask with.
+ */
+async function confirmArchive(): Promise<boolean> {
+  return !!(await window.PlatformUI?.confirm?.({
+    title: 'Archive this session?',
+    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
+    confirmLabel: 'Archive',
+  }));
+}
+
+/**
  * Archive the conversation, after a confirm. It leaves the lists; its
  * active change is paused (a change up for a vote keeps its vote), and the
  * conversation stays on screen, read-only, with Unarchive.
@@ -1588,11 +1602,7 @@ export async function renameCurrentSession() {
 export async function archiveCurrentSession() {
   const id = state.id;
   if (!id || state.session?.status === 'archived') return;
-  const ok = await window.PlatformUI?.confirm?.({
-    title: 'Archive this session?',
-    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
-    confirmLabel: 'Archive',
-  });
+  const ok = await confirmArchive();
   if (!ok || state.id !== id) return;
   try {
     const session = await api.archiveSession(id);
@@ -1601,6 +1611,39 @@ export async function archiveCurrentSession() {
     void loadAgentSessions();
   } catch (error) {
     if (state.id === id) publish({ error: errorText(error, 'Could not archive this session.') });
+  }
+}
+
+/**
+ * Archive a session from a LIST rather than from its own screen (#3515): a
+ * left swipe on a row of the Homeroom menu's Agent sessions. The same
+ * confirm and the same route as the ⋯'s Archive above; what differs is
+ * where the answer lands. The row leaves every list at once (the menu,
+ * Recents and Messages all read `sessions`), and the list is read again so
+ * the next session fills the place it left. When it is also the
+ * conversation on screen, that screen takes the archived session, read-only
+ * with Unarchive, exactly as if its own ⋯ had done it.
+ *
+ * Resolves whether it was archived. False is a Cancel or a refusal, and the
+ * caller puts its row back; a refusal also says why, in a toast, because a
+ * list has no error line of its own to say it in, and reads the list again
+ * all the same: the likeliest refusal is "already archived" (another tab
+ * did it), and then the row the caller puts back is gone on that read.
+ */
+export async function archiveListedSession(id: number): Promise<boolean> {
+  if (!id || !(await confirmArchive())) return false;
+  try {
+    const session = await api.archiveSession(id);
+    publish((current) => ({
+      sessions: current.sessions.filter((s) => s.id !== id),
+      ...(current.id === id ? { session } : {}),
+    }));
+    void loadAgentSessions();
+    return true;
+  } catch (error) {
+    window.PlatformUI?.toast?.(errorText(error, 'Could not archive this session.'));
+    void loadAgentSessions();
+    return false;
   }
 }
 

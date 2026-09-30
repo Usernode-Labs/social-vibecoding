@@ -140,10 +140,10 @@ import { Improve } from '../improve/improve-controller.js';
 import { appContextStore } from './app-context-store.js';
 import { AppContext } from './app-context-controller.js';
 import { recordAppUse } from './app-recency';
-import { continueRows } from './continue-model';
+import { continueRows, type ContinueRow } from './continue-model';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
 import { ACTIVITY_LABEL } from '../agent-session/activity';
-import { loadAgentSessions, useAgentSessions } from '../agent-session/store';
+import { archiveListedSession, loadAgentSessions, useAgentSessions } from '../agent-session/store';
 import { setFilter as setMessagesFilter } from '../messages/store';
 
 const ROW = 'flex items-center gap-3 px-5 min-h-[44px] text-sm '
@@ -289,6 +289,94 @@ function MenuRow({
     >
       <RowBody icon={icon} label={label} sub={sub} lead={lead} trailing={trailing} />
     </a>
+  );
+}
+
+/**
+ * One of your agent sessions under Agent sessions: a MenuRow that, on a
+ * phone, a left swipe archives (#3515).
+ *
+ * ARCHIVE, NOT DELETE. The request asked to delete, and nothing deletes an
+ * agent session: what puts one away is Archive, on the ⋯ of the session's own
+ * screen, which takes it out of your lists, pauses its change and can be
+ * undone. So the swipe offers that, in its word and with its confirm
+ * (../agent-session/store.ts `archiveListedSession`), rather than a second
+ * way to put a session away that means something different.
+ *
+ * THE SWIPE IS THE KIT'S (PlatformUI.swipeActions), wired the way the
+ * notifications' Saved and Invite rows wire it: on touch only, from an
+ * effect, after mount. The row takes only sideways drags (the kit gives it
+ * `touch-action: pan-y` and puts its drag through the gesture arbiter), so
+ * an up-and-down drag on a row still scrolls the list, and the kit sheet
+ * this menu is on a phone, which lets go of any drag that reads as
+ * sideways, still pulls down from its top as it did. A tap on the row still
+ * opens the session.
+ *
+ * Nothing replaces the swipe for a mouse or a keyboard. The rows it would
+ * sit beside are links, and a second control inside each one is a nested
+ * interactive element; the session the row opens has Archive on its ⋯,
+ * where it already was.
+ *
+ * WHY THE <a> SITS IN A <div> OF ITS OWN. The kit wraps the element it is
+ * handed: it moves it into a `.un-swipe` container it inserts in its place,
+ * beside the action tray. Were the <a> a direct child of #app-menu-continue,
+ * React would go on inserting rows before it and removing it from a parent it
+ * is no longer in, which throws the first time the list changes. The slot is
+ * the node React places, moves and removes; whatever the kit does happens
+ * inside it, and the <a> in it is only ever updated in place. Same id, same
+ * `data-context-row`, same href as the row it was.
+ *
+ * WHY THE SLOT HAS A KEY. Archive is the tray's destructive action, so a full
+ * swipe commits it the way the kit commits any: the row slides out, collapses
+ * and is taken out of the document, and only THEN is the handler called
+ * (a tap on the revealed Archive goes the same way). So the confirm is
+ * asked after the row has gone, the only order the kit has: gone, "Archive
+ * this session?", back on Cancel. "Back" is a new key: React drops the
+ * emptied slot and renders the row again, and the effect wraps it again.
+ * An archive that went through needs no repair, because the session leaves
+ * the list and its slot goes with it.
+ */
+function SessionRow({ row, index }: { row: ContinueRow; index: number }): ReactNode {
+  const rowRef = useRef<HTMLAnchorElement | null>(null);
+  const [round, setRound] = useState(0);
+  useEffect(() => {
+    const el = rowRef.current;
+    const ui = window.PlatformUI;
+    if (!el || !ui?.isTouch() || !ui.swipeActions) return undefined;
+    const swipe = ui.swipeActions(el, {
+      actions: [{
+        label: 'Archive',
+        destructive: true,
+        handler: () => {
+          void archiveListedSession(row.sessionId).then((archived) => {
+            if (!archived) setRound((n) => n + 1);
+          });
+        },
+      }],
+    });
+    return () => swipe.detach();
+  }, [row.sessionId, round]);
+
+  return (
+    <div key={round}>
+      <MenuRow
+        id={`app-menu-continue-${index}`}
+        dataContextRow="continue-agent"
+        elRef={rowRef}
+        href={row.href}
+        // Working, the spinner takes the icon's place (#3028); finished
+        // unseen, the green dot does (#3076). The icon slot is aria-hidden,
+        // so the state rides in the lead as words.
+        icon={row.activity
+          ? <AgentActivityIcon activity={row.activity} className="h-5 w-5" />
+          : <SparklesIcon />}
+        label={row.title}
+        sub={row.sub}
+        lead={row.activity
+          ? <span className="sr-only">{ACTIVITY_LABEL[row.activity]}</span>
+          : null}
+      />
+    </div>
   );
 }
 
@@ -762,25 +850,10 @@ export function AppsSwitcherSheet(): ReactNode {
             )}
             {continuing.rows.length ? (
               <div id="app-menu-continue" data-app-menu-continue={continuing.rows.length}>
+                {/* A left swipe archives one, on a phone (#3515): see
+                    SessionRow. */}
                 {continuing.rows.map((row, index) => (
-                  <MenuRow
-                    key={row.key}
-                    id={`app-menu-continue-${index}`}
-                    dataContextRow="continue-agent"
-                    href={row.href}
-                    // Working, the spinner takes the icon's place (#3028);
-                    // finished unseen, the green dot does (#3076). The icon
-                    // slot is aria-hidden, so the state rides in the lead as
-                    // words.
-                    icon={row.activity
-                      ? <AgentActivityIcon activity={row.activity} className="h-5 w-5" />
-                      : <SparklesIcon />}
-                    label={row.title}
-                    sub={row.sub}
-                    lead={row.activity
-                      ? <span className="sr-only">{ACTIVITY_LABEL[row.activity]}</span>
-                      : null}
-                  />
+                  <SessionRow key={row.key} row={row} index={index} />
                 ))}
                 {/*
                     SHOW MORE IS A LINK UNDER THE LIST, NOT A ROW IN IT (#3405).

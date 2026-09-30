@@ -156,6 +156,17 @@ declare global {
         items: Array<{ label: string; title?: string; destructive?: boolean; handler: () => void }>;
       }): Promise<unknown>;
       copyText?(text: string): Promise<boolean>;
+      /**
+       * The kit's swipe-to-act row (unNative.attachSwipeActions): it wraps
+       * `row` in a container of its own beside the action tray, so the
+       * element handed in must not be one React places among siblings. The
+       * last action, when destructive, is also the full swipe, and it takes
+       * the row out of the document BEFORE its handler runs. An inert
+       * handle without the kit.
+       */
+      swipeActions?(row: HTMLElement, opts: {
+        actions: Array<{ label: string; color?: string; destructive?: boolean; handler: () => void }>;
+      }): { close(): void; detach(): void };
       [key: string]: unknown;
     };
     /** features/header/node-pill.js */
