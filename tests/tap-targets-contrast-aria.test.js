@@ -155,8 +155,8 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   has('frontend/src/features/dev-board/workshop/page-back.tsx', new RegExp(`className="dev-ws-page-back ${KIT}"`), 'the way back from a page to the hub');
   has('frontend/src/features/dev-board/workshop/hub-cards.tsx', new RegExp(`className="dev-ws-hub-open ${KIT}"`), 'the channel\'s Open');
   // #852: the requests line (#3408) went with the hub's doors; the since
-  // card's Week by week is its small link now.
-  has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-link dev-ws-since-card-more ${KIT}"`), 'the summary\'s Week by week');
+  // card's Week by week is its door in the head's corner now (#3510).
+  has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-hub-open dev-ws-since-card-more ${KIT}"`), 'the summary\'s Week by week');
   const ui = 'frontend/src/features/home/panels/ui.tsx';
   has(ui, new RegExp(`className="home-panel-browse [^"]*${KIT}"`), 'Browse all apps');
   has(ui, new RegExp(`className="home-panel-lb-browse [^"]*${KIT}"`), 'Open challenges');
