@@ -16,7 +16,7 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // THE ROW CAP IS THE CLIENT'S. The block draws four challenges
 // (HomePanels.ROW_SLOTS in frontend/src/features/home/home-panels.js), and
 // WHICH four is picked in the Challenges tab's order (the group first, a
-// finished Get started last, then unfinished, then featured, then display
+// finished First challenges last, then unfinished, then featured, then display
 // order), the viewer's unfinished challenges taking the slots before any
 // finished one (#2490). A challenge's group is only settled after the query
 // (challengeCategory, below), so SQL cannot pick those four. The row query

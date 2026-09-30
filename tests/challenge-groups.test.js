@@ -1,9 +1,9 @@
 // Challenge group headers (ITERATION 03, "Groups count themselves").
 //
 // WHAT THIS PINS. A season that gates on setup, or whose challenges carry the
-// board's categories, draws the Challenges tab as groups: Get started while
+// board's categories, draws the Challenges tab as groups: First challenges while
 // setup is unfinished, This week, Always open, Season challenges for anything
-// else, and a finished Get started last (S10 owner decision). Each group is a
+// else, and a finished First challenges last (S10 owner decision). Each group is a
 // contiguous slice of the ONE flat order the cards' `idx` index into, and its
 // header says how far through the group the viewer is and when it closes
 // ("1/4 · 3d left", "2/2 done"). A finished group starts collapsed unless
@@ -99,14 +99,14 @@ const MIXED = [
 
 // ─── Order ──────────────────────────────────────────────────────────────
 
-test('a grouped grid runs Get started, This week, Always open, Season challenges, as slices of one flat order', () => {
+test('a grouped grid runs First challenges, This week, Always open, Season challenges, as slices of one flat order', () => {
   const { pane, store } = loadPane({ challenges: MIXED });
   pane._renderGrid();
   const grid = gridOf(store);
   assert.equal(grid.kind, 'cards');
   assert.deepEqual(keysOf(grid), ['setup', 'week', 'always', 'other']);
   assert.deepEqual(Array.from(grid.groups, (g) => g.heading),
-    ['Get started', 'This week', 'Always open', 'Season challenges'],
+    ['First challenges', 'This week', 'Always open', 'Season challenges'],
     'sentence case in data: the header uppercases with CSS');
   assert.deepEqual(idsOf(pane), [6, 4, 2, 5, 1, 7, 3, 8],
     'the group first, then unfinished, then the organiser’s order');
@@ -124,15 +124,15 @@ test('a grouped grid runs Get started, This week, Always open, Season challenges
   assert.equal(grid.notice, undefined, 'no setup gate, no notice');
 });
 
-test('the rank rule: Get started leads while unfinished and goes last once finished', () => {
+test('the rank rule: First challenges leads while unfinished and goes last once finished', () => {
   const { pane } = loadPane();
   const { ONBOARDING, WEEKLY, PERSISTENT } = pane.GROUPS;
   const ranks = (finished) => [ONBOARDING, WEEKLY, PERSISTENT, pane.OTHER_GROUP]
     .map((g) => pane._groupRankOf(g, finished));
   assert.deepEqual(ranks(false), [0, 1, 2, 3]);
-  assert.deepEqual(ranks(true), [4, 1, 2, 3], 'only Get started moves');
+  assert.deepEqual(ranks(true), [4, 1, 2, 3], 'only First challenges moves');
   assert.equal(pane._groupRankOf(null, false), 3, 'no group ranks as Season challenges');
-  assert.deepEqual({ ...pane.GROUPS.ONBOARDING }, { key: 'setup', heading: 'Get started', order: 0 },
+  assert.deepEqual({ ...pane.GROUPS.ONBOARDING }, { key: 'setup', heading: 'First challenges', order: 0 },
     'the key stays `setup`: ids and tests name it');
 
   // Finished, with an onboarding summary: the server's gate alone decides.
@@ -148,7 +148,7 @@ test('the rank rule: Get started leads while unfinished and goes last once finis
   assert.equal(pane._setupFinished([], null), false);
 });
 
-test('a finished Get started moves to the end of the grid; a locked one stays first', () => {
+test('a finished First challenges moves to the end of the grid; a locked one stays first', () => {
   const challenges = [ch(1, 'PERSISTENT'), ch(2, 'ONBOARDING', DONE), ch(3, 'SPOTLIGHT'), ch(4, 'WEEKLY'), ch(5, 'ONBOARDING', DONE)];
   const plain = loadPane({ challenges });
   plain.pane._renderGrid();
@@ -220,7 +220,7 @@ test('each header counts its group and gives its clock', () => {
   }, 'Always open never borrows the event’s end; Season challenges does');
 });
 
-test('Get started has no clock; This week falls back to the event’s end; Always open counts only its own end', () => {
+test('First challenges has no clock; This week falls back to the event’s end; Always open counts only its own end', () => {
   const { pane, store, context } = loadPane({
     event: { id: 10, ends_at: inHours(47) },
     challenges: [
@@ -249,7 +249,7 @@ test('a finished group starts collapsed; when every group is finished none does'
   const some = loadPane({ challenges: [ch(1, 'ONBOARDING', DONE), ch(2, 'WEEKLY')] });
   some.pane._renderGrid();
   assert.deepEqual(Array.from(gridOf(some.store).groups, (g) => [g.key, g.collapsed]),
-    [['week', false], ['setup', true]], 'the grid opens on the group holding the next action; a finished Get started trails it');
+    [['week', false], ['setup', true]], 'the grid opens on the group holding the next action; a finished First challenges trails it');
 
   const all = loadPane({ challenges: [ch(1, 'ONBOARDING', DONE), ch(2, 'WEEKLY', DONE)] });
   all.pane._renderGrid();
@@ -260,7 +260,7 @@ test('a finished group starts collapsed; when every group is finished none does'
 test('a header tap flips its group as drawn, and the toggle survives a redraw and the detail page', () => {
   const { pane, store } = loadPane({ challenges: [ch(1, 'ONBOARDING', DONE), ch(2, 'WEEKLY')] });
   pane._renderGrid();
-  // Keyed, whatever order the groups draw in (a finished Get started is last).
+  // Keyed, whatever order the groups draw in (a finished First challenges is last).
   const collapsed = () => Object.fromEntries(Array.from(gridOf(store).groups, (g) => [g.key, g.collapsed]));
   pane._toggleGroup('setup');
   assert.deepEqual(collapsed(), { setup: false, week: false }, 'a tap opens a finished group');
@@ -313,7 +313,7 @@ test('a new visit or another event starts from the defaults; a refresh of the sa
 
 // ─── The clock leaves the cards and the page ────────────────────────────
 
-test('a header with a clock takes the deadline off its cards and the page; Get started keeps the card’s', () => {
+test('a header with a clock takes the deadline off its cards and the page; First challenges keeps the card’s', () => {
   const event = { id: 10, name: 'Season 2', ends_at: inHours(71) };
   const challenges = [ch(1, 'ONBOARDING'), ch(2, 'WEEKLY'), ch(3, 'PERSISTENT'), ch(4, 'SPOTLIGHT')];
   const { pane, store } = loadPane({ challenges, event });
@@ -326,7 +326,7 @@ test('a header with a clock takes the deadline off its cards and the page; Get s
   assert.deepEqual(page(challenges[1]), ['This week · 3d left', null], 'the group and its clock, composed once');
   assert.deepEqual(page(challenges[2]), ['Always open', null], '"no deadline" is not a clock for the eyebrow');
   assert.deepEqual(page(challenges[3]), ['Season challenges · 3d left', null]);
-  assert.deepEqual(page(challenges[0]), ['Get started', '3d left'], 'Get started has no clock, so its page keeps the deadline');
+  assert.deepEqual(page(challenges[0]), ['First challenges', '3d left'], 'First challenges has no clock, so its page keeps the deadline');
 
   pane._openIdx(groupOf(grid, 'week').cards[0].idx);
   assert.equal(store.get().detail.eyebrow, 'This week · 3d left', 'the published descriptor says the same');
@@ -364,7 +364,7 @@ test('a season without the board’s categories keeps the ungrouped grid: open, 
 
 // ─── Progress ───────────────────────────────────────────────────────────
 
-test('while setup gates the rest the progress is Get started’s own; unlocked it is the event’s', () => {
+test('while setup gates the rest the progress is the First challenges group’s own; unlocked it is the event’s', () => {
   const { pane, store } = loadPane({
     event: { id: 10, name: 'Season 2' },
     challenges: [ch(1, 'ONBOARDING', DONE), ch(2, 'ONBOARDING')],
@@ -372,7 +372,7 @@ test('while setup gates the rest the progress is Get started’s own; unlocked i
   });
   pane._renderGrid();
   let grid = gridOf(store);
-  assert.deepEqual({ ...grid.progress }, { done: 1, total: 2, caption: 'done in Get started' });
+  assert.deepEqual({ ...grid.progress }, { done: 1, total: 2, caption: 'done in First challenges' });
   assert.deepEqual(headers(grid), { setup: { meta: '1/2', allDone: false, collapsed: false } });
   assert.equal(grid.notice, 'Finish these to unlock the rest of the season.');
   assert.equal(grid.onboardingEventId, null, 'the setup cards are here');
@@ -395,7 +395,7 @@ test('while setup gates the rest the progress is Get started’s own; unlocked i
   // Home's and the profile's "done in Season 2" count the whole season.
   assert.deepEqual({ ...grid.progress }, { done: 2, total: 3, caption: 'done in this event · Season 2' },
     'the tally counts finished cards across groups, not a finished tail of the grid');
-  assert.deepEqual(keysOf(grid), ['week', 'setup'], 'the finished Get started follows what is left to do');
+  assert.deepEqual(keysOf(grid), ['week', 'setup'], 'the finished First challenges follows what is left to do');
   assert.equal('notice' in grid, false, 'unlocked, there is no notice');
   assert.equal('lockedCount' in grid, false, 'unlocked, nothing is hidden and there is no count');
 
@@ -433,7 +433,7 @@ test('the pane renders each header as a disclosure over the grid it names, with 
   pane._renderGrid();
   const grid = JSON.parse(JSON.stringify(gridOf(store)));
   assert.deepEqual(grid.groups.map((g) => [g.key, g.collapsed]), [['week', false], ['setup', true]],
-    'a finished Get started goes last and starts collapsed, after the group holding the next action');
+    'a finished First challenges goes last and starts collapsed, after the group holding the next action');
 
   const api = loadTsx(PANE_API);
   api.topochainChallengesStore.set({ mounted: true, grid, detail: null, profile: null });
@@ -502,7 +502,7 @@ test('while locked the pane draws the placeholder after the last grid instead of
     'the wrapper’s child is the dashed card, one column wide');
   assert.match(PANE, /<div className=\{`mt-3 \$\{GRID\}`\}>\s*<LockedChallengesCard /,
     'the source names the shared GRID constant, not a copy of its classes');
-  assert.ok(afterLastCard(locked, placeholder), 'after the Get started grid and its cards');
+  assert.ok(afterLastCard(locked, placeholder), 'after the First challenges grid and its cards');
   assert.match(locked, />6 challenges locked</);
   assert.match(locked, />Finish setup to unlock</);
   assert.doesNotMatch(locked, /role="status"/, 'its second line is the note, so the note is not repeated');
@@ -537,7 +537,7 @@ test('the group header row has the cards’ 24px corners', () => {
 
 // ─── Screenshot state ───────────────────────────────────────────────────
 
-test('?shot=challenge-detail opens the first unfinished card, not a leading Get started group’s first', () => {
+test('?shot=challenge-detail opens the first unfinished card, not a leading First challenges group’s first', () => {
   const opened = [];
   const { pane } = loadPane({
     search: '?shot=challenge-detail',
@@ -546,7 +546,7 @@ test('?shot=challenge-detail opens the first unfinished card, not a leading Get 
   });
   pane.openChallengeDetail = (c) => opened.push(c.id);
   pane._renderGrid();
-  assert.deepEqual(idsOf(pane), [4, 3, 1, 2], 'the finished Get started group goes last');
+  assert.deepEqual(idsOf(pane), [4, 3, 1, 2], 'the finished First challenges group goes last');
   assert.deepEqual(opened, [4], 'the capture opens the next action, in a group that is not collapsed');
   pane._renderGrid();
   assert.deepEqual(opened, [4], 'once per page load');

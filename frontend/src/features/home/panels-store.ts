@@ -119,7 +119,7 @@ export interface ChallengeRowView {
    * challenge's own end, else its event's, else the season's; null on a
    * finished or not-open challenge, or with no end in the future. Also null
    * under a This week, Always open or Season challenges header, which owns
-   * the clock; only Get started's cards keep their own.
+   * the clock; only the First challenges cards keep their own.
    */
   deadline: string | null;
   /** "Earned N pts" on a finished challenge the viewer scored on. */
@@ -128,7 +128,7 @@ export interface ChallengeRowView {
 
 /**
  * One group of the block's cards under the board's group header. Every group
- * is headed, a block of one group included, so `heading` ("Get started", "This
+ * is headed, a block of one group included, so `heading` ("First challenges", "This
  * week", "Always open", "Season challenges") is null only on the renderer's
  * fallback for a view built before groups existed. `meta` is the header's
  * clock ("3d left", "no deadline") or null; never a count.
