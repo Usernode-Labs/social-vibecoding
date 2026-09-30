@@ -556,9 +556,9 @@ export interface DevWorkshopView {
     rows: ListRow[];
     /**
      * The rest of the same list — what moved BEFORE the baseline, newest
-     * first, which the reader has already seen. `Show older` walks into it
-     * and Clear moves the new rows here (#2183). `rows` is capped; `total`
-     * is the whole rest.
+     * first, which the reader has already seen. A week's `Show N more`
+     * walks into it and Clear moves the new rows here (#2183). `rows` is
+     * capped; `total` is the whole rest.
      */
     seen: { total: number; rows: ListRow[] };
   } | null;

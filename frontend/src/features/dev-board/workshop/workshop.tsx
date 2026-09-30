@@ -107,21 +107,37 @@ type TabKey = ProjectTabKey;
  * you were last here, and the Workshop tab's walk of weekly summaries. They
  * answer one question, so they are one list now: each WEEK is a heading
  * with its summary line, and what moved in it is nested under it, new
- * first and what you have already seen folded into one row.
+ * first and then what you have already seen, in the same column.
  *
- * Three new rows a week are on screen and the rest of that week's are one
- * press away ("N more new"), because the question a returning member asks
- * is "did anything happen", which three rows answer. The weeks that hold
- * something new are open on arrival; `Show older` steps back one week at a
- * time from there, past what is loaded down to the project's first week
- * (#3293), whose heading and line are the history even where no row is.
+ * Three new rows a week are on screen, because the question a returning
+ * member asks is "did anything happen", which three rows answer. The
+ * newest week holding something new is open on arrival (with any quieter
+ * week above it, so the page reads down to it); `Show an earlier week`
+ * steps back one week at a time from there, past what is loaded down to
+ * the project's first week (#3293), whose heading and line are the history
+ * even where no row is.
+ *
+ * ONE CONTROL PER WEEK, AND IT SHOWS A FEW (#3524). A week used to end in
+ * two stacked folds: "N more new", which put EVERY remaining new row on
+ * screen at once (a busy week is thirty cards), and "N more you have seen",
+ * which opened a second list under a "Seen before" label — directly above
+ * `Show older`, a third control that also said "more". Three nested levels
+ * (week, fold, row) and three adjacent reveals, and the requester could not
+ * tell which one did what. Now the week's rows are ONE stream — new, then
+ * seen, the crossing marked by the same "Seen before" line — and one
+ * `Show N more` under it puts the next SINCE_STEP of that stream on screen.
+ * The list-level control says "week" in its name and sits under a rule of
+ * its own, where the week it reveals will appear, so the two never read as
+ * one gesture spelled twice.
  *
  * #2183 carries over: the baseline is only a line across one list, so a
  * quiet visit, or a visit just after Clear, still has somewhere to look
- * (the seen rows, folded under their week), and `Show older` disables
- * rather than leaves when there is nothing further back.
+ * (the seen rows, a press into their week), and `Show an earlier week`
+ * disables rather than leaves when there is nothing further back.
  */
 const SINCE_FIRST = 3;
+/** How many more of a week's rows each press of its `Show N more` puts on screen (#3524). */
+export const SINCE_STEP = 5;
 
 /** Your work on the Workshop tab: its first rows, the rest behind a reveal. */
 export const WORKSHOP_WORK_FIRST = 3;
@@ -916,33 +932,80 @@ export function sinceWeekStateKey(week: Pick<SinceWeek, 'startMs'>): string {
   return String(week.startMs);
 }
 
-/** How many weeks the list opens with: every week holding something new, and at least one. */
+/**
+ * How many weeks the list opens with: down to the NEWEST week holding
+ * something new, and at least one (#3524).
+ *
+ * It was every week holding something new, which after a fortnight away
+ * opened two or three weeks at once, each with its rows and its folds: the
+ * page arrived fully expanded. The newest news is what the reader came
+ * for; anything new further back is counted on `Show an earlier week`
+ * (`sinceNewFurther`), so it is one press away and never unmentioned. A
+ * quieter week above the first one with news stays open with it, so the
+ * list reads down to the news rather than starting past a gap.
+ */
 export function sinceWeeksOpen(weeks: SinceWeek[]): number {
-  let last = -1;
-  weeks.forEach((w, i) => { if (w.fresh.length) last = i; });
-  return Math.min(weeks.length, Math.max(1, last + 1));
+  const first = weeks.findIndex((w) => w.fresh.length > 0);
+  return Math.min(weeks.length, Math.max(1, first + 1));
+}
+
+/** New rows in the weeks not yet on screen: what `Show an earlier week` says it leads to. */
+export function sinceNewFurther(weeks: SinceWeek[], open: number): number {
+  return weeks.slice(open).reduce((n, w) => n + w.fresh.length, 0);
+}
+
+/**
+ * How many of a week's rows are on screen, new and seen counted as one
+ * stream (new first): its first SINCE_FIRST new rows on arrival, and
+ * SINCE_STEP more for each press of its `Show N more` (#3524). Seen rows
+ * are never out on arrival, even under a week with fewer than three new:
+ * the list is about what is new, and what was seen is a press into it.
+ */
+export function sinceWeekShown(week: Pick<SinceWeek, 'fresh' | 'seen'>, more: number): number {
+  const base = Math.min(SINCE_FIRST, week.fresh.length);
+  return Math.min(week.fresh.length + week.seen.length, base + Math.max(0, more) * SINCE_STEP);
+}
+
+/**
+ * The one control under a week's rows, in words: how many the next press
+ * shows and, where one word can say it, which side of the line they are
+ * on. "new" while the whole batch is new; "you have seen" when nothing of
+ * the week is out yet and the batch is all seen (a quiet week, or a visit
+ * just after Clear); plain "more" once the batch crosses the line, where
+ * the "Seen before" mark in the stream says the rest.
+ */
+export function sinceRevealLabel(week: Pick<SinceWeek, 'fresh' | 'seen'>, shown: number): string {
+  const next = Math.min(SINCE_STEP, week.fresh.length + week.seen.length - shown);
+  const nextNew = Math.max(0, Math.min(next, week.fresh.length - shown));
+  if (nextNew === next) return `Show ${next} more new`;
+  if (!nextNew && !shown) return `Show ${next} you have seen`;
+  return `Show ${next} more`;
 }
 
 /**
  * One week of the since list: its heading (ONE NAMED WINDOW, THE REST
  * DATED, as the walk had it: "This week" wears its range as a gloss, every
  * other week is its dates), its summary line, and under them what moved in
- * it, nested so the rows read as the line's evidence. The seen rows are one
- * row, "Seen before", until it is pressed.
+ * it, nested so the rows read as the line's evidence: new, then seen under
+ * a "Seen before" mark, as far as `more` reaches, and ONE `Show N more`
+ * for the rest (#3524).
  */
-export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, allNew, onAllNew, seenOpen, onSeen }: {
+export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, more, onMore }: {
   week: SinceWeek;
   slug: string;
   canPost: boolean;
   openKey: string | null;
   onToggleRow: (key: string) => void;
-  allNew: boolean;
-  onAllNew: () => void;
-  seenOpen: boolean;
-  onSeen: () => void;
+  /** Presses of this week's `Show N more` so far. */
+  more: number;
+  onMore: () => void;
 }): ReactNode {
-  const fresh = allNew ? week.fresh : week.fresh.slice(0, SINCE_FIRST);
-  const moreNew = week.fresh.length - fresh.length;
+  const total = week.fresh.length + week.seen.length;
+  const shown = sinceWeekShown(week, more);
+  const freshShown = Math.min(shown, week.fresh.length);
+  const seenShown = shown - freshShown;
+  const hidden = total - shown;
+  const next = Math.min(SINCE_STEP, hidden);
   const row = (r: CardRow) => (
     <CardRowView
       key={r.key}
@@ -971,32 +1034,36 @@ export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, allN
         ) : null}
       </h4>
       {week.line ? <p className="dev-ws-since-week-line" data-ws-since-week-line="">{week.line}</p> : null}
-      {week.fresh.length || week.seen.length ? (
+      {total ? (
         <div className="dev-ws-since-nest">
-          {fresh.map(row)}
-          {moreNew > 0 ? (
-            <button type="button" className="dev-ws-since-fold dev-ws-since-fold-new" data-ws-since-more-new="" onClick={onAllNew}>
-              <span className="dev-ws-since-fold-label">{moreNew} more new</span>
-              <ChevronRightIcon className="dev-ws-since-fold-chev" aria-hidden="true" />
-            </button>
+          {week.fresh.slice(0, freshShown).map(row)}
+          {/* THE LINE ACROSS THE STREAM (#2183), where the new rows give way
+              to the ones the reader has seen: a mark in the column, not a
+              second fold to open (#3524). Counted for the whole week. */}
+          {seenShown ? (
+            <div className="dev-ws-since-seen" data-ws-since-seen="">
+              <span className="dev-ws-since-seen-label">Seen before</span>
+              <span className="dev-ws-since-seen-n">{week.seen.length}</span>
+            </div>
           ) : null}
-          {week.seen.length && !seenOpen ? (
-            <button type="button" className="dev-ws-since-fold" data-ws-since-seen-fold="" onClick={onSeen}>
-              <CheckIcon className="dev-ws-since-fold-check" aria-hidden="true" />
-              <span className="dev-ws-since-fold-label">
-                {week.fresh.length ? `${week.seen.length} more you have seen` : `${week.seen.length} you have seen`}
-              </span>
-              <ChevronDownIcon className="dev-ws-since-fold-chev" aria-hidden="true" />
+          {week.seen.slice(0, seenShown).map(row)}
+          {/* THE WEEK'S ONE REVEAL (#3524): the next few of this week's
+              stream, never the whole of it. Left-aligned INSIDE the week's
+              rule, so it reads as the week's and not as the list's `Show an
+              earlier week` under it. `touch-target-32`, not the kit's 44px:
+              it sits 4px under the last row, and a 44px box would take that
+              row's bottom edge (Your work's reveal carries the same note). */}
+          {hidden ? (
+            <button
+              type="button"
+              className="dev-ws-reveal dev-ws-since-week-more touch-target-32"
+              data-ws-since-week-more=""
+              onClick={onMore}
+            >
+              <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+              {sinceRevealLabel(week, shown)}
+              {hidden > next ? <span className="dev-ws-since-week-left">{` · ${hidden} left`}</span> : null}
             </button>
-          ) : null}
-          {week.seen.length && seenOpen ? (
-            <>
-              <div className="dev-ws-since-seen" data-ws-since-seen="">
-                <span className="dev-ws-since-seen-label">Seen before</span>
-                <span className="dev-ws-since-seen-n">{week.seen.length}</span>
-              </div>
-              {week.seen.map(row)}
-            </>
           ) : null}
         </div>
       ) : null}
@@ -3239,12 +3306,13 @@ export function DevWorkshop(): ReactNode {
     () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
   );
   // HOW FAR THE SINCE LIST IS OPEN, on the Workshop page (see SINCE_FIRST):
-  // the weeks past the ones it opens with, and which weeks have their extra
-  // new rows or their seen rows unfolded. Held here because Clear folds all
-  // of it back at once, and the legacy fillers re-run when any of it moves.
+  // the weeks past the ones it opens with, and how many times each week's
+  // one `Show N more` has been pressed (#3524 — it was two booleans a week,
+  // "every new row" and "every seen row"). Held here because Clear folds
+  // all of it back at once, and the legacy fillers re-run when any of it
+  // moves.
   const [sinceExtra, setSinceExtra] = useState(0);
-  const [sinceAllNew, setSinceAllNew] = useState<Record<string, boolean>>({});
-  const [sinceSeen, setSinceSeen] = useState<Record<string, boolean>>({});
+  const [sinceMore, setSinceMore] = useState<Record<string, number>>({});
   // Whether the hub's Your work shows every row or its first two.
   const [workAll, setWorkAll] = useState(false);
   // And the Workshop tab's, every row or its first WORKSHOP_WORK_FIRST.
@@ -3359,20 +3427,18 @@ export function DevWorkshop(): ReactNode {
     setOpenRows((cur) => (cur[scope] === key ? { ...cur, [scope]: '' } : { ...cur, [scope]: key }));
   };
 
-  // The since list's controls (#2183). `Show older` steps back a week;
+  // The since list's controls (#2183). `Show an earlier week` steps back a
+  // week; each week's `Show N more` puts its next few rows out (#3524);
   // `Clear` moves the baseline to now (AppView owns the stamp and its
   // storage, and republishes) and folds everything back to how it opened, so
-  // what the reader dismissed is under its week's "seen" row rather than
-  // gone. #2240: it is live whenever there is something to fold, new rows
-  // or not.
+  // what the reader dismissed is a press into its week rather than gone.
+  // #2240: it is live whenever there is something to fold, new rows or not.
   const sinceUnfolded = sinceExtra > 0
-    || Object.values(sinceAllNew).some(Boolean)
-    || Object.values(sinceSeen).some(Boolean);
+    || Object.values(sinceMore).some((n) => n > 0);
   const clearSince = () => {
     if (!v.since) return;
     setSinceExtra(0);
-    setSinceAllNew({});
-    setSinceSeen({});
+    setSinceMore({});
     setOpenRows((cur) => ({ ...cur, since: '' }));
     callAppView('_workshopClearSince', slug, v.since.through);
   };
@@ -3395,7 +3461,9 @@ export function DevWorkshop(): ReactNode {
   // A layout effect, so a merged card's kudos pill is in its band on the
   // card's first frame rather than popping in after it (dev-kanban.tsx has
   // the same note).
-  const openSig = `${Object.values(openRows).join('|')}|since:${sinceExtra}:${Object.keys(sinceAllNew).join(',')}:${Object.keys(sinceSeen).join(',')}|work:${workAll}:${mineAll}`;
+  // A week's presses are part of it (#3524): each one mounts rows the
+  // fillers have not seen, so the count, not only which weeks, goes in.
+  const openSig = `${Object.values(openRows).join('|')}|since:${sinceExtra}:${Object.entries(sinceMore).map(([at, n]) => `${at}=${n}`).join(',')}|work:${workAll}:${mineAll}`;
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -3473,6 +3541,7 @@ export function DevWorkshop(): ReactNode {
   const sinceList = v.since || EMPTY_SINCE;
   const weeks = tab === 'workshop' ? sinceWeeks(sinceList, v.dashboard ? v.dashboard.weeks : null, Date.now()) : [];
   const weeksOpen = Math.min(weeks.length, sinceWeeksOpen(weeks) + sinceExtra);
+  const newFurther = sinceNewFurther(weeks, weeksOpen);
   const firstWeek = v.dashboard ? v.dashboard.firstWeek : null;
 
   return (
@@ -3760,7 +3829,8 @@ export function DevWorkshop(): ReactNode {
       {/* ── Since your last visit, week by week ──
           The hub's list of what moved and the walk of weekly summaries, as
           one list (see SINCE_FIRST): each week's line, and what moved in it
-          under it. It follows All items (#852 review): the numbers, then the
+          under it, a few rows at a time behind ONE control a week (#3524).
+          It follows All items (#852 review): the numbers, then the
           history behind them. A person who has not joined reads "Recently", as does a
           first visit, which has no last visit to be since. */}
       {v.since || weeks.length ? (
@@ -3806,16 +3876,20 @@ export function DevWorkshop(): ReactNode {
                 canPost={canPost}
                 openKey={openRows.since || null}
                 onToggleRow={(key) => toggleRow('since', key)}
-                allNew={!!sinceAllNew[at]}
-                onAllNew={() => setSinceAllNew((cur) => ({ ...cur, [at]: true }))}
-                seenOpen={!!sinceSeen[at]}
-                onSeen={() => setSinceSeen((cur) => ({ ...cur, [at]: true }))}
+                more={sinceMore[at] || 0}
+                onMore={() => setSinceMore((cur) => ({ ...cur, [at]: (cur[at] || 0) + 1 }))}
               />
             );
           })}
           {/* ALWAYS DRAWN, and disabled rather than absent at the far end:
               a control that is sometimes there is one nobody learns to reach
-              for. Pointing DOWN, at where the week it reveals appears. */}
+              for. Pointing DOWN, at where the week it reveals appears.
+              #3524: it was "Show older", directly under a week's own "N more
+              new": two reveals side by side, and "older" could as well have
+              meant that week's older rows. It names what it reveals now, a
+              WEEK, and sits under a rule of its own, where that week's
+              heading will be. What is new further back is counted on it,
+              since the list opens down to the newest news only. */}
           <button
             type="button"
             className="dev-ws-reveal dev-ws-since-more un-touch-target"
@@ -3824,7 +3898,8 @@ export function DevWorkshop(): ReactNode {
             onClick={() => setSinceExtra(sinceExtra + 1)}
           >
             <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-            Show older
+            Show an earlier week
+            {newFurther ? <span className="dev-ws-since-more-new">{` · ${newFurther} new`}</span> : null}
           </button>
           {/* The floor. `firstWeek` is the project's beginning, which the
               server names beside a complete history (#3293), so the note

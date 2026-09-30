@@ -2569,10 +2569,10 @@
       "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
     },
     {
-      "name": "Since your last visit, on the Workshop page, files what moved under each week's heading, with a Clear on its own and a Show older always drawn (#2183)",
+      "name": "Since your last visit, on the Workshop page, files what moved under each week's heading, with a Clear on its own and a Show an earlier week always drawn (#2183, #3524)",
       "path": "/?demo=1&shot=since-visit&ws=workshop#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-body #dev-workshop [data-ws-since]:has(> [data-ws-since-week] > .dev-ws-since-week-head) > .dev-ws-since-head:has(> .dev-ws-since-n + button[data-ws-since-clear]) ~ button.dev-ws-since-more[data-ws-since-more]",
-      "expectText": "Show older"
+      "expectText": "Show an earlier week"
     },
     {
       "name": "Since your last visit: Clear goes live once a week's seen rows are unfolded, so they can be folded again (#2240)",

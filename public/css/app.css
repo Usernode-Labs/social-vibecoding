@@ -15519,8 +15519,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    caret, on the reasoning that most visits do not need the fact — and what
    that produced was a strip nobody opened: the count said something had
    moved and the rows saying what were behind a press. The bargain is the
-   LIST'S LENGTH now (three, then `Show older`), not its existence, which is
-   what the week walk one pane up already does with its own history.
+   LIST'S LENGTH now (three a week, then a few more a press, and `Show an
+   earlier week`), not its existence, which is what the week walk one pane
+   up already does with its own history.
 
    `.dev-ws-since-head` is what `.dev-ws-since-row` was, minus everything
    that said "press me": no pill radius, no pointer, no hover ink, no caret.
@@ -15545,11 +15546,22 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   background: var(--brand-tint); color: var(--brand-ink);
   font-size: 11px; font-variant-numeric: tabular-nums;
 }
-/* `Show older` steps the since list back a week: `.dev-ws-reveal`, centred,
-   caret down at what it is about to reveal, under a stack of full-width
-   rows, so it takes the centred form rather than `.dev-ws-reveal-start`'s
-   lane indent. Nothing of its own but the air between it and the last row. */
+/* `Show an earlier week` steps the since list back a week: `.dev-ws-reveal`,
+   centred, caret down at what it is about to reveal, under a stack of
+   full-width rows, so it takes the centred form rather than
+   `.dev-ws-reveal-start`'s lane indent.
+   #3524: under a week it also takes the week's own hairline, the rule the
+   week it reveals will arrive under. It sat bare beneath that week's "N
+   more new" before, and the two read as one control said twice; the rule
+   puts it outside the week, and the week's own reveal stays inside it
+   (`.dev-ws-since-week-more`). "N new" further back rides it in the accent:
+   a number that asks for the reader. */
 .dev-ws-since-more { margin-top: 2px; }
+.dev-ws-since-week + .dev-ws-since-more {
+  margin-top: 6px; padding-top: 10px;
+  border-top: 1px solid var(--app-sheet-line);
+}
+.dev-ws-since-more-new { color: var(--accent); }
 /* #2183: the control is always drawn and DISABLED when the walk is over,
    rather than leaving — so it reads as spent, not pressable. */
 .dev-ws-reveal:disabled { color: var(--text-muted); opacity: .45; cursor: default; }
@@ -15571,8 +15583,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-since-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-ws-since-clear:disabled { opacity: .45; cursor: default; }
 .dev-ws-since-clear:disabled:hover { color: var(--text-muted); }
-/* The line across the list (#2183): where `Show older` crosses from what is
-   new into what the reader has already seen. The heading's own shape, one
+/* The line across the list (#2183): where a week's rows cross from what is
+   new into what the reader has already seen (#3524: in the same column,
+   under the same one reveal, rather than behind a fold of their own). The heading's own shape, one
    size down, with the count of the whole rest riding it in plain ink rather
    than the brand tint — these rows are not news. */
 .dev-ws-since-seen {
@@ -16369,8 +16382,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    Each week is a division of the pane, as the walk's windows were: a
    hairline, the week's heading and range, its line, and what moved in it
    nested under a rule at the left, so the rows read as the line's
-   evidence. A week's rows past the first three, and the ones already seen,
-   are one quiet row each until pressed. */
+   evidence. A week's rows past the first three, new and then already seen,
+   come out a few at a time under ONE quiet reveal (#3524). */
 .dev-ws-since-week {
   display: flex; flex-direction: column;
   border-top: 1px solid var(--app-sheet-line);
@@ -16387,22 +16400,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   margin: 10px 0 0; padding-left: 10px;
   border-left: 2px solid var(--app-sheet-line);
 }
-.dev-ws-since-fold {
-  display: flex; align-items: center; gap: 6px; width: 100%;
-  min-height: 36px; box-sizing: border-box; padding: 0 10px;
-  border: 0; border-radius: 12px; cursor: pointer; text-align: left;
-  background: var(--bg-secondary); color: var(--text-muted);
-  font: inherit; font-size: 13px;
-}
-.dev-ws-since-fold-new { color: var(--accent); font-weight: 600; }
-.dev-ws-since-fold-label { flex: 1 1 auto; min-width: 0; }
-.dev-ws-since-fold-check { width: 14px; height: 14px; flex: none; color: var(--state-ok); }
-.dev-ws-since-fold-chev { width: 14px; height: 14px; flex: none; }
-.dev-ws-since-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-@media (hover: hover) {
-  .dev-ws-since-fold:hover { color: var(--text-primary); }
-  .dev-ws-since-fold-new:hover { color: var(--accent); }
-}
+/* #3524: the week's one reveal. It was two grey 36px pill rows stacked
+   here ("N more new" in the accent, "N more you have seen" with a check),
+   the most solid-looking things in the week and two different chevrons
+   side by side. Now it is the pane's own `.dev-ws-reveal`, the gesture
+   every other "more" in the pane uses, set to the LEFT, inside the week's
+   rule, so it belongs to the rows above it and not to `Show an earlier
+   week` below. The count still hidden rides it in the lighter weight. */
+.dev-ws-since-week-more { justify-content: flex-start; padding: 4px 12px 2px; }
+.dev-ws-since-week-left { font-weight: 500; }
 .dev-ws-since-nest > .dev-ws-since-seen { margin-top: 2px; padding-left: 0; }
 
 /* ── Share it (community-card.tsx ShareItCard) ──────────────────────

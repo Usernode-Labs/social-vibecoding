@@ -146,9 +146,13 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   has('frontend/src/features/dev-board/card/fold.tsx', new RegExp(`className="dev-fold-mark ${KIT}" data-open="1"`), 'Fold the card');
   const ws = 'frontend/src/features/dev-board/workshop/workshop.tsx';
   // "Show past week" went with the walk: the weeks head the since list now,
-  // and Show older below them steps back a week.
+  // and Show an earlier week below them steps back a week (#3524 renamed it
+  // from "Show older").
   has('frontend/src/features/dev-board/workshop/since-summary-card.tsx', new RegExp(`className="dev-ws-since-card-x ${KIT}"`), 'the summary\'s ×');
-  has(ws, new RegExp(`className="dev-ws-reveal dev-ws-since-more ${KIT}"`), 'Show older');
+  has(ws, new RegExp(`className="dev-ws-reveal dev-ws-since-more ${KIT}"`), 'Show an earlier week');
+  // #3524: a week's one Show N more sits 4px under its last row, so it takes
+  // the dense 32px slop rather than the kit's 44px, as Your work's does.
+  has(ws, /className="dev-ws-reveal dev-ws-since-week-more touch-target-32"/, 'a week\'s Show N more');
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Clear');
   // "N more of yours" is gone: the Workshop tab shows your own work in full.
   has(ws, new RegExp(`className="dev-ws-hub-open dev-ws-head-end ${KIT}"`), 'All items\' See all');
