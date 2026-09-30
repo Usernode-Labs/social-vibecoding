@@ -3363,7 +3363,7 @@
     {
       "name": "Admin console renders the Screenshot gallery section (#860)",
       "path": "/?demo=1#admin/gallery",
-      "expectSelector": "#admin-gallery-root #admin-gallery-proposals"
+      "expectSelector": "#admin-gallery-root:has(#admin-gallery-export-panel #admin-gallery-export-state) #admin-gallery-proposals"
     },
     {
       "name": "Screenshot gallery shows the seeded staging demo capture (#860)",

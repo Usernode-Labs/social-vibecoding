@@ -26,6 +26,7 @@ const appLimit = require('../services/app-limit');
 const platformLimits = require('../services/platform-limit-alerts');
 const modelCosts = require('../services/model-costs');
 const homeroomBot = require('../services/homeroom-bot');
+const shotsExport = require('../services/shots-export');
 const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
 const usernames = require('../services/usernames');
@@ -1268,6 +1269,69 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'Homeroom bot shadow build backfill failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Before & after shots runs export ───────────────────────
+  //
+  // Every shots run as one CSV, for debugging successes and failures in
+  // bulk: the per-proposal diagnostics answer one run at a time, and the
+  // admin gallery lists merged proposals only. services/shots-export.js
+  // owns the query, the filters and the columns; this layer only gates and
+  // streams.
+  //
+  // PERMISSIONS: requireAdminWrite, like the Homeroom bot's export above and
+  // for the same reason: a bulk downloadable artifact is the exposure class
+  // the other CSV exports and the database export already put behind the
+  // write gate. The agent's final responses are not in the file at all.
+  //
+  // Streamed, not buffered, and every value goes through `csvField`: the
+  // declared changes, titles and failure text are author- and model-written,
+  // which is the case the formula-injection guard exists for.
+  router.get('/api/admin/shots/export.csv', requireAdminWrite, async (req, res) => {
+    const parsed = shotsExport.parseFilters(req.query || {});
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    const { filters } = parsed;
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      res.status(200);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition',
+        `attachment; filename="shots-runs-${shotsExport.exportScope(filters)}-${day}.csv"`);
+      res.setHeader('Cache-Control', 'private, no-store');
+      res.write(`${shotsExport.EXPORT_COLUMNS.join(',')}\n`);
+      // A row carries JSON trace columns, so a slow client could otherwise
+      // let whole pages pile up in this process's write buffer. Wait for the
+      // socket to drain between pages, and stop querying once the download
+      // is abandoned.
+      const drained = () => new Promise((resolve) => {
+        const done = () => { res.off('drain', done); res.off('close', done); resolve(); };
+        res.on('drain', done);
+        res.on('close', done);
+      });
+      let rows = 0;
+      for await (const chunk of shotsExport.iterateRunsForExport(pool, filters)) {
+        for (const row of chunk) {
+          res.write(`${shotsExport.exportRow(row).map(csvField).join(',')}\n`);
+        }
+        rows += chunk.length;
+        if (res.writableNeedDrain) await drained();
+        if (res.destroyed) {
+          log.info('admin', 'Shots runs export abandoned by the client', { by: req.user.username, rows });
+          return undefined;
+        }
+      }
+      log.info('admin', 'Shots runs exported', { by: req.user.username, rows, ...filters });
+      return res.end();
+    } catch (err) {
+      log.error('admin', 'Shots runs CSV export failed', { message: err.message });
+      if (!res.headersSent) return res.status(500).json({ error: 'Internal server error' });
+      // Past the first chunk the status line and part of the file are
+      // already on the wire. Destroy the socket rather than ending it: a
+      // clean end closes the chunked body normally and the browser saves a
+      // truncated file as though it were complete; an aborted one is reported
+      // as a failed download.
+      return res.destroy();
     }
   });
 

@@ -1273,6 +1273,21 @@
     {
       "source": "src/routes/admin.js",
       "method": "GET",
+      "path": "/api/admin/shots/export.csv",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.shots.export.csv.f52ef48f",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/admin.js",
+      "method": "GET",
       "path": "/api/admin/storage",
       "expression": null,
       "status": "mapped",
