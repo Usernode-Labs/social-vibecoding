@@ -546,9 +546,13 @@ test('the task is not on the card; the detail overlay carries it in full, never 
   const paneSrc = require('node:fs').readFileSync(
     require('node:path').join(root, 'frontend/src/features/leaderboard/challenges-pane.tsx'), 'utf8');
   // `<SectionHeading title=…/>` is @/components/ui/field's PROP, not the DOM
-  // attribute of the same name: it renders the heading's visible text. Strip
-  // those and the blunt rule below still catches a real tooltip.
-  const noHeadings = paneSrc.replace(/<SectionHeading[\s\S]*?\/>/g, '');
+  // attribute of the same name: it renders the heading's visible text. Same
+  // for `<ListRow title=…/>` (#3200, the credits rows) — grouped-list's
+  // `title` is the row's content, its DOM tooltip is the separate `tooltip`
+  // prop. Strip both and the blunt rule below still catches a real tooltip.
+  const noHeadings = paneSrc
+    .replace(/<SectionHeading[\s\S]*?\/>/g, '')
+    .replace(/<ListRow[\s\S]*?\/>/g, '');
   assert.doesNotMatch(noHeadings, /title=\{/,
     'a phone has no hover: nothing on this screen may live only in a title attribute');
 });

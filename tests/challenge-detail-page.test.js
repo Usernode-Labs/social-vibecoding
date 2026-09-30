@@ -38,6 +38,7 @@ const VIEW = {
   stateLabel: '180/500 blocks',
   fill: 0.36,
   counted: true,
+  credits: null,
   cta: { kind: 'link', href: 'https://example.com/node', label: 'Set up your node' },
   description: 'Run a node that produces blocks.',
   requirements: 'A node reachable all week, on-device or delegated.',
@@ -109,6 +110,39 @@ test('optional parts drop out cleanly', () => {
   assert.match(html, /<div class="sr-only" role="status">Loading participants<\/div>/,
     'a screen reader still hears it once');
   assert.match(html, /<div class="animate-pulse flex flex-col" aria-hidden="true">/);
+});
+
+test('Your credits: one row per credit, the reason beside its points, dropped when there are none', () => {
+  // Present WITH a reason: points first, then the scorer's why, between the
+  // Scoring section and Participants.
+  const html = render({
+    ...VIEW,
+    credits: [
+      { key: '5|0', points: '150 pts', reason: 'Clear scope and a clean spec' },
+      { key: '5|1', points: '10 pts', reason: null },
+    ],
+  });
+  const scoring = html.indexOf('>Scoring<');
+  const heading = html.indexOf('Your credits');
+  const participants = html.indexOf('Participants · 34');
+  assert.ok(heading > scoring, 'the section sits below Scoring');
+  assert.ok(participants > heading, 'and above Participants');
+  const section = html.slice(heading, participants);
+  assert.match(html, />150 pts</, 'the points figure on its own');
+  assert.match(html, /Clear scope and a clean spec/, 'the grade reason beside it');
+  assert.match(html, /·/, 'the middle dot between them');
+  assert.doesNotMatch(section, /tc-se-entry|<a |href=/, 'credits are read-only rows, not links');
+
+  // Present WITHOUT a reason: points only, no placeholder sentence.
+  const bare = render({ ...VIEW, credits: [{ key: '5|0', points: '150 pts', reason: null }] });
+  const bareSection = bare.slice(bare.indexOf('Your credits'), bare.indexOf('Participants · 34'));
+  assert.match(bareSection, />150 pts</);
+  assert.ok(!bareSection.includes('·'), 'no middle dot when there is no reason to join');
+  assert.doesNotMatch(bare, /Clear scope/, 'no stale reason from another row');
+
+  // Absent when there are no credits (the VIEW default): no heading at all.
+  const absent = render(VIEW);
+  assert.doesNotMatch(absent, /Your credits/, 'no empty section');
 });
 
 test('the artwork well: only for a registry illustration, on its tone, and dropped if it fails to load', () => {
