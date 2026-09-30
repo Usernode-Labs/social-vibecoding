@@ -36,7 +36,7 @@ const PANE_API = 'tests/fixtures/challenges-pane-api.ts';
 // one's contract (select() no-ops on the current id). Nothing here waits on
 // the network: a fetch that never settles keeps every assertion about the
 // synchronous half of each call.
-function loadPane({ challenges = [], eventId = 10, event = null, onboarding = null, search = '' } = {}) {
+function loadPane({ challenges = [], eventId = 10, event = null, onboarding = null, search = '', storage = 'ok' } = {}) {
   const subs = [];
   const context = {
     eventId,
@@ -49,8 +49,24 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
     notify() { for (const fn of subs) fn(context.eventId); },
   };
   if (event) context.selectedEvent = () => event;
+  // The unlock notice's once-per-unlock memory (#3254) is a localStorage
+  // key, so the sandbox provides a real Map-backed stub — and a throwing
+  // variant for the modes that refuse it, and null for the SSG pass's
+  // missing-storage shape.
+  const backing = new Map();
+  // A working stub, and a throwing one for the modes that refuse storage
+  // even to its presence.
+  const localStorage = storage === null ? null : storage === 'throws' ? {
+    getItem: () => { throw new Error('denied'); },
+    setItem: () => { throw new Error('denied'); },
+  } : {
+    getItem: (k) => (backing.has(k) ? backing.get(k) : null),
+    setItem: (k, v) => backing.set(k, String(v)),
+  };
+  const storageWrites = () => Object.fromEntries(backing);
   const sandbox = {
-    window: { TopochainEventContext: context },
+    window: { TopochainEventContext: context, localStorage },
+    localStorage,
     TopochainEventContext: context,
     console,
     setTimeout,
@@ -59,6 +75,10 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
     // A Web API, not a JavaScript builtin, so a bare vm context lacks it and
     // _maybeShot's lookup would throw into its own catch.
     URLSearchParams,
+    // The promise is kept FOREVER unresolved on purpose (see the header): a
+    // test whose assertions run after the synchronous half does not need the
+    // fetch to settle. But an assertion that DOES wait on it needs a fetch
+    // that can — the unlock tests drive loadChallenges()'s real await chain.
     fetch: () => new Promise(() => {}),
   };
   sandbox.window.window = sandbox.window;
@@ -75,7 +95,7 @@ function loadPane({ challenges = [], eventId = 10, event = null, onboarding = nu
   pane._challengesLoading = false;
   pane._loadedEventId = eventId;
   pane._onboarding = onboarding;
-  return { pane, store, context };
+  return { pane, store, context, storageWrites, localStorage };
 }
 
 const inHours = (h) => new Date(Date.now() + h * 3600000).toISOString();
@@ -596,4 +616,195 @@ test('a challenge entry or profile the server could not name reads "Anonymous"',
   pane._profileUserId = 9;
   pane._profile = { display_name: null, activities: [] };
   assert.equal(pane.profileView().name, 'Anonymous', 'nor is the profile it opens');
+});
+
+// ─── Unlock notice (#3254) ──────────────────────────────────────────────
+//
+// Finishing Get started opens the rest of the season silently. The board now
+// notices the flip — a load that finds the gate open but remembers having
+// shown this viewer it locked — and says so once, in one quiet line above the
+// groups, pointing at the next step. The memory is a localStorage key per
+// onboarding event, so the sandbox drives the real controller through
+// loadChallenges()'s full fetch path, not just its render half.
+
+const unlockFetch = (pane, challenges, onboarding, calls = []) => {
+  pane.fetchJson = async (url) => {
+    calls.push(url);
+    return {
+      ok: true,
+      data: { success: true, data: challenges, ...(onboarding ? { onboarding } : {}) },
+    };
+  };
+};
+
+test('a locked load remembers the gate; the next unlocked load says so once and does not repeat', () => {
+  const calls = [];
+  const challenges = [ch(1, 'ONBOARDING', DONE), ch(2, 'WEEKLY'), ch(3, 'PERSISTENT')];
+  const { pane, store, storageWrites } = loadPane({
+    challenges: [],
+    onboarding: { total: 1, completed: 0, unlocked: false, event_id: 10 },
+  });
+  unlockFetch(pane, challenges, { total: 1, completed: 0, unlocked: false, event_id: 10 }, calls);
+  return pane.loadChallenges().then(async () => {
+    assert.deepEqual(storageWrites(), { 'tc-onboarding-gate:10': 'locked' }, 'the locked visit is remembered');
+    assert.equal(gridOf(store).unlockNotice, undefined, 'locked, nothing to announce');
+    assert.deepEqual(calls, [
+      '/api/v4/season-events/10/challenges',
+      '/challenges-api/challenges?season_event_id=10',
+    ], 'the load runs the real public route, then the session-authed decoration pass');
+
+    unlockFetch(pane, challenges, { total: 1, completed: 1, unlocked: true, event_id: 10 }, calls);
+    await pane.loadChallenges();
+    const grid = gridOf(store);
+    assert.equal(
+        grid.unlockNotice,
+        'Season unlocked: 2 challenges are now open. Start with "Challenge 2".',
+        'the count is the unfinished, the pointer the first of them in _ordered() order');
+    assert.deepEqual(storageWrites(), { 'tc-onboarding-gate:10': 'unlocked' }, 'shown once: the write IS the acknowledgement');
+
+    unlockFetch(pane, challenges, { total: 1, completed: 1, unlocked: true, event_id: 10 }, calls);
+    await pane.loadChallenges();
+    assert.equal(gridOf(store).unlockNotice, undefined, 'a later unlocked load never repeats it');
+    assert.deepEqual(storageWrites(), { 'tc-onboarding-gate:10': 'unlocked' });
+  });
+});
+
+test('an unlock noticed with every challenge already done points at nothing', () => {
+  const { pane, store, storageWrites } = loadPane({
+    challenges: [ch(1, 'ONBOARDING', DONE), ch(2, 'WEEKLY', DONE)],
+    onboarding: { total: 2, completed: 0, unlocked: false, event_id: 10 },
+  });
+  // Arm the transition first: this viewer's board has to have shown the gate
+  // locked before a later unlocked load can be noticed as the flip.
+  unlockFetch(pane, pane._challenges, { total: 2, completed: 0, unlocked: false, event_id: 10 });
+  return pane.loadChallenges().then(async () => {
+    unlockFetch(pane, pane._challenges, { total: 2, completed: 2, unlocked: true, event_id: 10 });
+    await pane.loadChallenges();
+    const notice = gridOf(store).unlockNotice;
+    assert.match(notice, /^Season unlocked: 0 challenges are now open\.$/, 'the line still says what opened');
+    assert.doesNotMatch(notice, /Start with/, 'nothing left to do, no pointer');
+    assert.deepEqual(storageWrites(), { 'tc-onboarding-gate:10': 'unlocked' });
+  });
+});
+
+test('unlocked on the first load, or with no gate at all, is not an unlock', () => {
+  const first = loadPane({
+    challenges: [ch(1, 'WEEKLY')],
+    onboarding: { total: 0, completed: 0, unlocked: true, event_id: 10 },
+  });
+  unlockFetch(first.pane, first.pane._challenges, first.pane._onboarding);
+  return first.pane.loadChallenges().then(async () => {
+    assert.equal(gridOf(first.store).unlockNotice, undefined, 'no remembered locked visit, no notice');
+    assert.deepEqual(first.storageWrites(), {}, 'and a viewer already through wrote nothing to remember');
+
+    const ungated = loadPane({ challenges: [ch(1, 'WEEKLY')] });
+    unlockFetch(ungated.pane, ungated.pane._challenges, null);
+    return ungated.pane.loadChallenges().then(() => {
+      assert.equal(gridOf(ungated.store).unlockNotice, undefined, 'no summary, no notice');
+      assert.deepEqual(ungated.storageWrites(), {}, 'and no gate is remembered either');
+    });
+  });
+});
+
+test('the summary is keyed per event, and a notice left by one event dies with it', () => {
+  const { pane, store, context, storageWrites } = loadPane({
+    challenges: [],
+    onboarding: { total: 1, completed: 0, unlocked: false, event_id: 10 },
+  });
+  unlockFetch(pane, [ch(1, 'WEEKLY')], { total: 1, completed: 1, unlocked: true, event_id: 10 });
+  return pane.loadChallenges().then(() => {
+    assert.equal(gridOf(store).unlockNotice, undefined, 'event 10 was never locked for this viewer');
+    assert.deepEqual(storageWrites(), {}, 'event 10\'s gate was never locked, so nothing is remembered');
+
+    context.select(11);
+    pane._challenges = [];
+    unlockFetch(pane, [ch(1, 'WEEKLY')], { total: 1, completed: 0, unlocked: false, event_id: 11 });
+    return pane.loadChallenges().then(() => {
+      assert.deepEqual(storageWrites(), { 'tc-onboarding-gate:11': 'locked' },
+        'each gate remembers its own state');
+      unlockFetch(pane, [ch(1, 'WEEKLY')], { total: 1, completed: 1, unlocked: true, event_id: 11 });
+      return pane.loadChallenges().then(() => {
+        assert.equal(
+          gridOf(store).unlockNotice,
+          'Season unlocked: 1 challenges are now open. Start with "Challenge 1".',
+          'unlocked on its own remembered lock, the notice fires; the text carries the load-time count');
+      });
+    });
+  });
+});
+
+test('dismissal clears the grid descriptor only, and never re-runs the screenshot or deep-link hooks', () => {
+  const shot = [];
+  const link = [];
+  const { pane, store } = loadPane({
+    challenges: [ch(1, 'ONBOARDING', DONE), ch(2, 'WEEKLY')],
+    onboarding: { total: 1, completed: 0, unlocked: false, event_id: 10 },
+  });
+  // The fetch stub is set BEFORE the first await, as every awaited test's
+  // is: the first load waits on it, and a load called with none is a promise
+  // the sandbox's never-settling fetch keeps open.
+  unlockFetch(pane, pane._challenges, { total: 1, completed: 0, unlocked: false, event_id: 10 });
+  return pane.loadChallenges().then(async () => {
+    unlockFetch(pane, pane._challenges, { total: 1, completed: 1, unlocked: true, event_id: 10 });
+    pane._maybeShot = (ordered) => shot.push(ordered.length);
+    pane._maybeDeepLink = (ordered) => link.push(ordered.length);
+    await pane.loadChallenges();
+    assert.ok(gridOf(store).unlockNotice, 'the notice is on the board');
+    assert.deepEqual([shot, link], [[2], [2]], 'the load itself ran each hook once');
+    pane.dismissUnlockNotice();
+    assert.equal('unlockNotice' in gridOf(store), false, 'the × clears it from the descriptor');
+    assert.deepEqual([shot, link], [[2], [2]], 'and rerunning the hooks was not part of that');
+  });
+});
+
+test('storage that refuses to serve degrades silently; the board loads as usual', () => {
+  const { pane, store } = loadPane({
+    challenges: [ch(1, 'ONBOARDING', DONE), ch(2, 'WEEKLY')],
+    onboarding: { total: 1, completed: 0, unlocked: false, event_id: 10 },
+    storage: 'throws',
+  });
+  unlockFetch(pane, pane._challenges, { total: 1, completed: 1, unlocked: true, event_id: 10 });
+  return pane.loadChallenges().then(() => {
+    assert.equal(gridOf(store).unlockNotice, undefined, 'nothing remembered, nothing announced');
+    assert.equal(store.get().grid.kind, 'cards', 'the board itself still draws');
+    // The refusal is silent: no throw escaped into the load's promise.
+  });
+});
+
+// The notice draws above the first group, under the progress line, with the
+// muted text style and the profile overlay's × for a Dismiss. The pane is
+// rendered over a REAL descriptor the controller built, so what is asserted
+// is the shipped markup path, not a copy of the shape.
+test('the pane draws the unlock notice above the groups, with a Dismiss-labelled ×', () => {
+  const api = loadTsx(PANE_API);
+  const { pane, store } = loadPane({
+    challenges: [ch(1, 'ONBOARDING', DONE), ch(2, 'WEEKLY')],
+    onboarding: { total: 1, completed: 0, unlocked: false, event_id: 10 },
+  });
+  // Arm the locked visit first: the notice is the flip, not the state.
+  unlockFetch(pane, pane._challenges, { total: 1, completed: 0, unlocked: false, event_id: 10 });
+  return pane.loadChallenges().then(() => {
+    unlockFetch(pane, pane._challenges, { total: 1, completed: 1, unlocked: true, event_id: 10 });
+    return pane.loadChallenges();
+  }).then(() => {
+    const grid = JSON.parse(JSON.stringify(gridOf(store)));
+    assert.ok(grid.unlockNotice, 'the descriptor carries the notice the pane is to draw');
+    api.topochainChallengesStore.set({ mounted: true, grid, detail: null, profile: null });
+    const html = renderToHtml(createElement(api.ChallengesPane));
+    const at = html.indexOf('Season unlocked:');
+    assert.ok(at !== -1, 'the notice text renders');
+    assert.ok(html.indexOf('id="tc-se-challenge-summary"') < at, 'under the progress line');
+    const firstGroup = html.indexOf('tc-se-group-week');
+    assert.ok(firstGroup !== -1 && at < firstGroup, 'above the first group');
+    const close = html.indexOf('aria-label="Dismiss"');
+    assert.ok(close > at && close < firstGroup, 'with the Dismiss-labelled × beside it');
+    assert.match(
+      html.slice(html.lastIndexOf('<div', at), close + 40),
+      /role="status"/, 'the unlock is announced as a status');
+    // The styling is the board's existing muted text, at the onboarding
+    // button's gap, and the × the profile overlay already ships.
+    assert.match(PANE, /<p className="text-sm text-zinc-500 dark:text-zinc-400" role="status">\{view\.unlockNotice\}<\/p>/);
+    assert.match(PANE, /className=\{`\$\{CLOSE_X\} shrink-0`\}[\s\S]{0,40}aria-label="Dismiss"/);
+    assert.match(PANE, /controller\(\)\?\.dismissUnlockNotice\(\)/);
+  });
 });

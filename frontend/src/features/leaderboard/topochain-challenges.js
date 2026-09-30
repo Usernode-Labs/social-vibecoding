@@ -115,6 +115,11 @@ const TopochainChallenges = {
   _bpSeq: 0,
   _bpRequesting: false,
   _onboarding: null,
+  // The one-line unlocked summary (#3254), composed once per load by
+  // _noteUnlock() when the board is noticed flipping from locked to
+  // unlocked, or null when there is nothing to say. gridView() only carries
+  // it; the text does not change when the personalization pass re-sorts.
+  _unlockNotice: null,
   // The challenge groups the viewer opened or closed on this visit, as group
   // key ('setup', 'week', 'always', 'other') -> collapsed. A group absent here
   // takes the board's default (see _groupedGridView). Reset by open() and by a
@@ -369,9 +374,95 @@ const TopochainChallenges = {
       TopochainChallenges._challengesError = (res.data && res.data.error)
         || 'Failed to load challenges.';
     }
+    TopochainChallenges._noteUnlock();
     TopochainChallenges._renderGrid();
     // Decorations land in a second pass so the grid never waits on them.
     TopochainChallenges._loadMine(eventId);
+  },
+
+  // ── Unlock notice (#3254) ────────────────────────────────────────────
+  //
+  // Finishing Get started opens the rest of the season, and until now the
+  // board simply re-rendered with more categories and no explanation. When a
+  // load finds the gate OPEN but remembers having shown this viewer the same
+  // gate LOCKED (localStorage, one key per onboarding event), it composes one
+  // quiet line — how many challenges the board now shows unfinished, and the
+  // first of them as the next step — and acknowledges the unlock by writing
+  // 'unlocked' back. The write IS the acknowledgement, so the notice shows
+  // exactly once per unlock: later loads and refreshes of an already-open
+  // gate find 'unlocked' (or nothing, for a viewer long since past the gate)
+  // and clear it. A locked load writes 'locked' so a later unlock is noticed,
+  // and a load with no gate clears any notice the previous event left.
+  //
+  // Best-effort storage: every access is guarded and caught, because this
+  // file runs in a vm sandbox without localStorage (tests/challenge-groups
+  // and challenge-deep-link) and in the SSG prerender pass without a window,
+  // and private browsing modes throw. Where it cannot remember, the notice
+  // may re-show on a later visit rather than the feature failing.
+  _gateKey(eventId) {
+    return `tc-onboarding-gate:${eventId}`;
+  },
+
+  readGateState(eventId) {
+    try {
+      if (typeof window === 'undefined'
+          || !window.localStorage
+          || typeof window.localStorage.getItem !== 'function') return null;
+      return window.localStorage.getItem(TopochainChallenges._gateKey(eventId));
+    } catch {
+      return null;
+    }
+  },
+
+  writeGateState(eventId, state) {
+    try {
+      if (typeof window === 'undefined'
+          || !window.localStorage
+          || typeof window.localStorage.setItem !== 'function') return;
+      window.localStorage.setItem(TopochainChallenges._gateKey(eventId), state);
+    } catch {
+      // Best effort only: a failed write is not a failed load.
+    }
+  },
+
+  _noteUnlock() {
+    const ob = TopochainChallenges._onboarding;
+    if (!ob || ob.unlocked !== true
+        || !Number.isFinite(Number(ob.event_id)) || ob.event_id == null) {
+      // No gate, or one the viewer is not through: a present-but-locked
+      // summary is remembered, so a later unlock on the same gate is
+      // noticed; a notice left by a previous event dies with it.
+      if (ob && ob.unlocked !== true && ob.event_id != null) {
+        TopochainChallenges.writeGateState(ob.event_id, 'locked');
+      }
+      TopochainChallenges._unlockNotice = null;
+      return;
+    }
+    const eventId = ob.event_id;
+    if (TopochainChallenges.readGateState(eventId) === 'locked') {
+      const ordered = TopochainChallenges._ordered();
+      const unfinished = ordered.filter((c) => !TopochainChallenges._isDone(c));
+      const next = unfinished[0] || null;
+      let text = `Season unlocked: ${unfinished.length.toLocaleString('en-US')} challenges are now open.`;
+      if (next) {
+        text += ` Start with "${TopochainChallenges.str(next.card_preview && next.card_preview.goal)}".`;
+      }
+      TopochainChallenges._unlockNotice = text;
+      TopochainChallenges.writeGateState(eventId, 'unlocked');
+    } else {
+      TopochainChallenges._unlockNotice = null;
+    }
+  },
+
+  // The notice's ×. Updates the grid descriptor alone — never _renderGrid,
+  // which would re-run the screenshot and deep-link hooks — exactly as
+  // _toggleGroup redraws after a tap.
+  dismissUnlockNotice() {
+    TopochainChallenges._unlockNotice = null;
+    const store = TopochainChallenges._store;
+    if (typeof store?.get === 'function' && store.get()?.grid?.kind === 'cards') {
+      store.set({ grid: TopochainChallenges.gridView(TopochainChallenges._ordered()) });
+    }
   },
 
   // Your own points per challenge, from the session-authed web read. Purely
@@ -623,7 +714,16 @@ const TopochainChallenges = {
       // without one; a payload without the field (an older server) is 0,
       // which draws no placeholder. Unlocked, nothing hides and there is
       // nothing to say: no notice, no count.
-      ...(onboarding.unlocked ? {} : {
+      ...(onboarding.unlocked ? {
+        // Unlocked, and just noticed the flip: the one-line summary, which
+        // the pane draws above the groups (#3254). Composed once at load, so
+        // the personalization pass re-sorting the grid does not move the
+        // pointer under the reader; dismissal and the once-per-unlock memory
+        // live in _noteUnlock/dismissUnlockNotice.
+        ...(TopochainChallenges._unlockNotice
+          ? { unlockNotice: TopochainChallenges._unlockNotice }
+          : {}),
+      } : {
         notice: 'Finish these to unlock the rest of the season.',
         lockedCount: Number(onboarding.hidden_count) || 0,
       }),

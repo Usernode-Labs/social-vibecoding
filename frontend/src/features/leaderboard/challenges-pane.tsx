@@ -70,6 +70,7 @@ const controller = () => (window as {
   TopochainChallenges?: {
     _openIdx(idx: number): void;
     _toggleGroup(key: string): void;
+    dismissUnlockNotice(): void;
     _toOnboarding(eventId: number): void;
     _moreBreakdown(): void;
     requestBlockProduction(): void;
@@ -135,6 +136,9 @@ type GridView =
   | {
     kind: 'cards';
     progress: SeasonProgressView;
+    // The one-line unlocked summary (#3254), when this load noticed the
+    // gate flip; drawn above the groups and dismissible for the visit.
+    unlockNotice?: string;
     notice?: string;
     onboardingEventId?: number | null;
     // While setup gates the event: how many challenges it hides (0 = none
@@ -379,6 +383,25 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
         >
           Go to onboarding challenges
         </button>
+      ) : null}
+      {/*
+          The unlock summary (#3254), when this load noticed the gate flip:
+          one quiet line above the groups, the board's existing muted text at
+          the onboarding button's gap, with the profile overlay's × to dismiss
+          it for the visit. role="status" announces it.
+      */}
+      {view.unlockNotice ? (
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-zinc-500 dark:text-zinc-400" role="status">{view.unlockNotice}</p>
+          <button
+            className={`${CLOSE_X} shrink-0`}
+            aria-label="Dismiss"
+            type="button"
+            onClick={() => controller()?.dismissUnlockNotice()}
+          >
+            {TIMES}
+          </button>
+        </div>
       ) : null}
       {/*
           Fragment, not a wrapping <div>: the two grids and the subheading
