@@ -532,6 +532,15 @@ test('the running row is headed "Coding agent is running", whatever ran it', () 
     'and it takes a whole line rather than sitting beside the heading');
 });
 
+test('status rows share the 12px inset of the messages and cards around them (#3415)', () => {
+  const css = read('public', 'css', 'app.css');
+  assert.match(css, /\.dc-status-line \{[^}]*padding: 2px 12px;/,
+    'a step row is inset like .dc-msg, not flush with the pane edge');
+  assert.match(css, /\.dc-msg \{ padding: 8px 12px;/, 'the inset it matches');
+  assert.match(css, /\.dc-activity-line \{ padding: 0 12px 4px; \}/,
+    'the trailing dots keep the same inset and their bounce headroom');
+});
+
 test('only "<venue> is running" is rewritten', () => {
   const h = makeDevChat();
   const untouched = [

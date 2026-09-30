@@ -1472,9 +1472,19 @@ function normalizedSha(value) {
 // run after the response rather than in front of it. That read was a full
 // `git fetch` queued behind every other fetch of the repository — and a cold
 // clone after a restart — on the path of every Yes.
+//
+// `notify: false` (#3411) silences the broadcast and the notice for a move
+// that keeps the approvals, which is all the merge queue's re-pin ever
+// expects. It does NOT silence a move that retires votes people cast: that
+// notice is posted in the proposal's own thread either way, because without
+// it the Discussion keeps "Voted yes" while the tally drops to 0 with nothing
+// saying why. A caller that writes its own line about the cleared votes (the
+// merge's head-moved 409) passes `announceClearedVotes: false`. Only the
+// caller whose conditional UPDATE claims the move reaches the notice, so two
+// paths reconciling the same push cannot both post it.
 async function reconcileNativeReviewedHead({
   config, pool, session, fresh = false, notify = true, deferChecks = false,
-  offline = false,
+  offline = false, announceClearedVotes = true,
 }) {
   const integration = require('../services/integration');
   const mirror = require('../services/repo-mirror');
@@ -1714,7 +1724,18 @@ async function reconcileNativeReviewedHead({
     session.checks_commit_sha = liveHead;
   }
 
-  if (notify) {
+  // A silent caller still announces votes it retired — only when there were
+  // any: an epoch bump over a proposal nobody had voted on clears nothing.
+  let clearedVotes = false;
+  if (!notify && !keepsApprovals && announceClearedVotes) {
+    const { rows: retired } = await pool.query(
+      'SELECT 1 FROM pr_votes WHERE session_id = $1 AND approval_epoch = $2 LIMIT 1',
+      [session.id, epoch - 1]
+    ).catch(() => ({ rows: [] }));
+    clearedVotes = retired.length > 0;
+  }
+
+  if (notify || clearedVotes) {
     try {
       const { pushVoteUpdate } = require('../services/ws');
       pushVoteUpdate({
@@ -6301,8 +6322,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
                 throw err;
               }
             } else {
+              // The line below says the votes were cleared, so the
+              // reconciler does not say it a second time (#3411).
               nativeRefresh = await reconcileNativeReviewedHead({
                 config, pool, session, fresh: true, notify: false,
+                announceClearedVotes: false,
               }).catch((syncErr) => {
                 log.warn('votes', 'Native head-moved reconciliation failed', {
                   sessionId: session.id, err: syncErr.message,

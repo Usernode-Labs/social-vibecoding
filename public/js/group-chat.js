@@ -2958,7 +2958,12 @@ const GroupChat = {
       // routes/votes.js: "<who> voted yes on PR #N: <title>" or, with a
       // reason, "<who> voted no: “<reason>”".
       let m = /^(\S+) voted (yes|no)(?::\s*[“"]([\s\S]*?)[”"]|\s+on\b[\s\S]*)?$/.exec(text);
-      if (m) return { ...base, type: 'vote', actor: m[1], vote: m[2], reason: m[3] || '' };
+      if (m) {
+        return {
+          ...base, type: 'vote', actor: m[1], vote: m[2], reason: m[3] || '',
+          earlier: GroupChat._votedOnEarlierVersion(sessionId, m[1]),
+        };
+      }
       m = /^(\S+) (?:promoted|imported) PR #\d+/.exec(text);
       return { ...base, type: 'submitted', actor: m ? m[1] : '' };
     }
@@ -2966,6 +2971,23 @@ const GroupChat = {
     const known = GroupChat._proposalEvent(msg, kind);
     if (known) return { ...known, here: known.type !== 'weekly' };
     return { ...base, type: 'notice', actor: '', text: GroupChat._noticeText(text, sessionId, prNumber) };
+  },
+
+  // #3411: whether this voter's vote no longer counts because the proposal
+  // changed after they cast it. The line posted at vote time is permanent,
+  // but the tally counts only votes on the current version, so a "Voted yes"
+  // row beside "Yes 0" needs to say why. Read off the roster the page has
+  // already loaded (AppView._loadVoteRoster), never a fetch per row. A voter
+  // has one vote per proposal, so one listed there has none on the current
+  // version and every line of theirs is from an earlier one; a voter who
+  // re-cast on the current version is not listed, and no line of theirs is
+  // marked.
+  _votedOnEarlierVersion(sessionId, username) {
+    const a = GroupChat.activeThread;
+    const sid = sessionId || (a && a.type === 'session' ? String(a.ref) : '');
+    if (!sid || !username || typeof AppView === 'undefined' || !AppView._voteRoster) return false;
+    const roster = AppView._voteRoster[sid];
+    return !!(roster && Array.isArray(roster.earlierVoters) && roster.earlierVoters.includes(username));
   },
 
   // A notice's wording on its own page: "PR #12: <title> reached the vote

@@ -987,6 +987,11 @@ function chatRoutes(config) {
   router.post(
     '/api/apps/:slug/chat-attachments',
     attachmentUploadLimiter,
+    // Uploading is posting, so it takes joining too (403 join_required),
+    // as POST /messages does: the storage cap below is per app, and a
+    // non-member could otherwise fill it. Before the body parser, so a
+    // refusal reads no bytes.
+    communities.requireAppMembership(pool),
     // Limit must exceed the largest single-file cap (10 MB binaries).
     express.raw({ type: 'application/octet-stream', limit: '11mb' }),
     async (req, res) => {
