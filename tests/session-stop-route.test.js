@@ -66,8 +66,13 @@ async function call(server, path, init) {
 
 // The route runs a handful of unrelated reads (progress log, session row,
 // lease). Only two matter here, so answer by shape and default to empty.
-function routeQueries({ activeTurn = null, ownerId = OWNER.id } = {}) {
+function routeQueries({
+  activeTurn = null, ownerId = OWNER.id, status = 'active', sharedAt = null,
+} = {}) {
   poolQueryHandler = async (sql, params = []) => {
+    if (/SELECT user_id, status, shared_at FROM chat_sessions/.test(sql)) {
+      return { rows: [{ user_id: ownerId, status, shared_at: sharedAt }] };
+    }
     if (/SELECT active_turn FROM chat_sessions/.test(sql)) {
       return { rows: [{ active_turn: activeTurn }] };
     }
@@ -181,6 +186,61 @@ test('a durable stop stamp repaints Stopping… across a restart, with its origi
     assert.equal(body.stopRequestedAt, Date.parse(at),
       'the ladder resumes 30s in, not from zero');
   } finally { server.close(); }
+});
+
+// ── GET /status: who may read it ────────────────────────────────────────
+//
+// The live status carries the session's progress log, spend and runner, so
+// it follows the /checks and /details visibility rule: owner, admin, a
+// shared underway session, or a proposal up for a vote.
+
+const STRANGER = { id: 55, username: 'mallory' };
+
+async function statusAs(viewer, rows) {
+  routeQueries(rows);
+  const server = await startServer(viewer);
+  try {
+    return await call(server, `/api/sessions/${SESSION_ID}/status`);
+  } finally { server.close(); }
+}
+
+test('a non-owner of an unshared underway session gets a 404, with no progress', async () => {
+  for (const status of ['active', 'paused']) {
+    const res = await statusAs(STRANGER, { status });
+    assert.equal(res.status, 404, `${status} session`);
+    assert.deepEqual(res.body, { error: 'Session not found' });
+  }
+  const leaked = capturedQueries.some((q) => /chat_session_messages|last_turn_runner/.test(q.sql));
+  assert.equal(leaked, false, 'no session data is read for a caller who may not see it');
+});
+
+test('a missing session answers 404', async () => {
+  poolQueryHandler = async () => ({ rows: [] });
+  const server = await startServer(OWNER);
+  try {
+    const res = await call(server, `/api/sessions/${SESSION_ID}/status`);
+    assert.equal(res.status, 404);
+  } finally { server.close(); }
+});
+
+test('the owner, an admin, a shared session and a proposal up for a vote all read the status', async () => {
+  assert.equal((await statusAs(OWNER, { status: 'active' })).status, 200, 'owner');
+  assert.equal((await statusAs(VIEW_ADMIN, { status: 'active' })).status, 200, 'view-only admin');
+  assert.equal((await statusAs(STRANGER, { status: 'active', sharedAt: new Date().toISOString() })).status,
+    200, 'shared underway session');
+  for (const status of ['promoted', 'merging', 'merged']) {
+    assert.equal((await statusAs(STRANGER, { status })).status, 200, `${status} proposal`);
+  }
+  assert.equal((await statusAs(STRANGER, { status: 'archived', sharedAt: new Date().toISOString() })).status,
+    404, 'a shared session stops being public once it is archived');
+});
+
+test('/status and /checks share one visibility predicate', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
+  const uses = src.match(/canViewSession\(session, req\.user\)|canViewSession\(seen\[0\], req\.user\)/g) || [];
+  assert.equal(uses.length, 2, 'both routes call the shared helper');
 });
 
 // ── POST /stop: who may press it ────────────────────────────────────────
