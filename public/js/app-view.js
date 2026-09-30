@@ -20325,6 +20325,9 @@ const AppView = {
     }
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
+    // The guard the failure-path retries close over: this open must still be
+    // the live one AND the same app must still be on screen.
+    const current = () => loadId === AppView._stagingLoadId && AppView._stagingSameApp(opts, slug);
     staging.clearSrc();
     AppView._pendingStagingPreview = null;
     // #816: a NEUTRAL opening state. This used to assert "the preview was
@@ -20348,10 +20351,24 @@ const AppView = {
       const res = await fetch(endpoint, readOnly ? undefined : { method: 'POST' });
       data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        staging.setHandlers({
+          // #3413: the retry lives inside the loader (the proposal card's own
+          // Retry preview button is under it). Re-enter ensureStaging — it
+          // takes a fresh load id, so a stale closure must no-op, exactly
+          // like the sign-in-failure retry in swapToStaging.
+          onRetry: () => {
+            if (current()) return AppView.ensureStaging(sessionId, fallbackUrl, testing, opts);
+          },
+        });
         AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.');
         return;
       }
     } catch {
+      staging.setHandlers({
+        onRetry: () => {
+          if (current()) return AppView.ensureStaging(sessionId, fallbackUrl, testing, opts);
+        },
+      });
       AppView._showStagingUnavailable(loadId, 'Network error while rebuilding the preview. Try again in a moment.');
       return;
     }
@@ -20381,6 +20398,11 @@ const AppView = {
           ? 'This preview is no longer running. A collaborator can rebuild it.'
           : 'This preview isn’t available right now.',
       };
+      staging.setHandlers({
+        onRetry: () => {
+          if (current()) return AppView.ensureStaging(sessionId, fallbackUrl, testing, opts);
+        },
+      });
       AppView._showStagingUnavailable(
         loadId,
         unavailableCopy[data.reason] || 'This preview isn’t available right now.'
@@ -20398,8 +20420,11 @@ const AppView = {
       sub: 'The preview was paused after a while of inactivity. Rebuilding it '
         + 'from the session’s latest changes. This usually takes 20–60 seconds.',
     });
+    // #3413: a failed rebuild must leave a reachable retry inside the loader,
+    // re-running this open with the same session + fallback url.
     AppView._pendingStagingPreview = {
       sessionId, slug, jump, testing, dock, loadId,
+      fallbackUrl: fallbackUrl || null,
       app: opts && opts.app ? opts.app : null,
       readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
     };
@@ -20424,6 +20449,7 @@ const AppView = {
     AppView._setStagingLoader(true, {
       title: 'Preview unavailable',
       sub: message,
+      retry: true,
     });
   },
 
@@ -20431,6 +20457,7 @@ const AppView = {
   // pending on-demand rebuild resolves. Opens the (new) URL on success, or
   // surfaces the failure reason in the loader.
   onStagingRebuildResult(sessionId, { url, failed, error } = {}) {
+    const staging = AppView._staging();
     const pending = AppView._pendingStagingPreview;
     if (!pending || pending.sessionId !== sessionId) return;
     if (pending.loadId !== AppView._stagingLoadId
@@ -20440,10 +20467,30 @@ const AppView = {
     }
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
     AppView._pendingStagingPreview = null;
+    // The guard the failure retry closes over: the open this result belonged
+    // to must still be the live one and the same app still on screen.
+    const current = () => pending.loadId === AppView._stagingLoadId
+      && AppView._stagingSameApp(pending.app ? { app: pending.app } : null, pending.slug);
     if (failed) {
+      // #3413: the loader covers the page, so the failure state needs its own
+      // reachable Retry. It re-runs the original open from the pending
+      // marker's data (including the fallback url threaded through it).
       AppView._setStagingLoader(true, {
         title: 'Preview couldn’t be rebuilt',
         sub: error || 'The staging build failed. See the dev chat for details.',
+        retry: true,
+      });
+      staging.setHandlers({
+        onRetry: () => {
+          if (current()) {
+            return AppView.ensureStaging(pending.sessionId, pending.fallbackUrl, pending.testing, {
+              jump: pending.jump,
+              dock: pending.dock,
+              ...(pending.app ? { app: pending.app } : {}),
+              ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
+            });
+          }
+        },
       });
       return;
     }

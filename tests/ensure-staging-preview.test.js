@@ -151,6 +151,87 @@ test('onStagingRebuildResult surfaces a failed rebuild in the loader (no swap)',
   assert.equal(AppView._pendingStagingPreview, null, 'pending marker cleared');
 });
 
+// ── #3413: a failed preview build leaves a reachable Retry in the loader ──
+//
+// The loader covers the page, so the proposal card's own Retry preview
+// button is unreachable underneath it. Every terminal build-failure state
+// must show the loader's own retry button, and clicking it must re-run the
+// original open (same session, same fallback url). A stale closure — the
+// overlay closed or a newer open superseded this one — must be a no-op.
+
+test('#3413 a {rebuilding} build that fails via staging_failed shows a retry that re-runs the open', async () => {
+  let requests = 0;
+  const { AppView, dom } = makeAppView(async () => {
+    requests += 1;
+    if (requests === 1) return { ok: true, json: async () => ({ status: 'rebuilding' }) };
+    return { ok: false, json: async () => ({}) };
+  });
+  await AppView.ensureStaging(7, 'https://stale.example', null, {});
+  assert.equal(requests, 1);
+  AppView.onStagingRebuildResult(7, { failed: true, error: 'Missing secret: STRIPE_KEY' });
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, 'retry button visible on the failed rebuild');
+  await AppView._staging()._handlers.onRetry();
+  assert.equal(requests, 2, 'retry re-issues the ensure-staging fetch');
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, 'retry stays visible while the retry is still failing');
+});
+
+test('#3413 a failed ensure-staging POST shows a retry that re-runs it with the same url', async () => {
+  let requests = 0;
+  const { AppView, dom } = makeAppView(async () => {
+    requests += 1;
+    if (requests === 1) return { ok: false, json: async () => ({ error: 'container config error' }) };
+    return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+  });
+  await AppView.ensureStaging(7, 'https://fallback.example', null, {});
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, 'retry button visible on the failed POST');
+  assert.match(dom.els['staging-loader-sub'].textContent, /container config error/);
+  await AppView._staging()._handlers.onRetry();
+  assert.equal(requests, 2, 'retry re-issues the ensure-staging fetch');
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'retry clears once the retry succeeds');
+});
+
+test('#3413 a network failure during ensure-staging shows a retry', async () => {
+  let requests = 0;
+  const { AppView, dom } = makeAppView(async () => {
+    requests += 1;
+    if (requests === 1) throw new Error('down');
+    return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+  });
+  await AppView.ensureStaging(7, 'https://fallback.example', null, {});
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, 'retry button visible on the network failure');
+  await AppView._staging()._handlers.onRetry();
+  assert.equal(requests, 2, 'retry re-issues the ensure-staging fetch');
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true);
+});
+
+test('#3413 an {unavailable} preview shows a retry that re-runs the open', async () => {
+  let requests = 0;
+  const { AppView, dom } = makeAppView(async () => {
+    requests += 1;
+    if (requests === 1) return { ok: true, json: async () => ({ status: 'unavailable', reason: 'unhealthy' }) };
+    return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+  });
+  await AppView.ensureStaging(7, 'https://fallback.example', null, {});
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, 'retry button visible on the unavailable state');
+  await AppView._staging()._handlers.onRetry();
+  assert.equal(requests, 2, 'retry re-issues the ensure-staging fetch');
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true);
+});
+
+test('#3413 a retry from a stale failure state (overlay closed) is a no-op', async () => {
+  let requests = 0;
+  const { AppView, dom } = makeAppView(async () => {
+    requests += 1;
+    return { ok: false, json: async () => ({ error: 'container config error' }) };
+  });
+  await AppView.ensureStaging(7, 'https://fallback.example', null, {});
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false);
+  const loadIdAtFailure = AppView._stagingLoadId;
+  AppView._stagingLoadId = loadIdAtFailure + 1; // the overlay closed / a newer open took over
+  await AppView._staging()._handlers.onRetry();
+  assert.equal(requests, 1, 'stale onRetry must not re-issue the fetch');
+});
+
 test('onStagingRebuildResult ignores a result for a different/stale session', async () => {
   const { AppView, swaps } = makeAppView(okJson({ status: 'rebuilding' }));
   await AppView.ensureStaging(7, 'https://stale.example', null, {});
