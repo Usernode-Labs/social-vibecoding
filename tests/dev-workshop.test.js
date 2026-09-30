@@ -834,6 +834,36 @@ test('the since list files each row under the week it moved in, and opens on the
   assert.match(WORKSHOP, /setSinceExtra\(0\);\s*setSinceAllNew\(\{\}\);\s*setSinceSeen\(\{\}\);/);
 });
 
+test('a week unfolded before the digest lands stays unfolded when the digest re-keys it', () => {
+  // The board paints first and the week summaries ride in behind it: until
+  // then this week is `week:<Monday>`, after it `thisWeek`. What is unfolded
+  // is remembered by the Monday both share, so the re-key does not fold it.
+  const { sinceWeeks, sinceWeekStateKey } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
+  const WEEK = 7 * 86400000;
+  const monday = Date.UTC(2026, 8, 14);
+  const row = (key, ms) => ({ t: 'card', key, card: {}, at: ms });
+  const since = {
+    baseline: 0, through: 0, total: 1, shipped: 0, opened: 0, proposed: 0,
+    rows: [row('since:a', FIXED_NOW - 3600000)],
+    seen: { total: 1, rows: [row('seen:b', monday - WEEK + 3600000)] },
+  };
+  const before = sinceWeeks(since, null, FIXED_NOW);
+  assert.deepEqual(before.map((w) => w.key), [`week:${monday}`, `week:${monday - WEEK}`]);
+  const open = { [sinceWeekStateKey(before[1])]: true };
+  const after = sinceWeeks(since, [
+    { key: 'thisWeek', title: 'This week', startMs: monday, endMs: FIXED_NOW, line: 'Now.', counts: null },
+    { key: 'lastWeek', title: '', startMs: monday - WEEK + 7200000, endMs: monday, line: 'Last.', counts: null },
+  ], FIXED_NOW);
+  assert.deepEqual(after.map((w) => w.key), ['thisWeek', 'lastWeek'], 'the digest re-keys the same weeks');
+  assert.equal(open[sinceWeekStateKey(after[1])], true, 'and the unfolded one is still found open');
+  assert.ok(!open[sinceWeekStateKey(after[0])], 'while its neighbour stays folded');
+  // The state and the React key both read the Monday; the week's own key is
+  // still what the markup names.
+  assert.match(WORKSHOP, /seenOpen=\{!!sinceSeen\[at\]\}/);
+  assert.match(WORKSHOP, /allNew=\{!!sinceAllNew\[at\]\}/);
+  assert.ok(!/sinceSeen\[w\.key\]|sinceAllNew\[w\.key\]|\[w\.key\]: true/.test(WORKSHOP), 'nothing is keyed by w.key');
+});
+
 // ── #3293: the list reaches back to the project's start ──────────────
 
 test('#3293: the weeks go back, one at a time, to the project’s start', async () => {
@@ -4397,6 +4427,12 @@ test('?shot=since-seen is the URL that reaches the walked state, for the check a
   assert.match(body, /document\.querySelector\('button\[data-ws-since-seen-fold\]'\)\s*\|\| document\.querySelector\('button\[data-ws-since-more\]:not\(\[disabled\]\)'\)/,
     'and presses the real controls: a week\'s seen row, or Show older to find one');
   assert.match(body, /e\.isTrusted/, 'and lets go on the first real gesture');
+  // The week summaries land after the board and can repaint the list, so the
+  // mark is re-checked for the whole window rather than trusted once.
+  assert.match(body, /if \(document\.querySelector\('\[data-ws-since-seen\]'\)\) return;/,
+    'the mark being there skips a press but keeps watching');
+  assert.ok(!/querySelector\('\[data-ws-since-seen\]'\)\) \{ done\(\)/.test(body),
+    'it does not stop at the first sighting');
   assert.ok(!/localStorage/.test(body), 'nothing is written to storage — a human is not told they were here');
 
   const check = dapp.tests.find((t) => /data-ws-since-clear\]:not\(\[disabled\]\)/.test(t.expectSelector || ''));

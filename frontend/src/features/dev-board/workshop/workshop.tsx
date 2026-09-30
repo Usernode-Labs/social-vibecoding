@@ -893,6 +893,17 @@ export function sinceWeeks(
   return [...byStart.values()].sort((a, b) => b.startMs - a.startMs);
 }
 
+/**
+ * What a week's unfolded state is remembered by: its Monday. Not `key`,
+ * which is `week:<Monday>` while the week is built from rows alone and
+ * becomes `thisWeek` / `lastWeek` when the digest's weeks ride in behind the
+ * board's data. Keyed by `key`, a week opened in between snapped shut as
+ * they landed. Both constructions share the `mondayUtc` start.
+ */
+export function sinceWeekStateKey(week: Pick<SinceWeek, 'startMs'>): string {
+  return String(week.startMs);
+}
+
 /** How many weeks the list opens with: every week holding something new, and at least one. */
 export function sinceWeeksOpen(weeks: SinceWeek[]): number {
   let last = -1;
@@ -3737,20 +3748,23 @@ export function DevWorkshop(): ReactNode {
               Nothing has changed since you were last here.
             </p>
           ) : null}
-          {weeks.slice(0, weeksOpen).map((w) => (
-            <SinceWeekBlock
-              key={w.key}
-              week={w}
-              slug={slug}
-              canPost={canPost}
-              openKey={openRows.since || null}
-              onToggleRow={(key) => toggleRow('since', key)}
-              allNew={!!sinceAllNew[w.key]}
-              onAllNew={() => setSinceAllNew((cur) => ({ ...cur, [w.key]: true }))}
-              seenOpen={!!sinceSeen[w.key]}
-              onSeen={() => setSinceSeen((cur) => ({ ...cur, [w.key]: true }))}
-            />
-          ))}
+          {weeks.slice(0, weeksOpen).map((w) => {
+            const at = sinceWeekStateKey(w);
+            return (
+              <SinceWeekBlock
+                key={at}
+                week={w}
+                slug={slug}
+                canPost={canPost}
+                openKey={openRows.since || null}
+                onToggleRow={(key) => toggleRow('since', key)}
+                allNew={!!sinceAllNew[at]}
+                onAllNew={() => setSinceAllNew((cur) => ({ ...cur, [at]: true }))}
+                seenOpen={!!sinceSeen[at]}
+                onSeen={() => setSinceSeen((cur) => ({ ...cur, [at]: true }))}
+              />
+            );
+          })}
           {/* ALWAYS DRAWN, and disabled rather than absent at the far end:
               a control that is sometimes there is one nobody learns to reach
               for. Pointing DOWN, at where the week it reveals appears. */}
