@@ -343,6 +343,53 @@ test('deterministicTitle names an issue-started session after its ISSUE, not the
   }
 });
 
+// ---- #3183: a pasted `TITLE: … DETAIL: …` request ----
+
+const TITLED_REQUEST = 'implement this change in the app: TITLE: Dark mode toggle on settings '
+  + 'DETAIL: Add a switch that flips the theme and remembers it across reloads for everyone.';
+
+test('parseTitledRequest reads an explicit TITLE field and ignores ordinary prose', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    assert.deepEqual(subject.parseTitledRequest(TITLED_REQUEST), {
+      title: 'Dark mode toggle on settings',
+      detail: 'Add a switch that flips the theme and remembers it across reloads for everyone.',
+    });
+    // No lead-in, fields on their own lines, and no DETAIL at all.
+    assert.deepEqual(subject.parseTitledRequest('TITLE: Dark mode\nDETAIL: Flip the theme.'),
+      { title: 'Dark mode', detail: 'Flip the theme.' });
+    assert.deepEqual(subject.parseTitledRequest('TITLE: Dark mode'), { title: 'Dark mode', detail: '' });
+    // A sentence that mentions a title field is not a template.
+    assert.equal(subject.parseTitledRequest('Fix the TITLE: field on the page'), null);
+    assert.equal(subject.parseTitledRequest('make the leaderboard paginate'), null);
+    assert.equal(subject.parseTitledRequest('TITLE:   DETAIL: something'), null);
+    assert.equal(subject.parseTitledRequest(null), null);
+  } finally {
+    restore();
+  }
+});
+
+test('deterministicTitle names a pasted template after its TITLE, and strips the bare instruction', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    assert.equal(subject.deterministicTitle(TITLED_REQUEST), 'Dark mode toggle on settings');
+    // The explicit title is a name: kept whole even when it is a sentence.
+    assert.equal(
+      subject.deterministicTitle('TITLE: Show the vote count. Hide it at zero DETAIL: '.padEnd(120, 'x')),
+      'Show the vote count. Hide it at zero',
+    );
+    // The instruction alone, with no TITLE field, is a lead-in like "Please".
+    assert.equal(
+      subject.deterministicTitle('Implement this change in the app: add a dark mode toggle to the settings screen'),
+      'add a dark mode toggle to the settings screen',
+    );
+    // An ordinary message keeps its own words.
+    assert.equal(subject.deterministicTitle('Fix the TITLE: field on the page'), 'Fix the TITLE: field on the page');
+  } finally {
+    restore();
+  }
+});
+
 test('titleInputsFromRequests hands the model the issue title and drops the wrapper', () => {
   const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
   try {
@@ -354,6 +401,10 @@ test('titleInputsFromRequests hands the model the issue title and drops the wrap
       'also sort them by date',
     ]);
     // Nothing to peel: requests pass through and there is no issue signal.
+    const titled = subject.titleInputsFromRequests([TITLED_REQUEST]);
+    assert.equal(titled.issueTitle, 'Dark mode toggle on settings');
+    assert.deepEqual(titled.requests, ['Dark mode toggle on settings'
+      + '\n\nAdd a switch that flips the theme and remembers it across reloads for everyone.']);
     const plain = subject.titleInputsFromRequests(['make the leaderboard paginate']);
     assert.equal(plain.issueTitle, null);
     assert.deepEqual(plain.requests, ['make the leaderboard paginate']);

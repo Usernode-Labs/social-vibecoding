@@ -97,6 +97,25 @@ function parseIssueSeed(text) {
   };
 }
 
+// #3183: a request pasted from another tool often arrives as a filled-in
+// template — `implement this change in the app: TITLE: Dark mode DETAIL: …`
+// — and the name came out as that instruction. When the message carries an
+// explicit `TITLE:` field, that field IS the name the person chose. The
+// label is matched in capitals only, and only at the start of the message
+// or after a short lead-in that ends in a colon or a line break, so an
+// ordinary sentence that mentions a title field keeps its own words.
+const TITLED_REQUEST_RE = /^([^\n]{0,80}?(?::[ \t]*|\n\s*))?TITLE[ \t]*:\s*([\s\S]*?)(?:\s*\bDETAIL[ \t]*:\s*([\s\S]*))?$/;
+
+// { title, detail } for a `TITLE:` / `DETAIL:` request, or null for
+// anything else (including a TITLE: field left empty).
+function parseTitledRequest(text) {
+  const m = TITLED_REQUEST_RE.exec(String(text || '').trim());
+  if (!m) return null;
+  const title = m[2].replace(/\s+/g, ' ').trim();
+  if (!title) return null;
+  return { title, detail: String(m[3] || '').trim() };
+}
+
 // #2653: a session named "just the first line of what I typed". The trim
 // below used to be a blind prefix — collapse the message, cut at 72, add an
 // ellipsis — which spends the whole budget on whatever the person happened
@@ -137,6 +156,8 @@ const ALWAYS_LEAD_IN = [
   'we\\s+(?:should|need\\s+to|want\\s+to)\\b',
   'let.?s\\b',
   '(?:go\\s+ahead\\s+and|try\\s+to|help\\s+me|i\\s+think\\s+we\\s+should)\\b',
+  // #3183: the instruction a pasted template opens with.
+  'implement\\s+(?:this|the)\\s+change(?:\\s+in\\s+the\\s+app)?\\b',
 ];
 
 // Openers that are ALSO ordinary words. "OK button remains disabled" and
@@ -281,7 +302,10 @@ function deterministicTitle(text) {
   // instruction wrapped around it. The body is the fallback for the
   // degraded seed whose issue fetch produced an empty title.
   const seed = parseIssueSeed(text);
-  const source = seed ? (seed.title || seed.body) : text;
+  // An explicit TITLE: field is a name the same way an issue title is.
+  const titled = seed ? null : parseTitledRequest(text);
+  const named = seed ? seed.title : titled && titled.title;
+  const source = seed ? (seed.title || seed.body) : (named || text);
   const plain = String(source || '')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/[#>*_`~\[\]()]/g, ' ')
@@ -299,7 +323,7 @@ function deterministicTitle(text) {
   // `Fix imports from foo.js. Preserve the compatibility path` must not
   // become `Fix imports from foo.js`; it is over the cap, so it gets cut,
   // and that is all.
-  if (seed && seed.title) {
+  if (named) {
     return `${truncateAtWord(plain, DETERMINISTIC_TITLE_MAX - 1)}…`;
   }
 
@@ -330,10 +354,10 @@ function titleInputsFromRequests(requests) {
     .map((r) => String(r || ''))
     .filter((r) => r.trim())
     .map((text) => {
-      const seed = parseIssueSeed(text);
+      const seed = parseIssueSeed(text) || parseTitledRequest(text);
       if (!seed) return text;
       if (!issueTitle && seed.title) issueTitle = seed.title;
-      return [seed.title, seed.body].filter(Boolean).join('\n\n') || text;
+      return [seed.title, seed.body || seed.detail].filter(Boolean).join('\n\n') || text;
     });
   return { requests: prepared, issueTitle };
 }
@@ -520,5 +544,5 @@ function titleAtTurnEnd({ pool, session, message, userId, resolveBilling, firstT
 module.exports = {
   headlessTitle, deterministicTitle, generateAndApply,
   maybeTitleFirstMessage, titleFromFirstMessage, refreshFromHistory,
-  titleAtTurnEnd, parseIssueSeed, titleInputsFromRequests,
+  titleAtTurnEnd, parseIssueSeed, parseTitledRequest, titleInputsFromRequests,
 };

@@ -355,6 +355,9 @@ test('what the platform did between turns reaches the Mayor as a note', () => {
     ['user', 'And now?'],
   ], 'history opens with the user, and a platform note rides on the Mayor\'s side');
   assert.equal(agentTurn.titleFromMessage('a '.repeat(100)).length <= 81, true);
+  assert.equal(agentTurn.titleFromMessage('implement this change in the app: TITLE: Dark mode DETAIL: Flip the theme.'),
+    'Dark mode', 'a pasted template is named by its TITLE field (#3183)');
+  assert.equal(agentTurn.titleFromMessage('Make the leaderboard paginate'), 'Make the leaderboard paginate');
 
   const built = agentTurn.historyToMessages([
     { id: 1, role: 'user', content: 'Build it', metadata: {} },

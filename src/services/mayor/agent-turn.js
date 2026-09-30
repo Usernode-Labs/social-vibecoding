@@ -347,7 +347,11 @@ function lastUserText(rows) {
 }
 
 function titleFromMessage(text) {
-  const clean = String(text || '').replace(/\s+/g, ' ').trim();
+  // #3183: a pasted `TITLE: … DETAIL: …` request is named by its TITLE field,
+  // not by the instruction in front of it. Required here rather than at the
+  // top so loading this module does not pull the title service's LLM client.
+  const titled = require('../session-title').parseTitledRequest(text);
+  const clean = String(titled ? titled.title : (text || '')).replace(/\s+/g, ' ').trim();
   if (clean.length <= TITLE_MAX) return clean;
   const cut = clean.slice(0, TITLE_MAX);
   const lastSpace = cut.lastIndexOf(' ');
