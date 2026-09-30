@@ -18860,6 +18860,50 @@ html.un-kb #platform-parked {
   display: none;
 }
 
+/* IN AND OUT BY THE BAR (#3376), on the phone. Parked, the strip rises out
+   from behind the tab bar (it sits one z-index under it); forgotten, it sinks
+   back in, a little quicker, and ends clipped until `hidden` lands. The ROOT
+   animates its clip and never a transform: a transform would make it the
+   containing block for its fixed `::before` glass layer, which would draw at
+   strip size and snap back at the end. The children carry the slide. The
+   band the strip reserves does not ease — it feeds every screen's padding —
+   so content already ends above where the strip is arriving. */
+@media (max-width: 767px) {
+  .platform-parked-enter {
+    animation: platform-parked-reveal 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .platform-parked-enter > * {
+    animation: platform-parked-rise 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .platform-parked-leave {
+    pointer-events: none;
+    animation: platform-parked-conceal 160ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  }
+  .platform-parked-leave > * {
+    animation: platform-parked-sink 160ms cubic-bezier(0.4, 0, 1, 1) forwards;
+  }
+}
+@keyframes platform-parked-reveal {
+  from { clip-path: inset(100% 0 0 0); }
+  to   { clip-path: inset(0); }
+}
+@keyframes platform-parked-conceal {
+  from { clip-path: inset(0); }
+  to   { clip-path: inset(100% 0 0 0); }
+}
+@keyframes platform-parked-rise {
+  from { transform: translateY(52px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+@keyframes platform-parked-sink {
+  from { transform: translateY(0); opacity: 1; }
+  to   { transform: translateY(52px); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .platform-parked-enter, .platform-parked-leave,
+  .platform-parked-enter > *, .platform-parked-leave > * { animation: none; }
+}
+
 
 /* ═══════════════════════════════════════════════════════════════════
    THE SAME FIVE TABS, STANDING UP — desktop from 768px (#2718)
