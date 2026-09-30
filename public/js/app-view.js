@@ -9141,11 +9141,17 @@ const AppView = {
       // clamp's sibling so it is never inside what it hides, and it ships
       // `hidden`: only a measurement can say whether this comment is long,
       // and only `_clampFeedComments` below has a laid-out box to measure.
+      // #3490: Homeroom bot's spec is its sentence and the spec's title
+      // here; the request's own page draws the spec itself.
+      const spec = AppView._botSpecOf(c);
+      const specLine = spec
+        ? `<span class="dev-feed-comment-spec">${escapeHtml(spec.title ? `The spec: ${spec.title}` : 'The spec')}</span>`
+        : '';
       return `<div class="dev-feed-comment">
           <span class="dev-feed-comment-main">
             <span class="dev-feed-comment-clamp">
               <span class="dev-feed-comment-author">${author}</span>${botTag}
-              <span class="dev-feed-comment-body">${renderMd(c.body || '')}</span>
+              <span class="dev-feed-comment-body">${renderMd(spec ? spec.lead : (c.body || ''))}${specLine}</span>
             </span>
             <button type="button" class="dev-feed-comment-toggle ${AppView.FEED_COMMENT_TOGGLE_CLASS}" aria-expanded="false" hidden>Show more</button>
           </span>
@@ -11454,6 +11460,30 @@ const AppView = {
     return /\[bot\]$/.test(a) || a === 'usernode-bot' || a.endsWith('-bot');
   },
 
+  // #3490: Homeroom bot's spec, as it writes one on the request it is
+  // building (services/homeroom-bot-live.js specCommentText): a sentence
+  // saying what it is, then the spec inside `<details><summary>The
+  // spec</summary>`, which GitHub folds away. The renderer here escapes raw
+  // HTML, so the markers showed as text and the spec ran on as the
+  // comment's own lines. Split, the sentence stays the comment and the spec
+  // is drawn as a spec: its "# " title, and the rest as the spec viewer
+  // draws it. A bot's comment only, and only that shape; null otherwise.
+  _botSpecOf(c) {
+    if (!c || !AppView._isBotCommentAuthor(c.author)) return null;
+    const m = /^([\s\S]*?)<details>\s*<summary>\s*The spec\s*<\/summary>([\s\S]*?)<\/details>\s*$/
+      .exec(String(c.body || ''));
+    if (!m) return null;
+    const lines = m[2].split('\n');
+    const first = lines.findIndex((l) => l.trim());
+    if (first < 0) return null;
+    let title = null;
+    if (/^#\s+\S/.test(lines[first].trim())) {
+      title = lines[first].trim().replace(/^#\s+/, '').trim();
+      lines.splice(first, 1);
+    }
+    return { lead: m[1].trim(), title, body: lines.join('\n').trim() };
+  },
+
   // #396: the GitHub comment thread for an issue, rendered beneath the
   // issue body in the topic sub-view. One row per comment (author + date +
   // markdown body), with bot comments tagged. When `truncated`, a final
@@ -11487,14 +11517,23 @@ const AppView = {
       // its safe src/alt fields before sanitizing it.
       ? (str) => DevChat.renderMarkdown(str, { images: true })
       : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
+    // #3490: a spec renders as the spec viewer renders one, with paragraph
+    // semantics rather than a chat's line breaks.
+    const renderSpec = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
+      ? (str) => DevChat.renderMarkdown(str, { breaks: false })
+      : (str) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(str)}</pre>`;
     return {
-      comments: list.map((c, i) => ({
-        key: String(c.id != null ? c.id : `i${i}`),
-        author: c.author || 'unknown',
-        bot: AppView._isBotCommentAuthor(c.author),
-        createdAt: c.createdAt || '',
-        bodyHtml: renderMd(c.body || ''),
-      })),
+      comments: list.map((c, i) => {
+        const spec = AppView._botSpecOf(c);
+        return {
+          key: String(c.id != null ? c.id : `i${i}`),
+          author: c.author || 'unknown',
+          bot: AppView._isBotCommentAuthor(c.author),
+          createdAt: c.createdAt || '',
+          bodyHtml: renderMd(spec ? spec.lead : (c.body || '')),
+          spec: spec ? { title: spec.title, html: renderSpec(spec.body) } : null,
+        };
+      }),
       truncated: !!truncated,
       htmlUrl: htmlUrl || null,
     };

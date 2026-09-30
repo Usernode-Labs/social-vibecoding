@@ -501,6 +501,31 @@ function isStagingMockIssueNumber(number) {
   return stagingMockIssues('https://github.com/example/app').some((i) => i.number === n);
 }
 
+// #3490: the spec comment the Homeroom bot posts when it starts building a
+// request, word for word as specCommentText writes it, around a short spec.
+const MOCK_BOT_SPEC_COMMENT = [
+  '[Mock] Homeroom bot wrote a spec for this request and is building it now. It is here for reference: '
+    + 'nobody needs to approve it, and the proposal will be linked here when it is up.',
+  '',
+  '<details><summary>The spec</summary>',
+  '',
+  '# Keep the Vote and Preview buttons on screen on small phones',
+  '',
+  '## User-facing changes',
+  '',
+  'On a phone as narrow as an iPhone SE, the Vote and Preview buttons on a proposal card move onto a second '
+    + 'line instead of running off the right edge.',
+  '',
+  '- Both buttons stay whole and tappable in portrait.',
+  '- Nothing changes on wider screens.',
+  '',
+  '## Design',
+  '',
+  'The card\'s action row wraps rather than scrolls, and each button keeps its 44px tap target.',
+  '',
+  '</details>',
+].join('\n');
+
 function stagingMockIssueComments(number) {
   const n = Number(number);
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
@@ -569,6 +594,10 @@ function stagingMockIssueComments(number) {
     900003: [
       ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] Happens on my iPhone SE in portrait — the Vote and Preview buttons spill off the right edge.', createdAt: hoursAgo(28) },
+      // #3490: Homeroom bot's spec, in the shape it writes one on a request
+      // (services/homeroom-bot-live.js specCommentText), so the request page
+      // draws it as a spec in a preview.
+      { author: 'usernode-bot', body: MOCK_BOT_SPEC_COMMENT, createdAt: hoursAgo(20) },
       longReply(),
     ],
   };

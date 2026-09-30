@@ -100,7 +100,8 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
     'the summary card\'s Week by week is the Workshop tab');
   assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
     'the discussion is a preview whose Open is the Discussion tab');
-  assert.match(hub, /\{v\.mine && v\.mine\.rows\.length \? \(\s*<YourWorkCard/, 'your work only when you have some');
+  assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| v\.mine\.viewer\) \? \(\s*<YourWorkCard/,
+    'your work for any signed-in viewer, with work or without (#3489)');
   assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole.
@@ -114,12 +115,13 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.match(ws, /v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
   assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
-  assert.doesNotMatch(ws, /<ApprovalRules/);
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
-  // All items leads with the approval rules, above the categories.
+  // The approval rules are the Workshop page's foot (#3487), not the head of
+  // All items, where they sat for a round.
+  assert.ok(w('<ApprovalRules') > w('data-ws-since=""'), 'the approval rules close the Workshop page');
+  assert.match(ws, /\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\s*<\/>/, 'as its last section');
   const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
-  assert.ok(all.indexOf('<ApprovalRules') >= 0 && all.indexOf('<ApprovalRules') < all.indexOf('data-ws-pane=""'),
-    'the approval rules above the categories');
+  assert.ok(!all.slice(0, all.indexOf('data-ws-pane=""')).includes('<ApprovalRules'), 'and All items no longer leads with them');
   // `?ws=discussion` is a deep link like the others.
   assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all'\],/);
 });

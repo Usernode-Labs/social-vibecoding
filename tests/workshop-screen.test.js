@@ -934,7 +934,7 @@ test('the Needs you row is drawn only while a vote waits on you', () => {
   mod.workshopStore.set({ open: false, tab: 'status', rows: null, feed: null, feedError: false });
 });
 
-test('#3270: the Needs you pane is one feed, every project mixed, one card per screen', () => {
+test('#3270, #3488: the Needs you pane is one feed, every project mixed, drawn by a project\'s own feed', () => {
   const mod = loadTsx('frontend/src/features/workshop/index.tsx');
   const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
   const card = (kind, id, slug, extra = {}) => ({
@@ -949,15 +949,24 @@ test('#3270: the Needs you pane is one feed, every project mixed, one card per s
   });
   let out = html();
   const pane = out.slice(out.indexOf('data-workshop-pane="needs"'));
-  assert.match(pane, /<div class="workshop-reel" data-needs-reel="" role="feed" aria-label="Decisions waiting on you">/);
-  assert.deepEqual([...pane.matchAll(/data-needs-card="(\w+)" data-needs-app="([\w-]+)"/g)].map((m) => `${m[2]}:${m[1]}`),
+  // #3488: the project's own feed, not cards of this screen's own.
+  assert.match(pane, /<div class="workshop-needs-feed" data-needs-reel=""><div class="dev-ws-needs" data-ws-needs="">/);
+  assert.doesNotMatch(pane, /workshop-reel-card|data-needs-answer/, 'the old cards are gone');
+  assert.deepEqual([...pane.matchAll(/data-ws-item="needs:(\w+):(\d+)"[^>]*data-ws-app="([\w-]+)"/g)].map((m) => `${m[3]}:${m[1]}`),
     ['garden:proposal', 'swap:governance', 'garden:proposal'], 'in the order the server mixed them, not grouped');
   assert.doesNotMatch(pane, /data-workshop-group=/, 'no list of lists any more');
-  assert.match(pane, /href="#app\/garden\/dev\/proposals\/8"/);
-  assert.match(pane, /data-needs-answer="yes"/, 'a change is answered on its card');
-  assert.match(pane, /<a class="workshop-reel-decide" href="#app\/swap\/dev\/governance\/9" data-needs-answer="open">/,
-    'a group decision opens its own page');
-  assert.match(pane, />1 of 3</);
+  // Each item names its project, and its title opens its page there.
+  assert.match(pane, /<a class="workshop-reel-app" data-ws-item-app="" href="#app\/swap\/workshop">/);
+  assert.match(pane, /<h2 class="dev-ws-item-title"><a href="#app\/garden\/dev\/proposals\/8">Item 8<\/a><\/h2>/);
+  assert.match(pane, /<h2 class="dev-ws-item-title"><a href="#app\/swap\/dev\/governance\/9">Item 9<\/a><\/h2>/);
+  assert.match(pane, /class="dev-ws-eyebrow">Group decision · needs your vote</, 'a group decision says what it is');
+  // The rail, as a project's: Vote, Description, Comments, Ask, Try it, More.
+  assert.deepEqual([...pane.matchAll(/data-ws-rail-btn="(\w+)"/g)].map((m) => m[1]),
+    ['vote', 'description', 'comments', 'ask', 'try', 'more']);
+  assert.match(pane, /data-ws-rail-btn="more" data-card-menu="" data-card-menu-open="#app\/garden\/dev\/proposals\/8"/,
+    'the ⋯ offers the card\'s page, the one entry that holds across projects');
+  assert.match(pane, /class="dev-ws-item-of">1 \/ 3</);
+  assert.match(pane, /class="dev-ws-done-cta">Back to your communities</);
 
   mod.workshopStore.set({ feed: [] });
   out = html();
