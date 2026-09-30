@@ -70,175 +70,231 @@ test('every friend write is guarded', () => {
   assert.doesNotMatch(src, /router\.(post|delete)\([^\n]*friendshipLimiter, write\(/, 'no unguarded write');
 });
 
-// One-click actions that need nothing but the URL: a request with a JSON body
-// already needs a CORS preflight, these do not. Each one carries the guard
-// after any rate limiter (and before the one raw body parser, so a refused
-// upload is never read).
-const GUARDED = [
-  ['src/routes/conversations.js', [
-    ['delete', '/api/conversations/:id/members/:userId'],
-    ['post', '/api/conversations/:id/leave'],
-    ['delete', '/api/conversations/:id/messages/:messageId'],
-    ['put', '/api/me/blocks/:userId'],
-    ['delete', '/api/me/blocks/:userId'],
-    ['put', '/api/conversations/:id/messages/:messageId/bookmark'],
-    ['delete', '/api/conversations/:id/messages/:messageId/bookmark'],
-    ['post', '/api/conversations/:id/attachments'],
-  ]],
-  ['src/routes/app-blocks.js', [
-    ['put', '/api/me/app-blocks/:slug'],
-    ['delete', '/api/me/app-blocks/:slug'],
-  ]],
-  ['src/routes/chat.js', [
-    ['put', '/api/apps/:slug/messages/:id/bookmark'],
-    ['delete', '/api/apps/:slug/messages/:id/bookmark'],
-    ['post', '/api/apps/:slug/messages/read'],
-    ['post', '/api/apps/:slug/messages/unread'],
-  ]],
-  ['src/routes/approvers.js', [
-    ['post', '/api/approver-invites/:appId/accept'],
-    ['post', '/api/approver-invites/:appId/decline'],
-    ['delete', '/api/apps/:slug/approvers/:userId'],
-  ]],
-  ['src/routes/collaborators.js', [
-    ['post', '/api/invites/:appId/accept'],
-    ['post', '/api/invites/:appId/decline'],
-    ['delete', '/api/apps/:slug/collaborators/:userId'],
-  ]],
-  ['src/routes/community-invites.js', [
-    ['delete', '/api/invite-links/:id'],
-  ]],
-  ['src/routes/kudos.js', [
-    ['post', '/api/sessions/:id/kudos'],
-    ['delete', '/api/sessions/:id/kudos'],
-  ]],
-  ['src/routes/votes.js', [
-    ['post', '/api/sessions/:id/promote'],
-    ['post', '/api/sessions/:id/undo'],
-    ['post', '/api/sessions/:id/admin-merge'],
-  ]],
-  ['src/routes/proposal-handoff.js', [
-    ['post', '/api/sessions/:id/promote'],
-  ]],
-  ['src/routes/sessions.js', [
-    ['post', '/api/apps/:slug/issues/:number/headless-session'],
-    ['post', '/api/sessions/:id/clone-headless'],
-    ['post', '/api/sessions/:id/platform-issue/:msgId/confirm'],
-    ['post', '/api/sessions/:id/platform-issue/:msgId/dismiss'],
-    ['post', '/api/sessions/:id/archive'],
-    ['post', '/api/sessions/:id/unpromote'],
-    ['post', '/api/sessions/:id/reset-agent-context'],
-    ['post', '/api/sessions/:id/unarchive'],
-    ['post', '/api/sessions/:id/share'],
-    ['post', '/api/sessions/:id/unshare'],
-    ['post', '/api/sessions/:id/share-transcript'],
-    ['post', '/api/sessions/:id/unshare-transcript'],
-    ['post', '/api/sessions/:id/fork'],
-    ['post', '/api/sessions/:id/pause'],
-    ['post', '/api/sessions/:id/resume'],
-    ['post', '/api/sessions/:id/sync-main'],
-    ['post', '/api/sessions/:id/specs/:version/share'],
-    ['post', '/api/sessions/:id/stop'],
-    ['post', '/api/sessions/:id/deploy-staging'],
-    ['post', '/api/sessions/:id/ensure-staging'],
-    ['post', '/api/sessions/:id/recheck'],
-  ]],
-  ['src/routes/agent-sessions.js', [
-    ['post', '/api/agent-sessions/:id/archive'],
-    ['post', '/api/agent-sessions/:id/unarchive'],
-    ['post', '/api/agent-sessions/:id/stop'],
-    ['post', '/api/agent-sessions/:id/actions/:actionId/confirm'],
-    ['post', '/api/agent-sessions/:id/actions/:actionId/dismiss'],
-  ]],
-  ['src/routes/agent-session-drafts.js', [
-    ['delete', '/api/agent-sessions/:id/drafts/:draftId'],
-  ]],
-  ['src/routes/chat-drafts.js', [
-    ['delete', '/api/sessions/:id/drafts/:draftId'],
-  ]],
-  ['src/routes/apps.js', [
-    ['post', '/api/me/app-allowance/request'],
-    ['delete', '/api/apps/:slug/secrets/:key'],
-    ['post', '/api/apps/:slug/redeploy'],
-    ['post', '/api/apps/:slug/check-updates'],
-    ['post', '/api/apps/:slug/main-check/resume'],
-    ['post', '/api/apps/:slug/retry'],
-  ]],
-  ['src/routes/auth.js', [
-    ['delete', '/api/me/api-key'],
-    ['post', '/api/me/wallet-link'],
-    ['delete', '/api/me/wallet-link'],
-  ]],
-  ['src/routes/credentials.js', [
-    ['post', '/api/me/credentials/openrouter/managed'],
-    ['delete', '/api/me/credentials/openrouter'],
-  ]],
-  ['src/routes/llm-grants.js', [
-    ['delete', '/api/me/llm-grants/:appId'],
-  ]],
-  ['src/routes/app-permissions.js', [
-    ['delete', '/api/me/permission-grants/:appId/:capability'],
-  ]],
-  ['src/routes/global-chat.js', [
-    ['post', '/api/global-chat/threads/:id/cancel'],
-    ['delete', '/api/global-chat/threads/:id'],
-  ]],
-  ['src/routes/issues.js', [
-    ['post', '/api/apps/:slug/issues/:number/bounty'],
-    ['post', '/api/apps/:slug/github-issues/:number/claim'],
-    ['delete', '/api/apps/:slug/github-issues/:number/claim'],
-    ['post', '/api/issues/:id/admin-apply'],
-    ['post', '/api/issues/:id/close'],
-  ]],
-  ['src/routes/demo-mode.js', [
-    ['post', '/api/apps/:slug/demo/vote'],
-    ['post', '/api/apps/:slug/demo/reset'],
-  ]],
-  ['src/routes/notifications.js', [
-    ['delete', '/api/apps/:slug/notification-preferences'],
-    ['post', '/api/notifications/read'],
-  ]],
-  ['src/routes/shots.js', [
-    ['post', '/api/apps/:slug/proposals/:sessionId/shots/stop'],
-  ]],
-  ['src/routes/topic-attributes.js', [
-    ['delete', '/api/apps/:slug/topics/:targetType/:targetRef/attributes'],
-  ]],
-  ['src/routes/report-ai.js', [
-    ['post', '/api/apps/:slug/report-ai/generate'],
-  ]],
-  ['src/routes/campaigns.js', [
-    ['post', '/api/campaigns/:id/merge-green'],
-    ['post', '/api/campaigns/:id/apps/:appId/retry'],
-  ]],
-  ['src/routes/profile.js', [
-    ['delete', '/api/me/avatar'],
-  ]],
-  ['src/routes/report-snapshots.js', [
-    ['post', '/api/apps/:slug/report-snapshots/:id/share'],
-    ['post', '/api/apps/:slug/report-snapshots/:id/unshare'],
-  ]],
-];
+// Every unsafe route under src/routes/** is accounted for: it carries the
+// guard, sits under an admin prefix (server.js guards those writes as a
+// block), or is listed in EXEMPT with the reason it cannot be sent from
+// another page with the visitor's cookie. A new route fails here until
+// someone decides which.
+//
+// Only POST needs the decision. PUT, PATCH and DELETE are not CORS-simple
+// methods, so another origin cannot send one without a preflight, and no
+// route here answers a preflight with credentials (public-cors.js allows
+// none). Many of them carry the guard anyway, as a second layer.
+const JSON_FIELD = 'requires a JSON body field: another origin cannot send one without a preflight';
+const RAW = 'application/octet-stream body: not CORS-safelisted, so another origin needs a preflight';
+const TOKEN = 'not cookie-authenticated: bearer, app, worker or partner token, webhook signature, OAuth client or public endpoint';
+const OWN = 'has its own Origin/Sec-Fetch-Site check';
 
-function declaration(src, method, route) {
-  const re = new RegExp(`router\\.${method}\\(\\s*'${route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}',`, 'g');
-  const starts = [...src.matchAll(re)].map((m) => m.index);
-  assert.equal(starts.length, 1, `${method.toUpperCase()} ${route} is declared once`);
-  const rest = src.slice(starts[0]);
-  const end = rest.search(/async \(req, res|\(req, res\) =>|update\(/);
-  assert.ok(end > 0, `${method.toUpperCase()} ${route} has a handler`);
-  return rest.slice(0, end);
+const EXEMPT = new Map([
+  ['agent-session-drafts.js POST /api/agent-sessions/:id/drafts', JSON_FIELD],
+  ['agent-sessions.js POST /api/agent-sessions/:id/attachments', RAW],
+  ['agent-sessions.js POST /api/agent-sessions/:id/turns', JSON_FIELD],
+  ['app-files.js POST /api/apps/:slug/files', RAW],
+  ['app-llm-proxy.js POST ${ROUTE_PREFIX}*', TOKEN],
+  ['app-permissions.js POST /api/me/permission-grants', JSON_FIELD],
+  ['app-storage.js POST /api/app-storage/files', TOKEN],
+  ['approvers.js POST /api/apps/:slug/approver-invites', JSON_FIELD],
+  ['apps.js POST /api/apps', JSON_FIELD],
+  ['apps.js POST /api/apps/:slug/fork', JSON_FIELD],
+  ['apps.js POST /api/apps/:slug/secret-declaration-pr', JSON_FIELD],
+  ['apps.js POST /api/apps/:slug/rename', JSON_FIELD],
+  ['apps.js POST /api/apps/:slug/lock', JSON_FIELD],
+  ['apps.js POST /api/apps/:slug/visibility-pr', JSON_FIELD],
+  ['apps.js POST /api/apps/:slug/admins-pr', JSON_FIELD],
+  ['apps.js POST /api/apps/:slug/governance-pr', JSON_FIELD],
+  ['apps.js POST /api/apps/:slug/favorite', JSON_FIELD],
+  ['apps.js POST /api/apps/:slug/membership', JSON_FIELD],
+  ['auth.js POST /api/auth/login', JSON_FIELD],
+  ['auth.js POST /api/auth/otp/request', JSON_FIELD],
+  ['auth.js POST /api/auth/otp/verify', JSON_FIELD],
+  ['auth.js POST /api/auth/otp/set-password', JSON_FIELD],
+  ['auth.js POST /api/auth/register', JSON_FIELD],
+  ['auth.js POST /api/me/api-key', JSON_FIELD],
+  ['auth.js POST /api/me/password', JSON_FIELD],
+  ['auth.js POST /api/me/ai-progress-estimate', JSON_FIELD],
+  ['auth.js POST /api/me/session-bridge', JSON_FIELD],
+  ['auth.js POST /api/auth/wallet-check', JSON_FIELD],
+  ['auth.js POST /api/auth/wallet-verify', JSON_FIELD],
+  ['auth.js POST /api/auth/wallet-reset-verify', JSON_FIELD],
+  ['auth.js POST /api/auth/password-reset/request', JSON_FIELD],
+  ['auth.js POST /api/auth/password-reset/confirm', JSON_FIELD],
+  ['auth.js POST /api/me/wallet-change-password', JSON_FIELD],
+  ['auth.js POST /api/auth/wallet-register', JSON_FIELD],
+  ['auth.js POST /api/auth/wallet-link-login', JSON_FIELD],
+  ['board-order.js POST /api/apps/:slug/board-order', JSON_FIELD],
+  ['chat-drafts.js POST /api/sessions/:id/drafts', JSON_FIELD],
+  ['chat.js POST /api/apps/:slug/messages', JSON_FIELD],
+  ['chat.js POST /api/apps/:slug/chat-attachments', RAW],
+  ['cli-agent.js POST /attach', TOKEN],
+  ['cli-agent.js POST /heartbeat', TOKEN],
+  ['cli-agent.js POST /turns/:id/accept', TOKEN],
+  ['cli-agent.js POST /turns/:id/decline', TOKEN],
+  ['cli-agent.js POST /turns/:id/progress', TOKEN],
+  ['cli-agent.js POST /turns/:id/commit', TOKEN],
+  ['cli-agent.js POST /turns/:id/result', TOKEN],
+  ['cli-agent.js POST /detach', TOKEN],
+  ['cli-auth.js POST /api/cli/device/code', JSON_FIELD],
+  ['cli-auth.js POST /api/cli/device/token', JSON_FIELD],
+  ['cli-auth.js POST /api/cli/device/approve', OWN],
+  ['collaborators.js POST /api/apps/:slug/invites', JSON_FIELD],
+  ['content-reports.js POST /api/apps/:slug/report', JSON_FIELD],
+  ['content-reports.js POST /api/apps/:slug/messages/:id/report', JSON_FIELD],
+  ['conversations.js POST /api/conversations', JSON_FIELD],
+  ['conversations.js POST /api/conversations/:id/respond', JSON_FIELD],
+  ['conversations.js POST /api/conversations/:id/members', JSON_FIELD],
+  ['conversations.js POST /api/conversations/:id/messages', JSON_FIELD],
+  ['conversations.js POST /api/conversations/:id/messages/:messageId/reactions', JSON_FIELD],
+  ['conversations.js POST /api/conversations/:id/read', JSON_FIELD],
+  ['conversations.js POST /api/conversations/:id/unread', JSON_FIELD],
+  ['conversations.js POST /api/conversations/:id/typing', JSON_FIELD],
+  ['conversations.js POST /api/conversations/:id/messages/:messageId/report', JSON_FIELD],
+  ['demo-mode.js POST /api/apps/:slug/demo/propose', JSON_FIELD],
+  ['dev-flow.js POST /api/apps/:slug/external-tasks', OWN],
+  ['dev-flow.js POST /api/apps/:slug/external-tasks/:id/submit', OWN],
+  ['dev-flow.js POST /api/apps/:slug/external-tasks/:id/discard', OWN],
+  ['dev-flow.js POST /api/apps/:slug/external-tasks/:id/submit-update', OWN],
+  ['feedback.js POST /api/feedback/title', JSON_FIELD],
+  ['feedback.js POST /api/feedback/screenshot', RAW],
+  ['feedback.js POST /api/feedback', JSON_FIELD],
+  ['github-webhook.js POST /api/github/webhook', TOKEN],
+  ['global-chat.js POST /api/global-chat/threads/:id/direct-actions', JSON_FIELD],
+  ['global-chat.js POST /api/global-chat/threads/:id/inline-actions', JSON_FIELD],
+  ['global-chat.js POST /api/global-chat/actions/:token/confirm', JSON_FIELD],
+  ['internal.js POST /api/internal/shots/:runId/shot', TOKEN],
+  ['internal.js POST /api/internal/shots/:runId/skip', TOKEN],
+  ['internal.js POST /api/internal/shots/:runId/note', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/visible-changes', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/visual-evidence-intent', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/push', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/pr', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/platform-issue', TOKEN],
+  ['internal.js POST /api/internal/sessions/:sessionId/prod-debug/sql', TOKEN],
+  ['issues.js POST /api/apps/:slug/issues', JSON_FIELD],
+  ['issues.js POST /api/issues/:id/vote', JSON_FIELD],
+  ['llm-grants.js POST /api/me/llm-grants', JSON_FIELD],
+  ['mcp-remote.js POST /api/connect/oauth/register', TOKEN],
+  ['mcp-remote.js POST /api/connect/oauth/token', TOKEN],
+  ['mcp-remote.js POST /api/connect/oauth/revoke', TOKEN],
+  ['mcp-remote.js POST /api/connect/oauth/authorize', OWN],
+  ['moderation.js POST /api/reports', JSON_FIELD],
+  ['moderation.js POST /api/conversations/:id/messages/:messageId/report', JSON_FIELD],
+  ['moderation.js POST /api/apps/:slug/report', JSON_FIELD],
+  ['moderation.js POST /api/apps/:slug/messages/:id/report', JSON_FIELD],
+  ['onboarding.js POST /api/me/communities', JSON_FIELD],
+  ['pm-order.js POST /api/apps/:slug/pm-order', JSON_FIELD],
+  ['profile.js POST /api/me/email/${action}', JSON_FIELD],
+  ['profile.js POST /api/me/username', JSON_FIELD],
+  ['profile.js POST /api/me/username/choose', JSON_FIELD],
+  ['profile.js POST /api/me/avatar', RAW],
+  ['profiles.js POST /api/profiles/:username/report', JSON_FIELD],
+  ['profiles.js POST /api/users/:username/report', JSON_FIELD],
+  ['proposal-handoff.js POST /api/apps/:slug/proposals/:id/update-from-fork', JSON_FIELD],
+  ['proposal-handoff.js POST /api/apps/:slug/work/share-in-progress', JSON_FIELD],
+  ['proposal-handoff.js POST /api/apps/:slug/proposal-handoffs', JSON_FIELD],
+  ['proposal-handoff.js POST /api/sessions/:id/proposal-handoff/context', JSON_FIELD],
+  ['proposal-handoff.js POST /api/sessions/:id/proposal-handoff/commits', JSON_FIELD],
+  ['proposal-handoff.js POST /api/sessions/:id/proposal-handoff/build', JSON_FIELD],
+  ['public-api.js POST /api/public/waitlist', JSON_FIELD],
+  ['public-api.js POST /api/public/waitlist/resend', JSON_FIELD],
+  ['public-api.js POST /api/public/waitlist/status', JSON_FIELD],
+  ['public-api.js POST /api/public/waitlist/confirm', JSON_FIELD],
+  ['public-api.js POST /api/public/waitlist/more/:token', JSON_FIELD],
+  ['report-snapshots.js POST /api/apps/:slug/report-snapshots', JSON_FIELD],
+  ['sessions.js POST /api/sessions/:id/attachments', RAW],
+  ['sessions.js POST /api/sessions/:id/chat', JSON_FIELD],
+  ['sessions.js POST /api/sessions/:id/specs/:version/share-user', JSON_FIELD],
+  ['social-identities.js POST /api/me/social-identities/:provider/replacement', OWN],
+  ['social-identities.js POST /api/me/social-identities/x/check', OWN],
+  ['topic-attributes.js POST /api/apps/:slug/topics/:targetType/:targetRef/attributes', JSON_FIELD],
+  ['topochain/ingest.js POST /api/v4/slot-outcomes', TOKEN],
+  ['topochain/ingest.js POST /api/v4/epoch-stats', TOKEN],
+  ['topochain/mobile.js POST /challenges-api/terms/consent', JSON_FIELD],
+  ['topochain/mobile.js POST /api/v4/mobile/zkpassport/complete', TOKEN],
+  ['topochain/mobile.js POST /api/v4/mobile/wallet/claim', JSON_FIELD],
+  ['topochain/native-session.js POST /api/v4/mobile/auth/restore-web-session', TOKEN],
+  ['topochain/partner.js POST /api/v4/user-activities', TOKEN],
+  ['topochain/public.js POST /api/v4/app-version/check', TOKEN],
+  ['user-agent-files.js POST /api/me/agent-files', JSON_FIELD],
+  ['votes.js POST /api/apps/:slug/pr-import', JSON_FIELD],
+  ['votes.js POST /api/apps/:slug/pr-import/_mock/advance', JSON_FIELD],
+  ['votes.js POST /api/sessions/:id/vote', JSON_FIELD],
+  ['waitlist-connect.js POST /waitlist/connect/:provider/complete', JSON_FIELD],
+  ['workshop-ask.js POST /api/apps/:slug/workshop/ask', JSON_FIELD],
+]);
+
+const ADMIN_PREFIX = /^\/api\/(v4\/)?admin(\/|$)/;
+
+function routeFiles(dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return routeFiles(full);
+    return entry.name.endsWith('.js') ? [full] : [];
+  });
 }
 
-test('the other one-click signed-in actions are guarded, after their limiters', () => {
-  for (const [file, routes] of GUARDED) {
-    const src = read(file);
-    assert.match(src, /const \{ sameOriginBrowserOnly \} = require\('\.\.\/middleware\/same-site-browser'\);/, file);
-    for (const [method, route] of routes) {
-      const decl = declaration(src, method, route);
-      const at = decl.indexOf('sameOriginBrowserOnly,');
-      assert.ok(at > 0, `${file}: ${method.toUpperCase()} ${route} is guarded`);
-      assert.doesNotMatch(decl.slice(at), /Limiter/, `${file}: ${method.toUpperCase()} ${route} guard follows its limiter`);
+function unsafeRoutes() {
+  const routesDir = path.join(ROOT, 'src/routes');
+  const found = [];
+  for (const file of routeFiles(routesDir).sort()) {
+    const src = fs.readFileSync(file, 'utf8');
+    const rel = path.relative(routesDir, file).split(path.sep).join('/');
+    for (const m of src.matchAll(/\brouter\.(post|put|patch|delete)\(\s*(['"`])([^'"`]+)\2/g)) {
+      // The declaration up to its handler: the first inline function, or the
+      // end of the call when the handler is a named function.
+      const rest = src.slice(m.index);
+      const end = Math.min(...['(req', '=>', ');'].map((t) => rest.indexOf(t)).filter((n) => n >= 0));
+      const decl = rest.slice(0, end);
+      found.push({ key: `${rel} ${m[1].toUpperCase()} ${m[3]}`, method: m[1], route: m[3], decl });
     }
+  }
+  return found;
+}
+
+test('every unsafe route is guarded, under the admin guard, or exempt with a reason', () => {
+  const routes = unsafeRoutes();
+  assert.ok(routes.length > 300, 'the inventory found the route files');
+  const undecided = [];
+  const seen = new Set();
+  for (const { key, method, route, decl } of routes) {
+    seen.add(key);
+    const at = decl.indexOf('sameOriginBrowserOnly');
+    if (at >= 0) {
+      assert.doesNotMatch(decl.slice(at), /Limiter/, `${key}: the guard follows its limiter`);
+      assert.ok(!EXEMPT.has(key), `${key} is guarded, so it is not exempt`);
+      continue;
+    }
+    if (ADMIN_PREFIX.test(route) || method !== 'post') continue;
+    if (!EXEMPT.has(key)) undecided.push(key);
+  }
+  assert.deepEqual(undecided, [], 'guard these routes or add them to EXEMPT with a reason');
+  for (const key of EXEMPT.keys()) assert.ok(seen.has(key), `EXEMPT names a route that no longer exists: ${key}`);
+});
+
+test('admin writes are guarded as a block, ahead of every admin router', () => {
+  const server = read('server.js');
+  const mount = "app.use(['/api/admin', '/api/v4/admin'], require('./src/middleware/same-site-browser').sameOriginBrowserWrites);";
+  const at = server.indexOf(mount);
+  assert.ok(at > server.indexOf('app.use(authMiddleware(config));'), 'mounted after auth');
+  for (const router of ["require('./src/routes/account-deletion').accountDeletionRoutes(config)", 'contentReportRoutes(config)', 'adminRoutes(config)', 'topochainAdminRoutes(config)']) {
+    assert.ok(at < server.indexOf(`app.use(${router})`), `before ${router}`);
+  }
+});
+
+test('the admin block guard lets reads through and refuses cross-site writes', async () => {
+  const { sameOriginBrowserWrites } = require('../src/middleware/same-site-browser');
+  const app = express();
+  app.use('/api/admin', sameOriginBrowserWrites);
+  app.all('/api/admin/x', (_req, res) => res.json({ ok: true }));
+  const server = app.listen(0);
+  await new Promise((resolve) => server.once('listening', resolve));
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/api/admin/x`;
+    const headers = { 'sec-fetch-site': 'same-site' };
+    assert.equal((await fetch(url, { headers })).status, 200);
+    assert.equal((await fetch(url, { method: 'POST', headers })).status, 403);
+    assert.equal((await fetch(url, { method: 'POST', headers: { 'sec-fetch-site': 'same-origin' } })).status, 200);
+    assert.equal((await fetch(url, { method: 'DELETE' })).status, 200);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
   }
 });

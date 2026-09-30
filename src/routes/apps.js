@@ -3362,7 +3362,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.post('/api/apps/:slug/activity', async (req, res) => {
+  router.post('/api/apps/:slug/activity', sameOriginBrowserOnly, async (req, res) => {
     const seconds = activitySeconds(req.body?.seconds);
 
     if (seconds === null) {

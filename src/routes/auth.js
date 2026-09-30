@@ -606,7 +606,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/logout', async (req, res) => {
+  router.post('/api/auth/logout', sameOriginBrowserOnly, async (req, res) => {
     const token = req.cookies?.session;
     if (token) {
       try {
@@ -1086,7 +1086,7 @@ function authRoutes(config) {
   // Connections. Body { flow: 'platform' | 'claude-code' | 'codex' | null }
   // — null (or "") clears it back to "ask me every time", which is what
   // unticking the checkbox sends.
-  router.post('/api/me/dev-flow', async (req, res) => {
+  router.post('/api/me/dev-flow', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     const { flow } = req.body || {};
 
@@ -1118,7 +1118,7 @@ function authRoutes(config) {
   // casing is normalized (language subtag lowercase, two-letter region
   // subtags uppercase: "pt-br" → "pt-BR"). The stored value feeds the
   // iframe JWT `locale` claim and /api/auth/me.
-  router.post('/api/me/locale', async (req, res) => {
+  router.post('/api/me/locale', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     const { locale } = req.body || {};
 

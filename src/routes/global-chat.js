@@ -812,7 +812,7 @@ function globalChatRoutes(config) {
     }
   });
 
-  router.post('/api/global-chat/threads', async (req, res) => {
+  router.post('/api/global-chat/threads', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     noStore(res);
     try {
@@ -996,11 +996,11 @@ function globalChatRoutes(config) {
     }
   });
 
-  router.post('/api/global-chat/threads/:id/turns', chatLimiter, (req, res) => (
+  router.post('/api/global-chat/threads/:id/turns', chatLimiter, sameOriginBrowserOnly, (req, res) => (
     streamTurn(req, res, 'user_turn')
   ));
 
-  router.post('/api/global-chat/threads/:id/more-suggestions', chatLimiter, (req, res) => (
+  router.post('/api/global-chat/threads/:id/more-suggestions', chatLimiter, sameOriginBrowserOnly, (req, res) => (
     streamTurn(req, res, 'more_suggestions')
   ));
 

@@ -271,7 +271,7 @@ function shotsRoutes(config) {
     }
   });
 
-  router.post('/api/apps/:slug/proposals/:sessionId/shots/rerun', async (req, res) => {
+  router.post('/api/apps/:slug/proposals/:sessionId/shots/rerun', sameOriginBrowserOnly, async (req, res) => {
     const id = sessionId(req.params.sessionId);
     if (!id) return res.status(404).json({ error: 'Proposal not found' });
     try {
@@ -332,7 +332,7 @@ function shotsRoutes(config) {
     }
   });
 
-  router.post('/api/apps/:slug/proposals/:sessionId/shots/override', async (req, res) => {
+  router.post('/api/apps/:slug/proposals/:sessionId/shots/override', sameOriginBrowserOnly, async (req, res) => {
     const id = sessionId(req.params.sessionId);
     if (!id) return res.status(404).json({ error: 'Proposal not found' });
     try {

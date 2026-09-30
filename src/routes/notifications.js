@@ -291,7 +291,7 @@ function notificationsRoutes(config) {
     legacyHeaders: false,
     message: { error: 'Please wait a minute before sending another test alert.' },
   });
-  router.post('/api/me/test-alert', (req, res, next) => {
+  router.post('/api/me/test-alert', sameOriginBrowserOnly, (req, res, next) => {
     res.set('Cache-Control', 'no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     return next();

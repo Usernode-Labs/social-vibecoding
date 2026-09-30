@@ -2795,7 +2795,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
   // Create a new session. No branch and no PR yet (#1350): the branch is
   // minted on the first chat turn, the PR after the first commit.
-  router.post('/api/apps/:slug/sessions', drainGuard, communities.requireAppMembership(pool), async (req, res) => {
+  router.post('/api/apps/:slug/sessions', drainGuard, communities.requireAppMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     try {
       // #2779: only an agent session's Mayor starts a change (a delegated
       // grant that names the session); a classic session is no longer
@@ -3891,7 +3891,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   timer run on a short (~5 min) worker-eviction-aligned window
   //   without pausing sessions someone is actively reading. One indexed
   //   UPDATE; only bumps 'active'/'promoted' rows owned by the caller.
-  router.post('/api/sessions/:id/activity', async (req, res) => {
+  router.post('/api/sessions/:id/activity', sameOriginBrowserOnly, async (req, res) => {
     try {
       await pool.query(
         `UPDATE chat_sessions SET last_activity_at = NOW()
@@ -3914,7 +3914,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // earlier visibility-arm — are harmless. Accepts navigator.sendBeacon
   // payloads: a same-origin JSON Blob rides through express.json() and
   // cookie auth applies as usual.
-  router.post('/api/sessions/:id/notify-on-done', async (req, res) => {
+  router.post('/api/sessions/:id/notify-on-done', sameOriginBrowserOnly, async (req, res) => {
     try {
       const armed = !!(req.body && req.body.armed);
       const { rowCount } = await pool.query(
@@ -4337,7 +4337,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   neither — the transcript, the branch and the proposal all stay exactly
   //   as they are, which is the promise the venue sheet makes when it says
   //   an in-chat venue "keeps this chat, this branch and this proposal".
-  router.post('/api/sessions/:id/build-venue', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/build-venue', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isFinite(sessionId)) {

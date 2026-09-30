@@ -32,4 +32,13 @@ function sameOriginBrowserOnly(req, res, next) {
   return next();
 }
 
-module.exports = { sameOriginBrowserOnly };
+// The same rule for a whole path prefix, applied to its writes only: reads
+// stay open to every caller. server.js mounts it on the admin prefixes, whose
+// writes are spread over many routers.
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+function sameOriginBrowserWrites(req, res, next) {
+  if (SAFE_METHODS.has(req.method)) return next();
+  return sameOriginBrowserOnly(req, res, next);
+}
+
+module.exports = { sameOriginBrowserOnly, sameOriginBrowserWrites };

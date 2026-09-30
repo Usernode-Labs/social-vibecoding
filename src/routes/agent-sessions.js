@@ -172,7 +172,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // POST /api/agent-sessions { hint?: { slug, issueNumber?, proposalId?, entry? }, agent? }
   // Called on the FIRST message of a New change, carrying the model the
   // viewer picked while it was unsent (`agent`, see resolveChoice).
-  router.post('/api/agent-sessions', requireUser, agentSessionCreateLimiter, async (req, res) => {
+  router.post('/api/agent-sessions', requireUser, agentSessionCreateLimiter, sameOriginBrowserOnly, async (req, res) => {
     const body = req.body || {};
     if (typeof body !== 'object' || Array.isArray(body)) {
       return res.status(400).json({ error: 'Body must be an object.' });
@@ -702,7 +702,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
   // drawer's "Switch to". The same move as the Mayor's switch_active_change
   // (parks the current change, appends a change_switched note), without
   // spending a model call on a button press.
-  router.post('/api/agent-sessions/:id/active-change', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/active-change', requireUser, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(404).json({ error: 'Agent session not found' });
     try {

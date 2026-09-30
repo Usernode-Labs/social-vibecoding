@@ -19,6 +19,7 @@ const log = require('../services/logger');
 const onboarding = require('../services/onboarding');
 const { acceptInvite } = require('../services/collab-invites');
 const { drainGuard } = require('../services/lifecycle');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function onboardingRoutes(config) {
   const router = Router();
@@ -60,7 +61,7 @@ function onboardingRoutes(config) {
   });
 
   // Read back as `tourDone` on /api/auth/me.
-  router.post('/api/me/tour-done', drainGuard, async (req, res) => {
+  router.post('/api/me/tour-done', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       res.json(await onboarding.markTourDone(pool, req.user.id));
     } catch (err) {
@@ -80,7 +81,7 @@ function onboardingRoutes(config) {
     }
   });
 
-  router.post('/api/me/getting-started/seen', drainGuard, async (req, res) => {
+  router.post('/api/me/getting-started/seen', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const result = await onboarding.markSeen(pool, req.user.id, req.body?.step);
       if (!result.ok) return res.status(result.status).json({ error: result.error });
@@ -91,7 +92,7 @@ function onboardingRoutes(config) {
     }
   });
 
-  router.post('/api/me/getting-started/close', drainGuard, async (req, res) => {
+  router.post('/api/me/getting-started/close', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       res.json(await onboarding.closeCard(pool, req.user.id));
     } catch (err) {

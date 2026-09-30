@@ -336,7 +336,7 @@ function demoModeRoutes(config) {
   }
 
   // ── The switch ─────────────────────────────────────────────────────────
-  router.post('/api/apps/:slug/demo-mode', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/demo-mode', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await loadDemoApp(req, res, { requireDemoMode: false });
       if (!app) return;
@@ -700,7 +700,7 @@ function demoModeRoutes(config) {
   });
 
   // ── Promote: the second cue ────────────────────────────────────────────
-  router.post('/api/apps/:slug/demo/promote', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/demo/promote', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await loadDemoApp(req, res);
       if (!app) return;
