@@ -17107,6 +17107,21 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 }
 .community-switcher-tick { flex: none; width: 20px; display: grid; place-items: center; color: var(--text-primary); }
 .community-switcher-note { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--text-muted); }
+/* The Communities screen's sections, in the switcher (#3519): the same small
+   caps label with its count, and the fold row full-width in the accent with
+   no tile, so it reads as more of the same list. */
+.community-switcher-section {
+  display: flex; align-items: center; gap: 6px;
+  margin: 0; padding: 12px 12px 4px;
+  font-size: 12px; font-weight: 700; line-height: 16px;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted);
+}
+.community-switcher-section-n { margin-left: auto; font-variant-numeric: tabular-nums; }
+.community-switcher-more {
+  min-height: 44px; justify-content: center;
+  color: var(--accent); font-size: 14px; font-weight: 650;
+}
+.community-switcher-menu .community-switcher-more { min-height: 40px; }
 
 /* THE DISCUSSION TAB (project-discussion.tsx): the channel's own pane, a
    FITTED SCREEN like Needs you, so its composer rests on the foot of the

@@ -7,6 +7,13 @@
  * "Join or start a community", which is Discover. Picking one makes it the
  * tab's community and opens its hub (./community-scope.ts goToCommunity).
  *
+ * The communities are drawn as the Communities screen draws them (#3519):
+ * Public communities, Private communities, Just you, newest first inside
+ * each, three out and then "Show N more", five a press, then "Show fewer"
+ * (./sections.ts, shared with the screen, so the switcher and the page can
+ * never disagree about the order of your communities). The one you are on is
+ * never folded away.
+ *
  * It replaced the in-place "Which project?" panel under the header, and it
  * opens from three places, all through the same store: the phone's tab
  * pressed while it is lit, the community's name and ⌄ in the coloured
@@ -38,6 +45,7 @@ import { useCommunityColor } from '../../lib/community-color';
 import {
   closeSwitcher, communityScopeStore, goToCommunity, type CommunityInfo,
 } from './community-scope';
+import { SECTIONS, sectionFloor, sectionFoldFrom, type Audience } from './sections';
 
 const WIDE = '(min-width: 768px)';
 
@@ -98,6 +106,63 @@ function Row({ info, current }: { info: CommunityInfo; current: boolean }) {
   );
 }
 
+/**
+ * One audience's part of the list (#3519): its label and count, its most
+ * recent rows, and the row that shows more of them.
+ *
+ * THE LABEL IS NOT A STOP. The arrows rove `.community-switcher-row` only
+ * (roveRows), so they go from the last row of one section to the first row
+ * of the next. The fold row IS a row, so the keyboard reaches it; pressing it
+ * moves focus to the first row it revealed, and "Show fewer" keeps focus on
+ * itself.
+ */
+function SwitcherSection({ audience, label, rows, current }: {
+  audience: Audience;
+  label: string;
+  rows: CommunityInfo[];
+  current: string | null;
+}) {
+  const floor = sectionFloor(rows, current);
+  const [limit, setLimit] = useState(floor);
+  const fold = sectionFoldFrom(rows.length, limit, floor);
+  const shown = rows.slice(0, fold.shown);
+  const groupRef = useRef<HTMLDivElement>(null);
+  // The index of the first row a press revealed, focused once it renders.
+  const revealFrom = useRef<number | null>(null);
+  useEffect(() => {
+    const from = revealFrom.current;
+    revealFrom.current = null;
+    if (from === null) return;
+    groupRef.current?.querySelectorAll<HTMLElement>('[data-switcher-community]')[from]?.focus({ preventScroll: true });
+  }, [fold.shown]);
+  const labelId = `community-switcher-section-${audience}`;
+  return (
+    <div ref={groupRef} role="group" aria-labelledby={labelId} data-switcher-section={audience}>
+      <h3 className="community-switcher-section" id={labelId}>
+        <span>{label}</span>
+        <span className="community-switcher-section-n" aria-label={`${rows.length} in ${label}`}>{rows.length}</span>
+      </h3>
+      {shown.map((info) => (
+        <Row key={info.slug} info={info} current={current === info.slug} />
+      ))}
+      {fold.label ? (
+        <button
+          type="button"
+          className="community-switcher-row community-switcher-more"
+          data-switcher-more={audience}
+          aria-expanded={fold.shown === rows.length}
+          onClick={() => {
+            if (fold.next > fold.shown) revealFrom.current = fold.shown;
+            setLimit(fold.next);
+          }}
+        >
+          {fold.label}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 /** Arrow keys between the rows; Home and End to either end. */
 function roveRows(e: React.KeyboardEvent<HTMLDivElement>): void {
   const keys = ['ArrowDown', 'ArrowUp', 'Home', 'End'];
@@ -117,6 +182,13 @@ export function SwitcherBody(): ReactNode {
   const st = useStoreState(communityScopeStore);
   const all = !st.slug;
   const rows = (st.list || []).map((slug) => st.info[slug]).filter(Boolean) as CommunityInfo[];
+  // The list is already newest first (community-scope.ts reads orderRows);
+  // each section keeps that order. An audience the client does not know is
+  // read as public, the server's own default, so no row falls out.
+  const known = (a: unknown): Audience => (a === 'invited' || a === 'solo' ? a : 'open');
+  const sections = SECTIONS
+    .map((section) => ({ ...section, rows: rows.filter((info) => known(info.audience) === section.key) }))
+    .filter((section) => section.rows.length > 0);
   return (
     <>
       <div className="community-switcher-head">
@@ -148,8 +220,14 @@ export function SwitcherBody(): ReactNode {
         </button>
         {st.list == null ? (
           <p className="community-switcher-note" data-switcher-loading="">Loading your communities…</p>
-        ) : rows.map((info) => (
-          <Row key={info.slug} info={info} current={st.slug === info.slug} />
+        ) : sections.map((section) => (
+          <SwitcherSection
+            key={section.key}
+            audience={section.key}
+            label={section.label}
+            rows={section.rows}
+            current={st.slug}
+          />
         ))}
         <button
           type="button"
