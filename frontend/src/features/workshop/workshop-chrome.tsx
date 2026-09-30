@@ -47,8 +47,11 @@
  * renders only once somebody has tapped is a panel no prerender ever sees.
  */
 
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import {
+  useEffect, useRef, useState, type ButtonHTMLAttributes, type ReactNode, type RefObject,
+} from 'react';
 
+import { SectionHeader } from '@/components/ui/grouped-list';
 import {
   CheckIcon, ChevronDownIcon, Squares2X2Icon,
 } from '@/components/ui/icons';
@@ -57,8 +60,16 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { focusFirstItem, roveMenuFocus } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { APP_SCOPE_PANEL_ID, appScopeStore } from './app-scope-store.js';
+import {
+  groupRows, SECTION_LIMIT, SECTION_STEP, sectionFold, type Audience, type SectionedRow,
+} from './sections';
 
-type PickerApp = {
+/**
+ * A row of the panel. `audience` and `last_active_at` come with GET
+ * /api/apps and are what the panel groups and orders by (#3363), exactly as
+ * the Communities screen does with the same rows.
+ */
+type PickerApp = SectionedRow & {
   slug: string;
   name?: string;
   icon_url?: string | null;
@@ -153,16 +164,20 @@ export function WorkshopScope({ open, id, scope, onToggle }: {
 const ROW = 'w-full flex items-center gap-3 px-4 min-h-[44px] py-2 text-left text-sm '
   + 'text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors';
 
-function PanelRow({ id, leading, title, detail, trailing, onClick }: {
+function PanelRow({
+  id, leading, title, titleClassName, detail, trailing, onClick, ...rest
+}: {
   id?: string;
   leading?: ReactNode;
   title: string;
+  /** In place of the title's own weight, for the fold row's accent. */
+  titleClassName?: string;
   detail?: string;
   trailing?: ReactNode;
   onClick: () => void;
-}) {
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'id' | 'title' | 'onClick' | 'type' | 'role' | 'className'>) {
   return (
-    <button id={id} type="button" role="menuitem" className={ROW} onClick={onClick}>
+    <button id={id} type="button" role="menuitem" className={ROW} onClick={onClick} {...rest}>
       <span
         className="shrink-0 flex items-center justify-center w-8 h-8 text-zinc-500 dark:text-zinc-400"
         aria-hidden="true"
@@ -170,7 +185,7 @@ function PanelRow({ id, leading, title, detail, trailing, onClick }: {
         {leading}
       </span>
       <span className="min-w-0 flex-1 flex flex-col">
-        <span className="truncate font-medium">{title}</span>
+        <span className={`truncate ${titleClassName || 'font-medium'}`}>{title}</span>
         {detail
           ? <span className="truncate text-xs text-zinc-500 dark:text-zinc-400">{detail}</span>
           : null}
@@ -181,11 +196,132 @@ function PanelRow({ id, leading, title, detail, trailing, onClick }: {
 }
 
 /**
+ * The fewest rows a panel section ever shows: three, or as many as it takes
+ * to reach the ticked app, so no press of "Show fewer" folds away the row
+ * that says where you are.
+ */
+export function pickerFloor(rows: Array<{ slug: string }>, scope: { slug: string } | null): number {
+  const at = scope ? rows.findIndex((app) => app.slug === scope.slug) : -1;
+  return Math.max(SECTION_LIMIT, at + 1);
+}
+
+/**
+ * The panel's fold: the screen's `sectionFold`, collapsing to `floor` rather
+ * than to three. With the floor at three (nothing ticked, or the ticked app
+ * among the three most recent) it IS `sectionFold`, answer for answer. A
+ * section whose floor already shows every row has no fold row at all: a
+ * "Show fewer" that could show nothing fewer is a dead control.
+ */
+export function pickerFold(total: number, limit: number, floor: number): { shown: number; label: string | null; next: number } {
+  if (floor <= SECTION_LIMIT) return sectionFold(total, limit);
+  if (total <= floor) return { shown: total, label: null, next: floor };
+  const shown = Math.min(total, Math.max(floor, limit));
+  const hidden = total - shown;
+  if (!hidden) return { shown, label: 'Show fewer', next: floor };
+  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+}
+
+/**
+ * One audience's part of the panel (#3363): its label, its most recent rows
+ * and the row that shows more of them.
+ *
+ * The Communities screen's `Section`, drawn as a menu. The same three
+ * sections in the same order, newest first, three out and then "Show N
+ * more", five a press, until every row is out and the same row reads "Show
+ * fewer" (./sections.ts, shared with the screen, so the menu and the page
+ * can never disagree about the order of your communities).
+ *
+ * THE LABEL IS NOT A STOP. It is the screen's `SectionHeader` (small caps),
+ * but `role="presentation"`, naming the group it heads rather than being a
+ * row of the menu: the arrows go from the last row of one section to the
+ * first row of the next (lib/menu-keys.ts roves `role="menuitem"` only).
+ * The fold row IS a menu item, so the keyboard can reach it; pressing it
+ * moves focus to the first row it revealed, and "Show fewer" keeps focus
+ * where it is, on the same row.
+ *
+ * THE ROW YOU ARE ON IS NEVER FOLDED AWAY. On an app's own Workshop the
+ * panel ticks that app, so the section holding it opens far enough to show
+ * it: a menu whose tick is behind "Show 5 more" does not say where you are.
+ */
+function PickerSection({ panelId, audience, label, rows, scope, onClose }: {
+  panelId: string;
+  audience: Audience;
+  label: string;
+  rows: PickerApp[];
+  scope: PickerApp | null;
+  onClose: () => void;
+}) {
+  const floor = pickerFloor(rows, scope);
+  const [limit, setLimit] = useState(floor);
+  const fold = pickerFold(rows.length, limit, floor);
+  const shown = rows.slice(0, fold.shown);
+  const groupRef = useRef<HTMLDivElement>(null);
+  // The index of the first row a press revealed, focused once it renders.
+  const revealFrom = useRef<number | null>(null);
+  useEffect(() => {
+    const from = revealFrom.current;
+    revealFrom.current = null;
+    if (from === null) return;
+    const items = groupRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]');
+    items?.[from]?.focus({ preventScroll: true });
+  }, [fold.shown]);
+  const labelId = `${panelId}-section-${audience}`;
+  return (
+    <div ref={groupRef} role="group" aria-labelledby={labelId} data-picker-section={audience}>
+      <SectionHeader id={labelId} role="presentation" className="flex items-center gap-1.5 pt-3">
+        <span>{label}</span>
+        <span className="ml-auto tabular-nums" aria-label={`${rows.length} in ${label}`}>{rows.length}</span>
+      </SectionHeader>
+      {shown.map((app) => (
+        <PanelRow
+          key={app.slug}
+          data-picker-app={app.slug}
+          leading={(
+            <span
+              data-icon={appIconKind(app as never)}
+              className="app-icon-tile w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center text-sm font-bold"
+            >
+              <AppIconContent app={app as never} />
+            </span>
+          )}
+          title={app.name || app.slug}
+          trailing={scope?.slug === app.slug
+            ? <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
+            : undefined}
+          // THE APP YOU ARE ALREADY IN closes the panel and goes nowhere. A
+          // row that re-navigates to the current route would throw this
+          // screen's scroll position and its open windows away to arrive
+          // where it started.
+          onClick={() => {
+            onClose();
+            if (scope?.slug === app.slug) return;
+            void goToApp(app.slug);
+          }}
+        />
+      ))}
+      {fold.label ? (
+        <PanelRow
+          data-picker-more={audience}
+          aria-expanded={fold.shown === rows.length}
+          title={fold.label}
+          titleClassName="font-semibold text-violet-700 dark:text-violet-300"
+          onClick={() => {
+            if (fold.next > fold.shown) revealFrom.current = fold.shown;
+            setLimit(fold.next);
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * The scope chip's panel: which workshop you are looking at.
  *
- * All apps first, then each of your apps, the one on screen carrying the
- * tick. On the all-apps screen (`scope: null`) the tick is on All apps and
- * that row only closes the panel, for the reason an app's own row does below.
+ * All first, then your communities in the Communities screen's three
+ * sections (PickerSection above), the one on screen carrying the tick. On
+ * the all-apps screen (`scope: null`) the tick is on All and that row only
+ * closes the panel, for the reason an app's own row does below.
  */
 export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
   apps: PickerApp[] | null;
@@ -230,30 +366,15 @@ export function WorkshopPicker({ apps, id, scope, onClose, panelRef }: {
           goToAllApps();
         }}
       />
-      {rows.map((app) => (
-        <PanelRow
-          key={app.slug}
-          leading={(
-            <span
-              data-icon={appIconKind(app as never)}
-              className="app-icon-tile w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center text-sm font-bold"
-            >
-              <AppIconContent app={app as never} />
-            </span>
-          )}
-          title={app.name || app.slug}
-          trailing={scope?.slug === app.slug
-            ? <CheckIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
-            : undefined}
-          // THE APP YOU ARE ALREADY IN closes the panel and goes nowhere. A
-          // row that re-navigates to the current route would throw this
-          // screen's scroll position and its open windows away to arrive
-          // where it started.
-          onClick={() => {
-            onClose();
-            if (scope?.slug === app.slug) return;
-            void goToApp(app.slug);
-          }}
+      {groupRows(rows).map((section) => (
+        <PickerSection
+          key={section.key}
+          panelId={id}
+          audience={section.key}
+          label={section.label}
+          rows={section.rows}
+          scope={scope}
+          onClose={onClose}
         />
       ))}
     </div>
