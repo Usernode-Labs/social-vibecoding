@@ -1069,3 +1069,15 @@ test('QA 2026-09-24 Q21: the scrolling strips fade the edge that has more', () =
   assert.match(pane, /const TAB_ROW = 'flex flex-col items-start gap-2 mb-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3';/,
     'below sm the sub-tabs and the window pills stack');
 });
+
+test('the empty standings say how often they update (#3187)', () => {
+  const state = { mounted: true, body: { state: 'noentries', challengeLine: null, disclaimer: null }, drill: null };
+  const store = { get: () => state, subscribe: () => () => {} };
+  const mod = loadTsx('frontend/src/features/leaderboard/topochain-standings.tsx', {
+    stubs: { './topochain-standings-store.js': { topochainStandingsStore: store } },
+  });
+  const out = renderToHtml(createElement(mod.TopochainStandingsPane, {}));
+  assert.match(out,
+    /data-tc-lb-empty="">No leaderboard entries yet\. Standings update every few hours; points from challenges you just finished appear at the next update\.<\/p>/,
+    'the same sentence as the standing card, after the words the declared checks read');
+});

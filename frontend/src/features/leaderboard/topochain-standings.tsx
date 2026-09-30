@@ -34,6 +34,7 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { topochainStandingsStore } from './topochain-standings-store.js';
+import { STANDINGS_UPDATE_NOTE } from './my-standing.js';
 
 type ColumnKey = 'rank' | 'user' | 'points' | 'blocks' | 'success';
 
@@ -323,7 +324,7 @@ function Body({ view }: { view: BodyView | null }): ReactNode {
             dapp.json standings checks: a fresh season has an empty
             leaderboard, and the checks accept "table or this hint" while
             still rejecting the red error state. */}
-        <p className={HINT} data-tc-lb-empty="">No leaderboard entries yet.</p>
+        <p className={HINT} data-tc-lb-empty="">No leaderboard entries yet. {STANDINGS_UPDATE_NOTE}</p>
       </>
     );
   }
