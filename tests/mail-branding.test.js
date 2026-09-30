@@ -60,13 +60,14 @@ test('every kind is framed, and framed exactly once', () => {
 test('the frame is applied in one place, not by the templates', () => {
   // The arrangement this replaces is the bug: six wrappers plus one in the
   // switch is how a seventh template ships unbranded.
-  assert.match(SRC, /const HTML_SHELL = \(body, why = WHY_DEFAULT\) =>/, 'defined once');
+  assert.match(SRC, /const HTML_SHELL = \(body, why = WHY_DEFAULT, preheader = null\) =>/, 'defined once');
   assert.equal((SRC.match(/HTML_SHELL\(/g) || []).length, 1,
     'and called from exactly one place');
   const build = SRC.slice(SRC.indexOf('function buildMessage'));
-  // A template may say why its mail arrived (`why`); the frame still wraps
-  // every kind, here and only here.
-  assert.match(build, /const \{ why, \.\.\.message \} = template\(payload\);\s*return \{ \.\.\.message, html: HTML_SHELL\(message\.html, why\) \};/);
+  // A template may say why its mail arrived (`why`) and set its inbox
+  // preview line (`preheader`); the frame still wraps every kind, here and
+  // only here.
+  assert.match(build, /const \{ why, preheader, \.\.\.message \} = template\(payload\);\s*return \{ \.\.\.message, html: HTML_SHELL\(message\.html, why, preheader\) \};/);
 });
 
 test('an unknown kind still throws rather than sending a blank frame', () => {
