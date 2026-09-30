@@ -3213,6 +3213,44 @@ function usePinnedStrip(
   }, [bar, hostRef, enabled, tab]);
 }
 
+/**
+ * #3514: HOW FAR A PULL TO REFRESH HAS SLID THE PAGE, as `--ptr-gap` on
+ * <html>.
+ *
+ * The kit's pull (public/js/app-view.js attaches it to #dev-forum-scroll)
+ * slides the whole scroller down to show its spinner, and on a project page
+ * that pulled the coloured tab band away from the coloured header: the gap
+ * between them showed the plain page. app.css paints exactly that gap in the
+ * community's colour, so header, gap and band read as one band stretching;
+ * it can only size the paint by the gap, which the kit keeps nowhere but the
+ * scroller's inline transform. So the transform is read back here as it
+ * changes and published as a length. A 240px spinner layer painted whole
+ * would show through the page's transparent hero below the band.
+ *
+ * On <html>, not on the scroller's parent, because that parent is not this
+ * component's to write to, and a custom property only reaches the spinner's
+ * layer (the scroller's sibling) from an ancestor of both.
+ */
+function usePullGap(hostRef: React.RefObject<HTMLDivElement | null>): void {
+  useEffect(() => {
+    const scroller = hostRef.current?.closest<HTMLElement>('#dev-forum-scroll');
+    if (!scroller || typeof MutationObserver !== 'function') return undefined;
+    const root = document.documentElement;
+    const sync = () => {
+      const m = /translateY\(([\d.]+)px\)/.exec(scroller.style.transform || '');
+      const gap = m ? Math.round(parseFloat(m[1])) : 0;
+      if (gap > 0) root.style.setProperty('--ptr-gap', `${gap}px`);
+      else root.style.removeProperty('--ptr-gap');
+    };
+    const mo = new MutationObserver(sync);
+    mo.observe(scroller, { attributes: true, attributeFilter: ['style'] });
+    return () => {
+      mo.disconnect();
+      root.style.removeProperty('--ptr-gap');
+    };
+  }, [hostRef]);
+}
+
 export function DevWorkshop(): ReactNode {
   const v = useStoreState(devWorkshopStore);
   // THE OPEN APP'S NAME AND ARTWORK, for the hero and the channel below. The
@@ -3322,6 +3360,7 @@ export function DevWorkshop(): ReactNode {
   const stripSticks = useMediaFlag(WIDE_QUERY);
   useStripInsets(bar, hostRef, stripSticks);
   usePinnedStrip(bar, hostRef, stripSticks, tab);
+  usePullGap(hostRef);
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.

@@ -274,3 +274,25 @@ test('#3499: the band and the Discussion pane bleed to the screen\'s edges, not 
   assert.ok(pane, 'the Discussion pane bleeds on a phone');
   assert.equal(Number(pane[1]), side, 'and so does the Discussion pane, to the band\'s width');
 });
+
+test('#3522, #3514: on a phone the band pins where it rests, and a pull stretches it from the header', () => {
+  const CSS = read('public/css/app.css');
+  const phone = CSS.slice(CSS.indexOf('@media (max-width: 699.98px) {\n  #dev-workshop { --ws-band-top'));
+  assert.ok(phone.length > 0, 'a phone block for the band');
+  const block = phone.slice(0, phone.indexOf('\n}\n') + 3);
+  // Where it rests: 10px above #dev-forum-scroll's top where that scrolls
+  // (the -18px tuck less #dev-body's 8px), and the header's height less the
+  // 17px tuck where the document scrolls.
+  assert.match(block, /#dev-workshop \{ --ws-band-top: -10px; \}/);
+  assert.match(block, /html\[data-browser-scroller="dev-forum-scroll"\] #dev-workshop \{\s*--ws-band-top: calc\(var\(--browser-banner-h\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top\) - 17px\);/);
+  assert.match(block, /\.dev-ws-tabs\.dev-ws-band \{\s*position: sticky;\s*top: var\(--ws-band-top\);\s*z-index: 29;/, 'sticky, over the cards, under the header');
+  assert.match(block, /#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-band-top\) \+ 58px\); \}/, 'All items\' head pins under the band');
+  // The two numbers the offsets are built from.
+  assert.match(CSS, /^#dev-body:has\(> #dev-workshop\) \{ padding: 8px /m, '#dev-body\'s 8px top padding');
+  assert.match(CSS, /^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px /m, 'the band\'s 18px tuck');
+  // A pull paints only the gap it opens, in the community's colour.
+  assert.match(CSS, /html\[data-community-tint\] :has\(> #dev-forum-scroll\) > \.un-ptr-layer \{\s*background: linear-gradient\(var\(--community-tint\), var\(--community-tint\)\) top left \/ 100% var\(--ptr-gap, 0px\) no-repeat;/);
+  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.match(ws, /function usePullGap\(hostRef[\s\S]*?closest<HTMLElement>\('#dev-forum-scroll'\)[\s\S]*?attributeFilter: \['style'\][\s\S]*?root\.style\.removeProperty\('--ptr-gap'\);/, 'the gap is read off the kit\'s transform, and cleared on the way out');
+  assert.match(ws, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);\s*usePullGap\(hostRef\);/);
+});
