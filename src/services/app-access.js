@@ -238,7 +238,8 @@ function sessionCollabGuard(pool) {
 function issueCollabGuard(pool) {
   return async (req, res, next) => {
     const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return next();
+    // Out of int4 range falls through too: Postgres would reject the cast.
+    if (!Number.isFinite(id) || id < 1 || id > 2147483647) return next();
     try {
       const { rows } = await pool.query(
         `SELECT a.id, a.collab_visibility, a.view_visibility, a.moderation_suspended_at
