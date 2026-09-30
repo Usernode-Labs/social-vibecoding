@@ -96,6 +96,31 @@ export const PlatformTarget = {
     return PlatformTarget._row;
   },
 
+  /** Who asked to hear when slug() changes (onSlug), and what they last heard. */
+  _slugListeners: new Set(),
+  _slugHeard: null,
+
+  /**
+   * Hear when slug() changes (#3407). It is read off three sources that land
+   * at different moments (this lookup's `_slug`, the about read, the version
+   * poll's `App._lastVersionInfo`), none of which a screen can wait on alone,
+   * so each calls notifySlug() when it lands. Returns the unsubscribe.
+   */
+  onSlug(listener) {
+    PlatformTarget._slugListeners.add(listener);
+    return () => { PlatformTarget._slugListeners.delete(listener); };
+  },
+
+  /** Tell onSlug's listeners, if slug() now says something new. */
+  notifySlug() {
+    const slug = PlatformTarget.slug() || null;
+    if (slug === PlatformTarget._slugHeard) return;
+    PlatformTarget._slugHeard = slug;
+    for (const listener of [...PlatformTarget._slugListeners]) {
+      try { listener(slug); } catch { /* one listener does not stop the rest */ }
+    }
+  },
+
   /** The platform's slug, from our own reads or the version pill's. */
   slug() {
     return PlatformTarget._slug
@@ -126,6 +151,7 @@ export const PlatformTarget = {
         if (!data || typeof data !== 'object' || !data.stats) return null;
         PlatformTarget._about = data;
         PlatformTarget._aboutAt = Date.now();
+        PlatformTarget.notifySlug();
         return data;
       } catch {
         return null;
@@ -172,9 +198,11 @@ export const PlatformTarget = {
           PlatformTarget._failedAt = Date.now();
         } else if (!rowServed) {
           PlatformTarget._slug = slug;
+          PlatformTarget.notifySlug();
           restricted(slug);
         } else {
           PlatformTarget._slug = slug;
+          PlatformTarget.notifySlug();
           // `manifest=summary`: this row is read for its identity and its
           // description; the platform's declared tests and env are ~280 KB of
           // it, fetched on every load, that nothing here reads.
