@@ -57,7 +57,7 @@ import {
 } from './store';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { PageBackButton } from '../dev-board/workshop/page-back';
-import { backToPlatformHub, openChannelHub, usePlatformSlug } from './channel-hub';
+import { generalHubBack, openChannelHub, usePlatformSlug } from './channel-hub';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
@@ -1073,8 +1073,9 @@ function ThreadHeader() {
   const menuRef = useRef<HTMLDivElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
   // #3407: #general's hub is the platform project's, whose slug may land
-  // after this header first draws (channel-hub.ts), so it is watched.
-  const hubSlug = usePlatformSlug(active?.kind === 'channel');
+  // after this header first draws (channel-hub.ts), so it is subscribed to;
+  // the disc's label and its press come from that one value.
+  const hubBack = generalHubBack(usePlatformSlug(active?.kind === 'channel'));
   const closeMenu = () => setMenu(false);
   useDismiss(menu, [menuWrapRef], closeMenu);
   const menuKeys = useMenuKeyboard(menu, menuRef, menuBtnRef, closeMenu);
@@ -1139,7 +1140,7 @@ function ThreadHeader() {
         : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
-      {channel ? <PageBackButton label={hubSlug ? 'Homeroom' : 'Communities'} onBack={backToPlatformHub} data-channel-back="" /> : null}
+      {channel ? <PageBackButton label={hubBack.label} onBack={hubBack.onBack} data-channel-back="" /> : null}
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
