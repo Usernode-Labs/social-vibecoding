@@ -291,3 +291,21 @@ test('GitHub disabled keeps the local-template fallback deploying to running', a
   assert.equal(successWrite.params[0], 'running');
   assert.ok(statusPushes.some((p) => p.status === 'running'));
 });
+
+// #3368: the first production container carries the same source-revision
+// evidence rebuildProduction stamps, so a new app's merges can be verified.
+test('the first deploy labels the container with the cloned commit, and only a real one', async () => {
+  const LABEL = 'social.usernode.io/source-revision';
+  const SHA = 'ABCDEF0123456789ABCDEF0123456789ABCDEF01';
+  const runLabels = async (mainSha) => {
+    let labels;
+    const { appCreator } = loadAppCreator({
+      dockerStubs: { runContainer: async (_name, opts) => { labels = opts.labels; return 'container-id-123'; } },
+    });
+    await appCreator.finalizeDeploy({}, { ...DEPLOY_ARGS, mainSha });
+    return labels;
+  };
+  assert.deepEqual(await runLabels(SHA), { [LABEL]: SHA.toLowerCase() });
+  assert.deepEqual(await runLabels('abc1234def5678'), {}, 'a short sha is not revision evidence');
+  assert.deepEqual(await runLabels(null), {});
+});

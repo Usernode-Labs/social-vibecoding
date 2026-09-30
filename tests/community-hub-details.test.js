@@ -130,14 +130,17 @@ test('Needs you counts the votes you owe, not the requests nobody has claimed', 
   assert.match(mixed, /<span class="dev-ws-head-n">1 to vote<\/span>/);
   assert.match(mixed, /<span class="dev-ws-hub-needs-title">Dark mode<\/span>/, 'the first VOTE leads, not the first row');
   assert.doesNotMatch(mixed, /Fix login/);
-  const claimsOnly = renderToHtml(createElement(NeedsCard, {
-    queue: [row('c1', 'Fix login', 'claim'), row('c2', 'Tags', 'claim')],
-    canPost: true,
-    onOpen: () => {},
-  }));
-  assert.doesNotMatch(claimsOnly, /dev-ws-head-n/, 'no votes owed, no count');
-  assert.match(claimsOnly, /No votes owed\. 2 requests nobody has picked up\./);
-  assert.doesNotMatch(claimsOnly, /data-ws-hub-needs-open="" disabled/, 'the queue still opens');
+  // #3408: requests alone owe no vote, so the hub draws no card, only the
+  // line, and its count of requests is the way into the queue.
+  const { NothingToVote, owesVote } = loadTsx(HUB);
+  const claims = [row('c1', 'Fix login', 'claim'), row('c2', 'Tags', 'claim')];
+  assert.equal(owesVote(claims), false, 'requests alone owe no vote');
+  assert.equal(owesVote([...claims, row('v1', 'Dark mode', 'vote')]), true);
+  const claimsOnly = renderToHtml(createElement(NothingToVote, { queue: claims, onOpen: () => {} }));
+  assert.match(claimsOnly, /^<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on · <button type="button" class="dev-ws-link un-touch-target" data-ws-hub-needs-requests="">2 requests nobody has picked up<\/button><\/p>$/);
+  assert.doesNotMatch(claimsOnly, /dev-ws-head-n|Needs you/, 'no card, no count');
+  const one = renderToHtml(createElement(NothingToVote, { queue: [claims[0]], onOpen: () => {} }));
+  assert.match(one, />1 request nobody has picked up</);
 });
 
 test('the channel card\'s composer sends to the room and re-reads the hub', () => {

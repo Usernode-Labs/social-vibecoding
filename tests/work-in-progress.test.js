@@ -166,8 +166,11 @@ test('the mark\'s menu: the app\'s own rows first, then Agent sessions, the sess
   assert.doesNotMatch(sheet, />Continue</);
   // Each session says what app it is on and where it stands, under its title.
   assert.match(sheet, /label=\{row\.title\}\s+sub=\{row\.sub\}/);
-  assert.match(sheet, /\{continuing\.more \? \(\s*<MenuRow\s+id="app-menu-continue-all"[\s\S]{0,200}label="Show more"[\s\S]{0,200}setMessagesFilter\('agents'\)/,
+  assert.match(sheet, /\{continuing\.more \? \(\s*<a\s+id="app-menu-continue-all"\s+href="#messages"\s+className=\{CONTINUE_ALL\}[\s\S]{0,200}setMessagesFilter\('agents'\)[\s\S]{0,200}>\s*Show more\s*<ChevronRightIcon /,
     'only when there are more, and it opens Messages\' Agents list');
+  // #3405: a link under the list in the action accent, not one more row.
+  assert.match(sheet, /const CONTINUE_ALL = 'inline-flex[^;]*text-violet-700 dark:text-violet-300/);
+  assert.doesNotMatch(sheet, /<MenuRow\s+id="app-menu-continue-all"/);
   assert.doesNotMatch(sheet, /See all sessions/);
   assert.match(sheet, /<AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>/);
   assert.doesNotMatch(sheet, /See all your work|continue-change/);

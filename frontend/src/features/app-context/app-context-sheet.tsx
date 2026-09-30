@@ -118,7 +118,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import {
-  ChatIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   FlagIcon,
@@ -167,6 +166,15 @@ const SECTION_TYPE = 'text-[0.7rem] font-semibold uppercase tracking-wide '
 
 /** A section label that owns its whole row. */
 const SECTION = 'px-5 pt-4 pb-1 ' + SECTION_TYPE;
+
+/**
+ * "Show more" under the agent sessions (#3405): a link in the action accent,
+ * not a row. The left padding is ROW's px-5 plus RowBody's 20px glyph and
+ * gap-3, so the words start where the session titles above them start.
+ */
+const CONTINUE_ALL = 'inline-flex items-center gap-1 min-h-[44px] pl-[52px] pr-5 '
+  + 'text-[13px] font-semibold text-violet-700 dark:text-violet-300 '
+  + 'hover:underline underline-offset-2';
 
 /**
  * One destination. An ANCHOR, always — whether clean-path or fragment-routed,
@@ -774,17 +782,29 @@ export function AppsSwitcherSheet(): ReactNode {
                       : null}
                   />
                 ))}
+                {/*
+                    SHOW MORE IS A LINK UNDER THE LIST, NOT A ROW IN IT (#3405).
+                    Drawn as one more row (icon, label, chevron at the edge) it
+                    read as a sixth session. It is small accent text instead,
+                    set in line with the session titles above so it reads as
+                    the list's own tail, with a small chevron because it leaves
+                    the menu for Messages' Agents list. Still an anchor, so
+                    it is in the Tab order and "open in new tab" works; the
+                    tap target stays 44px tall though the text is small.
+                */}
                 {continuing.more ? (
-                  <MenuRow
+                  <a
                     id="app-menu-continue-all"
                     href="#messages"
-                    icon={<ChatIcon />}
-                    label="Show more"
+                    className={CONTINUE_ALL}
                     onClick={(e) => {
                       setMessagesFilter('agents');
                       followThenDismiss(e, '#messages');
                     }}
-                  />
+                  >
+                    Show more
+                    <ChevronRightIcon className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                  </a>
                 ) : null}
               </div>
             ) : null}

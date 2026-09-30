@@ -669,9 +669,9 @@ async function getContainerLabels(nameOrId) {
 async function inspectContainer(nameOrId) {
   try {
     const { stdout } = await execFileAsync('docker', [
-      'inspect', '--format', '{{.State.Status}}\t{{json .Config.Labels}}', nameOrId,
+      'inspect', '--format', '{{.State.Status}}\t{{json .Config.Labels}}\t{{.Image}}', nameOrId,
     ], { timeout: 5000 });
-    const [status, labelsJson] = String(stdout).trim().split('\t');
+    const [status, labelsJson, imageId] = String(stdout).trim().split('\t');
     let labels = {};
     if (labelsJson && labelsJson !== 'null') {
       try {
@@ -679,7 +679,9 @@ async function inspectContainer(nameOrId) {
         if (parsed && typeof parsed === 'object') labels = parsed;
       } catch { /* malformed label blob — treat as unlabelled, status is still good */ }
     }
-    return { status: status || 'unknown', labels };
+    // `.Image` is the immutable image id the container was created from,
+    // not the (mutable) tag it was run by.
+    return { status: status || 'unknown', labels, imageId: imageId || null };
   } catch (err) {
     const msg = String((err && (err.stderr || err.message)) || '');
     // Docker's own "it isn't here" wording. Same phrase getContainerStatus
@@ -687,6 +689,20 @@ async function inspectContainer(nameOrId) {
     if (/no such (container|object)/i.test(msg)) {
       return { status: 'not_found', labels: {} };
     }
+    return null;
+  }
+}
+
+// The immutable id a (possibly mutable) image reference resolves to right
+// now, or null when it cannot be resolved. Compared with inspectContainer's
+// imageId, it proves whether a container runs exactly what a tag names.
+async function imageId(ref) {
+  try {
+    const { stdout } = await execFileAsync('docker', [
+      'image', 'inspect', '--format', '{{.Id}}', ref,
+    ], { timeout: 5000 });
+    return String(stdout).trim() || null;
+  } catch {
     return null;
   }
 }
@@ -999,6 +1015,7 @@ module.exports = {
   getContainerStatus,
   getContainerLabels,
   inspectContainer,
+  imageId,
   containerNetworkAliases,
   ensureNetworkAlias,
   containerExists,
