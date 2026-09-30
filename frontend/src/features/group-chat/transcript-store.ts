@@ -137,6 +137,11 @@ export interface ProposalEvent {
   /** `vote` rows: which way, and the line the voter left, if any. */
   vote?: 'yes' | 'no';
   reason?: string;
+  /**
+   * `vote` rows (#3411): the voter's vote was cast on an earlier version of
+   * the proposal and no longer counts in the tally.
+   */
+  earlier?: boolean;
   /** `notice` rows: the notice, reworded for the page it is on. */
   text?: string;
   /**
