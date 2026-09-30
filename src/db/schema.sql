@@ -2905,10 +2905,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_issues_open_featured_illustration
 
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_emoji VARCHAR(32);
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_image_id VARCHAR(32);
--- A project's colour, when its dapp.json sets one beside its icon
--- ("icon": { "color": "#2e6660" }). NULL means the page derives one from the
--- icon in the browser (frontend/src/lib/community-color.ts).
-ALTER TABLE apps ADD COLUMN IF NOT EXISTS icon_color VARCHAR(7);
 
 -- #1523: an admin's directory review, independent of container health and
 -- of the staging-only `demo` fixture flag. Existing apps remain unreviewed.

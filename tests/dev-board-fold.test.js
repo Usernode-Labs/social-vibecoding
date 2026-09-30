@@ -1361,7 +1361,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // opens its card.
   //
   // 826 → 829: +3 (#852, the Communities tab as a community): the project
-  // page's four tabs in its colour, and the Communities tab's two faces (the
+  // page's four tabs, and the Communities tab's two faces (the
   // community it is on, and All communities), which are new surfaces. The
   // rest FOLDED or was REWRITTEN in place: the hub's chat preview rides the
   // "ends with Start a new change" check, which replaced the Workshop door's;

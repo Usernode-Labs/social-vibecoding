@@ -150,7 +150,6 @@ export function topicBackLabel(href) {
  * @property {string|null} repoUrl
  * @property {string|null} iconUrl
  * @property {string|null} iconEmoji
- * @property {string|null} iconColor  the colour dapp.json sets beside the icon, if any
  * @property {string|null} version
  * @property {boolean} deploying
  * @property {boolean} readOnly
@@ -246,9 +245,6 @@ const INITIAL = {
       app that set an emoji must not fall through to its initial. */
   iconUrl: null,
   iconEmoji: null,
-  /** The project's colour when its dapp.json sets one (`icon.color`); null
-      means the page derives one from the icon (lib/community-color.ts). */
-  iconColor: null,
   /** Short commit sha for the version row, or null while unknown. */
   version: null,
   /** Whether a deploy is in flight for the target — renders as a pill. */

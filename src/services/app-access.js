@@ -73,7 +73,7 @@ const NON_SECRET_APP_COLUMNS = [
   'manifest_snapshot', 'last_failure', 'locked', 'self_hosted', 'moderation_suspended_at',
   'collab_visibility', 'view_visibility', 'approver_policy',
   'approvals_required', 'screenshot_device_scale', 'icon_emoji',
-  'icon_image_id', 'icon_color', 'featured_illustration', 'forked_from', 'admin_usernames',
+  'icon_image_id', 'featured_illustration', 'forked_from', 'admin_usernames',
   'directory_review_status', 'directory_reviewed_at', 'directory_reviewed_sha',
   'main_check_state', 'main_check_sha', 'main_check_at', 'main_check_detail',
   'main_check_resumed_sha', 'main_check_paused_sha', 'release_stall',

@@ -16747,47 +16747,19 @@ a.dev-ws-hero-pending {
 .dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar { opacity: .35; }
 .dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar-on { opacity: 1; }
 
-/* ── The project's colour: its header and its tabs ─────────────────────
-   Inside a project, the bar wears its community's colour (lib/community-
-   color.ts: dapp.json's `icon.color`, else one read off its icon, always dark
-   enough for white text), so which community you are in reads before any
-   word does. The header puts it on <html> as `--community-tint` while the
-   app view is up (`data-community-tint`, features/header/community-tint.ts),
-   on the project's page and in the running app alike, and holds it across a
-   switch from one community to the next.
-
-   THE HEADER. On the project's pages its fill is the faked-glass layer
-   ("FAKED GLASS" below), whose tint is `--fake-glass-tint`; an opaque tint
-   covers the washes, so the bar is the colour, flat. In the running app the
-   bar has no layer (it takes the app's tone, #1945), so the colour is its
-   own background. Its controls re-ink white through the same tokens the
-   app-tone rules move (--brand-*), and its rounded foot squares off: on the
-   project's pages the band continues it, and over the app a coloured bar
-   with a notch reads as a tab rather than an edge. */
-html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header {
-  --fake-glass-tint: var(--community-tint);
-  --brand-ink: #fff;
-  --brand-tint: rgba(255, 255, 255, .16);
-  --brand-line: rgba(255, 255, 255, .32);
-  background-color: var(--community-tint);
-  color: #fff;
-  clip-path: inset(0);
-  border-bottom-left-radius: 0;
-  border-bottom-right-radius: 0;
-}
-html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #header-app-tile {
-  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55);
-}
-/* THE BAND: Hub, Discussion, Needs you, Workshop, under the header, in its
-   colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)
-   for the two hooks that measure it, and bleeds to the column's edges and
-   up under the header's overlap (`-mb-2` on the bar, plus the body's own
-   top padding), so the colour runs unbroken from the top of the screen to
-   the tabs' underline. */
+/* ── A project's tabs: the band under the header ──────────────────────
+   Hub, Discussion, Needs you, Workshop, in the header's own colours: the
+   community's colour on the header is a possible follow-up (#852), so the
+   bar and the band are the standard ones for now. It keeps the old strip's
+   box (`.dev-ws-tabs` > `.dev-ws-tabtrack`) for the two hooks that measure
+   it, and runs to the column's edges over a hairline, as a tab strip does.
+   The tab you are on is lit (`--lit-*`, where you are); the count on Needs
+   you is the accent, a number that asks for you. */
 .dev-ws-tabs.dev-ws-band {
-  margin: -18px -12px 0;
-  padding: 8px 14px 0;
-  background: var(--community-tint, #2a2e34);
+  margin: -4px -12px 0;
+  padding: 0 14px 0;
+  background: none;
+  box-shadow: inset 0 -1px 0 var(--app-sheet-line);
   gap: 0;
 }
 /* The four spread across the band, so a phone fits them whole ("Needs you"
@@ -16803,7 +16775,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   display: inline-flex; align-items: center; gap: 5px;
   height: 42px; padding: 0 1px;
   border: 0; background: none;
-  color: rgba(255, 255, 255, .72);
+  color: var(--text-muted);
   font: inherit; font-size: 14.5px; font-weight: 600; white-space: nowrap;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
@@ -16814,32 +16786,30 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   .dev-ws-band .dev-ws-tabtrack { gap: 4px; }
   .dev-ws-band .dev-ws-ctab { font-size: 13px; gap: 4px; }
 }
-.dev-ws-ctab[aria-selected="true"] { color: #fff; }
+.dev-ws-ctab[aria-selected="true"] { color: var(--lit-ink); }
 .dev-ws-ctab[aria-selected="true"]::after {
   content: ''; position: absolute; left: 0; right: 0; bottom: 0;
-  height: 3px; border-radius: 3px 3px 0 0; background: #fff;
+  height: 3px; border-radius: 3px 3px 0 0; background: var(--lit-ink);
 }
-.dev-ws-ctab:focus-visible { outline: 2px solid #fff; outline-offset: -2px; border-radius: 6px; }
+.dev-ws-ctab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
 @media (hover: hover) {
-  .dev-ws-ctab:hover { color: #fff; }
+  .dev-ws-ctab:not([aria-selected="true"]):hover { color: var(--text-primary); }
 }
-/* How many votes wait on you, on Needs you: white, the colour for its ink. */
+/* How many votes wait on you, on Needs you. */
 .dev-ws-ctab-count {
   min-width: 19px; height: 19px; padding: 0 5px; box-sizing: border-box;
-  border-radius: 999px; background: #fff; color: var(--community-tint, #2a2e34);
+  border-radius: 999px; background: var(--accent); color: #fff;
   font-size: 11.5px; font-weight: 750; line-height: 19px; text-align: center;
 }
-.dev-ws-band .dev-ws-filter-dot { background: #fff; }
 /* The band is the page's own: no pinned sheet behind it (the strip's band
-   below is for the pill it replaced), and on a wide window it pins under
-   the header as that strip did, still in its colour. */
+   below is for the pill it replaced). */
 .dev-ws-tabs.dev-ws-band::before { content: none; }
 
 /* ── The hero's rows (community-card.tsx) ──
    Who is here: the faces, then "Public community · 23 members" as one
    phrase, the audience's glyph leading it. Then one row of what you can do:
-   Open app in the community's colour, Invite, the ⋯, and Join or Joined at
-   the far end, outlined, a state rather than an action. */
+   Open app, Invite, the ⋯, and Join or Joined at the far end, outlined, a
+   state rather than an action. */
 .dev-ws-hero-audience { display: inline-flex; align-items: center; gap: 4px; vertical-align: -3px; }
 .dev-ws-hero-audience b { font-weight: 650; }
 .dev-ws-hero-audience svg { width: 16px; height: 16px; flex: none; color: var(--text-muted); }
@@ -16850,7 +16820,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   display: inline-flex; align-items: center; gap: 6px; flex: none;
   height: 32px; padding: 0 14px;
   border: 0; border-radius: 999px;
-  background: var(--community-tint, var(--accent)); color: #fff;
+  background: var(--accent); color: #fff;
   font: inherit; font-size: 14px; font-weight: 650; white-space: nowrap;
   cursor: pointer;
 }
@@ -16894,11 +16864,96 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 @media (hover: hover) {
   .dev-ws-start-change:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
 }
+/* ── "Your communities" (features/workshop/community-switcher.tsx) ──
+   The switcher behind the Communities tab: a sheet from the floor on a
+   phone (the kit's own when it adopts it; this scrim and panel when not),
+   and a menu hung off whatever opened it on a wide window. Rows are the
+   shell's 15 over 13, each community's tile at 40px, and the one you are on
+   is lit (`--lit-*`, where you are) with a tick. */
+.community-switcher-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, .32);
+  display: flex; align-items: flex-end;
+}
+.community-switcher {
+  box-sizing: border-box;
+  display: flex; flex-direction: column;
+  background: var(--dc-sheet);
+  color: var(--text-primary);
+}
+.community-switcher-sheet {
+  width: 100%; max-height: 82dvh;
+  padding: 6px 8px calc(12px + var(--platform-safe-bottom, 0px));
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, .18);
+}
+.community-switcher-grab {
+  align-self: center; flex: none;
+  width: 36px; height: 5px; margin: 2px 0 8px; border-radius: 3px;
+  background: var(--border, rgba(0, 0, 0, .15));
+}
+.community-switcher-menu {
+  position: fixed; z-index: 60;
+  width: 340px; max-height: min(70vh, 560px);
+  padding: 6px;
+  border-radius: 16px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line), 0 14px 40px rgba(0, 0, 0, .18);
+}
+.community-switcher-head { padding: 8px 12px 6px; }
+.community-switcher-title { margin: 0; font-size: 17px; font-weight: 700; line-height: 22px; }
+.community-switcher-menu .community-switcher-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+.community-switcher-list {
+  display: flex; flex-direction: column; gap: 2px;
+  min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+}
+.community-switcher-row {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; min-height: 60px; padding: 8px 12px; box-sizing: border-box;
+  border: 0; border-radius: 14px; background: transparent;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.community-switcher-menu .community-switcher-row { min-height: 52px; border-radius: 10px; }
+@media (hover: hover) {
+  .community-switcher-row:not([aria-current="true"]):hover { background: var(--bg-secondary); }
+}
+.community-switcher-row[aria-current="true"] { background: var(--lit-tint); }
+.community-switcher-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.community-switcher-tile {
+  flex: none; width: 40px; height: 40px; overflow: hidden;
+  display: grid; place-items: center;
+  border-radius: 11px; font-size: 20px; font-weight: 700;
+}
+.community-switcher-menu .community-switcher-tile { width: 34px; height: 34px; border-radius: 9px; font-size: 17px; }
+.community-switcher-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+/* An emoji tile's glyph at the tile's own size, not the launcher's. */
+.community-switcher-tile > span, .platform-tab-tile > span { font-size: inherit; line-height: 1; }
+.platform-tab-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+.community-switcher-tile-all { background: #1f2329; color: #fff; }
+.dark .community-switcher-tile-all { background: #3a3f47; }
+.community-switcher-tile-add {
+  background: transparent; color: var(--text-muted);
+  box-shadow: inset 0 0 0 1.5px var(--app-sheet-line);
+}
+.community-switcher-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.community-switcher-name {
+  font-size: 15px; font-weight: 650; line-height: 20px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.community-switcher-sub { font-size: 13px; line-height: 17px; color: var(--text-muted); }
+.community-switcher-waiting {
+  flex: none; height: 22px; padding: 0 8px; border-radius: 999px;
+  display: inline-flex; align-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
+  font-size: 12px; font-weight: 650; white-space: nowrap;
+}
+.community-switcher-tick { flex: none; width: 20px; display: grid; place-items: center; color: var(--lit-ink); }
+.community-switcher-note { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--text-muted); }
+
 /* ON A WIDE WINDOW THE TABS ARE THE HEADER'S (header-project-tabs.tsx): one
-   coloured row, the community's name and then its tabs, so the band under
-   it is not drawn. White on the colour; the tab you are on is a pill of
-   white at low strength rather than an underline, which the bar's foot has
-   no room for. */
+   row, the community's name and then its tabs, so the band under it is not
+   drawn. The tab you are on is a lit pill rather than an underline, which
+   the bar's foot has no room for. */
 .header-project-tabs { display: none; }
 @media (min-width: 768px) {
   .dev-ws-tabs.dev-ws-band { display: none; }
@@ -16906,7 +16961,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   .header-project-tabs { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; margin-left: 4px; }
   .header-project-tabs .dev-ws-tabtrack { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
   .header-project-tabs .dev-ws-ctab { height: 30px; padding: 0 12px; border-radius: 999px; font-size: 14.5px; }
-  .header-project-tabs .dev-ws-ctab[aria-selected="true"] { background: rgba(255, 255, 255, .18); }
+  .header-project-tabs .dev-ws-ctab[aria-selected="true"] { background: var(--lit-tint); }
   .header-project-tabs .dev-ws-ctab[aria-selected="true"]::after { content: none; }
   .header-project-tabs .dev-ws-ctab:focus-visible { border-radius: 999px; }
   /* No band, so the page starts under the header as any other does. */
@@ -18611,15 +18666,15 @@ html.un-ios {
 
 /* THE COMMUNITIES TAB'S FACE (tab-bar.tsx CommunityTabFace). On the phone's
    bar, a square ring, an app tile's own shape, around the community the tab
-   is on (in its colour) or, on All communities, the tab's own people glyph
-   (in the tab's ink, so it lights with the tab). The ring is what says the
+   is on or, on All communities, the tab's own people glyph, in the tab's
+   ink either way, so it lights with the tab. The ring is what says the
    tab switches. The desktop rail draws no ring: its row goes back to All
    communities, and the header's name is the switcher there. */
 .platform-tab-ring {
   width: 28px; height: 28px; box-sizing: border-box; flex: none;
   display: inline-grid; place-items: center;
   border-radius: 9px;
-  box-shadow: inset 0 0 0 2px var(--ring, currentColor);
+  box-shadow: inset 0 0 0 2px currentColor;
 }
 .platform-tab-ring-all .platform-tab-glyph { width: 18px; height: 18px; }
 .platform-tab-tile {

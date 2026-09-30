@@ -40,7 +40,7 @@ test('the audience line uses the words on screen, and "Just you" counts nobody',
 
 test('before the read the hero draws only what needs none: Open app and the ⋯', () => {
   // No server render of it, so no hydration to mismatch. The tile and the
-  // name are the coloured header's now (#852), so before the read the hero
+  // name are the header's now (#852), so before the read the hero
   // is the actions that depend on nothing it says, or nothing at all; the
   // fetch runs in an effect.
   const { CommunityCard } = loadTsx(CARD);
@@ -48,9 +48,9 @@ test('before the read the hero draws only what needs none: Open app and the ⋯'
   const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes', name: 'Notes', canOpenApp: true }));
   assert.match(pending, /class="dev-ws-hero" data-ws-community-pending=""/);
   assert.match(pending, /<button type="button" class="dev-ws-open-app" data-ws-community-open-app="">/);
-  // Open app wears the community's colour from the root, where the header
-  // sets it (features/header/community-tint.ts), not from a prop.
-  assert.match(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*background: var\(--community-tint, var\(--accent\)\)/);
+  // Open app is an action, so it wears the accent (the community's own
+  // colour is a possible follow-up, #852).
+  assert.match(read('public/css/app.css'), /\.dev-ws-open-app \{[^}]*background: var\(--accent\); color: #fff;/);
   assert.doesNotMatch(pending, /dev-ws-hero-name|data-ws-community=""|Join|data-ws-community-rule/,
     'no second name under the header\'s, and nothing that depends on membership before it is known');
   const src = read(CARD);
@@ -100,5 +100,5 @@ test('the hero leads the hub, above what needs you and its discussion; who is he
     'first on the hub, then Needs you and the discussion');
   assert.doesNotMatch(lander, /<MembersCard/, 'no separate Members & activity card');
   assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+canOpenApp=\{!actions\.selfHosted\}/,
-    'its tile and name are the coloured header\'s (#852)');
+    'its tile and name are the header\'s (#852)');
 });

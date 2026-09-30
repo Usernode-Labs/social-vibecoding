@@ -15,7 +15,7 @@
  * (`setScope`), and on a cold load `hydrate()` reads the same key.
  *
  * WHAT IT LOOKS LIKE is described by whoever knows: a project page publishes
- * its own name, icon, colour and votes owed (`describe`), and the switcher's
+ * its own name, icon and votes owed (`describe`), and the switcher's
  * read of every community fills in the rest. The chosen community's
  * description is kept beside the key, so the tab draws its tile on a cold
  * load without waiting for a read.
@@ -24,8 +24,8 @@
  *
  * "Your communities": All communities first, then each community you are in,
  * then "Join or start a community". It opens from the phone's tab pressed
- * while it is already lit, from the community's name and ⌄ in the coloured
- * header, and from the header's "All ⌄" on the Communities list.
+ * while it is already lit, from the community's name and ⌄ in the header,
+ * and from the header's "All ⌄" on the Communities list.
  * `openSwitcher(from)` says where, so a wide window can hang the menu off
  * whatever opened it.
  *
@@ -44,8 +44,6 @@ export interface CommunityInfo {
   name: string;
   iconUrl: string | null;
   iconEmoji: string | null;
-  /** What dapp.json set (`icon.color`), if anything. */
-  iconColor: string | null;
   audience?: 'open' | 'invited' | 'solo' | string;
   memberCount?: number;
   /** Votes owed by the viewer here. */
@@ -130,7 +128,7 @@ export function describe(slug: string, patch: Partial<CommunityInfo>): void {
   if (!slug) return;
   const cur = communityScopeStore.get();
   const prev = cur.info[slug];
-  const base: CommunityInfo = prev || { slug, name: slug, iconUrl: null, iconEmoji: null, iconColor: null };
+  const base: CommunityInfo = prev || { slug, name: slug, iconUrl: null, iconEmoji: null };
   const next: CommunityInfo = {
     ...base,
     ...(Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) as Partial<CommunityInfo>),
@@ -177,7 +175,6 @@ type AppRow = {
   name?: string;
   icon_url?: string | null;
   icon_emoji?: string | null;
-  icon_color?: string | null;
   audience?: string;
   member_count?: number;
   last_active_at?: string | null;
@@ -228,7 +225,6 @@ export function loadCommunities(force = false): Promise<void> {
           name: r.name || r.slug,
           iconUrl: r.icon_url || null,
           iconEmoji: r.icon_emoji || null,
-          iconColor: r.icon_color || null,
           audience: r.audience,
           memberCount: Number(r.member_count) || 0,
           needs: Number(counts[r.slug]?.needs) || 0,

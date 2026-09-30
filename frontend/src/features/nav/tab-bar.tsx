@@ -75,7 +75,6 @@ import {
 } from '@/components/ui/icons';
 
 import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
-import { useCommunityColor } from '../../lib/community-color';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { AppIconContent, appIconKind } from '../apps/app-card-view';
@@ -205,10 +204,10 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
 /**
  * THE COMMUNITIES TAB'S FACE: the community it is on, or All communities.
  *
- * On the phone's bar, a square ring, the shape of an app's own tile, around
- * either that community's tile, in its colour (features/workshop/
- * community-scope.ts says which; lib/community-color.ts what colour), or, on
- * All communities, the tab's own people glyph. The ring is what says the tab
+ * On the phone's bar, a square ring, the shape of an app's own tile, in the
+ * tab's own ink, around either that community's tile (features/workshop/
+ * community-scope.ts says which) or, on All communities, the tab's own
+ * people glyph. The ring is what says the tab
  * can be switched: press it while it is lit and "Your communities" opens.
  * The desktop rail draws no ring (app.css): there the row goes back to All
  * communities, and the header's name is the switcher.
@@ -218,9 +217,6 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
  * render are both this branch.
  */
 function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
-  const color = useCommunityColor(info
-    ? { color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.slug }
-    : null);
   if (!info) {
     return (
       <span className="platform-tab-ring platform-tab-ring-all" aria-hidden="true">
@@ -230,7 +226,7 @@ function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
   }
   const app = { slug: info.slug, name: info.name, icon_url: info.iconUrl, icon_emoji: info.iconEmoji };
   return (
-    <span className="platform-tab-ring" style={{ ['--ring' as string]: color }} aria-hidden="true">
+    <span className="platform-tab-ring" aria-hidden="true">
       <span className="app-icon-tile platform-tab-tile" data-icon={appIconKind(app as never)}>
         <AppIconContent app={app as never} />
       </span>

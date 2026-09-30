@@ -3351,9 +3351,6 @@ export function DevWorkshop(): ReactNode {
   const outsider = !!community && !community.is_member;
   // The improve store is the header's own record of the app, read only once
   // it is about this project, not the one the page was last pointed at.
-  // THE COMMUNITY'S COLOUR is the header's (../../header/community-tint.ts):
-  // it sets `--community-tint` on the root, and the band and Open app wear
-  // that property, so the page works nothing out a second time.
   const own = !!v.slug && app.slug === v.slug;
   // The votes waiting on you: the band's Needs you count, the hub's row,
   // and the Communities tab's badge and switcher (features/workshop/
@@ -3363,10 +3360,10 @@ export function DevWorkshop(): ReactNode {
     if (!v.slug || v.loading) return;
     describeCommunity(v.slug, {
       needs: owed,
-      ...(own && app.name ? { name: app.name, iconUrl: app.iconUrl, iconEmoji: app.iconEmoji, iconColor: app.iconColor } : {}),
+      ...(own && app.name ? { name: app.name, iconUrl: app.iconUrl, iconEmoji: app.iconEmoji } : {}),
       ...(community ? { audience: community.audience, memberCount: Number(community.member_count) || 0 } : {}),
     });
-  }, [v.slug, v.loading, owed, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]);
+  }, [v.slug, v.loading, owed, own, app.name, app.iconUrl, app.iconEmoji, community]);
   // The header's copy of the tabs, on a wide window (./project-band.tsx):
   // which is up and what they count, and nothing once the page has gone.
   useEffect(() => {
