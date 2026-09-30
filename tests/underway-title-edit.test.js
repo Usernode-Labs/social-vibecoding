@@ -100,6 +100,7 @@ test('edit mode renders the session editor and protects both unified URL kinds f
   assert.equal(card.title.editing.initial, 'Original proposal title');
   const html = cardHtml(card);
   assert.match(html, /id="dev-session-title-input"/);
+  assert.match(html, /aria-label="Proposal title"/);
   assert.match(html, /maxlength="256"/i);
   for (const kind of ['session', 'proposal']) {
     assert.equal(av._titleEditBlocksRepaint(

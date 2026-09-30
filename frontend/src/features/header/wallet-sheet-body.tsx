@@ -193,12 +193,12 @@ function SendForm({ onSent }: { onSent: () => void }): ReactNode {
   return (
     <div className="flex flex-col gap-2 p-4 mb-4 rounded-lg border border-zinc-200 dark:border-zinc-800">
       <input
-        ref={toRef} placeholder="Recipient address (ut1…)"
+        ref={toRef} placeholder="Recipient address (ut1…)" aria-label="Recipient address"
         className={`${FIELD} font-mono`}
         value={to} onChange={(e) => setTo(e.target.value)}
       />
       <input
-        placeholder="Amount" inputMode="numeric" className={FIELD}
+        placeholder="Amount" aria-label="Amount" inputMode="numeric" className={FIELD}
         value={amount} onChange={(e) => setAmount(e.target.value)}
       />
       <Button size="flushBold" disabled={sending} onClick={submit}>Send</Button>

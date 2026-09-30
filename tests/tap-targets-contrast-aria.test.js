@@ -203,6 +203,19 @@ test('Q20: form controls the audit found unnamed have names', () => {
   const connectors = read('frontend/src/features/settings/sections/connectors.tsx');
   assert.match(connectors, /id="settings-dev-flow"\n\s*aria-label="Where changes get built"/,
     'the dev-flow select is named after its heading');
+  // Four text boxes that took focus announcing only "edit text".
+  assert.match(read('frontend/src/features/messages/message-row.tsx'),
+    /<textarea ref=\{editRef\} aria-label="Edit message"/, 'the message edit box');
+  assert.match(read('frontend/src/features/dev-board/card/dev-card.tsx'),
+    /id=\{`dev-\$\{kind\}-title-input`\}\n\s*aria-label=\{session \? 'Proposal title' : 'Issue title'\}/,
+    'the card title editor, named by kind');
+  const topicHead = read('frontend/src/features/dev-board/topic/topic-head.tsx');
+  assert.match(topicHead, /<h4 id="dev-issue-body-heading" className="dev-topic-h">About this issue<\/h4>/);
+  assert.match(topicHead, /id="dev-issue-body-input"\n\s*aria-labelledby="dev-issue-body-heading"/,
+    'the issue body editor is named after its heading');
+  const wallet = read('frontend/src/features/header/wallet-sheet-body.tsx');
+  assert.match(wallet, /placeholder="Recipient address \(ut1…\)" aria-label="Recipient address"/);
+  assert.match(wallet, /placeholder="Amount" aria-label="Amount"/);
 });
 
 test('Q20: the setup guide\'s scrolling code blocks are focusable, named regions', () => {
