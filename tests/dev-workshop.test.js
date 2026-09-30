@@ -4612,6 +4612,21 @@ test('the feed answers on the Vote sheet and moves by swipe, arrows or keys', ()
   // The count rides each item's own top line beside its eyebrow: it answers
   // "where am I" for the thing in front of you.
   assert.match(WORKSHOP, /className="dev-ws-item-of">\{`\$\{index \+ 1\} \/ \$\{count\}`\}/);
+  // #3517: AND ON A PHONE, THE WAY BACK beside it. The arrows above are a
+  // wide window's, so a phone had only the swipe down, which nothing on the
+  // card mentioned (and which the refresh gesture used to take: see
+  // platform-ui.test.js). A named button, from the second item on, handed
+  // down only below the breakpoint, stable so the memo()'d items skip a
+  // render, and going back by the same `go` the keys and arrows use.
+  const prev = /\{onPrev && index > 0 \? \(\s*<button[^>]*data-ws-item-prev=""[^>]*>/.exec(WORKSHOP);
+  assert.ok(prev, 'the item draws its Previous from the second item on, when handed one');
+  assert.match(prev[0], /aria-label="Previous item"/, 'a chevron alone has no name');
+  assert.match(prev[0], /onClick=\{onPrev\}/);
+  assert.match(WORKSHOP, /onPrev=\{wide \? undefined : prevItem\}/, 'a phone only: a wide window has the arrows');
+  assert.match(WORKSHOP, /const prevItem = useCallback\(\(\) => goRef\.current\(-1\), \[\]\);/);
+  // Held to the counter's line, so the title does not move between the
+  // first item (no button) and the rest.
+  assert.match(CSS, /\.dev-ws-item-prev \{[^}]*width: 26px; height: 26px; margin: -3px -4px -3px auto;/);
   // THE KEYS, every one also a button on the rail, ignored while a field has
   // focus, and listed only where a keyboard is likely (app.css hides the
   // legend on a phone).

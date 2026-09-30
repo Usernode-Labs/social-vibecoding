@@ -25,6 +25,41 @@
     return un && typeof un.toast === 'function' ? un : null;
   }
 
+  // How far the scrollers between a touch's target and `root` are from
+  // their own tops, together: 0 when every one of them is at its top (or
+  // there are none), which is the only time a pull on `root` is a pull.
+  // See pullToRefresh (#3517, #3514).
+  function nestedOffset(from, root) {
+    if (!from || !root || typeof root.contains !== 'function' || !root.contains(from)) return 0;
+    let sum = 0;
+    for (let el = from; el && el !== root; el = el.parentElement) sum += fromTop(el);
+    return sum;
+  }
+
+  // How far one element can still scroll towards the top of its content.
+  //
+  // Not always `scrollTop`. A scroller laid out `flex-direction:
+  // column-reverse` (the usual way to keep a chat on its newest line) sits
+  // at 0 at its BOTTOM and goes negative towards its top, so what is left
+  // to go up there is `scrollTop` plus its whole range. Neither chat on the
+  // Discussion tab is built that way today (#gc-messages and the embedded
+  // #general's .messages-thread-scroll both count up from 0), and the guard
+  // should not quietly stop working the day one is. 0 is ambiguous, the top
+  // of one and the bottom of the other, so only then is the style asked, and
+  // only of an element with something to scroll.
+  function fromTop(el) {
+    const top = Number(el.scrollTop) || 0;
+    if (top > 0) return top;
+    const range = (Number(el.scrollHeight) || 0) - (Number(el.clientHeight) || 0);
+    if (range <= 0) return 0;
+    if (top < 0) return Math.max(0, top + range);
+    let cs = null;
+    try {
+      cs = typeof window.getComputedStyle === 'function' ? window.getComputedStyle(el) : null;
+    } catch (_) { cs = null; }
+    return cs && /auto|scroll/.test(cs.overflowY) && cs.flexDirection === 'column-reverse' ? range : 0;
+  }
+
   function presentFrosted(un, method, opts) {
     const original = opts || {};
     const decorate = window.UsernodeReact && window.UsernodeReact.decorateOverlay;
@@ -281,16 +316,64 @@
     },
 
     /** Keep the gesture/content local to its screen, but read the actual
-        page offset so pulling down mid-page never claims a refresh. */
+        page offset so pulling down mid-page never claims a refresh.
+
+        #3517: AND THE OFFSET OF ANY SCROLLER THE FINGER LANDED IN. The kit
+        reads one scroller's offset, the screen's or the page's, so a
+        downward drag inside a nested scroller that was not at its own top
+        was a pull as far as the kit could tell, whenever the screen around
+        it was at 0. The Workshop's Needs you feed is exactly that: a snap
+        scroller inside #dev-forum-scroll, fitted to the window so the
+        outer offset never leaves 0. Swiping down to go back a card dragged
+        the whole Workshop down under the refresh puck and, past the
+        threshold, reloaded it; where the kit's preventDefault got in first
+        (it claims at a 10px lock, before most browsers start a scroll)
+        the card did not move at all. The Discussion tab is the same shape
+        (#3514): its chat (#gc-messages, or #general's embedded
+        .messages-thread-scroll) opens on its newest line, far from its
+        top, and dragging down to read back slid the page away from the
+        header under the puck instead of scrolling the chat.
+
+        A native scroll view gives the drag to the innermost scroller that
+        can still move, and so does this now: from touchstart to touchend
+        the offset the kit reads is the page's PLUS every scrolled element
+        between the finger and `scrollEl` (`nestedOffset`). Captured, so it
+        is known before the kit's own touchstart asks. Between touches it
+        is the page's alone, so the blocking listener the kit keeps bound
+        at the top is there before the next finger lands, as it always was.
+        v1 of the kit is frozen (additive only), which is why this is the
+        platform's seam and not a change to attachPullToRefresh. */
     pullToRefresh(scrollEl, onRefresh, opts) {
       const un = kit();
       if (!un || typeof un.attachPullToRefresh !== 'function' || !scrollEl) {
         return { detach() {} };
       }
-      return un.attachPullToRefresh(scrollEl, onRefresh, {
+      let from = null;
+      const listen = typeof scrollEl.addEventListener === 'function';
+      const onStart = (e) => { from = e.touches && e.touches.length === 1 ? e.target : null; };
+      const onEnd = (e) => { if (!e.touches || !e.touches.length) from = null; };
+      const cap = { capture: true, passive: true };
+      if (listen) {
+        scrollEl.addEventListener('touchstart', onStart, cap);
+        scrollEl.addEventListener('touchend', onEnd, cap);
+        scrollEl.addEventListener('touchcancel', onEnd, cap);
+      }
+      const handle = un.attachPullToRefresh(scrollEl, onRefresh, {
         ...opts,
-        getScrollTop: () => PlatformUI.scrollElement(scrollEl).scrollTop,
-      });
+        getScrollTop: () => PlatformUI.scrollElement(scrollEl).scrollTop + nestedOffset(from, scrollEl),
+      }) || { detach() {} };
+      return {
+        ...handle,
+        detach() {
+          if (listen) {
+            scrollEl.removeEventListener('touchstart', onStart, cap);
+            scrollEl.removeEventListener('touchend', onEnd, cap);
+            scrollEl.removeEventListener('touchcancel', onEnd, cap);
+          }
+          from = null;
+          if (typeof handle.detach === 'function') handle.detach();
+        },
+      };
     },
 
     /** App-side gestures join the kit's intent lock through here. */

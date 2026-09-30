@@ -1640,7 +1640,7 @@ function rowSlug(row: QueueRow, slug: string): string {
  * or a callback the feed keeps stable (`openFull`, `onDescribe`), so an item
  * renders again only when something it draws changed.
  */
-const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull, onDescribe, railClear, renderApp }: {
+const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull, onDescribe, onPrev, railClear, renderApp }: {
   row: QueueRow;
   index: number;
   count: number;
@@ -1655,6 +1655,12 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   onFull: (el: HTMLElement) => void;
   /** Opens the Description sheet, which the facts line is a door to. */
   onDescribe: () => void;
+  /**
+   * Back to the item before, from the chevron beside the counter (#3517).
+   * Handed down on a phone only, where the Previous and Next under the
+   * rail are hidden; unset on a wide window, which has those.
+   */
+  onPrev?: () => void;
   /**
    * On a phone, how far down the item the rail's first button starts (0
    * until measured, and on a wide window, where the rail stands beside the
@@ -1718,6 +1724,19 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
                 : 'Proposal · needs your vote'}
           </span>
         )}
+        {/* #3517: THE WAY BACK, WHERE A PHONE CAN SEE IT. Swiping down was
+            always the way back, but nothing on the card said so, and the
+            Previous under the rail is a wide window's. This is that
+            button, on the line that already says where you are, from the
+            second item on: it points the way it goes, and at the top of
+            the card it is in nobody's swipe. The rail is not the place:
+            on a phone it already stands six buttons tall, and every one
+            more is a line less for the title and summary above it. */}
+        {onPrev && index > 0 ? (
+          <button type="button" className="dev-ws-item-prev" data-ws-item-prev="" aria-label="Previous item" onClick={onPrev}>
+            <ChevronUpIcon className="dev-ws-item-prev-icon" aria-hidden="true" />
+          </button>
+        ) : null}
         <span className="dev-ws-item-of">{`${index + 1} / ${count}`}</span>
       </div>
       {row.app && renderApp ? renderApp(row) : null}
@@ -2251,6 +2270,12 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     if (el && el.clientHeight) el.scrollTo({ top: idx * el.clientHeight, behavior: 'smooth' });
     landOn(idx);
   };
+  // The chevron beside each item's counter (#3517). Stable, like `describe`
+  // below, so handing it to the memo()'d items costs no render; it reads
+  // this render's `go` through a ref, refreshed the way `swipeHandle` is.
+  const goRef = useRef(go);
+  useLayoutEffect(() => { goRef.current = go; });
+  const prevItem = useCallback(() => goRef.current(-1), []);
 
   const closeSheet = () => {
     if (!sheet) return;
@@ -2685,6 +2710,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
             slug={slug}
             onFull={openFull}
             onDescribe={describe}
+            onPrev={wide ? undefined : prevItem}
             railClear={wide ? 0 : railClear}
             renderApp={renderApp}
           />

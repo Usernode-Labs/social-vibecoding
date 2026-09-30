@@ -16077,6 +16077,24 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font-size: 12px; font-weight: 600; color: var(--text-muted);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
+/* #3517: the way back on a phone, beside the counter (workshop.tsx draws it
+   there only, from the second item on). A small frosted round, the rail's
+   own fill and line, drawn at 26px but held to the row's 20px by negative
+   margins, so the title under it sits where it does on the first card,
+   which has none: a swipe from one to the next must not nudge the text.
+   `margin-left: auto` takes the row's free space, so it rides beside the
+   counter rather than in the middle of the row; the tap target is the 44px
+   square around it. */
+.dev-ws-item-prev {
+  position: relative; flex: none;
+  width: 26px; height: 26px; margin: -3px -4px -3px auto; padding: 0;
+  display: grid; place-items: center;
+  border: 1px solid var(--app-sheet-line); border-radius: 9999px;
+  background-color: var(--dc-sheet-fill);
+  color: var(--text-secondary); cursor: pointer;
+}
+.dev-ws-item-prev::after { content: ''; position: absolute; inset: -9px; }
+.dev-ws-item-prev-icon { width: 16px; height: 16px; }
 /* After a vote the eyebrow IS the confirmation: the same line, in the ok
    tone, with a tick — no toast over the title. */
 .dev-ws-item-done {
