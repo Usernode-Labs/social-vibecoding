@@ -247,6 +247,17 @@ const HEADLESS_WRAPUP_EFFECT_KEYS = Object.freeze({
   spend: 'headless_wrapup_spend',
 });
 
+// Who may read a session's checks, details and live status: its owner, an
+// admin, anyone while its owner has shared it and it is still underway, and
+// anyone once it is a proposal up for a vote (or merging/merged). `session`
+// needs `user_id`, `status` and `shared_at`.
+function canViewSession(session, user) {
+  if (!session || !user) return false;
+  return session.user_id === user.id || !!user.isAdmin
+    || (!!session.shared_at && ['active', 'paused'].includes(session.status))
+    || ['promoted', 'merging', 'merged'].includes(session.status);
+}
+
 // A session that will not change again, for the session list's `?recent=N`.
 const FINISHED_SESSION_STATUSES = new Set(['merged', 'archived']);
 // `?recent=N` as a count of finished rows to keep: 1..200, or null to list
@@ -3583,10 +3594,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const session = rows[0];
-      const visible = session.user_id === req.user.id || req.user.isAdmin
-        || (session.shared_at && ['active', 'paused'].includes(session.status))
-        || ['promoted', 'merging', 'merged'].includes(session.status);
-      if (!visible) return res.status(404).json({ error: 'Session not found' });
+      if (!canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
       const detail = req.path.endsWith('/details')
         ? (await enrichImportedUnderwaySessions(pool, [session], req.user.id, { all: true }))[0]
         : session;
@@ -5604,6 +5612,20 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         busy = true;
         fixtureStoppable = fixture.stoppable;
       }
+    }
+
+    // Same visibility rule as /checks and /details: the progress log, spend,
+    // estimate and runner name below are the session's own, so a caller who
+    // may not see the session gets the same 404 as for a missing one.
+    try {
+      const { rows: seen } = Number.isNaN(sessionId) ? { rows: [] } : await pool.query(
+        'SELECT user_id, status, shared_at FROM chat_sessions WHERE id = $1',
+        [sessionId]
+      );
+      if (!canViewSession(seen[0], req.user)) return res.status(404).json({ error: 'Session not found' });
+    } catch (err) {
+      log.warn('sessions', 'Status visibility lookup failed', { sessionId, err: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
 
     let progress = [];
@@ -13149,4 +13171,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, MAYOR_TURN_DEPS, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
