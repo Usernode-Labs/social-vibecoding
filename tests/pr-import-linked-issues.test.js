@@ -3,10 +3,11 @@
 // A proposal built from a request has to be linked to it, in two places that
 // do different jobs:
 //
-//   1. `Closes #N` in the PR BODY — GitHub is what actually closes the issue
-//      on merge; the platform's post-merge watcher only polls for it having
+//   1. `Closes #N` in the PR BODY — GitHub normally closes the issue on
+//      merge; the platform's post-merge watcher polls for it having
 //      happened (services/issue-close-watcher.js); and
 //   2. `chat_sessions.linked_issues` — what that watcher expects to close,
+//      and closes itself if GitHub has not when its polls run out,
 //      what the merge path suppresses optimistically, and what the Dev board
 //      reads to show a request as being worked on.
 //

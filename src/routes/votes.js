@@ -5302,16 +5302,18 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         // broadcast triggers can read the issues as still open and
         // re-cache them — the suppression list makes fetchPublicIssues
         // drop them no matter what the list says. Optimistic on purpose:
-        // GitHub closes `Closes #N` reliably (just late), and the
-        // suppression TTL self-heals the rare case where it doesn't.
+        // GitHub usually closes `Closes #N` (late), and when it does not
+        // (as on 2026-09-30) the watcher below closes the linked issues
+        // itself once its polls run out; only a failed close there lifts
+        // the suppression again.
         const { sanitizeIssueNumbers } = require('../services/pr-metadata');
         const closedNumbers = sanitizeIssueNumbers(session.linked_issues);
         if (closedNumbers.length) github.noteIssuesClosed(ghOwner, ghRepo, closedNumbers);
         // Auto-resolve any open close-issue proposals targeting the issues
         // this merge closes — their vote is moot now. Same optimism as the
-        // suppression above (GitHub closes `Closes #N` reliably, just
-        // late); the watcher hook below catches hand-edited `Closes #N`
-        // beyond linked_issues. Lazy require to avoid an import cycle;
+        // suppression above (GitHub closes `Closes #N`, or the watcher
+        // below closes the linked ones itself); the watcher also catches
+        // hand-edited `Closes #N` beyond linked_issues. Lazy require to avoid an import cycle;
         // fired-and-forgotten so a failure never fails the merge.
         if (closedNumbers.length) {
           try {
@@ -5351,8 +5353,11 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     // stale for the cache TTL. Watch the referenced issues (PR-body closing
     // keywords ∪ linked_issues) with retry/backoff until GitHub reports
     // them closed, then bust the cache and broadcast the refresh again.
+    // If GitHub still has not closed a LINKED issue when the polls run
+    // out, the watcher closes it itself (after re-reading the PR as merged
+    // into the default branch); body-only numbers are never closed there.
     // Fired-and-forgotten — the polling must never slow down or fail the
-    // merge flow, and nothing is ever written to GitHub.
+    // merge flow.
     try {
       if (github.isEnabled() && session.pr_number) {
         const [, wOwner, wRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];

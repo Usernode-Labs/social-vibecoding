@@ -11,13 +11,20 @@
 // 5-minute fetchPublicIssues TTL, so the panel keeps showing a closed
 // issue.
 //
-// This watcher closes the gap WITHOUT writing anything to GitHub (closing
-// is GitHub's job and it does it reliably — just late): it polls the
-// referenced issues with retry/backoff until they read as closed (or
-// attempts run out), and once closes are observed it busts the open-issues
-// cache and broadcasts the same `github_synced` refresh event the merge
-// path uses, so every group-chat panel refetches and drops the issue.
+// This watcher closes the gap: it polls the referenced issues with
+// retry/backoff until they read as closed (or attempts run out), and once
+// closes are observed it busts the open-issues cache and broadcasts the same
+// `github_synced` refresh event the merge path uses, so every group-chat
+// panel refetches and drops the issue.
 //
+// GitHub's own keyword handling is not reliable enough to be the only path:
+// on 2026-09-30 it stopped applying `Closes #N` to merged PRs for hours. So
+// when the polls run out, the watcher closes the session's LINKED issues
+// that are still open itself (closeLinkedIssues below) — and only those,
+// and only after re-reading the PR as merged into the repo's default branch.
+// Numbers that come solely from a hand-edited PR body are watched but never
+// closed here.
+
 // Everything here is best-effort. watchIssuesClosedAfterMerge is
 // fired-and-forgotten from the merge path (routes/votes.js checkAndMerge)
 // and must never block, slow down, or roll back the merge flow — failures
@@ -46,23 +53,43 @@ function sleep(ms) {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-// Resolve the set of issue numbers the merged PR closes: the session's
-// linked_issues (the deterministic source behind the PR body's `Closes #N`
-// block) unioned with whatever closing keywords the merged body actually
-// carries — a hand-edited body can reference issues the session never
-// linked. Falls back to linkedIssues alone if the PR fetch fails.
-async function resolveIssueNumbers({ owner, repo, prNumber, linkedIssues }) {
-  let parsed = [];
+// Fetch the merged PR once: its body feeds resolveIssueNumbers and its merge
+// state gates closeLinkedIssues. Null when the fetch fails.
+async function fetchPr(owner, repo, prNumber) {
   try {
-    const pr = await github.getPR(owner, repo, prNumber);
-    parsed = parseClosingKeywords(pr && pr.body);
+    return await github.getPR(owner, repo, prNumber);
   } catch (err) {
     log.warn('issue-close-watcher', 'Failed to fetch merged PR body; using linked_issues only', {
       repo: `${owner}/${repo}`, pr: prNumber, err: err.message,
     });
+    return null;
   }
+}
+
+// Resolve the set of issue numbers the merged PR closes: the session's
+// linked_issues (the deterministic source behind the PR body's `Closes #N`
+// block) unioned with whatever closing keywords the merged body actually
+// carries — a hand-edited body can reference issues the session never
+// linked. Falls back to linkedIssues alone if the PR fetch fails. `pr`, when
+// passed, is the already-fetched PR (null = the fetch failed).
+async function resolveIssueNumbers({ owner, repo, prNumber, linkedIssues, pr }) {
+  const fetched = pr === undefined ? await fetchPr(owner, repo, prNumber) : pr;
+  const parsed = parseClosingKeywords(fetched && fetched.body);
   const linked = Array.isArray(linkedIssues) ? linkedIssues : [];
   return sanitizeIssueNumbers([...linked, ...parsed]);
+}
+
+// Whether `pr` is merged into the default branch of owner/repo itself — the
+// condition under which GitHub's own `Closes #N` would have fired. A PR from
+// another repository's base, an unmerged PR, or a payload missing any of
+// these fields answers false, and nothing is closed.
+function mergedIntoDefaultBranch(pr, owner, repo) {
+  if (!pr || pr.merged !== true) return false;
+  const base = pr.base || {};
+  const baseRepo = base.repo || {};
+  const norm = (s) => String(s || '').replace(/\.git$/i, '').toLowerCase();
+  if (!baseRepo.full_name || norm(baseRepo.full_name) !== norm(`${owner}/${repo}`)) return false;
+  return !!base.ref && base.ref === baseRepo.default_branch;
 }
 
 // Check one issue's state. Returns:
@@ -142,6 +169,48 @@ function resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers })
   }
 }
 
+// Close, on GitHub, the linked issues GitHub left open after the grace polls.
+// Returns { closed, failed }.
+//
+// Why this is safe to do without a vote of its own: the numbers are the
+// session's linked_issues, never the PR body's keywords and never anything a
+// request supplies here. Only the proposal's author (or a write admin) can
+// link an issue (proposal_start / prepare_work / update_proposal_issues), the
+// link is shown on the proposal the group votes on, and the platform writes
+// it into the PR body as `Closes #N` — so closing it on merge is exactly what
+// GitHub itself would have done. It runs only from the merge path (and its
+// post-restart resume), only for a PR re-read as merged into this repo's
+// default branch, and only in owner/repo, the app's own repository, parsed
+// from repo_url the same way the close-issue vote parses it.
+async function closeLinkedIssues({ owner, repo, prNumber, pr, linkedIssues, stillOpen }) {
+  const linked = new Set(sanitizeIssueNumbers(linkedIssues));
+  const targets = stillOpen.filter((n) => linked.has(n));
+  const closed = [];
+  const failed = [];
+  if (!targets.length) return { closed, failed };
+  if (!mergedIntoDefaultBranch(pr, owner, repo)) {
+    log.warn('issue-close-watcher', 'Not closing linked issues: PR not verified as merged into the default branch', {
+      repo: `${owner}/${repo}`, pr: prNumber, issues: targets,
+    });
+    return { closed, failed: targets };
+  }
+  for (const n of targets) {
+    try {
+      await github.closeIssue(owner, repo, n);
+      closed.push(n);
+      log.info('issue-close-watcher', 'Closed linked issue GitHub left open after merge', {
+        repo: `${owner}/${repo}`, pr: prNumber, issue: n,
+      });
+    } catch (err) {
+      failed.push(n);
+      log.warn('issue-close-watcher', 'Closing linked issue after merge failed', {
+        repo: `${owner}/${repo}`, pr: prNumber, issue: n, status: err.status, err: err.message,
+      });
+    }
+  }
+  return { closed, failed };
+}
+
 // Entry point, fired-and-forgotten from the merge path. Polls until every
 // referenced issue reads as closed (or attempts are exhausted), busting
 // the cache + broadcasting whenever new closes are observed. Returns the
@@ -154,7 +223,8 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
 
   await sleep(GRACE_DELAY_MS);
 
-  const numbers = await resolveIssueNumbers({ owner, repo, prNumber, linkedIssues });
+  const pr = await fetchPr(owner, repo, prNumber);
+  const numbers = await resolveIssueNumbers({ owner, repo, prNumber, linkedIssues, pr });
   if (!numbers.length) return empty;
 
   // #144: optimistically suppress every referenced number up front. The
@@ -212,6 +282,26 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
     log.warn('issue-close-watcher', 'Gave up waiting for GitHub to close issues', {
       repo: `${owner}/${repo}`, pr: prNumber, stillOpen: pending, attempts: MAX_ATTEMPTS,
     });
+    // Close the linked ones ourselves. What closes stays hidden and is
+    // handled like an observed close; the rest falls through to un-hide.
+    let selfClosed = [];
+    try {
+      ({ closed: selfClosed } = await closeLinkedIssues({
+        owner, repo, prNumber, pr, linkedIssues, stillOpen: pending,
+      }));
+    } catch (err) {
+      log.warn('issue-close-watcher', 'Closing linked issues failed', {
+        repo: `${owner}/${repo}`, pr: prNumber, err: err.message,
+      });
+    }
+    if (selfClosed.length) {
+      closed.push(...selfClosed);
+      bustAndBroadcast({ owner, repo, appSlug, appId, closed: selfClosed });
+      resolveSupersededProposals({ pool, appId, appSlug, prNumber, numbers: selfClosed });
+      pending = pending.filter((n) => !selfClosed.includes(n));
+    }
+  }
+  if (pending.length) {
     // These are genuinely still open on GitHub — lift the optimistic
     // suppression so they aren't hidden from the panel for the full
     // suppression TTL.
@@ -230,4 +320,4 @@ async function watchIssuesClosedAfterMerge({ owner, repo, prNumber, linkedIssues
   return { closed, skipped, stillOpen: pending };
 }
 
-module.exports = { watchIssuesClosedAfterMerge, resolveIssueNumbers };
+module.exports = { watchIssuesClosedAfterMerge, resolveIssueNumbers, mergedIntoDefaultBranch };
