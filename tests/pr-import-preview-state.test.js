@@ -43,6 +43,7 @@ function stub(id, exports) {
 // previewDisplayState is read.
 function loadStaging() {
   const ids = {
+    guard: require.resolve('../src/services/build-retention-guard'),
     logger: require.resolve('../src/services/logger'),
     docker: require.resolve('../src/services/docker'),
     caddy: require.resolve('../src/services/caddy'),
@@ -63,6 +64,7 @@ function loadStaging() {
   const cloneStarted = new Promise((r) => { reachedClone = r; });
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  stub(ids.guard, { withResourceUse: async (_config, _classifier, _resource, fn) => fn() });
   stub(ids.github, { getCloneUrl: async () => 'https://x/clone.git', isEnabled: () => true });
   stub(ids.appManifest, { read: () => ({}) });
   stub(ids.appSecrets, {

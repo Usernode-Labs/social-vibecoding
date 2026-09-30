@@ -1,0 +1,179 @@
+[
+  {
+    "source": "server.js",
+    "fingerprint": "4089da006cab19a49581",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Recovered worker tail still publishes its legacy build result.",
+    "migration": "Move recovered-tail preparation/publication to an explicit flow identity."
+  },
+  {
+    "source": "src/db/migrate.js",
+    "fingerprint": "7d191af4d6104490b646",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Staging-only demonstration fixture or fixture reset; no real build completion.",
+    "migration": "Keep a narrowly scoped fixture exception; do not reuse for runtime publication."
+  },
+  {
+    "source": "src/db/migrate.js",
+    "fingerprint": "872144cd91fdcdf383e3",
+    "count": 1,
+    "fields": [
+      "staging_url"
+    ],
+    "reason": "Staging-only demonstration fixture or fixture reset; no real build completion.",
+    "migration": "Keep a narrowly scoped fixture exception; do not reuse for runtime publication."
+  },
+  {
+    "source": "src/routes/proposal-handoff.js",
+    "fingerprint": "f4652b9bb8dd4313521a",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Head adoption clears pointers in the same statement that accepts the uploaded commit.",
+    "migration": "Compose head invalidation and complete projection clearing in the adoption transaction."
+  },
+  {
+    "source": "src/routes/sessions.js",
+    "fingerprint": "4089da006cab19a49581",
+    "count": 4,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Manual deploy and resumed/live hosted-turn tails still publish legacy build results.",
+    "migration": "Migrate each adapter and preserve its manual/hosted admission policy."
+  },
+  {
+    "source": "src/routes/votes.js",
+    "fingerprint": "4089da006cab19a49581",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Promotion can kick preparation/checks while voting proceeds.",
+    "migration": "Admit the reviewed head and publish with the same explicit flow identity."
+  },
+  {
+    "source": "src/services/cli-handoff-sync.js",
+    "fingerprint": "bd6a53e46b69625c96c6",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Native active/promoted head adoption clears pointers before its preparation pipeline.",
+    "migration": "Compose flow invalidation with guarded head adoption in one transaction."
+  },
+  {
+    "source": "src/services/cli-handoff-sync.js",
+    "fingerprint": "ce1bd9f1225ef58ef71f",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Native active/promoted head adoption clears pointers before its preparation pipeline.",
+    "migration": "Compose flow invalidation with guarded head adoption in one transaction."
+  },
+  {
+    "source": "src/services/fleet-maintenance.js",
+    "fingerprint": "4089da006cab19a49581",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Fleet recovery still resolves latest and publishes without the new flow adapter.",
+    "migration": "Resolve and admit an exact head before fleet preparation/publication."
+  },
+  {
+    "source": "src/services/pr-import-sync.js",
+    "fingerprint": "4089da006cab19a49581",
+    "count": 2,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Imported initial and new-head preparations use their own open-proposal policy.",
+    "migration": "Add an explicit imported policy and migrate both publishers."
+  },
+  {
+    "source": "src/services/proposal-update.js",
+    "fingerprint": "d0e374ee577dd58cf445",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Native active-head adoption still clears URL/container in its head CAS.",
+    "migration": "Compose flow invalidation and complete tuple clearing with head adoption."
+  },
+  {
+    "source": "src/services/staging-recovery.js",
+    "fingerprint": "4089da006cab19a49581",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id"
+    ],
+    "reason": "Legacy rebuild publication/failure retirement remains for unmigrated adapters.",
+    "migration": "Carry recovery flow identity and settle publication/failure through the action owner."
+  },
+  {
+    "source": "src/services/staging-recovery.js",
+    "fingerprint": "a6eb1f25ace4dff0f7e0",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id",
+      "staging_image_ref",
+      "staging_build_ref",
+      "staging_runtime_kind",
+      "staging_runtime_name",
+      "staging_commit_sha"
+    ],
+    "reason": "Legacy rebuild publication/failure retirement remains for unmigrated adapters.",
+    "migration": "Carry recovery flow identity and settle publication/failure through the action owner."
+  },
+  {
+    "source": "src/services/staging.js",
+    "fingerprint": "4b33861d054c14f14058",
+    "count": 1,
+    "fields": [
+      "staging_url",
+      "staging_container_id",
+      "staging_image_ref",
+      "staging_build_ref",
+      "staging_runtime_kind",
+      "staging_runtime_name",
+      "staging_commit_sha"
+    ],
+    "reason": "Legacy adapters retain partial metadata writes and teardown clears; native managed builds skip metadata writes.",
+    "migration": "Migrate remaining builders, then remove partial writes and guard teardown clearing by identity."
+  },
+  {
+    "source": "src/services/staging.js",
+    "fingerprint": "cbccfe58bc29faa54d0f",
+    "count": 1,
+    "fields": [
+      "staging_image_ref",
+      "staging_build_ref",
+      "staging_runtime_kind",
+      "staging_runtime_name",
+      "staging_commit_sha"
+    ],
+    "reason": "Legacy adapters retain partial metadata writes and teardown clears; native managed builds skip metadata writes.",
+    "migration": "Migrate remaining builders, then remove partial writes and guard teardown clearing by identity."
+  }
+]

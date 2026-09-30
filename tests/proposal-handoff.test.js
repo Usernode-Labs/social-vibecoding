@@ -41,6 +41,7 @@ function makeHarness() {
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
     staging: require.resolve('../src/services/staging'),
+    cleanup: require.resolve('../src/services/preview-flow/cleanup'),
     recovery: require.resolve('../src/services/staging-recovery'),
     visuals: require.resolve('../src/services/visuals'),
     activeWorkers: require.resolve('../src/services/active-workers'),
@@ -66,16 +67,21 @@ function makeHarness() {
   const state = {
     nextId: 101,
     sessions: [],
+    previewFlows: [],
+    previewHeads: {},
+    previewResources: {},
+    previewReceipts: {},
+    previewDecisions: [],
     messages: [],
     specs: [],
     github: [],
     prMetadata: [],
     staging: [],
-    teardowns: [],
+    cleanupCalls: [],
     captures: [],
     accessAppIds: [],
     accessAllowed: true,
-    teardownLeaks: false,
+    cleanupFails: false,
     busy: false,
     captureBusy: false,
     stagingGate: null,
@@ -101,6 +107,11 @@ function makeHarness() {
         transactionState = {
           nextId: state.nextId,
           sessions: state.sessions.map((row) => ({ ...row })),
+          previewFlows: structuredClone(state.previewFlows),
+          previewHeads: structuredClone(state.previewHeads),
+          previewResources: structuredClone(state.previewResources),
+          previewReceipts: structuredClone(state.previewReceipts),
+          previewDecisions: structuredClone(state.previewDecisions),
           messages: state.messages.map((message) => ({
             ...message, metadata: { ...message.metadata },
           })),
@@ -116,6 +127,9 @@ function makeHarness() {
         if (transactionState) {
           state.nextId = transactionState.nextId;
           state.sessions.splice(0, state.sessions.length, ...transactionState.sessions);
+          for (const key of ['previewFlows', 'previewHeads', 'previewResources', 'previewReceipts', 'previewDecisions']) {
+            state[key] = transactionState[key];
+          }
           state.messages.splice(0, state.messages.length, ...transactionState.messages);
           state.specs.splice(0, state.specs.length, ...transactionState.specs);
         }
@@ -264,35 +278,78 @@ function makeHarness() {
         }
         return { rows: [], rowCount: matched ? 1 : 0 };
       }
-      if (/SET staging_container_id = \$1, staging_url = \$2/.test(text)) {
-        // #907: ownership is now an inline `source IS DISTINCT FROM 'imported'`
-        // clause rather than a bound `source = $n`, because the same pipeline
-        // also stages native sessions run by a local coding agent. Emulate the
-        // predicate, and assert the guard is actually still in the statement.
-        assert.match(text, /source IS DISTINCT FROM 'imported'/,
-          'the pipeline must never stage over an imported mirror');
-        const row = state.sessions.find((s) => s.id === Number(params[2]));
-        const owned = row && row.source !== 'imported';
-        if (/status NOT IN/.test(text)) {
-          const matched = owned
-            && (!['active', 'paused'].includes(row.status) || row.checks_commit_sha === params[3]);
-          if (matched) {
-            row.staging_container_id = params[0];
-            row.staging_url = params[1];
-          }
-          return { rows: [], rowCount: matched ? 1 : 0 };
-        }
+      // Run the real action boundary/reducer against this route fixture. The
+      // independent-PG suite pins SQL atomicity; this suite pins HTTP behavior.
+      if (/SELECT \* FROM chat_sessions WHERE id = \$1/.test(text)) {
+        const row = state.sessions.find(s => s.id === Number(params[0]));
+        return { rows: row ? [{ ...row }] : [] };
+      }
+      if (/SELECT f\.\* FROM preview_flow_heads/.test(text)) {
+        const row = state.previewFlows.find(f => f.id === state.previewHeads[params[0]]);
+        return { rows: row ? [{ ...row }] : [] };
+      }
+      if (/SELECT action_hash, decision/.test(text)) {
+        const row = state.previewReceipts[`${params[0]}:${params[1]}`];
+        return { rows: row ? [row] : [] };
+      }
+      if (/INSERT INTO preview_flows \(/.test(text)) {
+        state.previewFlows.push({ id: params[0], session_id: params[1], generation: params[2],
+          head_sha: params[3], started_status: params[4], state: params[5] });
+        return { rows: [], rowCount: 1 };
+      }
+      if (/INSERT INTO preview_flow_heads/.test(text)) {
+        state.previewHeads[params[0]] = params[1];
+        return { rows: [], rowCount: 1 };
+      }
+      if (/UPDATE preview_flows SET state/.test(text)) {
+        const superseded = /state = 'superseded'/.test(text);
+        const row = state.previewFlows.find(f => f.id === params[superseded ? 0 : 1]);
+        row.state = superseded ? 'superseded' : params[0];
+        return { rows: [], rowCount: 1 };
+      }
+      if (/INSERT INTO preview_flow_resources/.test(text)) {
+        const isIntent = /session_id, intent/.test(text);
+        const row = state.previewFlows.find(f => f.id === params[0] && f.session_id === params[1]
+          && (isIntent || f.head_sha === params[3]));
+        if (!row) return { rows: [] };
+        state.previewResources[params[0]] = { ...state.previewResources[params[0]],
+          [isIntent ? 'intent' : 'receipt']: JSON.parse(params[2]) };
+        return { rows: [{ flow_id: params[0] }], rowCount: 1 };
+      }
+      if (/UPDATE preview_flow_resources SET published_at/.test(text)) {
+        state.previewResources[params[0]].published_at = new Date();
+        return { rows: [], rowCount: 1 };
+      }
+      if (/SELECT receipt FROM preview_flow_resources/.test(text)) {
+        const row = state.previewResources[params[0]];
+        return { rows: row ? [row] : [] };
+      }
+      if (/SELECT cleanup_started_at FROM preview_flow_resources/.test(text)) {
+        const row = state.previewResources[params[0]];
+        return { rows: row ? [row] : [] };
+      }
+      if (/INSERT INTO preview_action_receipts/.test(text)) {
+        state.previewReceipts[`${params[0]}:${params[1]}`] = { action_hash: params[2], decision: JSON.parse(params[3]) };
+        return { rows: [], rowCount: 1 };
+      }
+      if (/INSERT INTO preview_flow_decisions/.test(text)) {
+        state.previewDecisions.push({ action: JSON.parse(params[4]), decision: JSON.parse(params[6]) });
+        return { rows: [], rowCount: 1 };
+      }
+      if (/UPDATE chat_sessions SET staging_url = \$1/.test(text)) {
         if (state.persistStagingError) throw new Error('staging persistence unavailable');
-        // #3043: or promoted on this very commit while the run was checking it.
-        assert.match(text, /status = 'promoted' AND LOWER\(reviewed_head_sha\) = LOWER\(\$4\)/);
-        const matched = owned && row.checks_commit_sha === params[3]
-          && (row.status === params[4]
-            || (row.status === 'promoted' && row.reviewed_head_sha === params[3]));
-        if (matched) {
-          row.staging_container_id = params[0];
-          row.staging_url = params[1];
+        const row = state.sessions.find(s => s.id === Number(params[7]));
+        for (const [i, key] of ['staging_url', 'staging_container_id', 'staging_runtime_kind',
+          'staging_runtime_name', 'staging_image_ref', 'staging_build_ref', 'staging_commit_sha'].entries()) {
+          row[key] = params[i];
         }
-        return { rows: [], rowCount: matched ? 1 : 0 };
+        return { rows: [], rowCount: 1 };
+      }
+      if (/UPDATE chat_sessions SET staging_url = NULL/.test(text)) {
+        const row = state.sessions.find(s => s.id === Number(params[0]));
+        for (const key of ['staging_url', 'staging_container_id', 'staging_runtime_kind',
+          'staging_runtime_name', 'staging_image_ref', 'staging_build_ref', 'staging_commit_sha']) row[key] = null;
+        return { rows: [], rowCount: 1 };
       }
       if (/UPDATE chat_sessions SET spec_md = \$1/.test(text)) {
         const row = state.sessions.find((s) => s.id === Number(params[1]));
@@ -348,22 +405,33 @@ function makeHarness() {
   });
   stubModule(ids.staging, {
     hasInFlightBuild: () => false,
-    buildAndDeployStaging: async (_config, session, _app, sha) => {
+    buildAndDeployStaging: async (_config, session, _app, sha, options) => {
       state.staging.push([session.id, sha]);
+      await options.beforeBuild({ runtimeKind: 'docker', runtimeName: 'container-1',
+        dbName: 'app_demo_staging_s101_aaaaaa', namespace: null });
       if (state.stagingGate) await state.stagingGate;
       if (state.stagingFailure) throw new Error('fixture build failure');
-      return { containerId: 'container-1', stagingUrl: 'https://preview.example', hostname: 'preview' };
+      const result = { containerId: 'container-1', stagingUrl: 'https://preview.example', hostname: 'preview',
+        runtimeKind: 'docker', runtimeName: 'container-1', imageRef: 'image:exact', buildRef: null, commitSha: sha };
+      await options.consumePrepared(result);
+      return result;
     },
     warmStagingCert: async () => {},
-    teardownStaging: async (session) => {
-      state.teardowns.push([session.id, session.staging_container_id, session.staging_url]);
-      return state.teardownLeaks
-        ? { removed: false, leaked: true }
-        : { removed: true, leaked: false };
-    },
   });
+  stubModule(ids.cleanup, { underBuildLock: async ({ flowId, sessionId }) => {
+    state.cleanupCalls.push([sessionId, flowId]);
+    state.previewResources[flowId].cleanup_started_at = new Date();
+    if (state.cleanupFails) throw new Error('fixture runtime removal unavailable');
+    state.previewResources[flowId].cleanup_completed_at = new Date();
+    return { disposition: 'removed' };
+  } });
   stubModule(ids.recovery, {
-    recordStagingBootFailure: async (args) => { state.failures.push(args); },
+    recordStagingBootFailure: async (args) => {
+      const owner = require('../src/services/preview-flow').createPreviewFlow(pool, { persistFailure: async () => true });
+      const result = await owner.apply({ type: 'PreparationFailed', actionId: require('node:crypto').randomUUID(),
+        sessionId: args.session.id, ...args.previewFlow, detail: args.err.message });
+      if (result.decision.accepted) state.failures.push(args);
+    },
     checkRunOverdue(session, { now = Date.now(), staleMs = 10 * 60 * 1000 } = {}) {
       if (session?.check_state != null && session.check_state !== 'pending') return false;
       if (!(session?.checks_commit_sha || session?.handoff_head_sha)) return false;
@@ -929,6 +997,7 @@ test('an accepted local pipeline is idempotent by head and blocks a competing re
       user: { id: 7, username: 'maker' },
     }, retry);
     assert.equal(retry.statusCode, 202, 'a lost-response retry joins the accepted head');
+    await new Promise(resolve => setImmediate(resolve)); // admission now commits before execution starts
     assert.equal(state.staging.length, 1, 'the retry does not launch a duplicate pipeline');
 
     const competing = mockRes();
@@ -969,10 +1038,11 @@ for (const [initialStatus, endStatus] of [['active', 'archived'], ['paused', 'ar
 
       state.sessions[0].status = endStatus;
       releaseStaging();
-      for (let i = 0; i < 10 && state.teardowns.length === 0; i += 1) {
+      for (let i = 0; i < 10 && require('../src/services/handoff-pipeline').hasInFlightHandoffPipeline(101); i += 1) {
         await new Promise((resolve) => setImmediate(resolve));
       }
-      assert.deepEqual(state.teardowns, [[101, 'container-1', 'https://preview.example']]);
+      assert.equal(state.cleanupCalls.length, 1, 'rejected publication hands its resource to the cleanup owner');
+      assert.equal(Object.keys(state.previewResources).length, 1, 'runtime retained in separate resource inventory');
       assert.equal(state.sessions[0].staging_url, null,
         'an archived row never regains a preview link from the detached build');
       assert.equal(state.captures.length, 0,
@@ -984,7 +1054,7 @@ for (const [initialStatus, endStatus] of [['active', 'archived'], ['paused', 'ar
   });
 }
 
-test('a leaked preview remains discoverable when its first persistence write fails', async () => {
+test('failed publication keeps a cleanup obligation when removal also fails', async () => {
   const { router, state, restore } = makeHarness();
   try {
     const start = routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post');
@@ -994,7 +1064,7 @@ test('a leaked preview remains discoverable when its first persistence write fai
     }, mockRes());
     markUploaded(state);
     state.persistStagingError = true;
-    state.teardownLeaks = true;
+    state.cleanupFails = true;
 
     const build = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
     const accepted = mockRes();
@@ -1004,12 +1074,13 @@ test('a leaked preview remains discoverable when its first persistence write fai
       body: { schemaVersion: 1, headSha: HEAD, history: [], tests: [] },
     }, accepted);
     assert.equal(accepted.statusCode, 202);
-    for (let i = 0; i < 10 && !state.sessions[0].staging_url; i += 1) {
+    for (let i = 0; i < 10 && require('../src/services/handoff-pipeline').hasInFlightHandoffPipeline(101); i += 1) {
       await new Promise((resolve) => setImmediate(resolve));
     }
-    assert.deepEqual(state.teardowns, [[101, 'container-1', 'https://preview.example']]);
-    assert.equal(state.sessions[0].staging_url, 'https://preview.example',
-      'the reaper retains a durable pointer to the container that could not be removed');
+    assert.equal(state.cleanupCalls.length, 1, 'publication failure attempts cleanup before releasing its resource');
+    assert.equal(state.sessions[0].staging_url, null, 'a cleanup receipt cannot restore an unaccepted public link');
+    assert.equal(Object.keys(state.previewResources).length, 1, 'failed publication retains its runtime observation');
+    assert.ok(Object.values(state.previewResources)[0].intent, 'a pending pre-create intent is recoverable');
     assert.equal(state.captures.length, 0);
   } finally { restore(); }
 });

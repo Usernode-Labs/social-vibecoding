@@ -1324,6 +1324,8 @@ async function becomeLeader() {
   // CC volume + branch + PR are preserved; reopening auto-resumes.
   startConversationAttachmentSweeper(config);
   startSessionAutoPauseSweeper(config);
+  // Cleanup obligations must retry even when session auto-pause is disabled.
+  void require('./src/services/preview-flow/cleanup').start({ pool: getPool(config), config });
 
   // Stale-promoted-PR policy + reversible-archive GC. Warns authors of
   // promoted PRs that have gone quiet, auto-archives them after a grace
@@ -5863,6 +5865,7 @@ async function cleanup() {
     .catch((err) => log.warn('server', 'Interrupting agent turns failed', { err: err.message }));
   require('./src/services/mayor/agent-turn').stopInterruptedTurnSweeper();
   const retentionStop = require('./src/services/build-retention').stop();
+  const previewCleanupStop = require('./src/services/preview-flow/cleanup').stop();
   const scorerStop = require('./src/services/topochain/challenge-scorer').stop();
   // Stop claiming push jobs immediately. The bounded drain runs in
   // parallel with HTTP/session draining and is awaited before pool close.
@@ -6031,7 +6034,7 @@ async function cleanup() {
     let poolTimer = null;
     try {
       await Promise.race([
-        Promise.all([retentionStop, scorerStop]).then(() => shutdownPool.end()),
+        Promise.all([retentionStop, previewCleanupStop, scorerStop]).then(() => shutdownPool.end()),
         new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
       ]);
       log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });

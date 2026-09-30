@@ -687,7 +687,7 @@ async function recordChecksSkipped({
 // schedules the next backoff retry; the owner notification + thread post fire
 // only on the first failure of a streak (check_error_notified_at gate), which
 // setChecksPending clears when a new commit is pushed.
-async function recordStagingBootFailure({ config, pool, session, commitHash, err }) {
+async function recordStagingBootFailure({ config, pool, session, commitHash, err, previewFlow }) {
   if (require('./preview-lifecycle').isCancelled(err) || err?.previewFailureHandled) return;
   const visuals = require('./visuals');
   const { bootFailureIsInfrastructure } = require('./deploy-failure');
@@ -697,9 +697,14 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // detail; this decides who gets told.
   const infrastructure = bootFailureIsInfrastructure(err);
 
-  const stored = await visuals.storeChecks(
-    pool, session.id, commitHash, { state: 'error', results: [] }, detail
-  );
+  // Native handoff failures use the same attempt identity as publication.
+  // Checks/backoff and preview retirement commit together, after admission.
+  const stored = previewFlow
+    ? (await require('./preview-flow').createPreviewFlow(pool).apply({
+      type: 'PreparationFailed', actionId: require('node:crypto').randomUUID(),
+      sessionId: session.id, ...previewFlow, detail,
+    })).decision.accepted
+    : await visuals.storeChecks(pool, session.id, commitHash, { state: 'error', results: [] }, detail);
   if (stored === false) {
     log.info('staging-recovery', 'Discarded stale staging failure', {
       sessionId: session.id, commitHash: commitHash || null,
@@ -713,7 +718,7 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // the submitted build never started (#2328). storeChecks' compare-and-set
   // above proves this failure still belongs to the current checks commit;
   // only then retire every pointer that could vouch for the stale runtime.
-  await pool.query(
+  if (!previewFlow) await pool.query(
     `UPDATE chat_sessions
         SET staging_container_id = NULL, staging_url = NULL,
             staging_image_ref = NULL, staging_build_ref = NULL,

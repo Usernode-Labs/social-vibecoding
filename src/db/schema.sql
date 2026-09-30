@@ -9563,6 +9563,76 @@ CREATE TABLE IF NOT EXISTS preview_operations (
 );
 COMMENT ON TABLE preview_operations IS 'staging:private';
 
+-- Explicit preview publication authority. Execution still uses the existing
+-- preview_operations/resource locks; these IDs span admission and publication
+-- and do not identify a capture phase or a Kubernetes Job.
+CREATE TABLE IF NOT EXISTS preview_flows (
+  id UUID PRIMARY KEY,
+  session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  generation BIGINT NOT NULL CHECK (generation > 0 AND generation <= 9007199254740991),
+  head_sha TEXT NOT NULL CHECK (head_sha ~ '^[a-f0-9]{40}$'),
+  started_status TEXT NOT NULL CHECK (started_status IN ('active', 'paused')),
+  state TEXT NOT NULL CHECK (state IN ('preparing', 'ready', 'failed', 'cleared', 'superseded')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (session_id, generation),
+  UNIQUE (session_id, id)
+);
+CREATE TABLE IF NOT EXISTS preview_flow_heads (
+  session_id INTEGER PRIMARY KEY REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  flow_id UUID NOT NULL,
+  FOREIGN KEY (session_id, flow_id) REFERENCES preview_flows(session_id, id) ON DELETE CASCADE
+);
+-- Reserve cleanup locators before creating resources; observations survive
+-- rejected/rolled-back publication. Cleanup consumes these under the build lock
+-- and verifies the runtime's flow label before deleting a shared name.
+CREATE TABLE IF NOT EXISTS preview_flow_resources (
+  flow_id UUID PRIMARY KEY,
+  -- Cleanup must outlive hard deletion of the session/flow. Admission and
+  -- observation insert through a checked SELECT from preview_flows; recovery
+  -- can still consume these locators after that aggregate has disappeared.
+  session_id INTEGER NOT NULL CHECK (session_id > 0),
+  intent JSONB,
+  receipt JSONB,
+  published_at TIMESTAMPTZ,
+  cleanup_started_at TIMESTAMPTZ,
+  cleanup_completed_at TIMESTAMPTZ,
+  cleanup_disposition TEXT CHECK (cleanup_disposition IN ('removed', 'replaced')),
+  -- Durable queue order, separate from execution identity. Selection assigns
+  -- a new position before cleanup I/O, including for busy or failed resources.
+  cleanup_queue_position BIGINT GENERATED ALWAYS AS IDENTITY,
+  recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (intent IS NOT NULL OR receipt IS NOT NULL)
+);
+CREATE INDEX IF NOT EXISTS preview_flow_resources_pending_queue_idx
+  ON preview_flow_resources (cleanup_queue_position)
+  WHERE cleanup_completed_at IS NULL AND intent IS NOT NULL;
+CREATE TABLE IF NOT EXISTS preview_action_receipts (
+  session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  action_id UUID NOT NULL,
+  action_hash TEXT NOT NULL,
+  decision JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, action_id)
+);
+CREATE TABLE IF NOT EXISTS preview_flow_decisions (
+  id BIGSERIAL PRIMARY KEY,
+  session_id INTEGER NOT NULL,
+  action_id UUID NOT NULL,
+  reducer_version INTEGER NOT NULL,
+  pre_state JSONB NOT NULL,
+  action JSONB NOT NULL,
+  facts JSONB NOT NULL,
+  decision JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (session_id, action_id),
+  FOREIGN KEY (session_id, action_id) REFERENCES preview_action_receipts(session_id, action_id) ON DELETE CASCADE
+);
+COMMENT ON TABLE preview_flows IS 'staging:private';
+COMMENT ON TABLE preview_flow_heads IS 'staging:private';
+COMMENT ON TABLE preview_flow_resources IS 'staging:private';
+COMMENT ON TABLE preview_action_receipts IS 'staging:private';
+COMMENT ON TABLE preview_flow_decisions IS 'staging:private';
+
 
 -- #2716 account deletion: the receipt carries only opaque record ids, never
 -- an erased username, email, IP, password, or credential. It intentionally

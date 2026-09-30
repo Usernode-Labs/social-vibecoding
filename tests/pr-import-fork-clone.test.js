@@ -41,6 +41,7 @@ function stub(id, exports) {
 // full argument array), so a test can model "this repo has no refs/pull".
 function loadStaging({ gitFail = null } = {}) {
   const ids = {
+    guard: require.resolve('../src/services/build-retention-guard'),
     logger: require.resolve('../src/services/logger'),
     docker: require.resolve('../src/services/docker'),
     applicationRuntime: require.resolve('../src/services/application-runtime'),
@@ -59,6 +60,7 @@ function loadStaging({ gitFail = null } = {}) {
   const git = [];   // every git invocation's argv, in order
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  stub(ids.guard, { withResourceUse: async (_config, _classifier, _resource, fn) => fn() });
   stub(ids.github, { getCloneUrl: async () => 'https://x/clone.git', isEnabled: () => true });
   stub(ids.appManifest, { read: () => ({}) });
   stub(ids.appSecrets, {

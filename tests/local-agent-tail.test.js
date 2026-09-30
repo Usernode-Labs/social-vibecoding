@@ -271,7 +271,6 @@ test('the handoff pipeline is shared, not forked', () => {
     'hasInFlightHandoffPipeline',
     'beginHandoffPipeline',
     'startHandoffPipeline',
-    'discardHandoffStaging',
     'runStaging',
   ]) {
     assert.match(pipeline, new RegExp(`\\b${fn}\\b`), `pipeline must export ${fn}`);
@@ -281,6 +280,6 @@ test('the handoff pipeline is shared, not forked', () => {
     'proposal-handoff must consume the extracted module, not keep a copy');
 });
 
-test('the extracted pipeline still excludes imported sessions from ownership checks', () => {
-  assert.match(pipeline, /source IS DISTINCT FROM 'imported'/);
+test('the extracted pipeline delegates preparation to the explicit action owner', () => {
+  assert.match(pipeline, /require\('\.\/preview-flow\/native'\)\.prepareNativePreview/);
 });

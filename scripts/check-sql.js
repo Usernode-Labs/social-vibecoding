@@ -196,6 +196,9 @@ function collectQueryInventory(root = ROOT) {
             fingerprint: hash(original),
             count: 1,
             preview: original.replace(/\s+/g, ' ').slice(0, 160),
+            // Preserve complete literal fragments for ownership audits. These
+            // remain dynamic and are never passed to the PostgreSQL validator.
+            expression: original,
             line: lineOf(sourceFile, node),
           });
         }
@@ -223,6 +226,7 @@ function collectQueryInventory(root = ROOT) {
     queries,
     dynamicCalls: dynamic.length,
     dynamicQueries,
+    dynamicOccurrences: dynamic,
   };
 }
 

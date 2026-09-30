@@ -765,6 +765,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'app_workshop_themes.input_hash',      // same: digest of the board the themes were grouped from
     'chat_sessions.pr_summary_source_body_hash', // digest of the public PR description, not a credential
     'shot_runs.plan_hash',                 // SHA-256 naming the published shots, not authentication material
+    'preview_action_receipts.action_hash', // digest of a validated lifecycle action; no credentials in the action schema
 
     // Counters and flags.
     'chat_session_messages.token_count',   // an LLM token COUNT

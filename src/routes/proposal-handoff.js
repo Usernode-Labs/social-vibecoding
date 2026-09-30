@@ -63,7 +63,6 @@ const {
   hasInFlightHandoffPipeline,
   beginHandoffPipeline,
   startHandoffPipeline,
-  discardHandoffStaging,
   runStaging,
 } = require('../services/handoff-pipeline');
 

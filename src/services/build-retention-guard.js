@@ -5,10 +5,12 @@ const crypto = require('crypto');
 const { BUILD_RETENTION_LOCK } = require('./advisory-locks');
 const log = require('./logger');
 
-// One extra connection per process while any Kubernetes deployment is active,
+// One extra connection per process while a coordinated deployment is active,
 // independent of the application pool: holding one pool client per build can
 // deadlock deployments that still need that pool to persist their references.
 // A database-wide shared lock also protects builds started by HTTP followers.
+// Staging explicitly opts Docker into resource locking too: native publication
+// and historical cleanup must serialize with every builder of the shared name.
 function createGuard({ makeClient = (config) => new Client({
   connectionString: config.databaseUrl,
   connectionTimeoutMillis: 5000,
@@ -66,8 +68,8 @@ function createGuard({ makeClient = (config) => new Client({
     });
   }
 
-  async function withBuildUse(config, fn) {
-    if ((config?.appRuntime || process.env.APP_RUNTIME || 'docker') !== 'kubernetes') return fn();
+  async function withBuildUse(config, fn, { allRuntimes = false } = {}) {
+    if (!allRuntimes && (config?.appRuntime || process.env.APP_RUNTIME || 'docker') !== 'kubernetes') return fn();
     const release = await acquire(config);
     const state = current;
     const check = () => { if (state.lost) throw state.lost; };
@@ -78,16 +80,18 @@ function createGuard({ makeClient = (config) => new Client({
   // blocking pg_advisory_lock would prevent that same connection unlocking
   // another resource; a client per build would consume the database budget.
   // Local serialization is still required because session locks are reentrant.
-  function withResourceUse(config, classifier, resource, fn) {
-    if ((config?.appRuntime || process.env.APP_RUNTIME || 'docker') !== 'kubernetes') return fn();
+  function withResourceUse(config, classifier, resource, fn, { allRuntimes = false, tryOnly = false } = {}) {
+    if (!allRuntimes && (config?.appRuntime || process.env.APP_RUNTIME || 'docker') !== 'kubernetes') return fn();
     const key = crypto.createHash('sha256').update(String(resource)).digest().readInt32BE(0);
     const localKey = `${classifier}:${key}`;
+    if (tryOnly && resourceTails.has(localKey)) return Promise.resolve({ busy: true });
     const run = (resourceTails.get(localKey) || Promise.resolve()).then(() => withBuildUse(config, async (client, check) => {
       for (;;) {
         check();
         const result = await client.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [classifier, key]);
         check();
         if (result.rows[0]?.acquired) break;
+        if (tryOnly) return { busy: true };
         await new Promise(resolve => setTimeout(resolve, retryMs));
       }
       try { check(); return await fn(); } finally {
@@ -104,7 +108,7 @@ function createGuard({ makeClient = (config) => new Client({
           throw err;
         }
       }
-    }));
+    }, { allRuntimes }));
     const settled = run.then(() => {}, () => {});
     resourceTails.set(localKey, settled);
     settled.then(() => { if (resourceTails.get(localKey) === settled) resourceTails.delete(localKey); });

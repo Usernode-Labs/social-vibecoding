@@ -67,9 +67,10 @@ class PrivateSecretMissingStagingDefaultError extends Error {
 // /tmp/usernode-staging-<id> checkout dir, so B's rm -rf could yank A's
 // tree mid-build.
 //
-// The local chain coalesces requests within this process. Kubernetes also
-// takes a database advisory lock for the entire build: old and new platform
-// Pods both serve HTTP during a rollout. Different sessions remain parallel.
+// The local chain coalesces requests within this process. Both runtimes also
+// take a database advisory lock through preparation/publication/cleanup: old
+// and new platform Pods can serve HTTP during a rollout. Different sessions
+// remain parallel.
 // As a bonus,
 // a caller requesting the SAME commit as the in-flight/queued build joins
 // it and shares the result instead of rebuilding an identical image+clone
@@ -125,7 +126,7 @@ function previewDisplayState(row) {
   };
 }
 
-async function buildAndDeployStaging(config, session, app, commitHash) {
+async function buildAndDeployStaging(config, session, app, commitHash, options = {}) {
   const lifecycle = require('./preview-lifecycle');
   if (lifecycle.enabled(config) && !lifecycle.current()) {
     return lifecycle.run(config, session, commitHash, 'build', async (operation, fresh) => {
@@ -134,8 +135,11 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
       if (!fresh.checks_commit_sha) {
         await require('./visuals').setChecksPending(operation.pool, session.id, operation.revision, 'building');
       }
-      return buildAndDeployStaging(config, fresh, app, operation.revision);
+      return buildAndDeployStaging(config, fresh, app, operation.revision, options);
     }, { onError: async (err, pool, operation) => {
+      // The native action adapter settles this identity after the executor
+      // releases its context. Do not record an unguarded second failure here.
+      if (options.previewFlow) return;
       // Preserve boot-failure backoff/notifications while still owning this
       // run. Callers must not republish it after a same-SHA retry takes over.
       try {
@@ -143,14 +147,15 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
           config, pool, session, commitHash: operation.revision, err,
         });
       } finally { err.previewFailureHandled = true; }
-    }, resolveRevision: async fresh => {
+    }, force: !!options.previewFlow, resolveRevision: async fresh => {
       const [, owner, repo] = app.repo_url?.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       return owner && repo && fresh?.branch_name ? github.getBranchSha(owner, repo, fresh.branch_name) : null;
     } });
   }
   const key = session.id;
   const current = _stagingBuilds.get(key);
-  if (current && commitHash && commitHash !== 'latest' && current.commitHash === commitHash) {
+  if (current && commitHash && commitHash !== 'latest' && current.commitHash === commitHash
+      && current.flowId === options.previewFlow?.flowId) {
     log.info('staging', 'Joining in-flight staging build for same commit', {
       sessionId: key, commitHash,
     });
@@ -159,15 +164,27 @@ async function buildAndDeployStaging(config, session, app, commitHash) {
   const prevTail = current ? current.tail : Promise.resolve();
   // Run after the predecessor settles either way — a failed build must
   // not block the next one (it's often exactly the retry that heals it).
-  const promise = prevTail.then(
-    () => withResourceUse(config, STAGING_BUILD_LOCK, key, () => buildAndDeployStagingInner(config, session, app, commitHash)),
-    () => withResourceUse(config, STAGING_BUILD_LOCK, key, () => buildAndDeployStagingInner(config, session, app, commitHash))
-  );
+  const run = () => withResourceUse(config, STAGING_BUILD_LOCK, key, async () => {
+    if (options.beforeBuild) await options.beforeBuild({
+      runtimeKind: applicationRuntime.mode(config),
+      runtimeName: applicationRuntime.mode(config) === 'docker'
+        ? `usernode-staging-${app.slug}--${session.id}`
+        : require('./kubernetes').appResourceName(app, 'staging', session.id),
+      dbName: dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash),
+      namespace: applicationRuntime.mode(config) === 'kubernetes' ? config.kubernetes.appNamespace : null,
+    });
+    const result = await buildAndDeployStagingInner(config, session, app, commitHash, options);
+    // The native publication/cleanup consumer runs before a successor may
+    // replace this runtime or its clone, in Docker as well as Kubernetes.
+    if (options.consumePrepared) await options.consumePrepared(result);
+    return result;
+  }, { allRuntimes: true });
+  const promise = prevTail.then(run, run);
   // The stored tail never rejects, so waiters always run and no unhandled
   // rejection is parked on the chain; callers still get the real result
   // or the real error via `promise`.
   const tail = promise.then(() => {}, () => {});
-  const entry = { commitHash, promise, tail };
+  const entry = { commitHash, flowId: options.previewFlow?.flowId, promise, tail };
   _stagingBuilds.set(key, entry);
   tail.then(() => {
     // Self-clean once we're the last link so idle sessions don't leak
@@ -282,7 +299,7 @@ function makeImageProgressReporter(config, session, timings, startedAt, now = ()
   };
 }
 
-async function buildAndDeployStagingInner(config, session, app, commitHash) {
+async function buildAndDeployStagingInner(config, session, app, commitHash, options = {}) {
   const containerName = `usernode-staging-${app.slug}--${session.id}`;
   const imageName = `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
 
@@ -609,11 +626,14 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       cpus: docker.STAGING_CPUS,
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
+        ...(options.previewFlow ? { [require('./preview-flow/cleanup').FLOW_LABEL]: options.previewFlow.flowId } : {}),
       },
     });
     timings.healthMs = Date.now() - healthStartedAt;
     const { hostname, url: stagingUrl } = deployed;
-    await getPool(config).query(
+    // Legacy publishers still write URL/container themselves. Migrated
+    // adapters publish this entire receipt through preview-flow atomically.
+    if (!options.previewFlow) await getPool(config).query(
       `UPDATE chat_sessions SET staging_image_ref = $1, staging_build_ref = $2,
          staging_runtime_kind = $3, staging_runtime_name = $4,
          staging_commit_sha = $6 WHERE id = $5`,
