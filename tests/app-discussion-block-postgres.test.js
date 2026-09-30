@@ -35,7 +35,7 @@ test('app discussion history and inbox preview skip blocked authors', async (t) 
       CREATE TABLE apps (
         id int PRIMARY KEY, slug text NOT NULL, name text NOT NULL,
         icon_image_id int, icon_emoji text, self_hosted boolean NOT NULL DEFAULT false,
-        view_visibility text NOT NULL DEFAULT 'public'
+        view_visibility text NOT NULL DEFAULT 'public', moderation_suspended_at timestamptz
       );
       CREATE TABLE app_collaborators (app_id int, user_id int, status text);
       CREATE TABLE user_app_blocks (user_id int, app_id int, PRIMARY KEY (user_id, app_id));
