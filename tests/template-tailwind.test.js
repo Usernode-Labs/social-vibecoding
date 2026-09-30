@@ -134,6 +134,10 @@ test('the scaffold keeps dependencies out of Git and Cloud Native Buildpacks inp
   const list = files();
   assert.match(file(list, '.gitignore'), /^node_modules\/$/m,
     'generated apps must not commit dependency trees');
+  for (const entry of ['.playwright-mcp/', 'test-results/', 'playwright-report/']) {
+    assert.ok(file(list, '.gitignore').split('\n').includes(entry),
+      `generated apps must not commit coding-agent tool output (${entry})`);
+  }
   const project = file(list, 'project.toml');
   assert.match(project, /schema-version = "0\.2"/);
   assert.match(project, /exclude = \[[\s\S]*"node_modules"[\s\S]*\]/,

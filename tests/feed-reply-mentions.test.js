@@ -133,9 +133,9 @@ test('the list is the group chat’s endpoint, fetched once per app and shared',
   const api = ta();
   const calls = [];
   const realFetch = globalThis.fetch;
-  const respond = (body, ok = true) => async (url) => {
+  const respond = (body, ok = true, status = ok ? 200 : 404) => async (url) => {
     calls.push(url);
-    return { ok, json: async () => body };
+    return { ok, status, json: async () => body };
   };
   try {
     api.resetMentionCache();
@@ -163,6 +163,12 @@ test('the list is the group chat’s endpoint, fetched once per app and shared',
     globalThis.fetch = respond({ error: 'App not found' }, false);
     assert.deepEqual(await api.loadMentionCandidates('private-app'), []);
     assert.deepEqual(api.cachedMentionCandidates('private-app'), []);
+
+    // Rate-limited is an empty list, NOT kept: the limit passes within the minute.
+    api.resetMentionCache();
+    globalThis.fetch = respond({ error: 'Too many directory lookups. Please slow down.' }, false, 429);
+    assert.deepEqual(await api.loadMentionCandidates('usernode-2d5619'), []);
+    assert.equal(api.cachedMentionCandidates('usernode-2d5619'), null);
 
     // A failed fetch is an empty list, NOT kept: the next `@` retries.
     api.resetMentionCache();

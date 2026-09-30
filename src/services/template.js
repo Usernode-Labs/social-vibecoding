@@ -579,6 +579,9 @@ public/tailwind.css
 .env.*
 node_modules/
 public/tailwind.css
+.playwright-mcp/
+test-results/
+playwright-report/
 `,
     },
     {

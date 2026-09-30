@@ -34,6 +34,7 @@ const checkHistory = require('./check-history');
 const unitSuite = require('./unit-suite');
 const contentReview = require('./content-review');
 const assetRouteCheck = require('./asset-route-check');
+const renderHealth = require('./render-health');
 const checkRuns = require('./check-runs');
 const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { sameSha } = require('./pr-vote-revision');
@@ -674,6 +675,10 @@ function parseTests(stdout) {
       // than a check of its own: the container re-ran a failure on its own
       // cold document. Names the index it is a retry of.
       retryOf: Number.isInteger(payload.retryOf) ? payload.retryOf : null,
+      // The runner's render-health reading of this check's document (see
+      // services/render-health.js). Absent from frames an older capture
+      // image produced, which the row then treats as "no reading".
+      ...(payload.render && typeof payload.render === 'object' ? { render: payload.render } : {}),
     });
     i += 2;
   }
@@ -2921,6 +2926,15 @@ async function settleCaptureRun(config, pool, run) {
     pool, sessionId: session.id, appId: app.id, repoOwner, repoName, commitHash,
   }).catch(() => null);
   if (contentOutcome) extraRows.push(contentOutcome.row);
+  // Render health: the platform's own reading of every checked page — a
+  // stylesheet that failed or came back empty, a page that shows nothing —
+  // which no dapp.json setting can opt out of. Built from the same frames
+  // the verdict below reads; a run whose frames carry no reading gets no
+  // row. Never throws.
+  const renderOutcome = shotsOnly ? null : await renderHealth.maybeBuildRenderHealthRow({
+    pool, appId: app.id, sessionId: session.id, frames: parseTests(stdout),
+  });
+  if (renderOutcome) extraRows.push(renderOutcome.row);
 
   if (shotsOnly) {
     // No verdict was taken, so none is stored: the row stays 'pending' in
@@ -3091,7 +3105,7 @@ async function settleCaptureRun(config, pool, run) {
       // pass_count 0 / fail_count 2 for a container that logged zero
       // inbound requests — and, worse, could graduate nothing while
       // permanently colouring the app's history with a platform outage.
-      if ((dispatched || unitOutcome || assetOutcome) && checksResult.state !== 'error') {
+      if ((dispatched || unitOutcome || assetOutcome || renderOutcome) && checksResult.state !== 'error') {
         const historyRows = [];
         if (dispatched) {
           const byIndex = new Map(dispatched.map((d) => [d.index, d]));
@@ -3118,6 +3132,9 @@ async function settleCaptureRun(config, pool, run) {
         if (unitOutcome) historyRows.push(unitOutcome.history);
         // The asset-route row graduates the same way (#2315).
         if (assetOutcome) historyRows.push(assetOutcome.history);
+        // And the render-health row: advisory until this app's pages have
+        // been seen rendering with their stylesheets once.
+        if (renderOutcome) historyRows.push(renderOutcome.history);
         await checkHistory.recordRun(pool, app.id, historyRows);
       }
       log.info('visuals', 'Checks stored', {

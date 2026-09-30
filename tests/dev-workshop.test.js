@@ -4442,6 +4442,10 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   assert.match(WORKSHOP, /window\.matchMedia\('\(prefers-reduced-motion: reduce\)'\)\.matches/);
   assert.match(CSS, /\.dev-ws-sheet-modal\[data-ws-leaving\] > \.dev-ws-sheet-card \{\s*animation-name: var\(--ws-sheet-out\)/);
   assert.match(CSS, /@keyframes dev-ws-sheet-up \{ from \{ transform: translateY\(100%\); \}/);
+  // A leaving sheet lets taps and focus through: its scrim and buttons stay
+  // mounted for the leave, and would swallow the next tap. Not motion-gated.
+  assert.match(CSS, /\n\.dev-ws-sheet-modal\[data-ws-leaving\] \{ pointer-events: none; \}/);
+  assert.match(WORKSHOP, /const leavingAttr = !sheet && leaving \? \{ 'data-ws-leaving': '', inert: true \} : \{\};/);
   // A panel slides in from the side it lives on; a popover pops. Same rule,
   // different names, set where the panel and the popover are declared.
   const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(CSS)[1];

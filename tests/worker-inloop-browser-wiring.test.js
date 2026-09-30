@@ -66,6 +66,56 @@ test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json r
   assert.match(wr, /--headless/);
   assert.match(wr, /--isolated/);
   assert.match(wr, /--no-sandbox/);
+  // Saved screenshots/snapshots land outside the app checkout; the MCP
+  // default (./.playwright-mcp) put them where `git add -A` committed them.
+  assert.match(wr, /BROWSER_OUTPUT_DIR=\/tmp\/usernode-playwright-output/);
+  assert.match(wr, /"--output-dir", "\$BROWSER_OUTPUT_DIR"/);
+});
+
+test('worker-run.sh keeps agent tool output out of every checkout, old apps included', () => {
+  const wr = read('worker-run.sh');
+  // The local exclude file, not the app's .gitignore: it is never committed,
+  // and it covers apps scaffolded before the template carried these entries.
+  const block = wr.slice(wr.indexOf('for USERNODE_EXCLUDE in'), wr.indexOf('# Idempotent submodule sync'));
+  assert.ok(block.length > 0, 'exclude block present before the submodule sync');
+  for (const entry of ['.playwright-mcp/', 'test-results/', 'playwright-report/']) {
+    assert.ok(block.includes(`'${entry}'`), `excludes ${entry}`);
+  }
+  assert.match(block, /grep -qxF "\$USERNODE_EXCLUDE" \.git\/info\/exclude/, 'idempotent across warm re-bootstraps');
+  assert.match(block, />> \.git\/info\/exclude/);
+  // After both checkout branches (cold clone and existing checkout), so a
+  // re-warmed container gets it too.
+  assert.ok(wr.indexOf('for USERNODE_EXCLUDE in') > wr.indexOf('checkout (existing)'));
+});
+
+test('the exclude block really keeps agent output out of `git add -A`, and runs twice cleanly', () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  const wr = read('worker-run.sh');
+  const block = wr.slice(wr.indexOf('for USERNODE_EXCLUDE in'), wr.indexOf('# Idempotent submodule sync'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'un-exclude-'));
+  const git = (...args) => execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
+  try {
+    git('init', '-q');
+    fs.mkdirSync(path.join(dir, '.playwright-mcp'));
+    fs.writeFileSync(path.join(dir, '.playwright-mcp', 'page.png'), 'x');
+    fs.mkdirSync(path.join(dir, 'test-results'));
+    fs.writeFileSync(path.join(dir, 'test-results', 'r.json'), '{}');
+    fs.writeFileSync(path.join(dir, 'app.js'), '1');
+    const script = path.join(dir, '.exclude.sh');
+    fs.writeFileSync(script, `set -u\n${block}\n`);
+    execFileSync('/bin/sh', [script], { cwd: dir });
+    execFileSync('/bin/sh', [script], { cwd: dir });
+    fs.unlinkSync(script);
+    const lines = fs.readFileSync(path.join(dir, '.git', 'info', 'exclude'), 'utf8').split('\n');
+    for (const entry of ['.playwright-mcp/', 'test-results/', 'playwright-report/']) {
+      assert.equal(lines.filter((l) => l === entry).length, 1, `${entry} appears exactly once`);
+    }
+    git('add', '-A');
+    assert.deepEqual(git('diff', '--cached', '--name-only').trim().split('\n'), ['app.js']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 // ── run-cc.sh: purpose-bound MCP flags, strict config, scout/sync untouched ─

@@ -128,8 +128,9 @@ export function cachedMentionCandidates(slug: string, now: number = Date.now()):
 /**
  * The list for `slug`, from the cache or the endpoint. A response the server
  * refused (a 404 for a viewer who may not post) is cached as empty — it will
- * not change within the TTL — while a failed fetch or a 429 is not, so the
- * next `@` retries once the network (or the rate limit) is back.
+ * not change within the TTL — while a failed fetch is not, so the next `@`
+ * retries once the network is back. A 429 (the user-directory rate limit) is
+ * a failed fetch, not a refusal: it passes within the minute.
  */
 export function loadMentionCandidates(slug: string): Promise<string[]> {
   const fresh = cachedMentionCandidates(slug);

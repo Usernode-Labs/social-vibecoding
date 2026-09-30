@@ -160,11 +160,17 @@ JSON
 #   --isolated : ephemeral profile per session, no on-disk profile state.
 #   --no-sandbox : Chromium's own sandbox cannot start in the worker container.
 #   --config   : the software-WebGL launch args seeded just above.
+#   --output-dir : screenshots and snapshots the agent saves land OUTSIDE the
+#                workspace. The MCP default is ./.playwright-mcp in the cwd —
+#                the app checkout — and the commit step's `git add -A` then
+#                shipped them into app history (five apps carried committed
+#                .playwright-mcp screenshots before this).
 # Launch the image's pinned MCP executable directly. `npx @playwright/mcp`
 # may resolve a newer registry package instead of this global install,
 # requiring a different browser revision at the first tool call. Chromium
 # still launches lazily when the agent first uses a browser tool.
 BROWSER_MCP_CONFIG=/home/node/.usernode-mcp.json
+BROWSER_OUTPUT_DIR=/tmp/usernode-playwright-output
 cat > "$BROWSER_MCP_CONFIG" <<JSON
 {
   "mcpServers": {
@@ -174,7 +180,7 @@ cat > "$BROWSER_MCP_CONFIG" <<JSON
     },
     "playwright": {
       "command": "/usr/local/bin/mcp-server-playwright",
-      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG"]
+      "args": ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "$BROWSER_PW_CONFIG", "--output-dir", "$BROWSER_OUTPUT_DIR"]
     }
   }
 }
@@ -223,6 +229,21 @@ else
     fi
   fi
 fi
+
+# Coding-agent tool output never belongs in an app's history. The commit
+# step stages with `git add -A`, and apps scaffolded before these entries
+# reached the template's .gitignore carry nothing that would stop it, so
+# each checkout's LOCAL exclude file (never committed, never pushed) gets
+# them on every bootstrap: the Playwright MCP's default output directory,
+# and the Playwright test runner's result and report directories. Only
+# untracked files are affected; a repository that already tracks one keeps
+# tracking it.
+for USERNODE_EXCLUDE in '.playwright-mcp/' 'test-results/' 'playwright-report/'; do
+  if ! grep -qxF "$USERNODE_EXCLUDE" .git/info/exclude 2>/dev/null; then
+    { mkdir -p .git/info && printf '%s\n' "$USERNODE_EXCLUDE" >> .git/info/exclude; } \
+      || echo "__USERNODE_WARN__ could not add $USERNODE_EXCLUDE to .git/info/exclude"
+  fi
+done
 
 # Idempotent submodule sync — runs on every bootstrap (cold clone OR
 # pre-existing checkout) so a long-warm container that was cloned

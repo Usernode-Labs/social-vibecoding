@@ -303,7 +303,7 @@ test('settlement probes, carries the row, and records it in check history', () =
   const body = src.slice(src.indexOf('async function settleCaptureRun('));
   assert.match(body, /const assetOutcome = shotsOnly \? null : await assetRouteCheck\.maybeRunAssetRouteCheck\(\{/);
   assert.match(body, /if \(assetOutcome\) extraRows\.push\(assetOutcome\.row\);/);
-  assert.match(body, /\(dispatched \|\| unitOutcome \|\| assetOutcome\) && checksResult\.state !== 'error'/);
+  assert.match(body, /\(dispatched \|\| unitOutcome \|\| assetOutcome \|\| renderOutcome\) && checksResult\.state !== 'error'/);
   assert.match(body, /if \(assetOutcome\) historyRows\.push\(assetOutcome\.history\);/);
 });
 

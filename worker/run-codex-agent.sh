@@ -203,7 +203,8 @@ TOML
 [mcp_servers.playwright]
 command = "/usr/local/bin/mcp-server-playwright"
 TOML
-    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "%s"]\n' "$ESCAPED_BROWSER_CONFIG"
+    ESCAPED_BROWSER_OUTPUT=$(toml_escape "${BROWSER_OUTPUT_DIR:-/tmp/usernode-playwright-output}")
+    printf 'args = ["--browser", "chromium", "--headless", "--isolated", "--no-sandbox", "--config", "%s", "--output-dir", "%s"]\n' "$ESCAPED_BROWSER_CONFIG" "$ESCAPED_BROWSER_OUTPUT"
     cat <<'TOML'
 startup_timeout_sec = 30
 tool_timeout_sec = 60
