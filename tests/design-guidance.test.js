@@ -57,7 +57,9 @@ test('hosted Claude carries the guidance once as system context; local and Codex
 });
 
 test('every build and scout gets the design text, whatever the backend', () => {
-  assert.match(SESSIONS, /designGuidance: getDesignGuidance\(\{ readsImages: !isCodexSession \}\),/);
+  assert.match(SESSIONS, /const designGuidance = getDesignGuidance\(\{ readsImages: !isCodexSession \}\);/);
+  assert.match(SESSIONS, /runLocally, isCodexSession, harness, designGuidance,/,
+    'every transport the build renders carries it');
   assert.match(SESSIONS, /const scoutDesignBrief = `\\n- \$\{SPEC_DESIGN_BRIEF\}`;/);
   assert.match(SESSIONS, /so seeding is planned rather than improvised at build time\.\$\{scoutDesignBrief\}/);
   assert.match(prompts.SPEC_DESIGN_BRIEF, /"### Design" subsection/);

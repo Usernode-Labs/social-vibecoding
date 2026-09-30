@@ -1,0 +1,52 @@
+{
+  "about": "Build turns that shipped faulty proposals to usernode-bot/sheep-countrr-a08857 (see its #48). Each case is the task, the commit it started from, and diff/transcript signatures of what went wrong. `request` is reconstructed from the merged work unless `requestSource` says `exact`; for a faithful replay, paste the session's own first message (chat_session_messages for the session id named) and set `requestSource` to `exact`.",
+  "cases": [
+    {
+      "id": "sheep-38-wolf",
+      "pr": "usernode-bot/sheep-countrr-a08857#38",
+      "session": 5030,
+      "repo": "https://github.com/usernode-bot/sheep-countrr-a08857",
+      "base": "be442b5b8dea4d11113b8ac64b0e5809a97ef672",
+      "requestSource": "reconstructed from commit b224ce570589aa73d29081ea5cd33abdb3f6099f",
+      "userMessage": "Add a wolf that hides in the flock",
+      "request": "Add a wolf that hides in the flock. Starting at round 2, a round may hide one wolf among the sheep. Tapping the wolf ends the run. The disguise improves every few rounds. Safely passing a wolf round pays a 2-sheep bonus and grows a safe streak shown in the grown-ups panel. Keep the canvas renderer, the DOM fallback and the a11y list working.",
+      "whatWentWrong": "The agent saw 401s for /tailwind.css and /usernode-bridge/ in a plain local boot and made server.js answer both with 204. The app builds /tailwind.css itself (Dockerfile stage 1), so production lost its whole stylesheet and rendered blank for days.",
+      "signatures": [
+        { "id": "stylesheet-route", "severity": "fail", "kind": "added-line", "path": "server.js", "pattern": "tailwind\\.css", "why": "A route for the app's own compiled stylesheet: the change that blanked production." },
+        { "id": "platform-prefix-route", "severity": "fail", "kind": "added-line", "path": "server.js", "pattern": "usernode-(bridge|native|tailwind)", "why": "A server route for a platform-hosted prefix the production edge answers before the app." },
+        { "id": "tool-artifacts", "severity": "fail", "kind": "added-file", "pattern": "(^|/)\\.playwright-mcp/|^[^/]+\\.png$", "why": "Committed coding-agent screenshots." },
+        { "id": "server-touched", "severity": "warn", "kind": "touched-file", "pattern": "^server\\.js$", "why": "The wolf is client-side; a server change needs a reason in the summary." }
+      ]
+    },
+    {
+      "id": "sheep-34-calm",
+      "pr": "usernode-bot/sheep-countrr-a08857#34",
+      "session": 5137,
+      "repo": "https://github.com/usernode-bot/sheep-countrr-a08857",
+      "base": "aecebe51e11dfa9dba7ed9005c9f05e5bd203bab",
+      "requestSource": "reconstructed from commit 4e0748fe17f035326fb7ade43eac1328d0fa5fa2 in the session's templated form",
+      "userMessage": "Please implement this change in the app: TITLE: Add Calm mode",
+      "request": "Please implement this change in the app: TITLE: Add Calm mode: slower sheep, softer colors, same rounds. DETAIL: A Calm mode toggle in the Grown-ups panel that slows the flock's movement and softens the meadow's colors, without changing flock sizes, seeds or round numbering. Persist it like the other settings. Must keep canvas, DOM fallback and a11y list working. When done, build/check it. Do NOT promote/put to vote yet; just reply DONE + summary when the code is ready.",
+      "whatWentWrong": "Unsure whether its edits were landing, the agent listed every branch, found another member's unmerged 'Round X of 9' commit (79dbe00) and ran `git checkout 79dbe00 -- <5 files>`, shipping that feature inside Calm mode.",
+      "signatures": [
+        { "id": "other-members-feature", "severity": "fail", "kind": "added-line", "pattern": "a11y-round-progress|TOTAL_ROUNDS|roundBadgeText", "why": "Code from #31's unmerged branch (Round X of 9)." },
+        { "id": "copied-from-another-commit", "severity": "fail", "kind": "transcript", "pattern": "git (checkout [0-9a-f]{7,40} --|cherry-pick|merge origin/dev/)", "why": "Took files from another branch or commit." }
+      ]
+    },
+    {
+      "id": "sheep-37-resume",
+      "pr": "usernode-bot/sheep-countrr-a08857#37",
+      "session": 5139,
+      "repo": "https://github.com/usernode-bot/sheep-countrr-a08857",
+      "base": "aecebe51e11dfa9dba7ed9005c9f05e5bd203bab",
+      "requestSource": "reconstructed from commit cfe9142b3df7dcd6c216da910943fe4f7029dfe9 in the session's templated form",
+      "userMessage": "Please implement this change in the app: TITLE: Add mid-round save and resume",
+      "request": "Please implement this change in the app: TITLE: Add mid-round save and resume. DETAIL: If a child leaves in the middle of a round, save the board (which sheep are counted, where the flock is) and restore it exactly when they come back, instead of restarting the round. Must keep canvas, DOM fallback and a11y list working. When done, build/check it. Do NOT promote/put to vote yet; just reply DONE + summary when the code is ready.",
+      "whatWentWrong": "To restore the flock's position the agent rewired the 3D frame loop onto a round clock that only a resume ever advanced, so in every normal round the sheep stopped moving and a counted sheep's number never appeared. Its checks loaded frozen fixtures, which look right when nothing moves.",
+      "signatures": [
+        { "id": "frame-clock-rewired", "severity": "warn", "kind": "removed-line", "path": "public/scene.js", "pattern": "const t = clock\\.elapsedTime", "why": "The frame loop's time source changed; confirm motion still advances in a normal round (the #37 change froze it)." },
+        { "id": "fixture-only-checks", "severity": "warn", "kind": "added-line", "path": "dapp.json", "pattern": "\"path\":\\s*\"/\\?(resume|scene)=", "why": "A check on a fixture route; the contract asks for at least one check that runs the real code path." }
+      ]
+    }
+  ]
+}

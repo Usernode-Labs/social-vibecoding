@@ -6,6 +6,7 @@ const limits = require('../services/limits');
 const { invalidateGrant } = require('../middleware/app-llm-auth');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Grant management for app LLM access (issue #34). Mounted AFTER
 // authMiddleware — every route here is the signed-in user managing
@@ -277,7 +278,7 @@ function llmGrantsRoutes(config) {
   // Revoke. Keeps the row (usage history, easy re-grant) — the proxy
   // requires status='active' and its cache is invalidated here, so
   // the app's next AI call fails with grant_required immediately.
-  router.delete('/api/me/llm-grants/:appId', async (req, res) => {
+  router.delete('/api/me/llm-grants/:appId', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isInteger(appId)) return res.status(400).json({ error: 'Bad app id' });

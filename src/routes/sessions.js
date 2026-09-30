@@ -13,6 +13,8 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const proposalDescription = require('../services/proposal-description');
+const platformIssueBlock = require('../services/platform-issue-block');
+const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
 const topicAttrs = require('../services/topic-attributes');
 const agentSessions = require('../services/agent-sessions');
@@ -53,6 +55,7 @@ const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
 const modelFallback = require('../services/model-fallback');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Imported pull requests are proposal-shaped work before they are promoted:
 // their GitHub description, testing notes, check run and community attributes
@@ -2794,7 +2797,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
 
   // Create a new session. No branch and no PR yet (#1350): the branch is
   // minted on the first chat turn, the PR after the first commit.
-  router.post('/api/apps/:slug/sessions', drainGuard, communities.requireAppMembership(pool), async (req, res) => {
+  router.post('/api/apps/:slug/sessions', drainGuard, communities.requireAppMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     try {
       // #2779: only an agent session's Mayor starts a change (a delegated
       // grant that names the session); a classic session is no longer
@@ -3062,7 +3065,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // preview, but never opens a PR — the PR is created lazily on a cloned
   // session's branch at propose time (see runClaudeCodeTool's `headless`
   // flag).
-  router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, communities.requireAppMembership(pool), async (req, res) => {
+  router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, communities.requireAppMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
@@ -3277,7 +3280,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // hosted connector's submit_platform_build still takes ownership of a
   // build this way before proposing it, so an external connector token (not
   // a delegated grant) is the one caller left.
-  router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), async (req, res) => {
+  router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     if (!req.connectorClientId || req.mcpDelegation) {
       return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
     }
@@ -3890,7 +3893,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   timer run on a short (~5 min) worker-eviction-aligned window
   //   without pausing sessions someone is actively reading. One indexed
   //   UPDATE; only bumps 'active'/'promoted' rows owned by the caller.
-  router.post('/api/sessions/:id/activity', async (req, res) => {
+  router.post('/api/sessions/:id/activity', sameOriginBrowserOnly, async (req, res) => {
     try {
       await pool.query(
         `UPDATE chat_sessions SET last_activity_at = NOW()
@@ -3913,7 +3916,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // earlier visibility-arm — are harmless. Accepts navigator.sendBeacon
   // payloads: a same-origin JSON Blob rides through express.json() and
   // cookie auth applies as usual.
-  router.post('/api/sessions/:id/notify-on-done', async (req, res) => {
+  router.post('/api/sessions/:id/notify-on-done', sameOriginBrowserOnly, async (req, res) => {
     try {
       const armed = !!(req.body && req.body.armed);
       const { rowCount } = await pool.query(
@@ -4129,9 +4132,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   };
 
-  router.post('/api/sessions/:id/platform-issue/:msgId/confirm', (req, res) =>
+  router.post('/api/sessions/:id/platform-issue/:msgId/confirm', sameOriginBrowserOnly, (req, res) =>
     platformIssueDraftAction(req, res, 'confirm'));
-  router.post('/api/sessions/:id/platform-issue/:msgId/dismiss', (req, res) =>
+  router.post('/api/sessions/:id/platform-issue/:msgId/dismiss', sameOriginBrowserOnly, (req, res) =>
     platformIssueDraftAction(req, res, 'dismiss'));
 
   // Archive a session. Reversible: tears down staging + worker and closes
@@ -4139,7 +4142,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // within the retention window (a background GC purges the volume only
   // after ARCHIVED_RETENTION_MS). Use the service so the stale-PR sweeper
   // archives the exact same way.
-  router.post('/api/sessions/:id/archive', async (req, res) => {
+  router.post('/api/sessions/:id/archive', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
@@ -4179,7 +4182,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   no longer claim it, and a later promote puts it up for a fresh vote.
   //   Owner-scoped like /archive. All the safety lives in
   //   sessionLifecycle.unpromoteSession's single guarded UPDATE.
-  router.post('/api/sessions/:id/unpromote', async (req, res) => {
+  router.post('/api/sessions/:id/unpromote', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isInteger(sessionId) || sessionId <= 0) {
@@ -4218,7 +4221,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   the warm worker. Only allowed on an idle, owned, non-archived
   //   session. For codex_openrouter the caller must have a valid
   //   OpenRouter credential.
-  router.post('/api/sessions/:id/reset-agent-context', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/reset-agent-context', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { backend, model, reasoningEffort } = req.body || {};
@@ -4336,7 +4339,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   neither — the transcript, the branch and the proposal all stay exactly
   //   as they are, which is the promise the venue sheet makes when it says
   //   an in-chat venue "keeps this chat, this branch and this proposal".
-  router.post('/api/sessions/:id/build-venue', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/build-venue', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isFinite(sessionId)) {
@@ -4377,7 +4380,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   the UI then auto-resumes via the normal path. If the CC volume was
   //   already GC'd (cc_purged), the restore still works but Claude starts
   //   fresh — we surface that so the UI can warn.
-  router.post('/api/sessions/:id/unarchive', async (req, res) => {
+  router.post('/api/sessions/:id/unarchive', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       if (req.cliAuthenticated) {
@@ -4416,7 +4419,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   transcript_shared_at untouched, so today's behaviour is unchanged
   //   byte for byte: making a session visible never publishes the chat by
   //   accident.
-  router.post('/api/sessions/:id/share', async (req, res) => {
+  router.post('/api/sessions/:id/share', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const withTranscript = !!(req.body && req.body.transcript);
@@ -4451,7 +4454,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // Unshare clears BOTH stamps. Making a session private again must never
   // leave the transcript readable behind a card nobody can see any more —
   // the reader could still hold (or bookmark) the session id.
-  router.post('/api/sessions/:id/unshare', async (req, res) => {
+  router.post('/api/sessions/:id/unshare', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -4482,7 +4485,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   two flags can never disagree in the "readable but invisible"
   //   direction. Both stamps use COALESCE so re-sharing is idempotent and
   //   doesn't reshuffle the board's oldest-shared-first ordering.
-  router.post('/api/sessions/:id/share-transcript', async (req, res) => {
+  router.post('/api/sessions/:id/share-transcript', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -4518,7 +4521,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // board with its discussion thread intact. Deliberately NOT
   // status-filtered: revoking must work on any row whose flag is set,
   // including one that has since been promoted or archived.
-  router.post('/api/sessions/:id/unshare-transcript', async (req, res) => {
+  router.post('/api/sessions/:id/unshare-transcript', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -4640,7 +4643,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   work starts in an agent session, and a shell cached before the switch
   //   is told so rather than getting a 404. The transcript read above
   //   reports can_fork false, so no current page offers it.
-  router.post('/api/sessions/:id/fork', (req, res) => {
+  router.post('/api/sessions/:id/fork', sameOriginBrowserOnly, (req, res) => {
     res.status(410).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
   });
 
@@ -4661,7 +4664,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   Idempotent on the status side — re-pausing a paused session is
   //   a no-op rather than an error, since the state we'd land in is
   //   the same.
-  router.post('/api/sessions/:id/pause', async (req, res) => {
+  router.post('/api/sessions/:id/pause', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
@@ -4725,7 +4728,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //       fall back to a 429.
   //   We deliberately do NOT pre-spawn the worker here; first-turn lazy
   //   boot is what every other path uses.
-  router.post('/api/sessions/:id/resume', async (req, res) => {
+  router.post('/api/sessions/:id/resume', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const resumed = await resumePausedSession({ pool, config, user: req.user, sessionId });
@@ -4749,7 +4752,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //     clean          — merged + pushed without LLM
   //     resolved       — CC resolved conflicts; merged + pushed
   //     conflict       — CC couldn't resolve; merge aborted, no push
-  router.post('/api/sessions/:id/sync-main', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/sync-main', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
 
@@ -5359,7 +5362,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // full-spec affordance; the underlying chat_messages row carries
   // metadata.specShare so the renderer knows to upgrade it from a
   // plain system line.
-  router.post('/api/sessions/:id/specs/:version/share', async (req, res) => {
+  router.post('/api/sessions/:id/specs/:version/share', sameOriginBrowserOnly, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     const version = parseInt(req.params.version, 10);
     if (Number.isNaN(sessionId) || Number.isNaN(version)) {
@@ -5807,7 +5810,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // the CC phase. Deliberately does NOT abort Mayor phase-2 — by then
   // the commit + PR + staging already exist, and stopping the summary
   // would leave the user without context for changes that are real.
-  router.post('/api/sessions/:id/stop', async (req, res) => {
+  router.post('/api/sessions/:id/stop', sameOriginBrowserOnly, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
     try {
@@ -5988,7 +5991,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   });
 
   // Deploy staging for a session
-  router.post('/api/sessions/:id/deploy-staging', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/deploy-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       // #183: headless rows are excluded — their staging is built by the
       // headless runner itself; humans deploy staging from a CLONED session.
@@ -6178,7 +6181,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //
   // The sessionCollabGuard above already gates this to app members; the
   // ownership check below scopes WHO may trigger a rebuild.
-  router.post('/api/sessions/:id/ensure-staging', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/ensure-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const session = await loadPreviewSession(sessionId);
@@ -6262,7 +6265,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // gone, else re-run against the live container. Progress flows through the
   // existing checks_ready / staging_ready broadcasts so the badge updates in
   // place. Owner + admins only.
-  router.post('/api/sessions/:id/recheck', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/recheck', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -8206,6 +8209,19 @@ function scheduleRetainedHeadlessRecovery({
       );
       return false;
     },
+    // Out of attempts (recovery-retry DEFAULT_MAX_FAILURES): the same terminal
+    // outcome as a failure that cannot be retried.
+    onExhausted: async (err, { failures }) => {
+      log.error('sessions', 'Retained headless recovery gave up; marking run failed', {
+        sessionId, failures, err: err.message,
+      });
+      await failHeadlessRun(
+        pool,
+        latestSession,
+        `Auto session could not be completed after ${failures} recovery attempts: `
+          + `${String(err.message || err).substring(0, 200)}`,
+      );
+    },
     onComplete: () => log.info('sessions', 'Retained headless recovery completed', { sessionId }),
     onHookError: (err) => log.warn('sessions', 'Headless recovery retry hook failed', {
       sessionId, err: err.message,
@@ -8602,7 +8618,11 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       }
     } else {
       const testing = testingNotes.extract(result.lastResultText || '');
-      testing.cleanedText = proposalDescription.extract(testing.cleanedText).cleanedText;
+      // A recovered turn's escalation block is not re-filed (the turn's own
+      // tail did not run), but its markers must not reach the timeline.
+      testing.cleanedText = platformIssueBlock.extract(
+        proposalDescription.extract(testing.cleanedText).cleanedText,
+      ).cleanedText;
       const hasChanges = result.ahead > 0 && !!result.sha;
       // #170: a headless session only ever has spec_md if its own scout
       // wrote it this run — so spec_md present means this build was the
@@ -10924,6 +10944,46 @@ change on this branch does for someone using the app.
   - Put it after the rest of your message and BEFORE the testing block,
     which stays last. Skip it when you changed no files.`;
 
+// A build the Mayor dispatches. It replaced the platform's first prompt
+// (2026-04-25: "Spend minimal time reading files … stage everything with
+// "git add -A" … Do NOT ask questions or request clarification. Just build
+// it."), whose first two lines are how Sheep countrr's #38 shipped a server
+// change nobody had read the Dockerfile for; the rest of what that prompt
+// was for now lives in the shared build contract.
+const DISPATCHED_TURN_INSTRUCTIONS = `- IMPLEMENT the requested change fully: write the code and finish the feature. Do not stop at
+  exploring, and do not stop partway.
+- The request was already worked out with the user, so do not ask questions. Where it is still
+  ambiguous, choose the reading that changes the least existing behaviour, and say which you chose.`;
+
+// The dev chat's closing summary. The build contract's own closing line
+// (services/build-contract.js SUMMARY_LINE) says "End with …", but a dev chat
+// turn's final message ends with its description and testing blocks, so the
+// same request is made here, placed ahead of them.
+const DEV_CHAT_SUMMARY_RULE = `- In your final message, before any block it ends with, say in plain language what you changed,
+  list each file you changed with one line on why, and name anything you noticed but left alone.`;
+
+// An OpenRouter turn — Codex, or Claude Code driving the user's OpenRouter
+// model (#3296) — holds only a push-scoped token, which the platform-issue
+// route refuses, so it cannot run `usernode-report-platform-issue`. Before
+// this block it was told only that, while the conventions told it to
+// escalate instead of working around a platform problem; the workarounds
+// Sheep countrr shipped (usernode-bot/sheep-countrr-a08857#48) all came from
+// such turns. The platform reads the block after the turn and files the same
+// draft card the helper would (services/platform-issue-block.js).
+const OPENROUTER_PLATFORM_ISSUE_GUIDANCE = `When the cause of a problem is outside this app's repository (the shared bridge, the preview,
+build or checks pipeline, or a capability the platform does not provide: see "Platform-level
+problems & missing capabilities" in the supplied platform conventions), do not work around it in
+the app. The \`usernode-report-platform-issue\` helper is not available on this backend. Put the
+report in your FINAL message instead, before its description and testing blocks:
+
+==== PLATFORM ISSUE ====
+One-line title
+What is broken or missing, how you hit it, and what the app needs.
+==== END PLATFORM ISSUE ====
+
+Homeroom turns it into a draft report the user can send to the platform. Write at most one per
+turn, and never for something you can fix in this app.`;
+
 function buildHostedCodingWorkflowGuidance({ runLocally = false } = {}) {
   if (runLocally) return '';
   return `HOSTED WORKER LIFECYCLE (this invocation):
@@ -10976,6 +11036,10 @@ function buildCodingAgentBuildGuidance({ authoritativeSystemContext = false } = 
 function buildCodingAgentConventionsContext({
   runLocally = false,
   isCodexSession = false,
+  // #3296: the CLI an OpenRouter turn runs in. Claude Code takes the handbook
+  // as system context whoever serves the model; only Codex (and a local run)
+  // still needs it inline. Absent means Codex, as every OpenRouter turn was.
+  harness = null,
   conventions = getAppConventions(),
   designGuidance = '',
 } = {}) {
@@ -10986,7 +11050,7 @@ ${conventions}
 
 ==== END PLATFORM CONVENTIONS ====${designBlock}`;
 
-  if (runLocally || isCodexSession) {
+  if (runLocally || (isCodexSession && harness !== 'claude')) {
     return { promptBlock: fullBlock, systemPrompt: null };
   }
 
@@ -11333,7 +11397,7 @@ conflict with the platform conventions supplied to this run (which always win)
 or the repo's own \`CLAUDE.md\` on app-specific matters.`
     : '';
   const platformIssueHelperNote = isCodexSession
-    ? 'The `usernode-report-platform-issue` helper is NOT available on this backend; do not call it.'
+    ? OPENROUTER_PLATFORM_ISSUE_GUIDANCE
     : `A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the supplied platform conventions. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.`;
   const taskBlock = directSessionTurn
     ? `DIRECT USER TURN:\n${userMessage}${attachmentsBlock}${discussionBlock}`
@@ -11348,27 +11412,38 @@ or the repo's own \`CLAUDE.md\` on app-specific matters.`
 - If the user asks for a change, implement it fully and commit it. Do not stop after merely describing what should change.
 - If essential clarification is required, ask one concise question and make no speculative edits.
 - Never claim that files changed unless you actually changed and committed them.`)
-    : `- IMPLEMENT the requested changes fully. Do not just explore — write code.
-- Spend minimal time reading files. Focus on writing and editing.
-- Create or modify all necessary files to complete the request.
-- If building something new, implement the full feature — don't stop partway.
-- After all changes are made, stage everything with "git add -A" and commit
-  with a clear message describing what was built.
-- Do NOT ask questions or request clarification. Just build it.`;
-  const conventionsContext = buildCodingAgentConventionsContext({
-    runLocally,
-    isCodexSession,
-    // #2817: the same design guidance for every backend. Only its self-check
-    // differs: OpenRouter models read text, Claude reads screenshots.
-    designGuidance: getDesignGuidance({ readsImages: !isCodexSession }),
-  });
-  const buildGuidance = buildCodingAgentBuildGuidance({
-    authoritativeSystemContext: Boolean(conventionsContext.systemPrompt),
-  });
+    : DISPATCHED_TURN_INSTRUCTIONS;
+  // The rules every on-platform build works under, shared with the Homeroom
+  // bot (services/build-contract.js). The dev chat's final message ends with
+  // its own blocks (description, testing), so the summary is asked for here,
+  // ahead of them, rather than as the contract's closing line.
+  const buildContractBlock = `${buildContract.buildContractBlock({ commits: 'agent', summary: false })}
+${DEV_CHAT_SUMMARY_RULE}`;
+  // #2817: the same design guidance for every backend. Only its self-check
+  // differs: OpenRouter models read text, Claude reads screenshots.
+  const designGuidance = getDesignGuidance({ readsImages: !isCodexSession });
+  // The CLI that runs the turn decides how the handbook travels: Claude Code
+  // (on Anthropic's models or, since #3296, an OpenRouter model) takes it as
+  // system context; Codex and a local run keep it inline. It used to follow
+  // the backend, so GLM in Claude Code still carried the 165 KB handbook in
+  // every user message.
+  const buildTransport = (harness) => {
+    const conventions = buildCodingAgentConventionsContext({
+      runLocally, isCodexSession, harness, designGuidance,
+    });
+    return {
+      conventions,
+      guidance: buildCodingAgentBuildGuidance({
+        authoritativeSystemContext: Boolean(conventions.systemPrompt),
+      }),
+    };
+  };
+  const transport = buildTransport(agentIdentity.harness);
+  const conventionsContext = transport.conventions;
   const workflowGuidance = buildHostedCodingWorkflowGuidance({ runLocally });
-  const renderClaudePrompt = (renderedSpecBlock) => `${taskBlock}
+  const renderClaudePrompt = (renderedSpecBlock, { conventions, guidance } = transport) => `${taskBlock}
 
-${conventionsContext.promptBlock}
+${conventions.promptBlock}
 ${renderedSpecBlock}${failingChecksBlock}
 
 A \`CLAUDE.md\` at the repo root, if present, contains **app-specific**
@@ -11393,8 +11468,9 @@ ${debugAccess.promptBlock()}
 INSTRUCTIONS:
 ${workflowGuidance}
 ${turnInstructions}
-${buildGuidance.browserGuidance}
-${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildGuidance.testingGuidance}`;
+${buildContractBlock}
+${guidance.browserGuidance}
+${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidance.testingGuidance}`;
 
   const fullClaudePrompt = renderClaudePrompt(specContext.fullBlock);
   const claudePrompt = reuseHostedScoutSpec
@@ -11403,6 +11479,19 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
   // run-cc.sh reads this only after --resume fails. A fresh session therefore
   // gets the exact complete task it received before this optimization.
   const claudeResumeFallbackPrompt = reuseHostedScoutSpec ? fullClaudePrompt : null;
+  // An OpenRouter turn's CLI is settled only at dispatch, where
+  // resolveCodexRuntimeContext resolves harness 'auto' from the per-model map.
+  // Render both prompts so the attempt always gets the one for the CLI that
+  // actually runs, even if the map moves between here and there.
+  const openRouterBuildPrompts = isCodexSession && !runLocally
+    ? Object.fromEntries(['codex', 'claude'].map((harness) => {
+      const t = buildTransport(harness);
+      return [harness, {
+        prompt: renderClaudePrompt(specContext.fullBlock, t),
+        systemPrompt: t.conventions.systemPrompt,
+      }];
+    }))
+    : null;
 
   const commitMsg = github.safeMention(`Changes: ${userMessage.substring(0, 50)}`);
 
@@ -11972,19 +12061,27 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
       const doBuild = (ctx) => {
         const isClaudeDispatch = !ctx || !ctx.logicalTurnId;
         if (isClaudeDispatch) claudeTelemetryAttemptNumber += 1;
+        // An OpenRouter attempt: the prompt and system context rendered for the
+        // CLI its runtime resolved (see openRouterBuildPrompts above).
+        const openRouterBuild = !isClaudeDispatch && openRouterBuildPrompts
+          ? openRouterBuildPrompts[ctx.agentHarness === 'claude' ? 'claude' : 'codex']
+          : null;
         return worker.execInWorker(session.id, {
           mode: 'build',
-          prompt: claudePrompt,
+          prompt: openRouterBuild ? openRouterBuild.prompt : claudePrompt,
           // Present only for the first hosted-Claude build after an exact
           // matching scout. If --resume is unavailable, the runner retries
           // fresh with this complete spec-bearing user prompt.
           resumeFallbackPrompt: isClaudeDispatch ? claudeResumeFallbackPrompt : null,
-          // Hosted Claude gets the same authoritative handbook on every
-          // invocation as stable system context. New, resumed, compacted and
-          // resume-fallback-fresh runs therefore all use the current version
-          // without adding another copy to conversation history. Codex and
-          // local Claude retain the inline block above.
-          systemPrompt: isClaudeDispatch ? conventionsContext.systemPrompt : null,
+          // Claude Code gets the same authoritative handbook on every
+          // invocation as stable system context — hosted Claude, and an
+          // OpenRouter model running in Claude Code (#3296). New, resumed,
+          // compacted and resume-fallback-fresh runs therefore all use the
+          // current version without adding another copy to conversation
+          // history. Codex and local Claude retain the inline block above.
+          systemPrompt: isClaudeDispatch
+            ? conventionsContext.systemPrompt
+            : (openRouterBuild ? openRouterBuild.systemPrompt : null),
           model: turnModel,
           commitMsg,
           resumeSessionId: resumeThreadId,
@@ -12207,7 +12304,30 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
     // A message that was nothing but the block still gets a chat card.
     const described = proposalDescription.extract(testing.cleanedText);
     const turnDescription = described.description;
-    const ccText = described.cleanedText || turnDescription || '';
+    // An OpenRouter turn cannot run usernode-report-platform-issue, so it puts
+    // an escalation in a "==== PLATFORM ISSUE ====" block instead
+    // (OPENROUTER_PLATFORM_ISSUE_GUIDANCE). Peel it off the message and file
+    // the same draft card the helper would: a person still taps it before
+    // anything is filed, and the turn itself never held a token that could.
+    const escalation = isCodexSession
+      ? platformIssueBlock.extract(described.cleanedText)
+      : { cleanedText: described.cleanedText, issue: null };
+    if (escalation.issue) {
+      issueDraft.createDraft(pool, config, {
+        sessionId: session.id,
+        title: escalation.issue.title,
+        body: escalation.issue.body,
+        target: 'platform',
+        source: 'agent',
+      }).then((drafted) => {
+        if (!drafted.ok) {
+          log.info('sessions', 'Platform-issue block not drafted', { sessionId: session.id, code: drafted.code });
+        }
+      }).catch((err) => {
+        log.warn('sessions', 'Platform-issue block draft failed', { sessionId: session.id, err: err.message });
+      });
+    }
+    const ccText = escalation.cleanedText || turnDescription || '';
     commitHash = result.sha;
     const hasChanges = result.ahead > 0 && !!commitHash;
 
@@ -12289,6 +12409,12 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${buildG
       let msg;
       if (directReply) {
         msg = null;
+      } else if (result.branchMismatch) {
+        // worker/session-branch.sh: the agent ended on a line that does not
+        // build on this session's branch (another member's, say), so the
+        // runner committed and pushed nothing rather than publish it.
+        msg = `${executionAgentName} ended up working on a different branch that doesn't build on this change, `
+          + 'so nothing from this turn was saved. Send your request again to redo it here.';
       } else if (result.exitCode === 0) {
         msg = `No changes were made by ${executionAgentName}.`;
       } else if (result.exitCode === -1 || result.exitCode == null) {
@@ -13171,4 +13297,4 @@ const MAYOR_TURN_DEPS = Object.freeze({
   switchSessionAgent,
 });
 
-module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };
+module.exports = { requestSessionStop, MAYOR_TURN_DEPS, canViewSession, BUILD_VENUES, summarizeFailingChecks, describeStoppedLanding, stopLandingMeta, runCodexAttemptLoop, resumeRecoveredCodexFreshRetry, sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, buildFailingChecksBlock, buildSessionDiscussionBlock, postHeadlessQuestionThreadMessage, stripSpecWrapperFence, snapshotSessionSpec, persistScoutPublication, scheduleRetainedInteractiveTurn, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifySessionStalled, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, resolveTurnPills, quickReplyMeta, headlessWrapUpMeta, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, shouldRetryApiErrorTurn, codexMaxTokensRetry, codexProviderFailureText, stripFakeCompletionMarker, buildMayorMessages, buildCodingAgentConventionsContext, buildHostedCodingWorkflowGuidance, buildCodingAgentBuildGuidance, OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE, OPENROUTER_PLATFORM_ISSUE_GUIDANCE, DISPATCHED_TURN_INSTRUCTIONS, DEV_CHAT_SUMMARY_RULE, buildCodingAgentSpecContext, canReuseHostedClaudeScoutSpec, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, IN_PROCESS_TOOL_NAMES, DRAFT_TOOL_NAME, GET_PROD_STATUS_TOOL, GET_GITHUB_ISSUE_TOOL, LIST_GITHUB_ISSUES_TOOL, DRAFT_ISSUE_REPORT_TOOL, SUGGEST_REPLIES_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, DATA_TOOL_THINKING_STATUS, codingAgentRuntimeIdentity, resolveDefaultAgentPreference, resolveExplicitAgentPreference, AgentSelectionError, switchSessionAgent, resumePausedSession, _recordLocalCodingInvocationForTests: recordLocalCodingInvocation };

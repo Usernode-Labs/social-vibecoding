@@ -54,6 +54,7 @@ const { getPlatformApp } = require('../services/platform-app');
 // Deliberately NOT destructured: tests (and the never-throws mail contract)
 // swap sendPasswordResetMail on the module object.
 const mail = require('../services/mail');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // The idle lease a freshly-minted browser session starts with. This matches
 // SESSION_IDLE_DAYS in middleware/auth.js, which renews active sessions and
@@ -605,7 +606,7 @@ function authRoutes(config) {
     }
   });
 
-  router.post('/api/auth/logout', async (req, res) => {
+  router.post('/api/auth/logout', sameOriginBrowserOnly, async (req, res) => {
     const token = req.cookies?.session;
     if (token) {
       try {
@@ -979,7 +980,7 @@ function authRoutes(config) {
     }
   });
 
-  router.delete('/api/me/api-key', async (req, res) => {
+  router.delete('/api/me/api-key', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
       const credentialStore = require('../services/credential-store');
@@ -1085,7 +1086,7 @@ function authRoutes(config) {
   // Connections. Body { flow: 'platform' | 'claude-code' | 'codex' | null }
   // — null (or "") clears it back to "ask me every time", which is what
   // unticking the checkbox sends.
-  router.post('/api/me/dev-flow', async (req, res) => {
+  router.post('/api/me/dev-flow', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     const { flow } = req.body || {};
 
@@ -1117,7 +1118,7 @@ function authRoutes(config) {
   // casing is normalized (language subtag lowercase, two-letter region
   // subtags uppercase: "pt-br" → "pt-BR"). The stored value feeds the
   // iframe JWT `locale` claim and /api/auth/me.
-  router.post('/api/me/locale', async (req, res) => {
+  router.post('/api/me/locale', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     const { locale } = req.body || {};
 
@@ -1159,7 +1160,7 @@ function authRoutes(config) {
   // ── Wallet linking ───────────────────────────────────────────────
   const LINK_TOKEN_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
-  router.post('/api/me/wallet-link', async (req, res) => {
+  router.post('/api/me/wallet-link', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     if (!config.usernodeAppPubkey) {
       return res.status(503).json({ error: 'Wallet linking not configured' });
@@ -1211,7 +1212,7 @@ function authRoutes(config) {
     }
   });
 
-  router.delete('/api/me/wallet-link', async (req, res) => {
+  router.delete('/api/me/wallet-link', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
       await pool.query(

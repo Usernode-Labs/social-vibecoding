@@ -94,7 +94,7 @@ test('the OpenRouter build prompt requires a whole-change description block', ()
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
   assert.match(
     src,
-    /\$\{isCodexSession \? `\$\{OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE\}\\n` : ''\}\$\{buildGuidance\.testingGuidance\}/,
+    /\$\{isCodexSession \? `\$\{OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE\}\\n` : ''\}\$\{guidance\.testingGuidance\}/,
     'only OpenRouter build prompts carry it, just ahead of the testing block',
   );
 });
@@ -102,7 +102,11 @@ test('the OpenRouter build prompt requires a whole-change description block', ()
 test('the turn path peels the block off and hands it to the PR metadata', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8');
   assert.match(src, /const described = proposalDescription\.extract\(testing\.cleanedText\);/);
-  assert.match(src, /const ccText = described\.cleanedText \|\| turnDescription \|\| '';/);
+  // The OpenRouter escalation block is peeled off the same text next
+  // (tests/platform-issue-block.test.js); a message that was nothing but
+  // the description block still gets a chat card.
+  assert.match(src, /\? platformIssueBlock\.extract\(described\.cleanedText\)\s*\n\s*: \{ cleanedText: described\.cleanedText, issue: null \};/);
+  assert.match(src, /const ccText = escalation\.cleanedText \|\| turnDescription \|\| '';/);
   assert.match(src, /proposalDescription: turnDescription,/);
   assert.match(src, /\.\.\.\(turnDescription \? \{ proposalDescription: turnDescription \} : \{\}\),/);
 });

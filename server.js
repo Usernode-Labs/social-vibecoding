@@ -554,6 +554,10 @@ app.use(topochainMobileRoutes(config));
 // can never be confused for one of those distinct credentials.
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
+// Every admin write, on whichever router declares it, answers only the
+// Homeroom page itself (middleware/same-site-browser.js). Mounted ahead of
+// all of them; the CLI's bearer calls carry no Sec-Fetch-Site and pass.
+app.use(['/api/admin', '/api/v4/admin'], require('./src/middleware/same-site-browser').sameOriginBrowserWrites);
 app.use(require('./src/middleware/moderation').moderationGuard(config));
 app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));
@@ -2460,6 +2464,14 @@ function scheduleRetainedOrphanRecovery(orphan, deps) {
       });
       return false;
     },
+    // Out of attempts (recovery-retry DEFAULT_MAX_FAILURES). The reservation
+    // is released and the durable turn left in place, so the stale-turn
+    // watchdog ends it like any unowned turn and tells the user.
+    onExhausted: async (err, { failures }) => {
+      log.error('server', 'Retained orphan recovery gave up; leaving the turn to the stale-turn watchdog', {
+        name: orphan.name, sessionId, failures, err: err.message, code: err.code || null,
+      });
+    },
     onComplete: () => log.info('server', 'Retained orphan recovery completed', {
       name: orphan.name, sessionId,
     }),
@@ -3299,6 +3311,9 @@ async function finalizeRecoveredTurn({
     await persistCompletionRow(recoveredCcSummary, noChangeOutcome);
     if (result.fatalError) {
       summaryParts.push(`The coding agent hit an error: ${String(result.fatalError).substring(0, 200)}`);
+    } else if (result.branchMismatch) {
+      summaryParts.push('The coding agent ended up working on a different branch that does not build on this '
+        + 'change, so nothing from the turn was saved. Tell the user to send the request again.');
     } else if (!recoveryAgent.isOpenRouter) {
       summaryParts.push('The coding agent finished without committing any changes.');
     }

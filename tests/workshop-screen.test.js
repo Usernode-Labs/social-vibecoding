@@ -189,6 +189,13 @@ test('the visibility filter is GET /api/apps\'s, so the two lists cannot disagre
   const sql = route.COUNTS_SQL;
   assert.match(sql, /\(NOT a\.self_hosted OR \$2::boolean\)/);
   assert.match(sql, /\(\$3::boolean OR a\.view_visibility = 'public' OR me\.user_id IS NOT NULL\)/);
+  // As /api/apps also does, a suspended app is left out for everyone: it
+  // refuses to open, so a count, item or card for it would lead nowhere.
+  for (const [name, q] of [['COUNTS_SQL', sql], ['ITEMS_SQL', route.ITEMS_SQL], ['NEEDS_FEED_SQL', route.NEEDS_FEED_SQL]]) {
+    assert.match(q, /a\.moderation_suspended_at IS NULL\s+AND \(NOT a\.self_hosted OR \$2::boolean\)/,
+      `${name} leaves out suspended apps`);
+  }
+  assert.match(read('src/routes/apps.js'), /WHERE a\.moderation_suspended_at IS NULL AND \(NOT a\.self_hosted OR \$1::boolean\)/);
   assert.match(read('src/routes/apps.js'), /\(NOT a\.self_hosted OR \$1::boolean\)/,
     'the clause this mirrors is still the one /api/apps applies');
   // And only apps with something on them are returned: the client reads a

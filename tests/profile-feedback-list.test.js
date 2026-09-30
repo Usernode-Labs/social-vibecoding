@@ -72,6 +72,8 @@ test('a failed read is not "nothing sent", and a capped list says so', () => {
   const empty = feedbackListView({ sent: 0, counted: 0, reports: [] }, NOW);
   assert.equal(empty.loaded, true);
   assert.equal(empty.summary, 'Nothing sent yet');
+  assert.equal(feedbackListView({ sent: 4, counted: 0, reports: [] }, NOW).summary, '4 sent',
+    'a zero says nothing: no "· 0 counted"');
   assert.equal(feedbackListView({ ...FEEDBACK, sent: 120, truncated: true }, NOW).truncated, true);
 });
 
