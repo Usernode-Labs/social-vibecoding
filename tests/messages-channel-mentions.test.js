@@ -26,6 +26,7 @@ const HUB = read('frontend/src/features/dev-board/workshop/hub-cards.tsx');
 const TYPEAHEAD = read('frontend/src/features/dev-board/card/mention-typeahead.tsx');
 const SERVICE = read('src/services/conversations.js');
 const ROUTES = read('src/routes/conversations.js');
+const CHAT_ROUTES = read('src/routes/chat.js');
 
 const between = (src, from, to) => {
   const start = src.indexOf(from);
@@ -140,6 +141,18 @@ test('the server reuses the message-read gate and the directory rate limit', () 
   const route = between(ROUTES, "'/api/conversations/:id/mention-candidates'", '\n  });');
   assert.match(ROUTES, /router\.get\('\/api\/conversations\/:id\/mention-candidates', userDirectoryLimiter,/);
   assert.match(route, /users \? res\.json\(\{ users \}\) : sendNotFound\(res\)/);
+});
+
+test('the app list behind @ is rate-limited like the other people searches', () => {
+  // Since #3361 it takes ?q= per keystroke, so it spends the same per-user
+  // bucket as /mention-candidates and /api/users/search.
+  assert.match(CHAT_ROUTES, /\{[^}]*\buserDirectoryLimiter,[^}]*\} = require\('\.\.\/middleware\/rate-limits'\)/);
+  assert.match(CHAT_ROUTES, /router\.get\('\/api\/apps\/:slug\/mention-suggestions', userDirectoryLimiter, async/);
+  // A 429 is a failure, not an answer: the hub's per-prefix lookup does not
+  // remember it as "nobody", and the whole-list cache does not keep it.
+  assert.match(between(HUB, 'function HubComposer', '\n}\n'),
+    /if \(res\.status === 429\) throw new Error\('rate_limited'\);\s*if \(!res\.ok\) return \[\];/);
+  assert.match(TYPEAHEAD, /if \(res\.status === 429\) return \[\];\s*let users/);
 });
 
 test('the hub composer suggests people: the app list, or #general by prefix', () => {
