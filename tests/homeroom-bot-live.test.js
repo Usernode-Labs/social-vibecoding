@@ -604,8 +604,13 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.match(h.posts[1].text, /would build this, but it already has 2 proposals open on this app/);
   assert.match(h.posts[1].text, /come back to this issue when one of them is merged or closed/);
 
-  live.buildAndPropose = async () => ({ ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.25 });
+  live.buildAndPropose = async (args) => {
+    await args.onSession({ id: 5001 });
+    return { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.25 };
+  };
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
+  assert.ok(h.queries.some((q) => /SET build_session_id = \$2 WHERE id = \$1/.test(q.sql) && q.params[0] === 900 && q.params[1] === 5001),
+    'the live run is linked to its build session as soon as it exists, so a restart can find it (#3471)');
   const card = h.posts.find((p) => p.kind === 'proposal');
   assert.equal(card.msgType, 'vote', 'the thread gets the live vote card');
   assert.deepEqual(card.metadata, { vote: { sessionId: 5001, prNumber: 42 } });
