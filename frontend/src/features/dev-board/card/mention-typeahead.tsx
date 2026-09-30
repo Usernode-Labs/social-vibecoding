@@ -35,7 +35,7 @@
 import { useCallback, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 
 import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
-import { prefixLookup } from '../../../lib/prefix-lookup';
+import { prefixLookup, type PrefixLookup } from '../../../lib/prefix-lookup';
 import { MentionMenuView } from '../../group-chat/autocomplete';
 
 /** The character class the server's MENTION_RE recognises. */
@@ -45,6 +45,8 @@ export const MENTION_MAX_LEN = 32;
 export const MENTION_MAX_RESULTS = 50;
 /** A stale list only means a just-joined person is not suggested yet. */
 export const MENTION_CACHE_TTL_MS = 2 * 60 * 1000;
+/** The server's cap on the whole list (src/routes/chat.js); a list this long may be missing people. */
+export const MENTION_FULL_LIST = 500;
 
 // Anchored to the caret: a boundary (start or a non-mention char), `@`, then
 // up to MENTION_MAX_LEN mention chars, end of the text before the caret.
@@ -126,8 +128,8 @@ export function cachedMentionCandidates(slug: string, now: number = Date.now()):
 /**
  * The list for `slug`, from the cache or the endpoint. A response the server
  * refused (a 404 for a viewer who may not post) is cached as empty — it will
- * not change within the TTL — while a failed fetch is not, so the next `@`
- * retries once the network is back.
+ * not change within the TTL — while a failed fetch or a 429 is not, so the
+ * next `@` retries once the network (or the rate limit) is back.
  */
 export function loadMentionCandidates(slug: string): Promise<string[]> {
   const fresh = cachedMentionCandidates(slug);
@@ -137,6 +139,7 @@ export function loadMentionCandidates(slug: string): Promise<string[]> {
   const p = (async () => {
     try {
       const res = await fetch(mentionSuggestionsPath(slug));
+      if (res.status === 429) return [];
       let users: string[] = [];
       if (res.ok) {
         const data = await res.json();
@@ -145,6 +148,8 @@ export function loadMentionCandidates(slug: string): Promise<string[]> {
           : [];
       }
       cache.set(slug, { users, fetchedAt: Date.now() });
+      // What prefix lookups found is as old as the list it widens.
+      prefixAskers.delete(slug);
       return users;
     } catch {
       return [];
@@ -156,10 +161,52 @@ export function loadMentionCandidates(slug: string): Promise<string[]> {
   return p;
 }
 
+// ── When the whole list is full: ask by prefix ───────────────────────
+//
+// The whole list stops at MENTION_FULL_LIST people, so in a larger community
+// a quiet member late in its order is not in it. When it is full and a prefix
+// does not fill the menu from it, the people matching that prefix are asked
+// of the same endpoint (?q=), as the hub's channel box does (#3361). One
+// lookup per app, shared by every row; lib/prefix-lookup.ts drops a stale
+// answer and does not remember a failed one (a 429 throws, so it is retried).
+
+const prefixAskers = new Map<string, PrefixLookup<string>>();
+
+function prefixAskerFor(slug: string): PrefixLookup<string> {
+  let asker = prefixAskers.get(slug);
+  if (!asker) {
+    asker = prefixLookup(async (query: string) => {
+      const res = await fetch(`${mentionSuggestionsPath(slug)}?q=${encodeURIComponent(query)}`);
+      if (!res.ok) throw new Error(`mention lookup ${res.status}`);
+      const data = await res.json();
+      return Array.isArray(data?.users)
+        ? data.users.map((u: any) => String((u && u.username) || '')).filter(Boolean)
+        : [];
+    });
+    prefixAskers.set(slug, asker);
+  }
+  return asker;
+}
+
+/** Whether `query` should also be asked by prefix, given the whole list `names`. */
+export function needsPrefixLookup(names: readonly string[], query: string): boolean {
+  return !!query && names.length >= MENTION_FULL_LIST
+    && filterMentionCandidates(names, query).length < MENTION_MAX_RESULTS;
+}
+
+/** The whole list, then anybody a prefix lookup found beyond it. */
+export function mergeMentionNames(names: readonly string[], found: readonly string[]): string[] {
+  const seen = new Set(names);
+  const out = names.slice();
+  for (const name of found) if (!seen.has(name)) { seen.add(name); out.push(name); }
+  return out;
+}
+
 /** Tests only: forget every cached list. */
 export function resetMentionCache(): void {
   cache.clear();
   inflight.clear();
+  prefixAskers.clear();
 }
 
 // ── Keys ──────────────────────────────────────────────────────────────
@@ -279,12 +326,22 @@ export function useMentionTypeahead({
       void asker.ask(token.query).then((found) => { if (found) apply(found); });
       return;
     }
+    // The whole list, and, when it is full and this prefix is short of it,
+    // the server's answer for the prefix merged in once it lands.
+    const applyWhole = (names: string[]) => {
+      apply(names);
+      const caret = el.selectionStart;
+      const token = caret == null ? null : detectMentionToken(el.value, caret, wideTokens);
+      if (!token || !needsPrefixLookup(names, token.query)) return;
+      void prefixAskerFor(slug).ask(token.query)
+        .then((found) => { if (found) apply(mergeMentionNames(names, found)); });
+    };
     const names = cachedMentionCandidates(slug);
-    if (names) { apply(names); return; }
+    if (names) { applyWhole(names); return; }
     close();
     const caret = el.selectionStart;
     if (caret == null || !detectMentionToken(el.value, caret, wideTokens)) return;
-    void loadMentionCandidates(slug).then(apply);
+    void loadMentionCandidates(slug).then(applyWhole);
   }, [slug, inputRef, close, asker, wideTokens]);
 
   const warm = useCallback(() => {
