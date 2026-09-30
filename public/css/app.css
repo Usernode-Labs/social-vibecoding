@@ -16342,9 +16342,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 
 /* ── What landed since you were last here (since-summary-card.tsx) ─────
    The hub's first card: the window as the heading, the count, "AI summary"
-   when a model wrote it, and the × at the far end; then the sentence at the
-   reading size, or the titles when there are three or fewer. */
+   when a model wrote it, the ×, and "Week by week ›" as the corner door
+   (like the hub's other tiles); then the sentence at the reading size, or
+   the titles when there are three or fewer. */
 .dev-ws-since-card { gap: 6px; }
+.dev-ws-since-card .dev-ws-head { flex-wrap: wrap; }
 .dev-ws-since-card-n { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-since-card-tag { margin-left: auto; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
 .dev-ws-since-card-x {
@@ -17019,8 +17021,12 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   color: var(--accent); font: inherit; font-size: 13.5px; font-weight: 600;
   cursor: pointer;
 }
-/* The way to the rest of what landed, week by week. */
-.dev-ws-since-card-more { align-self: flex-start; font-size: 13.5px; font-weight: 600; }
+/* The way to the rest of what landed, week by week: a corner door like the
+   hub's other tiles (.dev-ws-hub-open), at the head row's far end. */
+.dev-ws-since-card-more {
+  display: inline-flex; align-items: center; gap: 2px; flex: none;
+  font-size: 13px; font-weight: 600;
+}
 /* ── "Your communities" (features/workshop/community-switcher.tsx) ──
    The switcher behind the Communities tab: a sheet from the floor on a
    phone (the kit's own when it adopts it; this scrim and panel when not),

@@ -8,7 +8,8 @@
 //     (the island rule: data loads in effects);
 //   - the heading names the window's start in the viewer's own calendar;
 //   - "AI summary" only when a model wrote the line;
-//   - it is not a link, and the × hides it until something newer lands.
+//   - it is not a link, and the × hides it until something newer lands;
+//   - "Week by week ›" is the card's corner door: in the head row, last.
 //
 // Run with: node --test tests/since-summary-card.test.js
 
@@ -64,6 +65,16 @@ test('the card says who wrote it, is not a link, and the × hides it until somet
   // (#852).
   assert.match(LANDER, /\{slug \? \(\s*<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>\s*\) : null\}/);
   assert.match(SRC, /data-ws-since-summary-more="" onClick=\{onMore\}>\s*Week by week/);
+  // The corner door: the more button lives in the head row, after the ×,
+  // with the same chevron the hub's other doors use.
+  const head = SRC.match(/<div className="dev-ws-head">([\s\S]*?)<\/div>/);
+  assert.ok(head, 'the card has a head row');
+  const moreInHead = head[1].match(/<button[^>]*data-ws-since-summary-more=""[\s\S]*?<\/button>/);
+  assert.ok(moreInHead, 'Week by week is in the head row');
+  assert.ok(/ChevronRightIcon/.test(moreInHead[0]), 'the corner door has a chevron');
+  const xEnd = head[1].indexOf('data-ws-since-summary-dismiss');
+  const moreEnd = head[1].indexOf('data-ws-since-summary-more');
+  assert.ok(xEnd !== -1 && moreEnd > xEnd, 'the more button is the head’s last child, after the ×');
   for (const cls of ['dev-ws-since-card', 'dev-ws-since-card-n', 'dev-ws-since-card-tag', 'dev-ws-since-card-x', 'dev-ws-since-card-text', 'dev-ws-since-card-list']) {
     assert.match(CSS, new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
   }

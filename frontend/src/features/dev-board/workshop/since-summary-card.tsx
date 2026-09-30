@@ -20,9 +20,9 @@
  * yesterday", "Since Monday", "Since Sep 12") and the count is the window's,
  * so what it says and what it covers agree.
  *
- * It is NOT A LINK. Where these changes are listed is the Workshop page,
- * which is a member's catch-up, not a place to send somebody who came to
- * the hub to see what is going on; the Workshop's own door is further down.
+ * "Week by week", with a chevron, sits at the card's top-right corner like
+ * the hub's other doors: it is the way to the Workshop page, where the
+ * window is listed week by week.
  *
  * ── Dismissing it ──────────────────────────────────────────────────────
  *
@@ -40,7 +40,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
-import { XIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
 export type SinceSummary =
   | { state: 'none' }
@@ -140,6 +140,12 @@ export function SinceSummaryCard({ slug, since, onMore }: {
         >
           <XIcon className="dev-ws-since-card-x-glyph" aria-hidden="true" />
         </button>
+        {onMore ? (
+          <button type="button" className="dev-ws-link dev-ws-since-card-more un-touch-target" data-ws-since-summary-more="" onClick={onMore}>
+            Week by week
+            <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+          </button>
+        ) : null}
       </div>
       {data.state === 'ai' ? (
         <p className="dev-ws-since-card-text" data-ws-since-summary-text="">{data.text}</p>
@@ -150,11 +156,6 @@ export function SinceSummaryCard({ slug, since, onMore }: {
           ))}
         </ul>
       )}
-      {onMore ? (
-        <button type="button" className="dev-ws-link dev-ws-since-card-more un-touch-target" data-ws-since-summary-more="" onClick={onMore}>
-          Week by week
-        </button>
-      ) : null}
     </section>
   );
 }

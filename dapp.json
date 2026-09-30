@@ -2583,7 +2583,7 @@
     {
       "name": "A project's hub opens on what landed since your last visit, in a sentence or two, with a way to dismiss it and a way to the Workshop page, week by week (staging demo line)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-since-summary=\"ai\"]:has(> .dev-ws-head > button[data-ws-since-summary-dismiss]):has(> button[data-ws-since-summary-more]) > [data-ws-since-summary-text]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-since-summary=\"ai\"]:has(> .dev-ws-head > button[data-ws-since-summary-dismiss]):has(> .dev-ws-head > button[data-ws-since-summary-more]) > [data-ws-since-summary-text]",
       "expectText": "Staging demo: mostly polish on Messages and Discover"
     },
     {
