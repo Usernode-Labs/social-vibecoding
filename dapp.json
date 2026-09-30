@@ -3980,7 +3980,7 @@
     {
       "name": "Admin Waitlist is a first-class menu section (#1179), with its Invites panel loaded",
       "path": "/#admin/waitlist",
-      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-invites-usage)",
+      "expectSelector": "#admin-topo-content:has(#admin-topo-wl-invites-usage):has(#admin-topo-wl-search)",
       "expectText": "Invite links"
     },
     {
