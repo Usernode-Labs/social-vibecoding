@@ -199,6 +199,13 @@ test('CEILING: the Homeroom mark is exactly the 28px row', () => {
   const tile = html.match(/<img[^>]*class="platform-mark-tile[^"]*"/)[0];
   assert.match(tile, /(?:^|\s)h-\[26px\](?:\s|$)/,
     'the artwork is 26px, so it fits the row with a pixel to spare');
+  // #3358: the button draws the Homeroom mark itself, a real asset, and as
+  // decoration: the button's aria-label is its name.
+  const full = html.match(/<img[^>]*class="platform-mark-tile[^"]*"[^>]*>/)[0];
+  assert.match(full, /\bsrc="\/brand\/homeroom-mark\.png"/, 'the mark, not another picture');
+  assert.match(full, /\balt=""/, 'decorative: the button is named by its label');
+  assert.ok(require('node:fs').existsSync(require('node:path').join(__dirname, '..', 'public', 'brand', 'homeroom-mark.png')),
+    'the mark ships with the shell');
 });
 
 test('CEILING: the landing bar is the wordmark at 28px, and carries no CTA', () => {
