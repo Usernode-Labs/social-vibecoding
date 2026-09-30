@@ -273,13 +273,13 @@ async function applyHeadChange({
   const { rows: claimed } = await pool.query(
     `UPDATE chat_sessions
         SET imported_pr_head_sha = $1,
-            ${summaryFreshness.INVALIDATE_SQL},
+            ${summaryFreshness.invalidateHeadMoveSql('$1')},
             stale_notified_at = NULL,
             approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 1 ELSE 0 END,
             checks_commit_sha = CASE WHEN $4::boolean THEN $1 ELSE checks_commit_sha END
       WHERE id = $2
         AND imported_pr_head_sha IS NOT DISTINCT FROM $5::varchar
-      RETURNING approval_epoch`,
+      RETURNING approval_epoch, pr_summary_stale`,
     [newHead, session.id, bumpEpoch, checksCarry, oldHead]
   );
   if (!claimed.length) {
@@ -299,7 +299,11 @@ async function applyHeadChange({
   }
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.imported_pr_head_sha = newHead;
-  session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  // #3344: read back, because an author summary recorded for this very head
+  // stays fresh (summaryFreshness.invalidateHeadMoveSql).
+  session.pr_summary_stale = typeof claimed[0].pr_summary_stale === 'boolean'
+    ? claimed[0].pr_summary_stale
+    : (session.pr_summary_stale || !!session.pr_summary_md);
   session.approval_epoch = epoch;
   if (checksCarry) session.checks_commit_sha = newHead;
   if (session.shots_state || session.shots_detail) {

@@ -607,7 +607,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
     testingMd: null, testingPath: null, appliedTesting: null,
     visuals: null, appliedVisuals: null,
     shotsDetail: null, appSlug: null, currentPrBody: null,
-    appliedSummary: null, summaryStale: false,
+    appliedSummary: null, summaryStale: false, summarySource: null,
     summaryInputVersion: 0, summaryHead: null, summaryInputsChangedDuringGather: false,
     agentSessionChange: false, changeName: null, personTitle: null,
   };
@@ -666,7 +666,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
         `SELECT spec_md, linked_issues, pr_linked_issues_applied,
                 testing_md, testing_path, pr_testing_applied,
                 pr_visuals_applied, pr_summary_md, pr_summary_stale,
-                pr_summary_input_version, source,
+                pr_summary_source, pr_summary_input_version, source,
                 shots_detail, pr_body,
                 (SELECT slug FROM apps WHERE id = chat_sessions.app_id) AS app_slug,
                 imported_pr_head_sha, reviewed_head_sha,
@@ -707,6 +707,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary, currentDe
       // can push a revised summary to GitHub on a title-unchanged turn.
       ctx.appliedSummary = (liveRows[0] && liveRows[0].pr_summary_md) || null;
       ctx.summaryStale = liveRows[0]?.pr_summary_stale === true;
+      ctx.summarySource = liveRows[0]?.pr_summary_source || null;
       ctx.summaryInputVersion = Number(liveRows[0]?.pr_summary_input_version || 0);
       ctx.summaryInputsChangedDuringGather = beforeVersion != null
         && Number(beforeVersion) !== ctx.summaryInputVersion;
@@ -816,7 +817,7 @@ async function applyPrMetadata({
   const {
     requests, summaries, descriptions, specs, linkedIssues, appliedIssues,
     testingMd, testingPath, appliedTesting,
-    visuals, appliedVisuals, appliedSummary, summaryStale,
+    visuals, appliedVisuals, appliedSummary, summaryStale, summarySource,
     summaryInputVersion, summaryHead: recordedHead,
     summaryInputsChangedDuringGather,
     shotsDetail, appSlug, currentPrBody,
@@ -935,14 +936,35 @@ async function applyPrMetadata({
   // preferred title is never a fallback: it is the author's own name for
   // the change, and the sweeper must leave it alone.
   const isFallback = chosenTitle ? false : !!meta.fallback;
+  // #3344. An AUTHOR's summary outranks the generated one while it is fresh.
+  // The rule, in full:
+  //   - The author (submit_work `summary`, at import or on an update) writes
+  //     pr_summary_source = 'author', fresh for the head it landed on, and
+  //     bumps the input version so a generation already in flight is
+  //     discarded (proposal-update.js applyProposedSummary).
+  //   - While that summary is fresh, a regeneration keeps it: its words lead
+  //     the PR body and every summary column is left as the author wrote it.
+  //     Title, testing, visuals and `Closes #N` still refresh as usual.
+  //   - A later code or description change that carries no summary marks it
+  //     stale exactly as it marks a generated one (summary-freshness.js): its
+  //     words stay visible, and a later regeneration may replace them, as it
+  //     always could. Sending a summary again is how the author reclaims it.
+  const authorSummaryHolds = summarySource === 'author' && !summaryStale && !!appliedSummary;
+  const rawGeneratedSummary = typeof meta.summary === 'string' ? meta.summary.trim() : '';
   // An empty generated summary cannot revoke the previous explanation. If
   // other PR metadata changed, carry that explanation in the PR body too,
   // while leaving its freshness flag set until a real refresh succeeds.
-  const generatedSummary = typeof meta.summary === 'string' ? meta.summary.trim() : '';
-  const retainedSummary = session.pr_number && !generatedSummary ? (appliedSummary || '') : '';
+  const generatedSummary = authorSummaryHolds ? '' : rawGeneratedSummary;
+  const retainedSummary = (session.pr_number || authorSummaryHolds) && !generatedSummary
+    ? (appliedSummary || '') : '';
   const prSummary = generatedSummary || retainedSummary;
-  const prBody = retainedSummary && !String(generatedBody || '').startsWith(retainedSummary)
-    ? `${retainedSummary}\n\n${generatedBody || ''}` : generatedBody;
+  // The draft renderer led the body with the model's own summary; drop it
+  // when the author's is the one that leads.
+  const draftBody = authorSummaryHolds && rawGeneratedSummary
+    && String(generatedBody || '').startsWith(`${rawGeneratedSummary}\n\n`)
+    ? String(generatedBody).slice(rawGeneratedSummary.length + 2) : generatedBody;
+  const prBody = retainedSummary && !String(draftBody || '').startsWith(retainedSummary)
+    ? `${retainedSummary}\n\n${draftBody || ''}` : draftBody;
 
   // Whether the linked-issue set drifted from what's reflected in the live
   // PR body. Drives the existing-PR update gate below so a newly-linked
@@ -1025,17 +1047,18 @@ async function applyPrMetadata({
       const saved = await pool.query(
         `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = $3,
            pr_linked_issues_applied = $4, pr_testing_applied = $5, pr_visuals_applied = $6,
-           pr_summary_md = CASE WHEN pr_summary_input_version = $11 THEN $7 ELSE pr_summary_md END,
-           pr_summary_source = CASE WHEN pr_summary_input_version = $11 AND $7::text IS NOT NULL THEN 'generated' ELSE pr_summary_source END,
-           pr_summary_source_head_sha = CASE WHEN pr_summary_input_version = $11 THEN $12 ELSE pr_summary_source_head_sha END,
-           pr_summary_source_body_hash = CASE WHEN pr_summary_input_version = $11 THEN $13 ELSE pr_summary_source_body_hash END,
-           pr_summary_applied_version = CASE WHEN pr_summary_input_version = $11 THEN $11 ELSE pr_summary_applied_version END,
-           pr_summary_stale = CASE WHEN pr_summary_input_version = $11 THEN FALSE ELSE pr_summary_stale END,
+           pr_summary_md = CASE WHEN pr_summary_input_version = $11 AND NOT $14::boolean THEN $7 ELSE pr_summary_md END,
+           pr_summary_source = CASE WHEN pr_summary_input_version = $11 AND NOT $14::boolean AND $7::text IS NOT NULL THEN 'generated' ELSE pr_summary_source END,
+           pr_summary_source_head_sha = CASE WHEN pr_summary_input_version = $11 AND NOT $14::boolean THEN $12 ELSE pr_summary_source_head_sha END,
+           pr_summary_source_body_hash = CASE WHEN pr_summary_input_version = $11 AND NOT $14::boolean THEN $13 ELSE pr_summary_source_body_hash END,
+           pr_summary_applied_version = CASE WHEN pr_summary_input_version = $11 AND NOT $14::boolean THEN $11 ELSE pr_summary_applied_version END,
+           pr_summary_stale = CASE WHEN pr_summary_input_version = $11 AND NOT $14::boolean THEN FALSE ELSE pr_summary_stale END,
            pr_title_fallback = $8,
            pr_body = CASE WHEN pr_summary_input_version = $11 THEN $9 ELSE pr_body END
          WHERE id = $10 RETURNING pr_summary_md, pr_summary_stale`,
         [pr.number, pr.html_url, prTitle, linkedIssues, testingBlock || null, visualsBlock || null,
-          prSummary || null, isFallback, prBody || null, session.id, summaryInputVersion, summaryHead, summaryBodyHash]
+          prSummary || null, isFallback, prBody || null, session.id, summaryInputVersion, summaryHead, summaryBodyHash,
+          authorSummaryHolds]
       );
       session.pr_summary_md = saved.rows?.length ? saved.rows[0].pr_summary_md : (prSummary || null);
       session.pr_summary_stale = saved.rows?.length ? saved.rows[0].pr_summary_stale : false;

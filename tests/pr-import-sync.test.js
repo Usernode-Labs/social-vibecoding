@@ -842,3 +842,47 @@ test('syncImportedProposal: a failed mirror write never fails the sweep', async 
     assert.equal(res, 'unchanged', 'a display field must never wedge the poller');
   });
 });
+
+// #3344. submit_work stores an author's summary fresh for the head it pushed,
+// but the sync it runs may not see that head yet ('unchanged'). The sweep that
+// sees it later must not stale the summary describing that very head.
+test('applyHeadChange: a late sweep keeps an author summary recorded for the head it installs', async () => {
+  const NEW = 'b'.repeat(40);
+  scriptedMove = { kind: 'authored' };
+  let github = SESSION_HEAD;
+  await withStubs([
+    [fakeGithub, 'getPR', async () => ({ head: { sha: github, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
+    [fakeGithub, 'getOctokit', async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 0 } }) } } })],
+    [fakeWs, 'sendSystemMessage', async () => {}],
+    [fakeStaging, 'buildAndDeployStaging', async () => ({ containerId: 'cid', stagingUrl: 'https://s', hostname: 'h' })],
+    [fakeVisuals, 'captureForSession', async () => {}],
+  ], async () => {
+    const session = {
+      ...SESSION,
+      pr_summary_md: 'The author’s words for the new head.',
+      pr_summary_source: 'author', pr_summary_source_head_sha: NEW, pr_summary_stale: false,
+    };
+    // 1. The update's own sync: GitHub has not caught up with the push.
+    const first = recordingPool();
+    assert.equal(await prImportSync.syncImportedProposal({ config: {}, pool: first, session }), 'unchanged');
+
+    // 2. The sweep, once it has. Postgres answers the claim with the kept flag.
+    github = NEW;
+    const pool = recordingPool();
+    const realQuery = pool.query;
+    pool.query = async (sql, params) => {
+      const res = await realQuery(sql, params);
+      if (/SET imported_pr_head_sha = \$1[\s\S]*RETURNING approval_epoch/.test(sql) && res.rows.length) {
+        res.rows[0].pr_summary_stale = false;
+      }
+      return res;
+    };
+    assert.equal(await prImportSync.syncImportedProposal({ config: {}, pool, session }), 'updated');
+    const claim = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
+    assert.match(claim.sql, /pr_summary_source = 'author'/);
+    assert.match(claim.sql, /pr_summary_source_head_sha = \$1::varchar/,
+      'the exception is scoped to the head this statement installs');
+    assert.match(claim.sql, /RETURNING approval_epoch, pr_summary_stale/);
+    assert.equal(session.pr_summary_stale, false, 'the in-memory row follows what Postgres kept');
+  });
+});

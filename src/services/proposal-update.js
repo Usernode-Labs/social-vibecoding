@@ -417,6 +417,7 @@ async function updateProposalFromForkBranch(deps, params) {
         visibleChanges,
         title: normalizeProposedTitle(params.title),
         description: normalizeProposedDescription(params.description),
+        summary: normalizeProposedSummary(params.summary),
         // #1323. A re-run of the checks against the commit already there.
         recheck: params.recheck === true,
         linkedIssues: normalizeLinkedIssues(params.linkedIssues),
@@ -432,9 +433,14 @@ async function updateProposalFromForkBranch(deps, params) {
         lifecycle: deps.lifecycle,
         pushSessionUpdate: deps.pushSessionUpdate,
       };
-      return branchHomeOf(session) === 'user_fork'
+      const result = branchHomeOf(session) === 'user_fork'
         ? await advanceForkHead(ctx)
         : await advanceAppRepoBranch(ctx);
+      // #3344. LAST, after every synchronous tail: a head move marks the
+      // summary stale (reconcileNativeReviewedHead, applyHeadChange), and the
+      // author's words sent WITH this revision describe it, so they must land
+      // after that invalidation rather than be staled by it.
+      return await withProposedSummary(ctx, result);
     } finally {
       releaseOperation();
     }
@@ -673,6 +679,150 @@ function normalizeProposedDescription(description) {
   if (typeof description !== 'string') return null;
   const t = description.trim().slice(0, 4000);
   return t || null;
+}
+
+// #3344. The plain-English summary a voter reads first, normalized by the
+// pr-import route's own parser so an update is held to the import's cap.
+function normalizeProposedSummary(summary) {
+  if (typeof summary !== 'string') return null;
+  return require('../routes/votes').parseImportSummary({ summary });
+}
+
+// Apply the submitted summary (#3344). Until this existed the summary was
+// written once, at import, and nothing could change it afterwards: neither the
+// agent nor the proposer. It is stored as the AUTHOR's summary, fresh for the
+// head this update landed on, replacing whatever was there (author or
+// generated). The input version is bumped in the same statement, so a
+// generation that read the older inputs is discarded when it tries to
+// publish; pr-metadata.js then keeps a fresh author summary on every later
+// regeneration (the full precedence rule is at its authorSummaryHolds).
+//
+// Who may: the update path's ownershipGate has already established the caller
+// owns the row, and callerOwnsPr is the same second test the title and
+// description apply, so a pull request another GitHub account opened is
+// refused here exactly as its title and body are.
+//
+// The in-app view renders pr_summary_md through the same sanitizing markdown
+// path it always has. The PR body is rewritten too where the platform wrote
+// the summary INTO it (see syncSummaryIntoBody): otherwise GitHub, and the
+// pr_body mirror get_proposal reports, would keep the old words, and a later
+// metadata pass compares against the already-updated column and never
+// notices.
+async function applyProposedSummary({ pool, gh, owner, repo, session, summary, viewerLogin, headSha }) {
+  const nothing = { changed: false, rejected: null };
+  if (!summary) return nothing;
+  if (!callerOwnsPr(session, viewerLogin)) return { changed: false, rejected: 'imported_pr' };
+  const head = SHA_RE.test(String(headSha || '')) ? String(headSha).toLowerCase() : null;
+  const previousSummary = typeof session.pr_summary_md === 'string' ? session.pr_summary_md : null;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE chat_sessions
+          SET pr_summary_previous_md = CASE WHEN pr_summary_md IS DISTINCT FROM $1::text
+                THEN COALESCE(pr_summary_md, pr_summary_previous_md) ELSE pr_summary_previous_md END,
+              pr_summary_md = $1::text,
+              pr_summary_source = 'author',
+              pr_summary_source_head_sha = $2::varchar,
+              pr_summary_source_body_hash = $3,
+              pr_summary_input_version = pr_summary_input_version + 1,
+              pr_summary_applied_version = pr_summary_input_version + 1,
+              pr_summary_stale = FALSE
+        WHERE id = $4
+          AND NOT (pr_summary_md IS NOT DISTINCT FROM $1::text
+                   AND pr_summary_source IS NOT DISTINCT FROM 'author'
+                   AND pr_summary_stale = FALSE
+                   AND pr_summary_source_head_sha IS NOT DISTINCT FROM $2::varchar)
+        RETURNING id`,
+      [summary, head, summaryFreshness.bodyHash(session.pr_body || null), Number(session.id)]
+    );
+    if (!rows.length) {
+      // Already stored and fresh. A resend is still how a body rewrite that
+      // failed last time is retried; the words it replaced are the previous
+      // summary.
+      const bodyRejected = await syncSummaryIntoBody({
+        pool, gh, owner, repo, session, summary,
+        previousSummary: session.pr_summary_previous_md || null,
+      });
+      return { ...nothing, ...(bodyRejected ? { bodyRejected } : {}) };
+    }
+  } catch (err) {
+    log.error('proposal-update', 'could not store the submitted summary', {
+      sessionId: Number(session.id), err: err.message,
+    });
+    return { changed: false, rejected: 'write_failed' };
+  }
+  session.pr_summary_md = summary;
+  session.pr_summary_source = 'author';
+  session.pr_summary_source_head_sha = head;
+  session.pr_summary_stale = false;
+  log.info('proposal-update', 'stored the submitted summary', { sessionId: Number(session.id) });
+  const bodyRejected = await syncSummaryIntoBody({
+    pool, gh, owner, repo, session, summary, previousSummary,
+  });
+  return { changed: true, rejected: null, ...(bodyRejected ? { bodyRejected } : {}) };
+}
+
+// Only a pull request whose body the PLATFORM composes carries the summary:
+// pr-metadata leads a native proposal's body with it. An imported pull
+// request's body is its author's description (the connector files the summary
+// beside it, never in it), so there is nothing there to replace. Where the
+// body leads with the previous summary, that paragraph is swapped; where it
+// leads with none, the summary is prepended, which is the shape pr-metadata
+// gives a retained summary. Returns null on success or nothing to do, else a
+// reason. Best-effort: the summary itself is already stored.
+async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, previousSummary }) {
+  if (String(session.source) === 'imported' || !session.pr_number || !gh || !owner || !repo) return null;
+  let existing;
+  try {
+    const pr = await gh.getPR(owner, repo, session.pr_number);
+    existing = String((pr && pr.body) || '');
+  } catch (err) {
+    log.warn('proposal-update', 'could not read the pull request body to lead it with the summary', {
+      sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+    });
+    return 'github_unreadable';
+  }
+  if (existing === summary || existing.startsWith(`${summary}\n\n`)) return null;
+  const prev = previousSummary ? previousSummary.trim() : '';
+  let rest = existing;
+  if (prev && existing.startsWith(`${prev}\n\n`)) rest = existing.slice(prev.length + 2);
+  else if (prev && existing === prev) rest = '';
+  const body = rest ? `${summary}\n\n${rest}` : summary;
+  if (body === existing) return null;
+  try {
+    await gh.updatePR(owner, repo, session.pr_number, { body });
+  } catch (err) {
+    log.warn('proposal-update', 'summary stored but the pull request body could not be rewritten', {
+      sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+    });
+    return 'github_write_failed';
+  }
+  try {
+    await pool.query(
+      'UPDATE chat_sessions SET pr_body = $1, pr_summary_source_body_hash = $2 WHERE id = $3',
+      [body, summaryFreshness.bodyHash(body), Number(session.id)]
+    );
+    session.pr_body = body;
+  } catch (err) {
+    log.warn('proposal-update', 'pull request body rewritten but the mirror write failed', {
+      sessionId: Number(session.id), err: err.message,
+    });
+  }
+  return null;
+}
+
+async function withProposedSummary(ctx, result) {
+  if (!ctx.summary || !result || result.ok !== true) return result;
+  const applied = await applyProposedSummary({
+    pool: ctx.pool, gh: ctx.gh, owner: ctx.owner, repo: ctx.repo,
+    session: ctx.session, summary: ctx.summary,
+    viewerLogin: ctx.expectedLogin, headSha: result.headSha,
+  });
+  return {
+    ...result,
+    summaryUpdated: applied.changed,
+    ...(applied.rejected ? { summaryRejected: applied.rejected } : {}),
+    ...(applied.bodyRejected ? { summaryBodyRejected: applied.bodyRejected } : {}),
+  };
 }
 
 // Apply the submitted title. Two cases, both author-initiated (the update
@@ -2051,6 +2201,8 @@ module.exports = {
   reconcileManagedCommitUpload,
   // The request-linking half of an update (#1310), unit-tested directly.
   applyLinkedIssues,
+  // #3344's author summary, likewise.
+  applyProposedSummary,
   // The post-creation issue association seam shared by the UI + connector.
   updateLinkedIssues,
 };

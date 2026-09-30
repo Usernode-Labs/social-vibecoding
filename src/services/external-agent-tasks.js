@@ -2798,6 +2798,11 @@ async function submitUpdate(deps, params, proposalId) {
     // kept whatever the FIRST submission said — the title bug of #1319 on the
     // surface that matters more.
     ...(params.body ? { description: String(params.body) } : {}),
+    // #3344. And the plain-English summary a voter reads first, which until
+    // now only the FIRST submission could set. The route caps it exactly as
+    // the import does and stores it as the author's, replacing the old one.
+    ...(typeof params.summary === 'string' && params.summary.trim()
+      ? { summary: params.summary.trim() } : {}),
     // #1323. And an explicit re-run of the checks against the commit already
     // on the proposal, which until now could only be had by CHANGING a capture
     // route so the testing-metadata write triggered one as a side effect.
@@ -2925,6 +2930,14 @@ async function submitUpdate(deps, params, proposalId) {
     // same call retries it.
     descriptionUpdated: result.descriptionUpdated === true,
     descriptionRejected: result.descriptionRejected || null,
+    // #3344. The same for the summary: 'imported_pr' — the pull request
+    // belongs to another author; 'write_failed' — the update landed and the
+    // summary did not, so the same call retries it.
+    summaryUpdated: result.summaryUpdated === true,
+    summaryRejected: result.summaryRejected || null,
+    // Stored, but the pull request body that leads with it was not rewritten
+    // ('github_unreadable' / 'github_write_failed'); resending retries it.
+    summaryBodyRejected: result.summaryBodyRejected || null,
     // Whether the task's request number was newly recorded on the target
     // (#1310) — false when the row already carried it, or the task names no
     // request.

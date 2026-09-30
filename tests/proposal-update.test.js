@@ -2524,3 +2524,181 @@ test('an update that carries linkedIssues stores them before the tails, on every
   );
   assert.match(fork, /applyLinkedIssues/, 'an imported proposal is linked too');
 });
+
+// ── #3344: the summary, revisable by its author ─────────────────────────
+//
+// The plain-English summary was written once, at import, and nothing could
+// change it: not the agent, not the proposer. An update now carries it and
+// stores it as the AUTHOR's, fresh for the head the update landed on.
+
+function summaryWrites(pool) {
+  return pool.queries.filter((q) => /pr_summary_source = 'author'/.test(q.sql));
+}
+
+test('an author\'s summary on a same-commit resubmit replaces the old one, fresh for that head', async () => {
+  const log = {};
+  const session = importedSession({
+    imported_pr_head_repo: 'evan-gh/r',
+    pr_summary_md: 'The first summary.',
+    pr_summary_stale: true,
+    pr_body: 'The body.',
+  });
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', [{ id: 601 }]],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: { getBranchSha: async () => NATIVE_HEAD, updatePR: async () => {} },
+  }, { branch: 'usernode/add-a-button', summary: '  The toggle now remembers your choice.  ' }, log);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.summaryUpdated, true);
+  assert.equal(result.summaryRejected, undefined);
+  const writes = summaryWrites(pool);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].params[0], 'The toggle now remembers your choice.');
+  assert.equal(writes[0].params[1], result.headSha, 'fresh for the head the update landed on');
+  assert.equal(writes[0].params[3], 601);
+  // The input version moves in the same statement, so a generation that read
+  // the older inputs is discarded instead of overwriting the author.
+  assert.match(writes[0].sql, /pr_summary_input_version = pr_summary_input_version \+ 1/);
+  assert.match(writes[0].sql, /pr_summary_stale = FALSE/);
+  assert.equal(session.pr_summary_md, 'The toggle now remembers your choice.');
+  assert.equal(session.pr_summary_stale, false);
+});
+
+test('the summary is held to the import\'s 600-character cap', async () => {
+  const session = importedSession({ imported_pr_head_repo: 'evan-gh/r' });
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', [{ id: 601 }]],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool, gh: { getBranchSha: async () => NATIVE_HEAD },
+  }, { branch: 'usernode/add-a-button', summary: 'x'.repeat(900) }, {});
+  assert.equal(result.summaryUpdated, true);
+  assert.equal(summaryWrites(pool)[0].params[0].length, 600);
+});
+
+test('nobody but the proposal\'s author may change its summary', async () => {
+  const session = importedSession({ imported_pr_head_repo: 'evan-gh/r' });
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const result = await svc.updateProposalFromForkBranch(deps({ session, pool }), {
+    user: { id: 8, username: 'mallory' }, session, branch: 'usernode/add-a-button',
+    summary: 'Not yours to write.',
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, 'not_your_proposal');
+  assert.equal(summaryWrites(pool).length, 0);
+
+  // And a pull request another GitHub account opened keeps its summary, by the
+  // same rule that keeps its title and body.
+  const theirs = importedSession({ imported_pr_head_repo: 'other-person/r' });
+  const theirPool = fakePool([['FROM chat_sessions cs JOIN apps a', [theirs]]]);
+  const refused = await run({
+    session: theirs, pool: theirPool, gh: { getBranchSha: async () => NATIVE_HEAD },
+  }, { branch: 'usernode/add-a-button', summary: 'Mine now' }, {});
+  assert.equal(refused.ok, true);
+  assert.equal(refused.summaryUpdated, false);
+  assert.equal(refused.summaryRejected, 'imported_pr');
+  assert.equal(summaryWrites(theirPool).length, 0);
+});
+
+test('a summary sent with a new commit lands AFTER the head move that stales the old one', async () => {
+  const order = [];
+  const session = nativeSession();
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', () => { order.push('summary'); return [{ id: 501 }]; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+    ['FROM pr_votes', [{ n: 1 }]],
+  ]);
+  const result = await run({
+    session, pool,
+    votes: {
+      reconcileNativeReviewedHead: async () => { order.push('reconcile'); return { updated: true }; },
+    },
+  }, { summary: 'Cards snap to the grid now.' }, {});
+  assert.equal(result.ok, true);
+  assert.equal(result.summaryUpdated, true);
+  assert.deepEqual(order, ['reconcile', 'summary'],
+    'the reconcile marks the old summary stale; the author\'s new one must not be staled by it');
+});
+
+test('an update without a summary leaves the stored one alone', async () => {
+  const session = importedSession({ imported_pr_head_repo: 'evan-gh/r' });
+  const pool = fakePool([['FROM chat_sessions cs JOIN apps a', [session]]]);
+  const result = await run({
+    session, pool, gh: { getBranchSha: async () => NATIVE_HEAD },
+  }, { branch: 'usernode/add-a-button', summary: '   ' }, {});
+  assert.equal(result.ok, true);
+  assert.equal(result.summaryUpdated, undefined);
+  assert.equal(summaryWrites(pool).length, 0);
+});
+
+// #3344 (review). The platform composes a native proposal's PR body with the
+// summary as its lead paragraph. A summary-only resubmit must rewrite that
+// paragraph: a later metadata pass compares against the already-updated
+// column and would never notice.
+test('a summary-only resubmit on a native proposal rewrites the body it leads', async () => {
+  const bodies = [];
+  const mirrors = [];
+  const session = nativeSession({
+    pr_summary_md: 'The old summary.',
+    pr_body: 'The old summary.\n\nTechnical detail.\n\nCloses #12',
+  });
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', [{ id: 501 }]],
+    ['SET pr_body', (params) => { mirrors.push(params); return []; }],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => FORK_HEAD,
+      getPR: async () => ({ body: 'The old summary.\n\nTechnical detail.\n\nCloses #12' }),
+      updatePR: async (o, r, n, patch) => { bodies.push({ n, patch }); },
+    },
+  }, { summary: 'The new summary.' }, {});
+  assert.equal(result.ok, true);
+  assert.equal(result.unchanged, true, 'no code moved');
+  assert.equal(result.summaryUpdated, true);
+  assert.equal(result.summaryBodyRejected, undefined);
+  assert.equal(bodies.length, 1);
+  assert.equal(bodies[0].n, 42);
+  assert.equal(bodies[0].patch.body, 'The new summary.\n\nTechnical detail.\n\nCloses #12');
+  assert.equal(mirrors[0][0], bodies[0].patch.body, 'the mirror get_proposal reads follows');
+
+  // Resending the same summary once the body already leads with it writes nothing.
+  bodies.length = 0;
+  const again = await run({
+    session, pool: fakePool([
+      ['pr_summary_source = \'author\'', []],
+      ['FROM chat_sessions cs JOIN apps a', [session]],
+    ]),
+    gh: {
+      getBranchSha: async () => FORK_HEAD,
+      getPR: async () => ({ body: 'The new summary.\n\nTechnical detail.\n\nCloses #12' }),
+      updatePR: async (o, r, n, patch) => { bodies.push({ n, patch }); },
+    },
+  }, { summary: 'The new summary.' }, {});
+  assert.equal(again.summaryUpdated, false);
+  assert.equal(bodies.length, 0);
+});
+
+test('an imported proposal\'s body is its author\'s and is not rewritten for the summary', async () => {
+  const session = importedSession({ imported_pr_head_repo: 'evan-gh/r', pr_summary_md: 'Old.' });
+  const pool = fakePool([
+    ['pr_summary_source = \'author\'', [{ id: 601 }]],
+    ['FROM chat_sessions cs JOIN apps a', [session]],
+  ]);
+  const result = await run({
+    session, pool,
+    gh: {
+      getBranchSha: async () => NATIVE_HEAD,
+      updatePR: async () => { throw new Error('must not rewrite an imported body for the summary'); },
+    },
+  }, { branch: 'usernode/add-a-button', summary: 'New.' }, {});
+  assert.equal(result.summaryUpdated, true);
+  assert.equal(result.summaryBodyRejected, undefined);
+});

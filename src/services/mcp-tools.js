@@ -3677,7 +3677,7 @@ function registerTools(server, ctx) {
       title: z.string().optional().describe('A short title for the proposal. Defaults to the task description. On a SESSION update (shape 4 targeting a work-order continuation) it is stored and names the pull request created when the session is proposed — with or without propose: true — instead of the "<user>\'s changes" placeholder. On a target that already has a PR it RENAMES it (panel and GitHub; votes untouched) — a same-commit resubmit with just a title is the fix for a wrong auto-generated name, and it works on a fork-tracked proposal too. The answer reports `titleUpdated`, and `titleRejected` when the rename was refused: `imported_pr` means the pull request was opened by a different GitHub account and keeps its own author\'s title.'),
       description: z.string().optional().describe('What changed and why, for the people voting on it. This is the TECHNICAL half — it is filed as the pull request body and shown in the proposal\u2019s collapsed "Technical details" section, so implementation detail belongs here rather than in `summary`.'),
       summary: z.string().optional()
-        .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description.'),
+        .describe('The USER-FACING half, and the first thing a voter reads: 1-3 short sentences, in plain everyday English, saying what changes for somebody USING the app. No file names, no identifiers, no code, no developer jargon — those belong in `description`. Not every voter is a developer, and a proposal that arrives without this shows them nothing but the technical description. Write what they would notice: what is different on screen, what they can now do, or what stops going wrong. Kept short (about 600 characters) — it is a summary, not a second description. On an UPDATE (shape 4, including a same-commit resubmit) it REPLACES the proposal\u2019s current summary — the way to correct one after it was first submitted. The answer reports `summaryUpdated`, and `summaryRejected` when it was refused.'),
       testingPaths: z.array(z.string()).optional()
         .describe('Routes for the manual “Test this change” link and legacy checks. For before/after shots, describe how a person reaches each change in visibleChanges instead; Homeroom’s shots agent follows those steps on the exact before and after builds. On an UPDATE supplied routes replace the stored routes; omitting them keeps existing routes.'),
       testingSteps: z.string().optional()
@@ -3912,6 +3912,9 @@ function registerTools(server, ctx) {
       // submission named — or, when it named none, '/' — and the group voted
       // on home-page screenshots of a change to somewhere else entirely.
       testing,
+      // #3344. An update carries the summary too; the import above already
+      // sends it on the create path.
+      ...(typeof summary === 'string' && summary.trim() ? { summary: summary.trim() } : {}),
       visibleChanges: acceptedVisibleChanges,
       share: share === true,
       importProposal,
@@ -4050,6 +4053,16 @@ function registerTools(server, ctx) {
             : (result.descriptionRejected === 'github_unreadable' || result.descriptionRejected === 'github_write_failed')
               ? ' Your commit landed but the description could not be written to GitHub — send the same commit again with just the description to retry.'
               : '';
+      // #3344. And the summary a voter reads first.
+      const summaryNote = result.summaryUpdated === true
+        ? (result.summaryBodyRejected
+          ? ' Its summary now reads as you submitted it in Homeroom, but the pull request body could not be updated on GitHub — send the same commit again with just the summary to retry.'
+          : ' Its summary now reads as you submitted it.')
+        : result.summaryRejected === 'imported_pr'
+          ? ' Your summary was NOT applied: this proposal tracks a pull request opened by another GitHub account.'
+          : result.summaryRejected === 'write_failed'
+            ? ' Your commit landed but the summary could not be stored — send the same commit again with just the summary to retry.'
+            : '';
 
       // #2066. A card in the IN-PROGRESS area is not up for a vote, so every
       // sentence about cleared votes and reviewers looking again is false for
@@ -4086,6 +4099,9 @@ function registerTools(server, ctx) {
         titleRejected: result.titleRejected || null,
         descriptionUpdated: result.descriptionUpdated === true,
         descriptionRejected: result.descriptionRejected || null,
+        summaryUpdated: result.summaryUpdated === true,
+        summaryRejected: result.summaryRejected || null,
+        summaryBodyRejected: result.summaryBodyRejected || null,
         captureRerun: result.captureRerun === true,
         shotsState: result.shotsState || null,
         visibleChangesAccepted: acceptedVisibleChanges ? result.visibleChangesAccepted === true : null,
@@ -4111,7 +4127,7 @@ function registerTools(server, ctx) {
           ? changeWebPath(origin, result.appSlug, result.proposalId)
           : `${origin}/#app/${result.appSlug}`,
         nextStep: (result.unchanged ? resubmitStep : landedStep)
-          + rejectedNote + titleNote + descNote + proposeNote,
+          + rejectedNote + titleNote + descNote + summaryNote + proposeNote,
       });
     }
 

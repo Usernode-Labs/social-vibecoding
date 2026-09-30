@@ -1591,12 +1591,16 @@ async function reconcileNativeReviewedHead({
   // semantics counted its unbound votes anyway, so binding costs nothing and
   // must not clear anything.
   if (!oldHead) {
-    await pool.query(
-      `UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.INVALIDATE_SQL}, stale_notified_at = NULL WHERE id = $2`,
+    const { rows: bound } = await pool.query(
+      `UPDATE chat_sessions SET reviewed_head_sha = $1, ${summaryFreshness.invalidateHeadMoveSql('$1')}, stale_notified_at = NULL WHERE id = $2
+       RETURNING pr_summary_stale`,
       [liveHead, session.id]
     );
     session.reviewed_head_sha = liveHead;
-    session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+    // #3344: an author summary recorded for this very head stays fresh.
+    session.pr_summary_stale = typeof bound?.[0]?.pr_summary_stale === 'boolean'
+      ? bound[0].pr_summary_stale
+      : (session.pr_summary_stale || !!session.pr_summary_md);
     if (session.shots_state || session.shots_detail) {
       await shotsState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
         log.warn('votes', 'Before & after shots invalidation after revision bind failed', {
@@ -1625,12 +1629,12 @@ async function reconcileNativeReviewedHead({
   const { rows: claimed } = await pool.query(
     `UPDATE chat_sessions
         SET reviewed_head_sha = $1,
-            ${summaryFreshness.INVALIDATE_SQL},
+            ${summaryFreshness.invalidateHeadMoveSql('$1')},
             stale_notified_at = NULL,
             approval_epoch = approval_epoch + CASE WHEN $3::boolean THEN 0 ELSE 1 END
       WHERE id = $2
         AND reviewed_head_sha IS NOT DISTINCT FROM $4::varchar
-      RETURNING approval_epoch`,
+      RETURNING approval_epoch, pr_summary_stale`,
     [liveHead, session.id, keepsApprovals, oldHead]
   );
 
@@ -1658,7 +1662,9 @@ async function reconcileNativeReviewedHead({
   const epoch = parseInt(claimed[0].approval_epoch, 10);
   session.reviewed_head_sha = liveHead;
   session.approval_epoch = epoch;
-  session.pr_summary_stale = session.pr_summary_stale || !!session.pr_summary_md;
+  session.pr_summary_stale = typeof claimed[0].pr_summary_stale === 'boolean'
+    ? claimed[0].pr_summary_stale
+    : (session.pr_summary_stale || !!session.pr_summary_md);
   if (session.shots_state || session.shots_detail) {
     await shotsState.markStaleForHead(pool, session.id, liveHead).catch((err) =>
       log.warn('votes', 'Before & after shots invalidation after head move failed', {
@@ -7079,6 +7085,8 @@ module.exports = {
   strandedPendingChecks,
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
+  parseImportSummary,
+  MAX_IMPORT_SUMMARY,
   MAX_IMPORT_LINKED_ISSUES,
   recordVote,
   parseExpectedEpoch,
