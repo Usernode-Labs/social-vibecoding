@@ -39,6 +39,13 @@ const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const BOARD_SEARCH_MIN_CHARS = 2;
 const BOARD_SEARCH_MAX_HITS = 200;
 
+// An issue id from the path, or null when it is not a positive integer that
+// fits `issues.id` (SERIAL). Answered as 404 rather than handed to Postgres
+// as a bad cast, which would surface as a 500.
+function positiveIssueId(raw) {
+  return /^[1-9]\d{0,9}$/.test(String(raw)) && Number(raw) <= 2147483647 ? Number(raw) : null;
+}
+
 // Pull owner/repo out of a stored repo_url. Same shape used across the
 // codebase (e.g. the rename-apply path below, routes/votes.js).
 function parseOwnerRepo(repoUrl) {
@@ -1336,6 +1343,9 @@ function issueRoutes(config) {
     if (normalized.error) return res.status(400).json({ error: normalized.error });
     const reason = normalized.reason;
 
+    const issueId = positiveIssueId(req.params.id);
+    if (!issueId) return res.status(404).json({ error: 'Issue not found' });
+
     try {
       // Join to apps so we have the slug for the WS broadcast below;
       // without it, other users' vote panels wouldn't refresh until they
@@ -1344,7 +1354,7 @@ function issueRoutes(config) {
         `SELECT i.*, a.slug AS app_slug
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
-        [req.params.id]
+        [issueId]
       );
       if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
       const issue = issueRows[0];
@@ -2715,12 +2725,14 @@ function issueRoutes(config) {
   // the chat message + GitHub comment name the admin so the override
   // is never silent.
   router.post('/api/issues/:id/admin-apply', async (req, res) => {
+    const issueId = positiveIssueId(req.params.id);
+    if (!issueId) return res.status(404).json({ error: 'Issue not found' });
     try {
       const { rows: issueRows } = await pool.query(
         `SELECT i.*, a.slug AS app_slug, a.created_by AS app_created_by
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
-        [req.params.id]
+        [issueId]
       );
       if (!issueRows.length) {
         if (!req.user?.canAdminWrite) {
@@ -2793,12 +2805,14 @@ function issueRoutes(config) {
   // proposal's creator may withdraw, and only while it is still open, so a
   // stale double-tap or a race against a passing vote is a harmless no-op.
   router.post('/api/issues/:id/close', async (req, res) => {
+    const issueId = positiveIssueId(req.params.id);
+    if (!issueId) return res.status(404).json({ error: 'Issue not found' });
     try {
       const { rows: issueRows } = await pool.query(
         `SELECT i.*, a.slug AS app_slug, a.repo_url AS repo_url
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
-        [req.params.id]
+        [issueId]
       );
       if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
       const issue = issueRows[0];

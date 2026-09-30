@@ -222,7 +222,8 @@ function requireAppMembership(pool) {
 function requireIssueMembership(pool) {
   return gate(pool, async (req) => {
     const id = parseInt(req.params.id, 10);
-    if (!Number.isFinite(id)) return null;
+    // Out of int4 range falls through too: Postgres would reject the cast.
+    if (!Number.isFinite(id) || id < 1 || id > 2147483647) return null;
     const { rows } = await pool.query(
       `SELECT ${GATE_COLUMNS} FROM issues i JOIN apps a ON a.id = i.app_id WHERE i.id = $1`,
       [id, req.user?.id || null]

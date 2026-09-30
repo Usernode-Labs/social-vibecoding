@@ -109,6 +109,20 @@ test('issueCollabGuard: same read/write split as the session guard', async () =>
   assert.equal((await fetch(`${base}/api/issues/2/thing`, { method: 'POST' })).status, 404);
 });
 
+test('issueCollabGuard: an id Postgres cannot cast falls through without a query', async () => {
+  // The route's own id check answers 404; the guard must not turn an
+  // out-of-range id into a Postgres cast error (a 500) first.
+  const guard = appAccess.issueCollabGuard({
+    async query(sql) { throw new Error(`unexpected query: ${sql}`); },
+  });
+  for (const id of ['abc', '0', '-1', '99999999999']) {
+    let passed = false;
+    const res = { status() { throw new Error(`guard answered for ${id}`); } };
+    await guard({ params: { id }, method: 'POST', user: { id: 99 } }, res, () => { passed = true; });
+    assert.equal(passed, true, id);
+  }
+});
+
 // ── 3. WS write gate ────────────────────────────────────────────────────
 
 const { handleMessage } = require('../src/services/ws');
