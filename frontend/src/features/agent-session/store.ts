@@ -1963,11 +1963,17 @@ function actionOn(changeId: number, kind?: NonNullable<AgentSessionState['change
  * confirmation is the card's own panel under the button (#3032,
  * ./propose-confirm.tsx), no longer a dialog asked for here. The card then
  * reads "In vote" from the refreshed change.
+ *
+ * `title` is a title the person typed in that panel (#3251), passed only when
+ * it differs from the change's own. It is saved first, so the proposal goes
+ * to the vote under it; if saving fails, nothing is proposed.
  */
-export async function proposeChange(changeId: number) {
+export async function proposeChange(changeId: number, title?: string | null) {
   if (state.changeAction) return;
   publish({ changeAction: { changeId, kind: 'propose' } });
   try {
+    const rename = (title || '').replace(/\s+/g, ' ').trim();
+    if (rename) await api.renameChange(changeId, rename);
     await api.promoteChange(changeId);
     if (state.id != null) await requestSync(state.id);
   } catch (error) {
