@@ -46,7 +46,9 @@ const ROWS = [
   ['profile-row-proposals', '#profile/your-changes'],
   ['profile-row-feedback', '#profile/your-requests'],
   ['profile-row-votes', '#profile/your-votes'],
-  // More.
+  // More. App slots opens the create dialog, whose allowance card offers
+  // "Request more" (#3250); `#create` is the same dialog's deep link.
+  ['profile-row-app-slots', '#create'],
   ['profile-row-challenges', '#leaderboard/challenges'],
   ['profile-row-kudos', '#leaderboard/kudos'],
   // The Friends card over Me, by the address Profile.open() honours.
@@ -67,7 +69,7 @@ test('the rows are anchors to their destinations', () => {
   }
 });
 
-test('in order: Your changes, requests, votes; then Challenges & standings, Kudos, Friends, Settings', () => {
+test('in order: Your changes, requests, votes; then App slots, Challenges & standings, Kudos, Friends, Settings', () => {
   const order = ROWS.map(([id]) => CODE.indexOf(`id="${id}"`));
   assert.deepEqual([...order].sort((a, b) => a - b), order);
   assert.ok(CODE.indexOf('id="profile-work"') < CODE.indexOf('id="profile-more"'));
@@ -78,6 +80,30 @@ test('in order: Your changes, requests, votes; then Challenges & standings, Kudo
     const tail = href.split('/')[1];
     assert.equal(validateUsername(tail).ok, false, `${tail} can never be somebody's username`);
   }
+});
+
+test('App slots says the allowance in words, and opens the create dialog in place', () => {
+  assert.match(rowSource(CODE, 'profile-row-app-slots'),
+    /if \(!plainClick\(event\)\) return;\s*event\.preventDefault\(\);\s*\(window[^;]*\.App\?\.showCreateModal\?\.\(\);/);
+  const { appSlotsLine } = loadTsx('frontend/src/features/dialogs/app-allowance.tsx');
+  assert.equal(appSlotsLine(null, null), null, 'no allowance yet, no invented count');
+  assert.equal(appSlotsLine({ used: 1, limit: 2, remaining: 1 }, null), '1 of 2 app slots used');
+  assert.equal(appSlotsLine({ used: 2, limit: 2, remaining: 0 }, '2026-09-07T12:00:00Z'),
+    '2 of 2 app slots used · more requested');
+  assert.equal(appSlotsLine({ used: 3, limit: null, remaining: null }, null), '3 apps · no limit',
+    'an admin without a slot limit is told so, not shown a fraction');
+
+  const store = loadTsx('frontend/src/features/dialogs/app-allowance-store.js');
+  store.seedAppAllowance({ appCreationQuota: { used: 1, limit: 2, remaining: 1 } });
+  const allowance = loadTsx('frontend/src/features/dialogs/app-allowance.tsx', {
+    stubs: { './app-allowance-store.js': store },
+  });
+  const mod = loadTsx('frontend/src/features/profile/account-panel.tsx', {
+    stubs: { '../dialogs/app-allowance': allowance },
+  });
+  const html = renderToHtml(createElement(mod.MorePanel, { rows: { challenges: null, kudos: null } }));
+  assert.match(html, /id="profile-row-app-slots"[\s\S]*?App slots[\s\S]*?1 of 2 app slots used/);
+  assert.ok(html.indexOf('id="profile-row-app-slots"') < html.indexOf('id="profile-row-challenges"'));
 });
 
 test('the rows that moved to Settings are not on Me any more', () => {
@@ -99,6 +125,7 @@ test('it renders the data\'s lines, and quiet fallbacks without them', () => {
   const bare = renderToHtml(createElement(mod.MorePanel, { rows: { challenges: null, kudos: null } }));
   assert.match(bare, /This season’s challenges and standings/, 'no data, no invented rank');
   assert.match(bare, /Only you can see your friends/, 'and no count of friends, ever');
+  assert.match(bare, /How many apps you can create/, 'no allowance yet, no invented count');
 
   const work = renderToHtml(createElement(mod.WorkPanel, {
     rows: { changes: '9 merged · 2 in progress', requests: '2 open · 1 done', votes: 'Latest: Timer sounds' },
