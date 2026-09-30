@@ -1221,7 +1221,11 @@ const AppView = {
         document.addEventListener('keydown', onUserInput, true);
         const tick = setInterval(() => {
           if (App.currentApp !== slug || (tries += 1) > 40) { done(); return; }
-          if (document.querySelector('[data-ws-since-seen]')) { done(); return; }
+          // Re-asserted for the whole window rather than stopped at the first
+          // sighting, as `?shot=card-menu` does: the week summaries ride in
+          // behind the board's data and repaint the list, and a check that
+          // judged the page after an unfold was undone failed intermittently.
+          if (document.querySelector('[data-ws-since-seen]')) return;
           // The Workshop page folds each week's seen rows into one row, so
           // that row is the press when there is one; `Show older` steps back
           // a week to find one when there is not.
