@@ -8,8 +8,12 @@
 //      trigger exactly one cache bust + broadcast.
 //   2. Issues that close a few polls in are retried with backoff and the
 //      broadcast fires once the closed state is observed.
-//   3. The watcher NEVER writes to GitHub (no closeIssue calls).
+//   3. The watcher never closes a number the session did not link, and
+//      closes nothing while GitHub is still expected to (inside the polls).
 //   4. Exhausted retries report stillOpen, no broadcast, never throw.
+//   8. When the polls run out, the watcher closes the LINKED issues GitHub
+//      left open — only for a PR merged into its repo's default branch —
+//      keeps them hidden, and falls back to un-hiding when a close fails.
 //   5. PR-shaped references and 404s are dropped from the watch.
 //   6. Issue numbers come from the merged PR body's closing keywords
 //      unioned with the session's linked_issues (getPR failure falls back
@@ -57,9 +61,10 @@ function loadWithStubs({ gh = {}, calls, ws }) {
         if (gh.getIssue) return gh.getIssue(owner, repo, issueNumber);
         return { number: issueNumber, state: 'closed' };
       },
-      // The watcher must never call this — recorded so tests can assert 0.
+      // Recorded so tests can assert exactly which numbers get closed.
       closeIssue: async (owner, repo, issueNumber) => {
         calls.push({ type: 'closeIssue', owner, repo, issueNumber });
+        if (gh.closeIssue) return gh.closeIssue(owner, repo, issueNumber);
         return { number: issueNumber, state: 'closed' };
       },
       invalidateIssuesCache: (owner, repo) => {
@@ -155,7 +160,7 @@ test('keeps polling until GitHub reports closed, then broadcasts', async () => {
   } finally { restore(); }
 });
 
-test('never writes to GitHub', async () => {
+test('never closes a number only the PR body names', async () => {
   const calls = [], ws = [];
   const { subject, restore } = loadWithStubs({
     calls, ws,
@@ -288,4 +293,101 @@ test('no-ops cleanly when GitHub is disabled or nothing is referenced', async ()
     assert.equal(calls2.filter((c) => c.type === 'getIssue').length, 0);
     assert.equal(ws2.length, 0);
   } finally { restore2(); }
+});
+
+// A PR as GitHub returns it once merged into the app repo's default branch.
+function mergedPr(body, over = {}) {
+  return {
+    body,
+    merged: true,
+    base: { ref: 'main', repo: { full_name: 'usernode-bot/some-app', default_branch: 'main' } },
+    ...over,
+  };
+}
+
+test('closes the linked issues GitHub left open, skips closed and unlinked ones', async () => {
+  const calls = [], ws = [];
+  const { subject, restore } = loadWithStubs({
+    calls, ws,
+    gh: {
+      // #20 is only in the body; #10 and #11 are linked.
+      getPR: async () => mergedPr('Closes #10\nCloses #11\nfixes #20'),
+      getIssue: async (o, r, n) => ({ number: n, state: n === 11 ? 'closed' : 'open' }),
+    },
+  });
+  try {
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, linkedIssues: [10, 11] });
+    const closes = calls.filter((c) => c.type === 'closeIssue');
+    assert.deepEqual(closes.map((c) => c.issueNumber), [10], 'only the still-open linked issue');
+    assert.equal(closes[0].owner, 'usernode-bot');
+    assert.equal(closes[0].repo, 'some-app');
+    // Closing happens only after every poll round ran.
+    const firstClose = calls.findIndex((c) => c.type === 'closeIssue');
+    assert.equal(calls.slice(0, firstClose).filter((c) => c.type === 'getIssue').length, 1 + 3 * 2);
+    assert.deepEqual(res.closed.sort((a, b) => a - b), [10, 11]);
+    assert.deepEqual(res.stillOpen, [20]);
+    // #10 stays hidden (noted closed again, not unsuppressed); #20 is un-hidden.
+    const noted = calls.filter((c) => c.type === 'noteIssuesClosed');
+    assert.deepEqual(noted[noted.length - 1].numbers, [10]);
+    const unsup = calls.filter((c) => c.type === 'unsuppressIssues');
+    assert.deepEqual(unsup.map((c) => c.numbers), [[20]]);
+    assert.equal(ws.length, 2, 'one refresh for #11 observed, one for #10 closed');
+  } finally { restore(); }
+});
+
+test('a failed GitHub close falls back to un-hiding the issue', async () => {
+  const calls = [], ws = [];
+  const { subject, restore } = loadWithStubs({
+    calls, ws,
+    gh: {
+      getPR: async () => mergedPr('Closes #10\nCloses #12'),
+      getIssue: async (o, r, n) => ({ number: n, state: 'open' }),
+      closeIssue: async (o, r, n) => {
+        if (n === 12) { const e = new Error('Forbidden'); e.status = 403; throw e; }
+        return { number: n, state: 'closed' };
+      },
+    },
+  });
+  try {
+    const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, linkedIssues: [10, 12] });
+    assert.deepEqual(res.closed, [10]);
+    assert.deepEqual(res.stillOpen, [12]);
+    const unsup = calls.filter((c) => c.type === 'unsuppressIssues');
+    assert.deepEqual(unsup.map((c) => c.numbers), [[12]]);
+  } finally { restore(); }
+});
+
+test('closes nothing unless the PR reads as merged into its own default branch', async () => {
+  const cases = [
+    ['PR fetch failed', async () => { throw new Error('rate limited'); }],
+    ['not merged', async () => mergedPr('Closes #10', { merged: false })],
+    ['other base branch', async () => mergedPr('Closes #10', {
+      base: { ref: 'staging', repo: { full_name: 'usernode-bot/some-app', default_branch: 'main' } },
+    })],
+    ['other repository', async () => mergedPr('Closes #10', {
+      base: { ref: 'main', repo: { full_name: 'someone/else', default_branch: 'main' } },
+    })],
+  ];
+  for (const [label, getPR] of cases) {
+    const calls = [], ws = [];
+    const { subject, restore } = loadWithStubs({
+      calls, ws,
+      gh: { getPR, getIssue: async (o, r, n) => ({ number: n, state: 'open' }) },
+    });
+    try {
+      const res = await subject.watchIssuesClosedAfterMerge({ ...BASE_ARGS, linkedIssues: [10] });
+      assert.equal(calls.filter((c) => c.type === 'closeIssue').length, 0, label);
+      assert.deepEqual(res.stillOpen, [10], label);
+      assert.deepEqual(calls.filter((c) => c.type === 'unsuppressIssues').map((c) => c.numbers), [[10]], label);
+    } finally { restore(); }
+  }
+});
+
+test('mergedIntoDefaultBranch tolerates a .git suffix and case', () => {
+  const { subject, restore } = loadWithStubs({ calls: [], ws: [] });
+  try {
+    assert.equal(subject.mergedIntoDefaultBranch(mergedPr(''), 'Usernode-Bot', 'some-app.git'), true);
+    assert.equal(subject.mergedIntoDefaultBranch(null, 'usernode-bot', 'some-app'), false);
+    assert.equal(subject.mergedIntoDefaultBranch({ merged: true }, 'usernode-bot', 'some-app'), false);
+  } finally { restore(); }
 });
