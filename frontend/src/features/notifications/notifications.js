@@ -110,6 +110,8 @@ const Notifications = {
   // This prevents an older boot/bell request from completing after a native
   // network-only invalidation and overwriting its fresher result.
   _refreshGeneration: 0,
+  // Each named filter owns a cursor; never advance the unfiltered feed with it.
+  filterPages: {},
   // Once a native invalidation starts, this document must never replace its
   // feed with the service worker's older API-cache fallback. Raise the floor
   // before the request awaits so a later overlapping ordinary refresh is also
@@ -197,6 +199,7 @@ const Notifications = {
       }
       if (generation !== Notifications._refreshGeneration) return false;
       Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
+      Notifications.filterPages = {};
       Notifications.invites = Array.isArray(data.pendingInvites) ? data.pendingInvites : [];
       Notifications.saved = Array.isArray(data.savedMessages) ? data.savedMessages : [];
       Notifications.unread = data.unread || 0;
@@ -354,6 +357,45 @@ const Notifications = {
       console.warn('[notifications] loadOlderMessages failed', err);
     } finally {
       Notifications.msgLoading = false;
+      Notifications._renderList();
+    }
+  },
+
+  async loadKind(kind, more = false) {
+    if (!['votes', 'mentions', 'kudos', 'invitations', 'allowance'].includes(kind)) return;
+    const previous = Notifications.filterPages[kind];
+    if (previous?.loading || (more && !previous?.hasMore)) return;
+    const page = { ...previous, loading: true, error: null };
+    Notifications.filterPages = { ...Notifications.filterPages, [kind]: page };
+    Notifications._renderList();
+    try {
+      const params = new URLSearchParams({ limit: '100', kind });
+      if (new URLSearchParams(window.location.search).get('demo') === '1') params.set('demo', '1');
+      if (more && previous?.nextBefore) {
+        params.set('before', String(previous.nextBefore.createdAt));
+        params.set('before_id', String(previous.nextBefore.id));
+      }
+      const res = await fetch(`/api/notifications?${params}`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Notifications unavailable');
+      const data = await res.json();
+      // A refresh replaced the feed while this request was in flight.
+      if (Notifications.filterPages[kind] !== page) return;
+      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const seen = new Set(Notifications.items.map((row) => row.id));
+      for (const row of incoming) {
+        if (!seen.has(row.id)) { Notifications.items.push(row); seen.add(row.id); }
+      }
+      Notifications.items.sort((a, b) => (Date.parse(b.createdAt) - Date.parse(a.createdAt)) || (b.id - a.id));
+      Notifications.filterPages = { ...Notifications.filterPages, [kind]: {
+        loaded: true, loading: false, error: null,
+        hasMore: !!data.hasMore, nextBefore: data.nextBefore || null,
+      } };
+    } catch {
+      if (Notifications.filterPages[kind] !== page) return;
+      Notifications.filterPages = { ...Notifications.filterPages, [kind]: {
+        ...previous, loading: false, error: 'Could not load these notifications. Try again.',
+      } };
+    } finally {
       Notifications._renderList();
     }
   },
@@ -1422,6 +1464,7 @@ const Notifications = {
         // showOlder reveal, so its list maps ALL items even when the
         // drawer's own list is empty (Streamlined Concept).
         screenList: screenViews(Notifications.items),
+        filterPages: Notifications.filterPages,
         // `empty` is still the ORIGINAL "you have never had a notification"
         // hint, so it now also requires that there be no older ones to
         // reveal — otherwise a fully-read drawer would claim nothing had
@@ -1453,6 +1496,7 @@ const Notifications = {
     store.set({
       list: Notifications._bellItems().map(rowView),
       screenList: screenViews(Notifications.items),
+        filterPages: Notifications.filterPages,
       empty: false,
       caughtUp: false,
       olderCount,
@@ -1850,6 +1894,7 @@ function rowView(n) {
   const who = n.sourceUsername ? n.sourceUsername : 'someone';
   const base = {
     id: n.id,
+    kind: n.kind,
     unread: !n.readAt,
     unreadCls,
     ...stampFields(n.createdAt),

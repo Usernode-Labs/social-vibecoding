@@ -60,6 +60,7 @@ export const notificationsStore = createStore({
    * Published from the same _renderList pass that fills `list`.
    */
   screenList: null,
+  filterPages: {},
   /** The "you'll get pinged here" hint. Hidden in the shipped markup. */
   empty: false,
   /**

@@ -101,8 +101,10 @@
  */
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
+import filterGroups from './filter-groups.json';
+import { Select } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
 import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
@@ -121,6 +123,7 @@ import type { SessionRowView } from '../improve/session-row';
 import type { NotificationRowView } from './notifications-list';
 
 type ScreenRowView = NotificationRowView & {
+  kind?: string;
   createdAtMs: number;
   who: string;
   appLine: string;
@@ -374,9 +377,17 @@ export function NotificationsSheetView() {
     screenList: ScreenRowView[] | null;
     screenCanLoadMore?: boolean;
     loadingMore: boolean;
+    filterPages?: Record<string, { loaded?: boolean; loading?: boolean; error?: string; hasMore?: boolean }>;
+    messagesCanLoadMore?: boolean;
+    loadingOlderMessages?: boolean;
   };
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
+  const [kind, setKind] = useState('');
+  const page = kind ? snap.filterPages?.[kind] : null;
+  useEffect(() => {
+    if (kind && !page?.loaded && !page?.loading && !page?.error) void controller()?.loadKind(kind);
+  }, [kind, page]);
 
   // `?shot=notifications-messages` lands on the Messages tab, so the capture
   // pipeline and the declared checks can reach a view that is otherwise only
@@ -410,7 +421,7 @@ export function NotificationsSheetView() {
     otherSessions: (SessionRowView & { sortAt?: number })[];
     sessionsLoaded: boolean;
   };
-  const agentRows = [...(improve.sessions || []), ...(improve.otherSessions || [])];
+  const agentRows = kind ? [] : [...(improve.sessions || []), ...(improve.otherSessions || [])];
   const rows = tab === 'unread' ? unread
     : tab === 'messages' ? messages : all;
   // #2815: the Messages tab interleaves the sessions with its notification
@@ -432,8 +443,10 @@ export function NotificationsSheetView() {
   const boundary = startOfToday();
   const entries: MessagesEntry[] = tab === 'messages' ? messageEntries
     : rows.map((view) => ({ type: 'notif', key: `n:${view.id}`, at: view.createdAtMs || 0, view }));
-  const today = entries.filter((entry) => entry.at >= boundary);
-  const earlier = entries.filter((entry) => entry.at < boundary);
+  const filteredEntries = kind ? entries.filter((entry) => entry.type === 'notif'
+    && (filterGroups as Record<string, { kinds: string[] }>)[kind]?.kinds.includes(entry.view.kind || '')) : entries;
+  const today = filteredEntries.filter((entry) => entry.at >= boundary);
+  const earlier = filteredEntries.filter((entry) => entry.at < boundary);
   const renderEntry = (entry: MessagesEntry): ReactNode => (entry.type === 'session' ? (
     // The same <SessionRow> the Improve panel and then the Agents tab drew,
     // so a session reads the same wherever you meet it and its busy /
@@ -510,7 +523,8 @@ export function NotificationsSheetView() {
             className={'inline-flex items-center h-8 px-3 rounded-full text-xs font-semibold '
               + 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 '
               + 'disabled:opacity-40 disabled:hover:bg-zinc-100 dark:disabled:hover:bg-zinc-800 un-touch-target'}
-            disabled={!unread.length}
+            disabled={!unread.length || !!kind}
+            title={kind ? 'Choose All types to mark all notifications read' : undefined}
             onClick={() => controller()?.markAllRead()}
           >
             Mark all read
@@ -572,6 +586,16 @@ export function NotificationsSheetView() {
           All
         </button>
       </div>
+      <label className="mx-4 mb-2 flex items-center gap-2 text-xs text-zinc-500 dark:text-zinc-400">
+        Notification type
+        <Select aria-label="Notification type" value={kind} onChange={(event) => {
+          setKind(event.target.value);
+          if (event.target.value) setTab('all');
+        }}>
+          <option value="">All types</option>
+          {Object.entries(filterGroups).map(([key, group]) => <option key={key} value={key}>{group.label}</option>)}
+        </Select>
+      </label>
       {/* The sheet's own scroller. The screen root used to be the scroller;
           a sheet's head has to stay put while its rows move, so the rows get
           a box of their own. */}
@@ -633,9 +657,9 @@ export function NotificationsSheetView() {
           </span>
           <ChevronRightIcon className="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
         </button>
-      ) : (
+      ) : !kind ? (
         <NotificationsPinnedSections />
-      )}
+      ) : null}
       {today.length ? (
         <>
           <SectionHead>
@@ -652,9 +676,9 @@ export function NotificationsSheetView() {
           {earlier.map(renderEntry)}
         </>
       ) : null}
-      {!entries.length ? (
+      {!filteredEntries.length && !page?.loading && !page?.error ? (
         <p className="px-4 py-8 text-sm text-zinc-500 text-center">
-          {tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
+          {kind ? 'No notifications of this type.' : tab === 'unread' ? 'You’re all caught up.' : 'Nothing here yet. You’ll get pinged here.'}
         </p>
       ) : null}
       {/*
@@ -681,7 +705,15 @@ export function NotificationsSheetView() {
           on a quiet account would otherwise offer a link to an equally empty
           All, which is a dead end dressed as a way forward.
       */}
-      {tab === 'messages' && snap.messagesCanLoadMore ? (
+      {kind ? (
+        <div className="px-4 py-3" aria-live="polite">
+          {page?.error ? <p role="alert" className="mb-2 text-sm text-red-600 dark:text-red-400">{page.error}</p> : null}
+          {page?.loading || page?.error || page?.hasMore ? <Button variant="neutral" size="sm"
+            disabled={!!page?.loading} onClick={() => controller()?.loadKind(kind, !!page?.loaded)}>
+            {page?.loading ? 'Loading…' : page?.error ? 'Try again' : 'See older notifications'}
+          </Button> : null}
+        </div>
+      ) : tab === 'messages' && snap.messagesCanLoadMore ? (
         <div className="px-4 py-3">
           <button
             id="notifications-see-older-messages"
