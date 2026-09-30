@@ -9654,7 +9654,19 @@ const DevChat = {
       danger: true,
     });
     if (!ok) return null;
-    await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
+    // Same shape as Pause and Unarchive: a refusal says why, and a request
+    // that never answers (offline) says so too rather than doing nothing.
+    try {
+      const resp = await fetch(`/api/sessions/${id}/archive`, { method: 'POST' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(data.error || 'Failed to archive session');
+        return null;
+      }
+    } catch {
+      PlatformUI.toast('Failed to archive session');
+      return null;
+    }
     await DevChat._reloadSessionList();
     return null;
   },
