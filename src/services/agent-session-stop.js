@@ -8,8 +8,6 @@ const mayor = require('./mayor/agent-turn');
 const workers = require('./active-workers');
 const registry = require('./stop-registry');
 
-const FORCE_AFTER_MS = 40_000;
-
 function epoch(value) {
   const n = typeof value === 'number' ? value : Date.parse(value || '');
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -58,14 +56,14 @@ async function readWork(pool, { agentSessionId, userId }, deps = {}) {
       stopping,
       stopRequestedAt: requestedAt,
       stopToken: token,
-      canForceStop: !!(coding && requestedAt && Date.now() - requestedAt >= FORCE_AFTER_MS
-        && live?.phase !== 'mayor2'),
+      // Compatibility for a browser still running the previous control.
+      canForceStop: false,
     },
     row,
   };
 }
 
-async function requestStop({ pool, user, agentSessionId, force = false, token = null, scheduleInteractiveRecovery = null }, deps = {}) {
+async function requestStop({ pool, user, agentSessionId, token = null, scheduleInteractiveRecovery = null }, deps = {}) {
   const work = await readWork(pool, { agentSessionId, userId: user.id }, deps);
   const fail = (status, error, code) => ({ status, body: { error, code } });
   if (!work) return fail(404, 'Agent session not found', 'not_found');
@@ -76,7 +74,6 @@ async function requestStop({ pool, user, agentSessionId, force = false, token = 
   }
   if (token && token !== work.turn.stopToken) return fail(409, 'The running job changed. Try Stop again.', 'turn_changed');
   if (work.turn.phase === 'mayor2') return { status: 200, body: { stopped: false, reason: 'wrap_up_not_stoppable' } };
-  if (force && !work.turn.canForceStop) return fail(409, 'Request Stop first and allow it time to finish.', 'stop_not_pending');
   const { row, turn } = work;
   // Persist before signalling, including on a pod that does not own the
   // in-memory Mayor. Its lease heartbeat consumes this request.
@@ -85,12 +82,15 @@ async function requestStop({ pool, user, agentSessionId, force = false, token = 
       agentSessionId, userId: user.id, turnId: row.active_turn.id, by: user.username,
     });
     if (!marked) return fail(409, 'The running turn changed. Try Stop again.', 'turn_changed');
+    // Wake the actual owner now. The durable stamp/heartbeat remains the
+    // fallback if this best-effort notification is missed.
+    require('./ws-bus').publish('agent_stop', null, { agentSessionId, turnId: row.active_turn.id });
   }
   (deps.mayor || mayor).stopAgentTurn(agentSessionId, { by: user.username, expectedTurnId: row.active_turn?.id || null });
   if (turn.changeId) {
     const stopJob = deps.stopJob || require('../routes/sessions').requestSessionStop;
     const result = await stopJob({
-      pool, user, sessionId: turn.changeId, force,
+      pool, user, sessionId: turn.changeId, force: true, immediate: true,
       expectedTurnId: lifecycle.turnIdentity(row.change_turn), scheduleInteractiveRecovery,
     });
     if (result.status >= 400) return result;
@@ -101,4 +101,4 @@ async function requestStop({ pool, user, agentSessionId, force = false, token = 
   return { status: 202, body: { stopped: true, stopping: true, stopRequestedAt: turn.stopRequestedAt || Date.now() } };
 }
 
-module.exports = { FORCE_AFTER_MS, readWork, requestStop };
+module.exports = { readWork, requestStop };

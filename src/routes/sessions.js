@@ -10179,9 +10179,10 @@ const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 // deletes its stop handle from the registry, so a handle mismatch means
 // there is nothing left to kill.
 // Shared entry point for classic sessions and agent conversations. The caller
-// receives an HTTP-shaped result; ownership, durable stop intent, confirmation
-// and force-stop policy are identical on both surfaces.
-async function requestSessionStop({ pool, sessionId, user, force = false, expectedTurnId = null, scheduleInteractiveRecovery = null }) {
+// receives an HTTP-shaped result with common ownership, durable intent and
+// confirmation. Agent conversations request immediate hard cancellation;
+// classic sessions retain their existing stop/force escalation policy.
+async function requestSessionStop({ pool, sessionId, user, force = false, immediate = false, expectedTurnId = null, scheduleInteractiveRecovery = null }) {
     // #1378: owner OR an admin who is allowed to WRITE. GET
     // /api/sessions/:id is admin-readable and GET .../status has no
     // ownership guard at all, so an admin could already watch someone
@@ -10212,10 +10213,11 @@ async function requestSessionStop({ pool, sessionId, user, force = false, expect
       return { status: 500, body: { error: 'Internal server error' } };
     }
 
-    // #937: `{ force: true }` is the escape hatch the client offers after a
+    // #937: In classic sessions, `{ force: true }` is offered after a
     // normal stop has visibly failed to land (its 40s rung). Strictly
     // second-order: it is only honoured once a stop is already pending for
-    // this turn, so it can never be the first thing that runs.
+    // this turn. The internal `immediate` option is for agent conversations;
+    // the classic HTTP route does not accept it from a request body.
     const forceRequested = force === true;
 
     const handle = stopRegistry.get(sessionId);
@@ -10225,10 +10227,27 @@ async function requestSessionStop({ pool, sessionId, user, force = false, expect
         return { status: 409, body: { error: 'The running job changed. Refresh its status before stopping it.', code: 'turn_changed' } };
       }
     }
-    // #937: one pure classifier owns the branching (see services/stop-
-    // policy) so the force path can't quietly acquire a way past the
-    // ordinary stop as this handler grows.
-    const action = stopPolicy.classifyStopRequest({ handle, force: forceRequested });
+    // Keep the classic escalation policy while giving agent conversations
+    // first-click hard cancellation. Neither can interrupt final wrap-up.
+    const action = immediate
+      ? (handle?.phase === 'mayor2' ? 'wrap_up_not_stoppable' : handle ? 'force' : 'force_orphan')
+      : stopPolicy.classifyStopRequest({ handle, force: forceRequested });
+
+    if (immediate && action !== 'wrap_up_not_stoppable') {
+      const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
+      if (expectedTurnId && turnLifecycle.turnIdentity(durable) !== expectedTurnId) {
+        return { status: 409, body: { error: 'The running job changed. Try Stop again.', code: 'turn_changed' } };
+      }
+      if (durable) {
+        const marked = await turnLifecycle.markStopRequested(pool, {
+          sessionId, turnId: durable.turnId, journal: durable.journal, by: user.username,
+        });
+        if (turnLifecycle.turnIdentity(marked.activeTurn) !== turnLifecycle.turnIdentity(durable)) {
+          return { status: 409, body: { error: 'The running job changed. Try Stop again.', code: 'turn_changed' } };
+        }
+      }
+      await pool.query('UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1', [sessionId]);
+    }
 
     if (action === 'no_active_turn') {
       const durable = await turnLifecycle.loadActiveTurn(pool, sessionId);
@@ -10274,7 +10293,7 @@ async function requestSessionStop({ pool, sessionId, user, force = false, expect
       // #907: that bookkeeping now includes a local turn row, which is what
       // a machine that went to sleep mid-turn leaves behind.
       await localAgent.requestStop(pool, { sessionId, userId: null }).catch(() => {});
-      await forceStopSession(pool, sessionId, user.username, null);
+      await forceStopSession(pool, sessionId, user.username, null, { immediate, expectedTurnId });
       await scheduleRetainedInteractiveTurn({
         pool, sessionId, scheduleInteractiveRecovery,
       });
@@ -10423,11 +10442,9 @@ async function requestSessionStop({ pool, sessionId, user, force = false, expect
     try { handle.abort.abort(); } catch {}
 
     if (action === 'force') {
-      // Force: the ordinary stop has already failed to land for this turn.
-      // Tear the container down so the journal tail dies with it and the
-      // owning request unwinds, then announce the stop ourselves — that
-      // request may itself be wedged and can't be relied on to do it.
-      await forceStopSession(pool, sessionId, user.username, handle);
+      // Immediately terminate the process tree when requested; evict only
+      // if the kill cannot be confirmed. Settle even if the owner is wedged.
+      await forceStopSession(pool, sessionId, user.username, handle, { immediate, expectedTurnId });
       await scheduleRetainedInteractiveTurn({
         pool, sessionId, scheduleInteractiveRecovery,
       });
@@ -10486,21 +10503,16 @@ async function confirmStopLanded(sessionId, handle) {
   }
 }
 
-// #937: the force-stop escape hatch, reachable from the client's 40s
-// escalation rung once a normal stop has visibly failed to land.
-//
-// Destroys the worker container outright — which is what makes it work
-// where the ordinary kill didn't: the journal tail is a `docker exec` into
-// that container, so it dies with it and the owning chat request unwinds
-// on its own. The CC volume is preserved (evictWorker's contract), so the
-// agent's `--resume` session memory survives; the cost is a cold start on
-// the next dispatch.
+// Hard cancellation for agent conversations, and the existing classic
+// force-stop escape hatch. Kill the turn in place first, preserving the warm
+// worker. If that fails, evict it while retaining the workspace; only that
+// fallback incurs a cold start on the next dispatch.
 //
 // We announce the stop ourselves rather than waiting for the owning
 // request to do it: that request may be the wedged thing we're rescuing
 // the user from. The duplicate `stopped`/`done` it emits afterwards is
 // harmless — the client's stopping-state helpers are idempotent.
-async function forceStopSession(pool, sessionId, username, handle) {
+async function forceStopSession(pool, sessionId, username, handle, { immediate = false, expectedTurnId = null } = {}) {
   const containerName = handle?.workerName || worker.workerContainerName(sessionId);
 
   // #1378: the force-orphan path arrives here with `handle === null` (a turn
@@ -10524,13 +10536,26 @@ async function forceStopSession(pool, sessionId, username, handle) {
 
   // The ordinary stop may be a beat from landing; don't destroy a
   // container that is already going quietly.
-  let executing = await worker.isWorkerExecuting(containerName);
-  if (executing !== false) {
-    await worker.stopTurn(sessionId).catch(() => {});
-    await sleepMs(stopPolicy.STOP_PROBE_INTERVAL_MS);
+  let executing;
+  if (immediate) {
+    // No initial probe, TERM grace period, retry timer or second button.
+    // The worker confirms its process tree is gone in the same command.
+    const killed = await worker.stopTurn(sessionId, { force: true }).catch(() => false);
+    // A root-only idle probe cannot rule out a surviving tool child after
+    // an incomplete tree kill. Without confirmation, evict the whole worker.
+    executing = killed ? false : null;
+  } else {
     executing = await worker.isWorkerExecuting(containerName);
+    if (executing !== false) {
+      await worker.stopTurn(sessionId).catch(() => {});
+      await sleepMs(stopPolicy.STOP_PROBE_INTERVAL_MS);
+      executing = await worker.isWorkerExecuting(containerName);
+    }
   }
   if (executing !== false) {
+    if (expectedTurnId && turnLifecycle.turnIdentity(await turnLifecycle.loadActiveTurn(pool, sessionId)) !== expectedTurnId) {
+      throw Object.assign(new Error('The running job changed. Retry Stop.'), { code: 'turn_changed' });
+    }
     await worker.evictWorker(sessionId).catch(
       (err) => log.warn('sessions', 'force stop evict failed', { sessionId, err: err.message })
     );
@@ -10540,13 +10565,16 @@ async function forceStopSession(pool, sessionId, username, handle) {
     await sleepMs(250);
     executing = await worker.isWorkerExecuting(containerName);
     if (executing !== false) {
-      const error = new Error('Could not confirm that the coding job stopped. Retry Force stop.');
+      const error = new Error('Could not confirm that the coding job stopped. Retry Stop.');
       error.code = 'stop_unconfirmed';
       throw error;
     }
   }
   try {
     const activeTurn = await turnLifecycle.loadActiveTurn(pool, sessionId);
+    if (activeTurn && expectedTurnId && turnLifecycle.turnIdentity(activeTurn) !== expectedTurnId) {
+      throw Object.assign(new Error('The running job changed. Retry Stop.'), { code: 'turn_changed' });
+    }
     if (activeTurn) {
       let ledgerReady = true;
       if (activeTurn.backend === 'codex_openrouter' && activeTurn.turnUuid) {
@@ -10605,6 +10633,7 @@ async function forceStopSession(pool, sessionId, username, handle) {
       }
     }
   } catch (err) {
+    if (err.code === 'turn_changed') throw err;
     log.warn('sessions', 'Force stop could not clear the owned durable turn', {
       sessionId, err: err.message,
     });

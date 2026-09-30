@@ -1543,8 +1543,8 @@ export function SavedDrafts({ drafts, busy, onSend, onEdit }: {
  * inside draws no edge of its own in any engine (public/css/app.css).
  */
 export function StopStatus({ turn, onStop }: {
-  turn: { running: boolean; stopping: boolean; stopRequestedAt: number | null; stopPending: boolean; stopError: string | null; canForceStop: boolean };
-  onStop: (force?: boolean) => void;
+  turn: { running: boolean; stopping: boolean; stopRequestedAt: number | null; stopPending: boolean; stopError: string | null };
+  onStop: () => void;
 }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -1554,15 +1554,12 @@ export function StopStatus({ turn, onStop }: {
     return () => window.clearInterval(timer);
   }, [turn.running, turn.stopping]);
   if (!turn.running || (!turn.stopping && !turn.stopError)) return null;
-  const slow = !!turn.stopRequestedAt && now - turn.stopRequestedAt >= 15_000;
+  const slow = !!turn.stopRequestedAt && now - turn.stopRequestedAt >= 3000;
   return (
     <div data-agent-session-stop-status className="flex flex-wrap items-center gap-2 px-3 py-2 text-[13px] text-zinc-600 dark:text-zinc-300" role="status">
       <span className="min-w-0 flex-1">{turn.stopError || (slow ? 'Stopping is taking longer than expected.' : 'Stopping the agent…')}</span>
       {turn.stopError || slow ? (
-        <Button type="button" variant="pillNeutral" ink="neutral" size="sm" disabledStyle="dim" disabled={turn.stopPending} onClick={() => onStop(false)}>Retry stop</Button>
-      ) : null}
-      {turn.canForceStop ? (
-        <Button type="button" variant="pillDanger" ink="dangerTint" size="sm" disabledStyle="dim" disabled={turn.stopPending} onClick={() => onStop(true)}>Force stop</Button>
+        <Button type="button" variant="pillNeutral" ink="neutral" size="sm" disabledStyle="dim" disabled={turn.stopPending} onClick={() => onStop()}>Retry stop</Button>
       ) : null}
     </div>
   );
@@ -1586,7 +1583,6 @@ function Composer({ id }: { id: string }) {
     stopRequestedAt: s.turn.stopRequestedAt,
     stopPending: s.turn.stopPending,
     stopError: s.turn.stopError,
-    canForceStop: s.turn.canForceStop,
     turnPhase: s.turn.phase,
   }));
   const [value, setValue] = useState('');
@@ -1765,7 +1761,7 @@ function Composer({ id }: { id: string }) {
       </p>
     ) : null}
     <SavedDrafts drafts={snapshot.drafts} busy={running} onSend={onSendDraft} onEdit={onEditDraft} />
-    <StopStatus turn={snapshot} onStop={(force) => { void stopAgentTurn(force); }} />
+    <StopStatus turn={snapshot} onStop={() => { void stopAgentTurn(); }} />
     <form
       className="agent-session-composer flex flex-col gap-2 rounded-[1.75rem] border border-zinc-200 bg-white px-3 pb-2.5 pt-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       onSubmit={submit}

@@ -75,7 +75,6 @@ export interface LiveTurn {
   stopping: boolean;
   stopRequestedAt: number | null;
   stopToken: string | null;
-  canForceStop: boolean;
   stopPending: boolean;
   stopError: string | null;
   streamText: string;
@@ -205,7 +204,6 @@ const IDLE_TURN: LiveTurn = {
   stopping: false,
   stopRequestedAt: null,
   stopToken: null,
-  canForceStop: false,
   stopPending: false,
   stopError: null,
   streamText: '',
@@ -590,7 +588,6 @@ export function settleTurn(turn: LiveTurn, read: {
     next.stopping = next.stopPending || !!server.stopping;
     next.stopRequestedAt = server.stopRequestedAt || null;
     next.stopToken = server.stopToken || null;
-    next.canForceStop = server.canForceStop === true;
   }
   if (!next.phase) next.phase = 'mayor';
   if (!next.startedAt) next.startedAt = Date.now();
@@ -1475,7 +1472,7 @@ export function stoppedText(current: Pick<AgentSessionState, 'messages'> & { out
   return null;
 }
 
-export async function stopAgentTurn(force = false) {
+export async function stopAgentTurn() {
   const id = state.id;
   if (!id || !state.turn.running || state.turn.stopPending) return;
   const token = state.turn.stopToken;
@@ -1489,7 +1486,7 @@ export async function stopAgentTurn(force = false) {
   patchTurn({ stopping: true, stopPending: true, stopError: null });
   if (text) publish({ returnedText: text });
   try {
-    const answer = await api.stopTurn(id, { token, force });
+    const answer = await api.stopTurn(id, { token });
     if (!sameTurn()) { if (state.id === id) await requestSync(id); return; }
     patchTurn({ stopPending: false });
     if (answer.stopRequestedAt) patchTurn({ stopRequestedAt: answer.stopRequestedAt });

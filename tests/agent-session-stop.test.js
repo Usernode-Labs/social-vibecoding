@@ -52,15 +52,16 @@ test('one server request stops a recovered job; fresh reads on both devices reta
   assert.deepEqual(await f.read(), { busy: false, turn: null, row: f.row });
 });
 
-test('pending cancellation keeps its escalation deadline after reload; force requires a prior stop', async () => {
+test('the first Stop and every retry use immediate force, with no prior-stop deadline', async () => {
   const f = fixture();
-  assert.equal((await requestStop({ ...f.args, force: true }, f.deps)).status, 409);
-  assert.equal(f.calls.length, 0);
-  f.row.change_turn.stopRequestedAt = new Date(Date.now() - 45_000).toISOString();
-  const fresh = await f.read();
-  assert.equal(fresh.turn.canForceStop, true);
-  assert.equal((await requestStop({ ...f.args, force: true, token: fresh.turn.stopToken }, f.deps)).status, 202);
-  assert.equal(f.calls.find((c) => c[0] === 'job')[1].force, true);
+  for (const force of [false, true]) {
+    const fresh = await f.read();
+    assert.equal(fresh.turn.canForceStop, false, 'there is no separate escalation control');
+    assert.equal((await requestStop({ ...f.args, force, token: fresh.turn.stopToken }, f.deps)).status, 202);
+    const job = f.calls.filter((c) => c[0] === 'job').at(-1)[1];
+    assert.equal(job.force, true);
+    assert.equal(job.immediate, true);
+  }
 });
 
 test('a stale device cannot stop a replacement run; another owner cannot stop or force it', async () => {
@@ -134,7 +135,7 @@ test('a fresh screen restores stopping from a server read and offers recovery fo
   const html = renderToHtml(createElement(StopStatus, { turn, onStop() {} }));
   assert.match(html, /Stopping is taking longer/);
   assert.match(html, /Retry stop/);
-  assert.match(html, /Force stop/);
+  assert.doesNotMatch(html, /Force stop/);
   const ended = store.settleTurn(turn, { busy: false, turn: null, messages: [], sending: false });
   assert.equal(ended.running, false);
   assert.equal(ended.stopping, false);

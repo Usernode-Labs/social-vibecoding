@@ -1008,6 +1008,13 @@ function stopAgentTurn(agentSessionId, { by = null, expectedTurnId = null } = {}
     handle.stopped = true;
     handle.stoppedBy = by;
     if (!handle.stopRequestedAt) handle.stopRequestedAt = Date.now();
+    const child = handle.change?.handle;
+    if (child && child.phase !== 'mayor2') {
+      child.stopped = true;
+      child.stoppedBy = by;
+      child.stopRequestedAt ||= handle.stopRequestedAt;
+      try { child.abort.abort(); } catch { /* already aborted */ }
+    }
     return {
       stopped: false,
       reason: 'dispatch_running',
@@ -1020,6 +1027,17 @@ function stopAgentTurn(agentSessionId, { by = null, expectedTurnId = null } = {}
   try { handle.send('stopping', { by }); } catch { /* best effort */ }
   try { handle.abort.abort(); } catch { /* already aborted */ }
   return { stopped: true, phase: handle.phase };
+}
+
+// Cross-process notifications are a wake-up, never permission to stop an
+// arbitrary run. Re-read the durable intent and match the exact local turn.
+async function receiveStopRequest(pool, { agentSessionId, turnId } = {}, deps = {}) {
+  const handle = stopRegistry.get(Number(agentSessionId));
+  if (!pool || !handle || handle.turnId !== turnId) return false;
+  const request = await (deps.agentSessions || require('../agent-sessions')).readTurnStopRequest(pool, { agentSessionId, turnId });
+  if (!request || stopRegistry.get(Number(agentSessionId)) !== handle) return false;
+  stopAgentTurn(Number(agentSessionId), { by: request.stopRequestedBy, expectedTurnId: turnId });
+  return true;
 }
 
 // Where the running turn is, for a client that joins mid-turn.
@@ -1212,7 +1230,7 @@ module.exports = {
   titleFromMessage,
   fallbackWrapUp,
   runAgentTurn,
-  stopAgentTurn,
+  stopAgentTurn, receiveStopRequest,
   turnState,
   handBackOrphanedTurn,
   handBackAfterRecovery,

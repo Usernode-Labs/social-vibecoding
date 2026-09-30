@@ -488,7 +488,7 @@ test('Stop state survives an unchanged poll, another device, and a fresh screen;
       const turn = store.getAgentSessionState().turn;
       assert.equal(turn.running, true);
       assert.equal(turn.stopping, true);
-      assert.equal(turn.canForceStop, true);
+      assert.equal(turn.canForceStop, undefined, 'there is no delayed force-stop step');
       assert.equal(turn.stopRequestedAt, server.turn.stopRequestedAt);
     }
     const refreshed = world(server).store;

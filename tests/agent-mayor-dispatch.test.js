@@ -810,3 +810,22 @@ test('a stop during dispatch preparation never starts a coding tool', async () =
     assert.equal(result.registry.size, 0);
   }
 });
+
+
+test('a durable cross-process stop notification interrupts the owning turn immediately and ignores stale notifications', async () => {
+  let reads = 0;
+  const { res } = await runTurn({
+    steps: [async () => {
+      const id = agentTurn.turnState(5).id;
+      const deps = { agentSessions: { readTurnStopRequest: async () => { reads += 1; return { stopRequestedAt: new Date().toISOString(), stopRequestedBy: 'ada' }; } } };
+      assert.equal(await agentTurn.receiveStopRequest({}, { agentSessionId: 5, turnId: 'old-turn' }, deps), false);
+      assert.equal(reads, 0, 'another turn is not even read');
+      assert.equal(await agentTurn.receiveStopRequest({}, { agentSessionId: 5, turnId: id }, { agentSessions: { readTurnStopRequest: async () => null } }), false);
+      assert.equal(await agentTurn.receiveStopRequest({}, { agentSessionId: 5, turnId: id }, deps), true);
+      assert.equal(agentTurn.turnState(5).stopping, true);
+      return { text: '', toolUses: [], rawContent: [], usage: {} };
+    }],
+  });
+  assert.equal(reads, 1);
+  assert.ok(res.events().some((event) => event.type === 'stopping'));
+});

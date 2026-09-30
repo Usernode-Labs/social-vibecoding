@@ -42,7 +42,7 @@ const workerMod = require('../src/services/worker');
 const wsMod = require('../src/services/ws');
 const sessionBus = require('../src/services/session-bus');
 
-const { sessionRoutes } = require('../src/routes/sessions');
+const { sessionRoutes, requestSessionStop } = require('../src/routes/sessions');
 
 const OWNER = { id: 7, username: 'alice' };
 const WRITE_ADMIN = { id: 99, username: 'root', isAdmin: true, canAdminWrite: true };
@@ -386,5 +386,69 @@ test('force stop reports an error and preserves ownership when termination canno
     workerMod.isWorkerExecuting = originals.executing;
     workerMod.evictWorker = originals.evict;
     server.close();
+  }
+});
+
+
+test('the agent-session first Stop goes straight to a hard kill, including a recovered job with no handle', async () => {
+  for (const withHandle of [false, true]) {
+    routeQueries({ activeTurn: durableTurn() });
+    stopRegistry._reset();
+    if (withHandle) stopRegistry.set(SESSION_ID, stopRegistry.createHandle({ sessionId: SESSION_ID, phase: 'cc' }));
+    const original = { stop: workerMod.stopTurn, probe: workerMod.isWorkerExecuting, evict: workerMod.evictWorker, clear: workerMod.clearActiveTurn };
+    const calls = [];
+    workerMod.stopTurn = async (id, options) => { calls.push(['kill', id, options]); return true; };
+    workerMod.isWorkerExecuting = async () => { throw new Error('No initial probe or polling needed after an acknowledged kill'); };
+    workerMod.evictWorker = async () => { throw new Error('Keep the warm worker after a successful kill'); };
+    workerMod.clearActiveTurn = async () => true;
+    try {
+      const answer = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
+        immediate: true, force: true, expectedTurnId: 'turn-xyz' });
+      assert.equal(answer.status, 200);
+      assert.equal(answer.body.stopped, true);
+      assert.deepEqual(calls, [['kill', SESSION_ID, { force: true }]]);
+      assert.ok(capturedQueries.some((q) => /stopRequestedAt/.test(q.sql)));
+    } finally {
+      workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe;
+      workerMod.evictWorker = original.evict; workerMod.clearActiveTurn = original.clear;
+    }
+  }
+});
+
+test('a failed immediate kill escalates automatically and keeps ownership if termination is unconfirmed', async () => {
+  routeQueries({ activeTurn: durableTurn() });
+  activeWorkers.add(SESSION_ID);
+  const original = { stop: workerMod.stopTurn, probe: workerMod.isWorkerExecuting, evict: workerMod.evictWorker };
+  const calls = [];
+  workerMod.stopTurn = async (_id, opts) => { calls.push(['kill', opts]); throw new Error('Exec failed'); };
+  workerMod.isWorkerExecuting = async () => null;
+  workerMod.evictWorker = async () => { calls.push(['evict']); throw new Error('Unavailable'); };
+  try {
+    await assert.rejects(requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
+      immediate: true, force: true, expectedTurnId: 'turn-xyz' }), /Could not confirm/);
+    assert.deepEqual(calls, [['kill', { force: true }], ['evict']]);
+    assert.equal(activeWorkers.has(SESSION_ID), true);
+  } finally {
+    workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe; workerMod.evictWorker = original.evict;
+  }
+});
+
+test('an unacknowledged hard kill still evicts when a root-only probe would say idle', async () => {
+  routeQueries({ activeTurn: durableTurn() });
+  stopRegistry._reset();
+  const original = { stop: workerMod.stopTurn, probe: workerMod.isWorkerExecuting, evict: workerMod.evictWorker, clear: workerMod.clearActiveTurn };
+  const calls = [];
+  workerMod.stopTurn = async () => { calls.push('kill'); return false; };
+  workerMod.isWorkerExecuting = async () => { calls.push('probe'); return false; };
+  workerMod.evictWorker = async () => { calls.push('evict'); };
+  workerMod.clearActiveTurn = async () => true;
+  try {
+    const answer = await requestSessionStop({ pool: poolMod.getPool(), user: OWNER, sessionId: SESSION_ID,
+      immediate: true, force: true, expectedTurnId: 'turn-xyz' });
+    assert.equal(answer.body.stopped, true);
+    assert.deepEqual(calls, ['kill', 'evict', 'probe'], 'unconfirmed tool children require whole-worker cancellation');
+  } finally {
+    workerMod.stopTurn = original.stop; workerMod.isWorkerExecuting = original.probe;
+    workerMod.evictWorker = original.evict; workerMod.clearActiveTurn = original.clear;
   }
 });
