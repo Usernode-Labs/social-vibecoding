@@ -170,6 +170,36 @@ const ARGS = {
   buildNote: 'x', turnBudgetMs: 60_000, model: 'm',
 };
 
+// ── From the platform build review (#3441) ───────────────────────────────
+
+test('the spec checks its two halves against each other before it finishes', () => {
+  const p = live.specPrompt({ seed: 'ISSUE', buildNote: 'Edit a.js.' });
+  assert.match(p, /Before you finish, read the two halves against each other\. Every assumption, and everything "User-facing\nchanges" says people will see, must be true of what "Technical implementation" builds/);
+  assert.match(p, /must build nothing the user-facing half leaves out\. Where they disagree, change one so they agree/);
+  assert.ok(p.indexOf('read the two halves against each other') < p.indexOf('There is one exception.'),
+    'part of writing the spec, before the one way out');
+});
+
+test('the build runs the queries it writes, does not stub what it changed, and commits no reports', () => {
+  for (const spec of [null, '# Title\n\n## User-facing changes\n\nx\n\n## Technical implementation\n\ny']) {
+    const p = live.buildPrompt({ seed: 'ISSUE', buildNote: 'Edit a.js.', spec });
+    const rules = p.slice(p.indexOf('Make exactly that change, and nothing else:'));
+    assert.match(rules, /- A database query you add or change must run in a test against a real database, where the repository has\n  such tests \(for example its \*-postgres tests\)\. A test that only matches the query's text does not count\./);
+    assert.match(rules, /Do not stub the code you changed in the test that checks it: stub what it calls, not what it is\./);
+    assert.match(rules, /- Do not add reports, notes or other documents to the repository unless the spec asks for that file\./);
+    assert.ok(rules.indexOf('real database') < rules.indexOf('Do not commit or push yourself'), 'inside the rules, before the hand-off');
+  }
+});
+
+test('triage sends a request for an explanation to a person, and still builds a bug report', () => {
+  const prompt = read('src/prompts/homeroom-bot-triage.md');
+  const ready = prompt.slice(prompt.indexOf('3. `ready`'), prompt.indexOf('4. `person`'));
+  assert.match(ready, /- It asks for a change to the app\. A request that only asks for an explanation or a write-up \("why does X happen\?", "look into Y and report back"\) names nothing to build: the answer is a reply for a person, not a commit, so it is `person`\./);
+  assert.match(ready, /A bug report \("X is broken", "X shows the wrong thing"\) is not this: it asks for X to be fixed\./);
+  const person = prompt.slice(prompt.indexOf('4. `person`'), prompt.indexOf('Also state, whatever the verdict:'));
+  assert.match(person, /So does a request that asks only for an explanation or an investigation\./);
+});
+
 test('a BLOCKED spec builds nothing and says why; a spec that merely mentions it builds', async () => {
   const h = buildHarness('BLOCKED: Pulse has no leaderboard data to rank.');
   let posted = false;
