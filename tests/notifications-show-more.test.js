@@ -135,7 +135,11 @@ test('the renderer maps rows directly, with no between-apps divider', () => {
   // #2815: through renderEntry, which draws a notification as <ScreenRow>
   // and a Messages-tab session as <SessionRow> — still one child per entry.
   assert.match(listBlock(), /\.map\(renderEntry\)/, 'renders one child per row');
-  assert.match(LIST_CODE, /: <ScreenRow key=\{entry\.key\} view=\{entry\.view\} \/>/);
+  // #3538: the row also takes `touch={touch}` — ScreenRow decides the
+  // swipe-to-clear affordance from it. The pin's job is unchanged: still one
+  // child per entry, still <ScreenRow> for a notification and <SessionRow>
+  // for a session.
+  assert.match(LIST_CODE, /: <ScreenRow key=\{entry\.key\} view=\{entry\.view\} touch=\{touch\} \/>/);
   assert.doesNotMatch(LIST_CODE, /DIVIDER/,
     'the heavier between-apps divider is gone — rows carry their own border');
 });

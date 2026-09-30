@@ -537,6 +537,18 @@ const Notifications = {
     if (!Notifications.items.some(isPriorityNotif)) DevChat.setCompletionTitle(null);
   },
 
+  // #3538: clear ONE notification without opening it — the swipe-to-clear
+  // row and the hover × both land here. Clearing means mark-as-read (the
+  // app has no delete): the drawer's Unread tab filters read rows out on
+  // the same _renderList pass, so the cleared row leaves the list for the
+  // same reason a clicked one does, and stays behind "See older
+  // notifications" and on All like any other read row. All of the
+  // reconcile is _markOneRead's, which is also the path a row's own tap
+  // takes — no second server path, no second failure story.
+  async clearOne(id) {
+    await Notifications._markOneRead(id);
+  },
+
   async _markOneRead(id) {
     // Optimistically mark read in-memory and re-render the open drawer
     // right away: the unread dot disappears and unread-first sorting

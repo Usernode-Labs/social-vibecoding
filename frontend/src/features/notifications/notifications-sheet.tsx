@@ -101,7 +101,7 @@
  */
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
@@ -109,7 +109,7 @@ import { ChatBubbleTailIcon, ChevronRightIcon, XIcon } from '@/components/ui/ico
 
 import { swatchFor } from '../messages/format';
 
-import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
+import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
 import { notificationsStore } from './notifications-store.js';
 import { notificationsSheetStore } from './notifications-sheet-store.js';
@@ -236,7 +236,85 @@ function RowActions({ view, actions }: {
   return <>{buttons}</>;
 }
 
-function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
+/*
+ * #3538 — Clear, the row's no-navigate dismissal. Clear marks a notification
+ * read — the same thing opening it does — so the row leaves the Unread list
+ * but stays in the app's history behind "See older notifications" and on
+ * All, exactly as if it had been opened.
+ *
+ * The affordance never competes with the row's tap. On DESKTOP it is a
+ * hover-revealed × beside the row's end, macOS-style; touch clients never
+ * render it, and read rows never do either.
+ *
+ * On TOUCH the whole unread row is a swipe target with Clear behind it, in
+ * the platform kit's swipe tray. The kit's attachSwipeActions re-parents the
+ * element it is handed into a .un-swipe container of its own, so a row
+ * handed to it straight from the shared list would throw NotFoundError the
+ * first time React removed one — the cleared row's own removal included.
+ * SwipeSlot below is that wrapper: the keyed div React places and removes,
+ * inside which the kit may wrap the row freely. Same shape as the
+ * app-context sheet's archive swipe (features/app-context/…). The commit
+ * handler bumps `round` after the clear settles: a destructive full-swipe
+ * removes the slot's content before the handler runs, and a re-mount is the
+ * repair the app-context sheet's archive swipe uses for the rows that DO
+ * survive their action.
+ */
+function SwipeSlot({ id, children }: { id: number; children: ReactNode }): ReactNode {
+  const [round, setRound] = useState(0);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useIsomorphicLayoutEffect(() => {
+    const el = ref.current?.firstElementChild as HTMLElement | null;
+    const ui = typeof window !== 'undefined' ? (window as any).PlatformUI : null;
+    if (!el || !ui?.swipeActions) return undefined;
+    const swipe = ui.swipeActions(el, {
+      actions: [{
+        label: 'Clear',
+        handler: () => {
+          // Destructive commit takes the row out of the document BEFORE the
+          // handler runs, so the round bump that re-mounts a fresh slot —
+          // the app-context sheet's archive-swipe repair — must happen only
+          // when the row SURVIVES. A full-swipe clear never does.
+          void Promise.resolve(controller()?.clearOne(id)).then(() => {
+            setRound((n) => n + 1);
+          });
+        },
+      }],
+    });
+    return () => swipe?.detach?.();
+  }, [id, round]);
+  return <div key={round} ref={ref}>{children}</div>;
+}
+
+function ClearButton({ view }: { view: ScreenRowView }): ReactNode {
+  const [hidden, setHidden] = useState(true);
+  const ref = useRef<HTMLButtonElement | null>(null);
+  useHiddenClass(ref, hidden);
+  return (
+    <button
+      ref={ref}
+      type="button"
+      data-notif-clear={view.id}
+      aria-label="Clear"
+      className={'flex h-6 w-6 shrink-0 items-center justify-center rounded-full '
+        + 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 '
+        + 'hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors'}
+      onMouseEnter={() => setHidden(false)}
+      onMouseLeave={() => setHidden(true)}
+      onClick={(event) => {
+        event.stopPropagation();
+        controller()?.clearOne(view.id);
+      }}
+    >
+      <XIcon className="w-3.5 h-3.5" />
+    </button>
+  );
+}
+
+function ScreenRow({ view, touch }: { view: ScreenRowView; touch: boolean }): ReactNode {
+  // #3538: the affordances ride on the UNREAD rows only. Touch swipes the
+  // whole row; desktop reveals an × at its edge on hover; a read row offers
+  // neither, exactly like a read row on iOS.
+  const swipeable = !!view.unread && !!touch;
   // Everything between the row's left edge and its chevron: the tile, the
   // three lines, the count, the dot.
   const body = (
@@ -320,11 +398,50 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
       <ChevronRightIcon className="w-5 h-5 shrink-0 text-zinc-300 dark:text-zinc-600" />
     </>
   );
+
+  // #3538 on touch, the WHOLE row is a swipe target when it is unread: the
+  // kit re-parents the element it is handed, so the row goes inside a keyed
+  // slot div that React owns (see SwipeSlot above). The slot is what the
+  // list mounts and removes; the row inside it only updates.
+  const actions = view.actions || [];
+  if (swipeable) {
+    const row = (
+      <ScreenRowInner
+        view={view}
+        body={body}
+        actions={actions}
+        withClear={!touch}
+      />
+    );
+    return <SwipeSlot id={view.id}>{row}</SwipeSlot>;
+  }
+
+  return <ScreenRowInner view={view} body={body} actions={actions} withClear={!touch} />;
+}
+
+/*
+ * The row itself, one level down so the swipe slot above can wrap it.
+ * #1688: a row with an action of its own ("Still yes" on a re-confirm ask)
+ * keeps the row as the tap that opens the thing, and puts the action beside
+ * it as a real button — never a button inside a button. #3538: an unread
+ * row's Clear × joins them as a third sibling on desktop, and on a two-action
+ * row it moves up beside the row's tap button so the stacked actions below
+ * stay untouched.
+ */
+function ScreenRowInner({ view, body, actions, withClear }: {
+  view: ScreenRowView;
+  body: ReactNode;
+  actions: NonNullable<ScreenRowView['actions']>;
+  withClear: boolean;
+}): ReactNode {
   // #1688: a row with an action of its own ("Still yes" on a re-confirm ask)
   // keeps the row as the tap that opens the thing, and puts the action
   // beside it as a real button — never a button inside a button.
-  const actions = view.actions || [];
-  if (actions.length) {
+  // #3538: an unread row on desktop joins its Clear × to that same container
+  // (a third sibling, after the tap); on a two-action row it moves up beside
+  // the row's tap button so the stacked actions below stay untouched. A read
+  // row keeps the bare <button> the declared checks select through.
+  if (actions.length || withClear) {
     return (
       <div
         data-notif-id={view.id}
@@ -343,6 +460,7 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
         >
           {body}
         </button>
+        {withClear ? <ClearButton view={view} /> : null}
         <RowActions view={view} actions={actions} />
       </div>
     );
@@ -366,7 +484,6 @@ export function NotificationsSheetView() {
   const { open, adopted } = useStoreState(notificationsSheetStore) as {
     open: boolean; adopted: boolean;
   };
-
   // Pull-to-refresh went with the screen root. A kit sheet owns the vertical
   // drag for its own dismiss gesture, so a pull-down inside one cannot also
   // mean "reload" — the controller refreshes on open instead.
@@ -374,7 +491,10 @@ export function NotificationsSheetView() {
     screenList: ScreenRowView[] | null;
     screenCanLoadMore?: boolean;
     loadingMore: boolean;
+    /** Published by _renderList from isTouchNow() — the swipe rows read it. */
+    touch?: boolean;
   };
+  const touch = !!snap.touch;
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
 
@@ -445,7 +565,7 @@ export function NotificationsSheetView() {
       showApp
       onNavigate={() => { NotificationsSheet.close?.(); }}
     />
-  ) : <ScreenRow key={entry.key} view={entry.view} />);
+  ) : <ScreenRow key={entry.key} view={entry.view} touch={touch} />);
 
   // `whitespace-nowrap`: "Unread (12)" is two words and the strip is a flex
   // row inside a phone-width sheet, so the count wrapped onto a second line

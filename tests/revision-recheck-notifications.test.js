@@ -188,7 +188,11 @@ test('"Still yes" re-casts the Yes with no line of its own, and marks the row re
   const sheet = fs.readFileSync(path.join(__dirname, '../frontend/src/features/notifications/notifications-sheet.tsx'), 'utf8');
   assert.match(sheet, /data-notif-action=\{a\.key\}/, 'the screen draws a row\'s actions as real buttons');
   assert.match(sheet, /controller\(\)\?\._onRowAction\(view\.id, a\.key\)/);
-  assert.match(sheet, /const actions = view\.actions \|\| \[\];\s+if \(actions\.length\) \{\s+return \(\s+<div/,
+  // #3538: the actions block moved into ScreenRowInner one level down, so the
+  // swipe slot can wrap the whole row on touch. The shape it pins is
+  // unchanged: a row with actions still renders the container <div> with the
+  // actions as real buttons beside the tap.
+  assert.match(sheet, /function ScreenRowInner\([\s\S]*?if \(actions\.length \|\| withClear\) \{\s+return \(\s+<div/,
     'beside the row, never a button inside a button');
 });
 
