@@ -798,9 +798,15 @@ async function ensurePlatformAssetBackend(config, { readyTimeoutMs = 45000, retr
 async function deployApplication(config, {
   app, environment, sessionId, imageRef, env, cpus = null,
   labels: extraLabels = {}, runtimeName = null, internalOnly = false,
-  command = [],
+  command = [], runAsUser = null,
 }) {
   if (!imageRef?.includes('@sha256:')) throw new Error('Kubernetes deployments require an immutable image digest');
+  // runAsUser is an explicit override for an image that names no user and
+  // so would run as root; nothing sets it unless the caller asks. The pod
+  // still runs with runAsNonRoot, so 0 is refused here, not by the kubelet.
+  if (runAsUser != null && (!Number.isSafeInteger(runAsUser) || runAsUser <= 0)) {
+    throw new Error('Kubernetes runAsUser must be a positive integer');
+  }
   if (!Array.isArray(command) || command.some((part) => typeof part !== 'string' || !part)) {
     throw new Error('Kubernetes container command must be an array of non-empty strings');
   }
@@ -841,7 +847,9 @@ async function deployApplication(config, {
         spec: {
           serviceAccountName: cfg.generatedAppServiceAccount,
           automountServiceAccountToken: false,
-          securityContext: podSecurityContext(),
+          securityContext: runAsUser == null
+            ? podSecurityContext()
+            : { ...podSecurityContext(), runAsUser, runAsGroup: runAsUser },
           ...previewDatabaseAffinity(cfg, environment),
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',

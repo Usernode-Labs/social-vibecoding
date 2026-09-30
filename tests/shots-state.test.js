@@ -719,3 +719,40 @@ test('a stored reason is bounded, so no log line or upstream message can grow th
   await state.recordNotStarted(pool, 42, 'x'.repeat(5000));
   assert.equal(seen[0][1].length, 300);
 });
+
+test('a trace merge tags the stored trace without replacing the run\'s diagnostics', async () => {
+  // The shutdown handler marks an interruption as a rollout this way: the
+  // trace the run already wrote (agent activity, timings) must survive it.
+  const merged = runPool(runRow());
+  await state.transitionRun(merged.pool, RUN_ID, 'failed', {
+    failureCode: 'shots_run_interrupted',
+    failureReason: state.SHUTDOWN_INTERRUPTED_REASON,
+    traceMerge: { interruptedBy: state.SHUTDOWN_INTERRUPTION },
+  });
+  const update = merged.statements.find(({ sql }) => /UPDATE shot_runs/.test(sql));
+  const at = update.values.indexOf(JSON.stringify({ interruptedBy: 'shutdown' }));
+  assert.ok(at > 1, 'the marker is a bound value');
+  assert.ok(update.sql.includes(`trace_summary = COALESCE(trace_summary, '{}'::jsonb) || $${at + 1}::jsonb`),
+    'merged into whatever the run stored, not written over it');
+  assert.ok(!/trace_summary = \$\d+::jsonb/.test(update.sql));
+
+  // Beside a replacement trace, the marker lands in that trace instead.
+  const replaced = runPool(runRow());
+  await state.transitionRun(replaced.pool, RUN_ID, 'failed', {
+    failureReason: 'x', traceSummary: { runs: 1 }, traceMerge: { interruptedBy: 'shutdown' },
+  });
+  const second = replaced.statements.find(({ sql }) => /UPDATE shot_runs/.test(sql));
+  assert.ok(second.values.includes(JSON.stringify({ runs: 1, interruptedBy: 'shutdown' })));
+  assert.equal((second.sql.match(/trace_summary =/g) || []).length, 1, 'one assignment, not two');
+});
+
+test('interruption budgets: rollouts spend only the ceiling, crashes keep the original two retries', () => {
+  const allowed = (retries, unexplained) => state.interruptedRetryAllowed({
+    interrupted_retries: retries, unexplained_interruptions: unexplained,
+  });
+  assert.equal(allowed(0, 1), true, 'a first crash is retried');
+  assert.equal(allowed(2, 3), false, 'a third crash is not: the run may be what kills the process');
+  assert.equal(allowed(5, 0), true, 'five rollouts in a row are still retried');
+  assert.equal(allowed(state.MAX_INTERRUPTED_RETRIES, 0), false, 'but not forever');
+  assert.equal(state.interruptedRetryAllowed({}), false, 'uncounted means no promise');
+});

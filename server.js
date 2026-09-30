@@ -5970,11 +5970,15 @@ async function cleanup() {
   // crashes, and a database that cannot accept this bounded write.
   const interruptedShots = require('./src/services/shots-orchestrator').inFlightRunSnapshot();
   if (interruptedShots.length && shutdownPool) {
+    const shotsState = require('./src/services/shots-state');
     let markTimer = null;
     const marking = Promise.allSettled(interruptedShots.map((runId) =>
-      require('./src/services/shots-state').transitionRun(shutdownPool, runId, 'failed', {
+      shotsState.transitionRun(shutdownPool, runId, 'failed', {
         failureCode: 'shots_run_interrupted',
-        failureReason: 'Homeroom restarted while these before & after shots were being taken. You can take them again.',
+        failureReason: shotsState.SHUTDOWN_INTERRUPTED_REASON,
+        // A rollout, not the run: the automatic retry does not count it
+        // against the tighter budget for unexplained interruptions.
+        traceMerge: { interruptedBy: shotsState.SHUTDOWN_INTERRUPTION },
       })
     ));
     const result = await Promise.race([

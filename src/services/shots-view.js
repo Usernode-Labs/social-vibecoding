@@ -235,7 +235,11 @@ async function getForSessions(pool, sessions, slug) {
               -- Its automatic retries, so the view can say one is coming.
               (SELECT COUNT(*) FROM shot_runs retry
                 WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
-                  AND retry.trigger = 'interrupted-retry')::int AS interrupted_retries
+                  AND retry.trigger = 'interrupted-retry')::int AS interrupted_retries,
+              (SELECT COUNT(*) FROM shot_runs crash
+                WHERE crash.session_id = r.session_id AND crash.head_sha = r.head_sha
+                  AND crash.failure_code = 'shots_run_interrupted'
+                  AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions
          FROM shot_runs r WHERE r.id = ANY($1::varchar[])`,
       [runIds]
     );

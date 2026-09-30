@@ -17,6 +17,7 @@ const shotsAgent = require('./shots-agent');
 const shotsControl = require('./shots-control');
 const environment = require('./shots-environment');
 const identities = require('./shots-identities');
+const lifecycle = require('./lifecycle');
 const planContract = require('./visible-changes');
 const state = require('./shots-state');
 const turnLifecycle = require('./turn-lifecycle');
@@ -687,6 +688,13 @@ function recordAgentDiagnostic(metrics, raw) {
     if (Number.isInteger(raw.responseStatus) && raw.responseStatus >= 100 && raw.responseStatus <= 599) {
       event.responseStatus = raw.responseStatus;
     }
+    // A failed sign-in says where it stopped and why, from fixed values
+    // (worker/shots-browser-bootstrap.js failureEvent).
+    if (['configure', 'launch', 'exchange', 'navigate', 'cookie', 'hosted_catalog',
+      'storage_state', 'allowlist'].includes(raw.failureStage)) {
+      event.failureStage = raw.failureStage;
+    }
+    if (/^[a-z_]{1,40}$/.test(String(raw.failureCode || ''))) event.failureCode = raw.failureCode;
   }
   for (const key of ['resultSubtype', 'providerStopReason']) {
     if (/^[a-z0-9_:-]{1,80}$/i.test(String(raw[key] || ''))) event[key] = raw[key];
@@ -1279,6 +1287,15 @@ async function scheduleForSession(config, options, injected = {}) {
   if (!config.shots?.execute) {
     await noteNotStarted(pool, sessionId, 'disabled', injected);
     return { scheduled: false, reason: 'disabled' };
+  }
+  // A draining process would start the run only for its shutdown handler
+  // to fail it seconds later, spending one of the proposal's automatic
+  // retries on nothing. Nothing is written: no claim row exists yet, so the
+  // next leader's unstarted-claim sweep (shots-gc.recoverUnstarted) starts
+  // it once that process is serving.
+  if ((injected.isShuttingDown || lifecycle.isShuttingDown)()) {
+    log.info('shots', 'Before & after shots run not started: the server is shutting down', { sessionId, trigger });
+    return { scheduled: false, reason: 'shutting_down' };
   }
   const session = await loadSession(pool, sessionId);
   // Closed changes do not start automatic shots runs. A proposal owner or

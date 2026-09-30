@@ -6,6 +6,7 @@ const path = require('path');
 const applicationRuntime = require('./application-runtime');
 const dbManager = require('./db-manager');
 const environment = require('./shots-environment');
+const lifecycle = require('./lifecycle');
 const log = require('./logger');
 const state = require('./shots-state');
 const { visualHeadForSession, sameSha } = require('./pr-vote-revision');
@@ -157,8 +158,13 @@ async function recoverInterrupted(config, pool, {
 // A declaration is written before checks finish. The ordinary checks
 // completion event starts the shots, but a process can die between those
 // two writes; this hands such a proposal to a run within minutes.
-async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, schedule = null } = {}) {
+async function recoverUnstarted(config, pool, {
+  limit = 10, minAgeMs = 60_000, schedule = null, isShuttingDown = lifecycle.isShuttingDown,
+} = {}) {
   if (!config.shots?.execute) return { examined: 0, scheduled: 0 };
+  // Starting a run in a draining process only hands it to the shutdown
+  // handler to fail; the next leader's sweep finds the same claim.
+  if (isShuttingDown()) return { examined: 0, scheduled: 0 };
   const retryAfterMs = 10 * 60_000;
   const { rows } = await pool.query(
     `SELECT cs.id, cs.source, cs.imported_pr_head_sha, cs.reviewed_head_sha,
@@ -214,28 +220,55 @@ async function recoverUnstarted(config, pool, { limit = 10, minAgeMs = 60_000, s
 // a person clicking Retry can clear. `rerunSameHead` keeps the interrupted
 // row as the audit record and the planned -> provisioning claim in
 // scheduleForSession still guarantees one live runner.
-const { INTERRUPTED_RETRY_TRIGGER, MAX_INTERRUPTED_RETRIES } = state;
+const {
+  INTERRUPTED_RETRY_TRIGGER, MAX_INTERRUPTED_RETRIES, MAX_UNEXPLAINED_RETRIES,
+} = state;
+
+// Each retry of the same head waits twice as long as the one before, from
+// `minAgeMs` up to this. Merges arrive in bursts; spreading the attempts over
+// a quarter of an hour gives a burst of rollouts time to end instead of
+// spending the budget inside it.
+const MAX_RETRY_DELAY_MS = 5 * 60_000;
 
 async function retryInterrupted(config, pool, {
   limit = 10, minAgeMs = 30_000, maxRetries = MAX_INTERRUPTED_RETRIES,
-  schedule = null, stateService = state,
+  maxUnexplained = MAX_UNEXPLAINED_RETRIES, maxDelayMs = MAX_RETRY_DELAY_MS,
+  schedule = null, stateService = state, isShuttingDown = lifecycle.isShuttingDown,
 } = {}) {
   if (!config.shots?.execute) return { examined: 0, scheduled: 0 };
+  // A process that is draining would start the retry only to interrupt it
+  // again; the next leader picks the run up once it is serving.
+  if (isShuttingDown()) return { examined: 0, scheduled: 0 };
+  // The two counts are the same subqueries shots-state.getForSession and
+  // shots-view.getForSessions select, read through
+  // state.interruptedRetryAllowed; they must agree, or the card would say
+  // "trying again" about a run this sweep will never start.
   const { rows } = await pool.query(
     `SELECT r.id AS run_id, r.head_sha, cs.id, cs.source, cs.imported_pr_head_sha,
             cs.reviewed_head_sha, cs.checks_commit_sha, cs.handoff_head_sha
        FROM chat_sessions cs
        JOIN shot_runs r ON r.id = cs.shots_run_id
+       CROSS JOIN LATERAL (
+         SELECT (SELECT COUNT(*) FROM shot_runs retry
+                  WHERE retry.session_id = r.session_id AND retry.head_sha = r.head_sha
+                    AND retry.trigger = 'interrupted-retry')::int AS interrupted_retries,
+                (SELECT COUNT(*) FROM shot_runs crash
+                  WHERE crash.session_id = r.session_id AND crash.head_sha = r.head_sha
+                    AND crash.failure_code = 'shots_run_interrupted'
+                    AND COALESCE(crash.trace_summary->>'interruptedBy', '') <> 'shutdown')::int AS unexplained_interruptions
+       ) n
       WHERE r.state = 'failed'
         AND r.failure_code = 'shots_run_interrupted'
         AND cs.status NOT IN ('merged', 'archived')
-        AND r.updated_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
-        AND (SELECT COUNT(*) FROM shot_runs prior
-              WHERE prior.session_id = cs.id AND prior.head_sha = r.head_sha
-                AND prior.trigger = $3) < $4
+        AND n.interrupted_retries < $3
+        AND n.unexplained_interruptions <= $4
+        AND r.updated_at < NOW() - (
+          LEAST($5::bigint, $1::bigint * POWER(2, n.interrupted_retries)::bigint)
+          * INTERVAL '1 millisecond')
       ORDER BY r.updated_at ASC LIMIT $2`,
     [Math.max(0, Number(minAgeMs) || 0), Math.max(1, Math.min(50, Number(limit) || 10)),
-      INTERRUPTED_RETRY_TRIGGER, Math.max(0, Number(maxRetries) || 0)]
+      Math.max(0, Number(maxRetries) || 0), Math.max(0, Number(maxUnexplained) || 0),
+      Math.max(0, Number(maxDelayMs) || 0)]
   );
   const dispatch = schedule || require('./shots-orchestrator').scheduleForSession;
   let scheduled = 0;
@@ -359,6 +392,8 @@ module.exports = {
   recoverUnstarted,
   retryInterrupted,
   MAX_INTERRUPTED_RETRIES,
+  MAX_UNEXPLAINED_RETRIES,
+  MAX_RETRY_DELAY_MS,
   INTERRUPTED_RETRY_TRIGGER,
   prune,
   sweepOrphanCheckouts,

@@ -268,7 +268,7 @@ test('an interrupted run with an automatic retry to come says so, and is not off
   const row = {
     id: 'f'.repeat(32), session_id: 42, state: 'failed', base_sha: BASE, head_sha: HEAD,
     failure_code: 'shots_run_interrupted', failure_reason: 'Homeroom restarted.', intent: null,
-    interrupted_retries: 0,
+    interrupted_retries: 0, unexplained_interruptions: 1,
   };
   const open = view.serialize(state.runSummary(row, []), session({ status: 'paused' }), 'demo', HEAD);
   assert.equal(open.automaticRetryPending, true);
@@ -278,6 +278,19 @@ test('an interrupted run with an automatic retry to come says so, and is not off
     session({ status: 'paused' }), 'demo', HEAD);
   assert.equal(spent.automaticRetryPending, false, 'once the retries are used up it is a failure again');
   assert.equal(spent.repairAvailable, true);
+
+  // Rollouts spend only the ceiling: a head interrupted by five deploys in a
+  // row is still retried, where the old single budget of two gave up.
+  const rollouts = state.runSummary({ ...row, interrupted_retries: 5, unexplained_interruptions: 0 }, []);
+  assert.equal(rollouts.automaticRetryPending, true);
+  // An interruption nothing explained keeps the original budget of two
+  // retries, since the run itself may be what takes the process down.
+  const crashes = state.runSummary({
+    ...row, interrupted_retries: 2, unexplained_interruptions: state.MAX_UNEXPLAINED_RETRIES + 1,
+  }, []);
+  assert.equal(crashes.automaticRetryPending, false);
+  assert.equal(state.runSummary({ ...row, interrupted_retries: 1, unexplained_interruptions: 2 }, [])
+    .automaticRetryPending, true, 'a second crash still gets its retry');
 
   const merged = view.serialize(state.runSummary(row, []), session({ status: 'merged' }), 'demo', HEAD);
   assert.equal(merged.automaticRetryPending, false, 'a merged proposal gets no automatic retry');
@@ -290,11 +303,24 @@ test('an interrupted run with an automatic retry to come says so, and is not off
   assert.equal(state.runSummary({ ...row, failure_code: 'evidence_run_interrupted' }, []).automaticRetryPending, false);
   // A loader that did not count the retries cannot promise one.
   assert.equal(state.runSummary({ ...row, interrupted_retries: undefined }, []).automaticRetryPending, false);
-  // Both loaders count them, under the trigger the sweep writes.
+  assert.equal(state.runSummary({ ...row, unexplained_interruptions: undefined }, []).automaticRetryPending, false);
+  // Both loaders and the sweep count them the same way, under the trigger
+  // the sweep writes and the marker the shutdown handler writes: if they
+  // drifted, the card would promise a retry the sweep never starts.
   assert.equal(state.INTERRUPTED_RETRY_TRIGGER, 'interrupted-retry');
-  for (const file of ['../src/services/shots-state.js', '../src/services/shots-view.js']) {
-    assert.match(require('node:fs').readFileSync(require('node:path').join(__dirname, file), 'utf8'),
-      /retry\.trigger = 'interrupted-retry'\)::int AS interrupted_retries/, file);
+  assert.equal(state.SHUTDOWN_INTERRUPTION, 'shutdown');
+  const counts = (file) => {
+    const src = require('node:fs').readFileSync(require('node:path').join(__dirname, file), 'utf8');
+    const start = src.indexOf('(SELECT COUNT(*) FROM shot_runs retry');
+    const end = src.indexOf('AS unexplained_interruptions', start);
+    assert.ok(start >= 0 && end > start, `${file} selects both counts`);
+    return src.slice(start, end).replace(/\s+/g, ' ');
+  };
+  const reference = counts('../src/services/shots-state.js');
+  assert.match(reference, /retry\.trigger = 'interrupted-retry'\)::int AS interrupted_retries/);
+  assert.match(reference, /COALESCE\(crash\.trace_summary->>'interruptedBy', ''\) <> 'shutdown'\)::int/);
+  for (const file of ['../src/services/shots-view.js', '../src/services/shots-gc.js']) {
+    assert.equal(counts(file), reference, `${file} counts exactly as shots-state does`);
   }
   assert.equal(view.fromSnapshot(session(), HEAD).automaticRetryPending, false);
 });

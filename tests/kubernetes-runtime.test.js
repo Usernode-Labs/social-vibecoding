@@ -920,3 +920,48 @@ test('unit suite refuses a mutable worker image before creating any resources', 
   kubernetes._setClientsForTest({});
   await assert.rejects(kubernetes.runUnitSuiteJob(cfg, { sessionId: 1 }), /immutable digest/);
 });
+
+test('a deploy asked to run a root image as a numeric user says so in the pod, and nothing else does', async () => {
+  // The shots copies' fallback for a before-side image that names no USER
+  // (services/shots-environment.js deployShotsRuntime). Every other deploy
+  // keeps runAsNonRoot with no runAsUser, so an image's own USER stands.
+  kubernetes._resetPlatformAssetBackendForTest();
+  const deployments = [];
+  let deployment = null;
+  const missing = async () => { throw notFound(); };
+  kubernetes._setClientsForTest({
+    core: {
+      readNamespacedSecret: missing, createNamespacedSecret: async () => {},
+      readNamespacedService: missing, createNamespacedService: async () => {},
+    },
+    apps: {
+      readNamespacedDeployment: async ({ name }) => {
+        if (!deployment) throw notFound();
+        return { ...deployment, metadata: { ...deployment.metadata, name, generation: 1 },
+          status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+      },
+      createNamespacedDeployment: async ({ body }) => { deployment = body; deployments.push(body); return body; },
+      replaceNamespacedDeployment: async ({ body }) => { deployment = body; deployments.push(body); return body; },
+    },
+    networking: {},
+  });
+  const base = {
+    app: { id: 7, slug: 'demo' }, environment: 'staging', sessionId: 42,
+    imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
+    runtimeName: 'sv-shots-0123456789abcdef-b', internalOnly: true,
+  };
+  await kubernetes.deployApplication(config(), base);
+  assert.deepEqual(deployments[0].spec.template.spec.securityContext,
+    { runAsNonRoot: true, seccompProfile: { type: 'RuntimeDefault' } });
+
+  deployment = null;
+  await kubernetes.deployApplication(config(), { ...base, runAsUser: 1000 });
+  assert.deepEqual(deployments[1].spec.template.spec.securityContext, {
+    runAsNonRoot: true, seccompProfile: { type: 'RuntimeDefault' }, runAsUser: 1000, runAsGroup: 1000,
+  });
+
+  for (const bad of [0, -1, 1.5, '1000']) {
+    await assert.rejects(kubernetes.deployApplication(config(), { ...base, runAsUser: bad }),
+      /runAsUser must be a positive integer/);
+  }
+});

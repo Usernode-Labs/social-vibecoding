@@ -12,6 +12,10 @@ const state = require('../services/shots-state');
 const view = require('../services/shots-view');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+// A rerun while this process drains would write a planned run no sweep
+// resumes (the unstarted sweep only reads claims without a run) and start it
+// only to be interrupted: refuse it up front, as other heavy routes do.
+const { drainGuard } = require('../services/lifecycle');
 
 const ARTIFACT_ID_RE = /^[0-9a-f]{32}$/;
 
@@ -271,7 +275,7 @@ function shotsRoutes(config) {
     }
   });
 
-  router.post('/api/apps/:slug/proposals/:sessionId/shots/rerun', sameOriginBrowserOnly, async (req, res) => {
+  router.post('/api/apps/:slug/proposals/:sessionId/shots/rerun', sameOriginBrowserOnly, drainGuard, async (req, res) => {
     const id = sessionId(req.params.sessionId);
     if (!id) return res.status(404).json({ error: 'Proposal not found' });
     try {
