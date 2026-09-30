@@ -209,6 +209,16 @@ test('the card keeps the vertical pan and moves only where motion is welcome', (
     'a mouse drag across the summary does not select it');
 });
 
+test('the first swipe build\'s styles are gone, so only the live block speaks for the card', () => {
+  // Two builds of #3052 merged; the first one's note and its armed ring
+  // match no markup, and its `[data-ws-swipe] { touch-action }` read that
+  // attribute as "swipeable" where it now means "mid-drag, on this side".
+  assert.ok(!CSS.includes('.dev-ws-swipe-note'), 'no note: the hints replaced it');
+  assert.ok(!CSS.includes('data-ws-swiping="armed"'), 'nothing sets the armed value');
+  assert.ok(!/\.dev-ws-item\[data-ws-swipe\] \{ touch-action/.test(CSS),
+    'touch-action hangs on [data-ws-swipeable] only');
+});
+
 // ── The declared check ─────────────────────────────────────────────────
 
 test('the declared Needs-you anatomy check also pins that a wide window takes no swipe', () => {
