@@ -307,23 +307,30 @@ function CampaignRow({
   const statusCls = c.status === 'running' ? 'text-violet-700 dark:text-violet-400'
     : c.status === 'done' ? 'text-green-800 dark:text-green-400' : 'text-zinc-500 dark:text-zinc-400';
 
+  const detailId = `admin-campaign-${c.id}-detail`;
+
   return (
     <div className="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3" id={`admin-campaign-${c.id}`}>
-      <div className="flex items-center justify-between gap-3 cursor-pointer"
-        data-campaign-toggle={c.id} onClick={() => onToggle(c.id)}>
-        <div className="min-w-0">
-          <div className="font-medium truncate">{c.title}</div>
-          <div className="text-xs text-zinc-500 dark:text-zinc-400">
+      {/* A real button, like the console's other expanders (Merges' run-head,
+          account deletions), so the header opens from the keyboard and says
+          whether it is open. Its children are spans: a button holds phrasing
+          content only. */}
+      <button type="button" className="w-full text-left flex items-center justify-between gap-3 cursor-pointer"
+        data-campaign-toggle={c.id} aria-expanded={open} aria-controls={detailId}
+        onClick={() => onToggle(c.id)}>
+        <span className="block min-w-0">
+          <span className="block font-medium truncate">{c.title}</span>
+          <span className="block text-xs text-zinc-500 dark:text-zinc-400">
             {`#${c.id} · `}<span className={statusCls}>{c.status}</span>
             {` · by ${c.created_by_username || 'platform'} · ${new Date(c.created_at).toLocaleString()}`}
-          </div>
-        </div>
-        <div className="text-xs font-mono shrink-0">
+          </span>
+        </span>
+        <span className="block text-xs font-mono shrink-0">
           {`${c.merged_apps}/${c.total_apps} merged`}
           {c.failed_apps ? <>{' · '}<span className="text-red-700 dark:text-red-400">{`${c.failed_apps} failed`}</span></> : null}
-        </div>
-      </div>
-      <div className={`mt-2${open ? '' : ' hidden'}`} data-campaign-detail={c.id}>
+        </span>
+      </button>
+      <div id={detailId} className={`mt-2${open ? '' : ' hidden'}`} data-campaign-detail={c.id}>
         {failed ? <p className="text-xs text-red-700 dark:text-red-400">Failed to load campaign detail.</p> : null}
         {!failed && detail ? (
           <>
