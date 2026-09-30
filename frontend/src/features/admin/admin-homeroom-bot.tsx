@@ -274,6 +274,38 @@ function ShadowBuild({ run }: { run: Run }) {
   );
 }
 
+/**
+ * What a live build came to (#3509), recorded on the run in the columns a
+ * shadow build fills. A build that became a proposal is said by the
+ * proposal link below; this says what else is worth knowing: what it pushed,
+ * why it did not become a proposal, or why it worked without a spec.
+ */
+function LiveBuild({ run }: { run: Run }) {
+  if (run.build_ok == null) return null;
+  if (!run.build_ok) {
+    const why = run.build_error || 'no reason recorded';
+    return (
+      <p className={`${AdminUI.muted} break-words`} data-live-build={why.startsWith('blocked: ') ? 'blocked' : 'failed'}>
+        {why.startsWith('blocked: ')
+          ? `Building showed it cannot be done as asked: ${why.slice('blocked: '.length)}.`
+          : `Live build did not become a proposal: ${why}.`}
+      </p>
+    );
+  }
+  const parts = [
+    run.build_branch ? `Built on ${run.build_branch}` : 'Built',
+    run.build_commits != null ? `${run.build_commits} commit${run.build_commits === 1 ? '' : 's'}` : null,
+    run.build_sha ? `at ${String(run.build_sha).slice(0, 7)}` : null,
+    run.build_cost_usd != null ? money(run.build_cost_usd) : null,
+  ].filter(Boolean);
+  return (
+    <div className="space-y-0.5" data-live-build="built">
+      <p className={AdminUI.muted}>{`${parts.join(', ')}.`}</p>
+      {run.build_error ? <p className={`${AdminUI.muted} break-words`}>{run.build_error}</p> : null}
+    </div>
+  );
+}
+
 /** A question's "user_facing: why" as words. */
 function blockerLabel(reason: string): string {
   const [kind, ...rest] = reason.split(': ');
@@ -318,7 +350,7 @@ function VerdictBody({ run }: { run: Run }) {
       <div className="space-y-1">
         <p className="text-sm whitespace-pre-line">{run.build_note || '(no build note)'}</p>
         {run.reason ? <p className={AdminUI.muted} data-demoted-question>{run.reason}</p> : null}
-        <ShadowBuild run={run} />
+        {run.mode === 'live' ? <LiveBuild run={run} /> : <ShadowBuild run={run} />}
         <BuildSpec run={run} />
         {run.proposal_session_id ? (
           <p className={AdminUI.muted}>

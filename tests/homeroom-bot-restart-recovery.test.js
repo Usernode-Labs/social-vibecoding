@@ -307,6 +307,7 @@ function stubLive({ promote = { status: 200, body: { ok: true, prNumber: 77 } },
   github.fetchPublicIssue = async (_o, _r, n) => ({ issue: { number: n, title: 'Issue', state: issueState } });
 }
 const requeues = (pool) => pool.calls.filter((c) => /INSERT INTO homeroom_bot_queue/.test(c.sql));
+const liveOutcome = (pool) => pool.calls.filter((c) => /SET build_ok = \$2, build_error = \$3/.test(c.sql)).at(-1)?.params;
 
 test('a live build that committed is proposed once recovery lets go, and the proposal is said on the issue', async () => {
   stubLive();
@@ -324,6 +325,9 @@ test('a live build that committed is proposed once recovery lets go, and the pro
   assert.deepEqual(said[3], { vote: { sessionId: 6001, prNumber: 77 } }, 'with the live vote card');
   assert.deepEqual(liveCalls.find((c) => c[0] === 'specOnProposal'), ['specOnProposal', 6001, 2, '# Spec'], 'and the spec on the proposal');
   assert.ok(pool.calls.some((c) => /SET proposal_session_id = \$2/.test(c.sql) && c.params[0] === 950), 'recorded on the live run');
+  const outcome = liveOutcome(pool);
+  assert.deepEqual([outcome[0], outcome[1], outcome[2], outcome[4], outcome[5], outcome[6], outcome[7]],
+    [950, true, null, 'c'.repeat(40), 1, 0.42, 6001], 'and what it built, as the live path records it (#3509)');
   assert.deepEqual(prCalls, [], 'not the dev-chat PR path');
   assert.deepEqual(requeues(pool), []);
   assert.deepEqual(spends, [{ userId: BOT_ID, cents: 42 }], 'debited as the live path debits a build');
@@ -339,6 +343,7 @@ test('a live build that pushed nothing says so on the issue, instead of going si
   const failed = liveCalls.find((c) => c[0] === 'post' && c[1] === 'build_failed');
   assert.ok(failed, 'the build-failed note is posted');
   assert.match(failed[2], /the build produced no change to propose \(finished after a restart\)/);
+  assert.deepEqual(liveOutcome(pool).slice(0, 3), [950, false, 'the build produced no change to propose (finished after a restart)']);
   assert.ok(sessionUpdates(pool).some((c) => /'archived'/.test(c.sql)));
 });
 
@@ -361,6 +366,8 @@ test('a live spec turn sends the issue back to be triaged, and a BLOCKED one say
   const blocked = liveCalls.find((c) => c[0] === 'post' && c[1] === 'blocked');
   assert.ok(blocked, 'the blocked note is posted');
   assert.match(blocked[2], /the app keeps no scores to rank\./);
+  assert.deepEqual(liveOutcome(pool).slice(0, 2), [950, false]);
+  assert.match(liveOutcome(pool)[2], /^blocked: the app keeps no scores to rank\./);
   assert.deepEqual(requeues(pool), []);
 });
 
@@ -376,5 +383,5 @@ test('a live build whose worker did not survive sends the issue back to be triag
 test('an issue a restart sent back is not told "looking" a second time', () => {
   const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot'), 'utf8');
   assert.equal(bot.RESTART_REASON, 'restart');
-  assert.match(src, /const looked = item\.reason === RESTART_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/);
+  assert.match(src, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(\{\n\s+pool, github, ws: liveD\.ws, app, repo, issueNumber,\n\s+kind: 'looking'/);
 });

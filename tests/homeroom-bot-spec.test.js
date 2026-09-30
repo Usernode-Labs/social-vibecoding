@@ -124,7 +124,10 @@ test('a spec is written first, read-only, stored as the session\'s spec doc, pos
   assert.match(bp, /where they differ,\nthe spec wins/);
   assert.equal(h.calls.loops.build.telemetryComponent, 'homeroom_bot_build');
 
-  assert.deepEqual(out, { ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.060000000000000005, specMd: SPEC, specVersion: 3 });
+  assert.deepEqual(out, {
+    ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'a'.repeat(40), commits: 1,
+    costUsd: 0.060000000000000005, specMd: SPEC, specVersion: 3,
+  });
 });
 
 test('a spec starts at its title: what the model said before it is dropped (#3385)', async () => {
