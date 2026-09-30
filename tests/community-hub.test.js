@@ -298,3 +298,37 @@ test('#3522, #3514: on a phone the band pins where it rests, and a pull stretche
   assert.match(ws, /function usePullGap\(hostRef[\s\S]*?closest<HTMLElement>\('#dev-forum-scroll'\)[\s\S]*?attributeFilter: \['style'\][\s\S]*?root\.style\.removeProperty\('--ptr-gap'\);/, 'the gap is read off the kit\'s transform, and cleared on the way out');
   assert.match(ws, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);\s*usePullGap\(hostRef\);/);
 });
+
+test('#3520: a short growing tab keeps one pixel to scroll, so the installed app bounces it', () => {
+  // "Unable to over scroll down on hub page (but can on workshop)", in the
+  // installed iPhone app, at both ends. Measured at 390x844 in that layout:
+  // one scroller (#dev-forum-scroll) with the same overflow, overscroll and
+  // touch-action on both tabs, no nested scroller on either, and the Hub at
+  // scrollHeight 799 against clientHeight 799. The flex chain fills the
+  // scroller with a short tab to exactly its height, iOS only rubber-bands a
+  // box that can scroll, and the document under it is held still. With the
+  // rule below the same Hub measured 800 against 799: one pixel of range.
+  const CSS = read('public/css/app.css');
+  const at = CSS.indexOf('@media (max-width: 699.98px) and (pointer: coarse) {\n  html:not([data-browser-scroller]) #dev-forum-scroll:has(');
+  assert.ok(at > -1, 'a phone block for the scroller holding a growing tab');
+  const block = CSS.slice(at, CSS.indexOf('\n}\n', at) + 3);
+  const growing = '#dev-forum-scroll:has\\(> #dev-body > #dev-workshop > \\.dev-ws:not\\(\\[data-ws-tab="needs"\\]\\):not\\(\\[data-ws-tab="discussion"\\]\\)\\)';
+  // Only where the scroller is the element, not the document (a phone
+  // browser pages the document, and the pixel would lengthen the page), and
+  // not the two fitted tabs, which scroll inside themselves.
+  assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing} \\{\\s*position: relative;\\s*\\}`),
+    'the scroller is the sentinel\'s containing block');
+  assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing}::after \\{\\s*content: '';\\s*position: absolute; left: 0; bottom: -1px;\\s*width: 1px; height: 1px;\\s*pointer-events: none;\\s*\\}`),
+    'a 1px box hung 1px below the scroller\'s bottom edge');
+  // No percentage: a percentage floor in this chain is what Firefox dropped
+  // (tests/dev-workshop.test.js), and the grow would absorb a spacer in flow.
+  // Nor the scroller's padding, which is the tab-bar clearance (#3053).
+  assert.doesNotMatch(block, /%/);
+  assert.doesNotMatch(block, /padding|z-index/);
+  // The two conditions it answers are still the case: the chain that fills a
+  // short tab, and the installed shell's still document.
+  assert.match(CSS, /#dev-forum-scroll:has\(> #dev-body > #dev-workshop\) \{ display: flex; flex-direction: column; \}/);
+  assert.match(CSS, /html, body \{\s*height: 100dvh;\s*overflow: hidden;[\s\S]*?overscroll-behavior-y: none;\s*\}/);
+  // And the pull at the top binds to that same scroller on every tab.
+  assert.match(read('public/js/app-view.js'), /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\)\);/);
+});

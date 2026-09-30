@@ -15717,6 +15717,64 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 #dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])),
 #dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])) { flex-shrink: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
+/* ── A SHORT TAB STILL HAS SOMETHING TO SCROLL (#3520) ──────────────────
+   "Unable to over scroll down on hub page (but can on workshop)", in the
+   installed iPhone app: on the Hub neither end rubber-banded and a pull from
+   the top did not stretch, while the Workshop tab of the same page did both.
+
+   Nothing on the Hub turns the gesture off. Measured in the installed layout
+   at 390x844 (standalone, an iPhone's agent): both tabs scroll in the one
+   #dev-forum-scroll, with the same overflow (auto), overscroll (contain) and
+   touch-action (auto) on it and on every ancestor; neither holds a nested
+   scroller, a touch-action or an overscroll rule of its own; and the kit's
+   pull binds to the scroller on both. What differs is the RANGE. The chain
+   above fills the scroller whenever a growing tab is shorter than the screen
+   ("the lander still fills a short tab"), to exactly its height and not a
+   pixel more: the Hub measured scrollHeight 799 against clientHeight 799,
+   nothing to scroll, and so did a fresh project's Workshop tab. The Workshop
+   tab the report compares against is the one that runs past the screen once
+   a project has history. iOS only rubber-bands a box that can scroll; one
+   with no range hands the drag to the document, which the installed shell
+   holds still on purpose (`html, body`: `overflow: hidden`,
+   `overscroll-behavior-y: none`), so neither end moved.
+
+   So a growing tab is always ONE PIXEL taller than the scroller: a 1px box
+   hung 1px below the scroller's bottom edge, which puts that pixel into its
+   scrollable overflow whatever the content does. The same range a long tab
+   has, so the same bounce at both ends and the same pull at the top as the
+   Workshop's. Past the fold it is a transparent pixel in the middle of the
+   content and changes nothing.
+
+   ABSOLUTE, AND OFFSET FROM THE SCROLLER'S OWN EDGE, because the two
+   obvious ways cannot work here. A 1px spacer in flow is a flex item of this
+   chain, and the grow above takes it back: the lander fills what is left and
+   the total stays the scroller's height. `min-height: calc(100% + 1px)` is a
+   percentage floor in this chain, which is exactly what Firefox dropped (the
+   note above). An absolute box's offsets are against its containing block's
+   padding box, which is definite in every engine, so the scroller becomes
+   that block (`position: relative`, no z-index: no new stacking context; and,
+   measured on all three growing tabs, nothing inside it was positioned
+   against anything further out). Nor does
+   it touch the scroller's bottom padding, the tab-bar clearance #3053 relies
+   on.
+
+   ONLY WHERE IT BOUNCES AND ONLY WHERE THIS IS THE SCROLLER: a phone
+   (`pointer: coarse` under 700px; a pixel of range would put a scrollbar on
+   a desktop window, and from 700px a scrolled strip draws its pinned band),
+   and not in a phone browser, where the document scrolls
+   (`data-browser-scroller`) and the pixel would lengthen the page. Not Needs
+   you or Discussion either: those are fitted on purpose and scroll inside. */
+@media (max-width: 699.98px) and (pointer: coarse) {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])) {
+    position: relative;
+  }
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]))::after {
+    content: '';
+    position: absolute; left: 0; bottom: -1px;
+    width: 1px; height: 1px;
+    pointer-events: none;
+  }
+}
 /* The tab body takes the space the tabs above it leave. */
 .dev-ws-tabbody {
   flex: 1 1 auto; min-height: 0;
