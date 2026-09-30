@@ -129,11 +129,12 @@ test('the provisional list never guesses a gate only the merge gate can answer',
 
 test('an unmeasured row does not read as finished', () => {
   // "Nothing left to check" on a row nothing has looked at is the exact
-  // misreading the feature exists to stop, in a new place.
+  // misreading the feature exists to stop, in a new place. Nor is it
+  // "Nothing needs you", the headline for the platform actively working.
   const block = requirements.readRequirements({ votes_required: 3, yes_count: 3 });
   const s = requirements.summarize(block.gates, {});
-  assert.notEqual(s.headline, 'Merging now');
-  assert.match(s.detail || '', /working out/);
+  assert.equal(s.headline, 'Checking what this needs');
+  assert.equal(s.detail, null);
 });
 
 test('every knowable requirement met reads as about to merge, not as unresolved', () => {
@@ -142,8 +143,44 @@ test('every knowable requirement met reads as about to merge, not as unresolved'
     integration_behind_by: 0, integration_merges_clean: true,
   });
   const s = requirements.summarize(block.gates, {});
-  assert.equal(s.headline, 'Nothing needs you');
+  assert.equal(s.headline, 'Merging');
   assert.match(s.detail || '', /merging shortly/);
+});
+
+test('the labels are short nouns, the same on the card and the page', () => {
+  assert.deepEqual(requirements.GATES.map((g) => g.label), [
+    'Votes', 'Explicit approval', 'Admin approval', 'No conflicts with main', 'Checks',
+    'Before & after shots', 'Platform variables', 'Main is healthy', 'Merge',
+  ]);
+  const prov = requirements.provisional({ votes_required: 1, yes_count: 1, app_main_check_state: 'passing' });
+  for (const g of prov) {
+    assert.equal(g.label, requirements.GATES.find((x) => x.key === g.key).label, `${g.key} is labelled as the gate is`);
+  }
+});
+
+test('a blocked step never reads as "Nothing needs you"', () => {
+  // GitHub refusing a merge the platform will not resolve names the author;
+  // one the gate cannot attribute keeps the automatic actor and says Blocked.
+  const t = requirements.trace();
+  t.pass('approvals').pass('integration').pass('checks').pass('main_healthy').stop('github', 'active', { note: 'merging now' });
+  t.revise('github', 'blocked', { note: 'GitHub refused the merge', actor: 'author' });
+  const refused = requirements.describe(t.toRecord());
+  assert.equal(refused.find((g) => g.key === 'github').actor, 'author');
+  assert.equal(requirements.summarize(refused, { isAuthor: false }).headline, 'Waiting on the author');
+  const u = requirements.trace();
+  u.pass('approvals').pass('integration').pass('checks').pass('main_healthy').stop('github', 'active', { note: 'merging now' });
+  u.revise('github', 'blocked', { note: 'the merge failed' });
+  const s = requirements.summarize(requirements.describe(u.toRecord()), {});
+  assert.equal(s.headline, 'Blocked');
+  assert.equal(s.detail, 'the merge failed');
+});
+
+test('waiting on the daily budget is automatic, not an admin\'s turn', () => {
+  const step = requirements.integrationStep({
+    integration_merges_clean: false, integration_block_reasons: ['budget'], integration_conflict_paths: ['a.js'],
+  });
+  assert.deepEqual([step.state, step.actor], ['active', 'auto']);
+  assert.match(step.note, /resumes after the daily budget reset/);
 });
 
 test('a recording supersedes the provisional list wholesale', () => {
@@ -281,7 +318,8 @@ test('every step done reads as merging, not as an empty checklist', () => {
   t.pass('approvals').pass('integration').pass('checks').pass('main_healthy').stop('github', 'active');
   t.revise('github', 'done', { note: 'merged' });
   const s = requirements.summarize(requirements.describe(t.toRecord()), {});
-  assert.equal(s.headline, 'Merging now');
+  assert.equal(s.headline, 'Merged');
+  assert.equal(s.detail, null);
   assert.equal(s.done, 5);
   assert.equal(s.total, 5);
 });
@@ -316,8 +354,8 @@ test('a conflict names who resolves it, from what the conflict lane wrote on the
   // The author's, two ways.
   assert.deepEqual([step(['unresolvable']).state, step(['unresolvable']).actor], ['blocked', 'author']);
   assert.deepEqual([step(['fork_head']).state, step(['fork_head']).actor], ['waiting', 'author']);
-  // Out of budget: an admin's.
-  assert.deepEqual([step(['budget']).state, step(['budget']).actor], ['waiting', 'admin']);
+  // Out of budget: a clock's, not an admin's, who has nothing to press.
+  assert.deepEqual([step(['budget']).state, step(['budget']).actor], ['active', 'auto']);
 });
 
 test('the provisional list reads a deferred verdict as waiting on the conflict, not on a runner', () => {
@@ -380,9 +418,16 @@ test('the main-health step names the test, and says when the red is provisional'
   assert.equal(blocked.detail.confirming, false);
   assert.match(blocked.detail.note, /^main's unit suite is failing since fffffff \(shared-sessions returns linked_issues per row\); merges are paused/);
 
+  assert.equal(blocked.detail.sha, 'fffffff', 'the short line reads the red commit off the detail');
+  assert.equal(blocked.detail.test, 'shared-sessions returns linked_issues per row');
+
+  // A first red being re-run is in flight: still a pause, but nobody's turn —
+  // no control is offered until it is confirmed.
   const confirming = requirements.mainStep({ ...PAUSED, app_main_check_state: 'confirming', app_main_check_confirming: true, integration_behind_by: 2 });
-  assert.equal(confirming.state, 'blocked', 'a provisional pause is still a pause');
+  assert.deepEqual([confirming.state, confirming.actor], ['active', 'auto']);
+  assert.equal(confirming.detail.paused, true, 'a provisional pause is still a pause');
   assert.equal(confirming.detail.confirming, true);
+  assert.equal(requirements.summarize([{ key: 'approvals', state: 'done' }, confirming], { isAdmin: true }).headline, 'Nothing needs you');
   assert.match(confirming.detail.note, /failed once since fffffff \(shared-sessions returns linked_issues per row\) and is being re-run to confirm; merges are paused/);
 
   // The flag, not the state, is the pause: a red the admin resumed, or that a
