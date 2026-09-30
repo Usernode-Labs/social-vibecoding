@@ -11,14 +11,19 @@ const log = require('./logger');
 // A database-wide shared lock also protects builds started by HTTP followers.
 // Staging explicitly opts Docker into resource locking too: native publication
 // and historical cleanup must serialize with every builder of the shared name.
-function createGuard({ makeClient = (config) => new Client({
-  connectionString: config.databaseUrl,
-  connectionTimeoutMillis: 5000,
-  application_name: 'social-build-retention-guard',
-}), onLockLost = () => process.exit(1), retryMs = 250 } = {}) {
+function createGuard({
+  makeClient = config => new Client({
+    connectionString: config.databaseUrl,
+    connectionTimeoutMillis: 5000,
+    application_name: 'social-build-retention-guard',
+  }),
+  onLockLost = () => process.exit(1),
+  retryMs = 250,
+} = {}) {
   let current = null;
   let tail = Promise.resolve();
   const resourceTails = new Map();
+
   function serialize(fn) {
     const result = tail.then(fn);
     tail = result.catch(() => {});
@@ -28,7 +33,12 @@ function createGuard({ makeClient = (config) => new Client({
   async function acquire(config) {
     return serialize(async () => {
       if (!current) {
-        const state = { client: makeClient(config), users: 0, closing: false, lost: null };
+        const state = {
+          client: makeClient(config),
+          users: 0,
+          closing: false,
+          lost: null,
+        };
         const lost = (err) => {
           if (state.closing || state.lost) return;
           state.lost = err || new Error('Build retention lock connection ended');
@@ -41,6 +51,7 @@ function createGuard({ makeClient = (config) => new Client({
         };
         state.client.on('error', lost);
         state.client.on('end', () => lost());
+
         try {
           await state.client.connect();
           await state.client.query('SELECT pg_advisory_lock_shared($1, $2)', [BUILD_RETENTION_LOCK, 0]);
@@ -52,9 +63,11 @@ function createGuard({ makeClient = (config) => new Client({
           throw err;
         }
       }
+
       if (current.lost) throw current.lost;
       const state = current;
       state.users++;
+
       return () => serialize(async () => {
         if (--state.users) return;
         current = null;
@@ -68,52 +81,86 @@ function createGuard({ makeClient = (config) => new Client({
     });
   }
 
+  function shouldCoordinate(config, allRuntimes) {
+    if (allRuntimes) return true;
+    const runtimeKind = config?.appRuntime || process.env.APP_RUNTIME || 'docker';
+    return runtimeKind === 'kubernetes';
+  }
+
   async function withBuildUse(config, fn, { allRuntimes = false } = {}) {
-    if (!allRuntimes && (config?.appRuntime || process.env.APP_RUNTIME || 'docker') !== 'kubernetes') return fn();
+    if (!shouldCoordinate(config, allRuntimes)) return fn();
+
     const release = await acquire(config);
     const state = current;
-    const check = () => { if (state.lost) throw state.lost; };
-    try { check(); return await fn(state.client, check); } finally { await release(); }
+    const assertLockHeld = () => {
+      if (state.lost) throw state.lost;
+    };
+
+    try {
+      assertLockHeld();
+      return await fn(state.client, assertLockHeld);
+    } finally {
+      await release();
+    }
   }
 
   // Multiplex nonblocking resource locks on the retention connection. A
   // blocking pg_advisory_lock would prevent that same connection unlocking
   // another resource; a client per build would consume the database budget.
   // Local serialization is still required because session locks are reentrant.
-  function withResourceUse(config, classifier, resource, fn, { allRuntimes = false, tryOnly = false } = {}) {
-    if (!allRuntimes && (config?.appRuntime || process.env.APP_RUNTIME || 'docker') !== 'kubernetes') return fn();
+  function withResourceUse(config, classifier, resource, fn, {
+    allRuntimes = false,
+    tryOnly = false,
+  } = {}) {
+    if (!shouldCoordinate(config, allRuntimes)) return fn();
+
     const key = crypto.createHash('sha256').update(String(resource)).digest().readInt32BE(0);
     const localKey = `${classifier}:${key}`;
     if (tryOnly && resourceTails.has(localKey)) return Promise.resolve({ busy: true });
-    const run = (resourceTails.get(localKey) || Promise.resolve()).then(() => withBuildUse(config, async (client, check) => {
-      for (;;) {
-        check();
-        const result = await client.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [classifier, key]);
-        check();
-        if (result.rows[0]?.acquired) break;
-        if (tryOnly) return { busy: true };
-        await new Promise(resolve => setTimeout(resolve, retryMs));
-      }
-      try { check(); return await fn(); } finally {
-        try {
-          check();
-          const result = await client.query('SELECT pg_advisory_unlock($1, $2) AS released', [classifier, key]);
-          if (!result.rows[0]?.released) throw new Error('Runtime resource lock was not held');
-        } catch (err) {
-          // Do not reuse a connection with uncertain lock ownership.
-          if (!current?.lost) {
-            current.lost = err;
-            onLockLost();
-          }
-          throw err;
+
+    async function runWithResourceLock() {
+      return withBuildUse(config, async (client, assertLockHeld) => {
+        // Check both sides of each asynchronous acquisition. A successful SQL
+        // response cannot authorize work after this connection has been lost.
+        for (;;) {
+          assertLockHeld();
+          const result = await client.query('SELECT pg_try_advisory_lock($1, $2) AS acquired', [classifier, key]);
+          assertLockHeld();
+          if (result.rows[0]?.acquired) break;
+          if (tryOnly) return { busy: true };
+          await new Promise(resolve => setTimeout(resolve, retryMs));
         }
-      }
-    }, { allRuntimes }));
+
+        try {
+          assertLockHeld();
+          return await fn();
+        } finally {
+          try {
+            assertLockHeld();
+            const result = await client.query('SELECT pg_advisory_unlock($1, $2) AS released', [classifier, key]);
+            if (!result.rows[0]?.released) throw new Error('Runtime resource lock was not held');
+          } catch (err) {
+            // Do not reuse a connection with uncertain lock ownership.
+            if (!current?.lost) {
+              current.lost = err;
+              onLockLost();
+            }
+            throw err;
+          }
+        }
+      }, { allRuntimes });
+    }
+
+    const predecessor = resourceTails.get(localKey) || Promise.resolve();
+    const run = predecessor.then(runWithResourceLock);
     const settled = run.then(() => {}, () => {});
     resourceTails.set(localKey, settled);
-    settled.then(() => { if (resourceTails.get(localKey) === settled) resourceTails.delete(localKey); });
+    settled.then(() => {
+      if (resourceTails.get(localKey) === settled) resourceTails.delete(localKey);
+    });
     return run;
   }
+
   return { withBuildUse, withResourceUse };
 }
 

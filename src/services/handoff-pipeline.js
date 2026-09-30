@@ -85,9 +85,15 @@ function startHandoffPipeline(
 // other change (archived, merged, promoted on another commit) still does.
 function publishableStatus(row, expectedStatus, headSha) {
   // Compatibility export; policy itself lives with the enabling conditions.
-  return require('./preview-flow/enabling-conditions').publishableStatus(row && {
-    status: row.status, reviewedHeadSha: row.reviewed_head_sha?.toLowerCase() || null,
-  }, expectedStatus, String(headSha).toLowerCase());
+  const session = row ? {
+    status: row.status,
+    reviewedHeadSha: row.reviewed_head_sha?.toLowerCase() || null,
+  } : null;
+  return require('./preview-flow/enabling-conditions').publishableStatus(
+    session,
+    expectedStatus,
+    String(headSha).toLowerCase(),
+  );
 }
 
 async function runStaging(config, pool, session, app, headSha, trigger = 'commit-push') {
@@ -97,14 +103,21 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
   let result;
   try {
     const prepared = await require('./preview-flow/native').prepareNativePreview({
-      config, pool, session, app, headSha, build: staging.buildAndDeployStaging,
+      config,
+      pool,
+      session,
+      app,
+      headSha,
+      build: staging.buildAndDeployStaging,
     });
     if (!prepared.accepted) {
       // The receipt is historical evidence, not a public preview pointer.
       // The native consumer already cleaned under the build lock, or left its
       // durable resource intent for preview-cleanup to retry.
       log.info('handoff-pipeline', 'Discarded stale staging publication', {
-        sessionId: session.id, headSha, reason: prepared.reason,
+        sessionId: session.id,
+        headSha,
+        reason: prepared.reason,
       });
       return;
     }
@@ -117,8 +130,14 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
       sessionId: session.id, headSha, err: err.message,
     });
     if (!err.previewFlow) return; // Admission failed; no execution identity to settle.
+
     await stagingRecovery.recordStagingBootFailure({
-      config, pool, session, commitHash: headSha, err, previewFlow: err.previewFlow,
+      config,
+      pool,
+      session,
+      commitHash: headSha,
+      err,
+      previewFlow: err.previewFlow,
     }).catch((recordErr) => log.warn('handoff-pipeline', 'Failed to record staging failure', {
       sessionId: session.id, err: recordErr.message,
     }));

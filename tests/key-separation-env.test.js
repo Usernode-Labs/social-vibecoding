@@ -576,12 +576,14 @@ test('the staging container label carries a digest, never a platform value', () 
   }
 });
 
-test('staging.js labels its preview containers with the fingerprint only', () => {
+test('staging.js preview labels use the fingerprint without raw secret values', () => {
   const code = stripComments(read('src/services/staging.js'));
-  // The `labels:` object handed to runContainer must reference the digest
-  // helper, not interpolate env values.
-  const labelBlock = code.match(/labels:\s*\{[^}]*\}/);
-  assert.ok(labelBlock, 'staging.js must pass a labels object to runContainer');
+  // The label map handed to the runtime references the digest helper. The
+  // optional flow-identity label must not interpolate injected secret values.
+  const labelBlock = code.match(/const runtimeLabels = \{[\s\S]*?(?=const deployed = await applicationRuntime\.deploy)/);
+  assert.ok(labelBlock, 'staging.js must construct its preview runtime labels');
+  assert.match(code, /const deployed = await applicationRuntime\.deploy\(config, \{[\s\S]*?labels: runtimeLabels,/,
+    'the runtime receives that label map');
   assert.match(labelBlock[0], /envFingerprint\(/,
     'the label value must be the digest, not a raw value');
   for (const k of FORBIDDEN) {

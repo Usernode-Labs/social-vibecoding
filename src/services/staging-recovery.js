@@ -699,12 +699,21 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 
   // Native handoff failures use the same attempt identity as publication.
   // Checks/backoff and preview retirement commit together, after admission.
-  const stored = previewFlow
-    ? (await require('./preview-flow').createPreviewFlow(pool).apply({
-      type: 'PreparationFailed', actionId: require('node:crypto').randomUUID(),
-      sessionId: session.id, ...previewFlow, detail,
-    })).decision.accepted
-    : await visuals.storeChecks(pool, session.id, commitHash, { state: 'error', results: [] }, detail);
+  let stored;
+  if (previewFlow) {
+    const owner = require('./preview-flow').createPreviewFlow(pool);
+    const outcome = await owner.apply({
+      type: 'PreparationFailed',
+      actionId: require('node:crypto').randomUUID(),
+      sessionId: session.id,
+      ...previewFlow,
+      detail,
+    });
+    stored = outcome.decision.accepted;
+  } else {
+    stored = await visuals.storeChecks(pool, session.id, commitHash, { state: 'error', results: [] }, detail);
+  }
+
   if (stored === false) {
     log.info('staging-recovery', 'Discarded stale staging failure', {
       sessionId: session.id, commitHash: commitHash || null,
@@ -718,17 +727,21 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // the submitted build never started (#2328). storeChecks' compare-and-set
   // above proves this failure still belongs to the current checks commit;
   // only then retire every pointer that could vouch for the stale runtime.
-  if (!previewFlow) await pool.query(
-    `UPDATE chat_sessions
+  // The native reducer already cleared the full tuple atomically. Legacy
+  // callers still need this second head guard at the separate clearing write.
+  if (!previewFlow) {
+    await pool.query(
+      `UPDATE chat_sessions
         SET staging_container_id = NULL, staging_url = NULL,
             staging_image_ref = NULL, staging_build_ref = NULL,
             staging_runtime_kind = NULL, staging_runtime_name = NULL,
             staging_commit_sha = NULL
       WHERE id = $1 AND checks_commit_sha IS NOT DISTINCT FROM $2::text`,
-    [session.id, commitHash || null]
-  ).catch((clearErr) => log.warn('staging-recovery', 'Failed to retire stale preview after boot failure', {
-    sessionId: session.id, err: clearErr.message,
-  }));
+      [session.id, commitHash || null],
+    ).catch((clearErr) => log.warn('staging-recovery', 'Failed to retire stale preview after boot failure', {
+      sessionId: session.id, err: clearErr.message,
+    }));
+  }
 
   // Read back the streak bookkeeping to decide whether this is the first
   // failure of the streak (→ notify + post) or a quiet backoff retry.

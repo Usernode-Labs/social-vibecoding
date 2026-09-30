@@ -71,12 +71,11 @@ class PrivateSecretMissingStagingDefaultError extends Error {
 // take a database advisory lock through preparation/publication/cleanup: old
 // and new platform Pods can serve HTTP during a rollout. Different sessions
 // remain parallel.
-// As a bonus,
-// a caller requesting the SAME commit as the in-flight/queued build joins
-// it and shares the result instead of rebuilding an identical image+clone
+// A caller requesting the SAME commit and execution identity as an in-flight
+// or queued build joins it instead of rebuilding an identical image+clone
 // back-to-back ('latest' never coalesces — it can point at different
 // content at different times).
-const _stagingBuilds = new Map(); // sessionId -> { commitHash, promise, tail }
+const _stagingBuilds = new Map(); // sessionId -> { commitHash, flowId, promise, tail }
 
 // Is a staging build currently in flight (or queued) for this session?
 // Consumed by staging-reap's orphan-DB sweep: a build's clone DB exists
@@ -136,22 +135,34 @@ async function buildAndDeployStaging(config, session, app, commitHash, options =
         await require('./visuals').setChecksPending(operation.pool, session.id, operation.revision, 'building');
       }
       return buildAndDeployStaging(config, fresh, app, operation.revision, options);
-    }, { onError: async (err, pool, operation) => {
-      // The native action adapter settles this identity after the executor
-      // releases its context. Do not record an unguarded second failure here.
-      if (options.previewFlow) return;
-      // Preserve boot-failure backoff/notifications while still owning this
-      // run. Callers must not republish it after a same-SHA retry takes over.
-      try {
-        await require('./staging-recovery').recordStagingBootFailure({
-          config, pool, session, commitHash: operation.revision, err,
-        });
-      } finally { err.previewFailureHandled = true; }
-    }, force: !!options.previewFlow, resolveRevision: async fresh => {
-      const [, owner, repo] = app.repo_url?.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      return owner && repo && fresh?.branch_name ? github.getBranchSha(owner, repo, fresh.branch_name) : null;
-    } });
+    }, {
+      onError: async (err, pool, operation) => {
+        // The native action adapter settles this identity after the executor
+        // releases its context. Do not record an unguarded second failure here.
+        if (options.previewFlow) return;
+
+        // Preserve boot-failure backoff/notifications while still owning this
+        // run. Callers must not republish it after a same-SHA retry takes over.
+        try {
+          await require('./staging-recovery').recordStagingBootFailure({
+            config,
+            pool,
+            session,
+            commitHash: operation.revision,
+            err,
+          });
+        } finally {
+          err.previewFailureHandled = true;
+        }
+      },
+      force: !!options.previewFlow,
+      resolveRevision: async fresh => {
+        const [, owner, repo] = app.repo_url?.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        return owner && repo && fresh?.branch_name ? github.getBranchSha(owner, repo, fresh.branch_name) : null;
+      },
+    });
   }
+
   const key = session.id;
   const current = _stagingBuilds.get(key);
   if (current && commitHash && commitHash !== 'latest' && current.commitHash === commitHash
@@ -161,30 +172,42 @@ async function buildAndDeployStaging(config, session, app, commitHash, options =
     });
     return current.promise;
   }
+
   const prevTail = current ? current.tail : Promise.resolve();
   // Run after the predecessor settles either way — a failed build must
   // not block the next one (it's often exactly the retry that heals it).
   const run = () => withResourceUse(config, STAGING_BUILD_LOCK, key, async () => {
-    if (options.beforeBuild) await options.beforeBuild({
-      runtimeKind: applicationRuntime.mode(config),
-      runtimeName: applicationRuntime.mode(config) === 'docker'
-        ? `usernode-staging-${app.slug}--${session.id}`
-        : require('./kubernetes').appResourceName(app, 'staging', session.id),
-      dbName: dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash),
-      namespace: applicationRuntime.mode(config) === 'kubernetes' ? config.kubernetes.appNamespace : null,
-    });
+    if (options.beforeBuild) {
+      const runtimeKind = applicationRuntime.mode(config);
+      await options.beforeBuild({
+        runtimeKind,
+        runtimeName: runtimeKind === 'docker'
+          ? `usernode-staging-${app.slug}--${session.id}`
+          : require('./kubernetes').appResourceName(app, 'staging', session.id),
+        dbName: dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash),
+        namespace: runtimeKind === 'kubernetes' ? config.kubernetes.appNamespace : null,
+      });
+    }
+
     const result = await buildAndDeployStagingInner(config, session, app, commitHash, options);
+
     // The native publication/cleanup consumer runs before a successor may
     // replace this runtime or its clone, in Docker as well as Kubernetes.
     if (options.consumePrepared) await options.consumePrepared(result);
     return result;
   }, { allRuntimes: true });
+
   const promise = prevTail.then(run, run);
   // The stored tail never rejects, so waiters always run and no unhandled
   // rejection is parked on the chain; callers still get the real result
   // or the real error via `promise`.
   const tail = promise.then(() => {}, () => {});
-  const entry = { commitHash, flowId: options.previewFlow?.flowId, promise, tail };
+  const entry = {
+    commitHash,
+    flowId: options.previewFlow?.flowId,
+    promise,
+    tail,
+  };
   _stagingBuilds.set(key, entry);
   tail.then(() => {
     // Self-clean once we're the last link so idle sessions don't leak
@@ -607,6 +630,13 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
 
     const healthStartedAt = Date.now();
     reportBuildStep(config, session, 'health', timings, healthStartedAt);
+    const runtimeLabels = {
+      [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
+    };
+    if (options.previewFlow) {
+      runtimeLabels[require('./preview-flow/cleanup').FLOW_LABEL] = options.previewFlow.flowId;
+    }
+
     const deployed = await applicationRuntime.deploy(config, {
       app,
       environment: 'staging',
@@ -624,22 +654,28 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
       // why a preview needs more than half a core.
       memory: docker.STAGING_MEMORY,
       cpus: docker.STAGING_CPUS,
-      labels: {
-        [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
-        ...(options.previewFlow ? { [require('./preview-flow/cleanup').FLOW_LABEL]: options.previewFlow.flowId } : {}),
-      },
+      labels: runtimeLabels,
     });
     timings.healthMs = Date.now() - healthStartedAt;
     const { hostname, url: stagingUrl } = deployed;
+
     // Legacy publishers still write URL/container themselves. Migrated
     // adapters publish this entire receipt through preview-flow atomically.
-    if (!options.previewFlow) await getPool(config).query(
-      `UPDATE chat_sessions SET staging_image_ref = $1, staging_build_ref = $2,
+    if (!options.previewFlow) {
+      await getPool(config).query(
+        `UPDATE chat_sessions SET staging_image_ref = $1, staging_build_ref = $2,
          staging_runtime_kind = $3, staging_runtime_name = $4,
          staging_commit_sha = $6 WHERE id = $5`,
-      [build.imageRef, build.buildRef, deployed.runtimeKind, deployed.runtimeName, session.id,
-       resolvedRevision || null]
-    );
+        [
+          build.imageRef,
+          build.buildRef,
+          deployed.runtimeKind,
+          deployed.runtimeName,
+          session.id,
+          resolvedRevision || null,
+        ],
+      );
+    }
 
     // NOTE: the edge verification intentionally does NOT happen here. The
     // caller persists staging_url after this function returns, and that is

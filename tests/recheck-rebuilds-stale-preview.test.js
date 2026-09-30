@@ -154,7 +154,7 @@ for (const status of ['promoted', 'paused']) {
 
 test('the build stamps the clone HEAD on the row and teardown clears it', () => {
   const staging = read('src/services/staging.js');
-  assert.match(staging, /staging_runtime_kind = \$3, staging_runtime_name = \$4,\n\s+staging_commit_sha = \$6 WHERE id = \$5`,\n\s+\[build\.imageRef, build\.buildRef, deployed\.runtimeKind, deployed\.runtimeName, session\.id,\n\s+resolvedRevision \|\| null\]/);
+  assert.match(staging, /staging_runtime_kind = \$3, staging_runtime_name = \$4,\s+staging_commit_sha = \$6 WHERE id = \$5`,\s+\[\s*build\.imageRef,\s*build\.buildRef,\s*deployed\.runtimeKind,\s*deployed\.runtimeName,\s*session\.id,\s*resolvedRevision \|\| null,?\s*\]/);
   assert.match(staging, /commitSha: resolvedRevision \|\| null,/, 'and hands it back to the caller');
   assert.match(staging, /staging_runtime_kind = NULL, staging_runtime_name = NULL,\n\s+staging_commit_sha = NULL WHERE id = \$1`/);
   assert.match(read('src/db/schema.sql'), /ALTER TABLE chat_sessions\s+ADD COLUMN IF NOT EXISTS staging_commit_sha VARCHAR\(64\);/);

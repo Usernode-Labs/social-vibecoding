@@ -99,6 +99,16 @@ function makeHarness() {
     reconcileFailure: null,
     finalizedArchives: [],
   };
+
+  const previewColumns = [
+    'staging_url',
+    'staging_container_id',
+    'staging_runtime_kind',
+    'staging_runtime_name',
+    'staging_image_ref',
+    'staging_build_ref',
+    'staging_commit_sha',
+  ];
   let transactionState = null;
   const pool = {
     async query(sql, params = []) {
@@ -281,41 +291,54 @@ function makeHarness() {
       // Run the real action boundary/reducer against this route fixture. The
       // independent-PG suite pins SQL atomicity; this suite pins HTTP behavior.
       if (/SELECT \* FROM chat_sessions WHERE id = \$1/.test(text)) {
-        const row = state.sessions.find(s => s.id === Number(params[0]));
+        const row = state.sessions.find(session => session.id === Number(params[0]));
         return { rows: row ? [{ ...row }] : [] };
       }
+
       if (/SELECT f\.\* FROM preview_flow_heads/.test(text)) {
-        const row = state.previewFlows.find(f => f.id === state.previewHeads[params[0]]);
+        const row = state.previewFlows.find(flow => flow.id === state.previewHeads[params[0]]);
         return { rows: row ? [{ ...row }] : [] };
       }
+
       if (/SELECT action_hash, decision/.test(text)) {
         const row = state.previewReceipts[`${params[0]}:${params[1]}`];
         return { rows: row ? [row] : [] };
       }
       if (/INSERT INTO preview_flows \(/.test(text)) {
-        state.previewFlows.push({ id: params[0], session_id: params[1], generation: params[2],
-          head_sha: params[3], started_status: params[4], state: params[5] });
+        state.previewFlows.push({
+          id: params[0],
+          session_id: params[1],
+          generation: params[2],
+          head_sha: params[3],
+          started_status: params[4],
+          state: params[5],
+        });
         return { rows: [], rowCount: 1 };
       }
+
       if (/INSERT INTO preview_flow_heads/.test(text)) {
         state.previewHeads[params[0]] = params[1];
         return { rows: [], rowCount: 1 };
       }
       if (/UPDATE preview_flows SET state/.test(text)) {
         const superseded = /state = 'superseded'/.test(text);
-        const row = state.previewFlows.find(f => f.id === params[superseded ? 0 : 1]);
+        const row = state.previewFlows.find(flow => flow.id === params[superseded ? 0 : 1]);
         row.state = superseded ? 'superseded' : params[0];
         return { rows: [], rowCount: 1 };
       }
+
       if (/INSERT INTO preview_flow_resources/.test(text)) {
         const isIntent = /session_id, intent/.test(text);
-        const row = state.previewFlows.find(f => f.id === params[0] && f.session_id === params[1]
-          && (isIntent || f.head_sha === params[3]));
+        const row = state.previewFlows.find(flow => flow.id === params[0] && flow.session_id === params[1]
+          && (isIntent || flow.head_sha === params[3]));
         if (!row) return { rows: [] };
-        state.previewResources[params[0]] = { ...state.previewResources[params[0]],
-          [isIntent ? 'intent' : 'receipt']: JSON.parse(params[2]) };
+        state.previewResources[params[0]] = {
+          ...state.previewResources[params[0]],
+          [isIntent ? 'intent' : 'receipt']: JSON.parse(params[2]),
+        };
         return { rows: [{ flow_id: params[0] }], rowCount: 1 };
       }
+
       if (/UPDATE preview_flow_resources SET published_at/.test(text)) {
         state.previewResources[params[0]].published_at = new Date();
         return { rows: [], rowCount: 1 };
@@ -329,7 +352,10 @@ function makeHarness() {
         return { rows: row ? [row] : [] };
       }
       if (/INSERT INTO preview_action_receipts/.test(text)) {
-        state.previewReceipts[`${params[0]}:${params[1]}`] = { action_hash: params[2], decision: JSON.parse(params[3]) };
+        state.previewReceipts[`${params[0]}:${params[1]}`] = {
+          action_hash: params[2],
+          decision: JSON.parse(params[3]),
+        };
         return { rows: [], rowCount: 1 };
       }
       if (/INSERT INTO preview_flow_decisions/.test(text)) {
@@ -338,17 +364,17 @@ function makeHarness() {
       }
       if (/UPDATE chat_sessions SET staging_url = \$1/.test(text)) {
         if (state.persistStagingError) throw new Error('staging persistence unavailable');
-        const row = state.sessions.find(s => s.id === Number(params[7]));
-        for (const [i, key] of ['staging_url', 'staging_container_id', 'staging_runtime_kind',
-          'staging_runtime_name', 'staging_image_ref', 'staging_build_ref', 'staging_commit_sha'].entries()) {
-          row[key] = params[i];
+        const row = state.sessions.find(session => session.id === Number(params[7]));
+        for (const [index, column] of previewColumns.entries()) {
+          row[column] = params[index];
         }
         return { rows: [], rowCount: 1 };
       }
       if (/UPDATE chat_sessions SET staging_url = NULL/.test(text)) {
-        const row = state.sessions.find(s => s.id === Number(params[0]));
-        for (const key of ['staging_url', 'staging_container_id', 'staging_runtime_kind',
-          'staging_runtime_name', 'staging_image_ref', 'staging_build_ref', 'staging_commit_sha']) row[key] = null;
+        const row = state.sessions.find(session => session.id === Number(params[0]));
+        for (const column of previewColumns) {
+          row[column] = null;
+        }
         return { rows: [], rowCount: 1 };
       }
       if (/UPDATE chat_sessions SET spec_md = \$1/.test(text)) {
@@ -407,29 +433,50 @@ function makeHarness() {
     hasInFlightBuild: () => false,
     buildAndDeployStaging: async (_config, session, _app, sha, options) => {
       state.staging.push([session.id, sha]);
-      await options.beforeBuild({ runtimeKind: 'docker', runtimeName: 'container-1',
-        dbName: 'app_demo_staging_s101_aaaaaa', namespace: null });
+      await options.beforeBuild({
+        runtimeKind: 'docker',
+        runtimeName: 'container-1',
+        dbName: 'app_demo_staging_s101_aaaaaa',
+        namespace: null,
+      });
       if (state.stagingGate) await state.stagingGate;
       if (state.stagingFailure) throw new Error('fixture build failure');
-      const result = { containerId: 'container-1', stagingUrl: 'https://preview.example', hostname: 'preview',
-        runtimeKind: 'docker', runtimeName: 'container-1', imageRef: 'image:exact', buildRef: null, commitSha: sha };
+      const result = {
+        containerId: 'container-1',
+        stagingUrl: 'https://preview.example',
+        hostname: 'preview',
+        runtimeKind: 'docker',
+        runtimeName: 'container-1',
+        imageRef: 'image:exact',
+        buildRef: null,
+        commitSha: sha,
+      };
       await options.consumePrepared(result);
       return result;
     },
     warmStagingCert: async () => {},
   });
-  stubModule(ids.cleanup, { underBuildLock: async ({ flowId, sessionId }) => {
-    state.cleanupCalls.push([sessionId, flowId]);
-    state.previewResources[flowId].cleanup_started_at = new Date();
-    if (state.cleanupFails) throw new Error('fixture runtime removal unavailable');
-    state.previewResources[flowId].cleanup_completed_at = new Date();
-    return { disposition: 'removed' };
-  } });
+  stubModule(ids.cleanup, {
+    underBuildLock: async ({ flowId, sessionId }) => {
+      state.cleanupCalls.push([sessionId, flowId]);
+      state.previewResources[flowId].cleanup_started_at = new Date();
+      if (state.cleanupFails) throw new Error('fixture runtime removal unavailable');
+      state.previewResources[flowId].cleanup_completed_at = new Date();
+      return { disposition: 'removed' };
+    },
+  });
   stubModule(ids.recovery, {
     recordStagingBootFailure: async (args) => {
-      const owner = require('../src/services/preview-flow').createPreviewFlow(pool, { persistFailure: async () => true });
-      const result = await owner.apply({ type: 'PreparationFailed', actionId: require('node:crypto').randomUUID(),
-        sessionId: args.session.id, ...args.previewFlow, detail: args.err.message });
+      const owner = require('../src/services/preview-flow').createPreviewFlow(pool, {
+        persistFailure: async () => true,
+      });
+      const result = await owner.apply({
+        type: 'PreparationFailed',
+        actionId: require('node:crypto').randomUUID(),
+        sessionId: args.session.id,
+        ...args.previewFlow,
+        detail: args.err.message,
+      });
       if (result.decision.accepted) state.failures.push(args);
     },
     checkRunOverdue(session, { now = Date.now(), staleMs = 10 * 60 * 1000 } = {}) {

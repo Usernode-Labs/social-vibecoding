@@ -271,6 +271,9 @@ test('#816 the staging build passes explicit memory + cpus to the runtime dispat
   const call = src.slice(start, src.indexOf('});', start));
   assert.match(call, /memory:\s*docker\.STAGING_MEMORY/, 'memory comes from the named constant');
   assert.match(call, /cpus:\s*docker\.STAGING_CPUS/, 'cpus comes from the named constant');
-  assert.match(call, new RegExp(`${LABEL_ENV_FP.replace(/\./g, '\\.')}|LABEL_ENV_FP`),
-    'and the env fingerprint label is still stamped alongside it');
+  assert.match(call, /labels:\s*runtimeLabels/, 'the same launch receives the preview label map');
+  const labels = src.match(/const runtimeLabels = \{[^}]*\}/);
+  assert.ok(labels, 'preview label map not found');
+  assert.match(labels[0], /\[stagingEnv\.LABEL_ENV_FP\]:\s*stagingEnv\.envFingerprint\(platformEnv\)/,
+    'the preview label map still includes the digest of the injected env');
 });

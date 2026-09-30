@@ -29,7 +29,14 @@ function stub(id, exports) {
 // with a configurable async delay so tests can force overlap windows.
 // Returns an event log of ['start'|'clone'|'end', sessionId, commit] plus
 // a live counter of in-flight inner builds per session.
-function loadStaging({ cloneDelayMs = 20, buildImageImpl = null, cloneImpl = null, existsImpl = async () => false, dropImpl = null, runtimeKind = 'docker' } = {}) {
+function loadStaging({
+  cloneDelayMs = 20,
+  buildImageImpl = null,
+  cloneImpl = null,
+  existsImpl = async () => false,
+  dropImpl = null,
+  runtimeKind = 'docker',
+} = {}) {
   const ids = {
     guard: require.resolve('../src/services/build-retention-guard'),
     logger: require.resolve('../src/services/logger'),
@@ -75,10 +82,14 @@ function loadStaging({ cloneDelayMs = 20, buildImageImpl = null, cloneImpl = nul
     // into previews (URL only, no token), so the staging path calls this.
     platformApiBaseUrl: () => 'http://usernode:3000/api/app-platform',
   });
-  stub(ids.pool, { getPool: () => ({ query: async (sql, params) => {
-    queries.push({ sql: String(sql), params });
-    return { rows: [] };
-  } }) });
+  stub(ids.pool, {
+    getPool: () => ({
+      query: async (sql, params) => {
+        queries.push({ sql: String(sql), params });
+        return { rows: [] };
+      },
+    }),
+  });
   stub(ids.caddy, {
     stagingHostname: (slug, u) => `${slug}--${u}.example.test`,
     warmCert: async () => ({ ok: true, code: 200 }),
@@ -94,21 +105,36 @@ function loadStaging({ cloneDelayMs = 20, buildImageImpl = null, cloneImpl = nul
       return { stdout: '' };
     },
     buildImage: buildImageImpl || (async () => {}),
-    runContainer: async (_name, options) => { deployments.push(options); events.push(['deploy']); return 'cid123'; },
+    runContainer: async (_name, options) => {
+      deployments.push(options);
+      events.push(['deploy']);
+      return 'cid123';
+    },
     waitForHealthy: async () => {},
     stopAndRemove: async () => {},
     getHostPort: async () => null,
   });
 
-  if (runtimeKind === 'kubernetes') stub(ids.applicationRuntime, {
-    mode: () => runtimeKind,
-    build: async () => ({ runtimeKind, imageRef: 'registry/image@sha256:exact', buildRef: 'build-1' }),
-    deploy: async (_config, options) => {
-      deployments.push(options); events.push(['deploy']);
-      return { runtimeKind, runtimeName: `sv-preview-${options.app.id}-s${options.sessionId}`,
-        hostname: 'preview.example.test', url: 'https://preview.example.test' };
-    },
-  });
+  if (runtimeKind === 'kubernetes') {
+    stub(ids.applicationRuntime, {
+      mode: () => runtimeKind,
+      build: async () => ({
+        runtimeKind,
+        imageRef: 'registry/image@sha256:exact',
+        buildRef: 'build-1',
+      }),
+      deploy: async (_config, options) => {
+        deployments.push(options);
+        events.push(['deploy']);
+        return {
+          runtimeKind,
+          runtimeName: `sv-preview-${options.app.id}-s${options.sessionId}`,
+          hostname: 'preview.example.test',
+          url: 'https://preview.example.test',
+        };
+      },
+    });
+  }
 
   stub(ids.dbManager, {
     appDbName: (slug) => `app_${slug}`,
@@ -154,10 +180,17 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
     const flowId = randomUUID();
     let intent;
     try {
-      const result = await subject.buildAndDeployStaging({ jwtSecret: 's', appRuntime: runtimeKind,
-        kubernetes: { appNamespace: 'test-apps' } }, mkSession(7), mkApp, headSha, {
+      const config = {
+        jwtSecret: 's',
+        appRuntime: runtimeKind,
+        kubernetes: { appNamespace: 'test-apps' },
+      };
+      const result = await subject.buildAndDeployStaging(config, mkSession(7), mkApp, headSha, {
         previewFlow: { flowId, generation: 1, headSha },
-        beforeBuild: async value => { intent = value; assert.equal(deployments.length, 0); },
+        beforeBuild: async value => {
+          intent = value;
+          assert.equal(deployments.length, 0);
+        },
         consumePrepared: async value => {
           assert.equal(value.runtimeName, intent.runtimeName);
           assert.equal(deployments[0].labels['social.usernode.io/preview-flow'], flowId);
@@ -166,7 +199,9 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
       assert.equal(result.runtimeKind, runtimeKind);
       assert.equal(intent.dbName, 'app_widget_staging_s7_aaaaaa');
       assert.equal(intent.namespace, runtimeKind === 'kubernetes' ? 'test-apps' : null);
-    } finally { restore(); }
+    } finally {
+      restore();
+    }
   });
 }
 
@@ -212,12 +247,14 @@ test('managed retries of the same SHA stay distinct, serialized, and return with
       subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, headSha, options(1)),
       subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, headSha, options(2)),
     ]);
-    assert.equal(events.filter(e => e[0] === 'clone').length, 2);
+    assert.equal(events.filter(event => event[0] === 'clone').length, 2);
     assert.equal(maxConcurrent(), 1, 'shared clone/runtime preparation remains serialized');
-    assert.ok(results.every(r => r.commitSha === headSha && r.imageRef && r.runtimeName && r.stagingUrl));
-    assert.equal(queries.filter(q => /UPDATE chat_sessions SET staging_image_ref/.test(q.sql)).length, 0,
+    assert.ok(results.every(result => result.commitSha === headSha && result.imageRef && result.runtimeName && result.stagingUrl));
+    assert.equal(queries.filter(query => /UPDATE chat_sessions SET staging_image_ref/.test(query.sql)).length, 0,
       'publication owner receives the complete receipt; no partial tuple written');
-  } finally { restore(); }
+  } finally {
+    restore();
+  }
 });
 
 test('repeated calls for one managed in-flight identity still share its build', async () => {
@@ -229,8 +266,10 @@ test('repeated calls for one managed in-flight identity still share its build', 
       subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, headSha, options),
       subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, headSha, options),
     ]);
-    assert.equal(events.filter(e => e[0] === 'clone').length, 1);
-  } finally { restore(); }
+    assert.equal(events.filter(event => event[0] === 'clone').length, 1);
+  } finally {
+    restore();
+  }
 });
 
 test('native publication and cleanup consumer completes before any legacy successor can start', async () => {
@@ -244,20 +283,27 @@ test('native publication and cleanup consumer completes before any legacy succes
   try {
     const managed = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, head, {
       previewFlow: { flowId: randomUUID(), generation: 1, headSha: head },
-      beforeBuild: async value => { intent = value; assert.equal(events.length, 0, 'intent precedes creation'); },
+      beforeBuild: async value => {
+        intent = value;
+        assert.equal(events.length, 0, 'intent precedes creation');
+      },
       consumePrepared: async result => {
         assert.equal(result.runtimeName, intent.runtimeName);
-        entered(); await finish;
+        entered();
+        await finish;
       },
     });
     await consuming;
     const legacy = subject.buildAndDeployStaging({ jwtSecret: 's' }, mkSession(7), mkApp, 'b'.repeat(40));
     await new Promise(r => setImmediate(r));
-    assert.equal(events.filter(e => e[0] === 'clone').length, 1, 'successor waits through consumption');
+    assert.equal(events.filter(event => event[0] === 'clone').length, 1, 'successor waits through consumption');
     release();
     await Promise.all([managed, legacy]);
-    assert.equal(events.filter(e => e[0] === 'clone').length, 2);
-  } finally { release(); restore(); }
+    assert.equal(events.filter(event => event[0] === 'clone').length, 2);
+  } finally {
+    release();
+    restore();
+  }
 });
 
 test("'latest' never coalesces — it can point at different content over time", async () => {

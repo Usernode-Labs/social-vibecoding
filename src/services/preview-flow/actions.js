@@ -3,13 +3,21 @@
 const { z } = require('zod');
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/i).transform(value => value.toLowerCase());
-const identity = {
+const executionIdentityFields = {
   flowId: z.string().uuid(),
   generation: z.number().int().positive().safe(),
   headSha: sha,
 };
-const envelope = { actionId: z.string().uuid(), sessionId: z.number().int().positive() };
-const request = { headSha: sha, startedStatus: z.enum(['active', 'paused']) };
+const actionEnvelopeFields = {
+  actionId: z.string().uuid(),
+  sessionId: z.number().int().positive(),
+};
+
+const preparationRequestFields = {
+  headSha: sha,
+  startedStatus: z.enum(['active', 'paused']),
+};
+
 const resourceIntent = z.object({
   runtimeKind: z.enum(['docker', 'kubernetes']),
   runtimeName: z.string().min(1).max(255),
@@ -18,9 +26,13 @@ const resourceIntent = z.object({
 }).strict().superRefine((value, ctx) => {
   if ((value.runtimeKind === 'docker' && value.namespace !== null)
       || (value.runtimeKind === 'kubernetes' && value.namespace === null)) {
-    ctx.addIssue({ code: 'custom', message: 'Resource intent namespace must match its runtime kind' });
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Resource intent namespace must match its runtime kind',
+    });
   }
 });
+
 const runtimeReceipt = z.object({
   commitSha: sha,
   stagingUrl: z.string().url().max(512),
@@ -31,27 +43,80 @@ const runtimeReceipt = z.object({
   buildRef: z.string().min(1).max(1024).nullable(),
 }).strict().superRefine((value, ctx) => {
   if (value.runtimeKind === 'docker' && value.containerId !== value.runtimeName) {
-    ctx.addIssue({ code: 'custom', message: 'Docker receipt must identify its container' });
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Docker receipt must identify its container',
+    });
   }
   if (value.runtimeKind === 'kubernetes' && value.containerId !== null) {
-    ctx.addIssue({ code: 'custom', message: 'Kubernetes receipt cannot identify a Docker container' });
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Kubernetes receipt cannot identify a Docker container',
+    });
   }
 });
+
 const actionSchema = z.discriminatedUnion('type', [
-  z.object({ ...envelope, type: z.literal('RequestPreview'), ...request }).strict(),
-  z.object({ ...envelope, type: z.literal('RetryPreview'), ...request }).strict(),
-  z.object({ ...envelope, type: z.literal('PreviewReady'), ...identity, receipt: runtimeReceipt }).strict(),
-  z.object({ ...envelope, type: z.literal('PreparationFailed'), ...identity,
-    detail: z.string().min(1).max(4096) }).strict(),
-  z.object({ ...envelope, type: z.literal('ClearPreview'), ...identity }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('RequestPreview'),
+    ...preparationRequestFields,
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('RetryPreview'),
+    ...preparationRequestFields,
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('PreviewReady'),
+    ...executionIdentityFields,
+    receipt: runtimeReceipt,
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('PreparationFailed'),
+    ...executionIdentityFields,
+    detail: z.string().min(1).max(4096),
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('ClearPreview'),
+    ...executionIdentityFields,
+  }).strict(),
   // Historical resources outlive their session/current flow. The stored
   // obligation supplies locators; callers cannot choose a runtime to delete.
-  z.object({ ...envelope, type: z.literal('RequestPreviewCleanup'), flowId: z.string().uuid() }).strict(),
-  z.object({ ...envelope, type: z.literal('PreviewCleanupCompleted'), flowId: z.string().uuid(),
-    disposition: z.enum(['removed', 'replaced']) }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('RequestPreviewCleanup'),
+    flowId: z.string().uuid(),
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('PreviewCleanupCompleted'),
+    flowId: z.string().uuid(),
+    disposition: z.enum(['removed', 'replaced']),
+  }).strict(),
 ]);
 
 // Internal action boundary. HTTP/MCP authentication remains at the adapters;
 // payloads cannot supply a capability, a SQL patch, or an enabling condition.
-const isResourceAction = action => ['RequestPreviewCleanup', 'PreviewCleanupCompleted'].includes(action.type);
-module.exports = { parseAction: value => actionSchema.parse(value), runtimeReceipt, resourceIntent, isResourceAction };
+function parseAction(value) {
+  return actionSchema.parse(value);
+}
+
+function isPreparationRequest(action) {
+  return action.type === 'RequestPreview' || action.type === 'RetryPreview';
+}
+
+function isResourceAction(action) {
+  return action.type === 'RequestPreviewCleanup' || action.type === 'PreviewCleanupCompleted';
+}
+
+module.exports = {
+  parseAction,
+  runtimeReceipt,
+  resourceIntent,
+  isPreparationRequest,
+  isResourceAction,
+};
