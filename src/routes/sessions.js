@@ -8208,6 +8208,19 @@ function scheduleRetainedHeadlessRecovery({
       );
       return false;
     },
+    // Out of attempts (recovery-retry DEFAULT_MAX_FAILURES): the same terminal
+    // outcome as a failure that cannot be retried.
+    onExhausted: async (err, { failures }) => {
+      log.error('sessions', 'Retained headless recovery gave up; marking run failed', {
+        sessionId, failures, err: err.message,
+      });
+      await failHeadlessRun(
+        pool,
+        latestSession,
+        `Auto session could not be completed after ${failures} recovery attempts: `
+          + `${String(err.message || err).substring(0, 200)}`,
+      );
+    },
     onComplete: () => log.info('sessions', 'Retained headless recovery completed', { sessionId }),
     onHookError: (err) => log.warn('sessions', 'Headless recovery retry hook failed', {
       sessionId, err: err.message,
@@ -12395,6 +12408,12 @@ ${isCodexSession ? `${OPENROUTER_PROPOSAL_DESCRIPTION_GUIDANCE}\n` : ''}${guidan
       let msg;
       if (directReply) {
         msg = null;
+      } else if (result.branchMismatch) {
+        // worker/session-branch.sh: the agent ended on a line that does not
+        // build on this session's branch (another member's, say), so the
+        // runner committed and pushed nothing rather than publish it.
+        msg = `${executionAgentName} ended up working on a different branch that doesn't build on this change, `
+          + 'so nothing from this turn was saved. Send your request again to redo it here.';
       } else if (result.exitCode === 0) {
         msg = `No changes were made by ${executionAgentName}.`;
       } else if (result.exitCode === -1 || result.exitCode == null) {
