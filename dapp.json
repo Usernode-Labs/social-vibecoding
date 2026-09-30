@@ -2407,10 +2407,10 @@
       "expectText": "to vote"
     },
     {
-      "name": "The Dev screen names its section, Communities, once, with no subtitle beside it (#2718 review)",
+      "name": "The Dev screen names its community, Homeroom, once, with no subtitle beside it (#2718 review; #852: the Communities tab is the community)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#header-title:not(:has(#header-subtitle))",
-      "expectText": "Communities"
+      "expectText": "Homeroom"
     },
     {
       "name": "A retired ?view=feed deep link resolves onto the Workshop",
