@@ -42,6 +42,8 @@ export interface ContinueAgentSession {
 
 export interface ContinueRow {
   key: string;
+  /** The session itself, for what a row can do to it: a swipe archives it (#3515). */
+  sessionId: number;
   href: string;
   title: string;
   detail: string;
@@ -101,6 +103,7 @@ export function continueRows(
   const rows = shown
     .map((session): ContinueRow => ({
       key: `agent:${session.id}`,
+      sessionId: session.id,
       href: `#messages/agent/${session.id}`,
       title: session.title || (session.activeChange && session.activeChange.title) || 'Agent session',
       detail: agentDetail(session),
