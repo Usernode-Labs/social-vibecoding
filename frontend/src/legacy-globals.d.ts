@@ -64,6 +64,8 @@ declare global {
       markConversationRead(conversationId: number): void;
       /** The same, for one reply thread's alerts (#2387). */
       markConversationThreadRead(conversationId: number, rootId: number): void;
+      /** One row's descriptor: its kind line and subject segments (#3233). */
+      _rowView?(row: Record<string, unknown>): unknown;
       open: boolean;
       [key: string]: unknown;
     };

@@ -1373,9 +1373,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // pin the band and the hero's actions row; the grouping-ear checks pin the
   // strip in the pane head; the All chip's pins the header's switcher.
   //
+  // 829 → 830: +1 (#3233): the notification sheet's app allowance row reads
+  // in words ("went up from 0 to 2 app slots") instead of "0:2". A kind with
+  // no declared check to fold into; its mock row (990212) is new. 830 sits
+  // exactly on the 20-slot floor against MAX_DECLARED_TESTS (850).
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 829);
+  checkCap.assertPinned(DAPP.tests.length, 830);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

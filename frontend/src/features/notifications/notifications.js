@@ -1834,6 +1834,20 @@ function headline(label, subject) {
   };
 }
 
+// #3233: `detail` is "<old>:<new>" (services/app-allowance.js). Say it in
+// words, and which way it moved; a token this build cannot read still says
+// what happened.
+function appQuotaChangeText(detail) {
+  const m = /^(\d{1,6}):(\d{1,6})$/.exec(String(detail || '').trim());
+  if (!m) return 'Your app allowance changed.';
+  const before = Number(m[1]);
+  const after = Number(m[2]);
+  const slots = (count) => `${count} app ${count === 1 ? 'slot' : 'slots'}`;
+  if (after > before) return `Your app allowance went up from ${before} to ${slots(after)}.`;
+  if (after < before) return `Your app allowance went down from ${before} to ${slots(after)}.`;
+  return `Your app allowance is ${slots(after)}.`;
+}
+
 function rowView(n) {
   // #103: keep the violet left line on every row, read or unread, so a
   // notification never "loses its line" when read. Only the background
@@ -1993,11 +2007,9 @@ function rowView(n) {
   }
 
   if (n.kind === 'app_quota_changed') {
-    const [before, after] = String(n.detail || '').split(':');
-    const detail = /^\d+$/.test(before) && /^\d+$/.test(after)
-      ? `${before} → ${after} app slots` : 'View your current app allowance';
     return { ...base, appLine: 'Account', wrap: true, icon: '＋',
-      label: 'App allowance changed', segments: [{ t: 'text', v: detail }] };
+      label: 'App allowance changed',
+      segments: [{ t: 'text', v: appQuotaChangeText(n.detail) }] };
   }
   if (n.kind === 'app_quota_requested') {
     return { ...base, appLine: 'Admin', wrap: true, icon: '＋',
