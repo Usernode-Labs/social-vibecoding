@@ -4593,6 +4593,10 @@ const DevChat = {
       const s = DevChat.currentSession;
       if (!s || !s.id) return;
       fetch(`/api/sessions/${s.id}/activity`, { method: 'POST' }).catch(() => {});
+      // #3232: the header pill says how long a checks run has been going
+      // ("Checks running · 12 min"). Nothing else repaints it between the
+      // run starting and its verdict, so this minute tick does.
+      if (s.check_state === 'pending') DevChat._renderSessionHeader();
     };
     if (!DevChat._heartbeatVisHandler) {
       // Bump immediately on regaining visibility so a just-refocused
