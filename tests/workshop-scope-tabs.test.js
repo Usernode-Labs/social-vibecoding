@@ -255,13 +255,15 @@ test('#852: a project page leads with its tabs, and All items with its way back 
 });
 
 /** #header-title as rendered on an app route, with the stores it reads fixed. */
-function renderHeader({ viewMode = 'workshop', subTab = 'forum', screen = 'app-view' } = {}) {
+function renderHeader({
+  viewMode = 'workshop', subTab = 'forum', screen = 'app-view', name = 'Recipe Box', selfHosted = false,
+} = {}) {
   const mod = loadTsx('frontend/src/features/header/header-title.tsx', {
     stubs: {
-      './header-title-store.js': { headerTitleStore: fixed({ text: 'Recipe Box', subtitle: '' }) },
+      './header-title-store.js': { headerTitleStore: fixed({ text: name, subtitle: '' }) },
       '../nav/nav-store.js': { navStore: fixed({ screen }) },
       '../improve/improve-store.js': {
-        improveStore: fixed({ tab: 'dev', subTab, name: 'Recipe Box', iconUrl: null, iconEmoji: '🍲' }),
+        improveStore: fixed({ tab: 'dev', subTab, name, iconUrl: null, iconEmoji: '🍲', selfHosted }),
       },
       '../dev-board/view-mode-store': { useDevViewMode: () => viewMode },
       '../workshop/community-scope': {
@@ -300,4 +302,28 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
   // bar's at every width too (#852).
   assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
   assert.doesNotMatch(header, /PHONE_QUERY|usePhone/);
+});
+
+test('#3497: on Homeroom\'s own pages the switcher names it with the logotype, not the word', () => {
+  // The Communities tab with Homeroom selected: the platform's own row, on
+  // its hub. The bar names the platform with the logotype on Home, and the
+  // switcher here used to be the one place it was plain type.
+  const html = renderHeader({ name: 'Homeroom', selfHosted: true });
+  const button = html.match(/<button id="header-app-switch"[\s\S]*?<\/button>/);
+  assert.ok(button, 'the name is still the switcher');
+  assert.match(button[0], /aria-label="Homeroom, switch community"/,
+    'the button says the name in words, which is why the drawing can be decoration');
+  const label = button[0].match(/<span id="header-title-name" class="min-w-0 truncate">([\s\S]*?)<\/span>/);
+  assert.ok(label, 'the named slot and its truncation stay');
+  assert.match(label[1], /^<svg class="h-5 w-\[77\.5px\]" fill="currentColor" viewBox="0 0 1236\.9 319\.2" aria-hidden="true">/,
+    'the logotype, at the size Home draws it, in the bar\'s own ink');
+  assert.doesNotMatch(label[1], /Homeroom/, 'drawn INSTEAD of the word, not beside it');
+  assert.match(button[0], /<span id="header-app-tile"/, 'the community\'s tile still leads');
+  assert.match(button[0], /<\/span><svg class="w-4 h-4 shrink-0"[^>]*aria-hidden="true">/, 'and the ⌄ still follows');
+
+  // The platform is the self-hosted ROW, not a name: a project somebody
+  // called Homeroom keeps its word.
+  const namesake = renderHeader({ name: 'Homeroom', selfHosted: false });
+  assert.match(namesake, /<span id="header-title-name" class="min-w-0 truncate">Homeroom<\/span>/);
+  assert.doesNotMatch(namesake, /viewBox="0 0 1236\.9 319\.2"/);
 });
