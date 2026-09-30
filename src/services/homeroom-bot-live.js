@@ -757,7 +757,13 @@ async function advanceSeen({
   ]);
   const botLogin = String(login || '').toLowerCase();
   const newer = (at) => Number.isFinite(Date.parse(at)) && Date.parse(at) > sinceMs;
-  const someoneElse = comments.some((c) => String(c.author || '').toLowerCase() !== botLogin && newer(c.createdAt))
+  // A comment this run posted is the bot's own whatever the login lookup
+  // said: when it failed, the bot's own note read as a person's reply, and
+  // the issue was triaged again minutes later (todo #78, #3509).
+  const ours = new Set(times);
+  const bots = (c) => ours.has(Date.parse(c.createdAt))
+    || (!!botLogin && String(c.author || '').toLowerCase() === botLogin);
+  const someoneElse = comments.some((c) => !bots(c) && newer(c.createdAt))
     || (thread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt))
     || (proposalThread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt));
   if (someoneElse) {
@@ -1194,15 +1200,20 @@ async function buildAndPropose({
     };
   }
 
+  // What the build pushed, recorded on a live run as a shadow build's is (#3509).
+  const pushed = { branchName: session.branch_name, sha: result.sha || null, commits: Number(result.ahead) || 0 };
   const promoted = await promoteAsBot({ config, bot, sessionId: session.id, router: deps.votesRouter || null });
   if (promoted.status !== 200 || !promoted.body?.ok) {
     const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
     // Built but not proposed: the branch holds the work. Left paused, not
     // archived, so a person can open the session and propose it.
     log.warn('homeroom-bot', 'Built but could not propose', { app: app.slug, issueNumber, sessionId: session.id, why });
-    return { ok: false, sessionId: session.id, costUsd, error: `the change was built but could not be proposed: ${why}`, ...specOut() };
+    return {
+      ok: false, sessionId: session.id, ...pushed, costUsd,
+      error: `the change was built but could not be proposed: ${why}`, ...specOut(),
+    };
   }
-  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, costUsd, ...specOut() };
+  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut() };
 }
 
 module.exports = {
