@@ -40,13 +40,23 @@ const SOURCE_REVISION_LABEL = 'social.usernode.io/source-revision';
 // rollover used to strip it, turning each merged row back to "unknown").
 // Only a label the live runtime itself reports is carried, never
 // apps.main_sha, which can be backfilled from the remote without a deploy.
-// On kubernetes the live image must also be the one being re-run.
+// And only when the live runtime provably runs the image being re-run: on
+// docker that image is the mutable `:latest` tag, which a rebuild can
+// retag and then fail before deploying, so the container's immutable image
+// id must equal what the tag resolves to now. Without that proof nothing
+// is carried and delivery reads `unknown` until the next real rebuild.
 async function carriedSourceRevision(config, app, imageName) {
   try {
-    const live = await applicationRuntime.inspect(config, applicationRuntime.productionRef(config, app));
+    const ref = applicationRuntime.productionRef(config, app);
+    const live = await applicationRuntime.inspect(config, ref);
     const sha = String(live?.labels?.[SOURCE_REVISION_LABEL] || '').toLowerCase();
     if (!/^[a-f0-9]{40}$/.test(sha)) return {};
-    if (live.imageRef && live.imageRef !== imageName) return {};
+    if (ref.runtimeKind === 'docker') {
+      const target = await docker.imageId(imageName);
+      if (!live.imageId || !target || live.imageId !== target) return {};
+    } else if (!live.imageRef || live.imageRef !== imageName) {
+      return {};
+    }
     return { [SOURCE_REVISION_LABEL]: sha };
   } catch (err) {
     log.warn('app-respawn', 'Could not read the running source revision', {

@@ -17,7 +17,9 @@ const SHA = 'abcdef0123456789abcdef0123456789abcdef01';
 let fx;
 
 stub(require.resolve('../src/services/logger'), { info() {}, warn() {}, error() {}, debug() {} });
-stub(require.resolve('../src/services/docker'), {});
+stub(require.resolve('../src/services/docker'), {
+  imageId: async (ref) => (ref === 'usernode-app-demo:latest' ? fx.latestId : null),
+});
 stub(require.resolve('../src/services/db-manager'), {
   appDbName: (slug) => `app_${slug}`, connectionUrl: () => 'postgres://x',
 });
@@ -47,14 +49,30 @@ const { runExistingImage } = require('../src/services/app-respawn');
 const app = { id: 1, slug: 'demo', db_password: 'pw', image_ref: 'registry/demo@sha256:1' };
 
 function reset(over = {}) {
-  fx = { mode: 'docker', deploys: [], inspectError: null,
-    live: { status: 'running', labels: { [LABEL]: SHA } }, ...over };
+  fx = { mode: 'docker', deploys: [], inspectError: null, latestId: 'sha256:aaa',
+    live: { status: 'running', imageId: 'sha256:aaa', labels: { [LABEL]: SHA } }, ...over };
 }
 
 test('a docker respawn keeps the running container’s source revision', async () => {
   reset();
   await runExistingImage({}, app);
+  assert.equal(fx.deploys[0].imageRef, 'usernode-app-demo:latest');
   assert.deepEqual(fx.deploys[0].labels, { [LABEL]: SHA });
+});
+
+test('a docker respawn carries nothing when :latest no longer names the running image', async () => {
+  // A rebuild retagged :latest and failed before deploying: re-running the
+  // tag now ships the NEW image, which the OLD revision cannot vouch for.
+  reset({ latestId: 'sha256:bbb' });
+  await runExistingImage({}, app);
+  assert.deepEqual(fx.deploys[0].labels, {});
+
+  for (const over of [{ latestId: null },
+    { live: { status: 'running', labels: { [LABEL]: SHA } } }]) {
+    reset(over);
+    await runExistingImage({}, app);
+    assert.deepEqual(fx.deploys[0].labels, {}, 'an unproven image identity carries nothing');
+  }
 });
 
 test('a kubernetes respawn keeps it only when re-running the same image', async () => {
@@ -67,6 +85,10 @@ test('a kubernetes respawn keeps it only when re-running the same image', async 
     live: { status: 'running', imageRef: 'registry/demo@sha256:other', labels: { [LABEL]: SHA } } });
   await runExistingImage({}, app);
   assert.deepEqual(fx.deploys[0].labels, {}, 'a different image cannot vouch for this one');
+
+  reset({ mode: 'kubernetes', live: { status: 'running', labels: { [LABEL]: SHA } } });
+  await runExistingImage({}, app);
+  assert.deepEqual(fx.deploys[0].labels, {}, 'an unreported image cannot vouch either');
 });
 
 test('no label, a gone container or a failed inspect claims no revision', async () => {

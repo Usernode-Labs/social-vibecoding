@@ -269,6 +269,7 @@ test('inspectContainer returns status and labels together', async () => {
     assert.ok(state, 'a live container inspects fine');
     assert.equal(typeof state.status, 'string');
     assert.deepEqual(state.labels, {}, 'no labels is an empty object, not null');
+    assert.ok('imageId' in state, 'the immutable image id rides the same call (#3368)');
     assert.equal(calls.filter((c) => c.args[0] === 'inspect').length, 1);
   } finally {
     restore();
