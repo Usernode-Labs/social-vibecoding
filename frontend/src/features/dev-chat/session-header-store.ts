@@ -63,6 +63,8 @@ export interface VenueButton {
 export interface SessionHeaderState {
   /** Identity for dismissing mobile details when the open session changes. */
   sessionId?: number | null;
+  /** Owner-scoped reads must not run for a viewer of somebody else's session. */
+  ownsSession?: boolean;
   /**
    * An AI turn is in flight right now — the strip's "Building" chip
    * (Streamlined Concept). The in-strip ← and its backHref retired when the

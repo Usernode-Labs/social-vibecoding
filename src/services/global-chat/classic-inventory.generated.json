@@ -7311,6 +7311,26 @@
     },
     {
       "source": "src/routes/sessions.js",
+      "method": "GET",
+      "path": "/api/sessions/:id/usage",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.get.sessions.item.usage.86a6d4ec",
+      "domain": "development",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop",
+      "clientReferences": [
+        "frontend/src/features/dev-chat/dev-chat.js",
+        "frontend/src/features/dev-chat/session-usage.tsx",
+        "public/js/app-view.js"
+      ]
+    },
+    {
+      "source": "src/routes/sessions.js",
       "method": "PATCH",
       "path": "/api/sessions/:id/linked-issues",
       "expression": null,

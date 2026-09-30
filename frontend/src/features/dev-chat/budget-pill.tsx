@@ -3,6 +3,8 @@
  * writer below that host. See ./budget-pill-store.ts for the split.
  */
 
+import { sessionHeaderStore } from './session-header-store';
+import { SessionUsage } from './session-usage';
 import { useStoreState } from '../../lib/use-store-state';
 import {
   budgetPillStore,
@@ -39,7 +41,9 @@ export function BudgetPillView({ title, parts }: BudgetPillState) {
 }
 
 export function BudgetPill() {
-  return <BudgetPillView {...useStoreState<BudgetPillState>(budgetPillStore)} />;
+  const header = useStoreState(sessionHeaderStore);
+  const budget = useStoreState<BudgetPillState>(budgetPillStore);
+  return <><BudgetPillView {...budget} />{header.ownsSession && header.sessionId ? <SessionUsage key={header.sessionId} sessionId={header.sessionId} /> : null}</>;
 }
 
 /**
