@@ -2935,6 +2935,9 @@ async function submitUpdate(deps, params, proposalId) {
     // summary did not, so the same call retries it.
     summaryUpdated: result.summaryUpdated === true,
     summaryRejected: result.summaryRejected || null,
+    // Stored, but the pull request body that leads with it was not rewritten
+    // ('github_unreadable' / 'github_write_failed'); resending retries it.
+    summaryBodyRejected: result.summaryBodyRejected || null,
     // Whether the task's request number was newly recorded on the target
     // (#1310) — false when the row already carried it, or the task names no
     // request.

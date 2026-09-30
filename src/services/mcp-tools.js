@@ -4055,7 +4055,9 @@ function registerTools(server, ctx) {
               : '';
       // #3344. And the summary a voter reads first.
       const summaryNote = result.summaryUpdated === true
-        ? ' Its summary now reads as you submitted it.'
+        ? (result.summaryBodyRejected
+          ? ' Its summary now reads as you submitted it in Homeroom, but the pull request body could not be updated on GitHub — send the same commit again with just the summary to retry.'
+          : ' Its summary now reads as you submitted it.')
         : result.summaryRejected === 'imported_pr'
           ? ' Your summary was NOT applied: this proposal tracks a pull request opened by another GitHub account.'
           : result.summaryRejected === 'write_failed'
@@ -4099,6 +4101,7 @@ function registerTools(server, ctx) {
         descriptionRejected: result.descriptionRejected || null,
         summaryUpdated: result.summaryUpdated === true,
         summaryRejected: result.summaryRejected || null,
+        summaryBodyRejected: result.summaryBodyRejected || null,
         captureRerun: result.captureRerun === true,
         shotsState: result.shotsState || null,
         visibleChangesAccepted: acceptedVisibleChanges ? result.visibleChangesAccepted === true : null,
