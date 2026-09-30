@@ -9,6 +9,7 @@
 // notify), and we don't want two copies drifting apart. Resume's LRU
 // logic in routes/sessions.js also leans on pauseSession here.
 
+const { randomUUID } = require('node:crypto');
 const log = require('./logger');
 const notifications = require('./notifications');
 const staging = require('./staging');
@@ -139,128 +140,66 @@ async function notifyPausedMidTurn(pool, session) {
   }
 }
 
-// #3114: take a proposal out of review and back to Underway, for when its
-// author wants to keep working on it before the group can merge it. The
-// opposite of the promote route (routes/votes.js), and deliberately NOT a
-// withdraw: the pull request, branch, staging preview and CC volume all stay
-// exactly as they are, so a later promote reuses them.
-//
-// Everything that decides safety happens in ONE guarded UPDATE:
-//   - `status = 'promoted'` is the same compare-and-set the merge claim in
-//     checkAndMerge uses ('promoted' -> 'merging'). Exactly one of the two can
-//     win, so a proposal that has started merging is never pulled back, and
-//     one that has been pulled back can never be claimed for a merge.
-//   - `approval_epoch + 1` voids every vote cast so far, the way
-//     integration.clearApprovals does (no DELETE: the rows stay as a record
-//     and a re-promote shows voters "Still yes?"). recordVote locks the row
-//     and requires 'promoted'/'merging', so a vote racing this either lands
-//     before it (and is voided) or finds the row Underway and is refused.
-//   - `active_turn IS NULL` plus the in-process busy check keep a running
-//     build from being cut off mid-turn.
-//   - A secret-declaration proposal is refused: its held value is discarded
-//     the moment the session leaves review (services/pending-secrets.js), so
-//     the author must decide to withdraw it rather than lose it silently.
-//
-// Native sessions land in 'paused' (the worker is torn down like /pause, and
-// sending a message resumes it through the usual caps); an imported PR has
-// no worker and no paused state, so it returns to 'active', the state it was
-// promoted from.
-//
-// Returns { ok: true, status, appSlug } on success, { ok: true, already: true,
-// status } when the proposal is already Underway, or { ok: false, code } with
-// code in 'not_found' | 'forbidden' | 'merging' | 'closed' | 'busy' |
-// 'pending_secret'.
-async function unpromoteSession({ pool, sessionId, userId, actorUsername = null }) {
-  // An in-process turn (the chat handler's set, a sync-main run) is not in
-  // the row, so it is checked here; a busy session skips the write and is
-  // reported below, after the ownership answer.
-  const busyNow = require('./active-workers').isSessionBusy(sessionId);
+// #3114: return a proposal to Underway without closing its PR or preview.
+// Review owns status/vote invalidation; preview owns unactivated preparation
+// retirement. Both decisions commit under the same session aggregate lock.
+// The following effects retain the existing best-effort, post-commit behavior.
+async function unpromoteSession({
+  pool,
+  sessionId,
+  userId,
+  actorUsername = null,
+  actionId = randomUUID(),
+}) {
+  const { createProposalReview } = require('./proposal-review/store');
+  const result = await createProposalReview(pool).apply({
+    type: 'RequestReturnToDevelopment',
+    actionId,
+    sessionId,
+    userId,
+    actorUsername,
+  });
+  const { decision } = result;
+  if (!decision.accepted) return { ok: false, code: decision.reason };
+  if (result.replayed || decision.reason === 'already_underway') {
+    return { ok: true, already: true, status: decision.change?.status || result.current.session?.status };
+  }
 
-  const { rows } = busyNow ? { rows: [] } : await pool.query(
-    `UPDATE chat_sessions cs
-        SET status = CASE WHEN cs.source = 'imported' THEN 'active' ELSE 'paused' END,
-            approval_epoch = cs.approval_epoch + 1,
-            stale_notified_at = NULL
-      WHERE cs.id = $1 AND cs.user_id = $2
-        AND cs.status = 'promoted'
-        AND cs.is_headless = FALSE
-        AND cs.active_turn IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM pending_secret_declarations p
-           WHERE p.session_id = cs.id AND p.status = 'pending'
-        )
-      RETURNING cs.id, cs.status, cs.app_id, cs.pr_number, cs.pr_title, cs.source`,
-    [sessionId, userId]
-  );
-
-  if (!rows.length) {
-    const { rows: current } = await pool.query(
-      `SELECT cs.status, cs.user_id, cs.active_turn IS NOT NULL AS turn_running,
-              EXISTS (
-                SELECT 1 FROM pending_secret_declarations p
-                 WHERE p.session_id = cs.id AND p.status = 'pending'
-              ) AS pending_secret
-         FROM chat_sessions cs
-        WHERE cs.id = $1 AND cs.is_headless = FALSE`,
-      [sessionId]
-    );
-    const row = current[0];
-    if (!row) return { ok: false, code: 'not_found' };
-    if (Number(row.user_id) !== Number(userId)) {
-      // A proposal in review is public, so naming it as someone else's leaks
-      // nothing; a private Underway session stays indistinguishable from a
-      // missing one.
-      return ['promoted', 'merging', 'merged'].includes(row.status)
-        ? { ok: false, code: 'forbidden' }
-        : { ok: false, code: 'not_found' };
+  let appSlug = null;
+  for (const effect of decision.effects) {
+    if (effect.type === 'StopDevelopmentWorker') {
+      workerProgress.clear(effect.sessionId);
+      await worker.destroyWorker(worker.workerContainerName(effect.sessionId)).catch(() => {});
+      continue;
     }
-    if (row.status === 'active' || row.status === 'paused') {
-      return { ok: true, already: true, status: row.status };
+
+    if (effect.type === 'AnnounceReturnToDevelopment') {
+      appSlug = effect.appSlug;
+      const label = effect.prNumber
+        ? (effect.prTitle ? `PR #${effect.prNumber}: ${effect.prTitle}` : `PR #${effect.prNumber}`)
+        : `Proposal #${effect.sessionId}`;
+      const content = `${effect.actorUsername || 'The author'} moved ${label} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`;
+      try {
+        const { sendSystemMessage } = require('./ws');
+        await sendSystemMessage(pool, effect.appId, content, 'system', null,
+          { type: 'session', ref: effect.sessionId }).catch(() => {});
+      } catch (error) {
+        log.warn('session-lifecycle', 'Failed to post moved-to-Underway chat message', { sessionId, err: error.message });
+      }
+
+      try {
+        const { pushSessionUpdate, pushVoteUpdate } = require('./ws');
+        pushSessionUpdate({ action: 'unpromoted', sessionId, appSlug });
+        pushVoteUpdate({ sessionId, appSlug, appId: effect.appId, merged: false });
+      } catch (_) { /* ws failures are non-fatal */ }
+      continue;
     }
-    if (row.status === 'merging' || row.status === 'merged') return { ok: false, code: 'merging' };
-    if (row.status !== 'promoted') return { ok: false, code: 'closed' };
-    if (busyNow || row.turn_running) return { ok: false, code: 'busy' };
-    if (row.pending_secret) return { ok: false, code: 'pending_secret' };
-    // Promoted a moment ago and changed again under us: report it as a
-    // conflict rather than guessing which state it is in now.
-    return { ok: false, code: 'merging' };
+    throw new Error(`Unsupported proposal review effect: ${effect.type}`);
   }
 
-  const session = rows[0];
-  const { rows: appRows } = await pool.query('SELECT slug FROM apps WHERE id = $1', [session.app_id]);
-  const appSlug = appRows[0]?.slug || null;
-
-  // The merge gate's "what it still needs" list describes a proposal under
-  // review; an Underway change has nothing blocking it.
-  await require('./integration').setBlockReasons(pool, session.id, []).catch(() => {});
-
-  if (session.source !== 'imported') {
-    workerProgress.clear(sessionId);
-    await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
-  }
-
-  // The lifecycle feed: promote, merge and withdraw all post here, so the
-  // move back is on the record in the app chat and the proposal's own thread.
-  const label = session.pr_number
-    ? (session.pr_title ? `PR #${session.pr_number}: ${session.pr_title}` : `PR #${session.pr_number}`)
-    : `Proposal #${session.id}`;
-  const content = `${actorUsername || 'The author'} moved ${label} back to Underway. Its votes were cleared, and it goes up for a fresh vote when it is proposed again`;
-  try {
-    const { sendSystemMessage } = require('./ws');
-    await sendSystemMessage(pool, session.app_id, content, 'system', null,
-      { type: 'session', ref: session.id }).catch(() => {});
-  } catch (err) {
-    log.warn('session-lifecycle', 'Failed to post moved-to-Underway chat message', { sessionId, err: err.message });
-  }
-
-  try {
-    const { pushSessionUpdate, pushVoteUpdate } = require('./ws');
-    pushSessionUpdate({ action: 'unpromoted', sessionId, appSlug });
-    pushVoteUpdate({ sessionId, appSlug, appId: session.app_id, merged: false });
-  } catch (_) { /* ws failures are non-fatal */ }
-
-  log.info('session-lifecycle', 'Proposal moved back to Underway', { sessionId, status: session.status });
-  return { ok: true, status: session.status, appSlug };
+  const status = decision.change.status;
+  log.info('session-lifecycle', 'Proposal moved back to Underway', { sessionId, status });
+  return { ok: true, status, appSlug };
 }
 
 // Demand-driven global-cap eviction. Called when a new session is needed

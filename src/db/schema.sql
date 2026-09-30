@@ -9662,6 +9662,33 @@ COMMENT ON TABLE preview_flow_resources IS 'staging:private';
 COMMENT ON TABLE preview_action_receipts IS 'staging:private';
 COMMENT ON TABLE preview_flow_decisions IS 'staging:private';
 
+-- A distinct review lifecycle machine shares the session aggregate decision
+-- runtime with preview, while keeping its own state, policy and journal mapping.
+-- Receipts survive aggregate deletion; session IDs must never be recycled.
+CREATE TABLE IF NOT EXISTS proposal_review_receipts (
+  session_id INTEGER NOT NULL CHECK (session_id > 0),
+  action_id UUID NOT NULL,
+  action_hash TEXT NOT NULL,
+  decision JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, action_id)
+);
+CREATE TABLE IF NOT EXISTS proposal_review_decisions (
+  id BIGSERIAL PRIMARY KEY,
+  session_id INTEGER NOT NULL,
+  action_id UUID NOT NULL,
+  reducer_version INTEGER NOT NULL,
+  pre_state JSONB NOT NULL,
+  action JSONB NOT NULL,
+  facts JSONB NOT NULL,
+  decision JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (session_id, action_id),
+  FOREIGN KEY (session_id, action_id) REFERENCES proposal_review_receipts(session_id, action_id) ON DELETE CASCADE
+);
+COMMENT ON TABLE proposal_review_receipts IS 'staging:private';
+COMMENT ON TABLE proposal_review_decisions IS 'staging:private';
+
 
 -- #2716 account deletion: the receipt carries only opaque record ids, never
 -- an erased username, email, IP, password, or credential. It intentionally

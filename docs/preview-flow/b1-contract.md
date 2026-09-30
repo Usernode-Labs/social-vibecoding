@@ -40,8 +40,9 @@ executor. Interrupted preparation is cleaned rather than resumed; uncertain
 activation stays recoverable and protected. Long-lived check/shot consumers,
 legacy route writers, edge reloads and full cancellation remain explicit limits
 until demonstrated. No guarantee of uninterrupted existing connections is made.
-A shared decision foundation, a distinct second workflow and the execution-backend
-comparison remain mandatory subsequent checkpoints.
+A shared decision foundation and distinct second workflow are demonstrated by
+[B2](../decision-runtime/b2-contract.md). The execution-backend comparison remains
+a mandatory subsequent checkpoint.
 
 Caddy's conditional configuration API is documented in the
 [Caddy API reference](https://caddyserver.com/docs/api#concurrent-config-changes).
@@ -126,9 +127,9 @@ and registry/cache retention retain their existing owners/limits. Out-of-protoco
 name reuse or late route writes are not fenced by this change.
 
 The default-off experiment, published-attempt limit and existing locks remain.
-No caller migration or generic executor was added. **B2 remains the next mandatory
-architectural deliverable:** extract the smallest useful reusable decision
-foundation and demonstrate a distinct second workflow without copying transaction,
-deduplication or tracing machinery. C0 must evaluate execution outside the web
+No caller migration or generic executor was added in this correction. The later
+[B2 checkpoint](../decision-runtime/b2-contract.md) extracts the reusable decision
+foundation and demonstrates proposal review cancellation without copying
+transaction, deduplication or tracing machinery. C0 must evaluate execution outside the web
 process, fair recoverable scheduling, external creation settlement and safe
 retention/compaction, with domain permission kept in actions/reducers.

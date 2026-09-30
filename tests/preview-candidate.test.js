@@ -144,6 +144,8 @@ test('completed isolated cleanup authorizes another observation while frozen B1 
     disposition: 'removed',
     effects: [],
   });
+  assert.deepEqual(replayDecision({ reducer_version: 4, pre_state: state, action, facts: {} }), decision,
+    'the frozen delayed-creation policy keeps its original reconciliation decision');
   assert.equal(reduceCandidate(state, { ...action, flowId: randomUUID() }, {}).reason, 'resource_missing');
   assert.equal(reduceCandidate({ ...state, binding: { desired: { attemptId: intent.attemptId } } }, action, {}).reason,
     'resource_bound');

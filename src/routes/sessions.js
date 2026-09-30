@@ -4181,7 +4181,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   without closing its pull request: votes are voided, the merge path can
   //   no longer claim it, and a later promote puts it up for a fresh vote.
   //   Owner-scoped like /archive. All the safety lives in
-  //   sessionLifecycle.unpromoteSession's single guarded UPDATE.
+  //   sessionLifecycle.unpromoteSession's shared decision transaction.
   router.post('/api/sessions/:id/unpromote', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);

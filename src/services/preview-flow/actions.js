@@ -71,6 +71,12 @@ const routeObservation = z.object({
 const actionSchema = z.discriminatedUnion('type', [
   z.object({
     ...actionEnvelopeFields,
+    type: z.literal('RetirePreviewPreparation'),
+    ...executionIdentityFields,
+    reviewActionId: z.string().uuid(),
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
     type: z.literal('RequestCandidatePreview'),
     ...preparationRequestFields,
   }).strict(),

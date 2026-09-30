@@ -1,9 +1,9 @@
 // #3114: "Move back to Underway" — POST /api/sessions/:id/unpromote.
 //
 // A proposal in review can be taken back to Underway by its author without
-// closing its pull request. The whole safety argument is one guarded UPDATE
-// in services/session-lifecycle.js unpromoteSession, so the interesting
-// half of this file runs that statement, the merge claim and recordVote
+// closing its pull request. The shared decision transaction locks the session
+// through services/session-lifecycle.js unpromoteSession, so the interesting
+// half of this file runs those decisions, the merge claim and recordVote
 // against a REAL PostgreSQL: a mock pool cannot show that the merge claim and
 // the move back exclude each other, or that a voided vote stops counting.
 //
@@ -111,6 +111,11 @@ async function connectPool() {
       status TEXT NOT NULL);
     INSERT INTO apps (id, slug, name, repo_url) VALUES (1, 'my-app', 'My App', 'https://github.com/o/r');
   `);
+  const schemaSource = read('src/db/schema.sql');
+  for (const table of ['preview_flows', 'preview_bindings', 'preview_flow_heads', 'preview_flow_resources',
+    'preview_action_receipts', 'preview_flow_decisions', 'proposal_review_receipts', 'proposal_review_decisions']) {
+    await pool.query(schemaSource.match(new RegExp(String.raw`CREATE TABLE IF NOT EXISTS ${table} \([\s\S]*?\n\);`))[0]);
+  }
   return { pool };
 }
 

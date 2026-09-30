@@ -31,6 +31,34 @@ function candidateCondition(state, action) {
 function reduceCandidate(state, action, facts) {
   const { flow, resource, binding } = state;
 
+  if (action.type === 'RetirePreviewPreparation') {
+    const returned = state.reviewReturn;
+    if (!returned?.accepted || returned.reason !== 'returned_to_development'
+        || returned.change.status !== state.session?.status
+        || returned.change.approvalEpoch !== state.session?.approvalEpoch) {
+      return rejection(state, 'review_return_changed');
+    }
+    if (!flow || flow.id !== action.flowId || flow.generation !== action.generation
+        || flow.headSha !== action.headSha) {
+      return rejection(state, 'superseded_flow');
+    }
+    // Authorized activation may still finish externally. Preserve its recovery
+    // owner, and every published consumer, instead of claiming cancellation.
+    const bound = binding?.desired?.flowId === flow.id || binding?.observed?.flowId === flow.id;
+    if (bound || resource?.published || !['preparing', 'candidate'].includes(flow.state)) {
+      return { accepted: true, reason: 'preview_owner_preserved', flow, projection: 'unchanged', effects: [] };
+    }
+    const cleanup = resource?.intent ? requestCleanupDecision(state, action) : null;
+    return {
+      accepted: true,
+      reason: 'preparation_retired',
+      flow: { ...flow, state: 'superseded' },
+      projection: 'unchanged',
+      effects: cleanup?.effects || [],
+      ...(cleanup?.resourceChange ? { resourceChange: cleanup.resourceChange } : {}),
+    };
+  }
+
   if (action.type === 'RequestCandidatePreview') {
     const condition = nativeHeadCondition(state.session, action.startedStatus, action.headSha);
     if (condition) return rejection(state, condition);

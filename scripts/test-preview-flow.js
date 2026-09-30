@@ -16,6 +16,8 @@ if (!databaseUrl) {
     '--test',
     '--test-force-exit',
     '--test-timeout=180000',
+    'tests/decision-runtime.test.js',
+    'tests/unpromote-proposal-postgres.test.js',
     'tests/preview-flow.test.js',
     'tests/preview-candidate.test.js',
     'tests/preview-binding-adapters.test.js',
@@ -32,6 +34,7 @@ if (!databaseUrl) {
       ...process.env,
       PREVIEW_FLOW_TEST_DATABASE_URL: databaseUrl,
       PREVIEW_LIFECYCLE_TEST_DATABASE_URL: databaseUrl,
+      TEST_DATABASE_URL: databaseUrl,
     },
   });
   if (result.error) console.error(result.error.message);
