@@ -469,6 +469,36 @@ test('one Mayor turn at a time, and a dead turn\'s lease is taken over', async (
   }
 });
 
+test('stop intent is durable and idempotent; a recovered coding job blocks a new lease on every connection', async (t) => {
+  const client = await connect(t);
+  if (!client) return;
+  const other = schemaPool();
+  try {
+    const session = await agentSessions.createAgentSession(client, { user: { id: 7 } });
+    const args = { agentSessionId: session.id, userId: 7, turnId: 'old-turn' };
+    assert.equal(await agentSessions.acquireTurnLease(client, args), true);
+    const first = await agentSessions.markTurnStopRequested(client, { ...args, by: 'ada' });
+    const again = await agentSessions.markTurnStopRequested(other, { ...args, by: 'other-device' });
+    assert.equal(again.stopRequestedAt, first.stopRequestedAt);
+    assert.equal(again.stopRequestedBy, 'ada');
+    assert.equal((await agentSessions.readState(other, { userId: 7, id: session.id })).lease.stopping, true);
+    assert.equal(await agentSessions.markTurnStopRequested(client, { ...args, userId: 8 }), null);
+    await agentSessions.releaseTurnLease(client, args);
+    const job = { turnId: 'coding-1', mode: 'build', stopRequestedAt: first.stopRequestedAt };
+    const { rows: [change] } = await client.query(
+      'INSERT INTO chat_sessions (app_id, user_id, agent_session_id, active_turn) VALUES (3, 7, $1, $2::jsonb) RETURNING id',
+      [session.id, JSON.stringify(job)],
+    );
+    await client.query('UPDATE agent_sessions SET active_change_id = $1 WHERE id = $2', [change.id, session.id]);
+    assert.equal(await agentSessions.acquireTurnLease(other, { ...args, turnId: 'new-turn' }), false,
+      'the Mayor lease is gone but its coding job still exists');
+    await client.query('UPDATE chat_sessions SET active_turn = NULL WHERE id = $1', [change.id]);
+    assert.equal(await agentSessions.acquireTurnLease(other, { ...args, turnId: 'new-turn' }), true);
+    assert.equal(await agentSessions.markTurnStopRequested(client, { ...args, by: 'late-device' }), null,
+      'an old stop cannot stamp the replacement turn');
+  } finally { await other.end(); await done(client); }
+});
+
 test('a lease its turn stopped renewing is not busy, and only such a lease is handed back', async (t) => {
   const client = await connect(t);
   if (!client) return;

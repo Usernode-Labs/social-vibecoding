@@ -623,7 +623,7 @@ async function dispatchWith(opts = {}, kind = 'build') {
   const outcome = await dispatch.runDispatch({
     pool, config: CONFIG, user: USER, agentSessionId: 5, kind, prompt: 'Build the toggle', userMessage: 'Add dark mode',
     apiKey: 'sk-byok', sendAgent: (type, data) => agentEvents.push({ type, ...data }),
-    res: { write() {} }, onStopHandle: (h) => handles.push(h), scheduleInteractiveRecovery: 'sched', deps,
+    res: { write() {} }, onStopHandle: (h) => handles.push(h), shouldStop: opts.shouldStop, scheduleInteractiveRecovery: 'sched', deps,
   });
   return { outcome, log, registry, agentEvents, handles, pool };
 }
@@ -718,7 +718,8 @@ test('the conversation\'s model applies from the next build: a Claude pick picks
     choice: { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: null },
     switched: { ok: false, status: 409, error: 'Session is busy' },
   });
-  assert.equal(refused.outcome.toolResultText, 'built', 'a switch that cannot happen does not stop the build');
+  assert.match(refused.outcome.toolResultText, /model_switch_failed/);
+  assert.ok(!refused.log.some((event) => event[0] === 'build'), 'a failed model switch must not run the previous model');
 
   assert.equal(dispatch.needsAgentSwitch(CHANGE_ROW, null), false, 'no choice follows what the change has');
   assert.equal(dispatch.needsAgentSwitch({ ...CHANGE_ROW, agent_backend: null }, { backend: 'claude_code', model: 'x' }), false);
@@ -796,4 +797,16 @@ test('the dispatch tools say they work on the active change', () => {
       'issue links go through update_proposal_issues, which the user confirms');
   }
   assert.equal(tools.SUGGEST_REPLIES_TOOL.name, 'suggest_replies');
+});
+
+
+test('a stop during dispatch preparation never starts a coding tool', async () => {
+  for (const stopAt of [1, 2, 3]) {
+    let reads = 0;
+    const result = await dispatchWith({ shouldStop: async () => ++reads >= stopAt });
+    assert.equal(result.outcome.stopped, true);
+    assert.equal(result.log.some(([kind]) => kind === 'build' || kind === 'scout'), false);
+    if (result.outcome.finish) await result.outcome.finish({});
+    assert.equal(result.registry.size, 0);
+  }
 });

@@ -271,24 +271,26 @@ test('a stop writes the intent durably so a cutover mid-click still honours it',
   assert.ok(stamp.params.includes('turn-xyz'), 'stamped against this turn\'s identity');
 });
 
-test('a stop with nothing to stop reports hasDurableTurn so the client can keep escalating', async () => {
+test('a stop with no local handle durably cancels the recovered job and keeps it busy', async () => {
   // The honest miss: no handle here, but the turn record says a turn is
   // alive somewhere. Answering a bare "no active turn" is what let the
   // client stand down while the agent kept running.
   activeWorkers.add(SESSION_ID);
   routeQueries({ activeTurn: durableTurn() });
 
+  const realStop = workerMod.stopTurn;
+  workerMod.stopTurn = async () => true;
   const server = await startServer(OWNER);
   try {
     const { status, body } = await call(server, `/api/sessions/${SESSION_ID}/stop`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
     });
-    assert.equal(status, 200);
-    assert.equal(body.stopped, false);
-    assert.equal(body.reason, 'no active turn');
-    assert.equal(body.hasDurableTurn, true,
-      'the client needs this to keep the Force stop rung armed');
-  } finally { server.close(); }
+    assert.equal(status, 202);
+    assert.equal(body.stopped, true);
+    assert.equal(body.stopping, true);
+    assert.equal(activeWorkers.has(SESSION_ID), true, 'only cleanup can release the running job');
+    assert.ok(capturedQueries.some((q) => /stopRequestedAt/.test(q.sql)), 'intent is persisted for the owning process');
+  } finally { workerMod.stopTurn = realStop; server.close(); }
 });
 
 test('with no handle and no turn record, hasDurableTurn is false', async () => {
@@ -360,4 +362,29 @@ test('force-stopping a handle-less turn still announces it on both channels', as
   const row = capturedQueries.find((q) => /INSERT INTO chat_session_messages/.test(q.sql));
   assert.ok(row, 'the forced stop is persisted too, for the reloading tab');
   assert.match(row.params[1], /Stopped by @alice \(forced\)\./);
+});
+
+
+test('force stop reports an error and preserves ownership when termination cannot be confirmed', async () => {
+  routeQueries({ activeTurn: durableTurn() });
+  activeWorkers.add(SESSION_ID);
+  const originals = { stop: workerMod.stopTurn, executing: workerMod.isWorkerExecuting, evict: workerMod.evictWorker };
+  workerMod.stopTurn = async () => false;
+  workerMod.isWorkerExecuting = async () => null;
+  workerMod.evictWorker = async () => { throw new Error('Runtime unavailable'); };
+  const server = await startServer(OWNER);
+  try {
+    const { status, body } = await call(server, `/api/sessions/${SESSION_ID}/stop`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }),
+    });
+    assert.equal(status, 503);
+    assert.equal(body.code, 'stop_unconfirmed');
+    assert.equal(activeWorkers.has(SESSION_ID), true);
+    assert.equal(capturedQueries.some((q) => /SET active_turn = NULL/.test(q.sql)), false);
+  } finally {
+    workerMod.stopTurn = originals.stop;
+    workerMod.isWorkerExecuting = originals.executing;
+    workerMod.evictWorker = originals.evict;
+    server.close();
+  }
 });

@@ -447,6 +447,12 @@ async function runAgentTurn({
   // stale window, and only a turn whose process died should lose it.
   const leaseTimer = setInterval(() => {
     d.agentSessions.renewTurnLease(pool, { agentSessionId, turnId }).catch(() => {});
+    if (!stop.stopped && typeof d.agentSessions.readTurnStopRequest === 'function') {
+      d.agentSessions.readTurnStopRequest(pool, { agentSessionId, turnId }).then((request) => {
+        if (!request || stopRegistry.get(agentSessionId) !== stop) return;
+        return require('../agent-session-stop').requestStop({ pool, user, agentSessionId, scheduleInteractiveRecovery });
+      }).catch((err) => log.warn('agent-mayor', 'Could not apply durable stop', { agentSessionId, err: err.message }));
+    }
   }, LEASE_RENEW_MS);
   if (typeof leaseTimer.unref === 'function') leaseTimer.unref();
 
@@ -646,6 +652,8 @@ async function runAgentTurn({
       sendAgent: send,
       res,
       onStopHandle: (handle) => { stop.change = handle; },
+      shouldStop: async () => stop.stopped || !!(typeof d.agentSessions.readTurnStopRequest === 'function'
+        && await d.agentSessions.readTurnStopRequest(pool, { agentSessionId, turnId })),
       scheduleInteractiveRecovery,
       deps: d.dispatchDeps,
     });
@@ -991,11 +999,15 @@ async function compactHistory({ pool, config, user, agentSessionId, mayor, summa
 // change's: its stop goes through POST /api/sessions/:changeId/stop, which
 // confirms the kill and escalates, so this answers with the change to stop.
 // The wrap-up cannot be stopped.
-function stopAgentTurn(agentSessionId, { by = null } = {}) {
+function stopAgentTurn(agentSessionId, { by = null, expectedTurnId = null } = {}) {
   const handle = stopRegistry.get(agentSessionId);
   if (!handle) return { stopped: false, reason: 'no_active_turn' };
+  if (expectedTurnId && handle.turnId !== expectedTurnId) return { stopped: false, reason: 'turn_changed' };
   if (handle.phase === 'mayor2') return { stopped: false, reason: 'wrap_up_not_stoppable' };
   if (handle.phase === 'cc') {
+    handle.stopped = true;
+    handle.stoppedBy = by;
+    if (!handle.stopRequestedAt) handle.stopRequestedAt = Date.now();
     return {
       stopped: false,
       reason: 'dispatch_running',
@@ -1004,6 +1016,7 @@ function stopAgentTurn(agentSessionId, { by = null } = {}) {
   }
   handle.stopped = true;
   handle.stoppedBy = by;
+  if (!handle.stopRequestedAt) handle.stopRequestedAt = Date.now();
   try { handle.send('stopping', { by }); } catch { /* best effort */ }
   try { handle.abort.abort(); } catch { /* already aborted */ }
   return { stopped: true, phase: handle.phase };
@@ -1017,6 +1030,7 @@ function turnState(agentSessionId) {
     id: handle.turnId || null,
     phase: handle.phase,
     stopping: !!handle.stopped,
+    stopRequestedAt: handle.stopRequestedAt || null,
     changeId: handle.change ? handle.change.changeId : null,
     // What the screen's clock counts from: the build once one was
     // dispatched (the wrap-up keeps counting it), else the turn.

@@ -73,6 +73,11 @@ export interface LiveTurn {
   running: boolean;
   phase: 'mayor' | 'cc' | 'mayor2' | null;
   stopping: boolean;
+  stopRequestedAt: number | null;
+  stopToken: string | null;
+  canForceStop: boolean;
+  stopPending: boolean;
+  stopError: string | null;
   streamText: string;
   activity: string;
   progress: string;
@@ -198,6 +203,11 @@ const IDLE_TURN: LiveTurn = {
   running: false,
   phase: null,
   stopping: false,
+  stopRequestedAt: null,
+  stopToken: null,
+  canForceStop: false,
+  stopPending: false,
+  stopError: null,
   streamText: '',
   activity: '',
   progress: '',
@@ -496,6 +506,10 @@ async function syncOnce(id: number, whole: boolean) {
     if (!working && state.turn.running && !sendingIn(id) && !stale) {
       publish({ turn: IDLE_TURN });
       following(id);
+    } else if (working) {
+      // A job's stop stamp and the force-stop deadline can change without
+      // a conversation revision. Reconnects and other devices still need it.
+      publish({ turn: settleTurn(state.turn, { busy: true, turn: answer.turn, messages: state.messages, sending: sendingIn(id) }) });
     }
     return;
   }
@@ -563,7 +577,8 @@ export function settleTurn(turn: LiveTurn, read: {
   if (!read.busy) return read.sending ? { ...turn, running: true } : (turn === IDLE_TURN ? turn : IDLE_TURN);
   const server = read.turn || null;
   let next: LiveTurn = { ...turn, running: true };
-  if (server && server.id && turn.turnId && server.id !== turn.turnId) {
+  if (server && ((server.id && turn.turnId && server.id !== turn.turnId)
+    || (server.stopToken && turn.stopToken && server.stopToken !== turn.stopToken))) {
     // Another turn than the one drawn (started on another device, or the
     // follow-up after a card): start its drawing afresh.
     next = { ...IDLE_TURN, running: true };
@@ -572,7 +587,10 @@ export function settleTurn(turn: LiveTurn, read: {
     if (server.id) next.turnId = server.id;
     if (!next.phase || server.phase !== 'mayor') next.phase = server.phase;
     if (typeof server.startedAt === 'number' && server.startedAt > 0) next.startedAt = server.startedAt;
-    if (server.stopping) next.stopping = true;
+    next.stopping = next.stopPending || !!server.stopping;
+    next.stopRequestedAt = server.stopRequestedAt || null;
+    next.stopToken = server.stopToken || null;
+    next.canForceStop = server.canForceStop === true;
   }
   if (!next.phase) next.phase = 'mayor';
   if (!next.startedAt) next.startedAt = Date.now();
@@ -1457,26 +1475,35 @@ export function stoppedText(current: Pick<AgentSessionState, 'messages'> & { out
   return null;
 }
 
-export async function stopAgentTurn() {
+export async function stopAgentTurn(force = false) {
   const id = state.id;
-  if (!id || !state.turn.running) return;
+  if (!id || !state.turn.running || state.turn.stopPending) return;
+  const token = state.turn.stopToken;
+  const turnId = state.turn.turnId;
+  const sameTurn = () => state.id === id && state.turn.running
+    && state.turn.stopToken === token && state.turn.turnId === turnId;
   // Back in the box to edit and send again, as the dev chat's Stop does. The
   // sent bubble stays: that turn really ran. Stopping first, so the box
   // filling up never turns the button under this click into Save.
   const text = stoppedText(state);
-  patchTurn({ stopping: true });
+  patchTurn({ stopping: true, stopPending: true, stopError: null });
   if (text) publish({ returnedText: text });
   try {
-    const answer = await api.stopTurn(id);
+    const answer = await api.stopTurn(id, { token, force });
+    if (!sameTurn()) { if (state.id === id) await requestSync(id); return; }
+    patchTurn({ stopPending: false });
+    if (answer.stopRequestedAt) patchTurn({ stopRequestedAt: answer.stopRequestedAt });
     if (!answer.stopped && answer.reason === 'wrap_up_not_stoppable') patchTurn({ stopping: false });
     if (!answer.stopped && answer.reason === 'no_active_turn') {
       // Nothing is running here to send a `done`: settle from the server.
       patchTurn({ stopping: false });
       await requestSync(id);
     }
+    if (answer.stopped) await requestSync(id);
   } catch (error) {
-    patchTurn({ stopping: false });
-    publish({ error: errorText(error, 'Could not stop the Mayor.') });
+    if (!sameTurn()) { if (state.id === id) await requestSync(id); return; }
+    patchTurn({ stopPending: false, stopError: errorText(error, 'Could not stop the agent. Try again.') });
+    await requestSync(id);
   }
 }
 
