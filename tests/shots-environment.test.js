@@ -195,3 +195,94 @@ test('paired cleanup removes the hosted app runtime with both exact revisions', 
     dbManager.releasePreparedCloneSource = original.release;
   }
 });
+
+test('a failed checkout clone is retried from a clean directory, a bounded number of times', async (t) => {
+  const docker = require('../src/services/docker');
+  const fsp = require('node:fs/promises');
+  const os = require('node:os');
+  const pathMod = require('node:path');
+  const saved = docker.execFileAsync;
+  t.after(() => { docker.execFileAsync = saved; });
+  const dir = await fsp.mkdtemp(pathMod.join(os.tmpdir(), 'shots-clone-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const target = pathMod.join(dir, 'base');
+
+  // Fails twice, leaving a partial directory each time, then succeeds.
+  let calls = 0;
+  const seen = [];
+  docker.execFileAsync = async (cmd, args) => {
+    calls += 1;
+    seen.push({ cmd, args, existed: await fsp.stat(target).then(() => true, () => false) });
+    if (calls < 3) {
+      await fsp.mkdir(target, { recursive: true });
+      await fsp.writeFile(pathMod.join(target, 'partial'), 'x');
+      throw Object.assign(new Error('Command failed: git clone'), { code: 128 });
+    }
+    return { stdout: '', stderr: '' };
+  };
+  const waits = [];
+  await environment.cloneWithRetry('https://github.com/o/r.git', target, { wait: async (ms) => { waits.push(ms); } });
+  assert.equal(calls, 3);
+  assert.deepEqual(seen.map((s) => s.existed), [false, false, false], 'each attempt starts from no directory');
+  assert.deepEqual(waits, [2000, 6000]);
+  assert.deepEqual(seen[0].args.slice(0, 6),
+    ['clone', '--depth', '1', '--no-tags', '--recurse-submodules', '--shallow-submodules'],
+    'the clone itself is unchanged');
+
+  // Out of attempts: the last error surfaces, so the run still fails loudly.
+  calls = 0;
+  docker.execFileAsync = async () => { calls += 1; throw Object.assign(new Error('still down'), { code: 128 }); };
+  await assert.rejects(environment.cloneWithRetry('https://github.com/o/r.git', target, { wait: async () => {} }),
+    /still down/);
+  assert.equal(calls, environment.CLONE_ATTEMPTS);
+
+  const src = require('node:fs').readFileSync(pathMod.join(__dirname, '../src/services/shots-environment.js'), 'utf8');
+  assert.match(src, /const checkoutDir = path\.join\(parentDir, side\);\n  await cloneWithRetry\(cloneUrl, checkoutDir\);/,
+    'the exact-revision checkout clones through the retry');
+});
+
+test('a before-side image that runs as root is started as the conventional app user, and only then', async () => {
+  const rejection = Object.assign(
+    new Error('Deployment social-apps/sv-shots-635f26f930d88a1f-b cannot start: app: CreateContainerConfigError: container has runAsNonRoot and image will run as root'),
+    { terminalPodFailure: true }
+  );
+  const calls = [];
+  const deploy = async (_config, params) => {
+    calls.push(params);
+    if (params.runAsUser == null) throw rejection;
+    return { runtimeName: params.runtimeName };
+  };
+  const params = { runtimeName: 'sv-shots-635f26f930d88a1f-b', imageRef: 'x@sha256:1' };
+  const deployed = await environment.deployShotsRuntime({}, params, deploy);
+  assert.deepEqual(deployed, { runtimeName: params.runtimeName });
+  assert.deepEqual(calls.map((c) => c.runAsUser), [undefined, environment.SHOTS_FALLBACK_UID]);
+  assert.equal(environment.SHOTS_FALLBACK_UID, 1000, 'the uid app Dockerfiles declare (USER 1000:1000)');
+
+  // Any other failure is the run's real failure: no second attempt.
+  const other = new Error('Deployment social-apps/x cannot start: app: CrashLoopBackOff');
+  let tries = 0;
+  await assert.rejects(environment.deployShotsRuntime({}, params, async () => { tries += 1; throw other; }), other);
+  assert.equal(tries, 1);
+
+  // The fallback is tried once: if uid 1000 is also refused, that error stands.
+  let attempts = 0;
+  const still = new Error('container has runAsNonRoot and image will run as root');
+  await assert.rejects(environment.deployShotsRuntime({}, params, async () => { attempts += 1; throw still; }), still);
+  assert.equal(attempts, 2);
+
+  // The rejection can arrive in the pod details rather than the message.
+  const detailed = Object.assign(new Error('Deployment social-apps/x cannot start'), {
+    terminalPodDetails: 'app: CreateContainerConfigError: container has runAsNonRoot and image will run as root',
+  });
+  const seen = [];
+  await environment.deployShotsRuntime({}, params, async (_c, p) => {
+    seen.push(p.runAsUser);
+    if (p.runAsUser == null) throw detailed;
+    return {};
+  });
+  assert.deepEqual(seen, [undefined, 1000]);
+
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/shots-environment.js'), 'utf8');
+  assert.match(src, /const deployed = await deployShotsRuntime\(config, \{/, 'both shots sides deploy through the fallback');
+  assert.doesNotMatch(src, /await applicationRuntime\.deploy\(config, \{\n\s+app: pair\.app,/);
+});

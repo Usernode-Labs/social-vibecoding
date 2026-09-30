@@ -4363,6 +4363,11 @@ const AppView = {
     platform_env: ['env'],
   },
   _topicStepsView(item, card, body) {
+    // A change in review has merge gates: one short step per gate
+    // (_gateStepsView). A change still under way has none yet, and keeps
+    // drawing its ledger rows below.
+    const gated = (card.extra || []).find((x) => x && x.t === 'requirements' && x.gates && x.gates.length);
+    if (gated) return AppView._gateStepsView(item, body, gated);
     const d = body.details || null;
     const rows = d && Array.isArray(d.ledger) ? d.ledger.slice() : [];
     const take = (keys) => {
@@ -4434,6 +4439,125 @@ const AppView = {
       total: req ? req.total : null,
       rows: out,
     };
+  },
+
+  // ── The steps, one line each ──────────────────────────────────────
+  // One row per merge gate: its mark, its label and one short line
+  // (_stepLine, the same words the card's strip uses), and a button only for
+  // the person who can clear it. Nothing trails after the gates: every fact
+  // belongs to the one step it is about. The long ledger sentences are not
+  // drawn here; the Checks step opens instead to show its run
+  // (_checksRunView). Keys stay the ledger's where a declared check
+  // addresses a step by `data-note`.
+  STEP_KEYS: { approvals: 'votes', integration: 'mergeability', checks: 'checks' },
+  _gateStepsView(item, body, req) {
+    const d = body.details || {};
+    const mine = !!(typeof App !== 'undefined' && App.user && Number(item.user_id) === Number(App.user.id));
+    const open = ['active', 'promoted'].includes(item.status);
+    const busy = AppView._changeActions.get(Number(item.id));
+    const ctx = AppView._proposalsCtx || {};
+    const snap = parseInt(item.votes_required, 10);
+    const majority = (Number.isFinite(snap) && snap > 0) ? snap : (parseInt(ctx.majority, 10) || 1);
+    // "Sync with main" only when the sync is the author's job and the
+    // platform can take the push: a head it holds itself, not a fork.
+    const syncable = mine && !AppView.readOnly && open && item.source !== 'imported'
+      && AppView._headHome(item) === 'app_repo';
+    const syncAction = () => ({
+      key: 'sync-main', cls: 'gc-vote-btn', label: busy === 'sync-main' ? 'Syncing…' : 'Sync with main',
+      disabled: !!busy || !!item.busy, act: { fn: 'runChangeAction', args: [item.id, 'sync-main', item] },
+    });
+    const rows = req.gates.map((g) => {
+      const step = {
+        key: AppView.STEP_KEYS[g.key] || g.key, gate: g.key, state: g.state, label: g.label,
+        line: g.note || null, actions: [],
+      };
+      if (g.action) step.actions.push({ key: `req:${g.key}`, cls: 'gc-vote-btn', label: g.action.label, title: g.action.title, act: g.action.act });
+      const authorsTurn = g.actor === 'author' && (g.state === 'blocked' || g.state === 'waiting');
+      if ((g.key === 'integration' || g.key === 'github') && authorsTurn && syncable) step.actions.push(syncAction());
+      if (g.key === 'approvals') {
+        // The count is the status pill's (the hero's status row); the step
+        // names who voted, and "?" opens How voting works.
+        step.votes = AppView._voteNamesLine(d.roster);
+        step.was = AppView.thresholdWasNote(item, majority);
+        step.help = !!d.helpHint;
+      }
+      if (g.key === 'checks') {
+        step.run = AppView._checksRunView(item, g);
+        if (g.state === 'blocked') {
+          const recheck = AppView._recheckAction(item);
+          if (recheck) step.actions.push(recheck);
+          if (!AppView.readOnly && !item.staging_url && item.staging_error && item.status !== 'merged') {
+            step.actions.push({ key: 'retry-preview', cls: 'gc-vote-btn', label: 'Retry preview',
+              act: { fn: 'swapToStagingForSession', args: [item.id, ''] } });
+          }
+        }
+        if (g.state === 'done' && AppView._freshnessOf(item).baseVerdict === 'superseded') {
+          step.attrs = { 'data-checks-base': 'superseded' };
+        }
+      }
+      return step;
+    });
+    return { headline: req.headline, detail: null, done: req.done, total: req.total, rows, simple: true };
+  },
+
+  // Who voted, for the Votes step: the names, not the count (the status pill
+  // carries that). Null while there is nothing to say.
+  _voteNamesLine(roster) {
+    if (!roster || roster.phase === 'hidden') return null;
+    if (roster.phase === 'loading') return 'Loading votes…';
+    const names = (side) => (side && side.names && side.names !== '—' ? side.names : '');
+    const yes = names(roster.yes);
+    const no = names(roster.no);
+    if (!yes && !no) return 'No votes yet';
+    return [yes, no ? `No: ${no}` : ''].filter(Boolean).join(' · ');
+  },
+
+  // What the Checks step shows when it opens: the build as its steps, then
+  // the app's declared checks and the unit suite as bars, the failures by
+  // name, and one line of context. Null when there is nothing to open —
+  // including a run behind an unfinished sync, which is going to be redone.
+  _checksRunView(item, g) {
+    if (!g || g.state === 'pending') return null;
+    const prog = AppView._checksProgressView(item);
+    const v = AppView._checksVerdictView(item);
+    const live = g.state === 'active' && item.check_state === 'pending' && item.check_phase !== 'deferred';
+    let checks = null;
+    if (prog && (prog.bar.ran || prog.bar.expected)) {
+      checks = { ran: prog.bar.ran, passed: prog.bar.passed, failed: prog.bar.failed, expected: prog.bar.expected, done: !live };
+    } else if (v) {
+      const total = v.passCount + v.failures.length;
+      checks = { ran: total, passed: v.passCount, failed: v.failures.length, expected: total, done: true };
+    }
+    // The build's steps and what to say at the bar's end: the step it is on,
+    // or what the whole build cost once it finished.
+    const b = prog && prog.build ? prog.build : null;
+    const now = b ? (b.steps || []).find((st) => st.state === 'now') : null;
+    const build = b ? {
+      steps: b.steps || [],
+      value: b.done ? (b.sub ? b.sub.charAt(0).toUpperCase() + b.sub.slice(1) : 'Built') : (now ? now.label : 'Building'),
+    } : null;
+    const unit = prog && prog.bar.unit ? prog.bar.unit : null;
+    const fails = v && v.failures.length ? v.failures : [];
+    let note = null;
+    if (live) {
+      const why = AppView._checksTriggerCopy(item.check_trigger);
+      const title = AppView._checksPhaseCopy(item.check_phase).title;
+      note = why ? `${title} ${why}` : title;
+    } else if (item.check_state === 'error' && item.check_error_detail) {
+      // The run's own reason first: it is the one that can say "not this
+      // change" (#1771).
+      note = String(item.check_error_detail).slice(0, 280);
+    } else if (!item.staging_url && item.staging_error) {
+      note = `The preview did not start: ${String(item.staging_error).slice(0, 280)}`;
+    } else if (item.check_state === 'error') {
+      note = "The staging build or the test run itself broke, so the platform can't confirm the app works.";
+    } else if (v && v.baseNote) {
+      note = v.baseNote;
+    }
+    if (!checks && !build && !unit && !fails.length && !note) return null;
+    // Open by itself while a run is going, and when it failed: that is when
+    // the bars and the names are what a reader came for.
+    return { live, phase: item.check_phase || null, open: live || g.state === 'blocked', build, checks, unit, fails, note };
   },
 
   // One detail model for a change before and after it enters review.
@@ -12039,24 +12163,179 @@ const AppView = {
         || !!AppView._proposalsCtx?.isAppAdmin,
       hasVoted: !!p.my_vote,
     };
-    const s = AppView._summarizeRequirements(gates, viewer);
+    const live = AppView._withLiveState(gates, p);
+    const s = AppView._summarizeRequirements(live, viewer);
+    // One short line per step, the same words on the card and on the page;
+    // the collapsed line's detail IS the current step's line, so the two can
+    // never describe one fact differently.
+    const lines = live.map((g) => AppView._stepLine(g, p, { viewer, gates: live }));
+    const at = live.findIndex((g) => g.key === s.current);
     return {
       t: 'requirements',
       key: `req:${p.id}`,
       headline: s.headline,
-      detail: s.detail,
+      detail: at >= 0 ? lines[at] : null,
       done: s.done,
       total: s.total,
       // Shut unless the step it is stuck on is one THIS viewer can clear.
       // Not remembered per viewer: a remembered "closed" would hide the one
       // case the rule exists for.
       open: s.needsViewer,
-      gates: gates.map((g) => ({
+      gates: live.map((g, i) => ({
         key: g.key, label: g.label, actor: g.actor, state: g.state,
-        note: (g.detail && g.detail.note) || null,
+        note: lines[i],
         action: AppView._requirementAction(g, viewer),
       })),
     };
+  },
+
+  // The merge and checks steps as the columns read them NOW. A recording
+  // stops at the first gate that refused, so every later gate reads "not
+  // reached" — and a Checks step marked not reached beside a build that
+  // started a minute ago said two things at once. A step the recording did
+  // not reach takes what the columns already know: a head measured clean is
+  // clean, and once it is, the checks step takes the live verdict. Behind an
+  // unfinished sync the run is moot, so the checks step keeps waiting.
+  _withLiveState(gates, p) {
+    const fresh = AppView._freshnessOf(p);
+    let clean = false;
+    const out = gates.map((g) => {
+      if (!g || g.key !== 'integration') return g;
+      clean = g.state === 'done' || (g.state === 'pending' && fresh.mergeability === 'clean');
+      return g.state === 'pending' && clean ? { ...g, state: 'done' } : g;
+    });
+    if (!clean && out.some((g) => g && g.key === 'integration')) return out;
+    const cs = p.check_state;
+    const now = (cs === 'passing' || cs === 'skipped') ? 'done'
+      : (cs === 'failing' || cs === 'error') ? 'blocked'
+        : (cs === 'pending' && p.check_phase !== 'deferred') ? 'active' : null;
+    if (!now) return out;
+    return out.map((g) => (g && g.key === 'checks' && g.state === 'pending' ? { ...g, state: now } : g));
+  },
+
+  // ── One short line per step ────────────────────────────────────────
+  // State first, a few words. A step with no button needs nobody, so no line
+  // says "nobody needs to do anything"; a finished step usually says
+  // nothing at all. Detail (failing names, the reason a run broke) is the
+  // Checks step's to show when it opens, not a sentence under every row.
+  _stepLine(g, p, opts) {
+    const o = opts || {};
+    const detail = (g && g.detail) || {};
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    const gates = o.gates || [];
+    // A step not reached yet says nothing, except where the columns already
+    // know something true about it (the merge and the checks, below).
+    const reached = !!g && g.state !== 'pending';
+    switch (g && g.key) {
+      // The status pill carries the count; the change page's step names the
+      // voters (_voteNamesLine).
+      case 'approvals': return null;
+      case 'explicit': {
+        if (g.state === 'done' || !reached) return null;
+        const need = parseInt(p.votes_required, 10);
+        return Number.isFinite(need) && need > 0
+          ? `Admin change · needs ${plural(need, 'yes vote', 'yes votes')}` : 'Admin change · needs yes votes';
+      }
+      case 'admin_yes': return g.state === 'done' || !reached ? null : 'Needs one admin to vote yes';
+      case 'integration': return AppView._integrationLine(g, p, o.viewer);
+      case 'checks': {
+        const integration = gates.find((x) => x && x.key === 'integration');
+        const moot = !!integration && integration.state !== 'done';
+        return AppView._checksLine(g, p, moot);
+      }
+      case 'shots':
+        if (g.state === 'done' || g.state === 'pending') return null;
+        return g.state === 'blocked' ? 'Couldn’t take shots' : 'Taking shots';
+      case 'platform_env': {
+        if (g.state === 'done' || !reached) return null;
+        const keys = Array.isArray(detail.missing) ? detail.missing.filter(Boolean) : [];
+        if (!keys.length) return 'Needs values set';
+        return `Set ${keys.length === 1 ? keys[0] : `${keys.slice(0, -1).join(', ')} and ${keys[keys.length - 1]}`}`;
+      }
+      case 'main_healthy': {
+        if (detail.passThrough) return 'Red, but this change can merge';
+        if (detail.paused && detail.confirming) return 'Re-checking a failure';
+        if (detail.paused) return `Red${detail.sha ? ` since ${detail.sha}` : ''}${detail.test ? ` · ${detail.test}` : ''}`;
+        if (g.state === 'active') return 'Checking the last merge';
+        if (/resumed/.test(detail.note || '')) return 'Red · an admin resumed merges';
+        return null;
+      }
+      case 'github': {
+        if (g.state === 'done' || g.state === 'pending') return null;
+        const note = String(detail.note || '');
+        if (/^merging (now|shortly)$/.test(note)) return null;
+        if (/refused.*resolving/.test(note)) return 'GitHub refused · resolving it now';
+        if (/refused/.test(note)) return 'GitHub refused · needs a manual sync';
+        return note ? note.charAt(0).toUpperCase() + note.slice(1) : null;
+      }
+      default:
+        return g && g.state !== 'done' && g.state !== 'pending' ? (detail.note || null) : null;
+    }
+  },
+
+  // The integration step's line, from the same columns integrationStep reads
+  // and the conflict lane's verdict on this head.
+  _integrationLine(g, p, viewer) {
+    if (g.state === 'done') return null;
+    const served = (p.integration && Array.isArray(p.integration.blockReasons)) ? p.integration.blockReasons : [];
+    const fresh = AppView._freshnessOf(p);
+    const n = Array.isArray(p.integration_conflict_paths) && p.integration_conflict_paths.length
+      ? p.integration_conflict_paths.length : (Array.isArray(fresh.files) ? fresh.files.length : 0);
+    const conflict = n ? `Conflict in ${n} file${n === 1 ? '' : 's'}` : 'Conflict with main';
+    const conflicting = g.state !== 'pending' || fresh.mergeability === 'conflict'
+      || p.merge_conflict_state === 'failed' || served.length > 0;
+    if (!conflicting) {
+      return fresh.mergeability === 'unknown' || fresh.mergeability == null ? 'Not measured yet' : null;
+    }
+    if (served.includes('integrating')) return n ? `Resolving a conflict in ${n} file${n === 1 ? '' : 's'}` : 'Resolving a conflict with main';
+    if (served.includes('unresolvable') || p.merge_conflict_state === 'failed') return `${conflict} · needs a manual sync`;
+    if (served.includes('fork_head')) {
+      return viewer && viewer.isAuthor ? `${conflict} · merge main into your fork` : `${conflict} · the author updates their fork`;
+    }
+    if (served.includes('awaiting_approval')) return `${conflict} · fixed after the vote`;
+    if (served.includes('budget')) return `${conflict} · resumes after the daily budget reset`;
+    if (n || fresh.mergeability === 'conflict' || /conflict/.test(String((g.detail && g.detail.note) || ''))) {
+      return `${conflict} · queued to fix`;
+    }
+    // Not a conflict the columns can see (a recording from before direct
+    // merges, say): the gate's own words, as a sentence.
+    const note = String((g.detail && g.detail.note) || '');
+    return note ? note.charAt(0).toUpperCase() + note.slice(1) : null;
+  },
+
+  // The checks step's line: the verdict's count when there is one, where the
+  // run has got to while it runs.
+  _checksLine(g, p, moot) {
+    const cs = p.check_state;
+    if (g.state === 'pending') return moot ? 'Runs after the sync' : null;
+    if (cs === 'pending' && p.check_phase === 'deferred') return 'Runs after the sync';
+    const v = AppView._checksVerdictView(p);
+    if (g.state === 'done') {
+      if (cs === 'skipped') return 'Skipped';
+      const older = AppView._freshnessOf(p).baseVerdict === 'superseded' ? ' · on an older main' : '';
+      if (!v) return `Passed${older}`;
+      const total = v.passCount + v.failures.length;
+      return (v.failures.length ? `${v.passCount} of ${total} passed` : `All ${total} passed`) + older;
+    }
+    if (g.state === 'blocked') {
+      if (cs === 'error' || (!p.staging_url && p.staging_error)) return 'Couldn’t run';
+      if (!v) return 'Failing';
+      const blocking = v.failures.filter((f) => !f.advisory).length || v.failures.length;
+      return `${blocking} of ${v.passCount + v.failures.length} failed`;
+    }
+    if (g.state === 'active') {
+      if (!cs) return 'Starting';
+      const prog = AppView._checksProgressView(p);
+      if (prog && prog.build && !prog.build.done) {
+        const steps = prog.build.steps || [];
+        const at = Math.min(steps.filter((s) => s.state === 'done').length + 1, steps.length || 1);
+        return `Building preview · ${at} of ${steps.length || 5}`;
+      }
+      if (prog && prog.bar.expected) return `Running · ${prog.bar.ran} of ${prog.bar.expected}`;
+      if (prog && prog.bar.ran) return `Running · ${prog.bar.ran} so far`;
+      return p.check_phase === 'building' ? 'Building preview' : 'Running';
+    }
+    return null;
   },
 
   // The one control a gate carries, for the viewer who can clear it. A red
@@ -12124,20 +12403,24 @@ const AppView = {
       // "nothing left to check" for the second is exactly the misreading this
       // whole feature exists to stop.
       if (total && done === total) {
-        return { headline: 'Merging now', detail: `all ${total} steps done`, done, total, needsViewer: false };
+        return { headline: 'Merged', detail: null, done, total, needsViewer: false, current: null };
       }
-      return {
-        headline: 'Nothing needs you',
-        detail: 'still working out what this needs',
-        done, total, needsViewer: false,
-      };
+      return { headline: 'Checking what this needs', detail: null, done, total, needsViewer: false, current: null };
+    }
+    // The last step in flight is the merge itself.
+    if (current.key === 'github' && current.state === 'active') {
+      return { headline: 'Merging', detail: noteOf(current), done, total, needsViewer: false, current: current.key };
+    }
+    // A blocked step is never "Nothing needs you".
+    if (current.state === 'blocked' && current.actor === 'auto') {
+      return { headline: 'Blocked', detail: noteOf(current), done, total, needsViewer: false, current: current.key };
     }
     // Anything in flight, and every 'auto' step, needs nobody at all.
     if (current.actor === 'auto' || current.state === 'active') {
       return {
         headline: 'Nothing needs you',
         detail: noteOf(current) || String(current.label || '').toLowerCase(),
-        done, total, needsViewer: false,
+        done, total, needsViewer: false, current: current.key,
       };
     }
     const roles = {
@@ -12147,12 +12430,12 @@ const AppView = {
     };
     const role = roles[current.actor];
     if (!role) {
-      return { headline: 'Waiting', detail: noteOf(current), done, total, needsViewer: false };
+      return { headline: 'Waiting', detail: noteOf(current), done, total, needsViewer: false, current: current.key };
     }
     return {
       headline: role.is ? role.you : role.them,
       detail: noteOf(current),
-      done, total, needsViewer: role.is,
+      done, total, needsViewer: role.is, current: current.key,
     };
   },
 
@@ -14175,7 +14458,7 @@ const AppView = {
   // threshold-met proposal legitimately waits for an admin's Yes, which
   // this client cannot verify, so it would otherwise show a spinner for a
   // proposal that is not being applied at all. The card's own ledger (its
-  // "An admin approves it" step) explains that wait.
+  // "Admin approval" step) explains that wait.
   _derivedGovApplying(issue) {
     if (!issue || issue.status !== 'open') return null;
     const ctx = AppView._proposalsCtx || {};
@@ -17343,7 +17626,9 @@ const AppView = {
     const mr = pr && pr.mergeRequirements && typeof pr.mergeRequirements === 'object' ? pr.mergeRequirements : null;
     const gates = mr && Array.isArray(mr.gates) ? mr.gates : [];
     const g = gates.find((x) => x && x.key === 'main_healthy');
-    return g && g.state === 'blocked' && g.detail && g.detail.paused ? g.detail : null;
+    // Blocked, or 'active' while a first red is re-run to confirm: the pause
+    // holds either way (merge-requirements.js mainStep).
+    return g && (g.state === 'blocked' || g.state === 'active') && g.detail && g.detail.paused ? g.detail : null;
   },
 
   blockReasons(pr) {

@@ -1496,3 +1496,80 @@ test('the trace keeps when the agent\'s startup reached each step, whatever the 
   assert.deepEqual(Object.keys(summary.firstAtMs).sort(), ['tool_start', 'worker_prepare_start']);
   assert.ok(!('tool_end' in summary.firstAtMs), 'only the startup steps are kept');
 });
+
+test('a draining process starts no shots run and writes no claim for one', async () => {
+  // The next leader's unstarted-claim sweep starts it instead; a run begun
+  // here would only be failed by the shutdown handler seconds later.
+  const pool = { query: async () => { throw new Error('must not load or write anything while shutting down'); } };
+  const refusals = [];
+  const result = await orchestrator.scheduleForSession(
+    { shots: { execute: true } },
+    { pool, sessionId: 42, trigger: 'preview-ready' },
+    {
+      isShuttingDown: () => true,
+      state: {
+        createRun: async () => { throw new Error('must not create a run'); },
+        recordNotStarted: async (_pool, sessionId, text) => { refusals.push({ sessionId, text }); },
+      },
+    }
+  );
+  assert.deepEqual(result, { scheduled: false, reason: 'shutting_down' });
+  assert.deepEqual(refusals, [], 'nothing is recorded on the proposal: it will start, just not here');
+});
+
+test('a person\'s rerun is refused while the process drains, before it writes a planned run', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/shots.js'), 'utf8');
+  assert.match(src, /router\.post\('\/api\/apps\/:slug\/proposals\/:sessionId\/shots\/rerun', sameOriginBrowserOnly, drainGuard,/);
+  assert.match(src, /const \{ drainGuard \} = require\('\.\.\/services\/lifecycle'\);/);
+});
+
+test('a failed shots sign-in reaches the trace and the failure reason with its stage and cause, and no URL', () => {
+  const bootstrap = require('../worker/shots-browser-bootstrap.js');
+  const { SessionBootstrapError } = require('../worker/session-bootstrap');
+  // A Playwright timeout names the navigation URL, token included.
+  const timeout = Object.assign(
+    new Error('page.goto: Timeout 30000ms exceeded.\nnavigating to "http://sv-shots-b:3000/?token=SECRET-TOKEN"'),
+    { name: 'TimeoutError' }
+  );
+  const event = bootstrap.failureEvent(timeout, {
+    persona: 'member', side: 'head', stage: 'navigate', bootstrap: { attempted: true, responseStatus: 302 },
+  });
+  assert.deepEqual(event, {
+    kind: 'auth_bootstrap', outcome: 'error', persona: 'member', side: 'head',
+    failureStage: 'navigate', errorClass: 'timeout', attempted: true, responseStatus: 302,
+  });
+  const summary = bootstrap.failureSummary(event);
+  assert.equal(summary,
+    'shots browser authentication failed (member on head) while opening the app: timeout, HTTP 302');
+  assert.ok(!JSON.stringify(event).includes('SECRET') && !summary.includes('SECRET')
+    && !summary.includes('http://'), 'nothing is copied from the error text');
+
+  // A controlled error keeps its code; an unknown stage reads as configuration.
+  const cookie = bootstrap.failureEvent(
+    new SessionBootstrapError('session_bootstrap_failed', 'The shots browser did not retain its private session cookie.'),
+    { persona: 'full_admin', side: 'base', stage: 'exchange', bootstrap: { responseStatus: 502 } }
+  );
+  assert.equal(cookie.failureCode, 'session_bootstrap_failed');
+  assert.equal(bootstrap.failureSummary(cookie),
+    'shots browser authentication failed (full_admin on base) while exchanging the sign-in token: session_bootstrap_failed, HTTP 502');
+  assert.equal(bootstrap.failureEvent(new Error('x'), { stage: 'nonsense' }).failureStage, 'configure');
+  assert.equal(bootstrap.errorClass(new Error('net::ERR_CONNECTION_REFUSED at http://x')), 'network');
+
+  // The trace keeps exactly those fields.
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { ...event, failureCode: 'x y', note: 'dropped' });
+  orchestrator.recordAgentDiagnostic(metrics, cookie);
+  const [first, second] = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.equal(first.failureStage, 'navigate');
+  assert.equal(first.errorClass, 'timeout');
+  assert.equal(first.outcome, 'error');
+  assert.equal(first.responseStatus, 302);
+  assert.equal(first.failureCode, undefined, 'a code that is not a fixed identifier is dropped');
+  assert.equal(first.note, undefined);
+  assert.equal(second.failureCode, 'session_bootstrap_failed');
+
+  // The runner turns the summary into the run's failure reason.
+  const runner = fs.readFileSync(path.join(__dirname, '../worker/run-cc.sh'), 'utf8');
+  assert.match(runner, /export SHOTS_BOOTSTRAP_FAILURE_FILE="\$SHOTS_TMP\/browser-bootstrap\.failure"/);
+  assert.match(runner, /\|\| die "\$\(head -c 300 "\$SHOTS_BOOTSTRAP_FAILURE_FILE"/);
+});

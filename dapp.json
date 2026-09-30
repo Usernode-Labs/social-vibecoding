@@ -907,9 +907,9 @@
       "expectText": "In review"
     },
     {
-      "name": "Vote opens the hero's band, ahead of Explore in dev chat; Re-run checks is the blocked Checks step's accent pill",
+      "name": "Vote sits at the end of the hero's status pill, as on a card; Re-run checks is the blocked Checks step's accent pill",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000043",
-      "expectSelector": ".dev-topic:has(.dev-topic-hero .gc-card-actions > .dev-vote-btn:first-child + .gc-explore-chat-btn) .dev-topic-steps [data-req-gate=\"checks\"][data-req-state=\"blocked\"] .dev-ledger-ops > .gc-vote-btn-accent[data-act=\"castRecheck\"]",
+      "expectSelector": ".dev-topic:has(.dev-topic-hero-status > .dev-status-pill + .dev-vote-btn) .dev-topic-steps [data-req-gate=\"checks\"][data-req-state=\"blocked\"] .dev-ledger-ops > .gc-vote-btn-accent[data-act=\"castRecheck\"]",
       "expectText": "Re-run checks"
     },
     {
@@ -2176,9 +2176,9 @@
       "expectText": "No work in progress."
     },
     {
-      "name": "Foreign proposal: Explore in dev chat is a pill on the hero's band, which the ⋯ menu closes (#827); the Vote step keeps who approved on its line, and How voting works with its ? at the line's right end",
+      "name": "Foreign proposal: Explore in dev chat is a pill on the hero's band, which the ⋯ menu closes (#827); the Votes step names who voted, with How voting works as the ? at the line's end",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
-      "expectSelector": ".dev-topic:has(.gc-card-actions > .gc-explore-chat-btn[data-proposal-id=\"9000001\"]:not([data-folded]) ~ [data-card-menu]:last-child) [data-note=\"votes\"] .dev-ledger-review-line > .dev-ledger-roster + .dev-ledger-help > .voting-help-link + .voting-help-btn",
+      "expectSelector": ".dev-topic:has(.gc-card-actions > .gc-explore-chat-btn[data-proposal-id=\"9000001\"]:not([data-folded]) ~ [data-card-menu]:last-child) [data-note=\"votes\"] .dev-ledger-review-line > .dev-ledger-roster + .dev-ledger-help > .voting-help-btn",
       "expectText": "Explore in dev chat"
     },
     {
@@ -3819,10 +3819,10 @@
       "expectText": "Preview unavailable"
     },
     {
-      "name": "Freshness (#1442): a conflicted proposal folds behind-main and the conflict into one sync step",
+      "name": "Freshness (#1442): a conflicted proposal says so in one short line on its merge step",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": "#gc-thread-head [data-note=\"mergeability\"]",
-      "expectText": "Main has moved 8 commits ahead, and 7 files changed on both sides"
+      "expectText": "Conflict in 7 files"
     },
     {
       "name": "A cleared step wears the filled tick in the ok tone, whatever the sheet around it is waiting on",
@@ -3830,46 +3830,46 @@
       "expectSelector": ".dev-topic-steps .dev-step[data-req-gate=\"checks\"][data-req-state=\"done\"] > .dev-step-mark-done"
     },
     {
-      "name": "A blocked proposal reads as the strip's ordered steps: the vote, then merging cleanly with main (the sync), then the checks",
+      "name": "A blocked proposal reads as the strip's ordered steps: the votes, then no conflicts with main, then the checks",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-topic-steps .dev-step[data-note=\"votes\"][data-req-gate=\"approvals\"] ~ .dev-step[data-note=\"mergeability\"][data-req-gate=\"integration\"] ~ .dev-step[data-note=\"checks\"][data-req-gate=\"checks\"]",
-      "expectText": "Merges cleanly with main"
+      "expectText": "No conflicts with main"
     },
     {
-      "name": "The steps sheet leads with the strip's own headline and count; the sync step names the platform as its actor, and its sentence leads with the state in the row's tone",
+      "name": "The steps sheet leads with the strip's own headline and count; the merge step says its conflict in one short line",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
-      "expectSelector": ".dev-topic-steps > .dev-steps > .dev-steps-head:has(> .dev-steps-headline ~ .dev-steps-count) + .dev-steps-list > [data-note=\"mergeability\"] > .dev-step-actor + .dev-step-body > .dev-ledger-text > .dev-ledger-lead-warn:first-child",
-      "expectText": "Syncing."
+      "expectSelector": ".dev-topic-steps > .dev-steps > .dev-steps-head:has(> .dev-steps-headline ~ .dev-steps-count) + .dev-steps-list > [data-note=\"mergeability\"] > .dev-step-main > .dev-step-line",
+      "expectText": "Conflict in 7 files"
     },
     {
-      "name": "A failing check is one line with a Why it failed door, on a Checks step marked blocked whose sentence says who has to act and when it last ran",
+      "name": "A failing check is one line with a Why it failed door, inside a blocked Checks step that opens onto its run",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000093",
-      "expectSelector": ".dev-step-blocked[data-note=\"checks\"]:has(.dev-ledger-text > .dev-ledger-lead-bad + .dev-step-when) .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why:not([open]) > .dev-ledger-check-line > .dev-ledger-check-name + .dev-ledger-check-open",
+      "expectSelector": ".dev-step-blocked[data-note=\"checks\"] .dev-step-run .dev-ledger-fails > .dev-ledger-check-why > .dev-ledger-why:not([open]) > .dev-ledger-check-line > .dev-ledger-check-name + .dev-ledger-check-open",
       "expectText": "Why it failed"
     },
     {
-      "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its vote still open above it",
+      "name": "Freshness (#1442): a conflicting proposal says so on its merge step, with its votes still open above it",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000034",
       "expectSelector": ".dev-topic-steps .dev-step[data-note=\"votes\"] ~ .dev-step[data-note=\"mergeability\"][data-req-gate=\"integration\"]",
-      "expectText": "changed on both sides"
+      "expectText": "Conflict in 7 files"
     },
     {
-      "name": "Freshness (#1442): checks that passed on a superseded base are annotated, not contradicted",
+      "name": "Freshness (#1442): checks that passed on a superseded base say so on their line, not contradicted",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000035",
-      "expectSelector": "[data-checks-base=\"superseded\"]",
-      "expectText": "would no longer merge into"
+      "expectSelector": ".dev-step[data-req-gate=\"checks\"][data-checks-base=\"superseded\"] .dev-step-line",
+      "expectText": "on an older main"
     },
     {
-      "name": "Freshness (#1442): an unmeasured proposal makes no conflict claim: its merge step says main has not been verified",
+      "name": "Freshness (#1442): an unmeasured proposal makes no conflict claim: its merge step says it is not measured yet",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000036",
-      "expectSelector": ".dev-topic-steps:not(:has([data-note=\"mergeability\"])) .dev-step[data-req-gate=\"integration\"] > .dev-step-body > .dev-step-note",
-      "expectText": "has not been verified yet"
+      "expectSelector": ".dev-topic-steps .dev-step[data-req-gate=\"integration\"][data-req-state=\"pending\"] > .dev-step-main > .dev-step-line",
+      "expectText": "Not measured yet"
     },
     {
-      "name": "Freshness (#1442): behind-but-clean syncs by itself: the merge step says how far main has moved, and the vote counts down to merge",
+      "name": "Freshness (#1442): behind-but-clean needs no sync: the merge step is done, and the status pill counts down to merge",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000033",
-      "expectSelector": ".dev-topic-steps:has([data-note=\"votes\"] .gc-merge-countdown) .dev-step[data-note=\"behind\"][data-req-gate=\"integration\"] .dev-ledger-text > .dev-ledger-lead-warn",
-      "expectText": "8 commits ahead"
+      "expectSelector": ".dev-topic:has(.dev-topic-hero-status .gc-merge-countdown) .dev-step[data-req-gate=\"integration\"][data-req-state=\"done\"]",
+      "expectText": "No conflicts with main"
     },
     {
       "name": "A failed imported preview offers Retry preview (#866)",
