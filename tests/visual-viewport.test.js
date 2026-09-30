@@ -129,6 +129,18 @@ const SHELL_SHIFTS = rules(APP_CSS, 'html.un-kb .un-modal').filter((body) => /(^
 const SHELL_SHIFT = SHELL_SHIFTS.length === 1 ? declared(SHELL_SHIFTS[0], 'translate') : null;
 /** The vertical half of `translate: 0 <y>`. */
 const SHELL_PAN = SHELL_SHIFT && SHELL_SHIFT.replace(/^0\s+/, '');
+const KIT_ALERT = rules(NATIVE_CSS, '.un-alert');
+assert.equal(KIT_ALERT.length, 1, 'native.css has one .un-alert rule');
+const KIT_ALERT_TOP = declared(KIT_ALERT[0], 'top');
+const ALERT_SHIFTS = rules(APP_CSS, 'html.un-kb .un-alert').filter((body) => /(^|\s)translate:/.test(body));
+
+/** Every rule in a stylesheet as [selector, body], comments stripped. */
+function allRules(css) {
+  const out = [];
+  const src = css.replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const m of src.matchAll(/([^{}]+)\{([^{}]*)\}/g)) out.push([m[1].trim(), m[2]]);
+  return out;
+}
 
 test('the shell moves the kit modal by the pan in exactly one rule, and leaves `top` to the kit', () => {
   assert.equal(SHELL_TOPS.length, 0, 'app.css does not restate the kit\'s top');
@@ -147,6 +159,23 @@ test('the pan never eases: it cancels iOS\'s instant jump in the same frame', ()
   assert.doesNotMatch(KIT_TRANSITION, /translate/);
   assert.doesNotMatch(SHELL_SHIFTS[0], /transition/);
   assert.doesNotMatch(APP_CSS, /\.un-modal[^{]*\{[^}]*transition:[^;}]*translate/);
+  assert.doesNotMatch(APP_CSS, /\.un-alert[^{]*\{[^}]*transition:[^;}]*translate/);
+});
+
+test('the shell moves the kit alert card by the pan in exactly one rule, and leaves `top` to the kit', () => {
+  // #3412: the vote prompt is an alert card, centred by the same expression
+  // the modal is, so it takes the same #2765 translate.
+  assert.equal(KIT_ALERT_TOP, KIT_TOP, 'the alert is centred by the same expression the modal is');
+  assert.equal(ALERT_SHIFTS.length, 1, 'one app.css rule sets the alert\'s translate, only while the keyboard is up');
+  assert.equal(declared(ALERT_SHIFTS[0], 'translate'), '0 var(--platform-vv-top, 0px)');
+  // Any translate but `none` is a transformed layer; with no keyboard there
+  // is no pan, so the card is left without one — nothing but `html.un-kb`
+  // may put it on one.
+  assert.equal(rules(APP_CSS, '.un-alert').filter((body) => /(^|\s)translate:/.test(body)).length, 0);
+  const gated = allRules(APP_CSS).filter(([selector, body]) =>
+    selector.includes('.un-alert') && /(^|\s)translate:/.test(body));
+  assert.equal(gated.length, 1);
+  assert.match(gated[0][0], /html\.un-kb/);
 });
 
 test('the kit rule the geometry relies on: centred on `top`, capped by the strip, scrolling', () => {
@@ -210,6 +239,25 @@ test('the kit on its own puts that same dialog above the screen — the report',
 test('iOS Safari, measured: inside the band', () => {
   const frame = { ...IOS_SAFARI, content: FEEDBACK };
   assert.ok(inside(place(frame), bandOf(frame)));
+});
+
+// #3412: the vote prompt is an alert card — the same centring expression and,
+// now, the same translate. One run under the #1938 geometry proves it, the
+// way the modal's runs above prove theirs: the card is a fixed ~200px tall
+// (title, message, field, buttons) centred box, with no cap of its own.
+test('iOS, installed: the alert card (the vote prompt) is inside the visible band', () => {
+  const frame = IOS_STANDALONE;
+  const kb = physics.keyboardInset({ layoutHeight: frame.layout, vvHeight: frame.vvHeight, vvScale: 1 });
+  const vars = {
+    '--un-kb-inset': kb,
+    '--platform-vv-top': visualViewportTop(frame),
+  };
+  const centre = evalCss(KIT_ALERT_TOP, { vars, percent: frame.layout, vh: frame.layout })
+    + evalCss(SHELL_PAN, { vars, percent: frame.layout, vh: frame.layout });
+  const height = 200;
+  const card = { top: centre - height / 2, bottom: centre + height / 2 };
+  const band = bandOf(frame);
+  assert.ok(inside(card, band), `alert ${card.top}–${card.bottom} within ${band.top}–${band.bottom}`);
 });
 
 test('every pan iOS can make keeps the card on screen, short card or tall', () => {

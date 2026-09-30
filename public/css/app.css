@@ -10259,7 +10259,7 @@ html .un-backdrop.platform-backdrop-dim {
    the kit's own placement is untouched. Every kit modal in the shell takes
    it: each dialog `useDialog` presents, the username and terms gates,
    session options and the build log. The alert card (`.un-alert`) is centred
-   the same way but is not a `.un-modal`, and is left to the kit.
+   the same way (the vote prompt is one) and takes the same translate.
 
    THE PAN IS A `translate`, NOT A TERM OF `top`, AND IT NEVER EASES. iOS
    moves the page by the whole pan in one frame, both ways: when it reveals
@@ -10278,7 +10278,8 @@ html .un-backdrop.platform-backdrop-dim {
    Only while the keyboard is up, the one time there is a pan: any
    `translate` but `none` keeps the card on a transformed layer, which the
    Android create screen below is anchored precisely to avoid. */
-html.un-kb .un-modal {
+html.un-kb .un-modal,
+html.un-kb .un-alert {
   translate: 0 var(--platform-vv-top, 0px);
 }
 
