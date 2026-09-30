@@ -123,6 +123,49 @@ test('issueCollabGuard: an id Postgres cannot cast falls through without a query
   }
 });
 
+const MALFORMED_IDS = ['abc', '0', '-1', '12abc', '99999999999', '0101'];
+const noQueryPool = { async query(sql) { throw new Error(`unexpected query: ${sql}`); } };
+
+test('sessionCollabGuard: a malformed id is 404 without a query', async () => {
+  // Answered here rather than let through: a route behind the guard that
+  // parseInt()s '12abc' would otherwise act on session 12 unchecked.
+  const guard = appAccess.sessionCollabGuard(noQueryPool);
+  for (const id of MALFORMED_IDS) {
+    for (const method of ['GET', 'POST']) {
+      let status = null;
+      let body = null;
+      const res = { status(c) { status = c; return this; }, json(b) { body = b; return this; } };
+      await guard({ params: { id }, method, user: { id: 99 } }, res, () => {
+        throw new Error(`guard let ${id} through`);
+      });
+      assert.equal(status, 404, `${method} ${id}`);
+      assert.deepEqual(body, { error: 'Session not found' });
+    }
+  }
+});
+
+test('sessionCollabGuard over HTTP: malformed ids 404, well-formed ids are checked as before', async () => {
+  // Over HTTP, so the route and the guard see the same path segment.
+  for (const id of MALFORMED_IDS.filter((i) => i !== '-1')) {
+    assert.equal((await fetch(`${base}/api/sessions/${id}/thing`)).status, 404, id);
+  }
+  assert.equal((await fetch(`${base}/api/sessions/1/thing`)).status, 200);
+  assert.equal((await fetch(`${base}/api/sessions/2/thing`)).status, 404);
+  // Unknown session: the guard falls through to the route's own lookup.
+  assert.equal((await fetch(`${base}/api/sessions/3/thing`)).status, 200);
+});
+
+test('requireSessionMembership: a malformed id falls through without a query', async () => {
+  const communities = require('../src/services/communities');
+  const gate = communities.requireSessionMembership(noQueryPool);
+  for (const id of MALFORMED_IDS) {
+    let passed = false;
+    const res = { status() { throw new Error(`gate answered for ${id}`); } };
+    await gate({ params: { id }, method: 'POST', user: { id: 99 } }, res, () => { passed = true; });
+    assert.equal(passed, true, id);
+  }
+});
+
 // ── 3. WS write gate ────────────────────────────────────────────────────
 
 const { handleMessage } = require('../src/services/ws');
