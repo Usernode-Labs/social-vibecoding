@@ -5133,11 +5133,20 @@ const App = {
     // navigateToApp commits the destination while the click is still
     // synchronous (see its note), and switchTab re-syncs after assigning it.
     const inApp = screen === 'app-view' && App.currentTab === 'app';
+    // …UNLESS THE VIEWER PINNED IT (#3319). Settings → Theme's "Keep sidebar
+    // open in apps" keeps the desktop rail docked beside a running app. Off
+    // by default, and desktop only: below 768px the bar is the phone's
+    // bottom bar, and an app keeps the whole screen there whatever is stored.
+    // `rail-pinned` on the body is what app.css keys the frame's own padding
+    // off (no gutter around somebody's program).
+    const railPinned = inApp && !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout();
+    document.body?.classList?.toggle('rail-pinned', railPinned);
+    App._watchRailBreakpoint();
     App.Visibility.publish(
       'platform-tabs',
       // …and never in the side panel's document, which draws no chrome at
       // all: the top window's bar and rail are the navigation.
-      App.embeddedPanel ? false : !!screen && !App.chromeless && !inApp,
+      App.embeddedPanel ? false : !!screen && !App.chromeless && (!inApp || railPinned),
     );
     // Published even when the bar is down: the store keeps the last screen
     // otherwise, and the bar coming back for a tab that has since changed
@@ -5181,6 +5190,48 @@ const App = {
     // whether it is on screen. Last, so the handle lands in the same callback
     // as the bar it rides on.
     App._syncParkedApp(inApp);
+  },
+
+  // ── "Keep sidebar open in apps" (#3319) ─────────────────────────────
+  //
+  // A per-browser display preference, like the theme: localStorage, read at
+  // every _syncPlatformTabs. Every access is guarded — storage throws in a
+  // private window or with site data blocked, and that must read as "off",
+  // the old behaviour, never as a broken router.
+  RAIL_PINNED_KEY: 'usernode:rail-pinned',
+
+  _railPinned() {
+    try {
+      return window.localStorage?.getItem(App.RAIL_PINNED_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  },
+
+  // Written by the Settings switch (features/settings/sections/theme.tsx),
+  // which re-decides at once so an app already open behind Settings is right
+  // the moment the viewer goes back to it.
+  setRailPinned(on) {
+    try {
+      if (on) window.localStorage?.setItem(App.RAIL_PINNED_KEY, '1');
+      else window.localStorage?.removeItem(App.RAIL_PINNED_KEY);
+    } catch (_) { /* unwritable storage: the switch simply does not stick */ }
+    App._syncPlatformTabs();
+  },
+
+  // A window resized across 768px inside an app changes the answer above
+  // (a pinned rail on the desktop, the full-screen app on a phone), so the
+  // breakpoint re-decides too. Installed once, lazily, where it is needed.
+  _railBreakpointWatched: false,
+  _watchRailBreakpoint() {
+    if (App._railBreakpointWatched) return;
+    App._railBreakpointWatched = true;
+    try {
+      const mql = window.matchMedia?.('(min-width: 768px)');
+      mql?.addEventListener?.('change', () => {
+        if (App._railPinned()) App._syncPlatformTabs();
+      });
+    } catch (_) { /* no matchMedia: nothing to watch */ }
   },
 
   // The two `#app-view` routes that are THREADS OF MESSAGES rather than the

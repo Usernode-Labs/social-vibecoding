@@ -1058,7 +1058,7 @@ test('the router consults the panel\'s document before routing an address', () =
   assert.ok(forward < body.indexOf('if (!hash) {'), 'before the first screen is chosen');
   assert.ok(forward > body.indexOf('AuthScreens.routeFromHash(hash)'), 'and after the signed-out routing');
   // The bar is down in there, and the parked strip is never written.
-  assert.match(APP_JS, /App\.embeddedPanel \? false : !!screen && !App\.chromeless && !inApp,/);
+  assert.match(APP_JS, /App\.embeddedPanel \? false : !!screen && !App\.chromeless && \(!inApp \|\| railPinned\),/);
   assert.match(APP_JS, /_syncParkedApp\(inApp\) \{\s*\/\/[^\n]*\n[^\n]*\n\s*if \(App\.embeddedPanel\) return;/);
 });
 

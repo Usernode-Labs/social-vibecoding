@@ -106,6 +106,7 @@ declare global {
       restoreFromHash?(): void;
       navigateToApp?(slug: string, tab?: string, ref?: unknown, subTab?: string | null): Promise<void>;
       openAppTab?(slug: string, tab?: string, opts?: unknown): void;
+      setRailPinned?(on: boolean): void;
       _appUrl?(slug: string, tab?: string, ref?: unknown, subTab?: string | null,
         options?: unknown): string;
       _rootUrl?(hash?: string): string;
