@@ -102,8 +102,6 @@ export type CommunityPayload = {
     href?: string;
     /** `general` on Homeroom's own hub, whose channel #general is. */
     handle?: string | null;
-    /** Homeroom's earlier project discussion, kept read-only. */
-    archive_href?: string | null;
     /** Where the hub's composer sends: the room's own write route. */
     post_url?: string | null;
   } | null;

@@ -121,12 +121,6 @@ export function ChannelCard({ slug, name, data }: {
       {channel.post_url ? (
         <HubComposer slug={slug} url={channel.post_url} placeholder={`Message ${channel.handle ? `#${channel.handle}` : name}…`} />
       ) : null}
-      {channel.archive_href ? (
-        <a href={channel.archive_href} className="dev-ws-hub-archive" data-ws-channel-archive="">
-          Earlier project discussion, read-only
-          <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
-        </a>
-      ) : null}
     </section>
   );
 }
