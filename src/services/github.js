@@ -1413,6 +1413,30 @@ async function compareRefs(owner, repo, basehead) {
   };
 }
 
+// #3207: per-file line counts between two refs ("main...branch"), for the
+// proposal page's "Files changed" list. Paths, statuses and counts only —
+// never the `patch` hunks. The compare endpoint stops at 300 files, so
+// `complete` is false when the list hits that cap and the totals then cover
+// only the files listed. Throws on transport errors; the route fails open.
+async function listChangedFileStats(owner, repo, basehead) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead, per_page: 100,
+  });
+  const files = (data.files || []).slice(0, COMPARE_FILES_CAP).map((f) => ({
+    filename: String(f.filename || ''),
+    status: String(f.status || 'modified'),
+    additions: Number(f.additions) || 0,
+    deletions: Number(f.deletions) || 0,
+  }));
+  return {
+    files,
+    additions: files.reduce((n, f) => n + f.additions, 0),
+    deletions: files.reduce((n, f) => n + f.deletions, 0),
+    complete: files.length < COMPARE_FILES_CAP,
+  };
+}
+
 // #297: a size-capped unified diff for LLM context. Concatenates the
 // per-file `patch` hunks from the compare endpoint (`main...<branch>`)
 // into one unified-diff string, truncated to a hard char budget so a huge
@@ -2393,6 +2417,7 @@ module.exports = {
   listChangedFiles,
   compareRefs,
   getProposalDiff,
+  listChangedFileStats,
   getIssue,
   createIssue,
   createIssueComment,

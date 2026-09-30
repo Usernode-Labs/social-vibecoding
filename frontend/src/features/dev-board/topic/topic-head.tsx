@@ -1131,6 +1131,67 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
   );
 }
 
+export type ChangedFile = { filename: string; status: string; additions: number; deletions: number };
+export type ChangedFiles = { files: ChangedFile[]; additions: number; deletions: number; complete: boolean };
+
+/** Rows the "Files changed" sheet lists before it points at GitHub for the rest. */
+export const CHANGED_FILES_SHOWN = 50;
+
+/**
+ * #3207: which files a change touches, with line counts, so a reviewer can
+ * see its reach without leaving for GitHub. Read in an effect (never in the
+ * first render) from `GET /api/sessions/:id/changed-files`, and re-read
+ * when the checked commit moves. Draws nothing until there is a list: an
+ * unavailable compare answers `{ files: null }` and the sheet stays away.
+ * Paths are text children, never links.
+ */
+function ChangedFilesSheet({ id, head }: { id: number; head: string }): ReactNode {
+  const [data, setData] = useState<ChangedFiles | null>(null);
+  useEffect(() => {
+    const abort = new AbortController();
+    const demo = (window as any).AppView?._demoQS?.() ? '?demo=1' : '';
+    fetch(`/api/sessions/${id}/changed-files${demo}`, { credentials: 'same-origin', signal: abort.signal })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((json) => {
+        if (abort.signal.aborted) return;
+        setData(json && Array.isArray(json.files) ? json as ChangedFiles : null);
+      })
+      .catch(() => {});
+    return () => abort.abort();
+  }, [id, head]);
+  return <ChangedFilesView data={data} />;
+}
+
+export function ChangedFilesView({ data }: { data: ChangedFiles | null }): ReactNode {
+  if (!data || !data.files.length) return null;
+  const shown = data.files.slice(0, CHANGED_FILES_SHOWN);
+  const more = data.files.length - shown.length;
+  const count = `${data.files.length}${data.complete ? '' : '+'}`;
+  return (
+    <section className="dev-topic-sheet dev-topic-files" data-topic-sheet="files">
+      <details className="dev-topic-details" data-changed-files>
+        <summary className="dev-topic-details-summary">
+          {`Files changed · ${count} (+${data.additions} −${data.deletions})`}
+        </summary>
+        <ul className="mt-2 divide-y divide-zinc-200 dark:divide-zinc-800 text-[13px]">
+          {shown.map((f) => (
+            <li key={f.filename} className="flex items-baseline gap-2 py-1.5" data-changed-file>
+              <span className="min-w-0 flex-1 break-all font-mono text-zinc-800 dark:text-zinc-200">{f.filename}</span>
+              {f.status === 'added' || f.status === 'removed' || f.status === 'renamed'
+                ? <span className="shrink-0 text-zinc-500 dark:text-zinc-400">{f.status}</span> : null}
+              <span className="shrink-0 tabular-nums text-emerald-700 dark:text-emerald-400">{`+${f.additions}`}</span>
+              <span className="shrink-0 tabular-nums text-red-700 dark:text-red-400">{`−${f.deletions}`}</span>
+            </li>
+          ))}
+        </ul>
+        {more > 0
+          ? <p className="dev-topic-note mt-2">{`and ${more}${data.complete ? '' : '+'} more on GitHub`}</p>
+          : null}
+      </details>
+    </section>
+  );
+}
+
 /**
  * Technical details — the pull request's description, or the spec a change
  * under way is built from — as a sheet over the page, opened from the ⋯
@@ -1276,6 +1337,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
           {body.steps ? <StepsSheet s={body.steps} help={!!(body.details && body.details.help)} /> : null}
+          {id ? <ChangedFilesSheet id={Number(id)} head={String(session?.checks_commit_sha || session?.imported_pr_head_sha || '')} /> : null}
           {/* #2605: a change's page carries NO build surface — not the Build
               sheet, and not the published chat's disclosure that used to sit
               beside it. Both are the dev session page's now, behind the

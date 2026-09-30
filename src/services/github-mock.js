@@ -10,7 +10,7 @@
 // always uses the real services/github.js client.
 //
 // It exposes the exact subset of the github.js surface the imported-PR
-// consumers touch — isEnabled / listOpenPulls / getPR / listChangedFiles /
+// consumers touch — isEnabled / listOpenPulls / getPR / listChangedFiles(+Stats) /
 // mergePR / getOctokit — so the routes, the sync poller, and the merge path
 // can swap it in with a one-line client selection. Backed by a small
 // in-memory catalog + a per-process head-revision map, so a reviewer can
@@ -169,6 +169,17 @@ async function listChangedFiles(/* owner, repo, basehead */) {
   return ['public/index.html', 'src/routes/example.js', 'README.md'];
 }
 
+// #3207: the same three files with line counts, for the proposal page's
+// "Files changed" list in a staging preview.
+async function listChangedFileStats(/* owner, repo, basehead */) {
+  const files = [
+    { filename: 'public/index.html', status: 'modified', additions: 12, deletions: 3 },
+    { filename: 'src/routes/example.js', status: 'added', additions: 40, deletions: 0 },
+    { filename: 'README.md', status: 'modified', additions: 2, deletions: 1 },
+  ];
+  return { files, additions: 54, deletions: 4, complete: true };
+}
+
 // Exact-sha merge, mirroring the real mergePR (Slice 4): when `sha` is pinned
 // and no longer matches the current head (a reviewer bumped it since the
 // vote), refuse with a HeadMovedError — the same sentinel a real GitHub 409
@@ -202,6 +213,7 @@ module.exports = {
   listOpenPulls,
   getPR,
   listChangedFiles,
+  listChangedFileStats,
   mergePR,
   getOctokit,
   HeadMovedError,

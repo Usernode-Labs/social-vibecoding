@@ -235,12 +235,12 @@ test('the owner, an admin, a shared session and a proposal up for a vote all rea
     404, 'a shared session stops being public once it is archived');
 });
 
-test('/status and /checks share one visibility predicate', () => {
+test('/status, /checks and /changed-files share one visibility predicate', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '../src/routes/sessions.js'), 'utf8');
   const uses = src.match(/canViewSession\(session, req\.user\)|canViewSession\(seen\[0\], req\.user\)/g) || [];
-  assert.equal(uses.length, 2, 'both routes call the shared helper');
+  assert.equal(uses.length, 3, 'all three routes (and /changed-files) call the shared helper');
 });
 
 // ── POST /stop: who may press it ────────────────────────────────────────

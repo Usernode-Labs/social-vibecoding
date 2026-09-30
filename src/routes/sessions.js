@@ -261,6 +261,14 @@ function canViewSession(session, user) {
     || ['promoted', 'merging', 'merged'].includes(session.status);
 }
 
+// #3207: GET /api/sessions/:id/changed-files. The list stops at 300 paths
+// (GitHub's compare cap too), and a compare is reused for a minute so a page
+// reopened or re-rendered does not spend another GitHub call.
+const CHANGED_FILES_CAP = 300;
+const CHANGED_FILES_CACHE_TTL_MS = 60 * 1000;
+const CHANGED_FILES_CACHE_MAX = 500;
+const changedFilesCache = new Map();
+
 // A session that will not change again, for the session list's `?recent=N`.
 const FINISHED_SESSION_STATUSES = new Set(['merged', 'archived']);
 // `?recent=N` as a count of finished rows to keep: 1..200, or null to list
@@ -3627,6 +3635,66 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     } catch (err) {
       log.error('sessions', 'Failed to read check results', { message: err.message });
       res.status(500).json({ error: 'Could not load check results' });
+    }
+  });
+
+  // #3207: the proposal page's "Files changed" list — each changed path with
+  // its status and line counts, compared against main the way the checks'
+  // changed-file heuristic does. The same visibility rule as /checks and
+  // /details; paths and counts only, never file content. GitHub being
+  // unavailable is not an error here: the page just leaves the list out.
+  router.get('/api/sessions/:id/changed-files', async (req, res) => {
+    try {
+      // The staging demo's fixture changes (the same ones /details serves)
+      // list the mock client's files, so the demo page is not a 404.
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        const id = Number(req.params.id);
+        if (id === 990101 || stagingMockSharedSessions().some((s) => s.id === id)) {
+          const stats = await require('../services/github-mock').listChangedFileStats();
+          return res.set('Cache-Control', 'no-store').json(stats);
+        }
+      }
+      const { rows } = await pool.query(
+        `SELECT cs.id, cs.user_id, cs.status, cs.shared_at, cs.source, cs.branch_name,
+                cs.imported_pr_head_sha, cs.checks_commit_sha, cs.handoff_head_sha,
+                a.repo_url
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+          WHERE cs.id = $1`,
+        [parseInt(req.params.id, 10)]
+      );
+      const session = rows[0];
+      if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      res.set('Cache-Control', 'no-store');
+      const client = require('../config').usesMockGithubForImports()
+        ? require('../services/github-mock') : github;
+      const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      const ref = visuals.sessionGitRef(session, session.checks_commit_sha);
+      if (!client.isEnabled() || !owner || !repo || !ref) return res.json({ files: null });
+      const basehead = `main...${ref}`;
+      const key = `${owner}/${repo}:${basehead}`;
+      const hit = changedFilesCache.get(key);
+      let stats = hit && hit.expiresAt > Date.now() ? hit.stats : null;
+      if (!stats) {
+        try {
+          stats = await client.listChangedFileStats(owner, repo, basehead);
+        } catch (err) {
+          log.warn('sessions', 'Changed-file stats compare failed', { sessionId: session.id, err: err.message });
+          return res.json({ files: null });
+        }
+        if (changedFilesCache.size >= CHANGED_FILES_CACHE_MAX) changedFilesCache.clear();
+        changedFilesCache.set(key, { stats, expiresAt: Date.now() + CHANGED_FILES_CACHE_TTL_MS });
+      }
+      const files = stats.files.slice(0, CHANGED_FILES_CAP);
+      res.json({
+        files,
+        additions: stats.additions,
+        deletions: stats.deletions,
+        complete: stats.complete !== false && files.length === stats.files.length,
+      });
+    } catch (err) {
+      log.error('sessions', 'Failed to read changed files', { message: err.message });
+      res.status(500).json({ error: 'Could not load changed files' });
     }
   });
 

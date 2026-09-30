@@ -7470,6 +7470,21 @@
     {
       "source": "src/routes/sessions.js",
       "method": "GET",
+      "path": "/api/sessions/:id/changed-files",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.get.sessions.item.changed.files.b391e367",
+      "domain": "development",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "method": "GET",
       "path": "/api/sessions/:id",
       "expression": null,
       "status": "mapped",
