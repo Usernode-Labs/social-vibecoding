@@ -364,6 +364,31 @@ test('the popover ships closed, with the hidden class on its two dismissable par
   assert.match(out, /id="dc-spec-share-send" class="dc-spec-action-btn dc-spec-share-send">Send</);
 });
 
+test('the share-to-user button announces its popover, and the popover field has a name', () => {
+  // Closed: the button says it opens a dialog, which one, and that it is shut.
+  const closed = html(OPEN);
+  const btn = closed.match(/<button[^>]*id="dc-spec-viewer-share-user"[^>]*>/)[0];
+  assert.match(btn, /aria-haspopup="dialog"/);
+  assert.match(btn, /aria-expanded="false"/);
+  assert.match(btn, /aria-controls="dc-spec-share-pop"/);
+  // The target it names is that dialog, labelled.
+  const card = closed.match(/<div[^>]*id="dc-spec-share-pop"[^>]*>/)[0];
+  assert.match(card, /role="dialog"/);
+  assert.match(card, /aria-label="Share this spec with one person"/);
+  // The field is named, not left to its placeholder.
+  const input = closed.match(/<input[^>]*id="dc-spec-share-input"[^>]*>/)[0];
+  assert.match(input, /aria-label="Username to share with"/);
+  // The disabled placeholder button opens nothing, so it claims no popup.
+  const blank = html({ ...OPEN, userShare: { kind: 'blank' } });
+  const placeholder = blank.match(/<button[^>]*>Share to user<\/button>/)[0];
+  assert.equal(placeholder.includes('aria-haspopup'), false);
+});
+
+test('opening the share popover flips the button to aria-expanded="true"', () => {
+  assert.match(VIEWER_TSX, /aria-expanded=\{pop\.open\}/,
+    'bound to the same flag that shows the card');
+});
+
 test('the two halves render as tabs, and an empty half keeps its own', () => {
   const out = html({
     ...OPEN,
