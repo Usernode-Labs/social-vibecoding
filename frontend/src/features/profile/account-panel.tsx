@@ -17,8 +17,12 @@
  *
  * ── More ───────────────────────────────────────────────────────────────
  *
- * Challenges & standings, Kudos, Friends and Settings, each with a line that
- * says what is behind it. Friends was a section of its own under these rows
+ * App slots, Challenges & standings, Kudos, Friends and Settings, each with a
+ * line that says what is behind it. App slots (#3250) is the one place the
+ * allowance shows outside the create dialog, so a "your app quota changed"
+ * notice has somewhere to point: "1 of 2 app slots used", from the session's
+ * allowance store. A plain click opens the create dialog in place, whose
+ * allowance card offers "Request more"; a modified click keeps `#create`. Friends was a section of its own under these rows
  * (#2386); it is a row now, with the one number it is allowed ("1 request
  * waiting": friends themselves are never counted), and it opens the same
  * section as a card over this screen (./friends-sheet.tsx), at its own
@@ -58,10 +62,11 @@ import { type ReactNode } from 'react';
 
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { IconTile } from '@/components/ui/icon-tile';
-import { BallotIcon, ChatIcon, CogIcon, HandRaisedIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon } from '@/components/ui/icons';
+import { AppWindowIcon, BallotIcon, ChatIcon, CogIcon, HandRaisedIcon, ThumbsUpIcon, TrophyIcon, UserGroupIcon } from '@/components/ui/icons';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
 import { walletSheetStore } from '../header/wallet-sheet-store';
+import { appSlotsLine, useAppAllowance } from '../dialogs/app-allowance';
 import { Profile } from './profile.js';
 
 /** The rows' two lines are the primitive's, a size down, as the prototype sets them. */
@@ -134,6 +139,8 @@ export function MorePanel({ rows }: {
   // The wallet is a Settings row only in the native app (its store reveals
   // it with the bridge's capability), so the line names it only there.
   const wallet = (useStoreState(walletSheetStore) as { visible: boolean }).visible;
+  const allowance = useAppAllowance();
+  const slotsLine = appSlotsLine(allowance.quota, allowance.requestedAt as string | null);
   const settingsLine = ['Account', 'alerts', 'keys']
     .concat(wallet ? ['wallet'] : [], isAdmin ? ['admin'] : [])
     .join(', ');
@@ -142,6 +149,21 @@ export function MorePanel({ rows }: {
       {/* SectionHeader's own `px-4`, on the rows' content edge (#2832). */}
       <SectionHeader>More</SectionHeader>
       <GroupedList className="mx-0" tone="plane">
+        <ListRow
+          as="a"
+          id="profile-row-app-slots"
+          href="#create"
+          onClick={(event) => {
+            if (!plainClick(event)) return;
+            event.preventDefault();
+            (window as unknown as { App?: { showCreateModal?: () => void } }).App?.showCreateModal?.();
+          }}
+          leading={<IconTile size="sm"><AppWindowIcon /></IconTile>}
+          title="App slots"
+          titleClassName={TITLE}
+          subtitle={slotsLine || 'How many apps you can create'}
+          subtitleClassName={SUBTITLE}
+        />
         <ListRow
           as="a"
           id="profile-row-challenges"
