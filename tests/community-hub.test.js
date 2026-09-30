@@ -119,7 +119,7 @@ test('the hub\'s channel card shows the last messages, what is new, and the way 
   assert.match(withPost, /<button type="submit" class="dev-ws-hub-compose-send" data-ws-channel-send="" aria-label="Send" disabled="">/,
     'nothing to send yet');
   assert.doesNotMatch(html, /data-ws-channel-archive/, 'no archive on an ordinary project');
-  // Homeroom's: #general, with its old discussion one tap away, read-only.
+  // Homeroom's: #general, and no link to its old discussion (#3406).
   const homeroom = renderToHtml(createElement(ChannelCard, {
     slug: 'homeroom',
     name: 'Homeroom',
@@ -130,7 +130,8 @@ test('the hub\'s channel card shows the last messages, what is new, and the way 
   assert.match(homeroom, /data-ws-channel-handle="general"/);
   assert.match(homeroom, /<span class="dev-ws-hub-handle">#general<\/span>/);
   assert.match(homeroom, /<a href="#messages\/1" class="dev-ws-hub-open/);
-  assert.match(homeroom, /<a href="#messages\/app\/homeroom" class="dev-ws-hub-archive" data-ws-channel-archive="">Earlier project discussion, read-only/);
+  assert.doesNotMatch(homeroom, /data-ws-channel-archive|dev-ws-hub-archive|Earlier project discussion/,
+    'the channel card links to no archive');
   // Nothing to draw without a record, or for a viewer who may not talk here.
   assert.equal(renderToHtml(createElement(ChannelCard, { slug: 'garden', name: 'Garden', data: null })), '');
   assert.equal(renderToHtml(createElement(ChannelCard, { slug: 'garden', name: 'Garden', data: community({ channel: null }) })), '');
@@ -190,5 +191,5 @@ test('#general needs the Homeroom community to post in; Homeroom\'s old channel 
   assert.match(STORE, /archived: app\.self_hosted === true,\s*readOnly: app\.can_collaborate === false \|\| app\.self_hosted === true,/);
   const route2 = read('src/routes/apps.js');
   assert.match(route2, /if \(app\.slug === config\.selfAppSlug\) \{\s*const general = await communities\.generalChannelSummary\(pool, req\.user\?\.id\);/);
-  assert.match(route2, /archive_href: `#messages\/app\/\$\{encodeURIComponent\(app\.slug\)\}`,/);
+  assert.doesNotMatch(route2, /archive_href/, 'the hub names no archive (#3406)');
 });
