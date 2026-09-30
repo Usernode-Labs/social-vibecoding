@@ -11,6 +11,7 @@ const communities = require('../services/communities');
 const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
+const conversationsSvc = require('../services/conversations');
 const {
   appChatReadLimiter,
   attachmentUploadLimiter,
@@ -1139,8 +1140,12 @@ function chatRoutes(config) {
   //      so suggestions match who can actually act on a mention),
   //   3. the app creator,
   //   4. the members of the app's community (#3361), after the three above.
-  // De-duplicated, alphabetical, capped. The client caches this once per
-  // app mount and filters by prefix locally; usernames are returned in
+  // De-duplicated, alphabetical, capped. The chat composer caches this once
+  // per app mount and filters by prefix locally. #3361: `?q=` narrows it on
+  // the server instead (the hub's channel composer), with the conversation
+  // list's prefix rules (conversations.mentionPrefixQuery) and a cap of 25,
+  // so in a community past the 500-row cap a new member is still found by
+  // name; usernames are returned in
   // canonical casing so the inserted @mention renders correctly. Auth is
   // enforced by the global JWT gate (this is a GET under /api/).
   router.get('/api/apps/:slug/mention-suggestions', async (req, res) => {
@@ -1153,6 +1158,10 @@ function chatRoutes(config) {
       }
       const appId = app.id;
       const createdBy = app.created_by;
+      // Only after the access check: a refused viewer learns nothing from q.
+      const prefixed = req.query.q !== undefined;
+      const query = prefixed ? conversationsSvc.mentionPrefixQuery(req.query.q) : null;
+      if (prefixed && query === null) return res.json({ users: [] });
 
       // Active-user ids, via the shared definition. Non-fatal: if this
       // lookup fails we still return chat authors + creator.
@@ -1208,9 +1217,14 @@ function chatRoutes(config) {
                 )
             AND (u.id IN (SELECT user_id FROM engaged)
              OR u.id IN (SELECT user_id FROM members))
+            AND ($5::text IS NULL OR LOWER(u.username) LIKE LOWER($5::text) || '%' ESCAPE '\\')
           ORDER BY friend DESC, engaged DESC, sort_name
-          LIMIT 500`,
-        [appId, ids, req.user.id, !!app.self_hosted]
+          LIMIT $6`,
+        [
+          appId, ids, req.user.id, !!app.self_hosted,
+          prefixed ? conversationsSvc.escapeMentionLike(query) : null,
+          prefixed ? conversationsSvc.MENTION_CANDIDATES_MAX : 500,
+        ]
       );
 
       res.json({

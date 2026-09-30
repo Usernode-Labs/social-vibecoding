@@ -38,22 +38,23 @@ const between = (src, from, to) => {
 test('a channel asks the server for the people matching the typed prefix', () => {
   const effect = between(COMPOSER, 'const isChannel = ', 'const mention = useMemo');
   assert.match(effect, /active\?\.kind === 'channel'/);
-  assert.match(effect, /api\.getMentionCandidates\(conversationId, mentionPrefix\)/);
-  // After a pause in typing, not on every keystroke, and remembered per
-  // prefix for this conversation.
-  assert.match(effect, /window\.setTimeout\(/);
+  // One lookup per conversation, which orders, shares and remembers requests.
+  assert.match(effect, /prefixLookup\(\(query\) => api\.getMentionCandidates\(conversationId, query, CHANNEL_MENTION_LIMIT\)\)/);
+  assert.match(effect, /\[isChannel, conversationId\]\)/, 'a different conversation starts a fresh lookup');
+  // After a pause in typing unless already answered; a superseded answer
+  // (null) or one for an effect since torn down never lands.
+  assert.match(effect, /window\.setTimeout\(ask, 120\)/);
   assert.match(effect, /window\.clearTimeout\(timer\)/);
-  assert.match(effect, /channelLookups\.current\.get\(key\)/);
-  assert.match(effect, /useEffect\(\(\) => \{ channelLookups\.current = new Map\(\); \}, \[conversationId\]\)/,
-    'a different conversation starts with nothing remembered');
-  // A failure shows no list and no error; the send's error state is the send's.
-  assert.doesNotMatch(effect, /setError\(/);
+  assert.match(effect, /if \(live && users\) setChannelPeople\(\{ lookup: channelLookup, key, users \}\)/);
+  assert.doesNotMatch(effect, /setError\(/, 'the send\'s error state is the send\'s');
 });
 
-test('the list offers channel people only for the conversation they came from', () => {
+test('the list shows only the answer for what is typed now', () => {
   const memo = between(COMPOSER, 'const mention = useMemo', 'const channelMatches');
-  assert.match(memo, /if \(isChannel\) \{\s*const people = channelPeople\.conversationId === conversationId \? channelPeople\.users : \[\];/);
-  // The same prefix filter, friends first and six rows as the roster path.
+  assert.match(memo, /channelPeople\.lookup === channelLookup/, 'never another conversation\'s people');
+  assert.match(memo, /channelPeople\.key === prefix/);
+  assert.match(memo, /prefix\.startsWith\(channelPeople\.key\) && channelPeople\.users\.length < CHANNEL_MENTION_LIMIT/,
+    'a shorter prefix\'s answer only while it was complete');
   assert.match(memo, /orderFriendsFirst\(people\.filter\(\(member\) => member\.username\.toLowerCase\(\)\.startsWith\(prefix\)\), friendIds\)\.slice\(0, 6\)/);
   // Groups and DMs keep their loaded roster, accepted members only.
   assert.match(memo, /orderFriendsFirst\(\(active\?\.members \|\| \[\]\)\.filter\(\(member\) => member\.status === 'member'/);
@@ -62,9 +63,65 @@ test('the list offers channel people only for the conversation they came from', 
 test('the client calls the read-gated endpoint with a bounded prefix and limit', () => {
   const fn = between(API, 'export async function getMentionCandidates', '\n}\n');
   assert.match(fn, /\/api\/conversations\/\$\{id\}\/mention-candidates\?q=\$\{q\}&limit=\$\{limit\}/);
-  assert.match(fn, /prefix\.slice\(0, 32\)/);
+  assert.match(fn, /prefix\.slice\(0, 64\)/);
   assert.match(fn, /encodeURIComponent/);
   assert.match(fn, /\.map\(normalizeUser\)\.filter\(\(user\) => user\.id\)/);
+});
+
+// ── lib/prefix-lookup.ts, driven with deferred answers ───────────────
+
+function deferredFetcher() {
+  const calls = [];
+  const fetcher = (query) => new Promise((resolve, reject) => { calls.push({ query, resolve, reject }); });
+  return { calls, fetcher };
+}
+
+test('an answer that lands after a later prefix was asked is dropped', async () => {
+  const { prefixLookup } = loadTsx('frontend/src/lib/prefix-lookup.ts');
+  const { calls, fetcher } = deferredFetcher();
+  const lookup = prefixLookup(fetcher);
+  const short = lookup.ask('a');
+  const long = lookup.ask('alex');
+  // Reverse order: the long prefix answers first, then the slow short one.
+  calls[1].resolve(['alex']);
+  calls[0].resolve(['amy', 'alex', 'ann']);
+  assert.deepEqual(await long, ['alex']);
+  assert.equal(await short, null, '`@a` no longer decides the list');
+  // Both answers are remembered for their own prefix.
+  assert.deepEqual(lookup.cached('A'), ['amy', 'alex', 'ann']);
+  // Going back to `@a` answers from memory, with no new request.
+  assert.deepEqual(await lookup.ask('a'), ['amy', 'alex', 'ann']);
+  assert.equal(calls.length, 2);
+});
+
+test('the same prefix asked twice shares one request, and a failure is not remembered', async () => {
+  const { prefixLookup } = loadTsx('frontend/src/lib/prefix-lookup.ts');
+  const { calls, fetcher } = deferredFetcher();
+  const lookup = prefixLookup(fetcher);
+  const first = lookup.ask('bo');
+  const again = lookup.ask('BO');
+  assert.equal(calls.length, 1, 'in flight is shared, case-insensitively');
+  calls[0].resolve(['bob']);
+  assert.deepEqual(await first, ['bob'], 'the same prefix is still the one being typed');
+  assert.deepEqual(await again, ['bob']);
+
+  const failed = lookup.ask('zz');
+  calls[1].reject(new Error('offline'));
+  assert.deepEqual(await failed, [], 'the latest prefix failing closes the list');
+  assert.equal(lookup.cached('zz'), null);
+  const retry = lookup.ask('zz');
+  assert.equal(calls.length, 3, 'and the next ask tries again');
+  calls[2].resolve(['zz_1']);
+  assert.deepEqual(await retry, ['zz_1']);
+});
+
+test('conversation tokens take legacy punctuation; app chat tokens do not', () => {
+  const { detectMentionToken } = loadTsx('frontend/src/features/dev-board/card/mention-typeahead.tsx');
+  assert.deepEqual(detectMentionToken('hi @ann-', 8, true), { start: 3, query: 'ann-' });
+  assert.deepEqual(detectMentionToken('hi @ann-m.x', 11, true), { start: 3, query: 'ann-m.x' });
+  assert.equal(detectMentionToken('mail@host', 9, true), null, 'an address is not a mention');
+  assert.equal(detectMentionToken('hi @ann-', 8, false), null, 'the app chat grammar stops at the hyphen');
+  assert.deepEqual(detectMentionToken('hi @ann', 7, false), { start: 3, query: 'ann' });
 });
 
 test('the server reuses the message-read gate and the directory rate limit', () => {
@@ -93,15 +150,18 @@ test('the hub composer suggests people: the app list, or #general by prefix', ()
   assert.equal(conversationIdFromPostUrl('/api/conversations/42/messages?x=1'), null);
 
   const hub = between(HUB, 'function HubComposer', '\n}\n');
-  assert.match(hub, /useMentionTypeahead\(\{\s*slug, inputRef, value: text, onChange: setText, lookup: conversationId \? lookup : undefined,/);
-  assert.match(hub, /\/api\/conversations\/\$\{conversationId\}\/mention-candidates\?q=\$\{encodeURIComponent\(query\)\}&limit=8/);
+  // Both rooms are asked by prefix: #general's conversation, or the app's
+  // list with ?q=, which finds a member past the whole list's 500-row cap.
+  assert.match(hub, /\/api\/conversations\/\$\{conversationId\}\/mention-candidates\?q=\$\{q\}&limit=8/);
+  assert.match(hub, /\$\{mentionSuggestionsPath\(slug\)\}\?q=\$\{q\}/);
+  assert.match(hub, /useMentionTypeahead\(\{\s*slug, inputRef, value: text, onChange: setText, lookup, wideTokens: !!conversationId,/);
   assert.match(hub, /ref=\{inputRef\}/);
   assert.match(hub, /mention\.onKeyDown\(e\)/, 'an open list owns Enter, so it picks rather than sends');
   assert.match(hub, /<FeedMentionMenu/);
 
-  // The hook takes the prefix lookup in place of the app's one list.
+  // The hook asks through the ordered lookup and applies only a live answer.
   const sync = between(TYPEAHEAD, 'const sync = useCallback', 'const accept = useCallback');
-  assert.match(sync, /if \(lookup\) \{/);
-  assert.match(sync, /looked\.current\.get\(key\)/);
-  assert.match(sync, /void lookup\(token\.query\)/);
+  assert.match(sync, /if \(asker\) \{/);
+  assert.match(sync, /asker\.ask\(token\.query\)\.then\(\(found\) => \{ if \(found\) apply\(found\); \}\)/);
+  assert.match(TYPEAHEAD, /const asker = useMemo\(\(\) => \(lookup \? prefixLookup\(lookup\) : null\), \[lookup\]\)/);
 });

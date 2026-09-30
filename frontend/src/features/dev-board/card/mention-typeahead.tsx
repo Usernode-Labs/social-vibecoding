@@ -32,9 +32,10 @@
  * the composer's send chord (feed-thread.tsx).
  */
 
-import { useCallback, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from 'react';
 
 import { useIsomorphicLayoutEffect } from '../../../lib/legacy-dom';
+import { prefixLookup } from '../../../lib/prefix-lookup';
 import { MentionMenuView } from '../../group-chat/autocomplete';
 
 /** The character class the server's MENTION_RE recognises. */
@@ -51,6 +52,13 @@ const TRIGGER_RE = new RegExp(
   `(^|[^${MENTION_CHARS}])@([${MENTION_CHARS}]{0,${MENTION_MAX_LEN}})$`,
 );
 
+// #3361: a conversation's mention parser (services/conversations.js
+// mentionsUsername) matches the exact username, and legacy or imported
+// accounts carry hyphens and other punctuation. Where the room is a
+// conversation, a token is any run of non-space, non-@ characters, capped.
+export const WIDE_MENTION_MAX_LEN = 64;
+const WIDE_TRIGGER_RE = new RegExp(`(^|\\s)@([^\\s@]{0,${WIDE_MENTION_MAX_LEN}})$`);
+
 export interface MentionToken {
   /** Index of the `@` in the value. */
   start: number;
@@ -58,10 +66,14 @@ export interface MentionToken {
   query: string;
 }
 
-/** The `@token` immediately before `caret`, or null when there is none. */
-export function detectMentionToken(value: string, caret: number): MentionToken | null {
+/**
+ * The `@token` immediately before `caret`, or null when there is none.
+ * `wide` takes the conversation grammar (WIDE_TRIGGER_RE) instead of the
+ * app chat's.
+ */
+export function detectMentionToken(value: string, caret: number, wide = false): MentionToken | null {
   if (caret < 0 || caret > value.length) return null;
-  const m = value.slice(0, caret).match(TRIGGER_RE);
+  const m = value.slice(0, caret).match(wide ? WIDE_TRIGGER_RE : TRIGGER_RE);
   if (!m || m.index == null) return null;
   return { start: m.index + m[1].length, query: m[2] };
 }
@@ -209,7 +221,7 @@ export interface MentionTypeahead {
 }
 
 export function useMentionTypeahead({
-  slug, inputRef, value, onChange, lookup,
+  slug, inputRef, value, onChange, lookup, wideTokens = false,
 }: {
   slug: string;
   inputRef: RefObject<HTMLTextAreaElement | HTMLInputElement | null>;
@@ -218,11 +230,13 @@ export function useMentionTypeahead({
   onChange: (next: string) => void;
   /**
    * #3361: ask for the people matching what has been typed, instead of the
-   * app's whole list. For a room whose people are everybody (#general, on
-   * Homeroom's own hub), where one list per app would be the platform.
-   * Answers are remembered per prefix while the field is mounted.
+   * app's whole list. Answers are remembered per prefix, a request in flight
+   * is shared, and an answer for a prefix that is no longer the one being
+   * typed is dropped (lib/prefix-lookup.ts).
    */
   lookup?: (query: string) => Promise<string[]>;
+  /** Tokens use the conversation grammar (hyphens and all), not the app chat's. */
+  wideTokens?: boolean;
 }): MentionTypeahead {
   const [items, setItems] = useState<string[]>([]);
   const [active, setActive] = useState(-1);
@@ -231,7 +245,7 @@ export function useMentionTypeahead({
   const tokenStart = useRef(-1);
   const composing = useRef(false);
   const pendingCaret = useRef<number | null>(null);
-  const looked = useRef(new Map<string, string[]>());
+  const asker = useMemo(() => (lookup ? prefixLookup(lookup) : null), [lookup]);
 
   const close = useCallback(() => {
     tokenStart.current = -1;
@@ -248,7 +262,7 @@ export function useMentionTypeahead({
       // after which the person may have moved on, or away.
       const caret = el.selectionStart;
       const token = document.activeElement === el && caret != null && caret === el.selectionEnd
-        ? detectMentionToken(el.value, caret)
+        ? detectMentionToken(el.value, caret, wideTokens)
         : null;
       const next = token ? filterMentionCandidates(names, token.query) : [];
       if (!token || !next.length) { close(); return; }
@@ -257,31 +271,26 @@ export function useMentionTypeahead({
       // The top row is highlighted whenever the set changes, as the chat's is.
       setActive(0);
     };
-    if (lookup) {
+    if (asker) {
       const caret = el.selectionStart;
-      const token = caret == null ? null : detectMentionToken(el.value, caret);
+      const token = caret == null ? null : detectMentionToken(el.value, caret, wideTokens);
       if (!token) { close(); return; }
-      const key = token.query.toLowerCase();
-      const known = looked.current.get(key);
-      if (known) { apply(known); return; }
-      void lookup(token.query).then((found) => {
-        looked.current.set(key, found);
-        apply(found);
-      }, () => close());
+      // null: a later prefix has been asked since, and its answer decides.
+      void asker.ask(token.query).then((found) => { if (found) apply(found); });
       return;
     }
     const names = cachedMentionCandidates(slug);
     if (names) { apply(names); return; }
     close();
     const caret = el.selectionStart;
-    if (caret == null || !detectMentionToken(el.value, caret)) return;
+    if (caret == null || !detectMentionToken(el.value, caret, wideTokens)) return;
     void loadMentionCandidates(slug).then(apply);
-  }, [slug, inputRef, close, lookup]);
+  }, [slug, inputRef, close, asker, wideTokens]);
 
   const warm = useCallback(() => {
-    if (lookup) return;
+    if (asker) return;
     if (!cachedMentionCandidates(slug)) void loadMentionCandidates(slug);
-  }, [slug, lookup]);
+  }, [slug, asker]);
 
   const accept = useCallback((username: string) => {
     const el = inputRef.current;

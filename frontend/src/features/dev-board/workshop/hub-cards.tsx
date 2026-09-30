@@ -51,7 +51,7 @@ import { ArrowUpIcon, BoardIcon, ChevronDownIcon, ChevronRightIcon } from '@/com
 import { agoStamp } from '../../../lib/timestamp';
 import { swatchFor } from '../../messages/format';
 import { CardRowView } from '../card/fold';
-import { FeedMentionMenu, useMentionTypeahead } from '../card/mention-typeahead';
+import { FeedMentionMenu, mentionSuggestionsPath, useMentionTypeahead } from '../card/mention-typeahead';
 import type { DevWorkshopView, ListRow } from '../card/model';
 import { reloadCommunity, type CommunityPayload } from './community-card';
 
@@ -143,12 +143,14 @@ export function conversationIdFromPostUrl(url: string): number | null {
  * sends it. A sent message clears the box and re-reads the hub, so it shows
  * up among the last few above; a refusal keeps the draft and says why.
  *
- * #3361: `@` offers people here as it does in the room itself. An app's
- * channel reads the app's list (GET /api/apps/:slug/mention-suggestions,
- * which the room's own composer uses); #general, on Homeroom's own hub,
- * asks its conversation by prefix (GET /api/conversations/:id/mention-
- * candidates), because its people are everybody. Either answers only a
- * viewer who may read that room.
+ * #3361: `@` offers people here as it does in the room itself, asked for by
+ * the prefix being typed. An app's channel asks the app's list
+ * (GET /api/apps/:slug/mention-suggestions?q=, which the room's own composer
+ * reads whole), so a member of a large community is found by name; #general,
+ * on Homeroom's own hub, asks its conversation (GET /api/conversations/:id/
+ * mention-candidates), whose people are everybody and whose usernames may
+ * carry hyphens (wide tokens). Either answers only a viewer who may read
+ * that room.
  */
 function HubComposer({ slug, url, placeholder }: { slug: string; url: string; placeholder: string }) {
   const [text, setText] = useState('');
@@ -157,13 +159,16 @@ function HubComposer({ slug, url, placeholder }: { slug: string; url: string; pl
   const inputRef = useRef<HTMLInputElement>(null);
   const conversationId = conversationIdFromPostUrl(url);
   const lookup = useCallback(async (query: string): Promise<string[]> => {
-    const res = await fetch(`/api/conversations/${conversationId}/mention-candidates?q=${encodeURIComponent(query)}&limit=8`);
+    const q = encodeURIComponent(query);
+    const res = await fetch(conversationId
+      ? `/api/conversations/${conversationId}/mention-candidates?q=${q}&limit=8`
+      : `${mentionSuggestionsPath(slug)}?q=${q}`);
     if (!res.ok) return [];
     const data = await res.json().catch(() => null);
     return Array.isArray(data?.users) ? data.users.map((u: any) => String((u && u.username) || '')).filter(Boolean) : [];
-  }, [conversationId]);
+  }, [conversationId, slug]);
   const mention = useMentionTypeahead({
-    slug, inputRef, value: text, onChange: setText, lookup: conversationId ? lookup : undefined,
+    slug, inputRef, value: text, onChange: setText, lookup, wideTokens: !!conversationId,
   });
   const send = async (e: FormEvent) => {
     e.preventDefault();

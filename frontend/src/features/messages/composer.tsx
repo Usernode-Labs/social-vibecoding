@@ -6,11 +6,14 @@ import { channels, draftFor, notifyTyping, replyFor, scopeKey, send, setDraft, s
 import type { ConversationUser, MessageAttachment, SharedObjectReference } from './types';
 import { fileSize } from './format';
 import { useAutoGrow } from '../../lib/use-auto-grow';
+import { prefixLookup, type PrefixLookup } from '../../lib/prefix-lookup';
 import { orderFriendsFirst, useFriendIds } from '../friends/store';
 import { wantsKeyboardFocus } from '../message-actions/focus';
 import { completedShortcodeAt, findShortcodeToken, matchShortcodes, replaceShortcodeToken } from '../message-actions/emoji-shortcodes';
 
 const MAX_ATTACHMENTS = 4;
+// People asked for per `@` prefix in a channel (#3361).
+const CHANNEL_MENTION_LIMIT = 8;
 
 function attachmentLimit(file: File): number {
   const name = file.name.toLowerCase();
@@ -119,40 +122,45 @@ export function MessageComposer({ threadRootId = null }: { threadRootId?: number
   // #3361: a channel's roster is counted, not loaded (the server's
   // serializeConversation), so `active.members` is empty there and `@`
   // offered nobody. A channel asks the server for the people matching what
-  // has been typed instead, a beat after the last keystroke, and remembers
-  // each answer for this conversation. Groups and DMs keep reading their
-  // loaded roster below, exactly as before.
+  // has been typed instead, a beat after the last keystroke. One lookup per
+  // conversation (lib/prefix-lookup.ts) remembers each answer, shares a
+  // request in flight and drops an answer for a prefix no longer being
+  // typed, so a slow `@a` cannot replace the list for `@alex`. Groups and
+  // DMs keep reading their loaded roster below, exactly as before.
   const isChannel = active?.kind === 'channel';
-  const channelLookups = useRef(new Map<string, ConversationUser[]>());
-  const [channelPeople, setChannelPeople] = useState<{ conversationId: number; users: ConversationUser[] }>({ conversationId: 0, users: [] });
-  useEffect(() => { channelLookups.current = new Map(); }, [conversationId]);
+  const channelLookup = useMemo<PrefixLookup<ConversationUser> | null>(() => (isChannel && conversationId
+    ? prefixLookup((query) => api.getMentionCandidates(conversationId, query, CHANNEL_MENTION_LIMIT))
+    : null), [isChannel, conversationId]);
+  const [channelPeople, setChannelPeople] = useState<{ lookup: PrefixLookup<ConversationUser> | null; key: string; users: ConversationUser[] }>({ lookup: null, key: '', users: [] });
   useEffect(() => {
-    if (!isChannel || !conversationId || mentionPrefix === undefined) return undefined;
+    if (!channelLookup || mentionPrefix === undefined) return undefined;
     const key = mentionPrefix.toLowerCase();
-    const known = channelLookups.current.get(key);
-    if (known) { setChannelPeople({ conversationId, users: known }); return undefined; }
     let live = true;
-    const timer = window.setTimeout(() => {
-      api.getMentionCandidates(conversationId, mentionPrefix)
-        .then((users) => {
-          channelLookups.current.set(key, users);
-          if (live) setChannelPeople({ conversationId, users });
-        })
-        .catch(() => { /* no list is the old behaviour; the next keystroke asks again */ });
-    }, 120);
+    const ask = () => {
+      void channelLookup.ask(mentionPrefix).then((users) => {
+        if (live && users) setChannelPeople({ lookup: channelLookup, key, users });
+      });
+    };
+    if (channelLookup.cached(mentionPrefix)) { ask(); return () => { live = false; }; }
+    const timer = window.setTimeout(ask, 120);
     return () => { live = false; window.clearTimeout(timer); };
-  }, [isChannel, conversationId, mentionPrefix]);
+  }, [channelLookup, mentionPrefix]);
 
   const mention = useMemo(() => {
     if (mentionPrefix === undefined) return null;
     const prefix = mentionPrefix.toLowerCase();
     if (isChannel) {
-      const people = channelPeople.conversationId === conversationId ? channelPeople.users : [];
+      // The answer for this prefix, or — while it loads — for a shorter one
+      // whose answer was complete (under the limit), which narrows exactly.
+      const held = channelPeople.lookup === channelLookup
+        && (channelPeople.key === prefix
+          || (prefix.startsWith(channelPeople.key) && channelPeople.users.length < CHANNEL_MENTION_LIMIT));
+      const people = held ? channelPeople.users : [];
       return orderFriendsFirst(people.filter((member) => member.username.toLowerCase().startsWith(prefix)), friendIds).slice(0, 6);
     }
     return orderFriendsFirst((active?.members || []).filter((member) => member.status === 'member'
       && member.username.toLowerCase().startsWith(prefix)), friendIds).slice(0, 6);
-  }, [active?.members, isChannel, channelPeople, conversationId, mentionPrefix, friendIds]);
+  }, [active?.members, isChannel, channelPeople, channelLookup, mentionPrefix, friendIds]);
 
   // #2783: `#` offers the viewer's channels — #general and their apps' —
   // and inserts `#handle`, which every chat renders as a link to it. Only a

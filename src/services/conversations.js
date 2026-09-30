@@ -650,20 +650,36 @@ async function listThread(pool, user, conversationId, rootId, { before = null, l
 // is everyone who can read it and is exactly who a channel @mention notifies
 // (sendMessage). Never the viewer, never anybody blocked in either
 // direction, never an invitee. Bounded: a prefix of at most
-// MENTION_QUERY_MAX mention characters, LIKE-escaped, and at most
+// MENTION_QUERY_MAX characters of username text, LIKE-escaped, and at most
 // MENTION_CANDIDATES_MAX rows. Friends lead, then whoever spoke here most
 // recently (read off the room's last MENTION_RECENT_WINDOW messages in the
 // same statement, so there is no per-person lookup), then A to Z. The
 // projection is the public identity every message row already carries: id,
 // username and avatar.
-const MENTION_QUERY_MAX = 32;
+const MENTION_QUERY_MAX = 64;
 const MENTION_CANDIDATES_DEFAULT = 8;
 const MENTION_CANDIDATES_MAX = 25;
 const MENTION_RECENT_WINDOW = 1000;
 
-function mentionQuery(raw) {
-  if (typeof raw !== 'string') return '';
-  return raw.trim().replace(/^@/, '').slice(0, MENTION_QUERY_MAX);
+// The typed prefix, or null when it cannot begin any username. Usernames
+// are not only [A-Za-z0-9_]: legacy and imported accounts carry hyphens and
+// other punctuation, and mentionsUsername below matches them exactly, so the
+// prefix may be any text a composer's `@token` can hold (no whitespace, no
+// second `@`), clipped to MENTION_QUERY_MAX. The query is parameterised and LIKE-escaped, so no
+// character in it widens the match. Shared with the app channel's list
+// (routes/chat.js mention-suggestions) so the two accept the same text.
+function mentionPrefixQuery(raw) {
+  if (raw == null) return '';
+  if (typeof raw !== 'string') return null;
+  const query = raw.trim().replace(/^@/, '');
+  if (/[\s@]/u.test(query)) return null;
+  // A longer prefix is clipped, never rejected: every answer to the clipped
+  // one is still narrowed by the full text in the composer.
+  return query.slice(0, MENTION_QUERY_MAX);
+}
+
+function escapeMentionLike(query) {
+  return query.replace(/([\\%_])/g, '\\$1');
 }
 
 function mentionLimit(raw) {
@@ -675,11 +691,9 @@ function mentionLimit(raw) {
 async function mentionCandidates(pool, user, conversationId, { q = '', limit } = {}) {
   const membership = await loadMembership(pool, conversationId, user.id, { allowDeletedPeer: true });
   if (!membership || !(await canReadConversation(pool, membership, user.id))) return null;
-  const query = mentionQuery(q);
-  // Only mention characters can be part of a handle the server notifies,
-  // so anything else matches nobody rather than widening the search.
-  if (query && !/^[A-Za-z0-9_]+$/.test(query)) return [];
-  const escaped = query.replace(/([\\%_])/g, '\\$1');
+  const query = mentionPrefixQuery(q);
+  if (query === null) return [];
+  const escaped = escapeMentionLike(query);
   const { rows } = await pool.query(
     `WITH recent AS (
        SELECT w.sender_id, MAX(w.id) AS last_id
@@ -2036,6 +2050,9 @@ module.exports = {
   leave,
   removeMember,
   mentionCandidates,
+  mentionPrefixQuery,
+  escapeMentionLike,
+  MENTION_CANDIDATES_MAX,
   mentionsUsername,
   ensureChannelMemberships,
   sendMessage,

@@ -106,11 +106,14 @@ test('mention candidates: read-gated, bounded, public fields only', { timeout: 1
   const mallory = await user('mallory');
   const b_x = await user('b_x');
   const bzz = await user('bzz');
+  // Legacy/imported handles carry punctuation; mentionsUsername matches them.
+  const annMarie = await user('ann-marie');
+  const ann = await user('ann');
 
   const general = (await pool.query(
     `SELECT id FROM conversations WHERE kind = 'channel' AND channel_key = 'general'`
   )).rows[0].id;
-  for (const person of [alice, bob, bea, carol, dave, eve, mallory, b_x, bzz]) {
+  for (const person of [alice, bob, bea, carol, dave, eve, mallory, b_x, bzz, annMarie, ann]) {
     await conversations.ensureChannelMemberships(pool, person);
   }
   const say = async (who, conversationId, content) => {
@@ -201,6 +204,17 @@ test('mention candidates: read-gated, bounded, public fields only', { timeout: 1
     assert.equal((await candidates(alice, general, '?q=zz&limit=1000')).body.users.length, 25, 'hard cap');
   });
 
+  await t.test('a legacy handle with a hyphen is found past the hyphen', async () => {
+    assert.deepEqual(names(await candidates(alice, general, '?q=ann')), ['ann', 'ann-marie']);
+    assert.deepEqual(names(await candidates(alice, general, '?q=ann-')), ['ann-marie'], 'the hyphen narrows, not empties');
+    assert.deepEqual(names(await candidates(alice, general, '?q=%40Ann-M')), ['ann-marie']);
+    // Text no @token can hold matches nobody; a long prefix is clipped, not refused.
+    assert.deepEqual(names(await candidates(alice, general, '?q=ann%20marie')), []);
+    assert.deepEqual(names(await candidates(alice, general, '?q=a%40b')), []);
+    assert.deepEqual(names(await candidates(alice, general, '?q=a&q=b')), [], 'a repeated q is not a string');
+    assert.equal((await candidates(alice, general, `?q=${'x'.repeat(300)}`)).status, 200);
+  });
+
   await t.test('blocks hide people in both directions', async () => {
     await conversations.setBlock(pool, alice.id, bob.id, true);
     await conversations.setBlock(pool, bea.id, alice.id, true);
@@ -249,6 +263,35 @@ test('mention candidates: read-gated, bounded, public fields only', { timeout: 1
     const refused = await call(alice, '/api/apps/closed-project/mention-suggestions');
     assert.equal(refused.status, 404, 'a private community is not listed to an outsider');
     assert.ok(!JSON.stringify(refused.body).includes('mallory'));
+    const probed = await call(alice, '/api/apps/closed-project/mention-suggestions?q=mal');
+    assert.equal(probed.status, 404, 'a prefix does not get past the gate either');
+    assert.deepEqual(probed.body, refused.body);
+    assert.equal((await call(alice, '/api/apps/closed-project/mention-suggestions?q=a%20b')).status, 404,
+      'an invalid prefix is refused only after the gate, so it says nothing either');
+
+    // ?q= narrows on the server, with the same prefix rules and a 25 cap, so a
+    // silent member of a community past the 500-row cap is still found.
+    const crowd = await insertApp('crowd-project');
+    await pool.query(
+      `WITH made AS (
+         INSERT INTO users (username, password, has_platform_access)
+         SELECT 'crowd_' || lpad(g::text, 4, '0'), 'x', TRUE FROM generate_series(1, 520) g
+         RETURNING id
+       )
+       INSERT INTO community_members (community_id, user_id) SELECT $1, id FROM made`,
+      [crowd.community_id]
+    );
+    // Sorts after every crowd_ name, and has spoken nowhere: last in line.
+    const zoe = await user('zoe-new');
+    await join(crowd, zoe);
+    const whole = await call(alice, '/api/apps/crowd-project/mention-suggestions');
+    assert.equal(whole.body.users.length, 500);
+    assert.ok(!whole.body.users.some((u) => u.username === 'zoe-new'), 'lost to the cap without a prefix');
+    const found = await call(alice, '/api/apps/crowd-project/mention-suggestions?q=zoe-');
+    assert.deepEqual(found.body.users.map((u) => u.username), ['zoe-new']);
+    assert.equal((await call(alice, '/api/apps/crowd-project/mention-suggestions?q=crowd_')).body.users.length, 25);
+    assert.deepEqual((await call(alice, '/api/apps/crowd-project/mention-suggestions?q=%25')).body.users, []);
+    assert.deepEqual((await call(alice, '/api/apps/crowd-project/mention-suggestions?q=a%20b')).body.users, []);
 
     const platform = await insertApp('platform-self', { selfHosted: true });
     await join(platform, mallory);

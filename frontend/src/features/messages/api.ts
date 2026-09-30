@@ -292,7 +292,7 @@ export async function getConversation(id: number): Promise<ConversationDetail> {
 // username prefix in, at most `limit` people out (friends first, then whoever
 // spoke there last), from exactly the people who can read the room.
 export async function getMentionCandidates(id: number, prefix: string, limit = 8): Promise<ConversationUser[]> {
-  const q = encodeURIComponent(prefix.slice(0, 32));
+  const q = encodeURIComponent(prefix.slice(0, 64));
   const data = record(await request<unknown>(`/api/conversations/${id}/mention-candidates?q=${q}&limit=${limit}`));
   return array(pick(data, 'users')).map(normalizeUser).filter((user) => user.id);
 }
