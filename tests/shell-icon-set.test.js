@@ -275,9 +275,10 @@ test('the glyphs that do NOT prerender are the ones that render behind state', (
     'M4 5v6c0 4 16 4 16 0V5M4 11v6c0 4 16 4 16 0v-6',
     // THE GRID is back on this list with #852. #2759 put it behind state when
     // the all-apps Workshop's scope chip went, and #3051 brought the chip back
-    // as "All apps", drawing it unconditionally. #852 moves "All ⌄" into the
-    // header at every width (#header-scope-switch, drawn once the router says
-    // the Communities screen is up), so nothing prerenders the grid again.
+    // as "All apps", drawing it unconditionally. #852 moves it into the
+    // header at every width, as "Communities ⌄" (#header-scope-switch, drawn
+    // once the router says the Communities screen is up), so nothing
+    // prerenders the grid again.
     'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z',
     // DescriptionIcon: the Needs-you rail's Description, client-rendered
     // with the rest of that rail.

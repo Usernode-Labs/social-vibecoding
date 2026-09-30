@@ -76,7 +76,7 @@ test('#3270: the feed reads the owed populations for member projects only, newes
   assert.ok(route.DEMO_NEEDS_FEED.some((it) => it.kind === 'governance'));
 });
 
-test('#3271, #852: the Communities screen\'s header is its All switcher, at every width', () => {
+test('#3271, #852: the Communities screen\'s header is its switcher, at every width', () => {
   const header = read('frontend/src/features/header/header-title.tsx');
   assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
   assert.match(header, /id="header-scope-switch"[\s\S]{0,400}aria-controls="community-switcher"[\s\S]{0,200}onClick=\{\(e\) => toggleSwitcher\('header', e\.currentTarget\)\}/,

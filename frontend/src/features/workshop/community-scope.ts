@@ -25,7 +25,7 @@
  * "Your communities": All communities first, then each community you are in,
  * then "Join or start a community". It opens from the phone's tab pressed
  * while it is already lit, from the community's name and ⌄ in the coloured
- * header, and from the header's "All ⌄" on the Communities list.
+ * header, and from the header's "Communities ⌄" on the Communities list.
  * `openSwitcher(from)` says where, so a wide window can hang the menu off
  * whatever opened it.
  *

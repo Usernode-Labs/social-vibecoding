@@ -86,12 +86,14 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   // The hub's order, as agreed: the hero (who is here, what it is, what you
   // can do, the fortnight), what landed since your last visit, Needs you (a
   // quiet line when no vote is owed, #3408), the discussion's last two
-  // messages (or Share it, for Just you), your work, and Start a new change.
-  // One column at every width.
+  // messages (or Share it, for Just you), and your work. One column at every
+  // width. Start a new change ended it until #852's review moved it into the
+  // hero's ⋯ (tests/improve-action-deduplication.test.js).
   const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'discussion' ? ("));
-  const order = ['<CommunityCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard', 'data-ws-start-change'].map((x) => hub.indexOf(x));
-  assert.ok(order.every((n) => n >= 0), `all seven on the hub: ${JSON.stringify(order)}`);
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, Needs you, discussion, Share it, your work, Start a new change');
+  const order = ['<CommunityCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
+  assert.ok(order.every((n) => n >= 0), `all six on the hub: ${JSON.stringify(order)}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, Needs you, discussion, Share it, your work');
+  assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
   assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
     'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408)');
   assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
@@ -103,11 +105,15 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole.
   assert.match(LANDER, /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
-  // The Workshop tab: your work in full, the since list by week, All items
-  // with See all.
+  // The Workshop tab: your work (its first three, #852 review), All items
+  // with See all, then the since list by week.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
-  assert.ok(w('data-ws-mine=""') < w('data-ws-since=""') && w('data-ws-since=""') < w('data-ws-dashboard=""'));
+  assert.ok(w('data-ws-mine=""') < w('data-ws-dashboard=""') && w('data-ws-dashboard=""') < w('data-ws-since=""'),
+    'your work, All items, then what changed');
+  assert.match(ws, /v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
+  assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
+  assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
   assert.doesNotMatch(ws, /<ApprovalRules/);
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
   // All items leads with the approval rules, above the categories.

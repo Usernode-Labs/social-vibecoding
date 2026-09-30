@@ -56,10 +56,12 @@ import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 
 import {
-  AppWindowIcon, EllipsisHorizontalIcon, GitHubIcon, KeyIcon, LightBulbIcon, LockIcon, PencilSquareIcon, UserGroupIcon,
+  AppWindowIcon, EllipsisHorizontalIcon, GitHubIcon, KeyIcon, LightBulbIcon, LockIcon, PencilSparklesIcon,
+  PencilSquareIcon, UserGroupIcon,
 } from '@/components/ui/icons';
 
 import { callAppView } from './card/fold';
+import { Improve } from '../improve/improve-controller.js';
 import { FeaturedIllustrationEditor } from '../apps/featured-illustration-editor';
 
 export interface DevActionsRowProps {
@@ -317,7 +319,19 @@ export function DevPlusMenu({
                 for what they want, and the group needs no heading: it is the
                 menu's first, and "Settings & rules" below says where the
                 rest begins.
+
+                START A NEW CHANGE comes first (#852 review): it was the
+                hub's last line, a dashed button under the cards, and it is
+                the ⋯'s now. The Homeroom menu's own action
+                (Improve.startSession), which keeps its row there too.
             */}
+            <PlusRow
+              data-plus="new-change"
+              icon={<PencilSparklesIcon className={PLUS_ICON_CLS} aria-hidden="true" />}
+              title="Start a new change"
+              sub="Build it with an agent, then put it to a vote"
+              onClick={() => { callAppView('_closePlusMenu'); void Improve.startSession(); }}
+            />
             <PlusRow
               data-plus="issue"
               icon={<LightBulbIcon className={PLUS_ICON_CLS} aria-hidden="true" />}

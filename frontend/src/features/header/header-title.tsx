@@ -66,7 +66,7 @@
  * project page this bar wears the community's colour (app.css, "The
  * project's colour"), so the name and ⌄ read as the community's own.
  *
- * ── And on the Communities screen, the All switcher (#3271, #852) ─────
+ * ── And on the Communities screen, its switcher (#3271, #852) ──────────
  *
  * The Communities screen led with the same kind of chip, "All ⌄". On a phone
  * it sat under a header that only said "Communities" (which the lit tab
@@ -74,7 +74,8 @@
  * there (#3271), `#header-scope-switch`. #852 makes that every width and
  * drops the chip from the page: the control that says where you are lives
  * in the bar that says it everywhere else. It opens "Your communities", as
- * the app's name does.
+ * the app's name does, and it reads "Communities ⌄": the screen's own name,
+ * with "All communities" kept for the switcher's first row.
  *
  * The width is a media flag settled in an effect, so the first client render
  * is the prerender's (no button) and nothing here can mismatch hydration; by
@@ -132,7 +133,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';
   // At every width (#3295): the Workshop draws no chip of its own any more.
   const appSwitch = onWorkshop;
-  // The Communities screen, at every width: the title is its All switcher.
+  // The Communities screen, at every width: the title is its switcher.
   const allAppsSwitcher = screen === 'workshop-screen';
   const showTile = inApp;
 
@@ -166,8 +167,9 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
       <span className="inline-flex items-center gap-2 max-w-full align-middle">
         {appSwitch ? null : tile}
         {allAppsSwitcher ? (
-          /* THE ALL SWITCHER, in the bar (#3271, at every width since #852):
-             the grid, "All" and the ⌄, opening Your communities. */
+          /* THE COMMUNITIES SWITCHER, in the bar (#3271, at every width
+             since #852): the grid, "Communities" and the ⌄, opening Your
+             communities. */
           <button
             id="header-scope-switch"
             type="button"
@@ -177,11 +179,11 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             aria-haspopup="dialog"
             aria-expanded={switcherOpen ? 'true' : 'false'}
             aria-controls="community-switcher"
-            aria-label="All your communities, or open one"
+            aria-label="Communities: all of yours, or open one"
             onClick={(e) => toggleSwitcher('header', e.currentTarget)}
           >
             <Squares2X2Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-            <span id="header-title-name" className="min-w-0 truncate">All</span>
+            <span id="header-title-name" className="min-w-0 truncate">Communities</span>
             <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
           </button>
         ) : appSwitch ? (

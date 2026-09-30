@@ -43,7 +43,6 @@ import { useStoreState } from '../../lib/use-store-state';
 import { backButtonStore } from './back-button-store.js';
 import { ChromelessPill } from './chromeless-pill';
 import { useCommunityHeaderTint } from './community-tint';
-import { HeaderProjectTabs } from './header-project-tabs';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
 import { SidebarToggle } from '../nav/sidebar-toggle';
@@ -548,8 +547,6 @@ export function PlatformHeader() {
             ./header-title.tsx.
         */}
         <HeaderTitle titleRef={titleRef} />
-        {/* A project's tabs, in this row on a wide window (./header-project-tabs.tsx). */}
-        <HeaderProjectTabs />
         {/* `gap-2.5`, not `gap-1`. The bell and the mark are an ALERT and a
             MENU — one tells you something happened, the other opens the app's
             options — and at 4px they read as two halves of one segmented

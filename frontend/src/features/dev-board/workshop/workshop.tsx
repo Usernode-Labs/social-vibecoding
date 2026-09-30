@@ -57,7 +57,6 @@ import {
   EllipsisHorizontalIcon,
   HandRaisedIcon,
   PlayIcon,
-  PlusIcon,
   SparklesIcon,
   SpeechCheckIcon,
   Squares2X2Icon,
@@ -84,7 +83,7 @@ import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakeP
 import { WorkshopNotices } from './notices';
 import { ChannelCard, NeedsCard, NothingToVote, owesVote, YourWorkCard } from './hub-cards';
 import { ProjectDiscussion } from './project-discussion';
-import { ProjectBand, projectTabsStore, type ProjectTabKey } from './project-band';
+import { ProjectBand, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
 import { PageBack } from './page-back';
 import { readAskStream } from './ask-stream';
@@ -123,6 +122,9 @@ type TabKey = ProjectTabKey;
  * rather than leaves when there is nothing further back.
  */
 const SINCE_FIRST = 3;
+
+/** Your work on the Workshop tab: its first rows, the rest behind a reveal. */
+export const WORKSHOP_WORK_FIRST = 3;
 
 /** The since list with nothing in it: a first visit's, which still has weeks. */
 const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
@@ -3190,6 +3192,8 @@ export function DevWorkshop(): ReactNode {
   const [sinceSeen, setSinceSeen] = useState<Record<string, boolean>>({});
   // Whether the hub's Your work shows every row or its first two.
   const [workAll, setWorkAll] = useState(false);
+  // And the Workshop tab's, every row or its first WORKSHOP_WORK_FIRST.
+  const [mineAll, setMineAll] = useState(false);
   // Which of the three tabs is up. Seeded from the publish so a `?ws=` deep
   // link paints the right one on the FIRST frame rather than showing Current
   // status and then swapping — the same reason `openThemes` is seeded from
@@ -3336,7 +3340,7 @@ export function DevWorkshop(): ReactNode {
   // A layout effect, so a merged card's kudos pill is in its band on the
   // card's first frame rather than popping in after it (dev-kanban.tsx has
   // the same note).
-  const openSig = `${Object.values(openRows).join('|')}|since:${sinceExtra}:${Object.keys(sinceAllNew).join(',')}:${Object.keys(sinceSeen).join(',')}|work:${workAll}`;
+  const openSig = `${Object.values(openRows).join('|')}|since:${sinceExtra}:${Object.keys(sinceAllNew).join(',')}:${Object.keys(sinceSeen).join(',')}|work:${workAll}:${mineAll}`;
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -3367,14 +3371,6 @@ export function DevWorkshop(): ReactNode {
       ...(community ? { audience: community.audience, memberCount: Number(community.member_count) || 0 } : {}),
     });
   }, [v.slug, v.loading, owed, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]);
-  // The header's copy of the tabs, on a wide window (./project-band.tsx):
-  // which is up and what they count, and nothing once the page has gone.
-  useEffect(() => {
-    if (!v.slug || v.loading) return undefined;
-    projectTabsStore.set({ slug: v.slug, tab, owed, filtered: !!v.meta.filtered && tab !== 'all' });
-    return undefined;
-  }, [v.slug, v.loading, tab, owed, v.meta.filtered]);
-  useEffect(() => () => { projectTabsStore.set({ slug: null }); }, []);
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
@@ -3521,20 +3517,8 @@ export function DevWorkshop(): ReactNode {
           onAll={() => setWorkAll(!workAll)}
         />
       ) : null}
-      {/* START A NEW CHANGE, the hub's last line: the Homeroom menu's own
-          action (Improve.startSession), gated as StartHereBanner's is, and
-          not drawn under that banner, which already leads with it. */}
-      {!app.readOnly && !startHere ? (
-        <button
-          type="button"
-          className="dev-ws-start-change"
-          data-ws-start-change=""
-          onClick={() => { void Improve.startSession(); }}
-        >
-          <PlusIcon className="w-4 h-4" aria-hidden="true" />
-          Start a new change
-        </button>
-      ) : null}
+      {/* Start a new change was the hub's last line; it is the hero's ⋯
+          now (../actions-row.tsx), as well as the Homeroom menu's. */}
       </>
       ) : null}
 
@@ -3543,10 +3527,11 @@ export function DevWorkshop(): ReactNode {
         <ProjectDiscussion slug={slug} name={app.name || community?.name || slug} data={community} />
       ) : null}
 
-      {/* ── THE WORKSHOP TAB: your work, what changed, what is open ──
-          Your own work in full, what moved since your last visit filed under
-          each week's summary, and All items' numbers and its one line (whose
-          head opens All items, the page under this tab). */}
+      {/* ── THE WORKSHOP TAB: your work, what is open, what changed ──
+          Your own work (its first three, the rest behind a reveal), All
+          items' numbers and its one line (whose head opens All items, the
+          page under this tab), and what moved since your last visit filed
+          under each week's summary. */}
       {tab === 'workshop' ? (
       <>
       {/* ── Lately in this project ──
@@ -3586,9 +3571,10 @@ export function DevWorkshop(): ReactNode {
                   : 'You have no work going on. Pick up an open item in All items, or use Start a new change in the Homeroom menu.'}
               </p>
             ) : null}
-            {/* IN FULL on the Workshop tab: the whole of your own work is
-                on screen here, so nothing of it waits behind a reveal. */}
-            {v.mine.rows.map((row) => (row.t === 'card' ? (
+            {/* THE FIRST THREE on the Workshop tab (#852 review), and the
+                rest behind Show N more. It was the whole list, which on a
+                busy member's board pushed All items off the screen. */}
+            {v.mine.rows.slice(0, mineAll ? undefined : WORKSHOP_WORK_FIRST).map((row) => (row.t === 'card' ? (
               <CardRowView
                 key={row.key}
                 row={row}
@@ -3608,90 +3594,20 @@ export function DevWorkshop(): ReactNode {
                 Its hit area is `touch-target-32`, not the kit's 44px one the
                 other two carry (QA 2026-09-24 Q19): it sits 4px under the
                 last row, and a 44px box would take that row's bottom edge. */}
-
-          </div>
-        </section>
-      ) : null}
-
-      {/* ── Since your last visit, week by week ──
-          The hub's list of what moved and the walk of weekly summaries, as
-          one list (see SINCE_FIRST): each week's line, and what moved in it
-          under it. A person who has not joined reads "Recently", as does a
-          first visit, which has no last visit to be since. */}
-      {v.since || weeks.length ? (
-        <section className="dev-ws-strip" data-ws-since="">
-          {/* Clear rides the far end of the heading row, as "Mark all read"
-              rides the notifications sheet's title row: an action on the
-              list, drawn small, and disabled rather than absent when there is
-              nothing to fold so the row does not reflow. */}
-          <div className="dev-ws-since-head" data-ws-since-head="">
-            <span className="dev-ws-since-label">{v.since && !outsider ? 'Since your last visit' : 'Recently'}</span>
-            {v.since ? (
-              <>
-                {/* THE WHOLE POPULATION, not the page of it that is drawn. */}
-                <span className="dev-ws-since-n">{v.since.total}</span>
-                <button
-                  type="button"
-                  className="dev-ws-since-clear un-touch-target"
-                  data-ws-since-clear=""
-                  disabled={!v.since.rows.length && !sinceUnfolded}
-                  onClick={clearSince}
-                >
-                  Clear
-                </button>
-              </>
+            {v.mine.rows.length > WORKSHOP_WORK_FIRST ? (
+              <button
+                type="button"
+                className="dev-ws-reveal touch-target-32"
+                data-ws-mine-more=""
+                aria-expanded={mineAll}
+                onClick={() => setMineAll(!mineAll)}
+              >
+                <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+                {mineAll ? 'Show less' : `Show ${v.mine.rows.length - WORKSHOP_WORK_FIRST} more`}
+              </button>
             ) : null}
+
           </div>
-          {v.since && v.since.rows.length ? (
-            <p className="dev-ws-since-sum" data-ws-since-sum="">{sinceWords(v.since)}</p>
-          ) : null}
-          {v.since && !v.since.rows.length ? (
-            <p className="dev-ws-week-note" data-ws-since-none="">
-              Nothing has changed since you were last here.
-            </p>
-          ) : null}
-          {weeks.slice(0, weeksOpen).map((w) => {
-            const at = sinceWeekStateKey(w);
-            return (
-              <SinceWeekBlock
-                key={at}
-                week={w}
-                slug={slug}
-                canPost={canPost}
-                openKey={openRows.since || null}
-                onToggleRow={(key) => toggleRow('since', key)}
-                allNew={!!sinceAllNew[at]}
-                onAllNew={() => setSinceAllNew((cur) => ({ ...cur, [at]: true }))}
-                seenOpen={!!sinceSeen[at]}
-                onSeen={() => setSinceSeen((cur) => ({ ...cur, [at]: true }))}
-              />
-            );
-          })}
-          {/* ALWAYS DRAWN, and disabled rather than absent at the far end:
-              a control that is sometimes there is one nobody learns to reach
-              for. Pointing DOWN, at where the week it reveals appears. */}
-          <button
-            type="button"
-            className="dev-ws-reveal dev-ws-since-more un-touch-target"
-            data-ws-since-more=""
-            disabled={weeksOpen >= weeks.length}
-            onClick={() => setSinceExtra(sinceExtra + 1)}
-          >
-            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-            Show older
-          </button>
-          {/* The floor. `firstWeek` is the project's beginning, which the
-              server names beside a complete history (#3293), so the note
-              says when that was; without it, only that this is as far back
-              as the list reaches, and only once somebody has walked there. */}
-          {weeks.length && weeksOpen >= weeks.length && firstWeek ? (
-            <p className="dev-ws-week-note" data-ws-week-start="">
-              {`This project started the week of ${weekDate(firstWeek)}.`}
-            </p>
-          ) : null}
-          {weeks.length && weeksOpen >= weeks.length && !firstWeek && sinceExtra > 0 ? (
-            <p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the list goes.</p>
-          ) : null}
         </section>
       ) : null}
 
@@ -3783,7 +3699,90 @@ export function DevWorkshop(): ReactNode {
           {/* THE WEEKS ARE NOT HERE ANY MORE. They were a walk under this
               paragraph ("Show past week"), and Since your last visit was a
               list on the hub: one question in two places. Each week's line
-              heads what moved in it now, in the since list above. */}
+              heads what moved in it now, in the since list below. */}
+        </section>
+      ) : null}
+
+      {/* ── Since your last visit, week by week ──
+          The hub's list of what moved and the walk of weekly summaries, as
+          one list (see SINCE_FIRST): each week's line, and what moved in it
+          under it. It follows All items (#852 review): the numbers, then the
+          history behind them. A person who has not joined reads "Recently", as does a
+          first visit, which has no last visit to be since. */}
+      {v.since || weeks.length ? (
+        <section className="dev-ws-strip" data-ws-since="">
+          {/* Clear rides the far end of the heading row, as "Mark all read"
+              rides the notifications sheet's title row: an action on the
+              list, drawn small, and disabled rather than absent when there is
+              nothing to fold so the row does not reflow. */}
+          <div className="dev-ws-since-head" data-ws-since-head="">
+            <span className="dev-ws-since-label">{v.since && !outsider ? 'Since your last visit' : 'Recently'}</span>
+            {v.since ? (
+              <>
+                {/* THE WHOLE POPULATION, not the page of it that is drawn. */}
+                <span className="dev-ws-since-n">{v.since.total}</span>
+                <button
+                  type="button"
+                  className="dev-ws-since-clear un-touch-target"
+                  data-ws-since-clear=""
+                  disabled={!v.since.rows.length && !sinceUnfolded}
+                  onClick={clearSince}
+                >
+                  Clear
+                </button>
+              </>
+            ) : null}
+          </div>
+          {v.since && v.since.rows.length ? (
+            <p className="dev-ws-since-sum" data-ws-since-sum="">{sinceWords(v.since)}</p>
+          ) : null}
+          {v.since && !v.since.rows.length ? (
+            <p className="dev-ws-week-note" data-ws-since-none="">
+              Nothing has changed since you were last here.
+            </p>
+          ) : null}
+          {weeks.slice(0, weeksOpen).map((w) => {
+            const at = sinceWeekStateKey(w);
+            return (
+              <SinceWeekBlock
+                key={at}
+                week={w}
+                slug={slug}
+                canPost={canPost}
+                openKey={openRows.since || null}
+                onToggleRow={(key) => toggleRow('since', key)}
+                allNew={!!sinceAllNew[at]}
+                onAllNew={() => setSinceAllNew((cur) => ({ ...cur, [at]: true }))}
+                seenOpen={!!sinceSeen[at]}
+                onSeen={() => setSinceSeen((cur) => ({ ...cur, [at]: true }))}
+              />
+            );
+          })}
+          {/* ALWAYS DRAWN, and disabled rather than absent at the far end:
+              a control that is sometimes there is one nobody learns to reach
+              for. Pointing DOWN, at where the week it reveals appears. */}
+          <button
+            type="button"
+            className="dev-ws-reveal dev-ws-since-more un-touch-target"
+            data-ws-since-more=""
+            disabled={weeksOpen >= weeks.length}
+            onClick={() => setSinceExtra(sinceExtra + 1)}
+          >
+            <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+            Show older
+          </button>
+          {/* The floor. `firstWeek` is the project's beginning, which the
+              server names beside a complete history (#3293), so the note
+              says when that was; without it, only that this is as far back
+              as the list reaches, and only once somebody has walked there. */}
+          {weeks.length && weeksOpen >= weeks.length && firstWeek ? (
+            <p className="dev-ws-week-note" data-ws-week-start="">
+              {`This project started the week of ${weekDate(firstWeek)}.`}
+            </p>
+          ) : null}
+          {weeks.length && weeksOpen >= weeks.length && !firstWeek && sinceExtra > 0 ? (
+            <p className="dev-ws-week-note" data-ws-week-end="">That is as far back as the list goes.</p>
+          ) : null}
         </section>
       ) : null}
 

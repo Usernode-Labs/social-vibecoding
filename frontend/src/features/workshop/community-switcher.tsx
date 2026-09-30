@@ -10,7 +10,7 @@
  * It replaced the in-place "Which project?" panel under the header, and it
  * opens from three places, all through the same store: the phone's tab
  * pressed while it is lit, the community's name and ⌄ in the coloured
- * header, and the header's "All ⌄" on the Communities list. (On a wide
+ * header, and the header's "Communities ⌄" on the Communities list. (On a wide
  * window the lit sidebar row goes back to All communities instead.)
  *
  * ── Two presentations ──────────────────────────────────────────────────
@@ -236,7 +236,7 @@ function SwitcherMenu(): ReactNode {
       document.removeEventListener('keydown', onKey);
     };
   }, []);
-  // Under what opened it (the header's name, or its "All ⌄"); with no box
+  // Under what opened it (the header's name, or its "Communities ⌄"); with no box
   // to hang from, under the header's left edge.
   const a = st.anchor;
   const style: Record<string, string> = a

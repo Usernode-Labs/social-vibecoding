@@ -4,22 +4,15 @@
  * All items is a page under the Workshop (its "See all"), with a way back,
  * so while it is up the Workshop tab stays lit.
  *
- * TWO PLACES, ONE CONTROL. On a phone they are a BAND under the header, in
- * the community's colour, continuing it (./workshop.tsx renders it at the
- * head of the page). On a wide window the header has the room, so they sit
- * in its one row, after the community's name, and the band is not drawn
- * (features/header/header-project-tabs.tsx, app.css).
- *
- * The header is another React root, so the two meet through a store: the
- * page publishes which tab is up and what the tabs count (`projectTabsStore`),
- * and a press in the header asks for a tab (`requestProjectTab`) by the same
- * event a door to the hub already uses (`usernode:workshop-tab`, which the
- * page listens for), after AppView has remembered it as a press here would.
+ * ONE PLACE, THE PAGE. ./workshop.tsx renders them at the head of the page at
+ * every width. On a phone they are a BAND under the header, in the
+ * community's colour, continuing it, four equal cells with each label
+ * centred in its own. On a wide window they are the first row of the page's
+ * panel, under the coloured header rather than in it (#852 review: they sat
+ * in the header's row for a round).
  */
 
 import type { KeyboardEvent, ReactNode } from 'react';
-
-import { createStore } from '../../../lib/plain-store.js';
 
 export type ProjectTabKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'all';
 
@@ -36,45 +29,25 @@ export function litTab(tab: ProjectTabKey): ProjectTabKey {
   return tab === 'all' ? 'workshop' : tab;
 }
 
-export interface ProjectTabsState {
-  /** The project whose page is up, or null when none is. */
-  slug: string | null;
-  tab: ProjectTabKey;
-  /** Votes waiting on you here: Needs you's count. */
-  owed: number;
-  /** All items' search or filters are on (#2915): a dot on the Workshop tab. */
-  filtered: boolean;
-}
-
-const INITIAL: ProjectTabsState = { slug: null, tab: 'status', owed: 0, filtered: false };
-
-export const projectTabsStore = createStore(INITIAL);
-
-/** A tab pressed somewhere other than the page itself (the header). */
-export function requestProjectTab(slug: string, tab: ProjectTabKey): void {
-  try { (window as any).AppView?._setWorkshopTab?.(tab); } catch { /* the page still turns */ }
-  try {
-    window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug, tab } }));
-  } catch { /* no window */ }
-}
-
 /**
  * The tabs. A tablist with roving focus: the arrows move between tabs, and
  * the selected one is the one Tab reaches. Needs you carries how many votes
  * wait on you; the Workshop a dot while All items' search or filters are on
  * (#2915), which narrow that page alone.
  *
- * In the page (`inHeader` false) it keeps the old strip's box, `.dev-ws-tabs`
- * around a `.dev-ws-tabtrack`. Its colour is the root's `--community-tint`,
- * which the header sets (features/header/community-tint.ts).
+ * The label and its count or dot are one `.dev-ws-ctab-text`, so a cell
+ * centres the WORD and the count hangs off its corner (app.css) rather than
+ * pushing it aside: "Needs you" and its "86" are wider together than a
+ * phone's quarter. It keeps the old strip's box, `.dev-ws-tabs` around a
+ * `.dev-ws-tabtrack`, for the hooks that measure it. Its colour is the root's
+ * `--community-tint`, which the header sets (features/header/community-tint.ts).
  */
-export function ProjectBand({ tab, owed, filtered, onTab, barRef, inHeader = false }: {
+export function ProjectBand({ tab, owed, filtered, onTab, barRef }: {
   tab: ProjectTabKey;
   owed: number;
   filtered: boolean;
   onTab: (key: ProjectTabKey) => void;
   barRef?: (el: HTMLElement | null) => void;
-  inHeader?: boolean;
 }): ReactNode {
   const lit = litTab(tab);
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
@@ -86,50 +59,40 @@ export function ProjectBand({ tab, owed, filtered, onTab, barRef, inHeader = fal
     onTab(next.key);
     (e.currentTarget.querySelector(`[data-ws-tab-btn="${next.key}"]`) as HTMLElement | null)?.focus();
   };
-  const list = (
-    <div className="dev-ws-tabtrack" role="tablist" aria-label="Project" onKeyDown={onKeyDown}>
-      {PROJECT_TABS.map((t) => {
-        const on = lit === t.key;
-        return (
-          <button
-            key={t.key}
-            type="button"
-            role="tab"
-            className="dev-ws-ctab"
-            data-ws-tab-btn={t.key}
-            aria-selected={on}
-            tabIndex={on ? 0 : -1}
-            onClick={() => onTab(t.key)}
-          >
-            <span className="dev-ws-ctab-label">{t.label}</span>
-            {t.key === 'needs' && owed > 0 ? (
-              <span className="dev-ws-ctab-count" data-ws-tab-count="">{owed > 99 ? '99+' : owed}</span>
-            ) : null}
-            {t.key === 'workshop' && filtered ? (
-              <>
-                <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
-                <span className="sr-only"> (filtered)</span>
-              </>
-            ) : null}
-          </button>
-        );
-      })}
-    </div>
-  );
-  if (inHeader) {
-    return (
-      <div className="header-project-tabs">
-        {list}
-      </div>
-    );
-  }
   return (
     <div
       ref={barRef}
       className="dev-ws-tabs dev-ws-band"
       data-ws-band=""
     >
-      {list}
+      <div className="dev-ws-tabtrack" role="tablist" aria-label="Project" onKeyDown={onKeyDown}>
+        {PROJECT_TABS.map((t) => {
+          const on = lit === t.key;
+          return (
+            <button
+              key={t.key}
+              type="button"
+              role="tab"
+              className="dev-ws-ctab"
+              data-ws-tab-btn={t.key}
+              aria-selected={on}
+              tabIndex={on ? 0 : -1}
+              onClick={() => onTab(t.key)}
+            >
+              <span className="dev-ws-ctab-text">
+                <span className="dev-ws-ctab-label">{t.label}</span>
+                {t.key === 'needs' && owed > 0 ? (
+                  <span className="dev-ws-ctab-count" data-ws-tab-count="">{owed > 99 ? '99+' : owed}</span>
+                ) : null}
+                {t.key === 'workshop' && filtered ? (
+                  <span className="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true" />
+                ) : null}
+              </span>
+              {t.key === 'workshop' && filtered ? <span className="sr-only"> (filtered)</span> : null}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

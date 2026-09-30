@@ -127,7 +127,7 @@ test('#852: every class the switcher draws with has a rule, and the menu floats 
   const used = [...new Set(SWITCHER.match(/community-switcher(?:-[a-z]+)*/g))];
   const unstyled = used.filter((c) => !new RegExp(`\\.${c}(?![-\\w])[^{}]*\\{`).test(CSS));
   assert.deepEqual(unstyled, [], 'each community-switcher-* class the component uses is styled in app.css');
-  assert.match(CSS, /\.community-switcher-menu \{[^}]*position: fixed;[^}]*width: 340px;/,
+  assert.match(CSS, /\.community-switcher-menu \{[^}]*position: fixed;[^}]*width: 364px;/,
     'the wide menu floats, at a fixed width');
   assert.match(CSS, /\.community-switcher-scrim \{[^}]*position: fixed;/, 'the phone sheet sits over a scrim');
   assert.match(CSS, /\.community-switcher-tile \{[^}]*width: 40px; height: 40px;/, 'and a community\'s tile has a size');
@@ -194,7 +194,7 @@ test('the Needs you row totals every project, and says nothing over a zero', () 
     'a row read from data is not in a cold document');
 });
 
-test('#3051, #852: "All" is the header\'s at every width, and opens Your communities', () => {
+test('#3051, #852: the header\'s "Communities" switcher is there at every width, and opens Your communities', () => {
   // #2759 took the all-apps chip off while the screen was only the list of
   // your apps; the owner asked for it back as "All apps" (#3051), leading the
   // page. #852 puts it in the bar at every width, where a phone already had
@@ -203,8 +203,11 @@ test('#3051, #852: "All" is the header\'s at every width, and opens Your communi
   assert.ok(!HTML.includes('id="workshop-scope"'), 'no chip in the cold document');
   assert.ok(!HTML.includes('id="community-switcher"'), 'and the switcher is behind a press');
   const html = renderHeader({ screen: 'workshop-screen' });
-  assert.match(html, /<button id="header-scope-switch" type="button" class="[^"]*" data-community-switch="" aria-haspopup="dialog" aria-expanded="false" aria-controls="community-switcher" aria-label="All your communities, or open one">/);
-  assert.match(html, /<span id="header-title-name" class="min-w-0 truncate">All<\/span>/, 'the word All (#3277)');
+  assert.match(html, /<button id="header-scope-switch" type="button" class="[^"]*" data-community-switch="" aria-haspopup="dialog" aria-expanded="false" aria-controls="community-switcher" aria-label="Communities: all of yours, or open one">/);
+  // The screen's own name (#852 review; it read "All", #3277), with "All
+  // communities" kept for the switcher's first row.
+  assert.match(html, /<span id="header-title-name" class="min-w-0 truncate">Communities<\/span>/, 'the word Communities');
+  assert.doesNotMatch(html, /truncate">All<\/span>/);
   // The page still steps down past the header's notch before its first row.
   assert.match(SCREEN, /<div className="pt-5" aria-hidden="true" \/>/);
   assert.doesNotMatch(SCREEN, /<p className="px-4 pt-1 pb-2 flex flex-wrap/);

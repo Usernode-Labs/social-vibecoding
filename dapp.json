@@ -1508,9 +1508,9 @@
       "expectSelector": ".dev-ws-hero #dev-plus-menu [data-plus=\"import-pr\"]"
     },
     {
-      "name": "The hub's ⋯ menu leads with Ask for a change, then names its settings group (#1900)",
+      "name": "The hub's ⋯ menu leads with Start a new change and Ask for a change, then names its settings group (#1900, #852 review)",
       "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-plus-menu > button[data-plus=\"issue\"]:first-child ~ [data-plus-group=\"settings\"]",
+      "expectSelector": "#dev-plus-menu > button[data-plus=\"new-change\"]:first-child + button[data-plus=\"issue\"] ~ [data-plus-group=\"settings\"]",
       "expectText": "Ask for a change"
     },
     {
@@ -2600,10 +2600,10 @@
       "expectText": "Communities"
     },
     {
-      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and the hub ends with Start a new change",
+      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Start a new change leads the hero's ⋯ rather than ending the hub (#852 review)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(section[data-ws-channel=\"preview\"] button[data-ws-channel-open]):not(:has(section[data-ws-channel=\"preview\"] form)) > .dev-ws-tabbody > button[data-ws-start-change]:last-child",
-      "expectText": "Start a new change"
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(section[data-ws-channel=\"preview\"] button[data-ws-channel-open]):not(:has(section[data-ws-channel=\"preview\"] form)):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"new-change\"]:first-child",
+      "expectText": "Discussion"
     },
     {
       "name": "All items leads with the approval rules, above the categories, under its way back to the Workshop",
@@ -3320,7 +3320,7 @@
       "expectText": "Public communities"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows, and the header's All opens Your communities, with no chip on the page (#3051, #852)",
+      "name": "The Communities screen draws no empty-state line while it has rows, and the header's Communities opens Your communities, with no chip on the page (#3051, #852)",
       "path": "/?demo=1#workshop",
       "expectSelector": "body:has(#header-scope-switch[aria-controls=\"community-switcher\"]) #workshop-screen:not(.hidden):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
     },

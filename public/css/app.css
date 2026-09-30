@@ -16738,6 +16738,10 @@ a.dev-ws-hero-pending {
 .dev-ws-hero .dev-ws-plus-btn { width: 32px; height: 32px; }
 .dev-ws-hero .dev-ws-plus-glyph { width: 18px; height: 18px; }
 .dev-ws-hero:has(#dev-plus-menu:not(.hidden)) { position: relative; z-index: 5; }
+/* It hangs from the ⋯'s LEFT edge and opens rightward, into the column: the
+   ⋯ is near the row's start (after Open app and Invite), and a menu opening
+   leftward from there ran under the sidebar. */
+.dev-ws-hero #dev-plus-menu { left: 0; right: auto; }
 /* THE CHART'S TIP (community-card.tsx Spark). Against the chart's right
    edge, above it, so it never runs off the screen; the day it is about is
    the lit bar. `pan-y` keeps a vertical drag scrolling the page and hands a
@@ -16785,54 +16789,101 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    the tabs' underline. */
 .dev-ws-tabs.dev-ws-band {
   margin: -18px -12px 0;
-  padding: 8px 14px 0;
+  /* 18px, not 8: the header's foot overlaps the band's top by ten, and the
+     count's badge rises above its word into that strip. */
+  padding: 18px 8px 0;
   background: var(--community-tint, #2a2e34);
   gap: 0;
 }
-/* The four spread across the band, so a phone fits them whole ("Needs you"
-   with its count is the widest); the track scrolls rather than clipping on
-   the narrowest. */
+/* FOUR EQUAL CELLS, each label centred in its own (#852 review): the whole
+   cell is the tap target, a quarter of the band each. They hugged their
+   labels once, spread across the band, which made Hub's target a third of
+   Needs you's and set no word over the middle of anything. */
 .dev-ws-band .dev-ws-tabtrack {
-  display: flex; align-items: stretch; justify-content: space-between; gap: 10px;
-  flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none;
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  flex: 1 1 auto; min-width: 0;
 }
-.dev-ws-band .dev-ws-tabtrack::-webkit-scrollbar { display: none; }
 .dev-ws-ctab {
-  position: relative; flex: none;
-  display: inline-flex; align-items: center; gap: 5px;
-  height: 42px; padding: 0 1px;
+  position: relative; min-width: 0;
+  display: flex; align-items: center; justify-content: center;
+  height: 40px; padding: 0;
   border: 0; background: none;
   color: rgba(255, 255, 255, .72);
-  font: inherit; font-size: 14.5px; font-weight: 600; white-space: nowrap;
+  font: inherit; font-size: 14px; font-weight: 600; white-space: nowrap;
   cursor: pointer;
   -webkit-tap-highlight-color: transparent;
 }
-/* The narrowest phones take the labels half a point down and the gaps in. */
+/* The WORD is centred, and what it carries hangs off its top-right corner
+   rather than pushing it aside: "Needs you" and its count together are
+   wider than a phone's quarter. */
+.dev-ws-ctab-text { position: relative; display: inline-block; }
+.dev-ws-band .dev-ws-ctab-count {
+  position: absolute; right: -10px; top: -12px;
+}
+.dev-ws-band .dev-ws-filter-dot {
+  position: absolute; left: calc(100% + 3px); top: 1px;
+}
+/* The narrowest phones take the labels a point down. */
 @media (max-width: 379.98px) {
-  .dev-ws-tabs.dev-ws-band { padding-left: 10px; padding-right: 10px; }
-  .dev-ws-band .dev-ws-tabtrack { gap: 4px; }
-  .dev-ws-band .dev-ws-ctab { font-size: 13px; gap: 4px; }
+  .dev-ws-band .dev-ws-ctab { font-size: 13px; }
 }
 .dev-ws-ctab[aria-selected="true"] { color: #fff; }
 .dev-ws-ctab[aria-selected="true"]::after {
-  content: ''; position: absolute; left: 0; right: 0; bottom: 0;
+  content: ''; position: absolute; left: 10px; right: 10px; bottom: 0;
   height: 3px; border-radius: 3px 3px 0 0; background: #fff;
 }
 .dev-ws-ctab:focus-visible { outline: 2px solid #fff; outline-offset: -2px; border-radius: 6px; }
 @media (hover: hover) {
   .dev-ws-ctab:hover { color: #fff; }
 }
-/* How many votes wait on you, on Needs you: white, the colour for its ink. */
+/* How many votes wait on you, on Needs you: white, the colour for its ink,
+   ringed in the band so it sits cleanly on the label's corner. */
 .dev-ws-ctab-count {
-  min-width: 19px; height: 19px; padding: 0 5px; box-sizing: border-box;
+  display: inline-block;
+  min-width: 17px; height: 17px; padding: 0 4px; box-sizing: border-box;
   border-radius: 999px; background: #fff; color: var(--community-tint, #2a2e34);
-  font-size: 11.5px; font-weight: 750; line-height: 19px; text-align: center;
+  box-shadow: 0 0 0 2px var(--community-tint, #2a2e34);
+  font-size: 10.5px; font-weight: 750; line-height: 17px; text-align: center;
 }
 .dev-ws-band .dev-ws-filter-dot { background: #fff; }
-/* The band is the page's own: no pinned sheet behind it (the strip's band
-   below is for the pill it replaced), and on a wide window it pins under
-   the header as that strip did, still in its colour. */
+/* On a phone the band is the page's own: no pinned sheet behind it (the
+   strip's band below is for the pill it replaced). */
 .dev-ws-tabs.dev-ws-band::before { content: none; }
+
+/* ON A WIDE WINDOW THE TABS ARE THE PANEL'S FIRST ROW (#852 review: they
+   sat in the coloured header's row for a round). Not a band: the header
+   above already says whose page this is, so the row is the page's own ink,
+   with the tab you are on, its underline and the count in the community's
+   colour. Left-aligned, each tab as wide as its word plus room to press. It
+   pins under the header's edge as the old strip did, on the sheet band that
+   strip drew while pinned (`data-ws-pinned`, usePinnedStrip). */
+@media (min-width: 768px) {
+  .dev-ws-tabs.dev-ws-band {
+    margin: 0 0 4px;
+    padding: 0;
+    background: none;
+    box-shadow: inset 0 -1px 0 var(--app-sheet-line);
+  }
+  .dev-ws-band .dev-ws-tabtrack { display: flex; gap: 4px; }
+  .dev-ws-band .dev-ws-ctab {
+    height: 44px; padding: 0 14px;
+    color: var(--text-muted); font-size: 15px;
+  }
+  .dev-ws-band .dev-ws-ctab[aria-selected="true"] { color: var(--community-tint, var(--lit-ink)); }
+  .dev-ws-band .dev-ws-ctab[aria-selected="true"]::after { left: 8px; right: 8px; background: var(--community-tint, var(--lit-ink)); }
+  .dev-ws-band .dev-ws-ctab:focus-visible { outline-color: var(--accent); }
+  @media (hover: hover) {
+    .dev-ws-band .dev-ws-ctab:not([aria-selected="true"]):hover { color: var(--text-primary); }
+  }
+  /* The count rides after the word here, where there is room. */
+  .dev-ws-band .dev-ws-ctab-text { display: inline-flex; align-items: center; gap: 6px; }
+  .dev-ws-band .dev-ws-ctab-count {
+    position: static;
+    background: var(--community-tint, var(--accent)); color: #fff; box-shadow: none;
+  }
+  .dev-ws-band .dev-ws-filter-dot { position: static; background: var(--accent); }
+  .dev-ws-tabs.dev-ws-band::before { content: ''; }
+}
 
 /* ── The hero's rows (community-card.tsx) ──
    Who is here: the faces, then "Public community · 23 members" as one
@@ -16882,17 +16933,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 }
 /* The way to the rest of what landed, week by week. */
 .dev-ws-since-card-more { align-self: flex-start; font-size: 13.5px; font-weight: 600; }
-/* START A NEW CHANGE ends the hub: a whole-width row in the accent. */
-.dev-ws-start-change {
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-  height: 44px; border-radius: 14px;
-  border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, transparent);
-  background: transparent; color: var(--accent);
-  font: inherit; font-size: 15px; font-weight: 650; cursor: pointer;
-}
-@media (hover: hover) {
-  .dev-ws-start-change:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
-}
 /* ── "Your communities" (features/workshop/community-switcher.tsx) ──
    The switcher behind the Communities tab: a sheet from the floor on a
    phone (the kit's own when it adopts it; this scrim and panel when not),
@@ -16924,7 +16964,8 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 }
 .community-switcher-menu {
   position: fixed; z-index: 60;
-  width: 340px; max-height: min(70vh, 560px);
+  /* 364px: "All communities" whole beside its "34 to vote" and the tick. */
+  width: 364px; max-height: min(70vh, 560px);
   padding: 6px;
   border-radius: 16px;
   box-shadow: 0 0 0 1px var(--app-sheet-line), 0 14px 40px rgba(0, 0, 0, .18);
@@ -16979,24 +17020,6 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 .community-switcher-tick { flex: none; width: 20px; display: grid; place-items: center; color: var(--text-primary); }
 .community-switcher-note { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--text-muted); }
 
-/* ON A WIDE WINDOW THE TABS ARE THE HEADER'S (header-project-tabs.tsx): one
-   coloured row, the community's name and then its tabs, so the band under
-   it is not drawn. White on the colour; the tab you are on is a pill of
-   white at low strength rather than an underline, which the bar's foot has
-   no room for. */
-.header-project-tabs { display: none; }
-@media (min-width: 768px) {
-  .dev-ws-tabs.dev-ws-band { display: none; }
-  #platform-header:has(.header-project-tabs) #header-title { flex: 0 1 auto; }
-  .header-project-tabs { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; margin-left: 4px; }
-  .header-project-tabs .dev-ws-tabtrack { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
-  .header-project-tabs .dev-ws-ctab { height: 30px; padding: 0 12px; border-radius: 999px; font-size: 14.5px; }
-  .header-project-tabs .dev-ws-ctab[aria-selected="true"] { background: rgba(255, 255, 255, .18); }
-  .header-project-tabs .dev-ws-ctab[aria-selected="true"]::after { content: none; }
-  .header-project-tabs .dev-ws-ctab:focus-visible { border-radius: 999px; }
-  /* No band, so the page starts under the header as any other does. */
-  #dev-body:has(> #dev-workshop > .dev-ws > .dev-ws-band) { padding-top: 14px; }
-}
 /* THE DISCUSSION TAB (project-discussion.tsx): the channel's own pane, as
    tall as the screen leaves it, so its composer sits above the tab bar and
    its stream scrolls inside it rather than the page. */

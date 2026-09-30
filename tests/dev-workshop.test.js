@@ -760,7 +760,7 @@ test('All items leads with the open line, and the weeks head the since list, the
   assert.ok(!html.includes(cards.lastWeek), 'last week waits behind the control');
   assert.match(html, /data-ws-since-more="">/, 'and the step back is offered');
   assert.ok(!html.includes('data-ws-cards') && !html.includes('data-ws-week-more'), 'the walk is gone');
-  assert.ok(html.indexOf('data-ws-since=""') < html.indexOf('data-ws-dashboard'), 'what changed, then All items');
+  assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-since=""'), 'All items, then what changed (#852 review)');
 
   // The weeks themselves are the view model's, so the order and the titles
   // are pinned where the component cannot quietly re-sort them.
@@ -1065,9 +1065,10 @@ test('since-your-last-visit sits with the other things addressed to you', () => 
   const html = workshopHtml(AppView, 'workshop');
   // It was a line under the tiles, inside "Where the app is", and that pane
   // answers a question about the APP. A list of what moved for this reader
-  // is a section of its own, on the Workshop page under your own work, and
-  // the hub says what landed in a sentence instead.
-  assert.ok(html.indexOf('data-ws-since=""') < html.indexOf('data-ws-dashboard'), 'its own section, above the board');
+  // is a section of its own, on the Workshop page, and the hub says what
+  // landed in a sentence instead. It follows All items (#852 review): the
+  // numbers, then the history behind them.
+  assert.ok(html.indexOf('data-ws-dashboard') < html.indexOf('data-ws-since=""'), 'its own section, under the board');
   assert.ok(!workshopHtml(AppView).includes('data-ws-since=""'), 'and not on the hub any more');
   // SHOWN, not offered. It WAS one collapsed line with a caret, on the
   // reasoning that most visits do not need the fact; what that produced was
@@ -1528,7 +1529,7 @@ test('the suggestion does not follow All items\' search to the other tabs (#2915
   assert.ok(!all.includes('issue:12'), 'while All items, which the search does narrow, hides it');
 });
 
-test('the hub is ordered for a returning member: the tabs, what is owed, then Start a new change', () => {
+test('the hub is ordered for a returning member: the tabs, then what is owed; the Workshop page is your work, All items, then what changed', () => {
   const store = {};
   // Keep the three-day-old proposal strictly after the last visit instead
   // of relying on whether seed() happens in a later clock millisecond.
@@ -1539,19 +1540,21 @@ test('the hub is ordered for a returning member: the tabs, what is owed, then St
   const html = workshopHtml(AppView);
   // THE HUB (#852): the tabs, then (after the hero and the summary card,
   // which wait on their own reads, none in this render) the votes you owe as
-  // one row, your work when you have some, and Start a new change last. The
-  // since list, your work in full and the board are the Workshop page's.
-  const order = ['data-ws-band', 'data-ws-hub-needs', 'data-ws-start-change'].map((k) => html.indexOf(k));
+  // one row, and your work when you have some. Start a new change is the
+  // hero's ⋯ now (#852 review). The since list, your work in full and the
+  // board are the Workshop page's.
+  const order = ['data-ws-band', 'data-ws-hub-needs'].map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `each is drawn: ${JSON.stringify(order)}`);
-  assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'the tabs, what is owed, then the way to start');
+  assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'the tabs, then what is owed');
+  assert.ok(!html.includes('data-ws-start-change'), 'no Start a new change at the foot');
   assert.ok(!html.includes('data-ws-workshop-door'), 'no door to the Workshop: it opens from the summary card');
   assert.ok(!html.includes('data-ws-since=""') && !html.includes('data-ws-mine=""') && !html.includes('data-ws-dashboard'),
     'the since list, your work in full and the board are the Workshop page\'s');
   const workshop = workshopHtml(AppView, 'workshop');
-  const wsOrder = ['data-ws-mine=""', 'data-ws-since-head', 'data-ws-dashboard'].map((k) => workshop.indexOf(k));
+  const wsOrder = ['data-ws-mine=""', 'data-ws-dashboard', 'data-ws-since-head'].map((k) => workshop.indexOf(k));
   assert.ok(wsOrder.every((i) => i >= 0), `every section is drawn: ${JSON.stringify(wsOrder)}`);
   assert.deepEqual(wsOrder.slice().sort((a, b) => a - b), wsOrder,
-    'the Workshop page: your work, what changed, then All items');
+    'the Workshop page: your work, All items, then what changed (#852 review)');
   assert.ok(!html.includes('data-ws-discussion'), 'and the old discussion section is gone');
   assert.ok(!html.includes('data-discussion-row'), 'nor its row');
   assert.ok(!/class="dev-ws-link"[^>]*aria-expanded/.test(workshop), 'no unsized text link toggles this pane');
@@ -3321,7 +3324,7 @@ test('#2915: while a search or filter is on, a dot on the way to All items says 
   for (const over of [{ q: 'dark' }, { assignedToMe: true }, { priority: 'high' }]) {
     AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), ...over };
     for (const tab of ['status', 'needs', 'workshop']) {
-      assert.match(workshopHtml(AppView, tab), /data-ws-tab-btn="workshop"[^>]*><span class="dev-ws-ctab-label">Workshop<\/span><span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>/,
+      assert.match(workshopHtml(AppView, tab), /data-ws-tab-btn="workshop"[^>]*><span class="dev-ws-ctab-text"><span class="dev-ws-ctab-label">Workshop<\/span><span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><\/span><span class="sr-only"> \(filtered\)<\/span>/,
         `${tab} / ${JSON.stringify(over)}: the dot on the Workshop tab, and its words`);
     }
     const ws = workshopHtml(AppView, 'workshop');

@@ -456,8 +456,8 @@ export function WorkshopScreen() {
             word twice, an inch apart, on the two screens that had been made
             to agree about what a title IS. The bar is the title, which is
             what it is for on every other screen in the shell. */}
-        {/* THE ALL SWITCHER IS THE HEADER'S, at every width (#852): the bar's
-            title on this screen is "All ⌄" (#header-scope-switch,
+        {/* THE SWITCHER IS THE HEADER'S, at every width (#852): the bar's
+            title on this screen is "Communities ⌄" (#header-scope-switch,
             features/header/header-title.tsx), which opens Your communities.
             It led the page as a chip of its own, #workshop-scope (#3051), and
             on a phone the header was already it (#3271); a control that says
