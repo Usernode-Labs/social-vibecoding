@@ -51,6 +51,26 @@ test('the Homeroom page itself, and a client that sends no header, pass', async 
   });
 });
 
+test('without Sec-Fetch-Site, an Origin other than the request\'s own is refused', async () => {
+  await withApp(async (url) => {
+    const { host } = new URL(url);
+    const post = (headers) => fetch(url, { method: 'POST', headers });
+    // A browser that predates Fetch Metadata, on a sibling app's subdomain.
+    const sibling = await post({ origin: 'https://evil-app.onhomeroom.com' });
+    assert.equal(sibling.status, 403);
+    assert.equal((await post({ origin: 'null' })).status, 403, 'an opaque origin is refused');
+    assert.equal((await post({ origin: `https://${host}` })).status, 403, 'another scheme is another origin');
+    assert.equal((await post({ origin: `http://${host}` })).status, 200, 'the request\'s own origin passes');
+    // Behind the proxy the origin is the one the proxy received, e.g. a
+    // staging preview's own host.
+    const preview = 'usernode-2d5619--s1234.onhomeroom.com';
+    const proxied = { 'x-forwarded-proto': 'https', 'x-forwarded-host': preview };
+    assert.equal((await post({ ...proxied, origin: `https://${preview}` })).status, 200);
+    assert.equal((await post({ ...proxied, origin: 'https://my.onhomeroom.com' })).status, 403);
+    assert.equal((await post({})).status, 200, 'no Origin and no Sec-Fetch-Site: a non-browser client');
+  });
+});
+
 test('invite redemption is guarded, after its rate limiter', () => {
   const src = read('src/routes/community-invites.js');
   assert.ok(src.includes(
@@ -84,13 +104,14 @@ const JSON_FIELD = 'requires a JSON body field: another origin cannot send one w
 const RAW = 'application/octet-stream body: not CORS-safelisted, so another origin needs a preflight';
 const TOKEN = 'not cookie-authenticated: bearer, app, worker or partner token, webhook signature, OAuth client or public endpoint';
 const OWN = 'has its own Origin/Sec-Fetch-Site check';
+const FILTER = 'a method filter, rate limit or 404/405 fallback: changes nothing itself';
 
 const EXEMPT = new Map([
   ['agent-session-drafts.js POST /api/agent-sessions/:id/drafts', JSON_FIELD],
   ['agent-sessions.js POST /api/agent-sessions/:id/attachments', RAW],
   ['agent-sessions.js POST /api/agent-sessions/:id/turns', JSON_FIELD],
   ['app-files.js POST /api/apps/:slug/files', RAW],
-  ['app-llm-proxy.js POST ${ROUTE_PREFIX}*', TOKEN],
+  ['app-llm-proxy.js POST `${ROUTE_PREFIX}*`', TOKEN],
   ['app-permissions.js POST /api/me/permission-grants', JSON_FIELD],
   ['app-storage.js POST /api/app-storage/files', TOKEN],
   ['approvers.js POST /api/apps/:slug/approver-invites', JSON_FIELD],
@@ -182,7 +203,7 @@ const EXEMPT = new Map([
   ['moderation.js POST /api/apps/:slug/messages/:id/report', JSON_FIELD],
   ['onboarding.js POST /api/me/communities', JSON_FIELD],
   ['pm-order.js POST /api/apps/:slug/pm-order', JSON_FIELD],
-  ['profile.js POST /api/me/email/${action}', JSON_FIELD],
+  ['profile.js POST `/api/me/email/${action}`', JSON_FIELD],
   ['profile.js POST /api/me/username', JSON_FIELD],
   ['profile.js POST /api/me/username/choose', JSON_FIELD],
   ['profile.js POST /api/me/avatar', RAW],
@@ -220,6 +241,32 @@ const EXEMPT = new Map([
   ['votes.js POST /api/sessions/:id/vote', JSON_FIELD],
   ['waitlist-connect.js POST /waitlist/connect/:provider/complete', JSON_FIELD],
   ['workshop-ask.js POST /api/apps/:slug/workshop/ask', JSON_FIELD],
+  // Declarations the literal-path scan used to miss.
+  ['anthropic-proxy.js ALL `${ROUTE_PREFIX}*`', TOKEN],
+  ['app-illustrations.js POST /api/apps/:slug/featured-illustration', RAW],
+  ['cli-agent.js ALL /*', FILTER],
+  ['cli-auth.js ALL /api/cli/device/approval', FILTER],
+  ['cli-auth.js ALL /api/cli/device/approve', FILTER],
+  ['cli-auth.js ALL /cli/authorize', FILTER],
+  ['cli-auth.js ALL /api/cli/token/status', FILTER],
+  ['cli-auth.js ALL /api/cli/token/current', FILTER],
+  ["cli-auth.js USE '/api/cli/rpc/me'", FILTER],
+  ['cli-auth.js ALL /api/cli/rpc/*', FILTER],
+  ['cli-auth.js ALL /api/me/cli-tokens', FILTER],
+  ['cli-auth.js ALL /api/me/cli-tokens/*', FILTER],
+  ['cli-auth.js ALL /api/me/local-agents', FILTER],
+  ['cli-auth.js ALL /api/me/local-agents/*', FILTER],
+  ["explorer-proxy.js USE '/explorer-api'", TOKEN],
+  ['mcp-remote.js POST MCP_PATH', TOKEN],
+  ['mcp-remote.js ALL MCP_PATH', FILTER],
+  ['moderation.js POST /api/profiles/:username/report', JSON_FIELD],
+  ['moderation.js POST /api/users/:username/report', JSON_FIELD],
+  ['topochain/epoch-delegation.js POST /api/v4/mobile/native/delegation', TOKEN],
+  ["topochain/mobile.js USE '/challenges-api'", FILTER],
+  ['topochain/native-session.js POST /api/v4/mobile/auth/native-establish-handoff', JSON_FIELD],
+  ['topochain/native-session.js POST /api/v4/mobile/auth/native-establish-ticket', TOKEN],
+  ['topochain/native-session.js POST /api/v4/mobile/auth/native-establish-exchange', TOKEN],
+  ['topochain/native-session.js POST /api/v4/mobile/auth/logout', TOKEN],
 ]);
 
 const ADMIN_PREFIX = /^\/api\/(v4\/)?admin(\/|$)/;
@@ -232,20 +279,76 @@ function routeFiles(dir) {
   });
 }
 
+const UNSAFE = new Set(['post', 'put', 'patch', 'delete', 'all']);
+
+// String paths a route argument names: a literal, an array of literals, or a
+// const in the same file bound to either. null when it cannot be resolved.
+function literalPaths(ts, node, consts) {
+  if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) return [node.text];
+  if (ts.isArrayLiteralExpression(node)) {
+    const parts = node.elements.map((el) => literalPaths(ts, el, consts));
+    return parts.every(Boolean) ? parts.flat() : null;
+  }
+  if (ts.isIdentifier(node) && consts.has(node.text)) return literalPaths(ts, consts.get(node.text), consts);
+  return null;
+}
+
+// Parsed, not pattern-matched, so a declaration cannot hide in a form the
+// scan does not know: every router.<verb>(…) call is found whatever its
+// first argument, router.route(…).<verb> and router.all are reported, and a
+// router.use whose inline handler answers requests itself (a terminal
+// (req, res) handler, or one that looks at req.method) is reported too.
 function unsafeRoutes() {
+  const ts = require('typescript');
   const routesDir = path.join(ROOT, 'src/routes');
   const found = [];
   for (const file of routeFiles(routesDir).sort()) {
-    const src = fs.readFileSync(file, 'utf8');
+    const text = fs.readFileSync(file, 'utf8');
     const rel = path.relative(routesDir, file).split(path.sep).join('/');
-    for (const m of src.matchAll(/\brouter\.(post|put|patch|delete)\(\s*(['"`])([^'"`]+)\2/g)) {
-      // The declaration up to its handler: the first inline function, or the
-      // end of the call when the handler is a named function.
-      const rest = src.slice(m.index);
-      const end = Math.min(...['(req', '=>', ');'].map((t) => rest.indexOf(t)).filter((n) => n >= 0));
-      const decl = rest.slice(0, end);
-      found.push({ key: `${rel} ${m[1].toUpperCase()} ${m[3]}`, method: m[1], route: m[3], decl });
-    }
+    const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const consts = new Map();
+    const routers = new Set(['router']);
+    const collect = (node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+          && (node.parent.flags & ts.NodeFlags.Const)) {
+        consts.set(node.name.text, node.initializer);
+      }
+      // Any other name a Router() is bound to is a router too.
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer
+          && ts.isCallExpression(node.initializer) && /\bRouter$/.test(node.initializer.expression.getText(sf))) {
+        routers.add(node.name.text);
+      }
+      ts.forEachChild(node, collect);
+    };
+    collect(sf);
+    const visit = (node) => {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+        const verb = node.expression.name.text;
+        const target = node.expression.expression;
+        const onRouter = ts.isIdentifier(target) && routers.has(target.text);
+        const onRoute = ts.isCallExpression(target) && ts.isPropertyAccessExpression(target.expression)
+          && target.expression.name.text === 'route';
+        if (onRoute && UNSAFE.has(verb)) {
+          found.push({ key: `${rel} ${verb.toUpperCase()} route(${target.arguments[0]?.getText(sf)})`, method: verb, paths: null, args: [] });
+        } else if (onRouter && UNSAFE.has(verb) && node.arguments.length) {
+          const [first, ...rest] = node.arguments;
+          const paths = literalPaths(ts, first, consts);
+          const args = rest.map((arg) => arg.getText(sf));
+          const names = paths || [first.getText(sf)];
+          for (const p of names) found.push({ key: `${rel} ${verb.toUpperCase()} ${p}`, method: verb, paths, route: p, args });
+        } else if (onRouter && verb === 'use') {
+          const inline = node.arguments.filter((arg) => ts.isArrowFunction(arg) || ts.isFunctionExpression(arg));
+          const answers = inline.some((fn) => fn.parameters.length === 2 || /\breq\.method\b/.test(fn.body.getText(sf)));
+          if (answers) {
+            const first = node.arguments[0];
+            const label = ts.isArrowFunction(first) || ts.isFunctionExpression(first) ? '*' : first.getText(sf).replace(/\s+/g, ' ');
+            found.push({ key: `${rel} USE ${label}`, method: 'use', paths: null, args: [] });
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
   }
   return found;
 }
@@ -255,15 +358,18 @@ test('every unsafe route is guarded, under the admin guard, or exempt with a rea
   assert.ok(routes.length > 300, 'the inventory found the route files');
   const undecided = [];
   const seen = new Set();
-  for (const { key, method, route, decl } of routes) {
+  for (const { key, method, paths, route, args } of routes) {
     seen.add(key);
-    const at = decl.indexOf('sameOriginBrowserOnly');
+    const at = args.indexOf('sameOriginBrowserOnly');
     if (at >= 0) {
-      assert.doesNotMatch(decl.slice(at), /Limiter/, `${key}: the guard follows its limiter`);
+      assert.ok(!args.slice(at + 1).some((arg) => /Limiter/.test(arg)), `${key}: the guard follows its limiter`);
       assert.ok(!EXEMPT.has(key), `${key} is guarded, so it is not exempt`);
       continue;
     }
-    if (ADMIN_PREFIX.test(route) || method !== 'post') continue;
+    // A preflighted verb on a path the scan could read needs no decision;
+    // anything that also answers POST (all, use) or that it could not read does.
+    if (paths && ADMIN_PREFIX.test(route)) continue;
+    if (paths && ['put', 'patch', 'delete'].includes(method)) continue;
     if (!EXEMPT.has(key)) undecided.push(key);
   }
   assert.deepEqual(undecided, [], 'guard these routes or add them to EXEMPT with a reason');
