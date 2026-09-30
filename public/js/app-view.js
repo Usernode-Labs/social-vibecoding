@@ -5921,6 +5921,11 @@ const AppView = {
         if (window.Secrets) Secrets.openForCurrentApp();
       }, { signal });
     }
+    // "Make it private" (the hub's ⋯, a public community's) renders once the
+    // community read answers, which can be after this wiring ran, so there is
+    // no node to bind here: its own click closes the menu through this.
+    // What it does is React's (community-card.tsx confirmMakePrivate).
+    AppView._closePlusMenu = close;
     const forkBtn = menu.querySelector('[data-plus="fork"]');
     if (forkBtn) {
       forkBtn.addEventListener('click', () => {

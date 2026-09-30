@@ -3348,7 +3348,7 @@ test('an empty board still gets the All items pane, and the note names the ⋯ a
   // BUG g, the first half: the note told the viewer to press a "+" that was
   // not on screen. On the hub the ⋯ it names is in the hero above it (drawn
   // once the community record has answered, which this render has not).
-  assert.match(WORKSHOP, /menu=\{\(\s*<DevPlusMenu[\s\S]*?inHero\s*\/>\s*\)\}/, 'the ⋯ the note names is the hub hero\'s');
+  assert.match(WORKSHOP, /menu=\{\(\s*<DevPlusMenu[\s\S]*?inHero\b[\s\S]*?\/>\s*\)\}/, 'the ⋯ the note names is the hub hero\'s');
   assert.doesNotMatch(status, /Press <span[^>]*>⋯<\/span> on the hub/, 'so on the hub it does not say where');
 });
 
@@ -3499,7 +3499,7 @@ test('the ⋯ is the hub hero’s: once, at the end of the members row, and no p
   // (import on canCollaborate, the members row, Fork for a read-only viewer)
   // are the ones the menu always had.
   assert.match(WORKSHOP,
-    /menu=\{\(\s*<DevPlusMenu\s+illustrationApp=\{actions\.illustrationApp\}\s+canManageIllustration=\{actions\.canManageIllustration\}\s+selfHosted=\{actions\.selfHosted\}\s+readOnly=\{actions\.readOnly\}\s+canCollaborate=\{actions\.canCollaborate\}\s+showsMembers=\{actions\.showsMembers\}\s+inHero\s*\/>\s*\)\}/);
+    /menu=\{\(\s*<DevPlusMenu\s+illustrationApp=\{actions\.illustrationApp\}\s+canManageIllustration=\{actions\.canManageIllustration\}\s+selfHosted=\{actions\.selfHosted\}\s+readOnly=\{actions\.readOnly\}\s+canCollaborate=\{actions\.canCollaborate\}\s+showsMembers=\{actions\.showsMembers\}\s+inHero\b[\s\S]*?onMakePrivate=\{canMakePrivate\(community\)[\s\S]*?\/>\s*\)\}/);
   assert.equal((WORKSHOP.match(/<DevPlusMenu\b/g) || []).length, 1, 'rendered in one place on this surface');
 });
 
