@@ -777,6 +777,36 @@ test('an action’s outcome is folded back into the strip', async () => {
   assert.match(DEV_CHAT_SRC.slice(at, at + 500), /_syncCurrentSessionFromList\(\)/);
 });
 
+test('a failed Archive says so, like Pause and Unarchive, and never throws', async () => {
+  // It fetched with no try and no status check: a refusal looked like
+  // success, and an offline click threw out of the menu and the list button.
+  const { DevChat, sandbox } = makeDevChat();
+  sandbox.AppView = { appData: { slug: 'recipe-box' } };
+  sandbox.ConfirmModal = { show: async () => true };
+  const toasts = [];
+  sandbox.PlatformUI = { toast: (msg) => toasts.push(msg) };
+  let reloads = 0;
+  DevChat._reloadSessionList = async () => { reloads += 1; };
+
+  sandbox.fetch = async () => ({ ok: false, json: async () => ({ error: 'Session is not active' }) });
+  assert.equal(await DevChat._sessionListArchive(SESSION.id, 'Widget language'), null);
+  assert.deepEqual(toasts, ['Session is not active'], "the server's own reason");
+
+  sandbox.fetch = async () => ({ ok: false, json: async () => { throw new Error('not json'); } });
+  assert.equal(await DevChat._sessionListArchive(SESSION.id, 'Widget language'), null);
+  assert.equal(toasts[1], 'Failed to archive session', 'a refusal with no body still says so');
+
+  sandbox.fetch = async () => { throw new TypeError('Failed to fetch'); };
+  assert.equal(await DevChat._sessionListArchive(SESSION.id, 'Widget language'), null);
+  assert.equal(toasts[2], 'Failed to archive session', 'offline says so too');
+  assert.equal(reloads, 0, 'a failed archive does not repaint as though it landed');
+
+  sandbox.fetch = async () => ({ ok: true, json: async () => ({}) });
+  assert.equal(await DevChat._sessionListArchive(SESSION.id, 'Widget language'), null);
+  assert.equal(toasts.length, 3, 'success is quiet');
+  assert.equal(reloads, 1);
+});
+
 // ── 5. #1941: one compact row ──────────────────────────────────────────
 //
 // The strip is the session's descriptor — its name, its PR, where it is
