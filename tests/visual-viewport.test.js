@@ -124,9 +124,15 @@ assert.equal(KIT_MODAL.length, 1, 'native.css has one .un-modal rule');
 const KIT_TOP = declared(KIT_MODAL[0], 'top');
 const KIT_MAX_HEIGHT = declared(KIT_MODAL[0], 'max-height');
 const KIT_TRANSITION = declared(KIT_MODAL[0], 'transition');
+const KIT_ALERT = rules(NATIVE_CSS, '.un-alert');
+assert.equal(KIT_ALERT.length, 1, 'native.css has one .un-alert rule');
+const KIT_ALERT_TOP = declared(KIT_ALERT[0], 'top');
+const KIT_ALERT_TRANSITION = declared(KIT_ALERT[0], 'transition');
 const SHELL_TOPS = rules(APP_CSS, '.un-modal').filter((body) => /(^|\s)top:/.test(body));
 const SHELL_SHIFTS = rules(APP_CSS, 'html.un-kb .un-modal').filter((body) => /(^|\s)translate:/.test(body));
 const SHELL_SHIFT = SHELL_SHIFTS.length === 1 ? declared(SHELL_SHIFTS[0], 'translate') : null;
+const SHELL_ALERT_SHIFTS = rules(APP_CSS, 'html.un-kb .un-alert').filter((body) => /(^|\s)translate:/.test(body));
+const SHELL_ALERT_SHIFT = SHELL_ALERT_SHIFTS.length === 1 ? declared(SHELL_ALERT_SHIFTS[0], 'translate') : null;
 /** The vertical half of `translate: 0 <y>`. */
 const SHELL_PAN = SHELL_SHIFT && SHELL_SHIFT.replace(/^0\s+/, '');
 
@@ -147,6 +153,35 @@ test('the pan never eases: it cancels iOS\'s instant jump in the same frame', ()
   assert.doesNotMatch(KIT_TRANSITION, /translate/);
   assert.doesNotMatch(SHELL_SHIFTS[0], /transition/);
   assert.doesNotMatch(APP_CSS, /\.un-modal[^{]*\{[^}]*transition:[^;}]*translate/);
+});
+
+test('the shell moves the kit alert by the pan in exactly one rule, and leaves `top` to the kit', () => {
+  // The vote prompt is the kit's alert card: its inset field autofocuses, so
+  // the keyboard is usually up and the pan is the one cause the #3412
+  // investigation could not rule out. The alert is centred on the same
+  // strip formula the modal is, so the same shift applies unchanged.
+  assert.equal(KIT_ALERT_TOP, KIT_TOP, 'native.css centres the alert on the modal\'s strip formula');
+  assert.equal(rules(APP_CSS, '.un-alert').filter((body) => /(^|\s)top:/.test(body)).length, 0,
+    'app.css does not restate the kit\'s top');
+  assert.equal(SHELL_ALERT_SHIFTS.length, 1, 'one app.css rule sets translate, only while the keyboard is up');
+  // Any translate but `none` is a transformed layer; with no keyboard there
+  // is no pan, so the card is left without one. This scans every
+  // `.un-alert` rule in app.css, not just ones it leads: the blur-off rule
+  // is a selector list (`.un-alert,` …) and must not grow a translate
+  // either. The selector and its `{` share a line, so a comment that
+  // mentions the class is not read as a rule.
+  const alertTranslateRules = APP_CSS.match(/[^\n{}]*\.un-alert[^\n{}]*\{[^{}]*translate:/) ?? [];
+  assert.equal(alertTranslateRules.length, 1, 'app.css translates the alert in no rule but the keyboard one');
+  assert.match(alertTranslateRules[0], /html\.un-kb \.un-alert \{/);
+  assert.equal(SHELL_ALERT_SHIFT, '0 var(--platform-vv-top, 0px)');
+});
+
+test('the alert\'s pan never eases either', () => {
+  // The kit's alert entrance eases transform and top; the pan must never
+  // join that list, for the same reason it never eases the modal's.
+  assert.doesNotMatch(KIT_ALERT_TRANSITION, /translate/);
+  assert.doesNotMatch(SHELL_ALERT_SHIFTS[0], /transition/);
+  assert.doesNotMatch(APP_CSS, /\.un-alert[^{]*\{[^}]*transition:[^;}]*translate/);
 });
 
 test('the kit rule the geometry relies on: centred on `top`, capped by the strip, scrolling', () => {
@@ -237,6 +272,25 @@ test('where nothing pans the kit\'s placement is unchanged: Android, no keyboard
     assert.deepEqual(place(frame), place(frame, { pan: false }));
     assert.ok(inside(place(frame), bandOf(frame)));
   }
+});
+
+test('the vote prompt: a short alert holds inside the band across the same pans', () => {
+  // The vote prompt IS an alert: 270px wide, a line of copy, the inset
+  // field, two buttons — content near 180px. Its kit rule carries the
+  // modal's strip formula (pinned above), and it reads the same shift, so
+  // place() is its geometry too.
+  assert.equal(SHELL_ALERT_SHIFT, SHELL_SHIFT, 'the alert reads the same pan the modal does');
+  for (const [layout, keyboard] of [[844, 403], [667, 304], [390, 200]]) {
+    const vvHeight = layout - keyboard;
+    for (let offsetTop = 0; offsetTop <= keyboard; offsetTop += 1) {
+      const frame = { layout, vvHeight, offsetTop, content: 180 };
+      assert.ok(inside(place(frame), bandOf(frame)),
+        `${layout}px layout, vote prompt at pan ${offsetTop}: ${place(frame).top}–${place(frame).bottom}`);
+    }
+  }
+  // Where nothing pans the shift is 0px and the kit's own placement stands.
+  const still = { layout: 844, vvHeight: 844, offsetTop: 0, content: 180 };
+  assert.deepEqual(place(still), place(still, { pan: false }));
 });
 
 test('pinch zoom is not a keyboard: the offset is ignored and the kit decides', () => {
