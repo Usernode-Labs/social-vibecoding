@@ -266,6 +266,43 @@ test('#3363: on an app\'s Workshop the ticked app is never folded away', () => {
   assert.match(html, /data-picker-more="open"[^>]*>[\s\S]*?>Show 1 more</);
 });
 
+test('#3363: expanding then collapsing a scoped section never folds the ticked app away', () => {
+  const { pickerFloor, pickerFold } = chrome;
+  const open = screen.groupRows(pickerRows)[0].rows; // six public rows
+  // Nothing ticked, or the ticked app in the top three: the screen's fold.
+  assert.equal(pickerFloor(open, null), 3);
+  assert.equal(pickerFloor(open, { slug: 'open-4' }), 3);
+  for (let total = 0; total <= 14; total++) {
+    for (const limit of [3, 8, 13, 18]) {
+      assert.deepEqual(pickerFold(total, limit, 3), screen.sectionFold(total, limit),
+        `floor 3 is sectionFold (${total}, ${limit})`);
+    }
+  }
+  // open-1 is 5th of 6: the section starts at five, expands to six, and
+  // "Show fewer" folds back to five, never to three.
+  const ticked = { slug: 'open-1' };
+  const floor = pickerFloor(open, ticked);
+  assert.equal(floor, 5);
+  const visible = (fold) => open.slice(0, fold.shown).map((r) => r.slug);
+  let fold = pickerFold(open.length, floor, floor);
+  assert.deepEqual(fold, { shown: 5, label: 'Show 1 more', next: 10 });
+  assert.ok(visible(fold).includes('open-1'), 'first render shows the ticked app');
+  fold = pickerFold(open.length, fold.next, floor);
+  assert.deepEqual(fold, { shown: 6, label: 'Show fewer', next: 5 }, 'expanded fully');
+  fold = pickerFold(open.length, fold.next, floor);
+  assert.equal(fold.shown, 5, 'Show fewer collapses to the floor, not to three');
+  assert.ok(visible(fold).includes('open-1'), 'and the ticked app is still drawn');
+  // The ticked app LAST: the floor is the whole section, so no fold row.
+  const last = { slug: 'mystery' };
+  assert.equal(pickerFloor(open, last), 6);
+  assert.deepEqual(pickerFold(6, 6, 6), { shown: 6, label: null, next: 6 });
+  const html = renderToHtml(createElement(chrome.WorkshopPicker, {
+    id: 'dev-ws-scope-chip-picker', scope: last, onClose: () => {}, apps: pickerRows,
+  }));
+  assert.ok(drawnSlugs(html).includes('mystery'));
+  assert.doesNotMatch(html, /data-picker-more="open"/, 'no dead Show fewer');
+});
+
 // ── The same panel, scoped to one app (#2718 review, #3295) ───────────
 //
 // On an app's own Workshop the control is the HEADER's tile and name, at

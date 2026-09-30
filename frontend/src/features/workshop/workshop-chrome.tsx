@@ -61,7 +61,7 @@ import { focusFirstItem, roveMenuFocus } from '../../lib/menu-keys';
 import { useStoreState } from '../../lib/use-store-state';
 import { APP_SCOPE_PANEL_ID, appScopeStore } from './app-scope-store.js';
 import {
-  groupRows, SECTION_LIMIT, sectionFold, type Audience, type SectionedRow,
+  groupRows, SECTION_LIMIT, SECTION_STEP, sectionFold, type Audience, type SectionedRow,
 } from './sections';
 
 /**
@@ -196,6 +196,32 @@ function PanelRow({
 }
 
 /**
+ * The fewest rows a panel section ever shows: three, or as many as it takes
+ * to reach the ticked app, so no press of "Show fewer" folds away the row
+ * that says where you are.
+ */
+export function pickerFloor(rows: Array<{ slug: string }>, scope: { slug: string } | null): number {
+  const at = scope ? rows.findIndex((app) => app.slug === scope.slug) : -1;
+  return Math.max(SECTION_LIMIT, at + 1);
+}
+
+/**
+ * The panel's fold: the screen's `sectionFold`, collapsing to `floor` rather
+ * than to three. With the floor at three (nothing ticked, or the ticked app
+ * among the three most recent) it IS `sectionFold`, answer for answer. A
+ * section whose floor already shows every row has no fold row at all: a
+ * "Show fewer" that could show nothing fewer is a dead control.
+ */
+export function pickerFold(total: number, limit: number, floor: number): { shown: number; label: string | null; next: number } {
+  if (floor <= SECTION_LIMIT) return sectionFold(total, limit);
+  if (total <= floor) return { shown: total, label: null, next: floor };
+  const shown = Math.min(total, Math.max(floor, limit));
+  const hidden = total - shown;
+  if (!hidden) return { shown, label: 'Show fewer', next: floor };
+  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+}
+
+/**
  * One audience's part of the panel (#3363): its label, its most recent rows
  * and the row that shows more of them.
  *
@@ -225,11 +251,9 @@ function PickerSection({ panelId, audience, label, rows, scope, onClose }: {
   scope: PickerApp | null;
   onClose: () => void;
 }) {
-  const [limit, setLimit] = useState(() => {
-    const at = scope ? rows.findIndex((app) => app.slug === scope.slug) : -1;
-    return Math.max(SECTION_LIMIT, at + 1);
-  });
-  const fold = sectionFold(rows.length, limit);
+  const floor = pickerFloor(rows, scope);
+  const [limit, setLimit] = useState(floor);
+  const fold = pickerFold(rows.length, limit, floor);
   const shown = rows.slice(0, fold.shown);
   const groupRef = useRef<HTMLDivElement>(null);
   // The index of the first row a press revealed, focused once it renders.
