@@ -75,8 +75,15 @@ import {
 } from '@/components/ui/icons';
 
 import { useClassToggle, useHiddenClass } from '../../lib/legacy-dom';
+import { useCommunityColor } from '../../lib/community-color';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibility } from '../../lib/visibility-store';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
+import {
+  communityScopeStore, goToCommunity, hydrateCommunityScope, shortName, toggleSwitcher, warmCommunities,
+  type CommunityInfo,
+} from '../workshop/community-scope';
+import { CommunitySwitcher } from '../workshop/community-switcher';
 import { navStore } from './nav-store.js';
 import { clearPeekTimer, enterPeek, leavePeek } from './rail-peek';
 import { RecentsList } from './recents-list';
@@ -193,6 +200,57 @@ function onWorkshopClick(event: React.MouseEvent<HTMLAnchorElement>): void {
   if (nav?.isNativeClick?.(event)) return;
   const app = (window as unknown as { App?: { resumeWorkshopView?: () => boolean } }).App;
   if (app?.resumeWorkshopView?.()) event.preventDefault();
+}
+
+/**
+ * THE COMMUNITIES TAB'S FACE: the community it is on, or All communities.
+ *
+ * On the phone's bar, a square ring, the shape of an app's own tile, around
+ * either that community's tile, in its colour (features/workshop/
+ * community-scope.ts says which; lib/community-color.ts what colour), or, on
+ * All communities, the tab's own people glyph. The ring is what says the tab
+ * can be switched: press it while it is lit and "Your communities" opens.
+ * The desktop rail draws no ring (app.css): there the row goes back to All
+ * communities, and the header's name is the switcher.
+ *
+ * All communities is THE PRERENDER: the scope arrives from localStorage and
+ * app.js after the first paint, so the shipped markup and the first client
+ * render are both this branch.
+ */
+function CommunityTabFace({ info }: { info: CommunityInfo | null }) {
+  const color = useCommunityColor(info
+    ? { color: info.iconColor, iconUrl: info.iconUrl, iconEmoji: info.iconEmoji, key: info.slug }
+    : null);
+  if (!info) {
+    return (
+      <span className="platform-tab-ring platform-tab-ring-all" aria-hidden="true">
+        <UserGroupIcon className="platform-tab-glyph" aria-hidden="true" />
+      </span>
+    );
+  }
+  const app = { slug: info.slug, name: info.name, icon_url: info.iconUrl, icon_emoji: info.iconEmoji };
+  return (
+    <span className="platform-tab-ring" style={{ ['--ring' as string]: color }} aria-hidden="true">
+      <span className="app-icon-tile platform-tab-tile" data-icon={appIconKind(app as never)}>
+        <AppIconContent app={app as never} />
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The votes the tab's community is waiting on you for (All communities: all
+ * of them), in the accent, because it asks for you. Only above zero, and
+ * never in the prerender (the store starts empty). While it shows, app.css
+ * hides the quiet unread-channels count beside it: one number per glyph.
+ */
+function VotesBadge({ count }: { count: number }) {
+  if (!(count > 0)) return null;
+  return (
+    <span className="platform-tab-votes" aria-label={`${count} ${count === 1 ? 'vote' : 'votes'} waiting on you`}>
+      {count > 99 ? '99+' : String(count)}
+    </span>
+  );
 }
 
 /**
@@ -671,6 +729,15 @@ export function PlatformTabs() {
   // shell) publish `false` once the router has run.
   const visible = useVisibility('platform-tabs', true);
   const { tab, messages, communities, screen, peek, peekOut, railOpen, viewer } = useStoreState(navStore);
+  // THE COMMUNITY THE FOURTH TAB IS ON (../workshop/community-scope.ts). Read
+  // from storage after the first paint, and every community's votes owed a
+  // moment after sign-in, so the badge can say so before anybody opens the
+  // switcher.
+  const scope = useStoreState(communityScopeStore);
+  useEffect(() => { hydrateCommunityScope(); }, []);
+  useEffect(() => (viewer ? warmCommunities() : undefined), [viewer]);
+  const scoped = scope.slug ? scope.info[scope.slug] || null : null;
+  const votes = scope.slug ? Number(scoped?.needs) || 0 : Number(scope.totalNeeds) || 0;
   // TWO WAYS TO HAVE NO RAIL, and they are not the same fact. The ROUTE can
   // say there is none (an app, chromeless, signed out) and the VIEWER can
   // fold the one there is (../header/../nav/sidebar-toggle.tsx). The peek
@@ -712,6 +779,25 @@ export function PlatformTabs() {
     if (key === lit && lit !== tab) {
       event.preventDefault();
       return;
+    }
+    // THE LIT COMMUNITIES TAB. On a phone it opens "Your communities"
+    // (../workshop/community-switcher.tsx) rather than popping to the list:
+    // the tab is a community now, and pressing it again is how you change
+    // which. On the desktop rail it goes back to All communities, the list,
+    // as a sidebar row does; the header's name is the switcher there.
+    if (key === 'workshop' && lit === 'workshop' && tab === 'workshop') {
+      let wide = false;
+      try { wide = window.matchMedia('(min-width: 768px)').matches; } catch { wide = false; }
+      if (!wide) {
+        event.preventDefault();
+        toggleSwitcher('tab', event.currentTarget);
+        return;
+      }
+      if (scope.slug) {
+        event.preventDefault();
+        goToCommunity(null);
+        return;
+      }
     }
     if (key !== lit && press(event.currentTarget, key, () => goToTab(key, href))) {
       event.preventDefault();
@@ -801,11 +887,13 @@ export function PlatformTabs() {
           // router's tab, except for the moment between a press and its route
           // landing, when it is the tab pressed (useTabMarker, #3259).
           aria-current={lit === key ? 'page' : undefined}
-          aria-label={tabLabel(key, label, viewer).ariaLabel}
+          aria-label={key === 'workshop' && scoped ? `${scoped.name}, your communities` : tabLabel(key, label, viewer).ariaLabel}
           onClick={(event) => onTabClick(event, key, href)}
         >
           <span className="platform-tab-mark">
-            <Icon className="platform-tab-glyph" aria-hidden="true" />
+            {key === 'workshop'
+              ? <CommunityTabFace info={scoped} />
+              : <Icon className="platform-tab-glyph" aria-hidden="true" />}
             {/*
                 THE SECOND BADGE IN THE SHELL, and the first one that is not
                 the bell's. #1443 argued the platform should carry exactly
@@ -842,8 +930,11 @@ export function PlatformTabs() {
             {key === 'workshop' ? (
               <TabBadge count={communities} id="platform-tabs-badge-communities" label="Channels with unread messages" />
             ) : null}
+            {key === 'workshop' ? <VotesBadge count={votes} /> : null}
           </span>
-          <span className="platform-tab-label">{tabLabel(key, label, viewer).text}</span>
+          <span className="platform-tab-label">
+            {key === 'workshop' && scoped ? shortName(scoped.name) : tabLabel(key, label, viewer).text}
+          </span>
         </a>,
       ])}
       {/*
@@ -874,6 +965,7 @@ export function PlatformTabs() {
         <CogIcon className="platform-rail-settings-glyph" aria-hidden="true" />
       </a>
       </nav>
+      <CommunitySwitcher />
     </>
   );
 }

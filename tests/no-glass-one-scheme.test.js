@@ -70,7 +70,7 @@ test('what content scrolls or slides behind is solid, in the plane colour', () =
     [/\.un-modal \{ background-color: var\(--dc-sheet\); \}/, 'kit dialogs (a 95% fill, so the opaque sheet)'],
     [/\.un-modal:has\(#feedback-form\) \{ background-color: var\(--dc-sheet-solid\); \}/, 'Send Feedback, in the plane colour like the sheets'],
     [/background-color: var\(--create-modal-fill, var\(--dc-strip-solid\)\)/, 'the centred create dialog'],
-    [/\.dev-ws-pane-head, \.dev-ws-pane-body, \.dev-ws-ear \{ background-color: var\(--dc-sheet-solid\); \}/, 'the Workshop pane, head, body and ear together'],
+    [/\.dev-ws-pane-head, \.dev-ws-pane-body \{ background-color: var\(--dc-sheet-solid\); \}/, 'the Workshop pane, head and body together'],
     // The Browse list's card and its empty note, on a phone. Its search and
     // filters sit on the ground above it now and scroll with it, so there is
     // no pinned head for the rows to pass behind.

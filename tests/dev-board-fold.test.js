@@ -1360,9 +1360,22 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Your contributions check pins the Your work rows, and the Friends check
   // opens its card.
   //
+  // 826 → 829: +3 (#852, the Communities tab as a community): the project
+  // page's four tabs in its colour, and the Communities tab's two faces (the
+  // community it is on, and All communities), which are new surfaces. The
+  // rest FOLDED or was REWRITTEN in place: the hub's chat preview rides the
+  // check that replaced the Workshop door's (it pinned "ends with Start a new
+  // change" until the review moved that into the ⋯, and pins the ⋯ now);
+  // the since card's Week by week rides the summary card's check; the
+  // Workshop tab's lit state rides its #2915 numbers check; the approval
+  // rules' check moved to the head of All items; #general's composer check
+  // moved to the Discussion tab; the filter dot, the ⋯ and Needs you checks
+  // pin the band and the hero's actions row; the grouping-ear checks pin the
+  // strip in the pane head; the All chip's pins the header's switcher.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 826);
+  checkCap.assertPinned(DAPP.tests.length, 829);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

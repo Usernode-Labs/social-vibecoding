@@ -60,7 +60,10 @@ test('the card says who wrote it, is not a link, and the × hides it until somet
   // Storage can throw (private mode): the card still works for the page.
   assert.match(SRC, /catch \{ \/\* private mode: dismissed for this page only \*\/ \}/);
   // On the hub, first under the hero, measured from the viewer's last visit.
-  assert.match(LANDER, /\{slug \? <SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} \/> : null\}/);
+  // Its one way on is a button, not a link: Week by week, the Workshop page
+  // (#852).
+  assert.match(LANDER, /\{slug \? \(\s*<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>\s*\) : null\}/);
+  assert.match(SRC, /data-ws-since-summary-more="" onClick=\{onMore\}>\s*Week by week/);
   for (const cls of ['dev-ws-since-card', 'dev-ws-since-card-n', 'dev-ws-since-card-tag', 'dev-ws-since-card-x', 'dev-ws-since-card-text', 'dev-ws-since-card-list']) {
     assert.match(CSS, new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
   }

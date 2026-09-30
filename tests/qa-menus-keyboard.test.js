@@ -128,12 +128,16 @@ test('Q18: the Workshop "+" menu closes on Escape and on a press anywhere, and r
   assert.doesNotMatch(fn, /content\.addEventListener\('click'/, 'the content-only dismisser, which a header press skipped, is gone');
 });
 
-test('Q18: the "Which project?" panel and the Homeroom menu take focus, rove, and give it back on Escape', () => {
-  const ws = read('frontend/src/features/workshop/workshop-chrome.tsx');
-  assert.match(ws, /<button id=\{id\} type="button" role="menuitem"/);
-  assert.match(ws, /onKeyDown=\{\(event\) => \{ roveMenuFocus\(event, event\.currentTarget\); \}\}/);
-  assert.match(ws, /focusFirstItem\(panelRef\.current\);/);
-  assert.match(ws, /if \(event\.key !== 'Escape'\) return;\s*const back = opener\(\);/);
+test('Q18: Your communities and the Homeroom menu take focus, rove, and give it back on Escape', () => {
+  // #852: "Your communities" replaced the "Which project?" panel. It lands
+  // focus on the community you are on, the arrows (and Home and End) move
+  // between its rows, and Escape closes it and hands focus back.
+  const sw = read('frontend/src/features/workshop/community-switcher.tsx');
+  assert.match(sw, /querySelector<HTMLButtonElement>\('\[aria-current="true"\]'\)\?\.focus\(\);/);
+  assert.match(sw, /<div className="community-switcher-list" onKeyDown=\{roveRows\}>/);
+  assert.match(sw, /const keys = \['ArrowDown', 'ArrowUp', 'Home', 'End'\];/);
+  assert.match(sw, /if \(e\.key !== 'Escape'\) return;\s*closeSwitcher\(\);\s*previousFocus\?\.focus\?\.\(\);/, 'the menu gives focus back');
+  assert.match(sw, /if \(adoption\) adoption\.release\(\);\s*previousFocus\?\.focus\?\.\(\);/, 'and so does the sheet');
   const ctx = read('frontend/src/features/app-context/index.tsx');
   assert.match(ctx, /roveMenuFocus\(event, el, SHEET_ROWS\)/);
   assert.match(ctx, /if \(inside\) document\.getElementById\(MARK_ID\)\?\.focus\(/);

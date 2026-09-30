@@ -47,30 +47,35 @@
  * ── On the app's Workshop the strip is the app switcher (#2768, #3295) ─
  *
  * The Workshop used to lead with a scope chip — the app's tile, its name and
- * a ⌄ — whose panel lists your other apps
- * (features/workshop/workshop-chrome.tsx). Under this bar that was the same
+ * a ⌄ — whose panel listed your other apps. Under this bar that was the same
  * tile and the same name twice, an inch apart. #2768 dropped the chip on a
  * phone and made the bar's tile and name the control there: a button with
- * the ⌄ that opens the same panel, through the same flag
- * (features/workshop/app-scope-store.js). A desktop kept the chip and the
- * bar dropped its tile instead.
+ * the ⌄ that opened the same panel. A desktop kept the chip and the bar
+ * dropped its tile instead.
  *
  * #3295 (the owner's request) makes the desktop the phone's: "on desktop,
  * put the community selector dropdown in the header, not either above the
  * community hub / workshop tabs or to the left of those if the screen is
  * wide". So the switcher is this bar's AT EVERY WIDTH, and the Workshop no
- * longer draws a chip. The panel still drops down at the top of the page,
- * right under this bar.
+ * longer draws a chip.
  *
- * ── And on the Communities screen, the all-apps chip (#3271) ─────────
+ * WHAT IT OPENS is "Your communities" now (features/workshop/
+ * community-switcher.tsx), the same switcher the Communities tab opens when
+ * pressed while lit: a sheet on a phone, a menu under this name on a wide
+ * window. The in-page "Which project?" panel it used to drop is gone. On the
+ * project page this bar wears the community's colour (app.css, "The
+ * project's colour"), so the name and ⌄ read as the community's own.
  *
- * The Communities screen leads with the same kind of chip, "All apps ⌄",
- * whose panel opens one of your apps. On a phone it sat under a header that
- * only said "Communities" (which the lit tab already says), costing a whole
- * row. So it gets the app Workshop's treatment: below 700px the header's
- * title IS the chip, `#header-scope-switch`, opening the screen's own panel
- * through the screen's own flag (`workshopStore.scopeOpen`), and app.css
- * hides the in-page chip. Above 700px nothing changes.
+ * ── And on the Communities screen, its switcher (#3271, #852) ──────────
+ *
+ * The Communities screen led with the same kind of chip, "All ⌄". On a phone
+ * it sat under a header that only said "Communities" (which the lit tab
+ * already says), costing a whole row, so the header's title became the chip
+ * there (#3271), `#header-scope-switch`. #852 makes that every width and
+ * drops the chip from the page: the control that says where you are lives
+ * in the bar that says it everywhere else. It opens "Your communities", as
+ * the app's name does, and it reads "Communities ⌄": the screen's own name,
+ * with "All communities" kept for the switcher's first row.
  *
  * The width is a media flag settled in an effect, so the first client render
  * is the prerender's (no button) and nothing here can mismatch hydration; by
@@ -79,7 +84,7 @@
  * prerender does not have either.
  */
 
-import { useEffect, useState, type RefObject } from 'react';
+import type { RefObject } from 'react';
 
 import { ChevronDownIcon, Squares2X2Icon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
@@ -92,8 +97,7 @@ import { sessionHeaderStore } from '../dev-chat/session-header-store';
 import { MergeStatusPill } from '../dev-chat/session-header';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { useDevViewMode } from '../dev-board/view-mode-store';
-import { APP_SCOPE_PANEL_ID, appScopeStore } from '../workshop/app-scope-store.js';
-import { workshopStore } from '../workshop/workshop-store.js';
+import { communityScopeStore, toggleSwitcher } from '../workshop/community-scope';
 
 // The one string that means "this is naming the platform, not an app". It is
 // header-title-store.js's INITIAL, which is why the prerendered document and
@@ -101,36 +105,16 @@ import { workshopStore } from '../workshop/workshop-store.js';
 // anything from anywhere.
 const PLATFORM_NAME = 'Homeroom';
 
-/**
- * The phone layout, in the spelling app.css uses for the same breakpoint (the
- * Workshop's own `WIDE_QUERY` is its complement). False until mounted, so the
- * hydrating render agrees with the prerender whatever the window is. Only the
- * Communities screen's switcher reads it now (#3295).
- */
-const PHONE_QUERY = '(max-width: 699.98px)';
-
-function usePhone(): boolean {
-  const [phone, setPhone] = useState(false);
-  useEffect(() => {
-    if (typeof window.matchMedia !== 'function') return undefined;
-    const mq = window.matchMedia(PHONE_QUERY);
-    const apply = () => setPhone(mq.matches);
-    apply();
-    mq.addEventListener('change', apply);
-    return () => mq.removeEventListener('change', apply);
-  }, []);
-  return phone;
-}
-
 export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingElement | null> }) {
   const { text, subtitle } = useStoreState(headerTitleStore);
   const { slug, tab, subTab, name, iconUrl, iconEmoji } = useStoreState(improveStore);
   const { screen } = useStoreState(navStore);
   const { life } = useStoreState(sessionHeaderStore);
   const viewMode = useDevViewMode();
-  const { open: scopeOpen } = useStoreState(appScopeStore) as { open: boolean };
-  const { scopeOpen: allAppsOpen } = useStoreState(workshopStore) as { scopeOpen: boolean };
-  const phone = usePhone();
+  // "Your communities" (features/workshop/community-switcher.tsx): the
+  // app's name opens it, and so does the Communities screen's All chip.
+  const { switcher } = useStoreState(communityScopeStore);
+  const switcherOpen = !!switcher;
 
   const onSession = tab === 'dev' && subTab === 'sessions';
   const sessionPill = onSession && life ? <MergeStatusPill life={life} /> : null;
@@ -148,9 +132,9 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   // the general chat) have no scope panel, so the strip is left alone there.
   const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';
   // At every width (#3295): the Workshop draws no chip of its own any more.
-  const switcher = onWorkshop;
-  // The Communities screen on a phone: the title is its all-apps chip.
-  const allAppsSwitcher = screen === 'workshop-screen' && phone;
+  const appSwitch = onWorkshop;
+  // The Communities screen, at every width: the title is its switcher.
+  const allAppsSwitcher = screen === 'workshop-screen';
   const showTile = inApp;
 
   /* `.app-icon-tile` + `data-icon` draw the box, and this call site adds no
@@ -163,7 +147,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
       id="header-app-tile"
       // Inside the switcher button, the tile is a nested link. The h1 is
       // pointer-events-none, so the tile opts back in.
-      nested={switcher}
+      nested={appSwitch}
       slug={slug}
       name={name || text}
       data-icon={appIconKind(record)}
@@ -181,28 +165,28 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
       className={"flex-1 min-w-0 text-base font-semibold pointer-events-none truncate\n               text-left"}
     >
       <span className="inline-flex items-center gap-2 max-w-full align-middle">
-        {switcher ? null : tile}
+        {appSwitch ? null : tile}
         {allAppsSwitcher ? (
-          /* THE ALL-APPS CHIP, in the bar (#3271). The same control as the
-             screen's own `#workshop-scope` — the grid, "All" and the ⌄ —
-             opening the same panel, which still drops down at the top of the
-             screen, right under this bar. */
+          /* THE COMMUNITIES SWITCHER, in the bar (#3271, at every width
+             since #852): the grid, "Communities" and the ⌄, opening Your
+             communities. */
           <button
             id="header-scope-switch"
             type="button"
             className="pointer-events-auto un-touch-target inline-flex items-center gap-2 min-w-0 max-w-full
                        text-left font-semibold"
-            aria-haspopup="menu"
-            aria-expanded={allAppsOpen ? 'true' : 'false'}
-            aria-controls="workshop-scope-picker"
-            aria-label="All your projects, or open one"
-            onClick={() => workshopStore.set({ scopeOpen: !allAppsOpen })}
+            data-community-switch=""
+            aria-haspopup="dialog"
+            aria-expanded={switcherOpen ? 'true' : 'false'}
+            aria-controls="community-switcher"
+            aria-label="Communities: all of yours, or open one"
+            onClick={(e) => toggleSwitcher('header', e.currentTarget)}
           >
             <Squares2X2Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
-            <span id="header-title-name" className="min-w-0 truncate">All</span>
+            <span id="header-title-name" className="min-w-0 truncate">Communities</span>
             <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
           </button>
-        ) : switcher ? (
+        ) : appSwitch ? (
           /* THE SWITCHER. `pointer-events-auto` because the h1 around it is
              `pointer-events-none` so its overlap never eats a tap meant for a
              control beside it — this is the one part of it that IS a
@@ -212,11 +196,12 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             type="button"
             className="pointer-events-auto un-touch-target inline-flex items-center gap-2 min-w-0 max-w-full
                        text-left font-semibold"
-            aria-haspopup="menu"
-            aria-expanded={scopeOpen ? 'true' : 'false'}
-            aria-controls={APP_SCOPE_PANEL_ID}
-            aria-label={`${name || text}, switch app`}
-            onClick={() => appScopeStore.set({ open: !scopeOpen })}
+            data-community-switch=""
+            aria-haspopup="dialog"
+            aria-expanded={switcherOpen ? 'true' : 'false'}
+            aria-controls="community-switcher"
+            aria-label={`${name || text}, switch community`}
+            onClick={(e) => toggleSwitcher('header', e.currentTarget)}
           >
             {tile}
             {/* THE APP'S NAME, not the screen's: the bar reads "Workshop" on this

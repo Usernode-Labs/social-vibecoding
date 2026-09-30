@@ -47,7 +47,7 @@ const community = (over = {}) => ({
 
 const days = (counts) => counts.map((n, i) => ({ day: `2026-09-${String(10 + i).padStart(2, '0')}`, n }));
 
-test('#3268: the hero carries who is here and the fortnight, with the actions at the row\'s end', () => {
+test('#3268: the hero carries who is here and the fortnight, and who it is for rides the count (#852)', () => {
   const { HeroPeople, HeroActivity, HERO_FACES, sparkTip } = loadTsx(CARD);
   const members = ['ada', 'lin', 'kai', 'mia', 'sam', 'zoe', 'raj'].map((u, i) => ({ id: i + 1, username: u }));
   const people = renderToHtml(createElement(HeroPeople, { members, count: 19 },
@@ -85,13 +85,24 @@ test('#3268: the hero carries who is here and the fortnight, with the actions at
   assert.doesNotMatch(shippedOnly, /active this week/);
   assert.match(shippedOnly, /<b>2<\/b> shipped this month/);
 
-  // Just you: the actions have the row alone; a Community or a Group gets both rows.
+  // WHO IT IS FOR rides the count: "Public community · 19 members", its
+  // glyph leading, and Just you is the label alone (#852: the label was a
+  // chip under the name, and the name is the coloured header's now).
+  const labelled = renderToHtml(createElement(HeroPeople, { members, count: 19, audience: 'open', audienceLabel: 'Public community' }));
+  assert.match(labelled, /<span class="dev-ws-hero-count" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience=""><svg[^>]*>[\s\S]*?<\/svg><b>Public community<\/b><\/span> · 19 members<\/span>/);
+  const alone = renderToHtml(createElement(HeroPeople, { members: [], count: 1, audience: 'solo', audienceLabel: 'Just you' }));
+  assert.match(alone, /<b>Just you<\/b><\/span><\/span>/);
+  assert.doesNotMatch(alone, /\d+ members?/, 'Just you counts nobody');
+
+  // Who is here first, then what it is, then one row of what you can do,
+  // then the fortnight (not for Just you, who has nobody to count).
   const src = CARD_SRC;
-  assert.match(src, /\{solo \? actions : \(\s*<HeroPeople members=\{data\.members\} count=\{Number\(data\.member_count\) \|\| 0\}>\s*\{actions\}\s*<\/HeroPeople>\s*\)\}\s*\{solo \? null : <HeroActivity activity=\{data\.activity\} \/>\}/);
-  assert.ok(src.indexOf('data-ws-community-description') < src.indexOf('<HeroPeople members'), 'what it is, then who is here');
-  // Joined sits across from the name; Invite, Make it public and the ⋯ end the members row.
-  assert.match(src, /<HeroId app=\{tileApp\} end=\{membership\}>/);
-  assert.match(src, /const actions = \(\s*<div className="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[\s\S]*?<MakePublic[\s\S]*?\{menu\}\s*<\/div>/);
+  assert.match(src, /<HeroPeople\s+members=\{solo \? \[\] : data\.members\}\s+count=\{Number\(data\.member_count\) \|\| 0\}\s+audience=\{data\.audience\}\s+audienceLabel=\{data\.audience_label\}\s+\/>/);
+  assert.ok(src.indexOf('<HeroPeople\n') < src.indexOf('data-ws-community-description=""'), 'who is here, then what it is');
+  assert.match(src, /\{solo \? null : <HeroActivity activity=\{data\.activity\} \/>\}/);
+  // Open app, Invite, Make it public and the ⋯ lead the row; Join or Joined
+  // is across from them at its far end.
+  assert.match(src, /<div className="dev-ws-hero-row">\s*<div className="dev-ws-hero-actions">\s*\{openApp\}[\s\S]*?data-ws-community-invite=""[\s\S]*?<MakePublic[\s\S]*?\{menu\}\s*<\/div>\s*\{membership \? <span className="dev-ws-hero-member">\{membership\}<\/span> : null\}/);
   // How a change gets in is the Workshop page's Approval rules card now.
   const hero = src.slice(src.indexOf('export function CommunityCard('), src.indexOf('export function ApprovalRules('));
   assert.doesNotMatch(hero, /data-ws-community-rule/);
@@ -99,23 +110,21 @@ test('#3268: the hero carries who is here and the fortnight, with the actions at
   assert.doesNotMatch(read(HUB), /export function MembersCard/, 'the hub has no Members & activity card any more');
 });
 
-test('#3276: the people row wraps its actions instead of running past a phone\'s edge', () => {
+test('#3276: the hero\'s rows wrap instead of running past a phone\'s edge', () => {
   // Five faces, "13 members", Joined and Invite came to 364px in a 359px
-  // row on a 375px phone, and the hub scrolled sideways. Nothing in the row
-  // can shrink, so it has to wrap: the row, and the actions among themselves.
+  // row on a 375px phone, and the hub scrolled sideways. Nothing in a row
+  // can shrink, so it has to wrap: the people row, and the actions among
+  // themselves, with Join or Joined held at the actions row's far end.
   const rule = (sel) => {
     const m = CSS.match(new RegExp(`^${sel.replace(/[.>]/g, '\\$&')} \\{([^}]*)\\}`, 'm'));
     assert.ok(m, `${sel} has a rule`);
     return m[1];
   };
   assert.match(rule('.dev-ws-hero-people'), /display: flex; flex-wrap: wrap;/);
-  const actions = rule('.dev-ws-hero-people > .dev-ws-hero-actions');
-  assert.match(actions, /flex-wrap: wrap;/);
-  // Still at the row's far end when they wrap: the Join and "Make it public"
-  // popups hang from the right of their button.
-  assert.match(actions, /margin-left: auto;/);
-  assert.match(actions, /justify-content: flex-end;/);
-  assert.match(CSS, /\.dev-ws-hero \.dev-ws-hero-people \.dev-ws-join-pop \{ left: auto; right: -6px; \}/);
+  assert.match(rule('.dev-ws-hero-row > .dev-ws-hero-actions'), /min-width: 0; flex-wrap: wrap;/);
+  assert.match(rule('.dev-ws-hero-member'), /margin-left: auto; flex: none;/);
+  // The Join popup hangs from the right of its button, which ends the row.
+  assert.match(CSS, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/);
 });
 
 test('Needs you counts the votes you owe, not the requests nobody has claimed', () => {

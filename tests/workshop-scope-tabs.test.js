@@ -32,12 +32,20 @@
 // above. All items and the plus stay retired: every item of every app is not
 // a page, and the plus's two questions can still only be asked inside an app.
 //
-// Three things are still pinned, and each is a way the screens can be quietly
-// wrong:
+// ── #852 made the tab a community, and the chip's panel a switcher ─────
 //
-//   1. PICKING AN APP NAVIGATES, to that app's own Workshop.
-//   2. THE NAVIGATION IS AWAITED, so a refused one cannot read as a
-//      completed one.
+// The fourth tab is the community you are on (or All communities), and
+// "Your communities" is how you change which: a sheet on a phone, a menu on a
+// wide window, opened from the lit tab, the header's name and ⌄, and the All
+// chip here (features/workshop/community-switcher.tsx). The "Which project?"
+// panel both ends of the chip shared is gone, and with it the audience
+// sections and "Show N more" of #3363: the switcher lists every community you
+// are in, newest first, each saying who it is for and what it waits on you for.
+//
+// What is pinned, each a way the screens can be quietly wrong:
+//
+//   1. PICKING A COMMUNITY GOES TO ITS HUB, and All communities to the list.
+//   2. THE SWITCHER SAYS WHICH ONE YOU ARE ON, and what each waits on you for.
 //   3. THE NEEDS YOU ROW SAYS NOTHING OVER A ZERO, and totals every
 //      project, not a filtered few.
 
@@ -50,44 +58,87 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 const HTML = read('public/index.html');
-const CHROME = read('frontend/src/features/workshop/workshop-chrome.tsx');
 const SCREEN = read('frontend/src/features/workshop/index.tsx');
 
+const SCOPE = read('frontend/src/features/workshop/community-scope.ts');
+const SWITCHER = read('frontend/src/features/workshop/community-switcher.tsx');
+
 const screen = loadTsx('frontend/src/features/workshop/index.tsx');
-const chrome = loadTsx('frontend/src/features/workshop/workshop-chrome.tsx');
 
 const app = (slug, working, needs) => ({ slug, name: slug, working, needs });
 
-test('picking an app navigates: the chip is the link out', () => {
-  assert.match(CHROME, /await win\(\)\.App\?\.navigateToApp\?\.\(slug, 'dev'\);/,
-    'picking an app goes to that app’s own Workshop');
-  // NEVER DISABLED. Scoped to an app there is always somewhere to go (back
-  // up to all of them), and at the all-apps end (#3051) there is always an
-  // app to go into or, with none, the panel's own All apps row.
-  assert.ok(!/disabled=\{/.test(CHROME), 'the chip is never a dead control');
+test('picking a community goes to its hub, and All communities to the list', () => {
+  const at = SCOPE.indexOf('export function goToCommunity(');
+  const fn = SCOPE.slice(at, SCOPE.indexOf('\n}\n', at));
+  assert.match(fn, /closeSwitcher\(\);/, 'the switcher closes either way');
+  assert.match(fn, /setScope\(null\);[\s\S]*?_forgetWorkshopView[\s\S]*?window\.location\.hash = '#communities';/,
+    'All communities is the list, by the same address the tab carries');
+  assert.match(fn, /setScope\(slug\);\s*try \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\); \}/,
+    'a community opens on its hub');
+  assert.match(fn, /void app\?\.navigateToApp\?\.\(slug, 'dev'\);/);
+  assert.ok(!fn.includes('startSession') && !fn.includes('giveFeedback'), 'nothing is started from the switcher');
+  // Join or start a community is Discover.
+  assert.match(SWITCHER, /data-switcher-join=""\s*onClick=\{\(\) => \{ closeSwitcher\(\); window\.location\.hash = '#apps'; \}\}/);
 });
 
-test('the action waits for the navigation', () => {
-  // It MATTERED more when the plus's two action rows landed here:
-  // navigateToApp resolves once the app view has opened and the Improve
-  // controller knows what it is about, and calling startSession() before that
-  // started a change on whatever app the panel last pointed at. The scope
-  // chip is the only caller left, so nothing runs after the await — the await
-  // stays so a refused navigation cannot read as a completed one, and the
-  // panel closes either way.
-  const at = CHROME.indexOf('async function goToApp(');
-  const fn = CHROME.slice(at, CHROME.indexOf('\n}\n', at));
-  assert.match(fn, /await win\(\)\.App\?\.navigateToApp\?\.\(slug, 'dev'\);/);
-  assert.match(fn, /\} catch \{/, 'and a refusal is caught rather than thrown at the screen');
-  assert.ok(!fn.includes('startSession'), 'nothing is started from this screen any more');
-  assert.ok(!fn.includes('giveFeedback'), 'nor reported from it');
+test('the switcher says which community you are on, who each is for, and what it waits on you for', () => {
+  const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
+  const info = {
+    garden: { slug: 'garden', name: 'Garden', iconUrl: null, iconEmoji: '🌱', iconColor: '#2e6660', audience: 'open', memberCount: 23, needs: 2 },
+    club: { slug: 'club', name: 'Club', iconUrl: null, iconEmoji: null, iconColor: null, audience: 'invited', memberCount: 1, needs: 0 },
+    notes: { slug: 'notes', name: 'Notes', iconUrl: null, iconEmoji: '📝', iconColor: null, audience: 'solo', memberCount: 1, needs: 0 },
+  };
+  const real = loadTsx('frontend/src/features/workshop/community-scope.ts');
+  const render = (slug) => {
+    const mod = loadTsx('frontend/src/features/workshop/community-switcher.tsx', {
+      stubs: {
+        './community-scope': {
+          ...real,
+          communityScopeStore: fixedStore({ slug, info, list: ['garden', 'club', 'notes'], totalNeeds: 2, switcher: 'tab', anchor: null }),
+        },
+      },
+    });
+    return renderToHtml(createElement(mod.SwitcherBody, {}));
+  };
+  const all = render(null);
+  assert.match(all, /<h2 class="community-switcher-title" id="community-switcher-title">Your communities<\/h2>/);
+  const rows = [...all.matchAll(/data-switcher-community="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(rows, ['all', 'garden', 'club', 'notes'], 'All communities first, then each in the list\'s order');
+  assert.match(all, /data-switcher-community="all" aria-current="true"/, 'with none chosen, All communities is the one you are on');
+  assert.match(all, /All communities<\/span><span class="community-switcher-sub">3 communities<\/span>/);
+  assert.match(all, /data-switcher-waiting="">2 to vote</, 'what they all wait on you for');
+  assert.match(all, />Public · 23 members<\/span>/);
+  assert.match(all, />Private · 1 member<\/span>/);
+  assert.match(all, />Just you<\/span>/);
+  assert.equal((all.match(/data-switcher-waiting/g) || []).length, 2, 'a zero says nothing');
+  assert.ok(all.indexOf('data-switcher-join') > all.indexOf('data-switcher-community="notes"'), 'Join or start a community last');
+  const one = render('garden');
+  assert.match(one, /data-switcher-community="garden" aria-current="true"/, 'the tab\'s community is ticked');
+  assert.doesNotMatch(one, /data-switcher-community="all" aria-current/);
+  assert.match(one, /color-mix\(in srgb, #2e6660 12%, transparent\)/, 'and tinted in its own colour');
+});
+
+test('#852: every class the switcher draws with has a rule, and the menu floats at a fixed size', () => {
+  // A REAL REGRESSION. Deleting the two-column hub's rules took the block
+  // under them with it, and the switcher rendered unstyled: its rows as
+  // inline text, each icon at its natural size across the page. Nothing
+  // failed, because nothing read the stylesheet for it.
+  const CSS = read('public/css/app.css');
+  const used = [...new Set(SWITCHER.match(/community-switcher(?:-[a-z]+)*/g))];
+  const unstyled = used.filter((c) => !new RegExp(`\\.${c}(?![-\\w])[^{}]*\\{`).test(CSS));
+  assert.deepEqual(unstyled, [], 'each community-switcher-* class the component uses is styled in app.css');
+  assert.match(CSS, /\.community-switcher-menu \{[^}]*position: fixed;[^}]*width: 364px;/,
+    'the wide menu floats, at a fixed width');
+  assert.match(CSS, /\.community-switcher-scrim \{[^}]*position: fixed;/, 'the phone sheet sits over a scrim');
+  assert.match(CSS, /\.community-switcher-tile \{[^}]*width: 40px; height: 40px;/, 'and a community\'s tile has a size');
+  assert.match(CSS, /\.community-switcher-tile > img \{ width: 100%; height: 100%;/, 'which its icon fills rather than overflowing');
+  assert.match(CSS, /\.platform-tab-tile > img \{ width: 100%; height: 100%;/, 'as the tab\'s tile does');
 });
 
 test('All items, the plus and now the tabs are gone; Needs you is a row (#3051)', () => {
   for (const id of ['workshop-tabs', 'workshop-tab-all', 'workshop-tab-empty', 'workshop-plus',
     'workshop-plus-change', 'workshop-plus-issue', 'workshop-plus-create', 'workshop-picker',
     'workshop-tab-status', 'workshop-tab-needs', 'workshop-total-working', 'workshop-total-needs']) {
-    assert.ok(!CHROME.includes(`id="${id}"`), `#${id} is not rendered`);
     assert.ok(!SCREEN.includes(`id="${id}"`), `#${id} is not on the screen either`);
     assert.ok(!HTML.includes(`id="${id}"`), `#${id} is not in the shipped shell`);
   }
@@ -97,26 +148,23 @@ test('All items, the plus and now the tabs are gone; Needs you is a row (#3051)'
   assert.ok(!SCREEN.includes('filterRows'), 'the screen does not filter the app list');
   const store = read('frontend/src/features/workshop/workshop-store.js');
   assert.match(store, /^\s*tab: 'status',/m, 'the list is the default, and the prerender');
-  assert.match(store, /^\s*scopeOpen: false,/m, 'the chip\'s panel ships closed');
+  assert.doesNotMatch(store, /scopeOpen/, 'Your communities keeps its own open flag (#852)');
   assert.doesNotMatch(store, /itemsError|^\s*items:/m, 'the items read left with the pane it filled');
-  // ONE PANEL COMPONENT for both ends of the chip.
-  assert.match(CHROME, /export const ALL_APPS_SCOPE_ID = 'workshop-scope';/);
-  assert.match(CHROME, /<WorkshopPicker\n\s+id=\{panelId\}\n\s+apps=\{apps\}\n\s+scope=\{null\}/);
+  // The chip's module went with the chip and its panel (#852).
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/workshop/workshop-chrome.tsx')));
 });
 
-test('the Needs you row opens the feed over the list without redrawing it, and closes the chip\'s panel', () => {
+test('the Needs you row opens the feed over the list without redrawing it', () => {
   const html = () => renderToHtml(createElement(screen.WorkshopScreen, {}));
   screen.workshopStore.set({
-    open: true, error: false, tab: 'status', scopeOpen: true,
+    open: true, error: false, tab: 'status',
     rows: [app('staging-demo-your-app', 2, 3)],
   });
   let out = html();
   assert.match(out, /data-workshop-pane="status" class=""/);
   assert.match(out, /data-workshop-needs-open=""/);
   assert.doesNotMatch(out, /data-workshop-pane="needs"/, 'the feed renders only while showing');
-  assert.match(out, /id="workshop-scope-picker"/, 'the panel renders once open');
   screen.workshopController.setTab('needs');
-  assert.equal(screen.workshopStore.get().scopeOpen, false, 'opening the feed closes the panel');
   out = html();
   assert.match(out, /data-workshop-pane="status" class="hidden"/);
   assert.match(out, /data-workshop-pane="needs"/);
@@ -125,7 +173,7 @@ test('the Needs you row opens the feed over the list without redrawing it, and c
     'the list is still in the document, hidden, not unmounted');
   screen.workshopController.setTab('nonsense');
   assert.equal(screen.workshopStore.get().tab, 'status', 'anything else is the list');
-  screen.workshopStore.set({ tab: 'status', scopeOpen: false, rows: null });
+  screen.workshopStore.set({ tab: 'status', rows: null });
 });
 
 test('the Needs you row totals every project, and says nothing over a zero', () => {
@@ -146,274 +194,101 @@ test('the Needs you row totals every project, and says nothing over a zero', () 
     'a row read from data is not in a cold document');
 });
 
-test('#3051: the all-apps screen wears the All apps chip again (reverses #2759)', () => {
-  // #2759 took it off while the screen was only the list of your apps. The
-  // owner asked for it back as "All apps", heading the two tabs it scopes.
-  assert.match(SCREEN, /<AllAppsScope\n/);
-  assert.match(HTML, /<button id="workshop-scope" type="button"[^>]*aria-haspopup="menu" aria-expanded="false" aria-controls="workshop-scope-picker"/,
-    'it ships closed in the cold document, naming its panel');
-  assert.ok(!HTML.includes('id="workshop-scope-picker"'), 'and the panel is behind a press');
-  const html = renderToHtml(createElement(chrome.WorkshopScope, {
-    id: 'workshop-scope', open: false, scope: null, onToggle: () => {},
-  }));
-  assert.match(html, />All</, 'the word All (#3277)');
-  assert.match(html, /aria-label="All your projects, or open one"/, 'and what All means, to a screen reader');
-  // Its panel ticks All apps, and pressing that row only closes the panel:
-  // navigating to the screen you are on would throw its scroll away.
-  const panel = renderToHtml(createElement(chrome.WorkshopPicker, {
-    id: 'workshop-scope-picker', scope: null, onClose: () => {},
-    apps: [{ slug: 'notes-ab12', name: 'Notes' }],
-  }));
-  assert.match(panel, /id="workshop-scope-picker-all"[\s\S]*?<\/svg><\/span><span[^>]*><span[^>]*>All<\/span><\/span><svg/,
-    'All carries the tick');
-  assert.match(CHROME, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
-  // The chip's row leads the screen, so it carries the header's notch
-  // clearance; the legend line that sat under it is gone.
-  assert.match(SCREEN, /<div className="px-4 pt-5 pb-2 flex flex-wrap items-center gap-x-3 gap-y-2">\n\s*<AllAppsScope/);
+test('#3051, #852: the header\'s "Communities" switcher is there at every width, and opens Your communities', () => {
+  // #2759 took the all-apps chip off while the screen was only the list of
+  // your apps; the owner asked for it back as "All apps" (#3051), leading the
+  // page. #852 puts it in the bar at every width, where a phone already had
+  // it (#3271): the bar is what says where you are.
+  assert.doesNotMatch(SCREEN, /AllAppsScope|id="workshop-scope"/);
+  assert.ok(!HTML.includes('id="workshop-scope"'), 'no chip in the cold document');
+  assert.ok(!HTML.includes('id="community-switcher"'), 'and the switcher is behind a press');
+  const html = renderHeader({ screen: 'workshop-screen' });
+  assert.match(html, /<button id="header-scope-switch" type="button" class="[^"]*" data-community-switch="" aria-haspopup="dialog" aria-expanded="false" aria-controls="community-switcher" aria-label="Communities: all of yours, or open one">/);
+  // The screen's own name (#852 review; it read "All", #3277), with "All
+  // communities" kept for the switcher's first row.
+  assert.match(html, /<span id="header-title-name" class="min-w-0 truncate">Communities<\/span>/, 'the word Communities');
+  assert.doesNotMatch(html, /truncate">All<\/span>/);
+  // The page still steps down past the header's notch before its first row.
+  assert.match(SCREEN, /<div className="pt-5" aria-hidden="true" \/>/);
   assert.doesNotMatch(SCREEN, /<p className="px-4 pt-1 pb-2 flex flex-wrap/);
 });
 
-// ── #3363: the panel sorts like the Communities screen ─────────────────
+// ── #3363's sections live on the Communities screen ───────────────────
 //
-// "Sort the 'all' community menu when clicked from the toolbar similar to
-// the menu on the 'all' page (by type and by recents, with show more on
-// each)." The panel draws the screen's three sections, newest first, three
-// out and then "Show N more", from ONE module both files import.
+// The panel drew the screen's three audience sections from one shared module.
+// The switcher lists communities in the screen's own order (orderRows), and
+// the sections stay the screen's.
 
 const SECTIONS_SRC = read('frontend/src/features/workshop/sections.ts');
 
-const pickerRows = [
-  // Server order is deliberately NOT the order drawn.
-  { slug: 'solo-old', name: 'Solo old', audience: 'solo', last_active_at: '2026-09-01T00:00:00Z' },
-  { slug: 'open-1', name: 'Open one', audience: 'open', last_active_at: '2026-09-10T00:00:00Z' },
-  { slug: 'open-5', name: 'Open five', audience: 'open', last_active_at: '2026-09-29T00:00:00Z' },
-  { slug: 'inv-1', name: 'Private one', audience: 'invited', last_active_at: '2026-09-20T00:00:00Z' },
-  { slug: 'open-2', name: 'Open two', audience: 'open', last_active_at: '2026-09-12T00:00:00Z' },
-  { slug: 'open-4', name: 'Open four', audience: 'open', last_active_at: '2026-09-28T00:00:00Z' },
-  { slug: 'open-3', name: 'Open three', audience: 'open', last_active_at: '2026-09-15T00:00:00Z' },
-  { slug: 'mystery', name: 'Mystery', audience: 'weird', last_active_at: null },
-];
-
-const drawnSlugs = (html) => [...html.matchAll(/data-picker-app="([^"]+)"/g)].map((m) => m[1]);
-const drawnSections = (html) => [...html.matchAll(/data-picker-section="([^"]+)"/g)].map((m) => m[1]);
-
-test('#3363: the panel groups by audience, newest first, three out then "Show N more"', () => {
-  const html = renderToHtml(createElement(chrome.WorkshopPicker, {
-    id: 'workshop-scope-picker', scope: null, onClose: () => {}, apps: pickerRows,
-  }));
-  assert.deepEqual(drawnSections(html), ['open', 'invited', 'solo'],
-    'Public communities, Private communities, Just you: the screen\'s order');
-  const labels = ['Public communities', 'Private communities', 'Just you'].map((l) => html.indexOf(`<span>${l}</span>`));
-  assert.ok(labels.every((at, i) => at > 0 && (i === 0 || at > labels[i - 1])), 'each section is labelled, in order');
-  assert.match(html, /aria-label="6 in Public communities"/, 'the label counts the whole section');
-  // Six public rows (the unknown audience reads as open, as on the screen):
-  // the three most recent are out, and the fold says how many more.
-  assert.deepEqual(drawnSlugs(html), ['open-5', 'open-4', 'open-3', 'inv-1', 'solo-old']);
-  assert.match(html, /data-picker-more="open" aria-expanded="false"[^>]*>[\s\S]*?>Show 3 more</);
-  assert.doesNotMatch(html, /data-picker-more="invited"|data-picker-more="solo"/,
-    'a section of three or fewer has no fold row');
-  // The "All" row still leads, ticked.
-  assert.ok(html.indexOf('id="workshop-scope-picker-all"') < html.indexOf('data-picker-section='));
-});
-
-test('#3363: the order and the fold are the screen\'s own, from one shared module', () => {
-  // The panel's sections are exactly what the screen's groupRows makes.
-  const expected = screen.groupRows(pickerRows).map((s) => [s.key, s.rows.map((r) => r.slug)]);
-  assert.deepEqual(expected, [
-    ['open', ['open-5', 'open-4', 'open-3', 'open-2', 'open-1', 'mystery']],
-    ['invited', ['inv-1']],
-    ['solo', ['solo-old']],
-  ]);
-  // ONE COPY. Both files import ./sections, and the panel does not reach
-  // into the screen for it (the screen imports the panel: that would be a
-  // cycle).
+test('#3363: the order is the screen\'s own, from one shared module', () => {
   for (const name of ['groupRows', 'orderRows', 'sectionFold', 'SECTION_LIMIT', 'SECTION_STEP', 'SECTIONS']) {
     assert.match(SECTIONS_SRC, new RegExp(`export (?:function|const) ${name}\\b`), `${name} lives in sections.ts`);
     assert.doesNotMatch(SCREEN, new RegExp(`(?:function|const) ${name}\\b`), `and the screen has no second ${name}`);
-    assert.doesNotMatch(CHROME, new RegExp(`(?:function|const) ${name}\\b`), `nor the panel`);
+    assert.doesNotMatch(SCOPE, new RegExp(`(?:function|const) ${name}\\b`), 'nor the switcher\'s store');
   }
   assert.match(SCREEN, /from '\.\/sections';/);
-  assert.match(CHROME, /from '\.\/sections';/);
-  assert.doesNotMatch(CHROME, /from '\.\/index'|from '\.'/, 'the panel never imports the screen');
+  assert.match(SCOPE, /import \{ orderRows \} from '\.\/sections';/);
+  assert.match(SCOPE, /const ordered = orderRows\(joined as any\)/, 'newest first, as the screen orders them');
 });
-
-test('#3363: section labels are not menu stops; the fold row is, and hands focus on', () => {
-  const html = renderToHtml(createElement(chrome.WorkshopPicker, {
-    id: 'workshop-scope-picker', scope: null, onClose: () => {}, apps: pickerRows,
-  }));
-  // Every section is a group named by its label, and the label is
-  // presentation, not a row: menu-keys roves role="menuitem" only.
-  for (const key of ['open', 'invited', 'solo']) {
-    assert.match(html, new RegExp(`<div role="group" aria-labelledby="workshop-scope-picker-section-${key}" data-picker-section="${key}"><h2 [^>]*id="workshop-scope-picker-section-${key}" role="presentation"`));
-  }
-  const items = html.match(/role="menuitem"/g) || [];
-  assert.equal(items.length, 1 + 5 + 1, 'All, the five rows out, and one fold row: nothing else is a stop');
-  // Pressing the fold moves focus to the first row it revealed; "Show
-  // fewer" (next below shown) leaves focus on the same row.
-  assert.match(CHROME, /if \(fold\.next > fold\.shown\) revealFrom\.current = fold\.shown;\n\s*setLimit\(fold\.next\);/);
-  assert.match(CHROME, /items\?\.\[from\]\?\.focus\(\{ preventScroll: true \}\);/);
-});
-
-test('#3363: on an app\'s Workshop the ticked app is never folded away', () => {
-  // open-1 is the fifth most recent public row, behind the fold at three.
-  const html = renderToHtml(createElement(chrome.WorkshopPicker, {
-    id: 'dev-ws-scope-chip-picker', scope: { slug: 'open-1' }, onClose: () => {}, apps: pickerRows,
-  }));
-  assert.deepEqual(drawnSlugs(html).slice(0, 5), ['open-5', 'open-4', 'open-3', 'open-2', 'open-1'],
-    'the section opens as far as the app you are on');
-  assert.match(html, /data-picker-app="open-1">(?:(?!<\/button>)[\s\S])*M5 13l4 4L19 7/,
-    'and it carries the tick');
-  assert.match(html, /data-picker-more="open"[^>]*>[\s\S]*?>Show 1 more</);
-});
-
-test('#3363: expanding then collapsing a scoped section never folds the ticked app away', () => {
-  const { pickerFloor, pickerFold } = chrome;
-  const open = screen.groupRows(pickerRows)[0].rows; // six public rows
-  // Nothing ticked, or the ticked app in the top three: the screen's fold.
-  assert.equal(pickerFloor(open, null), 3);
-  assert.equal(pickerFloor(open, { slug: 'open-4' }), 3);
-  for (let total = 0; total <= 14; total++) {
-    for (const limit of [3, 8, 13, 18]) {
-      assert.deepEqual(pickerFold(total, limit, 3), screen.sectionFold(total, limit),
-        `floor 3 is sectionFold (${total}, ${limit})`);
-    }
-  }
-  // open-1 is 5th of 6: the section starts at five, expands to six, and
-  // "Show fewer" folds back to five, never to three.
-  const ticked = { slug: 'open-1' };
-  const floor = pickerFloor(open, ticked);
-  assert.equal(floor, 5);
-  const visible = (fold) => open.slice(0, fold.shown).map((r) => r.slug);
-  let fold = pickerFold(open.length, floor, floor);
-  assert.deepEqual(fold, { shown: 5, label: 'Show 1 more', next: 10 });
-  assert.ok(visible(fold).includes('open-1'), 'first render shows the ticked app');
-  fold = pickerFold(open.length, fold.next, floor);
-  assert.deepEqual(fold, { shown: 6, label: 'Show fewer', next: 5 }, 'expanded fully');
-  fold = pickerFold(open.length, fold.next, floor);
-  assert.equal(fold.shown, 5, 'Show fewer collapses to the floor, not to three');
-  assert.ok(visible(fold).includes('open-1'), 'and the ticked app is still drawn');
-  // The ticked app LAST: the floor is the whole section, so no fold row.
-  const last = { slug: 'mystery' };
-  assert.equal(pickerFloor(open, last), 6);
-  assert.deepEqual(pickerFold(6, 6, 6), { shown: 6, label: null, next: 6 });
-  const html = renderToHtml(createElement(chrome.WorkshopPicker, {
-    id: 'dev-ws-scope-chip-picker', scope: last, onClose: () => {}, apps: pickerRows,
-  }));
-  assert.ok(drawnSlugs(html).includes('mystery'));
-  assert.doesNotMatch(html, /data-picker-more="open"/, 'no dead Show fewer');
-});
-
-// ── The same panel, scoped to one app (#2718 review, #3295) ───────────
-//
-// On an app's own Workshop the control is the HEADER's tile and name, at
-// every width (#3295, the owner's request: "on desktop, put the community
-// selector dropdown in the header, not either above the community hub /
-// workshop tabs or to the left of those if the screen is wide"). A phone had
-// that since #2768; a desktop drew its own chip above the tabs, or beside
-// them on a wide window (#2837). That chip is gone, so the Workshop renders
-// the panel alone, and only once the header has opened it.
 
 /** A store that holds one state and never changes, for a static render. */
 const fixed = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
 
-test('#3295: an app\'s Workshop draws no chip; its panel renders only once opened', () => {
-  // Closed, which is every first render: nothing at all. No chip to hide at
-  // one width and show at another, and no empty wrapper to cost `.dev-ws` a
-  // row gap at the top of the page.
-  const closed = renderToHtml(createElement(chrome.AppWorkshopScope, { slug: 'notes-ab12' }));
-  assert.equal(closed, '');
-
-  // Open: the panel, under the id the header's control names.
-  const opened = loadTsx('frontend/src/features/workshop/workshop-chrome.tsx', {
-    stubs: {
-      './app-scope-store.js': {
-        appScopeStore: fixed({ open: true }),
-        APP_SCOPE_PANEL_ID: 'dev-ws-scope-chip-picker',
-      },
-    },
-  });
-  const html = renderToHtml(createElement(opened.AppWorkshopScope, { slug: 'notes-ab12' }));
-  assert.match(html, /^<div class="dev-ws-scope" data-ws-scope=""><div id="dev-ws-scope-chip-picker"[^>]* role="menu"/);
-  // #3302 named the panel "Which project?"; this test landed after it (#3305).
-  assert.match(html, /Which project\?/);
-  assert.match(html, /id="dev-ws-scope-chip-picker-all"/, 'All, the way back up');
-  assert.doesNotMatch(html, /id="dev-ws-scope-chip"/, 'and no chip beside it');
-  assert.doesNotMatch(html, /aria-haspopup/, 'the only control for it is the header\'s');
-});
-
-test('#3295: a page leads with its back bar at every width, with nothing to measure', () => {
+test('#852: a project page leads with its tabs, and All items with its way back under them; no panel of its own', () => {
   const WORKSHOP_PATH = 'frontend/src/features/dev-board/workshop/workshop.tsx';
   const real = loadTsx('frontend/src/features/dev-board/card/cards-store.ts');
-  const view = { ...real.EMPTY_WORKSHOP_VIEW, loading: false, slug: 'notes-ab12', tab: 'all' };
-  const mod = loadTsx(WORKSHOP_PATH, {
-    stubs: { '../card/cards-store': { ...real, devWorkshopStore: fixed(view) } },
-  });
-  const html = renderToHtml(createElement(mod.DevWorkshop, {}));
-  // The panel is shut on arrival, so the page's back bar is the root's first
-  // child (the hub has no bar; a page leads with its way back).
-  assert.match(html, /^<div class="dev-ws" data-ws-tab="all"><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
-  assert.doesNotMatch(html, /dev-ws-scope/);
-
-  // #2837's measurement went with the chip it placed: nothing sets
-  // `data-ws-scope-inline` and app.css has no rule for it, nor for a chip
-  // inside `.dev-ws-scope`.
+  const page = (tab) => {
+    const view = { ...real.EMPTY_WORKSHOP_VIEW, loading: false, slug: 'notes-ab12', tab };
+    const mod = loadTsx(WORKSHOP_PATH, {
+      stubs: { '../card/cards-store': { ...real, devWorkshopStore: fixed(view) } },
+    });
+    return renderToHtml(createElement(mod.DevWorkshop, {}));
+  };
+  assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">/);
+  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">[\s\S]*?<\/div><\/div><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
   const ws = read(WORKSHOP_PATH);
-  assert.doesNotMatch(ws, /useScopeInline|scopeFitsInline|data-ws-scope-inline|SCOPE_INLINE_/);
-  assert.match(ws, /\{slug \? <AppWorkshopScope slug=\{slug\} \/> : null\}/);
+  assert.doesNotMatch(ws, /AppWorkshopScope|useScopeInline|scopeFitsInline|data-ws-scope-inline|SCOPE_INLINE_/);
   const css = read('public/css/app.css');
-  assert.doesNotMatch(css, /data-ws-scope-inline/);
-  assert.doesNotMatch(css, /\.dev-ws-scope > button/);
-  // On a desktop the panel keeps the menu's width the wide-window panel had,
-  // in the one block written at that breakpoint (tests/dev-workshop.test.js).
-  const wide = /@media \(min-width: 700px\) \{([\s\S]*?)\n\}/.exec(css);
-  assert.ok(wide, 'the wide-screen block exists');
-  assert.match(wide[1], /\n  \.dev-ws-scope > \[role='menu'\] \{ max-width: 420px; \}$/);
-});
-
-test('#2768: the panel\'s id is one spelling, shared with the header\'s control', () => {
-  // The HEADER's tile and name open the panel; its `aria-controls` must name
-  // the element the panel is. The all-apps chip derives its own panel's id
-  // the same way, from its id plus `-picker`.
-  const store = read('frontend/src/features/workshop/app-scope-store.js');
-  assert.match(store, /export const APP_SCOPE_PANEL_ID = 'dev-ws-scope-chip-picker';/);
-  assert.match(CHROME, /id=\{APP_SCOPE_PANEL_ID\}/, 'the panel wears it');
-  assert.match(CHROME, /aria-controls=\{`\$\{id\}-picker`\}/, 'and the all-apps chip derives its own the same way');
-  const header = read('frontend/src/features/header/header-title.tsx');
-  assert.match(header, /aria-controls=\{APP_SCOPE_PANEL_ID\}/, 'and the header names it');
-  assert.match(header, /onClick=\{\(\) => appScopeStore\.set\(\{ open: !scopeOpen \}\)\}/);
+  assert.doesNotMatch(css, /data-ws-scope-inline|\.dev-ws-scope\b/, 'the panel\'s CSS went with it');
+  assert.ok(!fs.existsSync(path.join(ROOT, 'frontend/src/features/workshop/app-scope-store.js')), 'and its store');
 });
 
 /** #header-title as rendered on an app route, with the stores it reads fixed. */
-function renderHeader({ viewMode = 'workshop', subTab = 'forum' } = {}) {
+function renderHeader({ viewMode = 'workshop', subTab = 'forum', screen = 'app-view' } = {}) {
   const mod = loadTsx('frontend/src/features/header/header-title.tsx', {
     stubs: {
       './header-title-store.js': { headerTitleStore: fixed({ text: 'Recipe Box', subtitle: '' }) },
-      '../nav/nav-store.js': { navStore: fixed({ screen: 'app-view' }) },
+      '../nav/nav-store.js': { navStore: fixed({ screen }) },
       '../improve/improve-store.js': {
         improveStore: fixed({ tab: 'dev', subTab, name: 'Recipe Box', iconUrl: null, iconEmoji: '🍲' }),
       },
       '../dev-board/view-mode-store': { useDevViewMode: () => viewMode },
+      '../workshop/community-scope': {
+        communityScopeStore: fixed({ switcher: null }),
+        toggleSwitcher: () => {},
+      },
     },
   });
   return renderToHtml(createElement(mod.HeaderTitle, { titleRef: { current: null } }));
 }
 
-test('#2768, #3295: on the app\'s Workshop the header IS the switcher, at every width', () => {
+test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your communities, at every width', () => {
   const header = read('frontend/src/features/header/header-title.tsx');
   // Which screen: the Dev half's board route in its Workshop layout.
   assert.match(header,
     /const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';/);
   // NO WIDTH IN IT. Until #3295 this was `onWorkshop && phone`, and a desktop
   // kept the name alone in the bar beside a chip in the page.
-  assert.match(header, /const switcher = onWorkshop;/);
+  assert.match(header, /const appSwitch = onWorkshop;/);
   assert.match(header, /const showTile = inApp;/);
 
   // A static render runs no effects, so the phone flag is still false: this
   // IS the desktop render. The tile and the app's name are one button that
-  // opens the Workshop's panel.
+  // opens Your communities.
   const html = renderHeader();
   assert.match(html,
-    /<button id="header-app-switch" type="button" class="pointer-events-auto [^"]*" aria-haspopup="menu" aria-expanded="false" aria-controls="dev-ws-scope-chip-picker" aria-label="Recipe Box, switch app"><span id="header-app-tile"[^>]*>[\s\S]*?<\/span><\/span><span id="header-title-name" class="min-w-0 truncate">Recipe Box<\/span><svg/);
+    /<button id="header-app-switch" type="button" class="pointer-events-auto [^"]*" data-community-switch="" aria-haspopup="dialog" aria-expanded="false" aria-controls="community-switcher" aria-label="Recipe Box, switch community"><span id="header-app-tile"[^>]*>[\s\S]*?<\/span><\/span><span id="header-title-name" class="min-w-0 truncate">Recipe Box<\/span><svg/);
 
   // The Kanban layout has no scope panel, so there the strip is a tile and a
   // name, not a control.
@@ -421,10 +296,8 @@ test('#2768, #3295: on the app\'s Workshop the header IS the switcher, at every 
   assert.doesNotMatch(kanban, /header-app-switch/);
   assert.match(kanban, /<span id="header-app-tile"[^>]*>[\s\S]*?<\/span><\/span><span class="min-w-0 flex items-baseline gap-1\.5"><span id="header-title-name" class="min-w-0 truncate">Recipe Box<\/span>/);
 
-  // The phone flag stays for the Communities screen's switcher (#3271), and
-  // is still settled in an EFFECT, false first, so the hydrating render is
-  // the prerender's whatever the window is.
-  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen' && phone;/);
-  assert.match(header, /const \[phone, setPhone\] = useState\(false\);/);
-  assert.match(header, /const PHONE_QUERY = '\(max-width: 699\.98px\)';/);
+  // No width anywhere in it now: the Communities screen's "All" is the
+  // bar's at every width too (#852).
+  assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
+  assert.doesNotMatch(header, /PHONE_QUERY|usePhone/);
 });

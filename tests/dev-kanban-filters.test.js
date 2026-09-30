@@ -1319,7 +1319,7 @@ test('a declared check reading the filter bar asks for the All-items sub-view (w
   const ALL_ITEMS_ONLY = [
     '#dev-filter-row', '#dev-kanban-filterbar', '#dev-kanban-search',
     '#dev-kanban-filters-btn', 'data-quick-filter', 'data-ws-pane',
-    'data-ws-ear', 'dev-ws-group',
+    'dev-ws-group',
   ];
   const offenders = [];
   for (const t of DAPP.tests) {

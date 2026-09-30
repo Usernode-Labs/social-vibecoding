@@ -259,6 +259,7 @@ const Improve = {
         repoUrl: null,
         iconUrl: null,
         iconEmoji: null,
+        iconColor: null,
         version: null,
         deploying: false,
         appUpdateReady: false,
@@ -292,6 +293,7 @@ const Improve = {
       repoUrl: target.repoUrl || null,
       iconUrl: target.iconUrl || null,
       iconEmoji: target.iconEmoji || null,
+      iconColor: target.iconColor || null,
       version: target.version || null,
       deploying: !!target.deploying,
       // A build that landed for the PREVIOUS app is not this one's news.

@@ -362,12 +362,13 @@ const ADDED_IDS = {
   // NOT in this map and that is not an omission: all six render only once
   // somebody has tapped or once a tab has filtered to nothing, so none of
   // them is in the prerendered document, which is what this map is for.
-  // #workshop-scope left this map with the chip itself (#2759), and came
-  // back with it in #3051, below. The chip on an app's own Workshop was
-  // #dev-ws-scope-chip, which rendered client-side and was never in the
+  // #workshop-scope left this map with the chip itself (#2759), came back
+  // with it in #3051, and left again in #852: the Communities screen's "All
+  // ⌄" is the header's #header-scope-switch at every width now, which is
+  // conditional and so not in this map. The chip on an app's own Workshop
+  // was #dev-ws-scope-chip, which rendered client-side and was never in the
   // prerendered document; #3295 retired it for the header's
   // #header-app-switch, which is conditional and so not in this map either.
-  'workshop-scope': '#3051 (the owner\'s request, reversing #2759): the all-apps Workshop\'s scope chip, reading "All apps" with the grid glyph. #2759 took it off because the screen was then only the list of your apps and the chip\'s panel repeated it; the screen reads the app Workshop\'s own Needs you across all of your communities, and the chip is what says so. Rendered unconditionally and closed, so the prerender and the first client render agree; its panel (#workshop-scope-picker) renders only once pressed, so it is not in this map.',
   // #workshop-tab-status and #workshop-tab-needs (#3051) left with the
   // tabs they named: the Communities screen is one page, and the Needs you
   // feed opens from a row at its top ([data-workshop-needs-open]) as a page

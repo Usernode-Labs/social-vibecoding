@@ -425,7 +425,7 @@ export interface DevWorkshopView {
    */
   emptyNote: { loadFailed: boolean; filtered?: boolean } | null;
   /** Which tab a `?ws=` deep link asked for; null for the viewer's own choice. */
-  tab: 'status' | 'workshop' | 'needs' | 'all' | null;
+  tab: 'status' | 'discussion' | 'workshop' | 'needs' | 'all' | null;
   /**
    * The models the ask box may talk to — the dev session's own list
    * (`DevChat.MODELS`), not a second one. Empty where DevChat is absent, and

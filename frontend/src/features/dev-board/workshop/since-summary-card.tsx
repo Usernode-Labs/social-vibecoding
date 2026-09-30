@@ -91,10 +91,12 @@ function demoAsked(): boolean {
   }
 }
 
-export function SinceSummaryCard({ slug, since }: {
+export function SinceSummaryCard({ slug, since, onMore }: {
   slug: string;
   /** The viewer's last visit, epoch ms; 0 on a first visit. */
   since: number;
+  /** The way to the whole of it, week by week (the Workshop page). */
+  onMore?: () => void;
 }): ReactNode {
   const [data, setData] = useState<SinceSummary | null>(null);
   const [dismissed, setDismissed] = useState(0);
@@ -148,6 +150,11 @@ export function SinceSummaryCard({ slug, since }: {
           ))}
         </ul>
       )}
+      {onMore ? (
+        <button type="button" className="dev-ws-link dev-ws-since-card-more un-touch-target" data-ws-since-summary-more="" onClick={onMore}>
+          Week by week
+        </button>
+      ) : null}
     </section>
   );
 }

@@ -1,13 +1,12 @@
 /**
  * How a list of your communities is arranged, in one place (#3363).
  *
- * The Communities screen (./index.tsx) and the "Which project?" panel behind
- * the header's "All ⌄" and an app's own title (./workshop-chrome.tsx) draw
- * the same list, so they sort and fold it the same way: Public communities,
- * Private communities, Just you; newest first inside each; three shown, then
- * "Show N more". The rules live here rather than in either file because the
- * screen already imports the panel, and the panel reading them back out of
- * the screen would be an import cycle.
+ * The Communities screen (./index.tsx) sorts and folds its list here:
+ * Public communities, Private communities, Just you; newest first inside
+ * each; three shown, then "Show N more". "Your communities"
+ * (./community-switcher.tsx, through ./community-scope.ts) lists the same
+ * communities in the same newest-first order, reading `orderRows` from here
+ * rather than from the screen, which it must not import.
  *
  * Generic over the row: the screen's rows carry their counts, the panel's do
  * not, and neither the order nor the grouping reads them.

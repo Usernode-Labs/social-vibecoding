@@ -4999,6 +4999,16 @@ const App = {
       localStorage.setItem(App._WORKSHOP_VIEW_KEY,
         JSON.stringify({ slug: App.currentApp, path }));
     } catch (_) { /* a view that does not survive is the old behaviour */ }
+    // THE TAB IS NOW THIS COMMUNITY (features/workshop/community-scope.ts):
+    // the Communities tab draws the community it reopens.
+    App._publishCommunityScope(App.currentApp);
+  },
+
+  // Tell the Communities tab which community it is on (null: All
+  // communities). The store lives in the React bundle; before it has loaded
+  // there is no tab to tell, and its own first read finds the same key.
+  _publishCommunityScope(slug) {
+    try { window.UsernodeReact?.communityScope?.setScope(slug || null); } catch (_) { /* no bundle yet */ }
   },
 
   _readWorkshopView() {
@@ -5015,6 +5025,7 @@ const App = {
   _forgetWorkshopView() {
     App._resumingWorkshop = null;
     try { localStorage.removeItem(App._WORKSHOP_VIEW_KEY); } catch (_) { /* nothing stored */ }
+    App._publishCommunityScope(null);
   },
 
   // The Workshop tab's click (features/nav/tab-bar.tsx). True when it has

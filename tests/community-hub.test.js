@@ -71,34 +71,57 @@ test('the bar reads Home, Discover, Messages, Communities, you — Messages in t
   assert.match(STORE, /communities: state\.conversations\.filter\(\(item\) => item\.kind === 'channel' && item\.unreadCount > 0\)\.length\s*\+ state\.discussions\.filter\(\(item\) => item\.section !== 'more' && \(item\.unreadCount \|\| 0\) > 0\)\.length,/);
 });
 
-test('a project page is its hub, with doors to the Workshop and Needs you; All items is under the Workshop', () => {
+test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with All items the Workshop\'s page (#852)', () => {
   const { pageParent, pageTitle } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.deepEqual(['needs', 'workshop', 'all'].map(pageParent), ['status', 'status', 'workshop'],
-    'a page goes back to where its door is');
-  assert.deepEqual(['needs', 'workshop', 'all'].map(pageTitle), ['Needs you', 'Workshop', 'All items']);
-  // No tab strip: the hub has no bar, and a page leads with its way back.
-  assert.doesNotMatch(LANDER, /role="tablist" aria-label="Workshop sections"/, 'the hub and the Workshop are not two tabs any more');
-  assert.match(LANDER, /const railNode = tab === 'status' \? null : \(/);
-  assert.match(LANDER, /<PageBack\s+label=\{tab === 'all' \? 'Workshop' : \(app\.name \|\| community\?\.name \|\| slug\)\}\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
-  // The hub's order, as agreed: the hero (with who is here, #3268), what
-  // landed since your last visit, your work, the channel, and the two doors.
-  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'workshop' ? ("));
-  const order = ['<CommunityCard', '<SinceSummaryCard', '<YourWorkCard', '<ChannelCard', '<NeedsCard', '<WorkshopDoor'].map((s) => hub.indexOf(s));
-  assert.ok(order.every((n) => n >= 0), 'all six on the hub');
-  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, your work, channel, Needs you, Workshop');
+  const band = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
+  assert.deepEqual(band.PROJECT_TABS.map((t) => [t.key, t.label]),
+    [['status', 'Hub'], ['discussion', 'Discussion'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
+  assert.equal(band.litTab('all'), 'workshop', 'the Workshop tab stays lit over All items');
+  assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
+  assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
+  // The band on every page; All items adds its way back under it.
+  assert.match(LANDER, /const pageBar = tab === 'all' \? \(/);
+  assert.match(LANDER, /<PageBack\s+label="Workshop"\s+title=\{pageTitle\(tab\)\}\s+onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
+  assert.match(LANDER, /\{band\}\s*\{pageBar\}/);
+  // The hub's order, as agreed: the hero (who is here, what it is, what you
+  // can do, the fortnight), what landed since your last visit, Needs you (a
+  // quiet line when no vote is owed, #3408), the discussion's last two
+  // messages (or Share it, for Just you), and your work. One column at every
+  // width. Start a new change ended it until #852's review moved it into the
+  // hero's ⋯ (tests/improve-action-deduplication.test.js).
+  const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'discussion' ? ("));
+  const order = ['<CommunityCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
+  assert.ok(order.every((n) => n >= 0), `all six on the hub: ${JSON.stringify(order)}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, Needs you, discussion, Share it, your work');
+  assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
   assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
     'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408)');
+  assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,
+    'the summary card\'s Week by week is the Workshop tab');
+  assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
+    'the discussion is a preview whose Open is the Discussion tab');
   assert.match(hub, /\{v\.mine && v\.mine\.rows\.length \? \(\s*<YourWorkCard/, 'your work only when you have some');
-  assert.doesNotMatch(hub, /data-ws-since=""/, 'the since list is the Workshop page\'s now');
-  // The Workshop page: your work in full, the since list by week, All items
-  // with See all, then the approval rules.
-  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("));
-  const w = (s) => ws.indexOf(s);
-  assert.ok(w('data-ws-mine=""') < w('data-ws-since=""') && w('data-ws-since=""') < w('data-ws-dashboard=""')
-    && w('data-ws-dashboard=""') < w('<ApprovalRules'));
+  assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
+  assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
+  // Discussion is the channel whole.
+  assert.match(LANDER, /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
+  // The Workshop tab: your work (its first three, #852 review), All items
+  // with See all, then the since list by week.
+  const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
+  const w = (x) => ws.indexOf(x);
+  assert.ok(w('data-ws-mine=""') < w('data-ws-dashboard=""') && w('data-ws-dashboard=""') < w('data-ws-since=""'),
+    'your work, All items, then what changed');
+  assert.match(ws, /v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
+  assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
+  assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
+  assert.doesNotMatch(ws, /<ApprovalRules/);
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
-  // `?ws=workshop` is a deep link like the others.
-  assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'workshop', 'needs', 'all'\],/);
+  // All items leads with the approval rules, above the categories.
+  const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
+  assert.ok(all.indexOf('<ApprovalRules') >= 0 && all.indexOf('<ApprovalRules') < all.indexOf('data-ws-pane=""'),
+    'the approval rules above the categories');
+  // `?ws=discussion` is a deep link like the others.
+  assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all'\],/);
 });
 
 test('the hub\'s channel card shows the last messages, what is new, and the way in', () => {
@@ -132,6 +155,25 @@ test('the hub\'s channel card shows the last messages, what is new, and the way 
   assert.match(homeroom, /<a href="#messages\/1" class="dev-ws-hub-open/);
   assert.doesNotMatch(homeroom, /data-ws-channel-archive|dev-ws-hub-archive|Earlier project discussion/,
     'the channel card links to no archive');
+  // THE HUB'S PREVIEW (#852): the card's own look, its last two messages,
+  // no composer, and how many more are unread above them, opening the
+  // Discussion tab rather than the room.
+  const five = [1, 2, 3, 4, 5].map((n) => ({ id: n, content: `m${n}`, created_at: '2026-09-20T10:00:00Z', by: 'ada' }));
+  const preview = renderToHtml(createElement(ChannelCard, {
+    slug: 'garden', name: 'Garden', compact: true, onOpen: () => {},
+    data: community({ channel: { ...community().channel, recent: five, unread_count: 7, post_url: '/api/apps/garden/messages' } }),
+  }));
+  assert.match(preview, /data-ws-channel="preview"/);
+  assert.match(preview, /<span class="dev-ws-head-title">Discussion<\/span>/);
+  assert.deepEqual([...preview.matchAll(/class="dev-ws-hub-msg-text">([^<]*)</g)].map((m) => m[1]), ['m4', 'm5'], 'the last two');
+  assert.match(preview, /<button type="button" class="dev-ws-hub-more-unread un-touch-target" data-ws-channel-more-unread="5">5 more unread messages<\/button>/,
+    'seven unread, two of them shown');
+  assert.ok(preview.indexOf('data-ws-channel-more-unread') < preview.indexOf('data-ws-channel-recent'), 'above the messages');
+  assert.match(preview, /<button type="button" class="dev-ws-hub-open un-touch-target" data-ws-channel-open="">Open/, 'Open is the tab');
+  assert.doesNotMatch(preview, /data-ws-channel-compose|data-ws-channel-unread/, 'no composer, and the count is the line, not a pill');
+  const { moreUnread } = loadTsx(HUB);
+  assert.equal(moreUnread(2, 2), 0, 'nothing more to say when both unread are on screen');
+  assert.equal(moreUnread(0, 2), 0);
   // Nothing to draw without a record, or for a viewer who may not talk here.
   assert.equal(renderToHtml(createElement(ChannelCard, { slug: 'garden', name: 'Garden', data: null })), '');
   assert.equal(renderToHtml(createElement(ChannelCard, { slug: 'garden', name: 'Garden', data: community({ channel: null }) })), '');

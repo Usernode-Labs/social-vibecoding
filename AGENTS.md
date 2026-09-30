@@ -213,15 +213,23 @@ is no replay plan to write and nothing to verify locally.
   the thing being built; keep "app" where it is the thing being used (the
   App tab, Discover).
 - **Communities is the fourth tab, beside you; Messages is in the middle.**
-  It lists every community you are in (Public communities, Private
-  communities, Just you) at `#communities` (`#workshop` still routes
-  there; the tab's key and ids keep `workshop`). A project's page opens on
-  its **hub** (a hero with who is here and a 14-day trend, then its channel,
-  Needs you, and Since your last visit) beside its **Workshop** (what you are
-  working on, All items). The Communities screen's Needs you is one feed of
-  every decision owed across your projects (`GET /api/workshop/needs-feed`). A
-  project's channel lives on its hub, not in Messages, and #general is the
-  Homeroom community's channel; Messages is people and agents. **A channel
+  The tab is a community: the one you last had open (its tile in a square
+  ring, its short name, the votes it waits on you for) or All communities,
+  whose page lists every community you are in (Public communities, Private
+  communities, Just you) at `#communities` (`#workshop` still routes there;
+  the tab's key and ids keep `workshop`). Pressing it while it is lit, the
+  header's name and ⌄, or the list's All chip opens **Your communities**
+  (`features/workshop/community-switcher.tsx`, scope in
+  `community-scope.ts`). A project's page wears its community's colour
+  (`lib/community-color.ts`: dapp.json's `icon.color`, else read off the
+  icon) and has four tabs, **Hub** (who is here and who it is for, the
+  actions, a 14-day trend, since your last visit, votes owed, the chat's
+  last lines, your work), **Chat**, **Needs you** and **All items**; the
+  **Workshop** page opens from the hub's since card. The Communities
+  screen's Needs you is one feed of every decision owed across your projects
+  (`GET /api/workshop/needs-feed`). A project's channel lives on its page,
+  not in Messages, and #general is the Homeroom community's channel;
+  Messages is people and agents. **A channel
   is what people said:** Homeroom writes no activity (a proposal put up for a
   vote, a merge, a check verdict, a setting changed) into a project's channel
   or #general. `ws.sendSystemMessage` writes nothing without a thread, so a
