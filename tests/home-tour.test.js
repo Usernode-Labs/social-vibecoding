@@ -912,7 +912,23 @@ test('the sidebar rail is not a bottom tab bar', () => {
     spotlight.bottomBarInset({ top: 52, left: 0, width: 240, height: 748 }, laptop), 52);
   assert.equal(hole.height, 292);
   assert.ok(spotlight.usableHole(hole));
-  assert.match(OVERLAY_SRC, /return bottomBarInset\(bar\.getBoundingClientRect\(\), \{ width: window\.innerWidth, height: window\.innerHeight \}\);/);
+  assert.match(OVERLAY_SRC, /let inset = bottomBarInset\(bar\.getBoundingClientRect\(\), \{ width: window\.innerWidth, height: window\.innerHeight \}\);/);
+});
+
+test('the parked strip is part of the bottom inset on a phone', () => {
+  // An app parked under the tour: #platform-parked is a 52px band ON TOP of
+  // the tab bar, so the tour's bottom clamp is the two stacked — a ring that
+  // cleared only the bar drew across the Resume pill. Measured by the same
+  // bottomBarInset, so a peeked or partial strip adds nothing it shouldn't.
+  const m = /function tabBarInset\([\s\S]*?\n\}/.exec(OVERLAY_SRC);
+  assert.ok(m, 'tabBarInset moved — re-anchor this test');
+  assert.match(m[0], /getElementById\('platform-parked'\)/,
+    'the strip must be measured alongside the bar');
+  assert.match(m[0], /!parked\.classList\.contains\('hidden'\)/,
+    'only a VISIBLE strip adds its band');
+  assert.match(m[0], /inset \+= bottomBarInset\(parked\.getBoundingClientRect\(\)/,
+    'the strip rides on top of the bar, so its band STACKS on the ' +
+    "bar's, measured by the same bottomBarInset");
 });
 
 test('holes stay below the header and inside their own bar', () => {

@@ -2139,7 +2139,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
-        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite" onScroll={onScroll}>
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 platform-safe-scroll" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
           ) : null}

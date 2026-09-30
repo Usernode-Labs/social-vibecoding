@@ -78,19 +78,29 @@
     },
 
     /** How much of the viewport's foot is bottom chrome a toast must clear:
-        the tab bar and any composer block (`.platform-safe-bar`, which every
-        composer wears) that is pinned to the bottom edge. A tall panel that
-        merely ends at the edge (its top in the upper half) is content, not
-        a bar, and is ignored, as is anything hidden or off-screen. 0 when
-        nothing qualifies. */
+        the tab bar, the parked-app strip (`#platform-parked`, a 52px band on
+        TOP of the bar — its top edge is above the bar's, so measuring to it
+        counts both bands) and any composer block (`.platform-safe-bar`,
+        which every composer wears) that is pinned to the bottom edge. A tall
+        panel that merely ends at the edge (its top in the upper half) is
+        content, not a bar, and is ignored, as is anything hidden or
+        off-screen. 0 when nothing qualifies. */
     toastClearance() {
       const root = document.documentElement;
       const vh = window.innerHeight || (root && root.clientHeight) || 0;
       if (!vh || typeof document.querySelectorAll !== 'function') return 0;
       let clear = 0;
-      for (const el of document.querySelectorAll('#platform-tabs, .platform-safe-bar')) {
+      for (const el of document.querySelectorAll('#platform-tabs, .platform-safe-bar, #platform-parked')) {
         const r = el.getBoundingClientRect();
         if (!r.width || !r.height) continue;
+        if (el.id === 'platform-parked') {
+          // The strip sits ON the bar, so its bottom edge is the bar's top
+          // rather than the viewport's — the edge test below would skip it.
+          // It is bottom chrome by construction, and `vh - r.top` already
+          // counts everything beneath it, bar included.
+          clear = Math.max(clear, vh - r.top);
+          continue;
+        }
         if (r.bottom < vh - 2 || r.top < vh / 2 || r.top >= vh) continue;
         clear = Math.max(clear, vh - r.top);
       }

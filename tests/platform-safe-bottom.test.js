@@ -45,6 +45,7 @@ const DEV_CHAT = read('frontend/src/features/dev-chat/dev-chat.js');
 const BOARD_FRAME = read('frontend/src/features/dev-board/board-frame.tsx');
 const DEV_VIEW = read('frontend/src/features/dev-chat/view.tsx');
 const GROUP_CHAT = read('public/js/group-chat.js');
+const AGENT_SESSION = read('frontend/src/features/agent-session/index.tsx');
 
 // ── 1. The tokens ────────────────────────────────────────────────────
 
@@ -297,6 +298,62 @@ test('no bare env(safe-area-inset-bottom) survives in app.css', () => {
   assert.deepEqual(bare, [],
     'every bottom inset in app.css must resolve through '
     + '--platform-safe-bottom:\n' + bare.join('\n'));
+});
+
+// ── 3b. The parked-app strip clears too ──────────────────────────────
+
+// #platform-parked is a 52px band on TOP of the tab bar, and app.css raises
+// --platform-tabs-h for it (see the :has(#platform-parked:not(.hidden)) rule
+// near the strip's own section). Every bottom-anchored surface that reads the
+// bare token therefore stops clearing its own band the moment the strip is
+// up: the max() keeps the bar's band when the bar is there and the strip's
+// full outer height when it is, without reserving either twice.
+test('Messages list scroller takes the combined bar-and-strip clearance', () => {
+  const m = /\.messages-list-scroll\s*\{([^{]*)\}/.exec(APP_CSS);
+  assert.ok(m, '.messages-list-scroll rule is missing');
+  assert.match(m[1], new RegExp(`padding-bottom:\\s*${CLEARANCE.source}`),
+    'the bare --platform-tabs-h left the last conversation row under the '
+    + 'Resume strip when an app was parked; the max() clears both bands '
+    + 'without reserving either twice');
+});
+
+test('the fixed bottom-anchored overlays take the combined clearance too', () => {
+  // Each entry is one of the sheets the spec names: a long-press action
+  // sheet, the workshop Details card, the workshop deck sheets (the vote
+  // variant pads more than the base card), and the community switcher.
+  const overlays = [
+    ['.msgx-sheet',
+      'padding: 8px 16px calc(16px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom)))'],
+    ['.dev-details-card',
+      'padding: 14px 18px calc(20px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom))); border-radius: 22px 22px 0 0'],
+    ['.dev-ws-sheet-card',
+      'padding: 8px 16px calc(12px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom))); box-sizing: border-box'],
+    ['.dev-ws-sheet-vote .dev-ws-sheet-card',
+      'padding-bottom: calc(22px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom)))'],
+    ['.community-switcher-sheet',
+      'padding: 6px 8px calc(12px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom)))'],
+  ];
+  for (const [selector, declaration] of overlays) {
+    assert.ok(new RegExp(`\\${selector}\\s*\\{`).test(APP_CSS),
+      `${selector} rule is missing`);
+    assert.ok(APP_CSS.includes(declaration),
+      `${selector} must carry the combined bar-and-strip clearance — ` +
+      'its content sat flush with the safe area and slid under the Resume strip');
+  }
+});
+
+test("the agent-session transcript carries platform-safe-scroll", () => {
+  // Rendered, not grepped: the panel is React and the class has to survive
+  // to the DOM. The phone screen is the one where the last transcript message
+  // used to sit under the Resume strip.
+  const html = renderComponent('frontend/src/features/agent-session/index.tsx', 'AgentSessionPanel', {});
+  const scroller = /<div class="([^"]*)" aria-live="polite"/.exec(html);
+  assert.ok(scroller, 'the transcript scroller moved — re-anchor this test');
+  assert.match(scroller[1], /platform-safe-scroll/,
+    'the transcript must clear the combined bar-and-strip band so the last message stays readable');
+  // Source-level, so the mapping stays true even if the wrapper changes:
+  assert.match(AGENT_SESSION, /flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 platform-safe-scroll/,
+    'the phone transcript scroller must wear the utility in its own class string');
 });
 
 // ── 4. Dev-mode surfaces inside #app-view ────────────────────────────

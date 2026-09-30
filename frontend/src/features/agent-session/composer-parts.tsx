@@ -442,8 +442,10 @@ export function ModelSheet({ anchor, onClose, children }: {
         aria-label="Build with"
         className={desktop
           ? 'fixed z-[71] w-[22rem] overflow-y-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-2 shadow-2xl dark:border-zinc-700 dark:bg-zinc-900'
-          : 'fixed inset-x-0 bottom-0 z-[71] max-h-[85vh] overflow-y-auto rounded-t-[28px] bg-zinc-50 px-4 pb-8 pt-2 dark:bg-zinc-900'}
-        style={desktop && place ? { left: place.left, bottom: place.bottom, maxHeight: place.maxHeight } : undefined}
+          : 'fixed inset-x-0 bottom-0 z-[71] max-h-[85vh] overflow-y-auto rounded-t-[28px] bg-zinc-50 px-4 pt-2 dark:bg-zinc-900'}
+        style={desktop && place
+          ? { left: place.left, bottom: place.bottom, maxHeight: place.maxHeight }
+          : { paddingBottom: 'calc(2rem + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom)))' }}
       >
         {desktop ? null : <div className="mx-auto mb-2 h-1.5 w-10 rounded-full bg-zinc-300 dark:bg-zinc-600" aria-hidden="true" />}
         {children}

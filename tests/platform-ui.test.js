@@ -898,7 +898,9 @@ test('QA 2026-09-24 Q28: toast clears the tab bar and a composer pinned to the f
   let asked = null;
   sandbox.document.querySelectorAll = (sel) => { asked = sel; return els; };
   assert.equal(PlatformUI.toastClearance(), 128, 'the composer block is the taller of the two');
-  assert.equal(asked, '#platform-tabs, .platform-safe-bar');
+  assert.equal(asked, '#platform-tabs, .platform-safe-bar, #platform-parked',
+    'the parked strip is measured alongside the bar, so its 52px band is ' +
+    'in the same tallest-of calculation');
   PlatformUI.toast('Cannot verify the issue right now.');
   assert.equal(style['--un-toast-inset-bottom'], '128px');
   sandbox.document.querySelectorAll = () => [];
@@ -907,4 +909,26 @@ test('QA 2026-09-24 Q28: toast clears the tab bar and a composer pinned to the f
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8');
   assert.match(css, /\.un-toast \{\n  --un-toast-inset-bottom: var\(--platform-tabs-h, 0px\);\n\}/,
     'with no measurement, the tab bar\'s height');
+});
+
+// An app is parked: #platform-parked is a 52px band on TOP of the tab bar.
+// The toast must clear the TALLEST of the two, not just the bar — without
+// the strip in the measurement a toast sat behind the Resume pill.
+test('the toast clears the parked strip on top of the bar', () => {
+  const rect = (top, bottom, width = 390) => ({ top, bottom, width, height: bottom - top });
+  // 52 + 57 + 57 = 166: the strip's band, the bar's box, the composer bar.
+  const els = [
+    { id: 'platform-parked', r: rect(735, 792) },   // the strip above the bar
+    { r: rect(787, 844) },            // #platform-tabs on a phone
+    { r: rect(787, 844) },            // the composer bar (.platform-safe-bar)
+  ].map(({ r, id }) => (id ? { id, getBoundingClientRect: () => r } : { getBoundingClientRect: () => r }));
+  const { kit } = stubKit();
+  const style = {};
+  kit.toast = () => ({ dismiss() {}, el: { style: { setProperty: (k, v) => { style[k] = v; }, removeProperty: (k) => { delete style[k]; } } } });
+  const { PlatformUI, sandbox } = makeSandbox({ kit });
+  sandbox.innerHeight = 844;
+  sandbox.document.querySelectorAll = () => els;
+  assert.equal(PlatformUI.toastClearance(), 109, 'the strip adds its 52px band');
+  PlatformUI.toast('Cannot verify the issue right now.');
+  assert.equal(style['--un-toast-inset-bottom'], '109px');
 });

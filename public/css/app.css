@@ -562,12 +562,12 @@ html.un-kb .platform-kb-column .un-kb-avoid {
    the screen, and from 768px up it is the left column beside the sheet —
    so its last conversation row would otherwise sit behind the bar.
 
-   The bare token rather than the `max()` the others take: this scroller
-   reserves NOTHING today, so the inset is not part of what it is correcting
-   and pulling it in here would be a second change riding along. 0px with no
-   bar keeps that exactly as it was. */
+   The `max()` the others take: with no bar `--platform-tabs-h` is 0px, so
+   the declaration is exactly the home-indicator strip it reserves anyway;
+   with the parked strip up the token already counts both bands and the
+   last conversation row clears the Resume strip too. */
 .messages-list-scroll {
-  padding-bottom: var(--platform-tabs-h, 0px);
+  padding-bottom: max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom));
 }
 
 /* A conversation row, drawn straight on the strip: the square swatch
@@ -1216,7 +1216,7 @@ html.un-kb .platform-kb-column .un-kb-avoid {
   flex-direction: column;
   gap: 12px;
   max-height: 88vh;
-  padding: 8px 16px calc(16px + var(--platform-safe-bottom, 0px));
+  padding: 8px 16px calc(16px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom)));
   overflow-y: auto;
   border-radius: 20px 20px 0 0;
   background: var(--dc-sheet-raise);
@@ -15215,7 +15215,7 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 }
 .dev-details-card {
   width: min(680px, 100%); max-height: 78vh; overflow: auto; box-sizing: border-box;
-  padding: 14px 18px 20px; border-radius: 22px 22px 0 0;
+  padding: 14px 18px calc(20px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom))); border-radius: 22px 22px 0 0;
   background: var(--bg-primary); color: var(--text-primary);
   box-shadow: 0 -12px 40px rgba(0, 0, 0, .22);
 }
@@ -16657,12 +16657,12 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   position: relative;
   display: flex; flex-direction: column; gap: 8px;
   max-height: 66%; min-height: 0;
-  padding: 8px 16px calc(12px + var(--platform-safe-bottom, 0px)); box-sizing: border-box;
+  padding: 8px 16px calc(12px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom))); box-sizing: border-box;
   border-radius: 22px 22px 0 0;
   background-color: var(--dc-sheet);
   box-shadow: 0 -10px 30px rgba(24, 39, 75, .2);
 }
-.dev-ws-sheet-vote .dev-ws-sheet-card { padding-bottom: calc(22px + var(--platform-safe-bottom, 0px)); }
+.dev-ws-sheet-vote .dev-ws-sheet-card { padding-bottom: calc(22px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom))); }
 /* With the keyboard up the sheet is short; let the card have all of it. */
 .dev-ws-needs[data-ws-kb] .dev-ws-sheet-card { max-height: 100%; }
 /* ── Open and close MOVE. The card rises from the floor and the scrim fades
@@ -17041,7 +17041,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 }
 .community-switcher-sheet {
   width: 100%; max-height: 82dvh;
-  padding: 6px 8px calc(12px + var(--platform-safe-bottom, 0px));
+  padding: 6px 8px calc(12px + max(var(--platform-tabs-h, 0px), var(--platform-safe-bottom)));
   border-radius: 22px 22px 0 0;
   box-shadow: 0 -8px 30px rgba(0, 0, 0, .18);
 }

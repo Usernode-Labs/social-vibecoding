@@ -4440,8 +4440,8 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   assert.match(WORKSHOP, /\}, \[sheet, wide\]\);/);
   assert.match(CSS, /\.dev-ws-sheet-modal \{\s*position: fixed; inset: 0; z-index: 30;[\s\S]*?bottom: var\(--un-kb-inset, 0px\);/);
   assert.match(CSS, /\.dev-ws-needs\[data-ws-kb\] \.dev-ws-sheet-card \{ max-height: 100%; \}/);
-  assert.match(CSS, /padding: 8px 16px calc\(12px \+ var\(--platform-safe-bottom, 0px\)\);/,
-    'and the floor clears the home indicator');
+  assert.match(CSS, /padding: 8px 16px calc\(12px \+ max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom\)\)\);/,
+    'and the floor clears the home indicator — and the parked-app strip on top of the bar');
   // OPEN CARD. The item is the whole screen, so the card's own page is a row
   // under More; the href rides on the trigger and app-view.js reads it.
   assert.match(WORKSHOP, /data-card-menu-open=\{cardHref \|\| undefined\}/);

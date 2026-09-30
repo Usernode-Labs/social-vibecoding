@@ -349,7 +349,14 @@ if (typeof window !== 'undefined') {
 function tabBarInset(target: HTMLElement | null): number {
   const bar = document.getElementById('platform-tabs');
   if (!bar || (target && bar.contains(target))) return 0;
-  return bottomBarInset(bar.getBoundingClientRect(), { width: window.innerWidth, height: window.innerHeight });
+  let inset = bottomBarInset(bar.getBoundingClientRect(), { width: window.innerWidth, height: window.innerHeight });
+  // The parked strip is its own band on top of the bar (app.css raises
+  // --platform-tabs-h for it), so the ring and card keep clear of both.
+  const parked = document.getElementById('platform-parked');
+  if (parked && !parked.classList.contains('hidden')) {
+    inset += bottomBarInset(parked.getBoundingClientRect(), { width: window.innerWidth, height: window.innerHeight });
+  }
+  return inset;
 }
 
 /**
