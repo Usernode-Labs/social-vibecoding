@@ -22,6 +22,7 @@ const { userDirectoryLimiter } = require('../middleware/rate-limits');
 // Shared with POST /api/apps, which sends a Group's invites at creation
 // (services/collab-invites.js).
 const { acceptInvite, sendInvite } = require('../services/collab-invites');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function collaboratorRoutes(config) {
   const router = Router();
@@ -204,7 +205,7 @@ function collaboratorRoutes(config) {
 
   // Accept a pending invite. Invitee-only; idempotent (accepting when
   // already a member is a no-op success, for two-tab races).
-  router.post('/api/invites/:appId/accept', drainGuard, async (req, res) => {
+  router.post('/api/invites/:appId/accept', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isFinite(appId)) return res.status(400).json({ error: 'Invalid app id' });
     try {
@@ -227,7 +228,7 @@ function collaboratorRoutes(config) {
 
   // Decline a pending invite. Deletes the row (re-invites allowed).
   // Success even when nothing was pending — races are fine.
-  router.post('/api/invites/:appId/decline', drainGuard, async (req, res) => {
+  router.post('/api/invites/:appId/decline', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const appId = parseInt(req.params.appId, 10);
     if (!Number.isFinite(appId)) return res.status(400).json({ error: 'Invalid app id' });
     try {
@@ -251,7 +252,7 @@ function collaboratorRoutes(config) {
   // Remove a member or revoke a pending invite. Allowed for admins, the
   // app creator, and the user removing themself (leave). The creator
   // cannot be removed.
-  router.delete('/api/apps/:slug/collaborators/:userId', drainGuard, async (req, res) => {
+  router.delete('/api/apps/:slug/collaborators/:userId', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const targetId = parseInt(req.params.userId, 10);
     if (!Number.isFinite(targetId)) return res.status(400).json({ error: 'Invalid user id' });
     try {

@@ -32,6 +32,7 @@ const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
 const collabInvites = require('../services/collab-invites');
 const emailInvites = require('../services/email-invites');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -915,7 +916,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.post('/api/me/app-allowance/request', appAllowanceRequestLimiter, async (req, res) => {
+  router.post('/api/me/app-allowance/request', appAllowanceRequestLimiter, sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     if (req.user.canAdminWrite) return res.status(400).json({ error: 'Your account already has unlimited app slots.' });
@@ -1830,7 +1831,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.delete('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
+  router.delete('/api/apps/:slug/secrets/:key', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT id, self_hosted FROM apps WHERE slug = $1', [req.params.slug]);
@@ -2130,7 +2131,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // by the secret_change vote-apply path). Returns immediately; the
   // rebuild streams progress via the existing `app_redeploy_status` WS
   // event so the UI's version pill flips to its yellow spinning state.
-  router.post('/api/apps/:slug/redeploy', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/redeploy', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
@@ -2168,7 +2169,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // apps; rejects with 400 otherwise. `manual` skips the poller's
   // backoff on a commit that has failed to rebuild before: an admin
   // pressing this has usually just fixed the thing that was failing.
-  router.post('/api/apps/:slug/check-updates', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/check-updates', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query(
@@ -2307,7 +2308,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   // the red sha the app is paused on, so the next red is a new pause. The
   // cheaper way out is still to merge the fix; this is for when the red is
   // a flake, an unrelated breakage, or the fix IS the proposal waiting.
-  router.post('/api/apps/:slug/main-check/resume', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/main-check/resume', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
       const { rows } = await pool.query('SELECT id, slug FROM apps WHERE slug = $1', [req.params.slug]);
@@ -3022,7 +3023,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
 
   // Retry a failed app. Allowed for the app's creator or any admin, capped
   // at MAX_RETRY_COUNT per app to avoid a stuck app burning budget forever.
-  router.post('/api/apps/:slug/retry', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/retry', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const { rows } = await pool.query(
         "SELECT * FROM apps WHERE slug = $1 AND status = 'error'",
@@ -3361,7 +3362,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.post('/api/apps/:slug/activity', async (req, res) => {
+  router.post('/api/apps/:slug/activity', sameOriginBrowserOnly, async (req, res) => {
     const seconds = activitySeconds(req.body?.seconds);
 
     if (seconds === null) {

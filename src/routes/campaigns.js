@@ -24,6 +24,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const fleetMaintenance = require('../services/fleet-maintenance');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // A campaign or app id from the path, or null when it is not a positive
 // integer — answered as 404 rather than handed to Postgres as a bad cast.
@@ -97,7 +98,7 @@ function campaignRoutes(config) {
     }
   });
 
-  router.post('/api/campaigns/:id/merge-green', async (req, res) => {
+  router.post('/api/campaigns/:id/merge-green', sameOriginBrowserOnly, async (req, res) => {
     try {
       if (!req.user?.canAdminWrite) {
         return res.status(403).json({ error: 'Full admin access required' });
@@ -122,7 +123,7 @@ function campaignRoutes(config) {
     }
   });
 
-  router.post('/api/campaigns/:id/apps/:appId/retry', async (req, res) => {
+  router.post('/api/campaigns/:id/apps/:appId/retry', sameOriginBrowserOnly, async (req, res) => {
     try {
       if (!req.user?.canAdminWrite) {
         return res.status(403).json({ error: 'Full admin access required' });

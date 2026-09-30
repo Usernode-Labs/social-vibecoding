@@ -25,6 +25,7 @@ const managedOpenRouter = require('../services/openrouter-managed-keys');
 const agentModels = require('../services/agent-models');
 const registry = require('../agents/registry');
 const agentPreferences = require('../services/agent-preferences');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function credentialRoutes(config) {
   const router = Router();
@@ -197,7 +198,7 @@ function credentialRoutes(config) {
   });
 
   // ── Claim the one company-funded OpenRouter child key ─────────────
-  router.post('/api/me/credentials/openrouter/managed', async (req, res) => {
+  router.post('/api/me/credentials/openrouter/managed', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Pragma', 'no-cache');
@@ -324,7 +325,7 @@ function credentialRoutes(config) {
   });
 
   // ── Delete (revoke) OpenRouter key ─────────────────────────────────
-  router.delete('/api/me/credentials/openrouter', async (req, res) => {
+  router.delete('/api/me/credentials/openrouter', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
       const managedState = await managedOpenRouter.stateForUser(pool, req.user.id);

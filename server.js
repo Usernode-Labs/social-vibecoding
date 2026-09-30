@@ -554,6 +554,10 @@ app.use(topochainMobileRoutes(config));
 // can never be confused for one of those distinct credentials.
 app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
+// Every admin write, on whichever router declares it, answers only the
+// Homeroom page itself (middleware/same-site-browser.js). Mounted ahead of
+// all of them; the CLI's bearer calls carry no Sec-Fetch-Site and pass.
+app.use(['/api/admin', '/api/v4/admin'], require('./src/middleware/same-site-browser').sameOriginBrowserWrites);
 app.use(require('./src/middleware/moderation').moderationGuard(config));
 app.use(require('./src/routes/moderation').moderationRoutes(config));
 app.use(require('./src/routes/app-blocks').appBlockRoutes(config));

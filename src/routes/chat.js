@@ -12,6 +12,7 @@ const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
 const conversationsSvc = require('../services/conversations');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
   appChatReadLimiter,
   attachmentUploadLimiter,
@@ -894,9 +895,9 @@ function chatRoutes(config) {
     }
   }
 
-  router.post('/api/apps/:slug/messages/read', appChatReadLimiter,
+  router.post('/api/apps/:slug/messages/read', appChatReadLimiter, sameOriginBrowserOnly,
     (req, res) => moveReadCursor(req, res, 'read'));
-  router.post('/api/apps/:slug/messages/unread', appChatReadLimiter,
+  router.post('/api/apps/:slug/messages/unread', appChatReadLimiter, sameOriginBrowserOnly,
     (req, res) => moveReadCursor(req, res, 'unread'));
 
   // ── #1280: saving (bookmarking) a group-chat message ─────────────
@@ -944,7 +945,7 @@ function chatRoutes(config) {
     return messageId;
   }
 
-  router.put('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, async (req, res) => {
+  router.put('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
@@ -960,7 +961,7 @@ function chatRoutes(config) {
     }
   });
 
-  router.delete('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, async (req, res) => {
+  router.delete('/api/apps/:slug/messages/:id/bookmark', messageBookmarkLimiter, sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'private, no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {

@@ -4,6 +4,7 @@ const { getPool } = require('../db/pool');
 const blocks = require('../services/app-blocks');
 const { conversationSafetyLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 function appBlockRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
@@ -29,8 +30,8 @@ function appBlockRoutes(config, { pool = getPool(config) } = {}) {
     ws.pushToUser(req.user.id, { type: 'notifications_changed' });
     res.json({ ok: true, ...result });
   });
-  router.put('/api/me/app-blocks/:slug', conversationSafetyLimiter, update(true));
-  router.delete('/api/me/app-blocks/:slug', conversationSafetyLimiter, update(false));
+  router.put('/api/me/app-blocks/:slug', conversationSafetyLimiter, sameOriginBrowserOnly, update(true));
+  router.delete('/api/me/app-blocks/:slug', conversationSafetyLimiter, sameOriginBrowserOnly, update(false));
   return router;
 }
 module.exports = { appBlockRoutes };
