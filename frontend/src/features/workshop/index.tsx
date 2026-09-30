@@ -592,10 +592,10 @@ export function WorkshopScreen() {
               </div>
             </div>
             {/* ONE FEED, EVERYTHING MIXED (#3270): every decision owed by you
-                across your projects, one per screen, newest first — the
-                shape a project's own Needs you page has. See ./needs-reel.tsx. */}
+                across your projects, one per screen, newest first, drawn by
+                a project's own Needs you feed (#3488). See ./needs-reel.tsx. */}
             {state.error ? null : (
-              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} />
+              <NeedsReel items={state.feed} error={state.feedError} capped={state.feedCapped} onDone={() => workshopController.setTab('status')} />
             )}
           </div>
         ) : null}

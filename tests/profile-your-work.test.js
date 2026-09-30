@@ -237,3 +237,59 @@ test('the router: three addresses no username can have, one screen, the bar name
   // The dialog's "See your requests" lands on the view.
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const SEE_MINE_ROUTE = '#profile\/your-requests';/);
 });
+
+// ── The layout (#3498) ─────────────────────────────────────────────────
+//
+// "Your requests + your votes sections are misformatted (gray, behind
+// sidebar) on desktop." The screen arrived after app.css's per-screen route
+// lists and was on none of them, so the body kept its gray `bg-zinc-100`
+// instead of the wallpaper, the bar kept its zinc-200 surface, and the page
+// was not moved over for the desktop rail: its column centred in the whole
+// window and, from a laptop width down, began under the rail. The column
+// also passed its lists `mx-0` (Profile's arrangement) without Profile's
+// `px-4` gutter, so the cards ran edge to edge on a phone.
+
+const CSS = read('public/css/app.css').replace(/\/\*[\s\S]*?\*\//g, '');
+
+// Every selector in app.css, comments stripped, as written before its `{`.
+const SELECTORS = (CSS.match(/[^{}]+(?=\{)/g) || []).map((s) => s.trim());
+
+test('#3498: every wallpaper and bar rule that names Workshop names Your work too', () => {
+  // The rules keyed on a visible screen root: `body:has(:is(<roots>):not(.hidden))`.
+  const routeRules = SELECTORS.filter((sel) => /body:has\(:is\([^)]*#workshop-screen[^)]*\):not\(\.hidden\)\)/.test(sel));
+  // The light and dark ground, their 640px layer sets and the launch cover
+  // (5); the cleared bar, its glass, its clip and its faked layer (4).
+  assert.equal(routeRules.length, 9, 'the nine route rules that name #workshop-screen are found');
+  for (const sel of routeRules) {
+    assert.ok(sel.includes('#profile-proposals-screen'),
+      `${sel.replace(/\s+/g, ' ').slice(0, 90)}… also names #profile-proposals-screen`);
+  }
+  const ground = routeRules.filter((sel) => !sel.includes('#platform-header'));
+  assert.equal(ground.length, 5, 'so the page paints the wallpaper, not the gray body');
+  const bar = routeRules.filter((sel) => sel.includes('#platform-header'));
+  assert.equal(bar.length, 4, 'and the bar wears the same glass as on Workshop');
+});
+
+test('#3498: on a desktop the screen moves over for the rail like its siblings', () => {
+  const desktop = CSS.slice(CSS.indexOf('--platform-rail-w: var(--platform-rail-full);'));
+  const at = desktop.indexOf(':is(#home-screen, #browse-screen, #workshop-screen');
+  assert.ok(at > 0, 'the rail\'s list of screens that move over is found');
+  const rule = desktop.slice(at, desktop.indexOf('}', at));
+  const roots = rule.slice(0, rule.indexOf('{'));
+  assert.match(roots, /#profile-proposals-screen/, 'Your changes, requests and votes clear the rail');
+  assert.match(rule, /padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
+});
+
+test('#3498: the column is Profile\'s, gutter and all, so its mx-0 lists keep a margin', () => {
+  const profileRoot = read('frontend/src/features/profile/index.tsx')
+    .match(/<div id="profile-root" className="([^"]+)">/);
+  assert.ok(profileRoot, 'Profile\'s column is found');
+  assert.match(profileRoot[1], /\bpx-4\b/, 'Profile\'s column carries the gutter its mx-0 lists rely on');
+  const mod = loadTsx(SCREEN);
+  const html = renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
+  const column = html.match(/^<main id="profile-proposals-screen"[^>]*><div class="([^"]+)">/);
+  assert.ok(column, 'the screen\'s column is found');
+  assert.equal(column[1], profileRoot[1], 'the same column as #profile-root, class for class');
+  assert.match(read(SCREEN), /<GroupedList className="mx-0" tone="plane">/,
+    'the lists still pass mx-0, which is why the column owns the gutter');
+});

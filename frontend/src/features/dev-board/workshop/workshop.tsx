@@ -1222,6 +1222,12 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
     out.push({ key: 'tally', tone: undefined, text: `${st.yes} of ${st.majority} yes` });
     if (st.label && !/^Vote\b/.test(st.label)) out.push({ key: 'state', tone: st.tone, text: st.label });
+  } else if (row.kind === 'vote' && row.tally) {
+    // The Communities feed's rows (#3488): the counts, without a threshold
+    // it has not worked out for each project. A zero says nothing.
+    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
+    const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
+    if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
   for (const b of row.card.badges) {
     if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority') && b.label.text) {
@@ -1234,7 +1240,12 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
 /** The line under the vote question: where the vote stands, and what follows. */
 function tallyLine(row: QueueRow): string {
   const st = row.card.pill ? row.card.pill.state : null;
-  if (!st) return '';
+  if (!st) {
+    if (!row.tally) return '';
+    const { yes, no } = row.tally;
+    if (!yes && !no) return 'Nobody has voted yet.';
+    return `${yes} yes and ${no} no so far.`;
+  }
   const said = `${st.yes} of ${st.majority} have said yes so far.`;
   return st.label && !/^Vote\b/.test(st.label) ? `${said} ${st.label}.` : said;
 }
@@ -1615,13 +1626,21 @@ function ItemBy({ row }: { row: QueueRow }): ReactNode {
 }
 
 /**
+ * The project a feed row is about: its own, on the Communities screen's feed
+ * of every project's (#3488), else the page's.
+ */
+function rowSlug(row: QueueRow, slug: string): string {
+  return row.app && row.app.slug ? row.app.slug : slug;
+}
+
+/**
  * memo(): the feed holds the Ask sheet's draft and its streamed answer, so it
  * renders on every keystroke and every token of an answer, and none of that
  * is any item's business. Every prop is a primitive, a row off the publish,
  * or a callback the feed keeps stable (`openFull`, `onDescribe`), so an item
  * renders again only when something it draws changed.
  */
-const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull, onDescribe, railClear }: {
+const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull, onDescribe, railClear, renderApp }: {
   row: QueueRow;
   index: number;
   count: number;
@@ -1642,9 +1661,11 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
    * card). Above it the by-line and title take the item's full width.
    */
   railClear: number;
+  /** Draws the row's project over its by-line, where rows mix projects. */
+  renderApp?: (row: QueueRow) => ReactNode;
 }): ReactNode {
   const isVote = row.kind === 'vote';
-  const href = openHref(slug, row.card);
+  const href = openHref(rowSlug(row, slug), row.card);
   const title = row.card.title.text || row.card.title.title;
   const facts = factsFor(row, voted);
   const summary = isVote ? row.summary : (row.body || null);
@@ -1681,6 +1702,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       data-ws-tint={tint}
       data-ws-swipeable={swipe ? '' : undefined}
       data-ws-head={railClear && head !== 'none' ? head : undefined}
+      data-ws-app={row.app ? row.app.slug : undefined}
     >
       <div className="dev-ws-item-progress" aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
       <div className="dev-ws-item-top">
@@ -1690,10 +1712,15 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
             {`Voted ${voted} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
           </span>
         ) : (
-          <span className="dev-ws-eyebrow">{isVote ? 'Proposal · needs your vote' : 'Open issue · nobody on it'}</span>
+          <span className="dev-ws-eyebrow">
+            {!isVote ? 'Open issue · nobody on it'
+              : row.card.attrs && row.card.attrs['data-gov-row'] ? 'Group decision · needs your vote'
+                : 'Proposal · needs your vote'}
+          </span>
         )}
         <span className="dev-ws-item-of">{`${index + 1} / ${count}`}</span>
       </div>
+      {row.app && renderApp ? renderApp(row) : null}
       <ItemBy row={row} />
       {/* The title is the headline and the door to the full card: its own
           page, with the checks, the thread and every affordance the card
@@ -1757,13 +1784,14 @@ function plural(n: number, one: string, many: string): string {
  * things in it and answered them all, it left some waiting, or there was
  * nothing to begin with.
  */
-function DoneItem({ total, acted, left, leftVotes, onDone, onBack }: {
+function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: {
   total: number;
   acted: number;
   left: number;
   leftVotes: number;
   onDone: () => void;
   onBack: () => void;
+  doneLabel?: string;
 }): ReactNode {
   const done = Math.max(0, Math.min(total, total - leftVotes));
   const line = left > 0 ? 'That’s it for now.' : (acted > 0 ? 'That’s it!' : 'You’re all caught up.');
@@ -1791,7 +1819,7 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack }: {
       ) : null}
       <p className="dev-ws-needs-done-line">{line}</p>
       <p className="dev-ws-needs-done-sub">{parts.join(' ')}</p>
-      <button type="button" className="dev-ws-done-cta" onClick={onDone}>See what changed this week</button>
+      <button type="button" className="dev-ws-done-cta" onClick={onDone}>{doneLabel || 'See what changed this week'}</button>
       {left > 0 ? (
         <button type="button" className="dev-ws-done-back" data-ws-done-back="" onClick={onBack}>
           Back to the first one waiting
@@ -2018,13 +2046,23 @@ function useSwipeVote(
 
 /* ── The feed ────────────────────────────────────────────────────────── */
 
-function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
+/**
+ * A project's Needs you, and the Communities screen's (#3488): ONE feed, so
+ * the two cannot drift apart again. There the rows mix every project's, each
+ * carrying its own (`row.app`), and every address the feed builds (the card's
+ * page, the ask box, the thread) is that row's project rather than `slug`.
+ * `renderApp` draws the project over a row's by-line; `doneLabel` is what the
+ * end card offers once the feed is through.
+ */
+export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabel, renderApp }: {
   rows: DevWorkshopView['queue'];
   total: number;
   models: DevWorkshopView['models'];
   slug: string;
   canPost: boolean;
   onDone: () => void;
+  doneLabel?: string;
+  renderApp?: (row: QueueRow) => ReactNode;
 }): ReactNode {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Whether the route asked to open on the end card. Read once, at mount:
@@ -2409,7 +2447,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   // The card's own page, offered under More as "Open card": here the item IS
   // the screen, so there is no card face to tap for it (app-view.js's
   // _toggleCardMenu reads it off the trigger).
-  const cardHref = row ? openHref(slug, row.card) : null;
+  const cardHref = row ? openHref(rowSlug(row, slug), row.card) : null;
   // What is rendered: the open sheet, or the one still leaving. Never on
   // the end card, which has no item for a sheet to be about.
   const shown = row ? (sheet || leaving) : null;
@@ -2432,6 +2470,11 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Only while the feed is on screen. It stays mounted under a screen
+      // that is hidden (the Communities tab's, #3488, while another tab is
+      // up), and a V then a Y there would cast a vote nobody could see.
+      const feed = scrollRef.current;
+      if (!feed || !feed.offsetParent) return;
       const k = e.key;
       if (k === 'Escape') { if (sheet) { closeSheet(); e.preventDefault(); } return; }
       if (k === 'ArrowDown' || k === 'j' || k === 'J') { go(1); e.preventDefault(); return; }
@@ -2475,7 +2518,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     let live = true;
     loadedRef.current.add(key);
     const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(String(ref))}`;
-    fetch(`/api/apps/${encodeURIComponent(slug)}/workshop/ask/thread?${qs}`, {
+    fetch(`/api/apps/${encodeURIComponent(rowSlug(row, slug))}/workshop/ask/thread?${qs}`, {
       credentials: 'same-origin',
       headers: { accept: 'application/json' },
     })
@@ -2535,7 +2578,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     let text: string;
     let failed = false;
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/workshop/ask`, {
+      const res = await fetch(`/api/apps/${encodeURIComponent(rowSlug(sending, slug))}/workshop/ask`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
         credentials: 'same-origin',
@@ -2643,6 +2686,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             onFull={openFull}
             onDescribe={describe}
             railClear={wide ? 0 : railClear}
+            renderApp={renderApp}
           />
         ))}
         {/* ALWAYS, after the last item: the swipe past the end lands here.
@@ -2653,6 +2697,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
           left={left}
           leftVotes={leftVotes}
           onDone={onDone}
+          doneLabel={doneLabel}
           onBack={() => go(items.findIndex((r) => !answered[r.key]) - i)}
         />
       </div>
@@ -2766,10 +2811,20 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
                 <p className="dev-ws-ask-q">{row.ask}</p>
                 <p className="dev-ws-vote-sub">{tallyLine(row)}</p>
-                <div className="dev-ws-answer-row">
-                  <button type="button" className="dev-ws-answer-btn dev-ws-answer-yes" data-ws-answer-btn="yes" disabled={!row.yes} onClick={() => answer('yes')}>Vote yes</button>
-                  <button type="button" className="dev-ws-answer-btn dev-ws-answer-no" data-ws-answer-btn="no" disabled={!row.no} onClick={() => answer('no')}>Vote no</button>
-                </div>
+                {/* A group decision (a rename, a secret, closing a request)
+                    carries no pair here: its votes can apply it on the spot,
+                    so it is decided on its own page, which shows the options
+                    and what follows. Two dead buttons said nothing of that. */}
+                {row.yes || row.no || !cardHref ? (
+                  <div className="dev-ws-answer-row">
+                    <button type="button" className="dev-ws-answer-btn dev-ws-answer-yes" data-ws-answer-btn="yes" disabled={!row.yes} onClick={() => answer('yes')}>Vote yes</button>
+                    <button type="button" className="dev-ws-answer-btn dev-ws-answer-no" data-ws-answer-btn="no" disabled={!row.no} onClick={() => answer('no')}>Vote no</button>
+                  </div>
+                ) : (
+                  <div className="dev-ws-answer-row">
+                    <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>Open to decide</a>
+                  </div>
+                )}
                 <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
                 <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Esc close</p>
               </div>
@@ -2901,7 +2956,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
         <div className="dev-ws-sheet-body" ref={commentsRef}>
           {row.commentsFor != null ? <div className="dev-feed-comments" data-comments-for={row.commentsFor} /> : null}
           {row.thread ? (
-            <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
+            <FeedThread slug={rowSlug(row, slug)} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
           ) : null}
           {!row.thread && row.commentsFor == null ? <p className="dev-ws-ask-hint">No comments yet.</p> : null}
         </div>
@@ -3506,7 +3561,7 @@ export function DevWorkshop(): ReactNode {
         <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('discussion')} />
       ) : null}
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
-      {v.mine && v.mine.rows.length ? (
+      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <YourWorkCard
           rows={v.mine.rows}
           slug={slug}
@@ -3786,6 +3841,10 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
+      {/* ── Approval rules: how a change gets in ──
+          The Workshop page's foot (#3487). It was the hero's last line, then
+          this foot, then the head of All items for a round (#852). */}
+      {slug ? <ApprovalRules slug={slug} /> : null}
       </>
       ) : null}
 
@@ -3807,10 +3866,6 @@ export function DevWorkshop(): ReactNode {
           tab; its body is what may be empty (see EmptyNote). */}
       {tab === 'all' ? (
         <>
-          {/* ── Approval rules: how a change gets in ──
-              Above the categories they govern (#852). It was the hero's last
-              line, then the Workshop page's foot. */}
-          {slug ? <ApprovalRules slug={slug} /> : null}
           {/* ── The two ways to read the same board ──────────────────────
               The eyebrow here used to say "12 categories" and nothing else:
               a count of a grouping the viewer had no say in. The grouping is

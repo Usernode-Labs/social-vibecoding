@@ -450,6 +450,17 @@ export interface DevWorkshopView {
     /** An issue's body as one plain run, the claim item's sub-hero. */
     body?: string | null;
     /**
+     * The project the row belongs to, on the Communities screen's Needs you
+     * (#3488), which mixes every project's. Unset inside a project, whose
+     * page says which one it is.
+     */
+    app?: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null } | null;
+    /**
+     * Where the vote stands when no status pill was worked out: the
+     * Communities feed has the counts but not each project's threshold.
+     */
+    tally?: { yes: number; no: number } | null;
+    /**
      * The Description sheet's body: a proposal's summary or an issue's
      * body, rendered and sanitised where it was built (app-view.js). Empty
      * when there is none.
@@ -513,6 +524,8 @@ export interface DevWorkshopView {
    * whatever the board is narrowed to.
    */
   mine: {
+    /** A signed-in viewer, who can have work (a guest has none to have none of). */
+    viewer?: boolean;
     count: number;
     shown: number;
     rows: ListRow[];

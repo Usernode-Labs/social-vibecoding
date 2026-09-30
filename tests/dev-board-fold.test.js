@@ -1373,9 +1373,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // pin the band and the hero's actions row; the grouping-ear checks pin the
   // strip in the pane head; the All chip's pins the header's switcher.
   //
+  // 829 → 830: +1 (#3489): the hub's Your work with nothing in progress, a
+  // state of the hub no check could reach before (it left the hub). The rest
+  // was REWRITTEN in place: the approval rules' check pins the foot of the
+  // Workshop tab (#3487), the Communities Needs you check pins the project's
+  // own feed there (#3488), and the comment-stamp check reads its stamps off
+  // the request whose thread carries Homeroom bot's spec card (#3490).
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 829);
+  checkCap.assertPinned(DAPP.tests.length, 830);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -3574,8 +3574,15 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    `bg-zinc-100` / `dark:bg-zinc-950` body instead of the wallpaper. On a
    desktop the session usually shows inside #messages-screen (listed), which
    hid the omission; the side panel beside an app is phone-width, swaps
-   `messages/agent/<id>` for `agent/<id>`, and so drew it gray. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+   `messages/agent/<id>` for `agent/<id>`, and so drew it gray.
+
+   #profile-proposals-screen IS ONE TOO (#3498). Profile's Your changes,
+   Your requests and Your votes are a drill-in off Me like Settings and the
+   Leaderboard, drawn in the same plane cards, but the screen arrived after
+   these lists and was on none of them: the page kept the gray body and the
+   bar its zinc-200 surface. Every list here that names #workshop-screen,
+   its React-owned sibling, names it as well. */
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -3613,7 +3620,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    screen — so on every other route these selectors are exactly the two they
    were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
    along with the ground. */
-:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -3653,7 +3660,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -3667,7 +3674,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -3695,7 +3702,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #global-chat-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #global-chat-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 
@@ -3725,7 +3732,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    notch in half. The frost IS the edge here. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
-             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header {
+             #global-chat-screen, #agent-session-screen,
+             #profile-proposals-screen):not(.hidden)) #platform-header {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
@@ -3753,7 +3761,8 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    reaches past its box, so the clip cuts nothing. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
-             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header,
+             #global-chat-screen, #agent-session-screen,
+             #profile-proposals-screen):not(.hidden)) #platform-header,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: transparent;
   clip-path: inset(0 round 0 0 1.25rem 1.25rem);
@@ -3907,7 +3916,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -15228,6 +15237,27 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .dev-step-vote-bar { flex-basis: 120px; }
 }
 #dev-issue-comments .dev-feed-msg-text { font-size: 13px; }
+/* #3490: Homeroom bot's spec, under its sentence (issue-comments.tsx
+   BotSpec). A card in the plane colour with one hairline, the spec's title
+   on it as a row's title (15 over the 13 of its label), folded as GitHub
+   folds it; open, the spec in the spec viewer's own typography. */
+.dev-issue-spec {
+  margin-top: 8px; border-radius: 14px; overflow: hidden;
+  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.dev-issue-spec-head {
+  display: flex; align-items: center; gap: 10px; min-height: 44px;
+  padding: 10px 12px; cursor: pointer; list-style: none;
+}
+.dev-issue-spec-head::-webkit-details-marker { display: none; }
+.dev-issue-spec-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.dev-issue-spec-kicker { font-size: 13px; color: var(--text-muted); }
+.dev-issue-spec-title { font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary); }
+.dev-issue-spec-chev { width: 18px; height: 18px; flex: none; color: var(--text-muted); transition: transform .15s ease; }
+.dev-issue-spec[open] .dev-issue-spec-chev { transform: rotate(180deg); }
+.dev-issue-spec-body { padding: 2px 12px 14px; border-top: 1px solid var(--app-sheet-line); padding-top: 12px; }
+/* The Workshop row's two-line preview names the spec after the sentence. */
+.dev-feed-comment-spec { display: block; margin-top: 2px; font-weight: 600; color: var(--text-primary); }
 #dev-topic-thread #gc-thread-messages {
   margin: 4px 0 0;
   max-width: 900px;
@@ -16127,68 +16157,51 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    `.workshop-scope-tabs`) are gone with the UI overhaul: the list is the
    page, and Needs you is a row at its top that opens the feed below. */
 /* ── The Communities screen's Needs you feed (#3270, workshop/needs-reel.tsx) ──
-   One decision per screen, like a project's own Needs you page: the reel is
-   its own scroller, a screen tall less the bars around it, and snaps a card
-   to the top as it moves. A card is the plane colour, 20px, one hairline —
-   the language's card — with the project it belongs to leading it, the
-   question and its two answers at its foot. */
-.workshop-reel {
-  height: calc(100dvh - 232px); min-height: 360px;
-  margin: 4px 16px 0; overflow-y: auto; overscroll-behavior: contain;
-  scroll-snap-type: y mandatory; scroll-padding-top: 0;
-  display: flex; flex-direction: column; gap: 12px;
-  -webkit-overflow-scrolling: touch;
+   A project's own Needs you feed since #3488 (NeedsFeed, the stage and the
+   item above), in a box a screen tall less the bars around it: the page head
+   over it and the tab bar under it. Each item leads with the project it
+   belongs to, its tile and its name, a door to its hub. */
+.workshop-needs-feed {
+  /* The page head and the header over it (116px), and the phone's tab bar
+     under it, measured against a project's own feed, which ends at the same
+     line. A browser's "Get the app" banner pushes the page down by its own
+     height, so that comes off as well. */
+  height: calc(100dvh - 180px - var(--browser-banner-h, 0px)); min-height: 360px;
+  margin: 4px 16px 0;
+  display: flex; flex-direction: column;
 }
 @media (min-width: 768px) {
-  .workshop-reel { height: calc(100dvh - 190px); max-width: 560px; }
+  /* No tab bar: the stage runs to 8px off the floor, as a project's does, so
+     the rail and its arrows clear the key legend under it. */
+  .workshop-needs-feed { height: calc(100dvh - 124px - var(--browser-banner-h, 0px)); }
+  /* The key legend is centred under the STAGE, not under the stage and the
+     rail: this screen's column is narrower than a project's panel, so the
+     legend is wider than the stage and, centred on both, ran under the
+     rail's arrows. 102px is the rail and its gap. */
+  .workshop-needs-feed .dev-ws-keys { right: 102px; }
+}
+/* Where the window has the room, the feed takes a project's stage width
+   (720px) out of the screen's 672px column, as far as that column's own
+   margins go. */
+@media (min-width: 1180px) {
+  .workshop-needs-feed { margin-left: -80px; margin-right: -80px; }
 }
 .workshop-reel-loading { background: var(--dc-sheet-solid); border-radius: 20px; }
-.workshop-reel-card {
-  flex: 0 0 100%; box-sizing: border-box; scroll-snap-align: start;
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 16px 18px 18px; border-radius: 20px;
-  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-  overflow: hidden;
-}
-.workshop-reel-top { display: flex; align-items: center; gap: 8px; }
 .workshop-reel-app {
   display: inline-flex; align-items: center; gap: 8px; min-width: 0;
   font-size: 13px; font-weight: 650; color: var(--text-primary); text-decoration: none;
 }
+.dev-ws-item > .workshop-reel-app { align-self: flex-start; max-width: calc(100% - 74px); margin: 12px 0 2px; }
 .workshop-reel-tile {
   width: 26px; height: 26px; flex: none; border-radius: 8px; overflow: hidden;
   display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
 }
-.workshop-reel-pos { margin-left: auto; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.workshop-reel-what { margin: 0; font-size: 13px; color: var(--text-muted); }
-.workshop-reel-title { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
-.workshop-reel-title a { color: var(--text-primary); text-decoration: none; }
-.workshop-reel-summary {
-  margin: 0; font-size: 16px; line-height: 1.45; color: var(--text-secondary);
-  display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
+/* A group decision's vote sheet opens its page: the answer button's shape,
+   as a link, in the accent. */
+.dev-ws-answer-open {
+  display: flex; align-items: center; justify-content: center;
+  border-color: transparent; background: var(--accent); color: #fff; text-decoration: none;
 }
-.workshop-reel-by { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--text-muted); }
-.workshop-reel-spacer { flex: 1 1 auto; min-height: 0; }
-.workshop-reel-answers { display: flex; flex-direction: column; gap: 10px; }
-.workshop-reel-ask { margin: 0; font-size: 15px; font-weight: 650; color: var(--text-primary); }
-.workshop-reel-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.workshop-reel-no, .workshop-reel-yes {
-  height: 48px; border: 0; border-radius: 14px; cursor: pointer;
-  font-family: inherit; font-size: 16px; font-weight: 650;
-}
-.workshop-reel-no { background: var(--state-neutral-bg); color: var(--text-primary); }
-.workshop-reel-yes { background: var(--accent); color: #fff; }
-.workshop-reel-no:disabled, .workshop-reel-yes:disabled { opacity: .6; cursor: default; }
-.workshop-reel-open, .workshop-reel-decide {
-  display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
-  font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none;
-}
-.workshop-reel-decide {
-  align-self: stretch; justify-content: center; height: 48px; border-radius: 14px;
-  background: var(--accent); color: #fff;
-}
-.workshop-reel-voted { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-secondary); }
-.workshop-reel-voted a { color: var(--accent); }
 /* ── THE PROJECT HUB'S OWN CARDS (features/dev-board/workshop/hub-cards.tsx) ──
    The channel, Needs you, and Members & activity, on the hub tab under the
    hero. They are `.dev-ws-strip` cards with the tab's one heading, and what
@@ -16853,9 +16866,17 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    for the two hooks that measure it, and bleeds to the column's edges and
    up under the header's overlap (`-mb-2` on the bar, plus the body's own
    top padding), so the colour runs unbroken from the top of the screen to
-   the tabs' underline. */
+   the tabs' underline.
+
+   THE SIDES CANCEL 4px, NOT 12 (#3499). `#dev-body` is `px-3`, but holding
+   the Workshop it narrows to 4px at the sides (`#dev-body:has(>
+   #dev-workshop)`), and the band's bleed was written against the 12. It ran
+   8px past both edges of the screen: harmless where the page itself scrolls
+   (a mobile browser clips #dev-forum-scroll's x-axis), but in an installed
+   app or the native WebView #dev-forum-scroll is the scroller, and its
+   `overflow-y: auto` made those 8px a sideways scroll of the whole hub. */
 .dev-ws-tabs.dev-ws-band {
-  margin: -18px -12px 0;
+  margin: -18px -4px 0;
   /* 18px, not 8: the header's foot overlaps the band's top by ten, and the
      count's badge rises above its word into that strip. */
   padding: 18px 8px 0;
@@ -17095,7 +17116,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    in a mobile browser, where the page scrolls, the tab takes `--ws-fit` as
    a definite height, at every width. The pane draws its own sheet
    (general-chat.tsx's `dc-lift dc-lift-session`), which runs off the
-   bottom as it does in Messages, so on a phone it spans the band's width. */
+   bottom as it does in Messages, so on a phone it spans the band's width:
+   the screen's, by cancelling the same 4px of `#dev-body` the band does
+   (#3499), not 12. */
 html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
   height: var(--ws-fit);
   min-height: var(--ws-fit);
@@ -17104,7 +17127,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
 .dev-ws-discussion-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .dev-ws-discussion-host > * { flex: 1 1 auto; min-height: 0; }
 @media (max-width: 767.98px) {
-  .dev-ws-discussion { margin: 0 -12px; }
+  .dev-ws-discussion { margin: 0 -4px; }
 }
 /* THE COMPOSER'S FOOT IS ALREADY CLEAR. `.platform-safe-bar` adds the tab
    bar's height under every composer, on the rule that inside #app-view the
@@ -18535,7 +18558,8 @@ html.un-kb #platform-tabs {
 .platform-parked::before,
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
-             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header::before,
+             #global-chat-screen, #agent-session-screen,
+             #profile-proposals-screen):not(.hidden)) #platform-header::before,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before,
 html[data-browser-scroller] #landing-header::before {
   content: '';
@@ -19249,10 +19273,14 @@ html.un-kb #platform-parked {
      #agent-session-screen was absent by omission (QA 2026-09-24 Q23): it
      arrived after this list, drew from the window's left edge, and its app
      and change chips, the reply suggestions and the start of the composer sat
-     under the rail where they could not be clicked. */
+     under the rail where they could not be clicked.
+
+     #profile-proposals-screen likewise (#3498): Your requests and Your votes
+     centred in the whole window, so from a laptop width down their cards
+     began under the rail. */
   :is(#home-screen, #browse-screen, #workshop-screen, #leaderboard-screen,
       #profile-screen, #admin-screen, #settings-screen, #messages-screen,
-      #global-chat-screen, #agent-session-screen) {
+      #global-chat-screen, #agent-session-screen, #profile-proposals-screen) {
     /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
        The rail's hairline was the content's left margin, so a card began
        where the rail ended and the page had air on the right and none on the
