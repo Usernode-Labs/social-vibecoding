@@ -166,7 +166,7 @@ test('the mark\'s menu: the app\'s own rows first, then Agent sessions, the sess
   assert.doesNotMatch(sheet, />Continue</);
   // Each session says what app it is on and where it stands, under its title.
   assert.match(sheet, /label=\{row\.title\}\s+sub=\{row\.sub\}/);
-  assert.match(sheet, /\{continuing\.more \? \(\s*<MenuRow\s+id="app-menu-continue-all"[\s\S]{0,200}label="Show more"[\s\S]{0,200}setMessagesFilter\('agents'\)/,
+  assert.match(sheet, /\{continuing\.more \? \(\s*<a\s+id="app-menu-continue-all"[\s\S]{0,500}setMessagesFilter\('agents'\)[\s\S]{0,300}>\s*Show more\s*<ChevronRightIcon/,
     'only when there are more, and it opens Messages\' Agents list');
   assert.doesNotMatch(sheet, /See all sessions/);
   assert.match(sheet, /<AgentActivityIcon activity=\{row\.activity\} className="h-5 w-5" \/>/);

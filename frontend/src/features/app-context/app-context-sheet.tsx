@@ -118,7 +118,6 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 
 import {
-  ChatIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
   FlagIcon,
@@ -775,16 +774,18 @@ export function AppsSwitcherSheet(): ReactNode {
                   />
                 ))}
                 {continuing.more ? (
-                  <MenuRow
+                  <a
                     id="app-menu-continue-all"
                     href="#messages"
-                    icon={<ChatIcon />}
-                    label="Show more"
+                    className="flex w-full items-center justify-center gap-1 min-h-[44px] px-5 pt-1 text-[0.8125rem] font-medium text-zinc-500 dark:text-zinc-400 transition-colors hover:text-zinc-700 dark:hover:text-zinc-200 hover:underline"
                     onClick={(e) => {
                       setMessagesFilter('agents');
                       followThenDismiss(e, '#messages');
                     }}
-                  />
+                  >
+                    Show more
+                    <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+                  </a>
                 ) : null}
               </div>
             ) : null}
