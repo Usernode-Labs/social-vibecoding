@@ -430,6 +430,13 @@
       "preview": "`UPDATE app_llm_grants SET ${sets.join(', ')} WHERE app_id = $1 AND user_id = $2 RETURNING app_id, user_id, status, daily_cap_cents, allow_byok, created_at, rev"
     },
     {
+      "source": "src/routes/notifications.js",
+      "kind": "structural-template",
+      "fingerprint": "d67fecfd937a92e0accb",
+      "count": 1,
+      "preview": "`SELECT ${appAccess.ACCESS_COLUMNS}, name, EXISTS (SELECT 1 FROM app_admins ad WHERE ad.app_id = apps.id AND ad.user_id = $2) AS is_admin FROM apps WHERE slug ="
+    },
+    {
       "source": "src/routes/profile.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "3ffc1b3759301eea2752",
