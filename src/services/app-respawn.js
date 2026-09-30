@@ -25,14 +25,6 @@ const { getPool } = require('../db/pool');
 
 const SOURCE_REVISION_LABEL = 'social.usernode.io/source-revision';
 
-// Core shared by respawnAppContainer (boot migration) and app-heal.js:
-// assemble the production env contract (per-role DATABASE_URL, LLM-proxy
-// pair, merged secrets) for the app's ALREADY-BUILT image, stop+rm any
-// existing container, and `docker run` a fresh one. Returns the new
-// containerId, or null when required secrets are missing (the image
-// cannot run — callers decide whether that's a warn or a failure).
-// Does NOT health-check and does NOT persist apps.container_id; callers
-// own both so each can pick its own strictness.
 // The source-revision label is the evidence proposal-delivery reads to say
 // a merged proposal is live (#3335). A respawn re-runs the SAME image, so
 // the revision it serves does not change — carry the label over from the
@@ -40,23 +32,21 @@ const SOURCE_REVISION_LABEL = 'social.usernode.io/source-revision';
 // rollover used to strip it, turning each merged row back to "unknown").
 // Only a label the live runtime itself reports is carried, never
 // apps.main_sha, which can be backfilled from the remote without a deploy.
-// And only when the live runtime provably runs the image being re-run: on
-// docker that image is the mutable `:latest` tag, which a rebuild can
-// retag and then fail before deploying, so the container's immutable image
-// id must equal what the tag resolves to now. Without that proof nothing
-// is carried and delivery reads `unknown` until the next real rebuild.
-async function carriedSourceRevision(config, app, imageName) {
+// And only when the live runtime provably runs the exact image about to be
+// deployed: on docker `imageToRun` is the immutable id the `:latest` tag
+// was resolved to ONCE, and that id is what gets deployed, so neither a
+// rebuild that retagged and then failed before deploying nor a retag
+// racing this respawn can put an old revision on a new image. Without that
+// proof nothing is carried and delivery reads `unknown` until the next
+// real rebuild.
+async function carriedSourceRevision(config, app, imageToRun, onDocker) {
+  if (!imageToRun) return {};
   try {
-    const ref = applicationRuntime.productionRef(config, app);
-    const live = await applicationRuntime.inspect(config, ref);
+    const live = await applicationRuntime.inspect(config, applicationRuntime.productionRef(config, app));
     const sha = String(live?.labels?.[SOURCE_REVISION_LABEL] || '').toLowerCase();
     if (!/^[a-f0-9]{40}$/.test(sha)) return {};
-    if (ref.runtimeKind === 'docker') {
-      const target = await docker.imageId(imageName);
-      if (!live.imageId || !target || live.imageId !== target) return {};
-    } else if (!live.imageRef || live.imageRef !== imageName) {
-      return {};
-    }
+    const liveImage = onDocker ? live.imageId : live.imageRef;
+    if (!liveImage || liveImage !== imageToRun) return {};
     return { [SOURCE_REVISION_LABEL]: sha };
   } catch (err) {
     log.warn('app-respawn', 'Could not read the running source revision', {
@@ -66,6 +56,14 @@ async function carriedSourceRevision(config, app, imageName) {
   }
 }
 
+// Core shared by respawnAppContainer (boot migration) and app-heal.js:
+// assemble the production env contract (per-role DATABASE_URL, LLM-proxy
+// pair, merged secrets) for the app's ALREADY-BUILT image, stop+rm any
+// existing container, and `docker run` a fresh one. Returns the new
+// containerId, or null when required secrets are missing (the image
+// cannot run — callers decide whether that's a warn or a failure).
+// Does NOT health-check and does NOT persist apps.container_id; callers
+// own both so each can pick its own strictness.
 async function runExistingImage(config, app) {
   if (!app.db_password) {
     throw new Error(
@@ -75,9 +73,10 @@ async function runExistingImage(config, app) {
   }
 
   const containerName = `usernode-app-${app.slug}`;
-  const imageName = applicationRuntime.mode(config) === 'kubernetes'
-    ? app.image_ref
-    : `usernode-app-${app.slug}:latest`;
+  const onDocker = applicationRuntime.mode(config) !== 'kubernetes';
+  const imageName = onDocker
+    ? `usernode-app-${app.slug}:latest`
+    : app.image_ref;
   if (!imageName) throw new Error(`runExistingImage: app ${app.slug} has no reusable image_ref`);
 
   const pool = getPool(config);
@@ -106,11 +105,17 @@ async function runExistingImage(config, app) {
   // the app-storage pair (#752).
   const llmEnv = await appLlmEnv.productionLlmEnv(pool, app.id);
   const storageEnv = await appStorageEnv.productionStorageEnv(pool, app.id);
-  const labels = await carriedSourceRevision(config, app, imageName);
+  // On docker, pin the mutable tag to the image id it names right now and
+  // run THAT id: the label check below and the container then describe the
+  // same image even if a build retags `:latest` in between. Kubernetes'
+  // image_ref is already an immutable digest. If the tag cannot be
+  // resolved, run it as before and carry no label.
+  const pinned = onDocker ? await docker.imageId(imageName) : imageName;
+  const labels = await carriedSourceRevision(config, app, pinned, onDocker);
   const deployed = await applicationRuntime.deploy(config, {
     app,
     environment: 'production',
-    imageRef: imageName,
+    imageRef: pinned || imageName,
     dockerName: containerName,
     labels,
     env: {
