@@ -161,8 +161,14 @@ export function ProfileProposalsScreen(): ReactNode {
       data-profile-work={kind}
     >
       {/* `pt-5` clears the header's notch, as on the Workshop screen. The bar
-          is the title, so the screen draws no heading of its own. */}
-      <div className="max-w-2xl mx-auto pt-5 pb-8">
+          is the title, so the screen draws no heading of its own.
+
+          `px-4` IS PROFILE'S COLUMN (#3498). The lists below pass `mx-0`, as
+          Profile's do, because #profile-root's own `px-4` is their gutter.
+          This column copied the `mx-0` without the gutter, so the cards ran
+          edge to edge on a phone with no margin. The column is now
+          #profile-root's, class for class. */}
+      <div className="max-w-2xl mx-auto px-4 pt-5 pb-8">
         {state.error ? (
           <div className={NOTE}>
             <p>{`${WORK_TITLES[kind]} could not be loaded.`}</p>
