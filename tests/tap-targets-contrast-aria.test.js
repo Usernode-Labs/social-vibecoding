@@ -152,7 +152,7 @@ test('Q19: each small control named by the audit wears a hit-slop', () => {
   has(ws, new RegExp(`className="dev-ws-since-clear ${KIT}"`), 'Clear');
   // "N more of yours" is gone: the Workshop tab shows your own work in full.
   has(ws, new RegExp(`className="dev-ws-hub-open dev-ws-head-end ${KIT}"`), 'All items\' See all');
-  has(ws, new RegExp(`className="dev-ws-page-back ${KIT}"`), 'the way back from a page to the hub');
+  has('frontend/src/features/dev-board/workshop/page-back.tsx', new RegExp(`className="dev-ws-page-back ${KIT}"`), 'the way back from a page to the hub');
   has('frontend/src/features/dev-board/workshop/hub-cards.tsx', new RegExp(`className="dev-ws-hub-open ${KIT}"`), 'the channel\'s Open');
   const ui = 'frontend/src/features/home/panels/ui.tsx';
   has(ui, new RegExp(`className="home-panel-browse [^"]*${KIT}"`), 'Browse all apps');

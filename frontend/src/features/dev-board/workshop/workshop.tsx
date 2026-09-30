@@ -51,7 +51,6 @@ import {
   ChatBubbleTailIcon,
   CheckIcon,
   ChevronDownIcon,
-  ChevronLeftIcon,
   ChevronRightIcon,
   ChevronUpIcon,
   DescriptionIcon,
@@ -84,6 +83,7 @@ import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakeP
 import { WorkshopNotices } from './notices';
 import { ChannelCard, NeedsCard, WorkshopDoor, YourWorkCard } from './hub-cards';
 import { SinceSummaryCard } from './since-summary-card';
+import { PageBack } from './page-back';
 import { readAskStream } from './ask-stream';
 import {
   commitDistance,
@@ -3273,34 +3273,6 @@ function usePinnedStrip(
       host.removeAttribute('data-ws-pinned');
     };
   }, [bar, hostRef, enabled, tab]);
-}
-
-/**
- * A page's head: the way back, and the page's name under where it goes back
- * to ("Homeroom" over "Workshop"). The back is a disc of its own rather than
- * a chevron in the header, because the header's slot is the project's own
- * (see App._backSlotFor), and this is a level inside it. The name is the
- * page's one heading.
- */
-function PageBack({ label, title, onBack }: { label: string; title: string; onBack: () => void }): ReactNode {
-  return (
-    <div className="dev-ws-pagehead" data-ws-pagehead="">
-      <button
-        type="button"
-        className="dev-ws-page-back un-touch-target"
-        data-ws-page-back=""
-        aria-label={`Back to ${label}`}
-        title={`Back to ${label}`}
-        onClick={onBack}
-      >
-        <ChevronLeftIcon className="dev-ws-page-back-glyph" aria-hidden="true" />
-      </button>
-      <div className="dev-ws-pagehead-text">
-        <span className="dev-ws-pagehead-over">{label}</span>
-        <h2 className="dev-ws-pagehead-title">{title}</h2>
-      </div>
-    </div>
-  );
 }
 
 export function DevWorkshop(): ReactNode {

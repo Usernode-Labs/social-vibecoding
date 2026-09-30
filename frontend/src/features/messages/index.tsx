@@ -56,6 +56,7 @@ import {
   useMessagesSnapshot,
 } from './store';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
+import { PageBackButton } from '../dev-board/workshop/page-back';
 import { ThreadActivityCard } from '../message-actions/thread-activity';
 import { GlobalChatPanel } from '../global-chat';
 import { AgentSessionPanel } from '../agent-session';
@@ -1050,10 +1051,35 @@ function FullWidthToggle() {
 }
 
 /**
+ * A CHANNEL'S WAY BACK TO ITS HUB (#3407). A channel is a level inside its
+ * community's hub — the hub's Channel card is its door — so its pane leads
+ * with the same round chevron the hub's own pages (Needs you, the Workshop)
+ * lead with. The header's arrow names the same place (store.ts channelHub);
+ * this is the one in the page, where the reader already is.
+ *
+ * It is a door that says where it goes, so it lands on the hub itself, not
+ * the tab that project page was last left on: AppView._landOnHub first, then
+ * the hub's address (App._hubHref's spelling, the one Discover's rows follow).
+ * #general is the Homeroom community's channel, whose hub is the platform
+ * project's; before the shell knows that slug it goes back to Communities.
+ */
+function openChannelHub(slug: string | null): void {
+  const win = window as unknown as { AppView?: { _landOnHub?: (slug: string) => void } };
+  if (slug) win.AppView?._landOnHub?.(slug);
+  window.location.hash = slug ? `#app/${encodeURIComponent(slug)}/workshop` : '#communities';
+}
+
+function platformSlug(): string | null {
+  return (window as unknown as { PlatformTarget?: { slug?: () => string | null } }).PlatformTarget?.slug?.() || null;
+}
+
+/**
  * The sheet's title row: who this conversation is with, and its actions as
  * floating discs. No back control of its own — on a phone the platform
  * header's back arrow already points at the list (see syncChrome in
  * ./store.ts), and a second one here was the same affordance twice.
+ * #general is the exception: a channel goes back up to its hub, not to this
+ * list, and like the hub's own pages it says so in the page (#3407).
  */
 function ThreadHeader() {
   const snap = useMessagesSnapshot();
@@ -1116,6 +1142,7 @@ function ThreadHeader() {
     catch (err) { ui.toast?.(err instanceof Error ? err.message : 'Couldn’t rename this group.'); }
   }
   const channel = active.kind === 'channel';
+  const hubSlug = channel ? platformSlug() : null;
   const invited = active.membershipStatus === 'invited';
   // QA 2026-09-24 Q33a: an unanswered request names its requester.
   const person = directPerson(active);
@@ -1132,6 +1159,7 @@ function ThreadHeader() {
         : active.awaitingAcceptance ? 'Request pending' : 'Direct message';
   return (
     <header className="messages-thread-header">
+      {channel ? <PageBackButton label={hubSlug ? 'Homeroom' : 'Communities'} onBack={() => openChannelHub(hubSlug)} data-channel-back="" /> : null}
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
@@ -1296,6 +1324,7 @@ function AppDiscussionThread({ slug }: { slug: string }) {
           once per browser and then never again. The conversation pane beside
           it carries the same row (ThreadHeader). */}
       <header className="messages-thread-header">
+        <PageBackButton label={name} onBack={() => openChannelHub(slug)} data-channel-back="" />
         <AppIconLink
           slug={slug}
           name={name}
