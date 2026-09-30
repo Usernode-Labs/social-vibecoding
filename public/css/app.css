@@ -16968,6 +16968,51 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    strip's band below is for the pill it replaced). */
 .dev-ws-tabs.dev-ws-band::before { content: none; }
 
+/* ON A PHONE THE BAND PINS UNDER THE HEADER (#3522). It scrolled away with
+   the page, so a long Hub or Workshop left you nowhere to change tab without
+   scrolling back up. It is sticky now at exactly where it rests, so it never
+   moves: the header's coloured foot and the band stay one piece while the
+   page slides under them. From 700px the strip's own pinning takes over (the
+   `min-width: 700px` block, with the pane head measured under it).
+
+   WHERE IT RESTS depends on which element scrolls. In the installed app and
+   the native WebView #dev-forum-scroll does, and its top edge is the
+   scrollport's: the band rests 10px above it (its -18px tuck under the
+   header, less #dev-body's 8px top padding), the part the header covers. On
+   a phone browser the document scrolls, under the sticky header, so the band
+   rests the header's height less its 17px tuck below the viewport's top.
+   `--ws-band-top` carries whichever it is, and the pane head on All items,
+   which pins too, comes to rest under the band (58px: its 18px tuck and its
+   40px row) rather than sliding beneath it.
+
+   Z-INDEX 29: over the cards that scroll under it, and under the header (30)
+   whose foot overlaps its top. */
+@media (max-width: 699.98px) {
+  #dev-workshop { --ws-band-top: -10px; }
+  html[data-browser-scroller="dev-forum-scroll"] #dev-workshop {
+    --ws-band-top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top) - 17px);
+  }
+  .dev-ws-tabs.dev-ws-band {
+    position: sticky;
+    top: var(--ws-band-top);
+    z-index: 29;
+  }
+  #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-band-top) + 58px); }
+}
+/* A PULL TO REFRESH KEEPS THE BAND ON THE HEADER (#3514). The kit slides the
+   whole page down to show its spinner, band included, and what it uncovered
+   between the coloured header and the coloured band was the plain page: the
+   four tabs came loose from the header they belong to. The layer the spinner
+   sits in hangs from the scroller's top edge, which is where the gap opens,
+   so it is painted in the community's colour exactly as tall as the gap
+   (`--ptr-gap`, which workshop.tsx usePullGap reads off the kit's transform)
+   and no further: the layer is 240px, and painted whole it would show
+   through the page's transparent hero below the band. Header, gap and band
+   read as one band that stretches. */
+html[data-community-tint] :has(> #dev-forum-scroll) > .un-ptr-layer {
+  background: linear-gradient(var(--community-tint), var(--community-tint)) top left / 100% var(--ptr-gap, 0px) no-repeat;
+}
+
 /* ON A WIDE WINDOW THE TABS ARE THE PANEL'S FIRST ROW (#852 review: they
    sat in the coloured header's row for a round). Not a band: the header
    above already says whose page this is, so the row is the page's own ink,
