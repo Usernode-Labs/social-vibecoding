@@ -1363,7 +1363,7 @@ function IssueBody(
   return (
     <>
       <div className="flex items-center justify-between gap-2">
-        <h4 className="dev-topic-h">About this issue</h4>
+        <h4 id="dev-issue-body-heading" className="dev-topic-h">About this issue</h4>
         {editor.canEdit && !editing ? (
           <button
             type="button"
@@ -1381,6 +1381,7 @@ function IssueBody(
         <form className="mt-2 space-y-3" data-issue-body-editor={editor.issue} onSubmit={save}>
           <Textarea
             id="dev-issue-body-input"
+            aria-labelledby="dev-issue-body-heading"
             rows={10}
             maxLength={10000}
             width="full"

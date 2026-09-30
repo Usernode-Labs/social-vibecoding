@@ -929,6 +929,7 @@ export function TitleContent({ t }: { t: TitleSpec }): ReactNode {
       <div className="flex flex-wrap items-center gap-2">
         <Input
           id={`dev-${kind}-title-input`}
+          aria-label={session ? 'Proposal title' : 'Issue title'}
           type="text"
           maxLength={session ? 256 : 200}
           defaultValue={t.editing.initial}
