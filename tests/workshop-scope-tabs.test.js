@@ -173,6 +173,99 @@ test('#3051: the all-apps screen wears the All apps chip again (reverses #2759)'
   assert.doesNotMatch(SCREEN, /<p className="px-4 pt-1 pb-2 flex flex-wrap/);
 });
 
+// ── #3363: the panel sorts like the Communities screen ─────────────────
+//
+// "Sort the 'all' community menu when clicked from the toolbar similar to
+// the menu on the 'all' page (by type and by recents, with show more on
+// each)." The panel draws the screen's three sections, newest first, three
+// out and then "Show N more", from ONE module both files import.
+
+const SECTIONS_SRC = read('frontend/src/features/workshop/sections.ts');
+
+const pickerRows = [
+  // Server order is deliberately NOT the order drawn.
+  { slug: 'solo-old', name: 'Solo old', audience: 'solo', last_active_at: '2026-09-01T00:00:00Z' },
+  { slug: 'open-1', name: 'Open one', audience: 'open', last_active_at: '2026-09-10T00:00:00Z' },
+  { slug: 'open-5', name: 'Open five', audience: 'open', last_active_at: '2026-09-29T00:00:00Z' },
+  { slug: 'inv-1', name: 'Private one', audience: 'invited', last_active_at: '2026-09-20T00:00:00Z' },
+  { slug: 'open-2', name: 'Open two', audience: 'open', last_active_at: '2026-09-12T00:00:00Z' },
+  { slug: 'open-4', name: 'Open four', audience: 'open', last_active_at: '2026-09-28T00:00:00Z' },
+  { slug: 'open-3', name: 'Open three', audience: 'open', last_active_at: '2026-09-15T00:00:00Z' },
+  { slug: 'mystery', name: 'Mystery', audience: 'weird', last_active_at: null },
+];
+
+const drawnSlugs = (html) => [...html.matchAll(/data-picker-app="([^"]+)"/g)].map((m) => m[1]);
+const drawnSections = (html) => [...html.matchAll(/data-picker-section="([^"]+)"/g)].map((m) => m[1]);
+
+test('#3363: the panel groups by audience, newest first, three out then "Show N more"', () => {
+  const html = renderToHtml(createElement(chrome.WorkshopPicker, {
+    id: 'workshop-scope-picker', scope: null, onClose: () => {}, apps: pickerRows,
+  }));
+  assert.deepEqual(drawnSections(html), ['open', 'invited', 'solo'],
+    'Public communities, Private communities, Just you: the screen\'s order');
+  const labels = ['Public communities', 'Private communities', 'Just you'].map((l) => html.indexOf(`<span>${l}</span>`));
+  assert.ok(labels.every((at, i) => at > 0 && (i === 0 || at > labels[i - 1])), 'each section is labelled, in order');
+  assert.match(html, /aria-label="6 in Public communities"/, 'the label counts the whole section');
+  // Six public rows (the unknown audience reads as open, as on the screen):
+  // the three most recent are out, and the fold says how many more.
+  assert.deepEqual(drawnSlugs(html), ['open-5', 'open-4', 'open-3', 'inv-1', 'solo-old']);
+  assert.match(html, /data-picker-more="open" aria-expanded="false"[^>]*>[\s\S]*?>Show 3 more</);
+  assert.doesNotMatch(html, /data-picker-more="invited"|data-picker-more="solo"/,
+    'a section of three or fewer has no fold row');
+  // The "All" row still leads, ticked.
+  assert.ok(html.indexOf('id="workshop-scope-picker-all"') < html.indexOf('data-picker-section='));
+});
+
+test('#3363: the order and the fold are the screen\'s own, from one shared module', () => {
+  // The panel's sections are exactly what the screen's groupRows makes.
+  const expected = screen.groupRows(pickerRows).map((s) => [s.key, s.rows.map((r) => r.slug)]);
+  assert.deepEqual(expected, [
+    ['open', ['open-5', 'open-4', 'open-3', 'open-2', 'open-1', 'mystery']],
+    ['invited', ['inv-1']],
+    ['solo', ['solo-old']],
+  ]);
+  // ONE COPY. Both files import ./sections, and the panel does not reach
+  // into the screen for it (the screen imports the panel: that would be a
+  // cycle).
+  for (const name of ['groupRows', 'orderRows', 'sectionFold', 'SECTION_LIMIT', 'SECTION_STEP', 'SECTIONS']) {
+    assert.match(SECTIONS_SRC, new RegExp(`export (?:function|const) ${name}\\b`), `${name} lives in sections.ts`);
+    assert.doesNotMatch(SCREEN, new RegExp(`(?:function|const) ${name}\\b`), `and the screen has no second ${name}`);
+    assert.doesNotMatch(CHROME, new RegExp(`(?:function|const) ${name}\\b`), `nor the panel`);
+  }
+  assert.match(SCREEN, /from '\.\/sections';/);
+  assert.match(CHROME, /from '\.\/sections';/);
+  assert.doesNotMatch(CHROME, /from '\.\/index'|from '\.'/, 'the panel never imports the screen');
+});
+
+test('#3363: section labels are not menu stops; the fold row is, and hands focus on', () => {
+  const html = renderToHtml(createElement(chrome.WorkshopPicker, {
+    id: 'workshop-scope-picker', scope: null, onClose: () => {}, apps: pickerRows,
+  }));
+  // Every section is a group named by its label, and the label is
+  // presentation, not a row: menu-keys roves role="menuitem" only.
+  for (const key of ['open', 'invited', 'solo']) {
+    assert.match(html, new RegExp(`<div role="group" aria-labelledby="workshop-scope-picker-section-${key}" data-picker-section="${key}"><h2 [^>]*id="workshop-scope-picker-section-${key}" role="presentation"`));
+  }
+  const items = html.match(/role="menuitem"/g) || [];
+  assert.equal(items.length, 1 + 5 + 1, 'All, the five rows out, and one fold row: nothing else is a stop');
+  // Pressing the fold moves focus to the first row it revealed; "Show
+  // fewer" (next below shown) leaves focus on the same row.
+  assert.match(CHROME, /if \(fold\.next > fold\.shown\) revealFrom\.current = fold\.shown;\n\s*setLimit\(fold\.next\);/);
+  assert.match(CHROME, /items\?\.\[from\]\?\.focus\(\{ preventScroll: true \}\);/);
+});
+
+test('#3363: on an app\'s Workshop the ticked app is never folded away', () => {
+  // open-1 is the fifth most recent public row, behind the fold at three.
+  const html = renderToHtml(createElement(chrome.WorkshopPicker, {
+    id: 'dev-ws-scope-chip-picker', scope: { slug: 'open-1' }, onClose: () => {}, apps: pickerRows,
+  }));
+  assert.deepEqual(drawnSlugs(html).slice(0, 5), ['open-5', 'open-4', 'open-3', 'open-2', 'open-1'],
+    'the section opens as far as the app you are on');
+  assert.match(html, /data-picker-app="open-1">(?:(?!<\/button>)[\s\S])*M5 13l4 4L19 7/,
+    'and it carries the tick');
+  assert.match(html, /data-picker-more="open"[^>]*>[\s\S]*?>Show 1 more</);
+});
+
 // ── The same panel, scoped to one app (#2718 review, #3295) ───────────
 //
 // On an app's own Workshop the control is the HEADER's tile and name, at

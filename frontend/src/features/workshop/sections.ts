@@ -1,0 +1,106 @@
+/**
+ * How a list of your communities is arranged, in one place (#3363).
+ *
+ * The Communities screen (./index.tsx) and the "Which project?" panel behind
+ * the header's "All ⌄" and an app's own title (./workshop-chrome.tsx) draw
+ * the same list, so they sort and fold it the same way: Public communities,
+ * Private communities, Just you; newest first inside each; three shown, then
+ * "Show N more". The rules live here rather than in either file because the
+ * screen already imports the panel, and the panel reading them back out of
+ * the screen would be an import cycle.
+ *
+ * Generic over the row: the screen's rows carry their counts, the panel's do
+ * not, and neither the order nor the grouping reads them.
+ */
+
+export type Audience = 'open' | 'invited' | 'solo';
+
+/** What the order and the grouping read off a row. */
+export type SectionedRow = {
+  audience?: Audience | string;
+  last_active_at?: string | null;
+  /** A ?demo=1 fixture row (see orderRows). */
+  demo?: boolean;
+};
+
+/**
+ * The three sections, in the order they are drawn, with the words a person
+ * sees. `community` / `audience` are internal: AGENTS.md, "Communities own
+ * projects". The glyphs say who else is there — a crowd, a lock (you were let
+ * in), one person.
+ */
+export const SECTIONS: ReadonlyArray<{ key: Audience; label: string; noun: string }> = [
+  { key: 'open', label: 'Public communities', noun: 'Public community' },
+  { key: 'invited', label: 'Private communities', noun: 'Private community' },
+  { key: 'solo', label: 'Just you', noun: 'Just you' },
+];
+
+/** How many rows a section shows before "Show N more". */
+export const SECTION_LIMIT = 3;
+
+/**
+ * How many more rows each press of "Show N more" reveals (#3269). A long
+ * section opened all at once turned three rows into thirty, and the next
+ * section went off the bottom of the screen; five at a time keeps the list
+ * something you read down rather than something you scroll past.
+ */
+export const SECTION_STEP = 5;
+
+/**
+ * The fold for a section of `total` rows with `limit` of them out: how many
+ * show, what the fold row says, and the limit a press moves to. Pure, so the
+ * three-then-five-then-fewer sequence is tested without a click.
+ */
+export function sectionFold(total: number, limit: number): { shown: number; label: string | null; next: number } {
+  const shown = Math.min(total, Math.max(SECTION_LIMIT, limit));
+  if (total <= SECTION_LIMIT) return { shown: total, label: null, next: SECTION_LIMIT };
+  const hidden = total - shown;
+  if (!hidden) return { shown, label: 'Show fewer', next: SECTION_LIMIT };
+  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+}
+
+/**
+ * The viewer's communities, most recently active first.
+ *
+ * Exported and pure so tests can drive the ordering without a fetch. A row
+ * with no `last_active_at` sorts after every dated one, and two rows the
+ * clock cannot tell apart keep the server's order (its activity order):
+ * `sort` is stable and this comparator answers 0 for them.
+ *
+ * A ?demo=1 FIXTURE ROW (`demo: true`, src/routes/apps.js's demoIconApps)
+ * LEADS ITS SECTION. The declared checks find those rows on this screen, and
+ * a section shows only its three most recent: on a staging clone the
+ * viewer's real memberships were all joined when the backfill ran, which is
+ * more recent than any fixed fixture time, so the fixture fell behind "Show
+ * N more" and the checks found nothing. Real rows never carry the flag.
+ */
+export function orderRows<T extends SectionedRow>(apps: T[]): T[] {
+  const at = (row: T) => {
+    const t = row.last_active_at ? Date.parse(row.last_active_at) : NaN;
+    return Number.isNaN(t) ? -Infinity : t;
+  };
+  return apps.slice().sort((a, b) => {
+    if (!!a.demo !== !!b.demo) return a.demo ? -1 : 1;
+    const x = at(a);
+    const y = at(b);
+    if (x === y) return 0;
+    return y > x ? 1 : -1;
+  });
+}
+
+/**
+ * The rows split into the three sections, each in recency order, empty
+ * sections left out. An audience the client does not know is read as 'open'
+ * — the server's own default — so a row can never fall out of the screen.
+ */
+export function groupRows<T extends SectionedRow>(rows: T[]): Array<{ key: Audience; label: string; rows: T[] }> {
+  const known = (a: unknown): Audience => (a === 'invited' || a === 'solo' ? a : 'open');
+  const ordered = orderRows(rows);
+  return SECTIONS
+    .map((section) => ({
+      key: section.key,
+      label: section.label,
+      rows: ordered.filter((row) => known(row.audience) === section.key),
+    }))
+    .filter((section) => section.rows.length > 0);
+}
