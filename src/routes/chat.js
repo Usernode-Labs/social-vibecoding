@@ -11,6 +11,7 @@ const communities = require('../services/communities');
 const attachmentsSvc = require('../services/attachments');
 const messageBookmarks = require('../services/message-bookmarks');
 const appChat = require('../services/app-chat');
+const conversationsSvc = require('../services/conversations');
 const {
   appChatReadLimiter,
   attachmentUploadLimiter,
@@ -1137,9 +1138,14 @@ function chatRoutes(config) {
   //   1. distinct authors of this app's chat messages,
   //   2. the app's active users (same definition that gates voting,
   //      so suggestions match who can actually act on a mention),
-  //   3. the app creator.
-  // De-duplicated, alphabetical, capped. The client caches this once per
-  // app mount and filters by prefix locally; usernames are returned in
+  //   3. the app creator,
+  //   4. the members of the app's community (#3361), after the three above.
+  // De-duplicated, alphabetical, capped. The chat composer caches this once
+  // per app mount and filters by prefix locally. #3361: `?q=` narrows it on
+  // the server instead (the hub's channel composer), with the conversation
+  // list's prefix rules (conversations.mentionPrefixQuery) and a cap of 25,
+  // so in a community past the 500-row cap a new member is still found by
+  // name; usernames are returned in
   // canonical casing so the inserted @mention renders correctly. Auth is
   // enforced by the global JWT gate (this is a GET under /api/).
   router.get('/api/apps/:slug/mention-suggestions', async (req, res) => {
@@ -1152,6 +1158,10 @@ function chatRoutes(config) {
       }
       const appId = app.id;
       const createdBy = app.created_by;
+      // Only after the access check: a refused viewer learns nothing from q.
+      const prefixed = req.query.q !== undefined;
+      const query = prefixed ? conversationsSvc.mentionPrefixQuery(req.query.q) : null;
+      if (prefixed && query === null) return res.json({ users: [] });
 
       // Active-user ids, via the shared definition. Non-fatal: if this
       // lookup fails we still return chat authors + creator.
@@ -1175,25 +1185,46 @@ function chatRoutes(config) {
       // #2386: the viewer's friends lead, flagged `friend: true`. Every
       // caller filters this list by prefix in the order it arrives, so the
       // order is the whole benefit.
+      // #3361: and the project's community members, who are the people
+      // this channel is FOR — somebody who joined but has not spoken yet
+      // was not offered at all. Members come after the people above (who
+      // have spoken, are active or made it), so a large public community
+      // cannot push those people out of the cap. Not on the platform's own project, whose
+      // community is every account: its channel is #general now, which
+      // answers from GET /api/conversations/:id/mention-candidates by prefix
+      // instead of listing everybody here.
       const { rows } = await pool.query(
-        `SELECT DISTINCT u.username, LOWER(u.username) AS sort_name,
+        `WITH engaged AS (
+           SELECT unnest($2::int[]) AS user_id
+           UNION
+           SELECT m.user_id FROM chat_messages m
+            WHERE m.app_id = $1 AND m.user_id IS NOT NULL
+         ), members AS (
+           SELECT cm.user_id FROM community_members cm
+             JOIN apps a ON a.community_id = cm.community_id
+            WHERE a.id = $1 AND NOT $4::boolean
+         )
+         SELECT u.username, LOWER(u.username) AS sort_name,
                 EXISTS (SELECT 1 FROM friendships f
                          WHERE f.status = 'accepted'
                            AND f.user_low_id = LEAST(u.id, $3::int)
-                           AND f.user_high_id = GREATEST(u.id, $3::int)) AS friend
+                           AND f.user_high_id = GREATEST(u.id, $3::int)) AS friend,
+                u.id IN (SELECT user_id FROM engaged) AS engaged
            FROM users u
           WHERE NOT EXISTS (
                   SELECT 1 FROM user_blocks blocked
                    WHERE blocked.blocker_id = $3 AND blocked.blocked_user_id = u.id
                 )
-            AND (u.id = ANY($2::int[])
-             OR u.id IN (
-               SELECT m.user_id FROM chat_messages m
-                WHERE m.app_id = $1 AND m.user_id IS NOT NULL
-             ))
-          ORDER BY friend DESC, sort_name
-          LIMIT 500`,
-        [appId, ids, req.user.id]
+            AND (u.id IN (SELECT user_id FROM engaged)
+             OR u.id IN (SELECT user_id FROM members))
+            AND ($5::text IS NULL OR LOWER(u.username) LIKE LOWER($5::text) || '%' ESCAPE '\\')
+          ORDER BY friend DESC, engaged DESC, sort_name
+          LIMIT $6`,
+        [
+          appId, ids, req.user.id, !!app.self_hosted,
+          prefixed ? conversationsSvc.escapeMentionLike(query) : null,
+          prefixed ? conversationsSvc.MENTION_CANDIDATES_MAX : 500,
+        ]
       );
 
       res.json({
