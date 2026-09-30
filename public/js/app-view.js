@@ -10507,10 +10507,11 @@ const AppView = {
         tone: 'ok', text: `Production live at ${String(d.runningSha).slice(0, 7)}`,
         title: 'The latest merged change is included in the observed production revision.',
       };
-      return {
-        tone: 'neutral', text: 'Production delivery could not be confirmed',
-        title: 'The running revision or its relationship to the latest merge is unknown.',
-      };
+      // `unknown` means the platform has no evidence either way (a
+      // container deployed before revision labels existed, one that is
+      // restarting, a mirror hiccup). That is not news to the reader, so
+      // the Done summary says nothing rather than raising a doubt (#3368).
+      return null;
     }
     const pending = Number.isFinite(Number(d.pendingCount)) ? Math.max(0, Number(d.pendingCount)) : null;
     const noun = pending === 1 ? 'change' : 'changes';
@@ -17700,8 +17701,10 @@ const AppView = {
           return { ...base, tier: 0, key: 'delivery_failed', label: 'Merged · deploy failed', tone: 'blocked', lock: false, advisory: 0,
             title: 'The production rebuild failed after this change merged.' };
         }
-        return { ...base, tier: 0, key: 'delivery_unknown', label: 'Merged · delivery unknown', tone: 'neutral', lock: false, advisory: 0,
-          title: 'The running production revision could not be confirmed.' };
+        // `unknown` falls through to the plain merged pill below: without
+        // evidence of a pending or failed rollout there is nothing to warn
+        // about, and every app not redeployed since revision labels were
+        // introduced would otherwise flag its whole history (#3368).
       }
       return { ...base, tier: 0, key: 'merged', label: '✓ Merged', tone: 'ok', lock: false, advisory: 0 };
     }

@@ -23,6 +23,8 @@ const appStorageEnv = require('./app-storage-env');
 const { appIdentityEnv } = require('./app-identity-env');
 const { getPool } = require('../db/pool');
 
+const SOURCE_REVISION_LABEL = 'social.usernode.io/source-revision';
+
 // Core shared by respawnAppContainer (boot migration) and app-heal.js:
 // assemble the production env contract (per-role DATABASE_URL, LLM-proxy
 // pair, merged secrets) for the app's ALREADY-BUILT image, stop+rm any
@@ -31,6 +33,29 @@ const { getPool } = require('../db/pool');
 // cannot run — callers decide whether that's a warn or a failure).
 // Does NOT health-check and does NOT persist apps.container_id; callers
 // own both so each can pick its own strictness.
+// The source-revision label is the evidence proposal-delivery reads to say
+// a merged proposal is live (#3335). A respawn re-runs the SAME image, so
+// the revision it serves does not change — carry the label over from the
+// runtime being replaced rather than dropping it (#3368: every heal and
+// rollover used to strip it, turning each merged row back to "unknown").
+// Only a label the live runtime itself reports is carried, never
+// apps.main_sha, which can be backfilled from the remote without a deploy.
+// On kubernetes the live image must also be the one being re-run.
+async function carriedSourceRevision(config, app, imageName) {
+  try {
+    const live = await applicationRuntime.inspect(config, applicationRuntime.productionRef(config, app));
+    const sha = String(live?.labels?.[SOURCE_REVISION_LABEL] || '').toLowerCase();
+    if (!/^[a-f0-9]{40}$/.test(sha)) return {};
+    if (live.imageRef && live.imageRef !== imageName) return {};
+    return { [SOURCE_REVISION_LABEL]: sha };
+  } catch (err) {
+    log.warn('app-respawn', 'Could not read the running source revision', {
+      slug: app.slug, err: err.message,
+    });
+    return {};
+  }
+}
+
 async function runExistingImage(config, app) {
   if (!app.db_password) {
     throw new Error(
@@ -71,11 +96,13 @@ async function runExistingImage(config, app) {
   // the app-storage pair (#752).
   const llmEnv = await appLlmEnv.productionLlmEnv(pool, app.id);
   const storageEnv = await appStorageEnv.productionStorageEnv(pool, app.id);
+  const labels = await carriedSourceRevision(config, app, imageName);
   const deployed = await applicationRuntime.deploy(config, {
     app,
     environment: 'production',
     imageRef: imageName,
     dockerName: containerName,
+    labels,
     env: {
       DATABASE_URL: dbUrl,
       ...appIdentityEnv(app, config),
