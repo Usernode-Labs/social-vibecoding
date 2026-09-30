@@ -773,49 +773,34 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
     /--ws-area: calc\([\s\S]*?max\(var\(--platform-tabs-h, 0px\), var\(--platform-safe-bottom, 0px\)\)\s*\);/);
 });
 
-test('the app\'s own Workshop wears the same scope panel, read from the other end', () => {
-  // "should preserve the app switcher". The all-apps screen's chip says "All
-  // apps" and picking one navigates here; here the header's tile and name are
-  // the chip (#2768, and at every width since #3295) and the panel offers the
-  // others — and All apps, which is the way back up and the other half of why
-  // the back arrow is gone.
-  const chrome = read('frontend/src/features/workshop/workshop-chrome.tsx');
+test('the app\'s own Workshop switches communities through Your communities, the same switcher the tab opens (#852)', () => {
+  // "should preserve the app switcher". The all-apps screen's chip says "All"
+  // and picking a community goes to its hub; on a project page the coloured
+  // header's name and ⌄ open the same switcher, whose All communities row is
+  // the way back up. The in-page "Which project?" panel it replaced is gone.
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-
-  assert.match(ws, /import \{ AppWorkshopScope \} from '\.\.\/\.\.\/workshop\/workshop-chrome';/,
-    'ONE component, not a second chip that can drift from the first');
-  assert.match(ws, /<AppWorkshopScope slug=\{slug\} \/>/);
-  // The page's own picture of the app (the hero) reads its name and artwork
-  // from the store the header's tile reads, so the two cannot disagree about
-  // which app this is, and no second fetch.
-  assert.match(ws, /name=\{app\.name \|\| undefined\}/);
-  assert.match(ws, /iconUrl=\{app\.iconUrl\}/);
+  const scope = read('frontend/src/features/workshop/community-scope.ts');
+  const header = read('frontend/src/features/header/header-title.tsx');
+  assert.doesNotMatch(ws, /AppWorkshopScope|workshop-chrome/, 'no panel of the page\'s own');
+  assert.match(header, /id="header-app-switch"\n\s+type="button"[\s\S]{0,600}onClick=\{\(e\) => toggleSwitcher\('header', e\.currentTarget\)\}/);
+  // The page reads the app's name and artwork from the store the header's
+  // tile reads, so the two cannot disagree about which community this is.
   assert.match(ws, /const app = useStoreState\(improveStore\);/);
+  assert.match(ws, /name=\{app\.name \|\| undefined\}/);
 
-  // THE PANEL'S "All apps" ROW IS THE WAY BACK UP — from an app's Workshop.
-  // On the all-apps screen itself (#3051, `scope === null`) it only closes.
-  assert.match(chrome, /onClose\(\);\n\s*if \(scope === null\) return;\n\s*goToAllApps\(\);/);
-  assert.match(chrome, /function goToAllApps\(\): void \{[\s\S]{0,200}window\.location\.hash = '#communities';/,
-    'a hash assignment, so the rail\'s Communities tab and this are one route');
-  // The app you are already in closes the panel and goes nowhere: a row that
-  // re-navigated to the current route would throw this screen's scroll
-  // position and its open windows away to arrive where it started.
-  assert.match(chrome, /onClose\(\);\n\s*if \(scope\?\.slug === app\.slug\) return;/);
-
-  // ITS OPEN STATE IS A STORE OF ITS OWN (#2768): the control that opens this
-  // panel is the header's tile and name, in another React root, so the flag
-  // cannot be a `useState` here. And it is still not
-  // workshopStore: the all-apps screen's chip (#3051) keeps its flag there,
-  // and a flag shared between two screens is a panel left open on one
-  // greeting the other.
-  const island = chrome.slice(chrome.indexOf('export function AppWorkshopScope('));
-  assert.match(island, /const \{ open \} = useStoreState\(appScopeStore\)/);
-  assert.ok(!island.includes('workshopStore'), 'the two screens share no flag');
-  // A panel left open does not outlive the app, nor the Workshop.
-  assert.match(island, /useEffect\(\(\) => \{\n\s*appScopeStore\.set\(\{ open: false \}\);\n\s*return \(\) => appScopeStore\.set\(\{ open: false \}\);\n\s*\}, \[slug\]\);/);
-  // The list loads in an effect and never during render.
-  assert.match(island, /useEffect\(\(\) => \{[\s\S]{0,600}fetch\(`\/api\/apps\$\{demoQuery\(\)\}`\)/);
-  assert.match(island, /catch \{/, 'and offline leaves the panel working');
+  // ALL COMMUNITIES IS THE WAY BACK UP: a hash assignment, so the tab and
+  // this are one route, and the page the tab reopened is forgotten.
+  assert.match(scope, /if \(!slug\) \{\s*setScope\(null\);\s*try \{ app\?\._forgetWorkshopView\?\.\(\); \}[\s\S]{0,160}window\.location\.hash = '#communities';/);
+  // The community you are already on goes nowhere: re-navigating to the
+  // current route would throw the page's scroll away. It turns to the hub.
+  assert.match(scope, /try \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\); \}/);
+  assert.match(scope, /if \(onPage\) return;\s*void app\?\.navigateToApp\?\.\(slug, 'dev'\);/);
+  // Its open flag is its own store's, not workshopStore's: the header and
+  // the tab bar are other React roots.
+  assert.match(scope, /switcher: SwitcherFrom \| null;/);
+  // The list loads on open, and never during render.
+  assert.match(scope, /communityScopeStore\.set\(\{ switcher: from, anchor \}\);\s*void loadCommunities\(\);/);
+  assert.match(scope, /fetch\(`\/api\/apps\$\{q\}`/);
 });
 
 // ── 4. The rows behind the counts (#3051) ──────────────────────────────

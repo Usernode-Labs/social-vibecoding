@@ -73,8 +73,7 @@
 import { useEffect, useReducer, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { CheckIcon, ChevronRightIcon, LockIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
-import { AppIconContent, AppIconLink, appIconKind } from '../../apps/app-card-view';
+import { CheckIcon, ChevronRightIcon, LockIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
 
@@ -169,29 +168,6 @@ function AudienceGlyph({ audience }: { audience: Audience }) {
   return <UserGroupIcon className={cls} aria-hidden="true" />;
 }
 
-/**
- * The tile and the name, with whatever line goes under the name, and
- * `end` across from them: Join or Joined.
- */
-function HeroId({ app, end, children }: {
-  app: { slug: string; name: string; icon_url: string | null; icon_emoji: string | null };
-  end?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="dev-ws-hero-id">
-      <AppIconLink slug={app.slug} name={app.name} className="app-icon-tile dev-ws-hero-tile" data-icon={appIconKind(app)}>
-        <AppIconContent app={app} />
-      </AppIconLink>
-      <div className="dev-ws-hero-id-text min-w-0">
-        <h2 className="dev-ws-hero-name">{app.name}</h2>
-        {children}
-      </div>
-      {end ? <div className="dev-ws-hero-id-end">{end}</div> : null}
-    </div>
-  );
-}
-
 async function readCommunity(slug: string): Promise<CommunityPayload | null> {
   try {
     const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/community`);
@@ -256,15 +232,21 @@ export function useCommunity(slug: string): CommunityPayload | null {
 export const HERO_FACES = 5;
 
 /**
- * The hero's people row (#3268): up to HERO_FACES faces, the member count,
- * and the actions (Invite, Make it public, ⋯) at its far end.
+ * The hub's people line (#3268): up to HERO_FACES faces, then who the
+ * community is for and how many are in it, "Public community · 23 members".
+ * The label used to be a chip of its own under the name, and the name is the
+ * coloured header's now, so the audience rides the count instead of spending
+ * a row of the page on itself. Just you is the label alone.
  */
-export function HeroPeople({ members, count, children }: {
+export function HeroPeople({ members, count, audience, audienceLabel, children }: {
   members: CommunityPayload['members'] | null | undefined;
   count: number;
+  audience?: Audience;
+  audienceLabel?: string;
   children?: ReactNode;
 }) {
   const faces = (members || []).slice(0, HERO_FACES);
+  const solo = audience === 'solo';
   return (
     <div className="dev-ws-hero-people" data-ws-members="">
       {faces.length ? (
@@ -276,7 +258,15 @@ export function HeroPeople({ members, count, children }: {
           ))}
         </span>
       ) : null}
-      <span className="dev-ws-hero-count" data-ws-members-cell="members">{plural(count, 'member', 'members')}</span>
+      <span className="dev-ws-hero-count" data-ws-members-cell="members">
+        {audienceLabel ? (
+          <span className="dev-ws-hero-audience" data-ws-community-audience="">
+            {audience ? <AudienceGlyph audience={audience} /> : null}
+            <b>{audienceLabel}</b>
+          </span>
+        ) : null}
+        {solo ? null : `${audienceLabel ? ' · ' : ''}${plural(count, 'member', 'members')}`}
+      </span>
       {children}
     </div>
   );
@@ -577,19 +567,19 @@ export function canMakePrivate(data: Pick<CommunityPayload, 'audience' | 'can_ma
   return !!data && data.audience === 'open' && !!data.can_manage && !data.audience_change;
 }
 
-export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp = false }: {
+export function CommunityCard({ slug, name, menu, canOpenApp = false, color = null }: {
   slug: string;
   /** The app's identity as the page already knows it (improveStore), so the
       hero draws the same tile and name as the header's chip. */
   name?: string;
-  iconUrl?: string | null;
-  iconEmoji?: string | null;
   /** The ⋯ and its menu (../actions-row.tsx DevPlusMenu), last on the
       members row. The page renders it so its props stay the page's. */
   menu?: ReactNode;
   /** Whether "Open app" leads the actions (#3367): every project but the
       platform's own, which is the page you are on. */
   canOpenApp?: boolean;
+  /** The community's colour (lib/community-color.ts), which Open app wears. */
+  color?: string | null;
 }) {
   const data = useCommunity(slug);
   const [busy, setBusy] = useState(false);
@@ -650,18 +640,25 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
     };
   }, [asking]);
 
-  // BEFORE THE READ: the identity alone, when the page already knows it, so
-  // the dashboard under the hero does not jump down when the read answers.
-  // Nothing when it does not (the page's own store has not loaded either).
-  // The ⋯ is drawn across from the name meanwhile: it depends on nothing the
-  // read says, and a read that fails must not take the project's settings
-  // off the page with it. It moves to the members row once they are known.
+  // BEFORE THE READ: the actions that depend on nothing the read says (Open
+  // app and the ⋯), so a read that fails cannot take the project's settings
+  // off the page. The name and tile are the coloured header's now.
+  const openApp = canOpenApp ? (
+    <button
+      type="button"
+      className="dev-ws-open-app"
+      style={color ? { background: color } : undefined}
+      data-ws-community-open-app=""
+      onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
+    >
+      <PlayIcon className="w-3 h-3" aria-hidden="true" />
+      Open app
+    </button>
+  ) : null;
   if (!data) {
-    return name ? (
+    return (openApp || menu) ? (
       <section className="dev-ws-hero" data-ws-community-pending="">
-        <HeroId app={{ slug, name, icon_url: iconUrl || null, icon_emoji: iconEmoji || null }} end={menu}>
-          <div className="dev-ws-hero-meta" aria-hidden="true">&nbsp;</div>
-        </HeroId>
+        <div className="dev-ws-hero-row"><div className="dev-ws-hero-actions">{openApp}{menu}</div></div>
       </section>
     ) : null;
   }
@@ -697,15 +694,8 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
   // the viewer cannot make one yet. Collaborators and approvals stay behind
   // the ⋯'s own gate.
   const displayName = name || data.name || slug;
-  const tileApp = { slug, name: displayName, icon_url: iconUrl || null, icon_emoji: iconEmoji || null };
-
-  // Who it is for, and who is here (#3268). A public or a private community
-  // puts its people and its fortnight in the hero, where the page starts, instead of
-  // in a card fourth down the hub: the faces and the count lead the row the
-  // actions end, and the activity line under it carries the 14-day trend.
-  // Just you has nobody else to count, so its actions have the row alone.
   const solo = data.audience === 'solo';
-  // YOU AND THIS PROJECT, across from its name: Join, or Joined.
+  // YOU AND THIS PROJECT, at the end of the action row: Join, or Joined.
   const membership = !data.is_member ? (
     <span className="dev-ws-join-anchor">
       <Button
@@ -750,16 +740,17 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
       ) : null}
     </span>
   ) : data.is_creator ? null : (
-    // JOINED IS THE LEAVE CONTROL. A state you can see, with a check,
-    // and a tap asks before it takes you out (Home.setMembership), the
-    // same pill Discover draws. The creator gets none: they cannot
-    // leave what they started.
+    // JOINED IS THE LEAVE CONTROL. A state you can see, with a check, and a
+    // tap asks before it takes you out (Home.setMembership), the same pill
+    // Discover draws. Outlined, not filled: it shares a row with Open app,
+    // and a settled state should not be the loudest thing in it. The creator
+    // gets none: they cannot leave what they started.
     <Button
       type="button"
       variant="pillNeutral"
       size="sm"
       ink="neutral"
-      className="inline-flex items-center gap-1"
+      className="dev-ws-joined inline-flex items-center gap-1"
       data-ws-community-leave=""
       title={`Joined. Tap to leave ${displayName}`}
       disabled={busy}
@@ -769,44 +760,6 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
       Joined
     </Button>
   );
-  // WHAT YOU CAN DO HERE, at the end of the members row: Open app (#3367),
-  // then Invite and "Make it public" (a private community only: a public
-  // one's "Make it private" is a row of the ⋯), then the ⋯. A project that is just yours
-  // grows from its Share it card at the foot of the hub instead (ShareItCard,
-  // below), so its hero keeps Open app and the ⋯ alone.
-  const actions = (
-    <div className="dev-ws-hero-actions">
-      {canOpenApp ? (
-        <Button
-          type="button"
-          variant="pillNeutral"
-          size="sm"
-          ink="neutral"
-          data-ws-community-open-app=""
-          onClick={() => { (window as any).App?.openAppTab?.(slug, 'app'); }}
-        >
-          Open app
-        </Button>
-      ) : null}
-      {data.is_member && !solo ? (
-        <Button
-          type="button"
-          variant="pillNeutral"
-          size="sm"
-          ink="neutral"
-          data-ws-community-invite=""
-          title="Invite people with a link"
-          onClick={openInviteLinks}
-        >
-          Invite
-        </Button>
-      ) : null}
-      {data.can_manage && !data.audience_change && data.audience === 'invited' ? (
-        <MakePublic slug={slug} name={displayName} onOpened={() => { void load(); }} />
-      ) : null}
-      {menu}
-    </div>
-  );
 
   return (
     <section
@@ -815,28 +768,50 @@ export function CommunityCard({ slug, name, iconUrl, iconEmoji, menu, canOpenApp
       data-ws-community=""
       data-audience={data.audience}
       // Lifted while the popup is open: the popup hangs below the hero, over
-      // the dashboard card after it.
+      // the card after it.
       style={asking ? { position: 'relative', zIndex: 5 } : undefined}
     >
-      <HeroId app={tileApp} end={membership}>
-        <div className="dev-ws-hero-meta" data-ws-community-audience="">
-          <span className="dev-ws-hero-chip">
-            <AudienceGlyph audience={data.audience} />
-            {data.audience_label}
-          </span>
-        </div>
-      </HeroId>
+      {/* WHO IS HERE, AND WHO IT IS FOR: the faces, then "Public community ·
+          23 members". The tile and the name are the coloured header's. */}
+      <HeroPeople
+        members={solo ? [] : data.members}
+        count={Number(data.member_count) || 0}
+        audience={data.audience}
+        audienceLabel={data.audience_label}
+      />
       {data.description ? (
         <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
       ) : null}
-      {solo ? (
-        <p className="dev-ws-hero-line" data-ws-community-solo-line="">Only you can see it and change it.</p>
-      ) : null}
-      {solo ? actions : (
-        <HeroPeople members={data.members} count={Number(data.member_count) || 0}>
-          {actions}
-        </HeroPeople>
-      )}
+      {/* WHAT YOU CAN DO HERE, one row: Open app in the community's colour,
+          Invite, "Make it public" (a private community only: a public one's
+          "Make it private" is a row of the ⋯), the ⋯, and across from them
+          Join or Joined. A project that is just yours grows from its Share
+          it card instead (ShareItCard), so its row keeps Open app and the ⋯.
+          The ⋯ stays LAST among the actions (its menu hangs off its right
+          edge); Join or Joined is the row's, pushed to the far end. */}
+      <div className="dev-ws-hero-row">
+      <div className="dev-ws-hero-actions">
+        {openApp}
+        {data.is_member && !solo ? (
+          <Button
+            type="button"
+            variant="pillNeutral"
+            size="sm"
+            ink="neutral"
+            data-ws-community-invite=""
+            title="Invite people with a link"
+            onClick={openInviteLinks}
+          >
+            Invite
+          </Button>
+        ) : null}
+        {data.can_manage && !data.audience_change && data.audience === 'invited' ? (
+          <MakePublic slug={slug} name={displayName} onOpened={() => { void load(); }} />
+        ) : null}
+        {menu}
+      </div>
+      {membership ? <span className="dev-ws-hero-member">{membership}</span> : null}
+      </div>
       {solo ? null : <HeroActivity activity={data.activity} />}
       {data.audience_change ? (
         <a

@@ -47,7 +47,7 @@ const community = (over = {}) => ({
 
 const days = (counts) => counts.map((n, i) => ({ day: `2026-09-${String(10 + i).padStart(2, '0')}`, n }));
 
-test('#3268: the hero carries who is here and the fortnight, with the actions at the row\'s end', () => {
+test('#3268: the hero carries who is here and the fortnight, and who it is for rides the count (#852)', () => {
   const { HeroPeople, HeroActivity, HERO_FACES, sparkTip } = loadTsx(CARD);
   const members = ['ada', 'lin', 'kai', 'mia', 'sam', 'zoe', 'raj'].map((u, i) => ({ id: i + 1, username: u }));
   const people = renderToHtml(createElement(HeroPeople, { members, count: 19 },
@@ -85,13 +85,24 @@ test('#3268: the hero carries who is here and the fortnight, with the actions at
   assert.doesNotMatch(shippedOnly, /active this week/);
   assert.match(shippedOnly, /<b>2<\/b> shipped this month/);
 
-  // Just you: the actions have the row alone; a Community or a Group gets both rows.
+  // WHO IT IS FOR rides the count: "Public community · 19 members", its
+  // glyph leading, and Just you is the label alone (#852: the label was a
+  // chip under the name, and the name is the coloured header's now).
+  const labelled = renderToHtml(createElement(HeroPeople, { members, count: 19, audience: 'open', audienceLabel: 'Public community' }));
+  assert.match(labelled, /<span class="dev-ws-hero-count" data-ws-members-cell="members"><span class="dev-ws-hero-audience" data-ws-community-audience=""><svg[^>]*>[\s\S]*?<\/svg><b>Public community<\/b><\/span> · 19 members<\/span>/);
+  const alone = renderToHtml(createElement(HeroPeople, { members: [], count: 1, audience: 'solo', audienceLabel: 'Just you' }));
+  assert.match(alone, /<b>Just you<\/b><\/span><\/span>/);
+  assert.doesNotMatch(alone, /\d+ members?/, 'Just you counts nobody');
+
+  // Who is here first, then what it is, then one row of what you can do,
+  // then the fortnight (not for Just you, who has nobody to count).
   const src = CARD_SRC;
-  assert.match(src, /\{solo \? actions : \(\s*<HeroPeople members=\{data\.members\} count=\{Number\(data\.member_count\) \|\| 0\}>\s*\{actions\}\s*<\/HeroPeople>\s*\)\}\s*\{solo \? null : <HeroActivity activity=\{data\.activity\} \/>\}/);
-  assert.ok(src.indexOf('data-ws-community-description') < src.indexOf('<HeroPeople members'), 'what it is, then who is here');
-  // Joined sits across from the name; Invite, Make it public and the ⋯ end the members row.
-  assert.match(src, /<HeroId app=\{tileApp\} end=\{membership\}>/);
-  assert.match(src, /const actions = \(\s*<div className="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[\s\S]*?<MakePublic[\s\S]*?\{menu\}\s*<\/div>/);
+  assert.match(src, /<HeroPeople\s+members=\{solo \? \[\] : data\.members\}\s+count=\{Number\(data\.member_count\) \|\| 0\}\s+audience=\{data\.audience\}\s+audienceLabel=\{data\.audience_label\}\s+\/>/);
+  assert.ok(src.indexOf('<HeroPeople\n') < src.indexOf('data-ws-community-description=""'), 'who is here, then what it is');
+  assert.match(src, /\{solo \? null : <HeroActivity activity=\{data\.activity\} \/>\}/);
+  // Open app, Invite, Make it public and the ⋯ lead the row; Join or Joined
+  // is across from them at its far end.
+  assert.match(src, /<div className="dev-ws-hero-row">\s*<div className="dev-ws-hero-actions">\s*\{openApp\}[\s\S]*?data-ws-community-invite=""[\s\S]*?<MakePublic[\s\S]*?\{menu\}\s*<\/div>\s*\{membership \? <span className="dev-ws-hero-member">\{membership\}<\/span> : null\}/);
   // How a change gets in is the Workshop page's Approval rules card now.
   const hero = src.slice(src.indexOf('export function CommunityCard('), src.indexOf('export function ApprovalRules('));
   assert.doesNotMatch(hero, /data-ws-community-rule/);
@@ -99,48 +110,42 @@ test('#3268: the hero carries who is here and the fortnight, with the actions at
   assert.doesNotMatch(read(HUB), /export function MembersCard/, 'the hub has no Members & activity card any more');
 });
 
-test('#3276: the people row wraps its actions instead of running past a phone\'s edge', () => {
+test('#3276: the hero\'s rows wrap instead of running past a phone\'s edge', () => {
   // Five faces, "13 members", Joined and Invite came to 364px in a 359px
-  // row on a 375px phone, and the hub scrolled sideways. Nothing in the row
-  // can shrink, so it has to wrap: the row, and the actions among themselves.
+  // row on a 375px phone, and the hub scrolled sideways. Nothing in a row
+  // can shrink, so it has to wrap: the people row, and the actions among
+  // themselves, with Join or Joined held at the actions row's far end.
   const rule = (sel) => {
     const m = CSS.match(new RegExp(`^${sel.replace(/[.>]/g, '\\$&')} \\{([^}]*)\\}`, 'm'));
     assert.ok(m, `${sel} has a rule`);
     return m[1];
   };
   assert.match(rule('.dev-ws-hero-people'), /display: flex; flex-wrap: wrap;/);
-  const actions = rule('.dev-ws-hero-people > .dev-ws-hero-actions');
-  assert.match(actions, /flex-wrap: wrap;/);
-  // Still at the row's far end when they wrap: the Join and "Make it public"
-  // popups hang from the right of their button.
-  assert.match(actions, /margin-left: auto;/);
-  assert.match(actions, /justify-content: flex-end;/);
-  assert.match(CSS, /\.dev-ws-hero \.dev-ws-hero-people \.dev-ws-join-pop \{ left: auto; right: -6px; \}/);
+  assert.match(rule('.dev-ws-hero-row > .dev-ws-hero-actions'), /min-width: 0; flex-wrap: wrap;/);
+  assert.match(rule('.dev-ws-hero-member'), /margin-left: auto; flex: none;/);
+  // The Join popup hangs from the right of its button, which ends the row.
+  assert.match(CSS, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/);
 });
 
 test('Needs you counts the votes you owe, not the requests nobody has claimed', () => {
-  const { NeedsCard } = loadTsx(HUB);
+  const { NeedsCard, owesVote } = loadTsx(HUB);
   const row = (key, title, kind) => ({ t: 'card', key, card: { title: { text: title } }, who: 'ada', kind });
   const mixed = renderToHtml(createElement(NeedsCard, {
-    queue: [row('c1', 'Fix login', 'claim'), row('v1', 'Dark mode', 'vote'), row('c2', 'Tags', 'claim')],
+    queue: [row('c1', 'Fix login', 'claim'), row('v1', 'Dark mode', 'vote'), row('v2', 'Tags', 'vote')],
     canPost: true,
     onOpen: () => {},
   }));
-  assert.match(mixed, /data-ws-hub-needs-votes="1"/);
-  assert.match(mixed, /<span class="dev-ws-head-n">1 to vote<\/span>/);
-  assert.match(mixed, /<span class="dev-ws-hub-needs-title">Dark mode<\/span>/, 'the first VOTE leads, not the first row');
-  assert.doesNotMatch(mixed, /Fix login/);
-  // #3408: requests alone owe no vote, so the hub draws no card, only the
-  // line, and its count of requests is the way into the queue.
-  const { NothingToVote, owesVote } = loadTsx(HUB);
+  assert.match(mixed, /data-ws-hub-needs-votes="2"/);
+  assert.match(mixed, /<span class="dev-ws-hub-votes-text">2 votes waiting on you<\/span><span class="dev-ws-hub-votes-cta">Vote<\/span>/,
+    'one row: the count in words, and Vote (#852)');
+  // Requests alone owe no vote, so the hub says nothing: the Needs you tab
+  // carries its own count, and a zero says nothing there either.
   const claims = [row('c1', 'Fix login', 'claim'), row('c2', 'Tags', 'claim')];
   assert.equal(owesVote(claims), false, 'requests alone owe no vote');
   assert.equal(owesVote([...claims, row('v1', 'Dark mode', 'vote')]), true);
-  const claimsOnly = renderToHtml(createElement(NothingToVote, { queue: claims, onOpen: () => {} }));
-  assert.match(claimsOnly, /^<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on · <button type="button" class="dev-ws-link un-touch-target" data-ws-hub-needs-requests="">2 requests nobody has picked up<\/button><\/p>$/);
-  assert.doesNotMatch(claimsOnly, /dev-ws-head-n|Needs you/, 'no card, no count');
-  const one = renderToHtml(createElement(NothingToVote, { queue: [claims[0]], onOpen: () => {} }));
-  assert.match(one, />1 request nobody has picked up</);
+  assert.equal(renderToHtml(createElement(NeedsCard, { queue: claims, canPost: true, onOpen: () => {} })), '');
+  const outsider = renderToHtml(createElement(NeedsCard, { queue: [row('v1', 'Dark mode', 'vote')], canPost: false, onOpen: () => {} }));
+  assert.match(outsider, /1 vote waiting on you[\s\S]*data-ws-hub-needs-join="">Join to vote on these\./);
 });
 
 test('the channel card\'s composer sends to the room and re-reads the hub', () => {

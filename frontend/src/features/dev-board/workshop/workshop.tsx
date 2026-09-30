@@ -57,6 +57,7 @@ import {
   EllipsisHorizontalIcon,
   HandRaisedIcon,
   PlayIcon,
+  PlusIcon,
   SparklesIcon,
   SpeechCheckIcon,
   Squares2X2Icon,
@@ -78,10 +79,13 @@ import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../c
 import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
-import { AppWorkshopScope } from '../../workshop/workshop-chrome';
+import { useCommunityColor } from '../../../lib/community-color';
+import { describe as describeCommunity } from '../../workshop/community-scope';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
-import { ChannelCard, NeedsCard, NothingToVote, owesVote, WorkshopDoor, YourWorkCard } from './hub-cards';
+import { ChannelCard, NeedsCard, YourWorkCard } from './hub-cards';
+import { ProjectChat } from './project-chat';
+import { ProjectBand, projectTabsStore, type ProjectTabKey } from './project-band';
 import { SinceSummaryCard } from './since-summary-card';
 import { PageBack } from './page-back';
 import { readAskStream } from './ask-stream';
@@ -96,7 +100,7 @@ import {
 } from './swipe-vote';
 
 export type SortKey = 'people' | 'activity' | 'open';
-type TabKey = 'status' | 'workshop' | 'needs' | 'all';
+type TabKey = ProjectTabKey;
 
 /**
  * "Since your last visit", week by week, on the Workshop page.
@@ -127,21 +131,26 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
 };
 
 /**
- * THE PAGES OF A PROJECT: its HUB, and three pages that open from it.
+ * THE PAGES OF A PROJECT: four tabs under its coloured header, and one page.
  *
- * The hub is the community's page: the hero, what landed since you were last
- * here, your work, the channel, and a door each to Needs you and the
- * Workshop. Anything longer than a glance is a page with a way back:
+ *   Hub · Chat · Needs you · All items
  *
- *   - Workshop, from its door: your work in full, since your last visit week
- *     by week, All items' summary, and the approval rules;
- *   - Needs you, from its door: one decision per screen;
- *   - All items, from the Workshop's All items card: the whole board.
+ * The HUB is the community's page: who is here and who it is for, what you
+ * can do (Open app, Invite, the ⋯, Joined), how lively it has been, what
+ * landed since you were last here, the votes waiting on you, the last lines
+ * of its chat, your work, and Start a new change. CHAT is its channel,
+ * whole. NEEDS YOU is one decision per screen, and ALL ITEMS the whole
+ * board, with the approval rule every change goes through at its foot.
  *
- * There is no tab strip any more. The hub and the Workshop were two tabs,
- * and the hub read as a second Workshop, seven cards long; with doors it is
- * short enough to take in, and each page is where its door says. The keys
- * and the `?ws=` deep links are the ones the tabs had.
+ * The tabs came back as a BAND in the community's colour, continuing the
+ * header, rather than the pill the hub once shared with the Workshop: the
+ * hub then read as one of two peers, and a second Workshop. Here the hub is
+ * the first of four places in one community, and the colour says which.
+ *
+ * THE WORKSHOP is the one page left, behind the since card's "Week by week":
+ * your work in full, what moved since your last visit filed under each week,
+ * and All items' numbers. It leads with a way back to the hub. The keys and
+ * the `?ws=` deep links are the ones the tabs and doors had.
  */
 
 /**
@@ -150,19 +159,39 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
  */
 export function freshTab(): TabKey | null {
   const tab = callAppView('_workshopTab');
-  return tab === 'status' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
+  return tab === 'status' || tab === 'chat' || tab === 'workshop' || tab === 'needs' || tab === 'all' ? tab : null;
 }
 
-/** Where a page's back button goes: All items to the Workshop, the rest to the hub. */
-export function pageParent(tab: TabKey): TabKey {
-  return tab === 'all' ? 'workshop' : 'status';
+/** Where a page's back button goes. The Workshop is the only page, and it is the hub's. */
+export function pageParent(_tab: TabKey): TabKey {
+  return 'status';
 }
 
 /** A page's own title, in its back bar. */
 export function pageTitle(tab: TabKey): string {
   if (tab === 'needs') return 'Needs you';
   if (tab === 'all') return 'All items';
+  if (tab === 'chat') return 'Chat';
   return 'Workshop';
+}
+
+/**
+ * THE COMMUNITY'S COLOUR, on the page's chrome while it is up: the header
+ * above the band paints itself from `--community-tint` on the root
+ * (app.css, "The project's colour"). Set on mount and on a change of colour,
+ * and taken off when the page goes, so no other screen inherits it.
+ */
+function useHeaderTint(color: string | null): void {
+  useEffect(() => {
+    if (!color || typeof document === 'undefined') return undefined;
+    const root = document.documentElement;
+    root.style.setProperty('--community-tint', color);
+    root.setAttribute('data-community-tint', '');
+    return () => {
+      root.style.removeProperty('--community-tint');
+      root.removeAttribute('data-community-tint');
+    };
+  }, [color]);
 }
 
 // The shared ago ladder (#1808) — this file used to carry its own, with a
@@ -3484,6 +3513,36 @@ export function DevWorkshop(): ReactNode {
   const community = useCommunity(v.slug || '');
   // Looking in rather than taking part: the hub says "Recently" to them.
   const outsider = !!community && !community.is_member;
+  // THE COMMUNITY'S COLOUR (lib/community-color.ts): dapp.json's own, else
+  // one read off its icon, else its name's swatch, always dark enough for
+  // white text. The header, the band and Open app wear it. The improve
+  // store is the header's own record of the app, so it is read only once it
+  // is about this project, not the one the page was last pointed at.
+  const own = !!v.slug && app.slug === v.slug;
+  const color = useCommunityColor(own ? {
+    color: app.iconColor, iconUrl: app.iconUrl, iconEmoji: app.iconEmoji, key: v.slug as string,
+  } : null);
+  useHeaderTint(own && !v.loading ? color : null);
+  // The votes waiting on you: the band's Needs you count, the hub's row,
+  // and the Communities tab's badge and switcher (features/workshop/
+  // community-scope.ts), which learn it from here while the page is up.
+  const owed = (v.queue || []).filter((row) => row.kind === 'vote').length;
+  useEffect(() => {
+    if (!v.slug || v.loading) return;
+    describeCommunity(v.slug, {
+      needs: owed,
+      ...(own && app.name ? { name: app.name, iconUrl: app.iconUrl, iconEmoji: app.iconEmoji, iconColor: app.iconColor } : {}),
+      ...(community ? { audience: community.audience, memberCount: Number(community.member_count) || 0 } : {}),
+    });
+  }, [v.slug, v.loading, owed, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]);
+  // The header's copy of the tabs, on a wide window (./project-band.tsx):
+  // which is up and what they count, and nothing once the page has gone.
+  useEffect(() => {
+    if (!v.slug || v.loading) return undefined;
+    projectTabsStore.set({ slug: v.slug, tab, owed, filtered: !!v.meta.filtered && tab !== 'all', color });
+    return undefined;
+  }, [v.slug, v.loading, tab, owed, v.meta.filtered, color]);
+  useEffect(() => () => { projectTabsStore.set({ slug: null }); }, []);
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
@@ -3495,27 +3554,31 @@ export function DevWorkshop(): ReactNode {
   // EmptyNote.
   const startHere = !!(v.dashboard && v.dashboard.open === 0 && !v.dashboard.everShipped);
 
-  /* ── The back bar, on a page ──
-     THE HUB HAS NO BAR. It is the project's page, and what it opens are
-     doors on it; a strip of tabs over it made the hub one of two peers, and
-     it read as a second Workshop. A page (the Workshop, Needs you, All items)
-     leads with a bar holding its way back and its name.
-
-     THE BAR KEEPS THE STRIP'S BOX: `.dev-ws-tabs` with its track, which is
-     what the pinned header and the grouping ear on All items are measured
-     against (useEarInset, usePinnedStrip), so both keep working unchanged,
-     and the ear sits level with the back button where it sat level with the
-     tabs. It LEADS the markup, so focus order and reading order agree. */
-  const railNode = tab === 'status' ? null : (
+  /* ── The band, or the Workshop page's back bar ──
+     The four tabs in the community's colour (ProjectBand), leading the
+     markup so focus order and reading order agree. The Workshop is a page,
+     not a tab, so it leads with its way back to the hub instead; both keep
+     the strip's measured box (`.dev-ws-tabs` > `.dev-ws-tabtrack`). */
+  const railNode = tab === 'workshop' ? (
     <div ref={setBar} className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">
       <div className="dev-ws-tabtrack">
         <PageBack
-          label={tab === 'all' ? 'Workshop' : (app.name || community?.name || slug)}
+          label="Hub"
           title={pageTitle(tab)}
           onBack={() => openTab(pageParent(tab))}
         />
       </div>
     </div>
+  ) : (
+    <ProjectBand
+      tab={tab}
+      owed={owed}
+      // #2915: not while All items is up, where the search box says so.
+      filtered={!!v.meta.filtered && tab !== 'all'}
+      color={color}
+      onTab={openTab}
+      barRef={setBar}
+    />
   );
 
   // The Workshop page's since list, filed by week. A first visit has no
@@ -3532,20 +3595,6 @@ export function DevWorkshop(): ReactNode {
       className="dev-ws"
       data-ws-tab={tab}
     >
-      {/* WHICH WORKSHOP YOU ARE IN, and the way to another (#2718 review):
-          the panel of your other projects, and All, which is the way back
-          up.
-
-          ITS CONTROL IS THE HEADER'S, AT EVERY WIDTH (#3295). The app's tile
-          and name in the bar open it (features/header/header-title.tsx). A
-          phone has had that since #2768; a desktop kept a chip of its own
-          here, on a row above the tabs or, on a wide window, beside them
-          (#2837), and the owner asked for it in the header there too. So
-          only the panel renders here, and only once it is open.
-
-          ABOVE THE BAR in the markup, so the panel drops down over the page
-          rather than under it, right under the header that opened it. */}
-      {slug ? <AppWorkshopScope slug={slug} /> : null}
       {railNode}
       {/* Everything but the bar lives in here. It is what carries the
           clearance under the last card: a sticky bar overlays whatever is
@@ -3556,26 +3605,24 @@ export function DevWorkshop(): ReactNode {
       <div className="dev-ws-tabbody">
       {tab === 'status' ? (
       <>
-      {/* ── The hero: what this is, who it is for, Join (communities) ──
-          FIRST ON THE PAGE. A person arriving from Discover or a shared link
-          met four numbers about the code before the thing's own name; the
-          page now leads with identity, the way a profile does, and the
-          hub's own cards follow. See ./community-card.tsx.
+      {/* ── The hero: who is here, who it is for, and what you can do ──
+          FIRST ON THE PAGE, under the band: the faces and "Public community
+          · 23 members", the description, then one row of actions (Open app
+          in the community's colour, Invite, the ⋯) with Join or Joined at
+          its far end, then the fortnight. The name and tile are the coloured
+          header's. See ./community-card.tsx.
 
-          THE ⋯ IS THE HERO'S. It closed the tab strip, and with the strip
-          gone it sits beside Invite at the end of the members row: the
-          project's own menu, on the project's own card. It is ONE node
-          (`DevPlusMenu`, ../actions-row.tsx) rendered here and nowhere else
-          on this surface, which is what keeps `#dev-plus-btn` /
-          `#dev-plus-menu` unique for `_wirePlusMenu`; it wires itself on
-          mount, so arriving after the hero's read is no problem. */}
+          THE ⋯ IS THE HERO'S. It is ONE node (`DevPlusMenu`,
+          ../actions-row.tsx) rendered here and nowhere else on this surface,
+          which is what keeps `#dev-plus-btn` / `#dev-plus-menu` unique for
+          `_wirePlusMenu`; it wires itself on mount, so arriving after the
+          hero's read is no problem. */}
       {slug ? (
         <CommunityCard
           slug={slug}
           name={app.name || undefined}
-          iconUrl={app.iconUrl}
-          iconEmoji={app.iconEmoji}
           canOpenApp={!actions.selfHosted}
+          color={color}
           menu={(
             <DevPlusMenu
               illustrationApp={actions.illustrationApp}
@@ -3609,13 +3656,28 @@ export function DevWorkshop(): ReactNode {
         />
       ) : null}
 
-      {/* ── The hub, top to bottom: what landed, yours, the room, the doors ──
-          What landed since you were last here, in a sentence or two, then
-          your own work when you have some, then the channel, then a door to
-          Needs you when a vote is owed (a quiet "Nothing more to vote on"
-          line when none is) and one to the Workshop. See
+      {/* ── The hub, top to bottom: what landed, what is owed, the room, yours ──
+          What landed since you were last here, in a sentence or two, with
+          the way to it week by week (the Workshop page); the votes waiting
+          on you, one row, when there are any; the chat's last two lines and
+          its tab, or, for a project that is just yours and has nobody to
+          talk to yet, the Share it card, which is how it grows; your own
+          work, two rows and the rest in place; and Start a new change. See
           ./since-summary-card.tsx and ./hub-cards.tsx. */}
-      {slug ? <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} /> : null}
+      {slug ? (
+        <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} onMore={() => openTab('workshop')} />
+      ) : null}
+      {/* THE SIDE COLUMN on a wide window: what is owed and what is being
+          said, beside the hero and your work (app.css). On a phone the
+          wrapper draws no box and these are rows of the one column, in this
+          order. */}
+      <div className="dev-ws-hub-side">
+        <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
+        {slug && community?.audience !== 'solo' ? (
+          <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('chat')} />
+        ) : null}
+        {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
+      </div>
       {v.mine && v.mine.rows.length ? (
         <YourWorkCard
           rows={v.mine.rows}
@@ -3627,24 +3689,33 @@ export function DevWorkshop(): ReactNode {
           onAll={() => setWorkAll(!workAll)}
         />
       ) : null}
-      {/* A project that is just yours has nobody to talk to yet: no channel
-          card, and a Share it card at the foot instead, which is how it
-          grows (./community-card.tsx ShareItCard). */}
-      {slug && community?.audience !== 'solo' ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
-      {owesVote(v.queue)
-        ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
-        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
-      <WorkshopDoor open={v.dashboard ? v.dashboard.open : 0} filtered={!!v.meta.filtered} onOpen={() => openTab('workshop')} />
-      {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
+      {/* START A NEW CHANGE, the hub's last line: the Homeroom menu's own
+          action (Improve.startSession), gated as StartHereBanner's is, and
+          not drawn under that banner, which already leads with it. */}
+      {!app.readOnly && !startHere ? (
+        <button
+          type="button"
+          className="dev-ws-start-change"
+          data-ws-start-change=""
+          onClick={() => { void Improve.startSession(); }}
+        >
+          <PlusIcon className="w-4 h-4" aria-hidden="true" />
+          Start a new change
+        </button>
+      ) : null}
       </>
+      ) : null}
+
+      {/* ── CHAT: the community's channel, whole ── (./project-chat.tsx) */}
+      {tab === 'chat' ? (
+        <ProjectChat slug={slug} name={app.name || community?.name || slug} data={community} />
       ) : null}
 
       {/* ── THE WORKSHOP PAGE: your work, what changed, what is open ──
           Everything that was the Workshop tab and the hub's catch-up, as one
           page behind the hub's door: your own work in full, what moved since
-          your last visit filed under each week's summary, All items' numbers
-          and its one line (whose head opens All items itself), and the
-          approval rule every change goes through. */}
+          your last visit filed under each week's summary, and All items'
+          numbers and its one line (whose head opens All items itself). */}
       {tab === 'workshop' ? (
       <>
       {/* ── Lately in this project ──
@@ -3885,10 +3956,6 @@ export function DevWorkshop(): ReactNode {
         </section>
       ) : null}
 
-      {/* ── Approval rules: how a change gets in ──
-          The last thing on the page, under the work it governs. It was the
-          hero's last line. */}
-      {slug ? <ApprovalRules slug={slug} /> : null}
       </>
       ) : null}
 
@@ -4049,6 +4116,10 @@ export function DevWorkshop(): ReactNode {
           )}
           </div>
           </section>
+          {/* ── Approval rules: how a change gets in ──
+              The foot of All items, under the work it governs. It was the
+              hero's last line, then the Workshop page's. */}
+          {slug ? <ApprovalRules slug={slug} /> : null}
         </>
       ) : null}
 

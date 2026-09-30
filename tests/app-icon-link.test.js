@@ -27,12 +27,13 @@ test('a tap on the icon is never also the card\'s', () => {
   assert.equal((list.match(/closest\?\.\('\.browse-add-btn, \.app-icon-link'\)/g) || []).length, 2);
 });
 
+// The project hub's hero drew one until #852; the community's tile is the
+// coloured header's now (header-title.tsx, below).
 test('every app surface that draws an icon links it', () => {
   for (const file of [
     'frontend/src/features/apps/browse-list.tsx',
     'frontend/src/features/apps/browse-detail.tsx',
     'frontend/src/features/app-context/about-pane.tsx',
-    'frontend/src/features/dev-board/workshop/community-card.tsx',
     'frontend/src/features/global-chat/renderers.tsx',
     'frontend/src/features/header/header-title.tsx',
     'frontend/src/features/messages/index.tsx',

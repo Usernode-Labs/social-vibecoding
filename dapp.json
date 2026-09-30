@@ -2,7 +2,8 @@
   "name": "Homeroom",
   "description": "The community for the platform itself. Discuss the platform and help make it better.",
   "icon": {
-    "image": "public/apple-touch-icon.png"
+    "image": "public/apple-touch-icon.png",
+    "color": "#37477b"
   },
   "secrets": [
     {
@@ -2395,14 +2396,15 @@
       "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
     },
     {
-      "name": "Re-pointed: the ⋯ ends the hub hero's members row, beside Invite, not the actions row",
+      "name": "Re-pointed: the ⋯ ends the hero's actions row, after Invite, with Joined across from it",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/dev",
-      "expectSelector": "#dev-workshop .dev-ws-hero[data-ws-community] .dev-ws-hero-people > .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn"
+      "expectSelector": "#dev-workshop .dev-ws-hero[data-ws-community] .dev-ws-hero-row > .dev-ws-hero-actions > .dev-ws-plus:last-child > #dev-plus-btn"
     },
     {
-      "name": "A project's page opens on its hub: no tab strip, the votes you owe as a door, and a 14-day trend on the hero",
+      "name": "A project's page opens on its Hub tab, with the votes you owe as one row and a 14-day trend on the hero",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:not(:has([data-ws-pagebar])):has([data-ws-members-trend]) > .dev-ws-tabbody > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]"
+      "expectSelector": ".dev-ws[data-ws-tab=\"status\"]:has(> [data-ws-band] [data-ws-tab-btn=\"status\"][aria-selected=\"true\"]):has([data-ws-members-trend]) > .dev-ws-tabbody > .dev-ws-hub-side > [data-ws-hub-needs-votes] > button[data-ws-hub-needs-open]",
+      "expectText": "votes waiting on you"
     },
     {
       "name": "The Dev screen names its section, Communities, once, with no subtitle beside it (#2718 review)",
@@ -2491,15 +2493,15 @@
       "expectText": "Nothing here matches the current search and filters."
     },
     {
-      "name": "Workshop: the All items search leaves the Workshop tab's numbers whole, with no 'nothing matches' note (#2915)",
+      "name": "Workshop: the Workshop page leads with its way back to the hub, not the tabs, and the All items search leaves its numbers whole, with no 'nothing matches' note (#2915)",
       "path": "/?demo=1&ws=workshop&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])) .dev-ws-tabbody > [data-ws-dashboard]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:not(:has([data-ws-empty])):has(> [data-ws-pagebar] [data-ws-page-back]):not(:has(> [data-ws-band])) .dev-ws-tabbody > [data-ws-dashboard]",
       "expectText": "All items"
     },
     {
-      "name": "Workshop: a dot on the hub's Workshop door says All items' search is still on (#2915)",
+      "name": "Workshop: a dot on the All items tab says its search is still on (#2915)",
       "path": "/?demo=1&ws=status&q=nothing-matches-this#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] button[data-ws-workshop-open] [data-ws-filtered]"
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-band] [data-ws-tab-btn=\"all\"] [data-ws-filtered]"
     },
     {
       "name": "Dev board: the search reads issue bodies, not only titles (#2089)",
@@ -2551,9 +2553,9 @@
       "expectSelector": "#apps-switcher-sheet:not(:has(#switcher-views)) #switcher-nav #app-menu-row-about"
     },
     {
-      "name": "Homeroom's hub carries its channel, #general, with a composer that posts there and no link to the old discussion; the header's app switcher names the app, on a desktop too (#2768, #3295, #3406)",
-      "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "body:has(#header-app-switch > #header-title-name) #dev-workshop section[data-ws-channel][data-ws-channel-handle=\"general\"]:has(form[data-ws-channel-compose] > input[placeholder=\"Message #general…\"]):not(:has(a[data-ws-channel-archive]))",
+      "name": "Homeroom's Chat tab is its channel, #general, with a composer that posts there and no link to the old discussion; the header's name is the switcher, on a desktop too (#2768, #3295, #3406)",
+      "path": "/?demo=1&ws=chat#app/usernode-2d5619/workshop",
+      "expectSelector": "body:has(#header-app-switch > #header-title-name) .dev-ws[data-ws-tab=\"chat\"] section[data-ws-channel-handle=\"general\"]:has(form[data-ws-channel-compose] > input[placeholder=\"Message #general…\"]):not(:has(a[data-ws-channel-archive]))",
       "expectText": "#general"
     },
     {
@@ -2574,21 +2576,39 @@
       "expectText": "Clear"
     },
     {
-      "name": "A project's hub opens on what landed since your last visit, in a sentence or two, with a way to dismiss it (staging demo line)",
+      "name": "A project's hub opens on what landed since your last visit, in a sentence or two, with a way to dismiss it and a way to the Workshop page, week by week (staging demo line)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-since-summary=\"ai\"]:has(> .dev-ws-head > button[data-ws-since-summary-dismiss]) > [data-ws-since-summary-text]",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] [data-ws-since-summary=\"ai\"]:has(> .dev-ws-head > button[data-ws-since-summary-dismiss]):has(> button[data-ws-since-summary-more]) > [data-ws-since-summary-text]",
       "expectText": "Staging demo: mostly polish on Messages and Discover"
     },
     {
-      "name": "The hub ends with a door to the Workshop page",
+      "name": "A project page's tabs are Hub, Chat, Needs you and All items, in the community's colour",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"status\"] > .dev-ws-tabbody > [data-ws-workshop-door]:last-child > button[data-ws-workshop-open]",
-      "expectText": "Workshop"
+      "expectSelector": "html[data-community-tint] #dev-workshop [data-ws-band] > [role=\"tablist\"] > [data-ws-tab-btn=\"status\"][aria-selected=\"true\"] + [data-ws-tab-btn=\"chat\"] + [data-ws-tab-btn=\"needs\"] + [data-ws-tab-btn=\"all\"]",
+      "expectText": "Needs you"
     },
     {
-      "name": "The Workshop page leads with its way back to the hub and ends with the approval rules, which were the hero's last line",
-      "path": "/?demo=1&ws=workshop#app/usernode-2d5619/workshop",
-      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"workshop\"]:has(> [data-ws-pagebar] [data-ws-page-back]) > .dev-ws-tabbody > [data-ws-approval-rules]:last-child > [data-ws-community-rule]",
+      "name": "The Communities tab wears the community you are in: its tile in a ring, and its name",
+      "path": "/?demo=1#app/usernode-2d5619/workshop",
+      "expectSelector": "#platform-tabs #platform-tab-workshop[aria-current=\"page\"] .platform-tab-ring:not(.platform-tab-ring-all) > .platform-tab-tile",
+      "expectText": "Homeroom"
+    },
+    {
+      "name": "On All communities the Communities tab is a dark tile in the same ring",
+      "path": "/?demo=1#communities",
+      "expectSelector": "#platform-tabs #platform-tab-workshop[aria-current=\"page\"] .platform-tab-ring.platform-tab-ring-all > .platform-tab-tile > svg",
+      "expectText": "Communities"
+    },
+    {
+      "name": "The hub's chat is a preview (its last lines and Open, the Chat tab, with no composer), and the hub ends with Start a new change",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(section[data-ws-channel=\"preview\"] button[data-ws-channel-open]):not(:has(section[data-ws-channel=\"preview\"] form)) > .dev-ws-tabbody > button[data-ws-start-change]:last-child",
+      "expectText": "Start a new change"
+    },
+    {
+      "name": "All items ends with the approval rules, under the work they govern",
+      "path": "/?demo=1&ws=all#app/usernode-2d5619/workshop",
+      "expectSelector": "#dev-body #dev-workshop .dev-ws[data-ws-tab=\"all\"] > .dev-ws-tabbody > [data-ws-approval-rules]:last-child > [data-ws-community-rule]",
       "expectText": "to merge"
     },
     {
@@ -3300,9 +3320,9 @@
       "expectText": "Public communities"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip over the list itself, with no tabs (#3051)",
+      "name": "The Communities screen draws no empty-state line while it has rows, and leads with the All chip, which opens Your communities, over the list itself (#3051)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"workshop-scope-picker\"]):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
+      "expectSelector": "#workshop-screen:not(.hidden):has(#workshop-scope[aria-controls=\"community-switcher\"]):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
     },
     {
       "name": "The Communities screen's Needs you page is one feed of every decision owed, mixed across projects, one card per screen, with a way back (#3270)",

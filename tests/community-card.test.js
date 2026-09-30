@@ -38,17 +38,19 @@ test('the audience line uses the words on screen, and "Just you" counts nobody',
   assert.equal(audienceLine({ audience: 'solo', audience_label: 'Just you', member_count: 1 }), 'Just you');
 });
 
-test('the hero draws its identity before the read, and the rest only after it', () => {
-  // No server render of it, so no hydration to mismatch. Before the read it
-  // is the tile and name the page already knows (so the dashboard under it
-  // does not jump), or nothing without a name; the fetch runs in an effect.
+test('before the read the hero draws only what needs none: Open app and the ⋯', () => {
+  // No server render of it, so no hydration to mismatch. The tile and the
+  // name are the coloured header's now (#852), so before the read the hero
+  // is the actions that depend on nothing it says, or nothing at all; the
+  // fetch runs in an effect.
   const { CommunityCard } = loadTsx(CARD);
   assert.equal(renderToHtml(createElement(CommunityCard, { slug: 'notes' })), '');
-  const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes', name: 'Notes', iconEmoji: '📝' }));
+  const pending = renderToHtml(createElement(CommunityCard, { slug: 'notes', name: 'Notes', canOpenApp: true, color: '#2e6660' }));
   assert.match(pending, /class="dev-ws-hero" data-ws-community-pending=""/);
-  assert.match(pending, /<h2 class="dev-ws-hero-name">Notes<\/h2>/);
-  assert.doesNotMatch(pending, /data-ws-community=""|Join|data-ws-community-rule/,
-    'nothing that depends on membership is drawn before it is known');
+  assert.match(pending, /<button type="button" class="dev-ws-open-app" style="background:#2e6660" data-ws-community-open-app="">/,
+    'Open app wears the community\'s colour');
+  assert.doesNotMatch(pending, /dev-ws-hero-name|data-ws-community=""|Join|data-ws-community-rule/,
+    'no second name under the header\'s, and nothing that depends on membership before it is known');
   const src = read(CARD);
   // ONE READ FOR THE HUB: the hero and the hub's cards share the community
   // record, and each mount asks for a fresh copy unless one is on its way.
@@ -73,8 +75,8 @@ test('the channel is a hub card at its old address; Join asks under its button a
   const css = read('public/css/app.css');
   assert.match(css, /\.dev-ws-join-pop \{\s*position: absolute; top: calc\(100% \+ 12px\)/,
     'it hangs from the button');
-  assert.match(css, /\.dev-ws-hero \.dev-ws-join-pop \{ left: -6px; right: auto; \}/,
-    'from its left edge in the hero, where Join leads the row');
+  assert.match(css, /\.dev-ws-hero \.dev-ws-hero-member \.dev-ws-join-pop \{ left: auto; right: -6px; \}/,
+    'from its right edge in the hero, where Join ends the actions row (#852)');
   assert.match(src, /home\.setMembership\(slug, false\)/, 'Joined leaves through the same call Discover makes');
   assert.match(src, /data-ws-community-leave=""[\s\S]*Joined/, 'Joined is the leave control, as on Discover');
   assert.match(src, /\) : data\.is_creator \? null : \(/, 'the creator is never offered Leave');
@@ -86,15 +88,15 @@ test('the channel is a hub card at its old address; Join asks under its button a
   assert.doesNotMatch(src, /_plusMenuShowsMembers/, 'not by the members dialog\'s gate');
 });
 
-test('the hero leads the hub, above its channel and Needs you; who is here is the hero\'s (#3268)', () => {
+test('the hero leads the hub, above what needs you and its chat; who is here is the hero\'s (#3268)', () => {
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   const tab = lander.indexOf("{tab === 'status' ? (");
   const hero = lander.indexOf('<CommunityCard\n          slug={slug}');
-  const channel = lander.indexOf('<ChannelCard');
   const needs = lander.indexOf('<NeedsCard');
-  assert.ok(tab > 0 && hero > tab && channel > hero && needs > channel,
-    'first on the hub, then the channel and what needs you');
+  const channel = lander.indexOf('<ChannelCard');
+  assert.ok(tab > 0 && hero > tab && needs > hero && channel > needs,
+    'first on the hub, then the votes you owe and the chat');
   assert.doesNotMatch(lander, /<MembersCard/, 'no separate Members & activity card');
-  assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+iconUrl=\{app\.iconUrl\}\s+iconEmoji=\{app\.iconEmoji\}/,
-    'with the identity the header chip draws');
+  assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+canOpenApp=\{!actions\.selfHosted\}\s+color=\{color\}/,
+    'with the community\'s colour; its tile and name are the coloured header\'s (#852)');
 });

@@ -7582,12 +7582,13 @@ const AppView = {
   // they are placed here, by the issue they link.
 
   WORKSHOP_SEEN_KEY: 'workshopSeen',
-  // The lander's two tabs, the hub (`status`) and the Workshop, and the two
-  // pages under them, Needs you and All items. A query param reaches each
-  // directly (`?ws=needs`) because the platform's own rule is that a screen
-  // only reachable by interacting needs a URL: the declared checks select
-  // against it and the proposal screenshots are shot from it.
-  WORKSHOP_TABS: ['status', 'workshop', 'needs', 'all'],
+  // A project page's four tabs under its coloured header: the hub (`status`),
+  // Chat (its channel), Needs you and All items, and the Workshop page the
+  // hub's summary opens (every change, week by week). A query param reaches
+  // each directly (`?ws=needs`) because the platform's own rule is that a
+  // screen only reachable by interacting needs a URL: the declared checks
+  // select against it and the proposal screenshots are shot from it.
+  WORKSHOP_TABS: ['status', 'chat', 'workshop', 'needs', 'all'],
   _workshopModels() {
     const src = (typeof DevChat !== 'undefined' && DevChat && DevChat.MODELS) || null;
     if (!src || typeof src !== 'object') return { list: [], selected: null };

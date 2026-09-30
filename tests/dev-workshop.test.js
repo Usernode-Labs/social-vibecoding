@@ -1350,9 +1350,12 @@ test('#2573: the status tab offers to start an app with nothing open and nothing
   // AT THE TOP OF THE HUB, ahead of the no-items note and the hub's own
   // cards. The note answers what the board HOLDS and points at the ⋯;
   // this answers what to do about an app nobody has started.
-  const order = ['data-ws-start-here', 'data-ws-empty', 'data-ws-workshop-door'].map((k) => html.indexOf(k));
+  const order = ['data-ws-band', 'data-ws-start-here', 'data-ws-empty'].map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `each is drawn: ${JSON.stringify(order)}`);
-  assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'and the prompt leads');
+  assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'and the prompt leads, under the tabs');
+  // The hub's own last line is the same action (#852), and stands down under
+  // the banner that already leads with it.
+  assert.ok(!html.includes('data-ws-start-change'), 'one Start a new change, not two');
 });
 
 test('#2573: the prompt stands down for an app with open work, or with a history', () => {
@@ -1525,7 +1528,7 @@ test('the suggestion does not follow All items\' search to the other tabs (#2915
   assert.ok(!all.includes('issue:12'), 'while All items, which the search does narrow, hides it');
 });
 
-test('the hub is ordered for a returning member: what landed, yours, the room, then the doors', () => {
+test('the hub is ordered for a returning member: the tabs, what is owed, then Start a new change', () => {
   const store = {};
   // Keep the three-day-old proposal strictly after the last visit instead
   // of relying on whether seed() happens in a later clock millisecond.
@@ -1534,12 +1537,14 @@ test('the hub is ordered for a returning member: what landed, yours, the room, t
   seed(AppView);
   AppView._workshopThemes = themes([{ id: 't', name: 'T', items: ['issue:12'] }]);
   const html = workshopHtml(AppView);
-  // THE HUB: the summary card and the channel wait on their own reads (none
-  // in this render), then Needs you and the Workshop's door. The since list,
-  // your work in full and the board are the Workshop page's.
-  const order = ['data-ws-hub-needs', 'data-ws-workshop-door'].map((k) => html.indexOf(k));
-  assert.ok(order.every((i) => i >= 0), `each door is drawn: ${JSON.stringify(order)}`);
-  assert.ok(order[0] < order[1], 'Needs you, then the Workshop');
+  // THE HUB (#852): the tabs, then (after the hero and the summary card,
+  // which wait on their own reads, none in this render) the votes you owe as
+  // one row, your work when you have some, and Start a new change last. The
+  // since list, your work in full and the board are the Workshop page's.
+  const order = ['data-ws-band', 'data-ws-hub-needs', 'data-ws-start-change'].map((k) => html.indexOf(k));
+  assert.ok(order.every((i) => i >= 0), `each is drawn: ${JSON.stringify(order)}`);
+  assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'the tabs, what is owed, then the way to start');
+  assert.ok(!html.includes('data-ws-workshop-door'), 'no door to the Workshop: it opens from the summary card');
   assert.ok(!html.includes('data-ws-since=""') && !html.includes('data-ws-mine=""') && !html.includes('data-ws-dashboard'),
     'the since list, your work in full and the board are the Workshop page\'s');
   const workshop = workshopHtml(AppView, 'workshop');
@@ -2901,8 +2906,8 @@ test('"By stage" swaps the pane for the board\'s own columns, and keeps everythi
   // are the bar at the bottom — so what has to hold is that the grouping
   // choice is a control WITHIN one destination and does not move you off it.
   assert.ok(!html.includes('data-ws-dashboard'), 'the status strip is the Workshop page\'s');
-  assert.match(html, /data-ws-page-back=""[^>]*aria-label="Back to Workshop"[\s\S]*?<h2 class="dev-ws-pagehead-title">All items<\/h2>/,
-    'and All items is still where you are, with its way back to the Workshop');
+  assert.match(html, /data-ws-band=""[\s\S]*?data-ws-tab-btn="all" aria-selected="true"/,
+    'and All items is still the tab you are on (#852)');
 });
 
 test('the stage pane is the SAME board component, not a second one', () => {
@@ -3223,7 +3228,7 @@ test('a search that matches nothing keeps the pane on screen, with the search bo
   assert.ok(html.includes('data-ws-pane'), 'the pane renders');
   assert.ok(html.includes('id="dev-actions"'), 'with its toolbar');
   assert.ok(html.includes('id="dev-kanban-filterbar"'), 'and the host the search box fills');
-  assert.ok(html.includes('data-ws-page-back=""'), 'and the way back to the Workshop above it');
+  assert.ok(html.includes('data-ws-tab-btn="all"'), 'and the project\'s tabs above it');
   assert.ok(html.includes('data-ws-group="category"'), 'and the grouping tabs');
   // The rows' place says why they are gone, UNDER the controls it is about.
   assert.match(html, /data-ws-empty=""[^>]*>Nothing here matches the current search and filters\./);
@@ -3315,14 +3320,16 @@ test('#2915: while a search or filter is on, a dot on the way to All items says 
     assert.doesNotMatch(workshopHtml(AppView, tab), /data-ws-filtered/, `${tab}: no dot without a search`);
   }
   // Any of the filters, not only the search: a quick toggle counts too. It
-  // rides the hub's Workshop door and All items' See all on the Workshop
-  // page, the two ways to the page it narrows, and leaves while All items
-  // itself is up, where the search box says so.
+  // rides the All items tab (#852: it rode the hub's Workshop door) and All
+  // items' See all on the Workshop page, the two ways to the page it
+  // narrows, and leaves while All items itself is up, where the search box
+  // says so.
   for (const over of [{ q: 'dark' }, { assignedToMe: true }, { priority: 'high' }]) {
     AppView._kanbanFilters = { ...AppView._defaultKanbanFilters(), ...over };
-    const hub = workshopHtml(AppView, 'status');
-    assert.match(hub, /<span class="dev-ws-head-title">Workshop<\/span><span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>/,
-      `hub / ${JSON.stringify(over)}: the dot on the Workshop door, and its words`);
+    for (const tab of ['status', 'needs']) {
+      assert.match(workshopHtml(AppView, tab), /data-ws-tab-btn="all"[^>]*><span class="dev-ws-ctab-label">All items<\/span><span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>/,
+        `${tab} / ${JSON.stringify(over)}: the dot on the All items tab, and its words`);
+    }
     const ws = workshopHtml(AppView, 'workshop');
     assert.match(ws, /data-ws-all-open="">See all<span class="dev-ws-filter-dot" data-ws-filtered="" aria-hidden="true"><\/span><span class="sr-only"> \(filtered\)<\/span>/,
       `workshop / ${JSON.stringify(over)}: on See all`);
@@ -3335,13 +3342,18 @@ test('#2915: while a search or filter is on, a dot on the way to All items says 
   assert.match(CSS, /\.dev-ws-filter-dot \{ flex: none; width: 6px; height: 6px; border-radius: 999px; background: var\(--accent\); \}/);
 });
 
-test('the tab strip, its marker and its measurements are gone with the tabs', () => {
+test('the tabs are a band in the community\'s colour, not the old pill: nothing slides', () => {
   // The hub and the Workshop were two tabs under a segmented control with a
-  // sliding marker. The hub has no bar now, and a page leads with its way
-  // back, so nothing selects and nothing slides.
-  assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|data-ws-tab-btn|role="tablist" aria-label="Workshop sections"/);
+  // sliding marker, and then no tabs at all. #852 brings back four (Hub,
+  // Chat, Needs you, All items) as a band under the coloured header, with an
+  // underline rather than a marker, and the Workshop is the one page left.
+  assert.doesNotMatch(WORKSHOP, /useTabMarker|data-ws-tab-marker|role="tablist" aria-label="Workshop sections"/);
+  assert.match(WORKSHOP, /<ProjectBand\s+tab=\{tab\}\s+owed=\{owed\}/);
   assert.match(WORKSHOP, /<div ref=\{setBar\} className="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/,
-    'the bar keeps the strip\'s box, which the ear and the pinned header measure');
+    'the Workshop page\'s bar keeps the strip\'s box, which the ear and the pinned header measure');
+  const band = read('frontend/src/features/dev-board/workshop/project-band.tsx');
+  assert.match(band, /className="dev-ws-tabs dev-ws-band"/, 'and so does the band');
+  assert.match(band, /<div className="dev-ws-tabtrack" role="tablist" aria-label="Project"/);
 });
 
 test('#2915: declared checks open the Workshop page and the hub with a search on', () => {
@@ -3351,8 +3363,8 @@ test('#2915: declared checks open the Workshop page and the hub with a search on
   assert.match(whole.expectSelector, /\.dev-ws\[data-ws-tab="workshop"\]:not\(:has\(\[data-ws-empty\]\)\)/,
     'and expects no "nothing here" note on it');
   const dot = searched('status').find((t) => /data-ws-filtered/.test(t.expectSelector || ''));
-  assert.ok(dot, 'and one expects the dot on the Workshop door from the hub');
-  assert.match(dot.expectSelector, /\.dev-ws\[data-ws-tab="status"\] button\[data-ws-workshop-open\] \[data-ws-filtered\]/);
+  assert.ok(dot, 'and one expects the dot on the All items tab from the hub');
+  assert.match(dot.expectSelector, /\.dev-ws\[data-ws-tab="status"\] \[data-ws-band\] \[data-ws-tab-btn="all"\] \[data-ws-filtered\]/);
 });
 
 test('an empty board still gets the All items pane, and the note names the ⋯ and where it is', () => {
@@ -3504,7 +3516,7 @@ async function heroWithMenu(menuProps, over) {
   }
 }
 
-test('the ⋯ is the hub hero’s: once, at the end of the members row, and no page draws another', async () => {
+test('the ⋯ is the hub hero’s: once, at the end of its actions, and no page draws another', async () => {
   const AppView = makeAppView();
   seed(AppView);
   AppView._workshopThemes = themes([
@@ -3518,13 +3530,13 @@ test('the ⋯ is the hub hero’s: once, at the end of the members row, and no p
   }
   const html = await heroWithMenu();
   assert.match(html,
-    /class="dev-ws-hero-people"[\s\S]*?<div class="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[^>]*>Invite<\/button><div class="dev-ws-plus ?"><button id="dev-plus-btn"/,
-    'Invite, then the ⋯, ending the members row');
+    /<div class="dev-ws-hero-row"><div class="dev-ws-hero-actions">[\s\S]*?data-ws-community-invite=""[^>]*>Invite<\/button><div class="dev-ws-plus ?"><button id="dev-plus-btn"/,
+    'Invite, then the ⋯, ending the actions');
   assert.equal(html.split('id="dev-plus-btn"').length - 1, 1, 'one ⋯');
   // The menu comes with it, leading with the ask, then Settings & rules.
   assert.match(html, /id="dev-plus-menu"[\s\S]*?data-plus="issue"[\s\S]*?>Ask for a change<[\s\S]*?data-plus-group="settings"/);
-  // Joined sits across from the name, not in this row.
-  assert.match(html, /<div class="dev-ws-hero-id-end"><button[^>]*data-ws-community-leave=""/);
+  // Joined sits across from them, at the row's far end (#852).
+  assert.match(html, /<\/div><span class="dev-ws-hero-member"><button[^>]*data-ws-community-leave=""/);
   // The same props the toolbar row reads, from the same store, so the gates
   // (import on canCollaborate, the members row, Fork for a read-only viewer)
   // are the ones the menu always had.
@@ -4038,7 +4050,7 @@ test('the ⋯ asks to be wired when it mounts, because the module wires it befor
   // draws its actions only once the community read has answered; and a
   // door back to the hub mounts it from React state, while the module side
   // of the press only persists the choice — nothing re-runs the wiring.
-  assert.match(WORKSHOP, /onOpen=\{\(\) => openTab\('workshop'\)\}/);
+  assert.match(WORKSHOP, /onMore=\{\(\) => openTab\('workshop'\)\}/);
   assert.match(WORKSHOP, /onBack=\{\(\) => openTab\(pageParent\(tab\)\)\}/);
   assert.match(WORKSHOP, /const openTab = \(next: TabKey\) => \{\s*setTab\(next\);\s*callAppView\('_setWorkshopTab', next\);/);
   const setTab = APP_VIEW_SRC.slice(APP_VIEW_SRC.indexOf('  _setWorkshopTab(key) {'));

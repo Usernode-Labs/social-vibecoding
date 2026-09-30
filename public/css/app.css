@@ -15274,26 +15274,6 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-muted);
 }
-/* WHICH WORKSHOP YOU ARE IN (#2718 review) — the panel the header's app
-   switcher opens (features/header/header-title.tsx). It renders only while
-   open, at the head of the column, right under the bar. There is no chip
-   here any more at any width (#3295): a phone lost it to the header in
-   #2768, and a desktop, which drew it above the tabs or beside them on a
-   wide window (#2837), has now too.
-
-   The panel's own `mx-4` is cancelled: it was written for a screen whose
-   column runs to the window's edge, and this column is already inset. A
-   second inch of margin inside an already-inset card reads as a panel that
-   missed its anchor. */
-.dev-ws-scope {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-}
-.dev-ws-scope > [role='menu'] {
-  margin-inline: 0;
-  margin-bottom: 0;
-}
 .dev-ws-strip {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
@@ -16714,53 +16694,25 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 @keyframes dev-ws-join-pop-in { from { opacity: 0; transform: translateY(-4px) scale(.96); } to { opacity: 1; transform: none; } }
 
 /* ── The project page's hero (community-card.tsx) ──────────────────────
-   On the ground, not in a card: it is the page's title, and the cards under
-   it are what the page holds. A 56px tile and the name at 22px, the audience
-   as a chip, then the actions, then a paragraph of what it is. The type is
-   the scale AGENTS.md "Type and colour" sets: one heading size per page, the
-   rows' 15/13 below it. */
+   On the ground, not in a card: who is here and who it is for, what it is,
+   what you can do, and how lively it has been. The name and tile are the
+   coloured header's (#852), so the hero has no heading of its own. The type
+   is the scale AGENTS.md "Type and colour" sets: the rows' 15/13. */
 .dev-ws-hero { display: flex; flex-direction: column; gap: 12px; padding: 6px 4px 4px; }
-.dev-ws-hero-id { display: flex; align-items: center; gap: 14px; min-width: 0; }
-.dev-ws-hero-tile {
-  width: 56px; height: 56px; flex: none; overflow: hidden;
-  display: flex; align-items: center; justify-content: center;
-  border-radius: 16px; font-size: 28px; font-weight: 700;
-}
-.dev-ws-hero-name {
-  margin: 0; font-size: 22px; font-weight: 700; line-height: 28px;
-  letter-spacing: -.01em; color: var(--text-primary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.dev-ws-hero-meta {
-  display: flex; align-items: center; gap: 8px; margin-top: 4px;
-  font-size: 13px; line-height: 22px; color: var(--text-muted);
-}
-.dev-ws-hero-chip {
-  display: inline-flex; align-items: center; gap: 4px;
-  height: 22px; padding: 0 8px; border-radius: 999px;
-  background: var(--bg-tertiary); color: var(--text-primary);
-  font-size: 12px; font-weight: 600;
-}
 .dev-ws-hero-actions { display: flex; align-items: center; gap: 8px; }
 .dev-ws-hero-actions:empty { display: none; }
 .dev-ws-hero-desc { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
-/* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces,
-   the member count, and the actions pushed to its far end. The activity
-   line under it: this week in words, and the last fourteen days as a small
-   bar chart at its end, the busiest day the tallest bar.
+/* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces, then
+   "Public community · 23 members". The activity line under the actions: this
+   week in words, and the last fourteen days as a small bar chart at its end,
+   the busiest day the tallest bar.
 
    THE ROW WRAPS (#3276). Nothing in it can shrink: the faces are a fixed
-   stack, the count is `nowrap`, and each pill is its own word. So when five
-   faces, "13 members", Joined, Invite and "Make it private" came to more
-   than a phone's width, the row ran past the screen's edge and the whole
-   hub scrolled sideways. Now the actions drop to a line of their own under
-   the faces, still at its far end, and wrap among themselves if even that
-   line is too short. They stay right-aligned on purpose: the Join and
-   "Open it up" popups below hang from the right of their button, and a
-   button at the left edge would send them off the screen. */
+   stack and the count is `nowrap`. So when five faces and the count come to
+   more than a phone's width, the count drops to a line of its own rather than
+   running past the screen's edge and scrolling the hub sideways. */
 .dev-ws-hero-people { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; min-height: 32px; }
-.dev-ws-hero-people > .dev-ws-hero-actions { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
 .dev-ws-hero-faces { display: inline-flex; align-items: center; flex: none; }
 .dev-ws-hero-face {
   width: 26px; height: 26px; margin-right: -6px; border-radius: 9999px;
@@ -16781,13 +16733,6 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 }
 .dev-ws-hero-spark-bar:last-child { opacity: 1; }
 .dev-ws-hero-spark-bar-quiet { background: var(--app-sheet-line); opacity: 1; }
-/* The Join and "Open it up" popups hang from the RIGHT here: the actions
-   end the people row, so a popup opening rightward would leave the screen. */
-.dev-ws-hero .dev-ws-hero-people .dev-ws-join-pop { left: auto; right: -6px; }
-.dev-ws-hero .dev-ws-hero-people .dev-ws-join-pop::before { left: auto; right: 26px; }
-@media (prefers-reduced-motion: no-preference) {
-  .dev-ws-hero .dev-ws-hero-people .dev-ws-join-pop { transform-origin: calc(100% - 32px) 0; }
-}
 /* A change to who it is for, up for a vote: the one line on the hero that
    asks for something, so it carries the accent and goes to the proposal. */
 a.dev-ws-hero-pending {
@@ -16795,34 +16740,6 @@ a.dev-ws-hero-pending {
   color: var(--accent); font-weight: 600; text-decoration: none;
 }
 .dev-ws-audience-error { margin: 0; font-size: 12.5px; color: var(--state-blocked); }
-.dev-ws-hero-channel {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 12px; border-radius: 14px;
-  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-  font-size: 13px; color: var(--text-primary); text-decoration: none;
-}
-@media (hover: hover) {
-  .dev-ws-hero-channel:hover { background: var(--bg-secondary); }
-}
-/* The Join popup hangs from the LEFT of its button here: the button leads
-   the actions row, and a popup opening leftward from it would leave the
-   screen. The arrow moves with it. */
-.dev-ws-hero .dev-ws-join-anchor { margin-left: 0; }
-.dev-ws-hero .dev-ws-join-pop { left: -6px; right: auto; }
-.dev-ws-hero .dev-ws-join-pop::before { left: 26px; right: auto; }
-@media (prefers-reduced-motion: no-preference) {
-  .dev-ws-hero .dev-ws-join-pop { transform-origin: 32px 0; }
-}
-/* JOIN AND JOINED, ACROSS FROM THE NAME. The name's column takes the row
-   and the pill ends it; Join's popup then hangs from the RIGHT, as it does
-   at the end of the members row, or it would leave the screen. */
-.dev-ws-hero-id-text { flex: 1 1 auto; }
-.dev-ws-hero-id-end { flex: none; display: flex; align-items: center; }
-.dev-ws-hero .dev-ws-hero-id-end .dev-ws-join-pop { left: auto; right: -6px; }
-.dev-ws-hero .dev-ws-hero-id-end .dev-ws-join-pop::before { left: auto; right: 26px; }
-@media (prefers-reduced-motion: no-preference) {
-  .dev-ws-hero .dev-ws-hero-id-end .dev-ws-join-pop { transform-origin: calc(100% - 32px) 0; }
-}
 /* THE ⋯ ENDS THE MEMBERS ROW, Invite's height and fill (actions-row.tsx
    draws the fill), a circle. Its menu hangs below it over the cards under
    the hero, so the hero lifts while the menu is open, as it does for the
@@ -16838,6 +16755,298 @@ a.dev-ws-hero-pending {
 .dev-ws-hero-spark { touch-action: pan-y; cursor: default; -webkit-user-select: none; user-select: none; }
 .dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar { opacity: .35; }
 .dev-ws-hero-spark[data-ws-spark-active] .dev-ws-hero-spark-bar-on { opacity: 1; }
+
+/* ── The project's colour: its header and its tabs ─────────────────────
+   A project page wears its community's colour (lib/community-color.ts:
+   dapp.json's `icon.color`, else one read off its icon, always dark enough
+   for white text), so which community you are in reads before any word
+   does. workshop.tsx puts it on <html> as `--community-tint` while the page
+   is up (`data-community-tint`), and two surfaces paint it:
+
+   THE HEADER. Its fill is the faked-glass layer ("FAKED GLASS" below), whose
+   tint is `--fake-glass-tint`; an opaque tint covers the washes, so the bar
+   is the colour, flat. Its controls re-ink white through the same tokens
+   the app-tone rules move (--brand-*), and its rounded foot squares off, so
+   the band under it reads as the same surface continued.
+
+   Scoped to the Workshop lander (`#dev-workshop > .dev-ws`) as well as the
+   attribute: a card or a session opened under the project is a page of its
+   own, and it keeps the ordinary bar. */
+html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="platform"] #dev-workshop > .dev-ws) #platform-header {
+  --fake-glass-tint: var(--community-tint);
+  --brand-ink: #fff;
+  --brand-tint: rgba(255, 255, 255, .16);
+  --brand-line: rgba(255, 255, 255, .32);
+  color: #fff;
+  clip-path: inset(0);
+}
+html[data-community-tint] body:has(#app-view:not(.hidden)[data-app-surface="platform"] #dev-workshop > .dev-ws) #platform-header #header-app-tile {
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, .55);
+}
+/* THE BAND: Hub, Chat, Needs you, All items, under the header, in its
+   colour. It keeps the old strip's box (`.dev-ws-tabs` > `.dev-ws-tabtrack`)
+   for the two hooks that measure it, and bleeds to the column's edges and
+   up under the header's overlap (`-mb-2` on the bar, plus the body's own
+   top padding), so the colour runs unbroken from the top of the screen to
+   the tabs' underline. */
+.dev-ws-tabs.dev-ws-band {
+  margin: -18px -12px 0;
+  padding: 8px 16px 0;
+  background: var(--community-tint, #2a2e34);
+  gap: 0;
+}
+.dev-ws-band .dev-ws-tabtrack {
+  display: flex; align-items: stretch; gap: 22px;
+  min-width: 0; overflow-x: auto; scrollbar-width: none;
+}
+.dev-ws-band .dev-ws-tabtrack::-webkit-scrollbar { display: none; }
+.dev-ws-ctab {
+  position: relative; flex: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 42px; padding: 0 1px;
+  border: 0; background: none;
+  color: rgba(255, 255, 255, .72);
+  font: inherit; font-size: 15px; font-weight: 600; white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.dev-ws-ctab[aria-selected="true"] { color: #fff; }
+.dev-ws-ctab[aria-selected="true"]::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0;
+  height: 3px; border-radius: 3px 3px 0 0; background: #fff;
+}
+.dev-ws-ctab:focus-visible { outline: 2px solid #fff; outline-offset: -2px; border-radius: 6px; }
+@media (hover: hover) {
+  .dev-ws-ctab:hover { color: #fff; }
+}
+/* How many votes wait on you, on Needs you: white, the colour for its ink. */
+.dev-ws-ctab-count {
+  min-width: 19px; height: 19px; padding: 0 5px; box-sizing: border-box;
+  border-radius: 999px; background: #fff; color: var(--community-tint, #2a2e34);
+  font-size: 11.5px; font-weight: 750; line-height: 19px; text-align: center;
+}
+.dev-ws-band .dev-ws-filter-dot { background: #fff; }
+/* The band is the page's own: no pinned sheet behind it (the strip's band
+   below is for the pill it replaced), and on a wide window it pins under
+   the header as that strip did, still in its colour. */
+.dev-ws-tabs.dev-ws-band::before { content: none; }
+
+/* ── The hero's rows (community-card.tsx) ──
+   Who is here: the faces, then "Public community · 23 members" as one
+   phrase, the audience's glyph leading it. Then one row of what you can do:
+   Open app in the community's colour, Invite, the ⋯, and Join or Joined at
+   the far end, outlined, a state rather than an action. */
+.dev-ws-hero-audience { display: inline-flex; align-items: center; gap: 4px; vertical-align: -3px; }
+.dev-ws-hero-audience b { font-weight: 650; }
+.dev-ws-hero-audience svg { width: 16px; height: 16px; flex: none; color: var(--text-muted); }
+.dev-ws-hero-row { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 32px; }
+.dev-ws-hero-row > .dev-ws-hero-actions { flex: 1 1 auto; min-width: 0; flex-wrap: wrap; }
+.dev-ws-hero-member { margin-left: auto; flex: none; display: flex; }
+.dev-ws-open-app {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  height: 32px; padding: 0 14px;
+  border: 0; border-radius: 999px;
+  background: var(--community-tint, var(--accent)); color: #fff;
+  font: inherit; font-size: 14px; font-weight: 650; white-space: nowrap;
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .dev-ws-open-app:hover { filter: brightness(1.1); }
+}
+.dev-ws-hero .dev-ws-joined {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+  color: var(--text-muted);
+}
+/* Join's popup hangs from the RIGHT: Join ends the row, so a popup opening
+   rightward would leave the screen. The arrow moves with it. */
+.dev-ws-hero .dev-ws-join-anchor { margin-left: 0; }
+.dev-ws-hero .dev-ws-hero-member .dev-ws-join-pop { left: auto; right: -6px; }
+.dev-ws-hero .dev-ws-hero-member .dev-ws-join-pop::before { left: auto; right: 26px; }
+@media (prefers-reduced-motion: no-preference) {
+  .dev-ws-hero .dev-ws-hero-member .dev-ws-join-pop { transform-origin: calc(100% - 32px) 0; }
+}
+
+/* ── The hub's rows (hub-cards.tsx) ──
+   VOTES WAITING ON YOU: one row, a ballot on the accent's tint, the count
+   in words, and Vote. */
+.dev-ws-hub-row.dev-ws-hub-votes { flex-direction: row; align-items: center; gap: 12px; }
+.dev-ws-hub-votes-tile {
+  flex: none; width: 36px; height: 36px; border-radius: 10px;
+  display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
+}
+.dev-ws-hub-votes-glyph { width: 20px; height: 20px; }
+.dev-ws-hub-votes-text { flex: 1 1 auto; min-width: 0; font-size: 15px; font-weight: 650; color: var(--text-primary); }
+.dev-ws-hub-votes-cta {
+  flex: none; display: inline-flex; align-items: center;
+  height: 30px; padding: 0 14px; border-radius: 999px;
+  background: var(--accent); color: #fff; font-size: 13.5px; font-weight: 650;
+}
+/* THE CHAT'S LAST TWO LINES: one line each, who and what, and Open. */
+.dev-ws-hub-channel-compact .dev-ws-hub-msgs { gap: 8px; }
+.dev-ws-hub-channel-compact .dev-ws-hub-msg { align-items: center; }
+.dev-ws-hub-channel-compact .dev-ws-hub-msg > span.min-w-0 { display: flex; align-items: baseline; gap: 6px; }
+.dev-ws-hub-channel-compact .dev-ws-hub-msg-head { flex: 0 1 auto; min-width: 0; max-width: 45%; }
+.dev-ws-hub-channel-compact .dev-ws-hub-msg-by { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-ws-hub-channel-compact .dev-ws-hub-msg-head time { display: none; }
+.dev-ws-hub-channel-compact .dev-ws-hub-msg-text {
+  flex: 1 1 auto; min-width: 0;
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  -webkit-line-clamp: unset;
+}
+/* The way to the rest of what landed, week by week. */
+.dev-ws-since-card-more { align-self: flex-start; font-size: 13.5px; font-weight: 600; }
+/* START A NEW CHANGE ends the hub: a whole-width row in the accent. */
+.dev-ws-start-change {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  height: 44px; border-radius: 14px;
+  border: 1.5px dashed color-mix(in srgb, var(--accent) 45%, transparent);
+  background: transparent; color: var(--accent);
+  font: inherit; font-size: 15px; font-weight: 650; cursor: pointer;
+}
+@media (hover: hover) {
+  .dev-ws-start-change:hover { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+}
+/* THE HUB IN TWO COLUMNS on a wide window: the hero, what landed, your work
+   and Start a new change down the reading column, and beside them what is
+   owed and what is being said (`.dev-ws-hub-side`). The side spans every
+   row the main column fills, so neither column waits on the other's
+   heights. On a phone the side draws no box and its cards are rows of the
+   one column, in the order the markup gives them. */
+.dev-ws-hub-side { display: contents; }
+@media (min-width: 1100px) {
+  .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody {
+    display: grid; align-content: start;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+    grid-template-rows: repeat(8, auto);
+    column-gap: 16px; row-gap: 10px;
+  }
+  .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > * { grid-column: 1; min-width: 0; }
+  .dev-ws[data-ws-tab="status"] > .dev-ws-tabbody > .dev-ws-hub-side {
+    grid-column: 2; grid-row: 1 / -1; align-self: start;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+}
+/* ── "Your communities" (features/workshop/community-switcher.tsx) ──
+   The switcher behind the Communities tab: a sheet from the floor on a
+   phone (the kit's own when it adopts it; this scrim and panel when not),
+   and a menu hung off whatever opened it on a wide window. Rows are the
+   shell's 15 over 13, each community's tile at 40px, and the one you are on
+   is tinted in its colour with a tick (set inline, since the colour is the
+   community's). */
+.community-switcher-scrim {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, .32);
+  display: flex; align-items: flex-end;
+}
+.community-switcher {
+  box-sizing: border-box;
+  display: flex; flex-direction: column;
+  background: var(--dc-sheet);
+  color: var(--text-primary);
+}
+.community-switcher-sheet {
+  width: 100%; max-height: 82dvh;
+  padding: 6px 8px calc(12px + var(--platform-safe-bottom, 0px));
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -8px 30px rgba(0, 0, 0, .18);
+}
+.community-switcher-grab {
+  align-self: center; flex: none;
+  width: 36px; height: 5px; margin: 2px 0 8px; border-radius: 3px;
+  background: var(--border, rgba(0, 0, 0, .15));
+}
+.community-switcher-menu {
+  position: fixed; z-index: 60;
+  width: 340px; max-height: min(70vh, 560px);
+  padding: 6px;
+  border-radius: 16px;
+  box-shadow: 0 0 0 1px var(--app-sheet-line), 0 14px 40px rgba(0, 0, 0, .18);
+}
+.community-switcher-head { padding: 8px 12px 6px; }
+.community-switcher-title { margin: 0; font-size: 17px; font-weight: 700; line-height: 22px; }
+.community-switcher-menu .community-switcher-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+.community-switcher-list {
+  display: flex; flex-direction: column; gap: 2px;
+  min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+}
+.community-switcher-row {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; min-height: 60px; padding: 8px 12px; box-sizing: border-box;
+  border: 0; border-radius: 14px; background: transparent;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.community-switcher-menu .community-switcher-row { min-height: 52px; border-radius: 10px; }
+@media (hover: hover) {
+  .community-switcher-row:not([aria-current="true"]):hover { background: var(--bg-secondary); }
+}
+.community-switcher-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.community-switcher-tile {
+  flex: none; width: 40px; height: 40px; overflow: hidden;
+  display: grid; place-items: center;
+  border-radius: 11px; font-size: 20px; font-weight: 700;
+}
+.community-switcher-menu .community-switcher-tile { width: 34px; height: 34px; border-radius: 9px; font-size: 17px; }
+.community-switcher-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+/* An emoji tile's glyph at the tile's own size, not the launcher's. */
+.community-switcher-tile > span, .platform-tab-tile > span { font-size: inherit; line-height: 1; }
+.platform-tab-tile > img { width: 100%; height: 100%; object-fit: cover; border-radius: 0; }
+.community-switcher-tile-all { background: #1f2329; color: #fff; }
+.dark .community-switcher-tile-all { background: #3a3f47; }
+.community-switcher-tile-add {
+  background: transparent; color: var(--text-muted);
+  box-shadow: inset 0 0 0 1.5px var(--app-sheet-line);
+}
+.community-switcher-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.community-switcher-name {
+  font-size: 15px; font-weight: 650; line-height: 20px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.community-switcher-sub { font-size: 13px; line-height: 17px; color: var(--text-muted); }
+.community-switcher-waiting {
+  flex: none; height: 22px; padding: 0 8px; border-radius: 999px;
+  display: inline-flex; align-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent);
+  font-size: 12px; font-weight: 650; white-space: nowrap;
+}
+.community-switcher-tick { flex: none; width: 20px; display: grid; place-items: center; color: var(--text-primary); }
+.community-switcher-note { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--text-muted); }
+
+/* ON A WIDE WINDOW THE TABS ARE THE HEADER'S (header-project-tabs.tsx): one
+   coloured row, the community's name and then its tabs, so the band under
+   it is not drawn. White on the colour; the tab you are on is a pill of
+   white at low strength rather than an underline, which the bar's foot has
+   no room for. */
+.header-project-tabs { display: none; }
+@media (min-width: 768px) {
+  .dev-ws-tabs.dev-ws-band { display: none; }
+  #platform-header:has(.header-project-tabs) #header-title { flex: 0 1 auto; }
+  .header-project-tabs { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; margin-left: 4px; }
+  .header-project-tabs .dev-ws-tabtrack { display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; }
+  .header-project-tabs .dev-ws-ctab { height: 30px; padding: 0 12px; border-radius: 999px; font-size: 14.5px; }
+  .header-project-tabs .dev-ws-ctab[aria-selected="true"] { background: rgba(255, 255, 255, .18); }
+  .header-project-tabs .dev-ws-ctab[aria-selected="true"]::after { content: none; }
+  .header-project-tabs .dev-ws-ctab:focus-visible { border-radius: 999px; }
+  /* No band, so the page starts under the header as any other does. */
+  #dev-body:has(> #dev-workshop > .dev-ws > .dev-ws-band) { padding-top: 14px; }
+  /* ALL ITEMS' EAR (the grouping tabs) hung level with the old tab pill, in
+     the strip's row above the pane. With the tabs in the header that row is
+     gone, so the pane steps down by the ear's height and the ear hangs in
+     the room it leaves, at the pane's top-right corner, hugging its two
+     tabs (nothing measures it now: the band it was measured against is not
+     drawn). */
+  .dev-ws:has(> .dev-ws-band) [data-ws-pane]:has(.dev-ws-ear) { margin-top: 44px; }
+  .dev-ws:has(> .dev-ws-band) .dev-ws-ear { left: auto; }
+  .dev-ws:has(> .dev-ws-band) .dev-ws-ear .dev-ws-group { width: auto; }
+  .dev-ws:has(> .dev-ws-band) .dev-ws-pane:has(.dev-ws-ear)::before { content: none; }
+}
+/* THE CHAT TAB (project-chat.tsx): the channel's own pane, as tall as the
+   screen leaves it, so its composer sits above the tab bar and its stream
+   scrolls inside it rather than the page. */
+.dev-ws-chat { display: flex; flex-direction: column; height: calc(100dvh - 210px); min-height: 380px; }
+.dev-ws-chat-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
 .dev-ws-hero-spark-tip {
   position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6;
@@ -17270,13 +17479,6 @@ a.dev-ws-hero-pending {
   .dev-ws-keys-hint { display: block; align-self: center; margin: 4px 0 0; font-size: 11px; color: var(--text-faint); font-family: ui-monospace, Menlo, monospace; }
   .dev-ws-ask-msg { font-size: 14px; }
   .dev-ws-ask-log { max-height: none; }
-
-  /* THE SWITCHER'S PANEL (#3295), which the header's app switcher drops at
-     the head of the column (see `.dev-ws-scope`, far above). The column is
-     760px here, and a menu of names across all of it reads as a bar rather
-     than as the switcher's list; the cap is the one the wide-window panel had
-     beside the retired chip (#2837). */
-  .dev-ws-scope > [role='menu'] { max-width: 420px; }
 }
 
 /* Between the breakpoint and a wide desktop the panel would push the card
@@ -18720,6 +18922,35 @@ html.un-ios {
   justify-content: center;
 }
 
+/* THE COMMUNITIES TAB'S FACE (tab-bar.tsx CommunityTabFace). A square ring,
+   an app tile's own shape, around the community the tab is on (its colour)
+   or, on All communities, a dark tile with the people glyph (the tab's own
+   ink, so it lights with the tab). The ring is what says it switches. */
+.platform-tab-ring {
+  width: 26px; height: 26px; box-sizing: border-box; flex: none;
+  display: inline-grid; place-items: center;
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 2px var(--ring, currentColor);
+}
+.platform-tab-tile {
+  width: 18px; height: 18px; border-radius: 5px; overflow: hidden;
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 700; line-height: 1;
+}
+.platform-tab-ring-all .platform-tab-tile { background: #1f2329; color: #fff; }
+.platform-tab-ring-all .platform-tab-glyph { width: 13px; height: 13px; stroke-width: 2.2; }
+.dark .platform-tab-ring-all .platform-tab-tile { background: #3a3f47; }
+/* THE VOTES IT IS WAITING ON YOU FOR: the accent, because it asks for you.
+   The quiet unread-channels count gives way to it on the same glyph. */
+.platform-tab-votes {
+  position: absolute; top: -4px; left: calc(100% - 8px);
+  min-width: 1.1rem; height: 1.1rem; padding: 0 4px; box-sizing: border-box;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 0.65rem; font-weight: 700; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.platform-tab-mark:has(.platform-tab-votes) > #platform-tabs-badge-communities { display: none; }
+
 /* THE MARK'S TILE (#2718). The artwork is a near-black squircle, which is a
    shade the dark bar behind it is also wearing — `bg-zinc-900` on
    #platform-header — so at 26px the tile's own edge disappears and the figure
@@ -19301,6 +19532,13 @@ html.un-kb #platform-parked {
     color: var(--text-muted);
     font-size: 11px;
     font-weight: 600;
+  }
+  /* The votes count rides the row's end the same way, in the accent. */
+  .platform-tab-votes {
+    position: static; order: 1; flex: none;
+    margin-left: auto; margin-right: 2px;
+    min-width: 20px; height: 18px; padding: 0 6px;
+    font-size: 11px;
   }
 
   /* A TAB ANSWERS THE POINTER (#2798). The rail's rows had no hover at all,

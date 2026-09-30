@@ -92,6 +92,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { channelUnread, useMessagesSnapshot } from '../messages/store';
 import { AllAppsScope } from './workshop-chrome';
+import { communityScopeStore } from './community-scope';
 import { NeedsReel, type NeedsFeedItem } from './needs-reel';
 import {
   groupRows, orderRows, SECTION_LIMIT, sectionFold, type Audience,
@@ -412,10 +413,12 @@ export function WorkshopScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const state = useStoreState(workshopStore) as {
     open: boolean; rows: WorkshopRow[] | null; error: boolean;
-    tab: TabKey; scopeOpen: boolean;
+    tab: TabKey;
     feed: NeedsFeedItem[] | null; feedError: boolean; feedCapped: boolean;
   };
   useVisibilityHiddenClass(screenRef, 'workshop-screen', false);
+  // Whether "Your communities" is open, for the All chip's aria-expanded.
+  const { switcher } = useStoreState(communityScopeStore);
   // ONE PAGE: the list of your projects, with Needs you as a row at its top
   // that opens the feed of votes owed across all of them (`tab: 'needs'`,
   // also reached by `?ws=needs`), and a way back. See the markup below.
@@ -481,11 +484,7 @@ export function WorkshopScreen() {
             screen is about, all of your projects, and its panel is the way
             into one. */}
         <div className="px-4 pt-5 pb-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <AllAppsScope
-            apps={rows}
-            open={state.scopeOpen}
-            onToggle={(next) => workshopStore.set({ scopeOpen: next })}
-          />
+          <AllAppsScope open={!!switcher} />
         </div>
         {/* ONE PAGE, NO TABS. The screen had two, Current status and Needs
             you (#3051), over a line of totals. What you are working
@@ -645,14 +644,14 @@ export const workshopController = {
     return workshopController.reload();
   },
   close() {
-    workshopStore.set({ open: false, scopeOpen: false });
+    workshopStore.set({ open: false });
   },
   isOpen() {
     return workshopStore.get().open;
   },
-  /** Show one of the two tabs, and close the chip's panel on the way. */
+  /** Show one of the two tabs. */
   setTab(tab: TabKey) {
-    workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status', scopeOpen: false });
+    workshopStore.set({ tab: tab === 'needs' ? 'needs' : 'status' });
   },
   async reload() {
     const demo = demoQuery();
