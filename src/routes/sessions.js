@@ -3653,7 +3653,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   router.get('/api/sessions/:id/changed-files', async (req, res) => {
     try {
       // The staging demo's fixture changes (the same ones /details serves)
-      // list the mock client's files, so the demo page is not a 404.
+      // list the mock client's files, so the demo page shows a list.
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         const id = Number(req.params.id);
         if (id === 990101 || stagingMockSharedSessions().some((s) => s.id === id)) {
@@ -3671,7 +3671,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
         [parseInt(req.params.id, 10)]
       );
       const session = rows[0];
-      if (!session || !canViewSession(session, req.user)) return res.status(404).json({ error: 'Session not found' });
+      // A missing session and one the caller may not view answer exactly as
+      // "no list" does: the same body, so nothing is learned, and no 404 for
+      // the browser to log on pages whose change has no row here (the
+      // staging demo's fixture proposals).
+      if (!session || !canViewSession(session, req.user)) {
+        return res.set('Cache-Control', 'no-store').json({ files: null });
+      }
       res.set('Cache-Control', 'no-store');
       // The mock client stands in only where config.js scopes it: imported
       // PRs in a staging preview. A native session there has no GitHub and

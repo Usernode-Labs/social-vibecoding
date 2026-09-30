@@ -62,13 +62,16 @@ function reset(patch = {}) {
   });
 }
 
-test('a caller who may not view the session gets the same 404 as a missing one, and GitHub is never asked', async () => {
+test('a caller who may not view the session gets the same empty answer as a missing one, and GitHub is never asked', async () => {
   reset({ status: 'active' });
   const result = await get({ id: 99 });
-  assert.equal(result.status, 404);
+  assert.equal(result.status, 200);
+  assert.deepEqual(result.body, { files: null });
   assert.equal(compareCalls.length, 0);
   reset(); session = null;
-  assert.equal((await get({ id: 42 })).status, 404);
+  const missing = await get({ id: 42 });
+  assert.equal(missing.status, 200);
+  assert.deepEqual(missing.body, result.body, 'missing and not-viewable are indistinguishable');
 });
 
 test('a viewer gets the paths and counts, compared against main at the reviewed commit', async () => {
@@ -150,7 +153,8 @@ test('staging: a native session without GitHub lists nothing; demo fixtures and 
     const demo = await get({ id: 42 }, 990101, '?demo=1');
     assert.equal(demo.status, 200);
     assert.equal(demo.body.files.length, 3);
-    assert.equal((await get({ id: 42 }, 990101)).status, 404, 'without ?demo=1 a fixture id is just a missing session');
+    const bare = await get({ id: 42 }, 990101);
+    assert.deepEqual(bare.body, { files: null }, 'without ?demo=1 a fixture id is just a missing session');
   } finally {
     github.isEnabled = enabled;
     if (previous === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = previous;
