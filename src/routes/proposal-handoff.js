@@ -31,6 +31,7 @@ const { drainGuard } = require('../services/lifecycle');
 const events = require('../services/events');
 const log = require('../services/logger');
 const { changeHashPath } = require('../services/change-destination');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
   MAX_UPLOAD_FILES,
   MAX_UPLOAD_FILE_BYTES,
@@ -1901,7 +1902,7 @@ function proposalHandoffRoutes(config) {
   // Membership first (services/communities.js): proposing is for the
   // community's members whichever router ends up promoting, and this one
   // runs ahead of voteRoutes' own copy of the same gate.
-  router.post('/api/sessions/:id/promote', communities.requireSessionMembership(pool), async (req, res, next) => {
+  router.post('/api/sessions/:id/promote', communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res, next) => {
     let releasePromotion = null;
     let releaseOnResponse = false;
     try {

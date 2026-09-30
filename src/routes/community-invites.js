@@ -141,7 +141,7 @@ function communityInviteRoutes(config) {
     }
   });
 
-  router.delete('/api/invite-links/:id', drainGuard, async (req, res) => {
+  router.delete('/api/invite-links/:id', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     try {
       const done = await invites.revokeInvite(pool, { inviteId: req.params.id, user: req.user });

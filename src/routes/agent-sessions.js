@@ -27,6 +27,7 @@ const agentStop = require('../services/agent-session-stop');
 const models = require('../services/models');
 const agentPreferences = require('../services/agent-preferences');
 const notifications = require('../services/notifications');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const MAX_MESSAGE_CHARS = 20000;
 
@@ -370,7 +371,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/archive', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/archive', requireUser, sameOriginBrowserOnly, async (req, res) => {
     try {
       const session = await agentSessions.archiveAgentSession(pool, { userId: req.user.id, id: req.params.id });
       if (!session) return res.status(404).json({ error: 'Agent session not found or already archived' });
@@ -380,7 +381,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/unarchive', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/unarchive', requireUser, sameOriginBrowserOnly, async (req, res) => {
     try {
       const session = await agentSessions.unarchiveAgentSession(pool, { userId: req.user.id, id: req.params.id });
       if (!session) return res.status(404).json({ error: 'Agent session not found or not archived' });
@@ -676,7 +677,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     return undefined;
   });
 
-  router.post('/api/agent-sessions/:id/stop', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/stop', requireUser, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(400).json({ error: 'Bad agent session id' });
     const body = req.body || {};
@@ -730,7 +731,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/actions/:actionId/confirm', requireUser, drainGuard, async (req, res) => {
+  router.post('/api/agent-sessions/:id/actions/:actionId/confirm', requireUser, drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(404).json({ error: 'Agent session not found' });
     try {
@@ -752,7 +753,7 @@ function agentSessionRoutes(config, { scheduleInteractiveRecovery = null } = {})
     }
   });
 
-  router.post('/api/agent-sessions/:id/actions/:actionId/dismiss', requireUser, async (req, res) => {
+  router.post('/api/agent-sessions/:id/actions/:actionId/dismiss', requireUser, sameOriginBrowserOnly, async (req, res) => {
     const id = positiveId(req.params.id);
     if (!id) return res.status(404).json({ error: 'Agent session not found' });
     try {

@@ -10,6 +10,7 @@ const conversations = require('../services/conversations');
 const communities = require('../services/communities');
 const messageBookmarks = require('../services/message-bookmarks');
 const attachments = require('../services/attachments');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const {
   attachmentUploadLimiter,
   conversationMessageLimiter,
@@ -181,7 +182,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.delete('/api/conversations/:id/members/:userId', conversationActionLimiter, async (req, res) => {
+  router.delete('/api/conversations/:id/members/:userId', conversationActionLimiter, sameOriginBrowserOnly, async (req, res) => {
     const id = conversations.strictId(req.params.id);
     const targetId = conversations.strictId(req.params.userId);
     if (!id || !targetId) return sendNotFound(res);
@@ -199,7 +200,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.post('/api/conversations/:id/leave', conversationSafetyLimiter, async (req, res) => {
+  router.post('/api/conversations/:id/leave', conversationSafetyLimiter, sameOriginBrowserOnly, async (req, res) => {
     const id = conversations.strictId(req.params.id);
     if (!id) return sendNotFound(res);
     try {
@@ -349,7 +350,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   // #2387: delete your own message. Soft: the row stays as a placeholder so
   // its thread and any quote of it keep their place; see
   // services/conversations.js deleteMessage for what goes with it.
-  router.delete('/api/conversations/:id/messages/:messageId', conversationMessageLimiter, async (req, res) => {
+  router.delete('/api/conversations/:id/messages/:messageId', conversationMessageLimiter, sameOriginBrowserOnly, async (req, res) => {
     const id = conversations.strictId(req.params.id);
     const messageId = conversations.strictId(req.params.messageId);
     if (!id || !messageId) return sendNotFound(res);
@@ -426,6 +427,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   router.put(
     '/api/conversations/:id/messages/:messageId/bookmark',
     conversationReactionLimiter,
+    sameOriginBrowserOnly,
     async (req, res) => {
       const id = conversations.strictId(req.params.id);
       const messageId = conversations.strictId(req.params.messageId);
@@ -447,6 +449,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   router.delete(
     '/api/conversations/:id/messages/:messageId/bookmark',
     conversationReactionLimiter,
+    sameOriginBrowserOnly,
     async (req, res) => {
       const id = conversations.strictId(req.params.id);
       const messageId = conversations.strictId(req.params.messageId);
@@ -549,6 +552,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
   router.post(
     '/api/conversations/:id/attachments',
     attachmentUploadLimiter,
+    sameOriginBrowserOnly,
     express.raw({ type: '*/*', limit: '21mb' }),
     async (req, res) => {
       const id = conversations.strictId(req.params.id);
@@ -703,7 +707,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.put('/api/me/blocks/:userId', conversationSafetyLimiter, async (req, res) => {
+  router.put('/api/me/blocks/:userId', conversationSafetyLimiter, sameOriginBrowserOnly, async (req, res) => {
     const targetId = conversations.strictId(req.params.userId);
     if (!targetId) return sendNotFound(res);
     try {
@@ -727,7 +731,7 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.delete('/api/me/blocks/:userId', conversationSafetyLimiter, async (req, res) => {
+  router.delete('/api/me/blocks/:userId', conversationSafetyLimiter, sameOriginBrowserOnly, async (req, res) => {
     const targetId = conversations.strictId(req.params.userId);
     if (!targetId) return sendNotFound(res);
     try {

@@ -22,6 +22,7 @@ const externalAgentPatch = require('../services/external-agent-patch');
 const { reviewedHeadForSession } = require('../services/pr-vote-revision');
 const { drainGuard } = require('../services/lifecycle');
 const votes = require('./votes');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Demo mode — a synthetic partner, on one app, for recording the proposal
 // flow.
@@ -777,7 +778,7 @@ function demoModeRoutes(config) {
   });
 
   // ── Vote ───────────────────────────────────────────────────────────────
-  router.post('/api/apps/:slug/demo/vote', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/demo/vote', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await loadDemoApp(req, res);
       if (!app) return;
@@ -806,7 +807,7 @@ function demoModeRoutes(config) {
   });
 
   // ── Reset ──────────────────────────────────────────────────────────────
-  router.post('/api/apps/:slug/demo/reset', drainGuard, async (req, res) => {
+  router.post('/api/apps/:slug/demo/reset', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await loadDemoApp(req, res);
       if (!app) return;

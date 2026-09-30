@@ -11,6 +11,7 @@ const plan = require('../services/visible-changes');
 const state = require('../services/shots-state');
 const view = require('../services/shots-view');
 const { visualHeadForSession } = require('../services/pr-vote-revision');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const ARTIFACT_ID_RE = /^[0-9a-f]{32}$/;
 
@@ -313,7 +314,7 @@ function shotsRoutes(config) {
 
   // Stop the running before/after shots. The same people as Rerun, which is
   // how a stopped run is started again.
-  router.post('/api/apps/:slug/proposals/:sessionId/shots/stop', async (req, res) => {
+  router.post('/api/apps/:slug/proposals/:sessionId/shots/stop', sameOriginBrowserOnly, async (req, res) => {
     const id = sessionId(req.params.sessionId);
     if (!id) return res.status(404).json({ error: 'Proposal not found' });
     try {

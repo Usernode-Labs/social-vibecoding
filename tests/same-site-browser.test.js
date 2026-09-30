@@ -1,7 +1,9 @@
 'use strict';
 
-// Invite redemption and friend writes answer only the Homeroom page itself:
-// a browser request marked by Sec-Fetch-Site as coming from anywhere else —
+// Invite redemption, friend writes and the other one-click signed-in actions
+// (leaving a conversation, accepting an invite, archiving or sharing a
+// proposal, revoking a grant, ...) answer only the Homeroom page itself: a
+// browser request marked by Sec-Fetch-Site as coming from anywhere else —
 // including an app on a sibling subdomain, which the Lax session cookie
 // does not stop — is refused. Clients that send no such header pass.
 //
@@ -66,4 +68,177 @@ test('every friend write is guarded', () => {
     "router.delete('/api/friends/:userId', friendshipLimiter, sameOriginBrowserOnly, write('unfriend',",
   ]) assert.ok(src.includes(route), route);
   assert.doesNotMatch(src, /router\.(post|delete)\([^\n]*friendshipLimiter, write\(/, 'no unguarded write');
+});
+
+// One-click actions that need nothing but the URL: a request with a JSON body
+// already needs a CORS preflight, these do not. Each one carries the guard
+// after any rate limiter (and before the one raw body parser, so a refused
+// upload is never read).
+const GUARDED = [
+  ['src/routes/conversations.js', [
+    ['delete', '/api/conversations/:id/members/:userId'],
+    ['post', '/api/conversations/:id/leave'],
+    ['delete', '/api/conversations/:id/messages/:messageId'],
+    ['put', '/api/me/blocks/:userId'],
+    ['delete', '/api/me/blocks/:userId'],
+    ['put', '/api/conversations/:id/messages/:messageId/bookmark'],
+    ['delete', '/api/conversations/:id/messages/:messageId/bookmark'],
+    ['post', '/api/conversations/:id/attachments'],
+  ]],
+  ['src/routes/app-blocks.js', [
+    ['put', '/api/me/app-blocks/:slug'],
+    ['delete', '/api/me/app-blocks/:slug'],
+  ]],
+  ['src/routes/chat.js', [
+    ['put', '/api/apps/:slug/messages/:id/bookmark'],
+    ['delete', '/api/apps/:slug/messages/:id/bookmark'],
+    ['post', '/api/apps/:slug/messages/read'],
+    ['post', '/api/apps/:slug/messages/unread'],
+  ]],
+  ['src/routes/approvers.js', [
+    ['post', '/api/approver-invites/:appId/accept'],
+    ['post', '/api/approver-invites/:appId/decline'],
+    ['delete', '/api/apps/:slug/approvers/:userId'],
+  ]],
+  ['src/routes/collaborators.js', [
+    ['post', '/api/invites/:appId/accept'],
+    ['post', '/api/invites/:appId/decline'],
+    ['delete', '/api/apps/:slug/collaborators/:userId'],
+  ]],
+  ['src/routes/community-invites.js', [
+    ['delete', '/api/invite-links/:id'],
+  ]],
+  ['src/routes/kudos.js', [
+    ['post', '/api/sessions/:id/kudos'],
+    ['delete', '/api/sessions/:id/kudos'],
+  ]],
+  ['src/routes/votes.js', [
+    ['post', '/api/sessions/:id/promote'],
+    ['post', '/api/sessions/:id/undo'],
+    ['post', '/api/sessions/:id/admin-merge'],
+  ]],
+  ['src/routes/proposal-handoff.js', [
+    ['post', '/api/sessions/:id/promote'],
+  ]],
+  ['src/routes/sessions.js', [
+    ['post', '/api/apps/:slug/issues/:number/headless-session'],
+    ['post', '/api/sessions/:id/clone-headless'],
+    ['post', '/api/sessions/:id/platform-issue/:msgId/confirm'],
+    ['post', '/api/sessions/:id/platform-issue/:msgId/dismiss'],
+    ['post', '/api/sessions/:id/archive'],
+    ['post', '/api/sessions/:id/unpromote'],
+    ['post', '/api/sessions/:id/reset-agent-context'],
+    ['post', '/api/sessions/:id/unarchive'],
+    ['post', '/api/sessions/:id/share'],
+    ['post', '/api/sessions/:id/unshare'],
+    ['post', '/api/sessions/:id/share-transcript'],
+    ['post', '/api/sessions/:id/unshare-transcript'],
+    ['post', '/api/sessions/:id/fork'],
+    ['post', '/api/sessions/:id/pause'],
+    ['post', '/api/sessions/:id/resume'],
+    ['post', '/api/sessions/:id/sync-main'],
+    ['post', '/api/sessions/:id/specs/:version/share'],
+    ['post', '/api/sessions/:id/stop'],
+    ['post', '/api/sessions/:id/deploy-staging'],
+    ['post', '/api/sessions/:id/ensure-staging'],
+    ['post', '/api/sessions/:id/recheck'],
+  ]],
+  ['src/routes/agent-sessions.js', [
+    ['post', '/api/agent-sessions/:id/archive'],
+    ['post', '/api/agent-sessions/:id/unarchive'],
+    ['post', '/api/agent-sessions/:id/stop'],
+    ['post', '/api/agent-sessions/:id/actions/:actionId/confirm'],
+    ['post', '/api/agent-sessions/:id/actions/:actionId/dismiss'],
+  ]],
+  ['src/routes/agent-session-drafts.js', [
+    ['delete', '/api/agent-sessions/:id/drafts/:draftId'],
+  ]],
+  ['src/routes/chat-drafts.js', [
+    ['delete', '/api/sessions/:id/drafts/:draftId'],
+  ]],
+  ['src/routes/apps.js', [
+    ['post', '/api/me/app-allowance/request'],
+    ['delete', '/api/apps/:slug/secrets/:key'],
+    ['post', '/api/apps/:slug/redeploy'],
+    ['post', '/api/apps/:slug/check-updates'],
+    ['post', '/api/apps/:slug/main-check/resume'],
+    ['post', '/api/apps/:slug/retry'],
+  ]],
+  ['src/routes/auth.js', [
+    ['delete', '/api/me/api-key'],
+    ['post', '/api/me/wallet-link'],
+    ['delete', '/api/me/wallet-link'],
+  ]],
+  ['src/routes/credentials.js', [
+    ['post', '/api/me/credentials/openrouter/managed'],
+    ['delete', '/api/me/credentials/openrouter'],
+  ]],
+  ['src/routes/llm-grants.js', [
+    ['delete', '/api/me/llm-grants/:appId'],
+  ]],
+  ['src/routes/app-permissions.js', [
+    ['delete', '/api/me/permission-grants/:appId/:capability'],
+  ]],
+  ['src/routes/global-chat.js', [
+    ['post', '/api/global-chat/threads/:id/cancel'],
+    ['delete', '/api/global-chat/threads/:id'],
+  ]],
+  ['src/routes/issues.js', [
+    ['post', '/api/apps/:slug/issues/:number/bounty'],
+    ['post', '/api/apps/:slug/github-issues/:number/claim'],
+    ['delete', '/api/apps/:slug/github-issues/:number/claim'],
+    ['post', '/api/issues/:id/admin-apply'],
+    ['post', '/api/issues/:id/close'],
+  ]],
+  ['src/routes/demo-mode.js', [
+    ['post', '/api/apps/:slug/demo/vote'],
+    ['post', '/api/apps/:slug/demo/reset'],
+  ]],
+  ['src/routes/notifications.js', [
+    ['delete', '/api/apps/:slug/notification-preferences'],
+    ['post', '/api/notifications/read'],
+  ]],
+  ['src/routes/shots.js', [
+    ['post', '/api/apps/:slug/proposals/:sessionId/shots/stop'],
+  ]],
+  ['src/routes/topic-attributes.js', [
+    ['delete', '/api/apps/:slug/topics/:targetType/:targetRef/attributes'],
+  ]],
+  ['src/routes/report-ai.js', [
+    ['post', '/api/apps/:slug/report-ai/generate'],
+  ]],
+  ['src/routes/campaigns.js', [
+    ['post', '/api/campaigns/:id/merge-green'],
+    ['post', '/api/campaigns/:id/apps/:appId/retry'],
+  ]],
+  ['src/routes/profile.js', [
+    ['delete', '/api/me/avatar'],
+  ]],
+  ['src/routes/report-snapshots.js', [
+    ['post', '/api/apps/:slug/report-snapshots/:id/share'],
+    ['post', '/api/apps/:slug/report-snapshots/:id/unshare'],
+  ]],
+];
+
+function declaration(src, method, route) {
+  const re = new RegExp(`router\\.${method}\\(\\s*'${route.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}',`, 'g');
+  const starts = [...src.matchAll(re)].map((m) => m.index);
+  assert.equal(starts.length, 1, `${method.toUpperCase()} ${route} is declared once`);
+  const rest = src.slice(starts[0]);
+  const end = rest.search(/async \(req, res|\(req, res\) =>|update\(/);
+  assert.ok(end > 0, `${method.toUpperCase()} ${route} has a handler`);
+  return rest.slice(0, end);
+}
+
+test('the other one-click signed-in actions are guarded, after their limiters', () => {
+  for (const [file, routes] of GUARDED) {
+    const src = read(file);
+    assert.match(src, /const \{ sameOriginBrowserOnly \} = require\('\.\.\/middleware\/same-site-browser'\);/, file);
+    for (const [method, route] of routes) {
+      const decl = declaration(src, method, route);
+      const at = decl.indexOf('sameOriginBrowserOnly,');
+      assert.ok(at > 0, `${file}: ${method.toUpperCase()} ${route} is guarded`);
+      assert.doesNotMatch(decl.slice(at), /Limiter/, `${file}: ${method.toUpperCase()} ${route} guard follows its limiter`);
+    }
+  }
 });

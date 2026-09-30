@@ -53,6 +53,7 @@ const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
 const modelFallback = require('../services/model-fallback');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // Imported pull requests are proposal-shaped work before they are promoted:
 // their GitHub description, testing notes, check run and community attributes
@@ -3062,7 +3063,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // preview, but never opens a PR — the PR is created lazily on a cloned
   // session's branch at propose time (see runClaudeCodeTool's `headless`
   // flag).
-  router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, communities.requireAppMembership(pool), async (req, res) => {
+  router.post('/api/apps/:slug/issues/:number/headless-session', drainGuard, communities.requireAppMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
@@ -3277,7 +3278,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // hosted connector's submit_platform_build still takes ownership of a
   // build this way before proposing it, so an external connector token (not
   // a delegated grant) is the one caller left.
-  router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), async (req, res) => {
+  router.post('/api/sessions/:id/clone-headless', drainGuard, communities.requireSessionMembership(pool), sameOriginBrowserOnly, async (req, res) => {
     if (!req.connectorClientId || req.mcpDelegation) {
       return res.status(403).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
     }
@@ -4129,9 +4130,9 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
     }
   };
 
-  router.post('/api/sessions/:id/platform-issue/:msgId/confirm', (req, res) =>
+  router.post('/api/sessions/:id/platform-issue/:msgId/confirm', sameOriginBrowserOnly, (req, res) =>
     platformIssueDraftAction(req, res, 'confirm'));
-  router.post('/api/sessions/:id/platform-issue/:msgId/dismiss', (req, res) =>
+  router.post('/api/sessions/:id/platform-issue/:msgId/dismiss', sameOriginBrowserOnly, (req, res) =>
     platformIssueDraftAction(req, res, 'dismiss'));
 
   // Archive a session. Reversible: tears down staging + worker and closes
@@ -4139,7 +4140,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // within the retention window (a background GC purges the volume only
   // after ARCHIVED_RETENTION_MS). Use the service so the stale-PR sweeper
   // archives the exact same way.
-  router.post('/api/sessions/:id/archive', async (req, res) => {
+  router.post('/api/sessions/:id/archive', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
@@ -4179,7 +4180,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   no longer claim it, and a later promote puts it up for a fresh vote.
   //   Owner-scoped like /archive. All the safety lives in
   //   sessionLifecycle.unpromoteSession's single guarded UPDATE.
-  router.post('/api/sessions/:id/unpromote', async (req, res) => {
+  router.post('/api/sessions/:id/unpromote', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       if (!Number.isInteger(sessionId) || sessionId <= 0) {
@@ -4218,7 +4219,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   the warm worker. Only allowed on an idle, owned, non-archived
   //   session. For codex_openrouter the caller must have a valid
   //   OpenRouter credential.
-  router.post('/api/sessions/:id/reset-agent-context', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/reset-agent-context', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { backend, model, reasoningEffort } = req.body || {};
@@ -4377,7 +4378,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   the UI then auto-resumes via the normal path. If the CC volume was
   //   already GC'd (cc_purged), the restore still works but Claude starts
   //   fresh — we surface that so the UI can warn.
-  router.post('/api/sessions/:id/unarchive', async (req, res) => {
+  router.post('/api/sessions/:id/unarchive', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       if (req.cliAuthenticated) {
@@ -4416,7 +4417,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   transcript_shared_at untouched, so today's behaviour is unchanged
   //   byte for byte: making a session visible never publishes the chat by
   //   accident.
-  router.post('/api/sessions/:id/share', async (req, res) => {
+  router.post('/api/sessions/:id/share', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const withTranscript = !!(req.body && req.body.transcript);
@@ -4451,7 +4452,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // Unshare clears BOTH stamps. Making a session private again must never
   // leave the transcript readable behind a card nobody can see any more —
   // the reader could still hold (or bookmark) the session id.
-  router.post('/api/sessions/:id/unshare', async (req, res) => {
+  router.post('/api/sessions/:id/unshare', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -4482,7 +4483,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   two flags can never disagree in the "readable but invisible"
   //   direction. Both stamps use COALESCE so re-sharing is idempotent and
   //   doesn't reshuffle the board's oldest-shared-first ordering.
-  router.post('/api/sessions/:id/share-transcript', async (req, res) => {
+  router.post('/api/sessions/:id/share-transcript', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -4518,7 +4519,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // board with its discussion thread intact. Deliberately NOT
   // status-filtered: revoking must work on any row whose flag is set,
   // including one that has since been promoted or archived.
-  router.post('/api/sessions/:id/unshare-transcript', async (req, res) => {
+  router.post('/api/sessions/:id/unshare-transcript', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
@@ -4640,7 +4641,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   work starts in an agent session, and a shell cached before the switch
   //   is told so rather than getting a 404. The transcript read above
   //   reports can_fork false, so no current page offers it.
-  router.post('/api/sessions/:id/fork', (req, res) => {
+  router.post('/api/sessions/:id/fork', sameOriginBrowserOnly, (req, res) => {
     res.status(410).json({ error: CLASSIC_SESSIONS_RETIRED, code: 'agent_sessions_only' });
   });
 
@@ -4661,7 +4662,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //   Idempotent on the status side — re-pausing a paused session is
   //   a no-op rather than an error, since the state we'd land in is
   //   the same.
-  router.post('/api/sessions/:id/pause', async (req, res) => {
+  router.post('/api/sessions/:id/pause', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
@@ -4725,7 +4726,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //       fall back to a 429.
   //   We deliberately do NOT pre-spawn the worker here; first-turn lazy
   //   boot is what every other path uses.
-  router.post('/api/sessions/:id/resume', async (req, res) => {
+  router.post('/api/sessions/:id/resume', sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const resumed = await resumePausedSession({ pool, config, user: req.user, sessionId });
@@ -4749,7 +4750,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //     clean          — merged + pushed without LLM
   //     resolved       — CC resolved conflicts; merged + pushed
   //     conflict       — CC couldn't resolve; merge aborted, no push
-  router.post('/api/sessions/:id/sync-main', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/sync-main', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
 
@@ -5359,7 +5360,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // full-spec affordance; the underlying chat_messages row carries
   // metadata.specShare so the renderer knows to upgrade it from a
   // plain system line.
-  router.post('/api/sessions/:id/specs/:version/share', async (req, res) => {
+  router.post('/api/sessions/:id/specs/:version/share', sameOriginBrowserOnly, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     const version = parseInt(req.params.version, 10);
     if (Number.isNaN(sessionId) || Number.isNaN(version)) {
@@ -5807,7 +5808,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // the CC phase. Deliberately does NOT abort Mayor phase-2 — by then
   // the commit + PR + staging already exist, and stopping the summary
   // would leave the user without context for changes that are real.
-  router.post('/api/sessions/:id/stop', async (req, res) => {
+  router.post('/api/sessions/:id/stop', sameOriginBrowserOnly, async (req, res) => {
     const sessionId = parseInt(req.params.id, 10);
     if (Number.isNaN(sessionId)) return res.status(400).json({ error: 'Bad session id' });
     try {
@@ -5988,7 +5989,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   });
 
   // Deploy staging for a session
-  router.post('/api/sessions/:id/deploy-staging', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/deploy-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       // #183: headless rows are excluded — their staging is built by the
       // headless runner itself; humans deploy staging from a CLONED session.
@@ -6178,7 +6179,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   //
   // The sessionCollabGuard above already gates this to app members; the
   // ownership check below scopes WHO may trigger a rebuild.
-  router.post('/api/sessions/:id/ensure-staging', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/ensure-staging', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const session = await loadPreviewSession(sessionId);
@@ -6262,7 +6263,7 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // gone, else re-run against the live container. Progress flows through the
   // existing checks_ready / staging_ready broadcasts so the badge updates in
   // place. Owner + admins only.
-  router.post('/api/sessions/:id/recheck', drainGuard, async (req, res) => {
+  router.post('/api/sessions/:id/recheck', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(

@@ -65,6 +65,7 @@ const {
 } = require('./home-panels');
 const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 const { MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE } = require('./workshop-overview');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // ─── Field limits ──────────────────────────────────────────────────────
 //
@@ -1069,6 +1070,7 @@ function profileRoutes(config) {
     '/api/me/avatar',
     requireUser,
     profileWriteLimiter,
+    sameOriginBrowserOnly,
     async (req, res) => {
       try {
         await pool.query('DELETE FROM user_avatars WHERE user_id = $1', [req.user.id]);

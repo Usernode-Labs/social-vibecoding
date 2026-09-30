@@ -8,6 +8,7 @@ const mobilePushPreferences = require('../services/mobile-push-preferences');
 const notificationPreferences = require('../services/notification-preferences');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -512,7 +513,7 @@ function notificationsRoutes(config) {
   // defaults again" button. A DELETE of the overrides rather than writing
   // them all to the default value, so the app goes back to INHERITING and
   // keeps doing so if a default ever changes.
-  router.delete('/api/apps/:slug/notification-preferences', async (req, res) => {
+  router.delete('/api/apps/:slug/notification-preferences', sameOriginBrowserOnly, async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
@@ -702,7 +703,7 @@ function notificationsRoutes(config) {
     }
   });
 
-  router.post('/api/notifications/read', async (req, res) => {
+  router.post('/api/notifications/read', sameOriginBrowserOnly, async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     res.set('Cache-Control', 'private, no-store');
     const {

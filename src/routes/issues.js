@@ -32,6 +32,7 @@ const illustrationProposals = require('../services/illustration-proposals');
 // points at can never disagree about whether an agent is actually running.
 const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
 // #2089: the board search's server half. Shorter queries are not asked
 // (the browser applies the same floor); the hit list is capped because the
@@ -2515,7 +2516,7 @@ function issueRoutes(config) {
   //   409 conflict  — viewer already has an open bounty on this issue
   //   429 too_many  — shared weekly kudos allowance exhausted
   // ----------------------------------------------------------------
-  router.post('/api/apps/:slug/issues/:number/bounty', async (req, res) => {
+  router.post('/api/apps/:slug/issues/:number/bounty', sameOriginBrowserOnly, async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
       return res.status(400).json({ error: 'Invalid issue number' });
@@ -2602,7 +2603,7 @@ function issueRoutes(config) {
   // no GitHub write. Expiry is a read-time filter in the /github-issues
   // enrichment (ISSUE_CLAIM_TTL_DAYS).
   // ----------------------------------------------------------------
-  router.post('/api/apps/:slug/github-issues/:number/claim', async (req, res) => {
+  router.post('/api/apps/:slug/github-issues/:number/claim', sameOriginBrowserOnly, async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
       return res.status(400).json({ error: 'Invalid issue number' });
@@ -2663,7 +2664,7 @@ function issueRoutes(config) {
   // and forth between users. Idempotent: clearing a nonexistent (or
   // already-expired-and-replaced) claim is a soft 200.
   // ----------------------------------------------------------------
-  router.delete('/api/apps/:slug/github-issues/:number/claim', async (req, res) => {
+  router.delete('/api/apps/:slug/github-issues/:number/claim', sameOriginBrowserOnly, async (req, res) => {
     const issueNumber = parseInt(req.params.number, 10);
     if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
       return res.status(400).json({ error: 'Invalid issue number' });
@@ -2724,7 +2725,7 @@ function issueRoutes(config) {
   // trivially satisfied by the admin acting). Same visibility rules:
   // the chat message + GitHub comment name the admin so the override
   // is never silent.
-  router.post('/api/issues/:id/admin-apply', async (req, res) => {
+  router.post('/api/issues/:id/admin-apply', sameOriginBrowserOnly, async (req, res) => {
     const issueId = positiveIssueId(req.params.id);
     if (!issueId) return res.status(404).json({ error: 'Issue not found' });
     try {
@@ -2804,7 +2805,7 @@ function issueRoutes(config) {
   // PR-proposal equivalent is POST /api/sessions/:id/archive). Only the
   // proposal's creator may withdraw, and only while it is still open, so a
   // stale double-tap or a race against a passing vote is a harmless no-op.
-  router.post('/api/issues/:id/close', async (req, res) => {
+  router.post('/api/issues/:id/close', sameOriginBrowserOnly, async (req, res) => {
     const issueId = positiveIssueId(req.params.id);
     if (!issueId) return res.status(404).json({ error: 'Issue not found' });
     try {
