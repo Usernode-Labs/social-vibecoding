@@ -16641,6 +16641,10 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    block can swap them for a panel's slide and a popover's pop without a
    second reduced-motion query of its own. */
 .dev-ws-sheet-modal { --ws-sheet-in: dev-ws-sheet-up; --ws-sheet-out: dev-ws-sheet-down; }
+/* A leaving sheet catches nothing: its scrim (transparent and full-screen
+   behind the wide popover) and its buttons would otherwise swallow the next
+   tap for the 220ms it stays mounted. Outside the motion query on purpose. */
+.dev-ws-sheet-modal[data-ws-leaving] { pointer-events: none; }
 @media (prefers-reduced-motion: no-preference) {
   .dev-ws-sheet-modal > .dev-ws-scrim { animation: dev-ws-scrim-in .22s ease-out both; }
   .dev-ws-sheet-modal > .dev-ws-sheet-card {
