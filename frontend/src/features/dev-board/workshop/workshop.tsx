@@ -82,7 +82,7 @@ import { useWorkshopGroup } from './group-mode-store';
 import { AppWorkshopScope } from '../../workshop/workshop-chrome';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
-import { ChannelCard, NeedsCard, WorkshopDoor, YourWorkCard } from './hub-cards';
+import { ChannelCard, NeedsCard, NothingToVote, owesVote, WorkshopDoor, YourWorkCard } from './hub-cards';
 import { SinceSummaryCard } from './since-summary-card';
 import { readAskStream } from './ask-stream';
 import {
@@ -3627,7 +3627,8 @@ export function DevWorkshop(): ReactNode {
       {/* ── The hub, top to bottom: what landed, yours, the room, the doors ──
           What landed since you were last here, in a sentence or two, then
           your own work when you have some, then the channel, then a door to
-          Needs you when something waits and one to the Workshop. See
+          Needs you when a vote is owed (a quiet "Nothing more to vote on"
+          line when none is) and one to the Workshop. See
           ./since-summary-card.tsx and ./hub-cards.tsx. */}
       {slug ? <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} /> : null}
       {v.mine && v.mine.rows.length ? (
@@ -3645,7 +3646,9 @@ export function DevWorkshop(): ReactNode {
           card, and a Share it card at the foot instead, which is how it
           grows (./community-card.tsx ShareItCard). */}
       {slug && community?.audience !== 'solo' ? <ChannelCard slug={slug} name={app.name || slug} data={community} /> : null}
-      {v.queue.length ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} /> : null}
+      {owesVote(v.queue)
+        ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
+        : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
       <WorkshopDoor open={v.dashboard ? v.dashboard.open : 0} filtered={!!v.meta.filtered} onOpen={() => openTab('workshop')} />
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
       </>
