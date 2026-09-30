@@ -32,25 +32,27 @@ const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
 const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 
-async function get(user, id = 123) {
+async function get(user, id = 123, qs = '') {
   const app = express();
   app.use((req, _res, next) => { req.user = user; next(); });
   app.use(sessionRoutes({}));
   const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
   try {
-    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/${id}/changed-files`);
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/sessions/${id}/changed-files${qs}`);
     return { status: response.status, body: await response.json() };
   } finally { await new Promise((resolve) => server.close(resolve)); }
 }
 
-let branchSeq = 0;
+let seq = 0;
+const sha = (n) => n.toString(16).padStart(40, '0');
 function reset(patch = {}) {
   queries = []; compareCalls = [];
-  // A fresh branch per test, so the route's short cache never answers for
-  // an earlier test's compare.
-  branchSeq += 1;
+  // A fresh reviewed head per test, so the route's short cache never answers
+  // for an earlier test's compare.
+  seq += 1;
   session = { id: 123, user_id: 42, status: 'promoted', shared_at: null, source: null,
-    branch_name: `usernode/change-${branchSeq}`, repo_url: 'https://github.com/acme/widgets', ...patch };
+    branch_name: `usernode/change-${seq}`, reviewed_head_sha: sha(seq),
+    repo_url: 'https://github.com/acme/widgets', ...patch };
   compare = async () => ({
     files: [
       { filename: 'src/a.js', status: 'modified', additions: 3, deletions: 1 },
@@ -69,7 +71,7 @@ test('a caller who may not view the session gets the same 404 as a missing one, 
   assert.equal((await get({ id: 42 })).status, 404);
 });
 
-test('a viewer gets the paths and counts, compared against main', async () => {
+test('a viewer gets the paths and counts, compared against main at the reviewed commit', async () => {
   reset();
   const result = await get({ id: 99 });
   assert.equal(result.status, 200);
@@ -77,7 +79,7 @@ test('a viewer gets the paths and counts, compared against main', async () => {
   assert.equal(result.body.additions, 13);
   assert.equal(result.body.deletions, 1);
   assert.equal(result.body.complete, true);
-  assert.deepEqual(compareCalls[0], ['acme', 'widgets', `main...${session.branch_name}`]);
+  assert.deepEqual(compareCalls[0], ['acme', 'widgets', `main...${session.reviewed_head_sha}`]);
   assert.doesNotMatch(JSON.stringify(result.body), /patch/);
   const projection = queries.find((sql) => sql.includes('FROM chat_sessions cs'));
   assert.doesNotMatch(projection, /cs\.\*|spec_md|chat_session_messages/);
@@ -98,6 +100,61 @@ test('the list stops at 300 files and says it is incomplete', async () => {
   const result = await get({ id: 42 });
   assert.equal(result.body.files.length, 300);
   assert.equal(result.body.complete, false);
+});
+
+test('a new revision within the cache minute is compared afresh, against its own commit', async () => {
+  reset();
+  assert.equal((await get({ id: 42 })).status, 200);
+  assert.equal((await get({ id: 42 })).status, 200);
+  assert.equal(compareCalls.length, 1, 'the same commit reuses its compare');
+  const moved = sha(10_000 + seq);
+  session.reviewed_head_sha = moved;
+  compare = async () => ({ files: [{ filename: 'new.js', status: 'added', additions: 1, deletions: 0 }], additions: 1, deletions: 0, complete: true });
+  const result = await get({ id: 42 });
+  assert.equal(compareCalls.length, 2);
+  assert.deepEqual(compareCalls[1], ['acme', 'widgets', `main...${moved}`]);
+  assert.deepEqual(result.body.files.map((f) => f.filename), ['new.js']);
+});
+
+test('without a reviewed head the checked commit pins it; only an underway change with no commit reads its branch, uncached', async () => {
+  reset({ reviewed_head_sha: null, checks_commit_sha: sha(20_000 + seq) });
+  await get({ id: 42 });
+  assert.equal(compareCalls[0][2], `main...${session.checks_commit_sha}`);
+
+  reset({ reviewed_head_sha: null });
+  assert.deepEqual((await get({ id: 42 })).body, { files: null }, 'a proposal never falls back to its mutable branch');
+  assert.equal(compareCalls.length, 0);
+
+  reset({ status: 'active', reviewed_head_sha: null });
+  await get({ id: 42 });
+  await get({ id: 42 });
+  assert.deepEqual(compareCalls.map((c) => c[2]), [`main...${session.branch_name}`, `main...${session.branch_name}`]);
+});
+
+test('staging: a native session without GitHub lists nothing; demo fixtures and imported PRs use the mock', async () => {
+  const previous = process.env.USERNODE_ENV;
+  const enabled = github.isEnabled;
+  try {
+    process.env.USERNODE_ENV = 'staging';
+    github.isEnabled = () => false;
+    reset();
+    assert.deepEqual((await get({ id: 42 })).body, { files: null });
+    assert.equal(compareCalls.length, 0);
+
+    reset({ source: 'imported', reviewed_head_sha: null, imported_pr_head_sha: sha(30_000 + seq) });
+    const imported = await get({ id: 42 });
+    assert.deepEqual(imported.body.files.map((f) => f.filename), ['public/index.html', 'src/routes/example.js', 'README.md']);
+    assert.equal(compareCalls.length, 0, 'the mock answered, not the real client');
+
+    reset(); session = null;
+    const demo = await get({ id: 42 }, 990101, '?demo=1');
+    assert.equal(demo.status, 200);
+    assert.equal(demo.body.files.length, 3);
+    assert.equal((await get({ id: 42 }, 990101)).status, 404, 'without ?demo=1 a fixture id is just a missing session');
+  } finally {
+    github.isEnabled = enabled;
+    if (previous === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = previous;
+  }
 });
 
 test('the Files changed sheet: collapsed, counted, 50 rows, then a pointer to GitHub', () => {

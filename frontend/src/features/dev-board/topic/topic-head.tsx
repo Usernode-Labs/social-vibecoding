@@ -1337,7 +1337,7 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
         <>
           <ChangeHero id={id ? Number(id) : null} card={card} body={body} linkedIssues={linkedIssues} onIssuesSaved={applyLinkedIssues} />
           {body.steps ? <StepsSheet s={body.steps} help={!!(body.details && body.details.help)} /> : null}
-          {id ? <ChangedFilesSheet id={Number(id)} head={String(session?.checks_commit_sha || session?.imported_pr_head_sha || '')} /> : null}
+          {id ? <ChangedFilesSheet id={Number(id)} head={String(session?.reviewed_head_sha || session?.checks_commit_sha || session?.imported_pr_head_sha || session?.handoff_head_sha || '')} /> : null}
           {/* #2605: a change's page carries NO build surface — not the Build
               sheet, and not the published chat's disclosure that used to sit
               beside it. Both are the dev session page's now, behind the
