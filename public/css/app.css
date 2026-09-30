@@ -5828,10 +5828,13 @@ body:has(#platform-header.hidden) #app-frame-host {
   padding-left: 8px;
 }
 
+/* #3415: 12px on each side is the inset .dc-msg and the transcript's cards
+   (.dc-pr-card, .dc-cc-attached, .dc-failure) already use, so a step's check
+   lines up with the reply label and card edges instead of touching the pane. */
 .dc-status-line {
   font-size: 11px;
   color: var(--text-muted);
-  padding: 2px 0;
+  padding: 2px 12px;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -9277,7 +9280,7 @@ a.gc-event-box:focus-visible { outline: 2px solid var(--accent); outline-offset:
    out of its own row and into the ladder line above — the overlap that was
    reported. 6px is exactly the travel, so the dot lands flush with the row's
    top edge at the peak and nothing crosses it. */
-.dc-activity-line { padding: 0 0 4px; }
+.dc-activity-line { padding: 0 12px 4px; }
 .dc-activity-line .dc-streaming-dots { padding: 6px 0 2px; }
 .dc-activity-label { font-size: 11px; color: var(--text-muted); }
 

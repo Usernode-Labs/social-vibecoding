@@ -234,3 +234,31 @@ test('#2989: Enter and Space on the row open the session; keys from a child do n
     if (prev === undefined) delete globalThis.window; else globalThis.window = prev;
   }
 });
+
+// ── A row action that throws still gives its button back ──────────────
+//
+// The button shows its busy label ("...") while the named DevChat method
+// runs. It used to set the answer straight after the await, so a method that
+// threw left it on "..." and disabled until the next publish, which a failed
+// call never sends.
+
+test('an action button goes back to its label when its handler throws', async () => {
+  const m = mod();
+  const prev = globalThis.window;
+  const prevWarn = console.warn;
+  const labels = [];
+  console.warn = () => {};
+  try {
+    globalThis.window = { DevChat: { _boom: async () => { throw new Error('offline'); } } };
+    await m.runSessionAction({ fn: '_boom', args: [1], busy: '...' }, (l) => labels.push(l));
+    assert.deepEqual(labels, ['...', null], 'busy, then the label back — and nothing thrown');
+
+    labels.length = 0;
+    globalThis.window = { DevChat: { _ok: async () => 'Worker freed' } };
+    await m.runSessionAction({ fn: '_ok', args: [], busy: 'Freeing…' }, (l) => labels.push(l));
+    assert.deepEqual(labels, ['Freeing…', 'Worker freed'], 'a normal answer is still flashed');
+  } finally {
+    console.warn = prevWarn;
+    if (prev === undefined) delete globalThis.window; else globalThis.window = prev;
+  }
+});

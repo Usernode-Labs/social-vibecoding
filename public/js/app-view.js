@@ -14542,8 +14542,16 @@ const AppView = {
     AppView._voteRosterInFlight.add(sessionId);
     const publish = (view) => {
       AppView._voteRosterInFlight.delete(sessionId);
+      const before = (AppView._voteRoster[sessionId]?.earlierVoters || []).join('\n');
       AppView._voteRoster[sessionId] = view;
       AppView._renderTopicHead();
+      // #3411: the Discussion marks the vote lines this roster says no longer
+      // count, so repaint it when that set moves (and only then).
+      const a = typeof GroupChat !== 'undefined' ? GroupChat.activeThread : null;
+      if (a && a.type === 'session' && String(a.ref) === String(sessionId)
+          && before !== (view.earlierVoters || []).join('\n')) {
+        GroupChat.renderThread();
+      }
     };
     try {
       const res = await fetch(`/api/sessions/${sessionId}/votes`);
@@ -14597,6 +14605,9 @@ const AppView = {
         needs,
         reasons,
         earlier,
+        // The same people by name, which the Discussion reads to mark their
+        // vote lines (GroupChat._votedOnEarlierVersion).
+        earlierVoters: [...earlierYes, ...earlierNo],
       });
     } catch {
       publish({ phase: 'hidden' });
