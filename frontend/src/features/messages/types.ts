@@ -215,6 +215,14 @@ export interface MessagesRoute {
    * scrolled to and flashes. Cleared once shown.
    */
   focusMessageId: number | null;
+  /**
+   * #3494: the conversation is open IN ITS COMMUNITY'S PAGE, not on this
+   * screen — #general, on Homeroom's Discussion tab (`embed` in ./store.ts).
+   * `open` stays false while it is, so nothing that asks whether Messages is
+   * on screen (its chrome, Back, the router) hears yes. Optional so a
+   * fixture without it reads as false.
+   */
+  embedded?: boolean;
 }
 
 /** An agent thread of the inbox (#2813). See `MessagesRoute.agent`. */
