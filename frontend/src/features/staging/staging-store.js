@@ -33,7 +33,7 @@ import { createStore } from '../../lib/plain-store.js';
  * @typedef {{ top: number, left: number, width: number, height: number }} DockRect
  * @typedef {{
  *   open: boolean, mode: string, dockRect: DockRect | null, urlLabel: string, background: string,
- *   loaderVisible: boolean, loaderTitle: string, loaderSub: string, loaderRetry: boolean,
+ *   loaderVisible: boolean, loaderTitle: string, loaderSub: string, loaderRetry: boolean, loaderRetryLabel: string,
  *   testBtnHidden: boolean, testBtnTitle: string, testPanelHidden: boolean,
  *   testHtml: string, fsBtnHidden: boolean, fsBtnText: string, fsBtnTitle: string,
  * }} StagingState
@@ -59,6 +59,8 @@ export const stagingStore = createStore(/** @type {StagingState} */ ({
   loaderTitle: 'Opening preview…',
   loaderSub: '',
   loaderRetry: false,
+  /** #3413: "Retry preview" after a failed build; the shipped markup's text otherwise. */
+  loaderRetryLabel: 'Retry sign-in',
   testBtnHidden: true,
   testBtnTitle: '',
   testPanelHidden: true,

@@ -167,6 +167,85 @@ test('ensureStaging shows the demo copy and never opens when {unavailable,demo}'
   assert.match(dom.els['staging-loader-sub'].textContent, /demo/i, 'explains it is the demo env');
 });
 
+// ── #3413: a failed preview keeps a reachable retry ─────────────────────
+//
+// The terminal failure states leave the full-screen loader over the page, and
+// the card's own "Retry preview" (swapToStagingForSession → ensureStaging) sat
+// under it. The loader now carries that same action, labelled for a preview,
+// for exactly the viewers the card offers it to (not read-only ones).
+
+test('#3413 a failed rebuild keeps its reason and offers "Retry preview" that re-runs the same open', async () => {
+  const bodies = [{ status: 'rebuilding' }, { status: 'ready', url: 'https://rebuilt.example', verified: true }];
+  let requests = 0;
+  const endpoints = [];
+  const { AppView, dom, swaps } = makeAppView(async (url) => {
+    endpoints.push(url);
+    return { ok: true, json: async () => bodies[requests++] };
+  });
+  await AppView.ensureStaging(7, 'https://stale.example', { md: 'do x', path: '/x' }, { jump: true });
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'no retry while the rebuild runs');
+  AppView.onStagingRebuildResult(7, { failed: true, error: 'Container config error: bad port' });
+  assert.match(dom.els['staging-loader-title'].textContent, /couldn|n.t be rebuilt/i, 'failure title stays up');
+  assert.match(dom.els['staging-loader-sub'].textContent, /Container config error/, 'failure reason stays up');
+  assert.equal(dom.els['staging-loader'].classList._hidden, false);
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, 'retry is visible inside the loader');
+  assert.equal(dom.els['staging-retry-btn'].textContent, 'Retry preview');
+
+  await AppView._staging()._handlers.onRetry();
+  assert.deepEqual(endpoints, ['/api/sessions/7/ensure-staging', '/api/sessions/7/ensure-staging'],
+    'retry asks the same collaborator ensure route the card button does');
+  assert.equal(swaps.length, 1, 'the retried open resolves normally');
+  assert.equal(swaps[0].url, 'https://rebuilt.example');
+  assert.equal(swaps[0].opts.jump, true, 'carries the original open arguments');
+  assert.deepEqual(swaps[0].testing, { md: 'do x', path: '/x' });
+  assert.equal(dom.els['staging-retry-btn'].classList._hidden, true, 'the retry hides once the open restarts');
+});
+
+test('#3413 an ensure-staging error and a network error both offer "Retry preview"', async () => {
+  for (const fail of ['http', 'network']) {
+    let calls = 0;
+    const { AppView, dom, swaps } = makeAppView(async () => {
+      if (++calls === 1) {
+        if (fail === 'network') throw new Error('offline');
+        return { ok: false, json: async () => ({ error: 'Staging build failed: invalid container config' }) };
+      }
+      return { ok: true, json: async () => ({ status: 'ready', url: 'https://live.example', verified: true }) };
+    });
+    await AppView.ensureStaging(7, '', null, {});
+    assert.match(dom.els['staging-loader-title'].textContent, /unavailable/i, fail);
+    assert.match(dom.els['staging-loader-sub'].textContent, fail === 'network' ? /network error/i : /invalid container config/, fail);
+    assert.equal(dom.els['staging-retry-btn'].classList._hidden, false, fail);
+    assert.equal(dom.els['staging-retry-btn'].textContent, 'Retry preview', fail);
+    await AppView._staging()._handlers.onRetry();
+    assert.equal(calls, 2, fail);
+    assert.equal(swaps.length, 1, fail);
+  }
+});
+
+test('#3413 read-only viewers and the demo environment get no retry (mirrors the card)', async () => {
+  const ro = makeAppView(async () => ({ ok: true, json: async () => ({ status: 'unavailable', reason: 'missing' }) }));
+  await ro.AppView.ensureStaging(7, '', null, { readOnly: true });
+  assert.match(ro.dom.els['staging-loader-sub'].textContent, /collaborator can rebuild/i);
+  assert.equal(ro.dom.els['staging-retry-btn'].classList._hidden, true, 'read-only: no retry');
+
+  const demo = makeAppView(okJson({ status: 'unavailable', reason: 'demo' }));
+  await demo.AppView.ensureStaging(7, '', null, {});
+  assert.equal(demo.dom.els['staging-retry-btn'].classList._hidden, true, 'demo: a retry could only loop');
+});
+
+test('#3413 a stale retry (the user moved on) does nothing', async () => {
+  let calls = 0;
+  const { AppView } = makeAppView(async () => {
+    calls++;
+    return { ok: false, json: async () => ({ error: 'boom' }) };
+  });
+  await AppView.ensureStaging(7, '', null, {});
+  const staleRetry = AppView._staging()._handlers.onRetry;
+  AppView._stagingLoadId++;
+  await staleRetry();
+  assert.equal(calls, 1, 'no second ensure request from a superseded open');
+});
+
 // ── #816: the rebuild estimate is reserved for actual rebuilds ───────────
 //
 // The reported bug in one assertion: clicking Preview on a live preview
@@ -393,6 +472,7 @@ test('#1993 failed token request exposes a retry that obtains a new token', asyn
   assert.equal(dom.els['staging-iframe'].src, '');
   assert.match(dom.els['staging-loader-title'].textContent, /could not sign in/i);
   assert.equal(dom.els['staging-retry-btn'].classList._hidden, false);
+  assert.equal(dom.els['staging-retry-btn'].textContent, 'Retry sign-in', '#3413: the sign-in path keeps its label');
   await AppView._staging()._handlers.onRetry();
   assert.equal(mints, 2);
   assert.equal(dom.els['staging-iframe'].src, 'https://live.example/?demo=1&token=retry-token&un-theme=light');
