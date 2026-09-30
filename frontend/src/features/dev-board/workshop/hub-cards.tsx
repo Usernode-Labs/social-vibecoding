@@ -98,7 +98,9 @@ export function ChannelCard({ slug, name, data }: {
                 <Avatar name={who} />
                 <span className="min-w-0 flex-1">
                   <span className="dev-ws-hub-msg-head">
-                    <span className="dev-ws-hub-msg-by">{m.by ? `@${m.by}` : name}</span>
+                    {m.by
+                      ? <a className="dev-ws-hub-msg-by profile-name-link" href={`#profile/${encodeURIComponent(m.by)}`}>{`@${m.by}`}</a>
+                      : <span className="dev-ws-hub-msg-by">{name}</span>}
                     {when ? <time dateTime={m.created_at} title={when.title}>{when.text}</time> : null}
                   </span>
                   <span className="dev-ws-hub-msg-text">{m.content}</span>

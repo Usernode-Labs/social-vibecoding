@@ -1452,6 +1452,22 @@ async function seedStagingGeneralChannel(pool) {
               (902784, 'staging-demo-general-lin', 'staging-demo-not-a-login')
        ON CONFLICT DO NOTHING`
     );
+    // A tap on one of these names opens their profile, so the two speakers
+    // get a published page of their own: without `profile_published` the
+    // #profile/<name> route answers 404 and the tap lands on "This profile is
+    // unavailable." Staging-only, and never the viewer's own row.
+    await pool.query(
+      `UPDATE users
+          SET profile_published = TRUE,
+              display_name = COALESCE(display_name, 'Staging demo Ada')
+        WHERE id = 902783`
+    );
+    await pool.query(
+      `UPDATE users
+          SET profile_published = TRUE,
+              display_name = COALESCE(display_name, 'Staging demo Lin')
+        WHERE id = 902784`
+    );
     const room = await pool.query(
       `SELECT id FROM conversations WHERE channel_key = 'general' AND kind = 'channel'`
     );

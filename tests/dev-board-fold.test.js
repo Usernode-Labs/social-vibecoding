@@ -1337,9 +1337,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // in the same section via :has(), and the card's description as
   // expectText; its name and path are unchanged.
   //
+  // 820 → 824: +4 (tappable chat names): the sender name is a link to that
+  // person's profile in the Messages transcript (#general and a direct
+  // conversation), the direct header, and the hub channel card's recent list;
+  // plus one check that a name opens the profile page. Four routes with
+  // nothing already declared on them to fold into, so MAX_DECLARED_TESTS goes
+  // 840 → 850 (services/app-manifest.js) to keep clear of the 20-slot floor.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 820);
+  checkCap.assertPinned(DAPP.tests.length, 824);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

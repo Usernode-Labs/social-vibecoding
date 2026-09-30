@@ -3095,6 +3095,28 @@
       "expectText": "#general"
     },
     {
+      "name": "#1790494793459: a chat names who said it as a link to that person's profile, in #general",
+      "path": "/?demo=1#messages/910004",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-channel .messages-message-head a.messages-message-author.profile-name-link[href=\"#profile/ada\"]",
+      "expectText": "@ada"
+    },
+    {
+      "name": "#1790494793459: the same in a direct conversation, and its header names the person as a link too",
+      "path": "/?demo=1#messages/910001",
+      "expectSelector": "#messages-screen .messages-thread-direct #messages-message-9100100 .messages-message-head a.profile-name-link[href=\"#profile/ada\"], #messages-screen .messages-thread-header a.profile-name-link[href=\"#profile/ada\"] > .messages-thread-name"
+    },
+    {
+      "name": "#1790494793459: a person's name opens their profile page",
+      "path": "/?demo=1#profile/ada",
+      "expectSelector": "#profile-screen:not(.hidden) #public-profile-card"
+    },
+    {
+      "name": "#1790494793459: the hub's channel card names each speaker as a link to their profile",
+      "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
+      "expectSelector": "a.dev-ws-hub-msg-by[href^=\"#profile/\"]",
+      "expectText": "@staging-demo-general-ada"
+    },
+    {
       "name": "#2783: #name in a message is a link to that channel",
       "path": "/?demo=1#messages/910004",
       "expectSelector": "#messages-message-9100404 .messages-markdown a.gc-channel-ref[href=\"#messages/channel/general\"]",

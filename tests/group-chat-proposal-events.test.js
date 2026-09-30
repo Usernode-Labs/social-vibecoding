@@ -165,7 +165,7 @@ test('every chat draws a person\'s message as a named row — no bubble, and you
   const theirs = renderToHtml(createElement(MessageRow, { msg: human('hello there') }));
   assert.match(theirs, /^<div class="flex gap-3 px-4 py-2 gc-msg" data-msg-id="\d+" data-username="alice">/);
   assert.match(theirs, /rounded-xl h-11 w-11[^>]*>A<\/span>/, 'the avatar');
-  assert.match(theirs, /<span>alice<\/span>/);
+  assert.match(theirs, /<a href="#profile\/alice" class="profile-name-link">alice<\/a>/, 'a person\'s name links to their profile');
   assert.match(theirs, /<div class="gc-msg-content"><p>hello there<\/p><\/div><div class="gc-reactions"/, 'the body flat, the reactions under it');
   assert.doesNotMatch(theirs, /gc-bubble/);
 
@@ -174,7 +174,7 @@ test('every chat draws a person\'s message as a named row — no bubble, and you
     'left, like everybody\'s, and still gc-msg-self for the reaction bar');
   assert.doesNotMatch(mine, /gc-bubble|flex-row-reverse|justify-end/);
   assert.match(mine, /rounded-xl h-11 w-11/, 'your own face beside your own words, as Discord draws it');
-  assert.match(mine, /<span class="gc-msg-username-self">evan<\/span>/);
+  assert.match(mine, /<a href="#profile\/evan" class="profile-name-link gc-msg-username-self">evan<\/a>/);
 });
 
 test('a continuation line drops the avatar and the name, and keeps its time in the gutter (#2783)', () => {

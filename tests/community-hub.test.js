@@ -105,6 +105,9 @@ test('the hub\'s channel card shows the last messages, what is new, and the way 
   assert.match(html, /<a href="#messages\/app\/garden" class="dev-ws-hub-open un-touch-target" data-ws-channel-open="">Open/);
   const lines = [...html.matchAll(/class="dev-ws-hub-msg-text">([^<]*)</g)].map((m) => m[1]);
   assert.deepEqual(lines, ['Who has seeds?', 'See you Sunday'], 'oldest first, as a transcript reads');
+  // Each line names who said it, and the name is a link to their profile.
+  assert.match(html, /<a class="dev-ws-hub-msg-by profile-name-link" href="#profile\/ada">@ada<\/a>/, 'the speaker is a link to their profile');
+  assert.match(html, /<a class="dev-ws-hub-msg-by profile-name-link" href="#profile\/lin">@lin<\/a>/);
   // The composer posts from here, to the room's own write route.
   assert.doesNotMatch(html, /data-ws-channel-compose/, 'no write route, no composer');
   const withPost = renderToHtml(createElement(ChannelCard, {

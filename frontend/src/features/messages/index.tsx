@@ -1141,10 +1141,17 @@ function ThreadHeader() {
       {channel
         ? <span className="messages-inbox-tile messages-channel-tile messages-thread-channel-tile" aria-hidden="true">#</span>
         : <UserAvatar user={active.kind === 'direct' ? person : null} title={person?.username || active.title} shape="square" />}
-      <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
-        <div className="messages-thread-name">{active.kind === 'direct' && person ? `@${person.username}` : channel ? `#${active.channelKey || active.title}` : active.title}</div>
-        <div className="messages-thread-sub">{subtitle}</div>
-      </button>
+      {active.kind === 'direct' && person ? (
+        <a href={`#profile/${encodeURIComponent(person.username)}`} className="profile-name-link min-w-0 flex-1 text-left">
+          <div className="messages-thread-name">{`@${person.username}`}</div>
+          <div className="messages-thread-sub">{subtitle}</div>
+        </a>
+      ) : (
+        <button type="button" className="min-w-0 text-left flex-1" onClick={() => active.kind === 'group' && openDialog('messagesMembers')}>
+          <div className="messages-thread-name">{channel ? `#${active.channelKey || active.title}` : active.title}</div>
+          <div className="messages-thread-sub">{subtitle}</div>
+        </button>
+      )}
       {active.kind === 'group' ? <button type="button" onClick={() => openDialog('messagesMembers')} className="messages-thread-action" aria-label="Group members" title="Group members"><UserGroupIcon aria-hidden="true" /></button> : null}
       <FullWidthToggle />
       <div className="relative" ref={menuWrapRef}>

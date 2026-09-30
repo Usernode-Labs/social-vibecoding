@@ -300,7 +300,7 @@ test('the transcript row wears the chip and data-posted-via only for an agent ro
   assert.match(agent, /<div class="[^"]*\bgc-msg\b[^"]*"[^>]*data-posted-via="agent"/, 'the row carries the attribute');
   assert.match(agent, /<span class="[^"]*\bgc-posted-via\b[^"]*"[^>]*title="Posted by a coding agent on this person(?:'|&#x27;|&#39;)s behalf"[^>]*>.*?<svg[^>]*aria-hidden="true"[^>]*>.*?<\/svg>via agent<\/span>/s,
     'the chip: a sparkle glyph then the words');
-  assert.match(agent, /gc-msg-username|<span>evan<\/span>/, 'the author name is still drawn');
+  assert.match(agent, /<a href="#profile\/evan" class="profile-name-link">evan<\/a>/, 'the author name is drawn as a link to their profile');
   assert.match(agent, /bg-violet-50[^"]*text-violet-700/, 'shell palette, not the admin console’s');
   assert.ok(!/—/.test(agent), 'no em dash in platform copy');
 

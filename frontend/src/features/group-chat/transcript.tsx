@@ -719,7 +719,9 @@ export const MessageRow = memo(function MessageRow({ msg, grouped = false, surfa
       name={(
         <>
           {msg.unread ? <span className="gc-unread-dot" aria-label="Unread mention" /> : null}
-          <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{msg.username}</span>
+          {msg.senderId || msg.kind === 'message'
+            ? <a href={`#profile/${encodeURIComponent(msg.username)}`} className={`profile-name-link${msg.mine ? ' gc-msg-username-self' : ''}`}>{msg.username}</a>
+            : <span className={msg.mine ? 'gc-msg-username-self' : undefined}>{msg.username}</span>}
           <PostedViaChip via={msg.postedVia} className="ml-1.5" />
         </>
       )}
