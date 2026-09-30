@@ -6220,10 +6220,13 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       res.json({ status: 'rebuilding' });
 
       // Fire-and-forget. On success rebuildSessionStaging broadcasts
-      // `staging_ready` with the (new, commit-hash-bearing) URL, which the
-      // front end opens. On a no-op ('skipped' — branch not ahead of main)
-      // or a build failure (missing secrets, docker error) we broadcast
-      // `staging_failed` so the loader surfaces a concrete reason.
+      // `staging_ready` with the preview URL, which the front end opens. The
+      // URL is stable per session (services/caddy.js stagingHostname), so the
+      // rebuilt preview is the SAME origin the reviewer opened before, with
+      // that visit's service worker still installed. On a no-op ('skipped' —
+      // branch not ahead of main) or a build failure (missing secrets, docker
+      // error) we broadcast `staging_failed` so the loader surfaces a concrete
+      // reason.
       const { broadcastGlobal } = require('../services/ws');
       stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'preview-click' })
         .then((result) => {
