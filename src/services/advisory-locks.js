@@ -78,7 +78,11 @@ const HOMEROOM_BOT_LOCK = 991012;
 // Held from the GitHub merge call through its finalizer. Recovery may only
 // inspect/replay that proposal after the live owner has released it.
 const MERGE_FINALIZATION_LOCK = 991013;
+// Transaction-only fallback for actions on obligations whose chat_session was
+// hard-deleted. There is no row left to lock. Keyed by the original session ID;
+// participating machines must share it, rather than lock their own domains.
+const DELETED_SESSION_ACTION_LOCK = 991014;
 
 module.exports = { ADMIN_MUTATION_LOCK, EXTERNAL_TASK_SUBMIT_LOCK, PROPOSAL_UPDATE_LOCK, MERGE_FINALIZATION_LOCK, BUILD_RETENTION_LOCK,
   STAGING_BUILD_LOCK, PRODUCTION_BUILD_LOCK, STAGING_TEMPLATE_LOCK, PREVIEW_LIFECYCLE_LOCK,
-  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK };
+  VOTE_DIGEST_LOCK, CHALLENGE_SCORER_LOCK, WEEKLY_DIGEST_LOCK, HOMEROOM_BOT_LOCK, DELETED_SESSION_ACTION_LOCK };

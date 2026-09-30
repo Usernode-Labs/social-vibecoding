@@ -9607,13 +9607,17 @@ CREATE INDEX IF NOT EXISTS preview_flow_resources_pending_queue_idx
   ON preview_flow_resources (cleanup_queue_position)
   WHERE cleanup_completed_at IS NULL AND intent IS NOT NULL;
 CREATE TABLE IF NOT EXISTS preview_action_receipts (
-  session_id INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  -- Cleanup decisions and original receipts must outlive their aggregate,
+  -- just like the resource obligation. IDs must never be recycled.
+  session_id INTEGER NOT NULL CHECK (session_id > 0),
   action_id UUID NOT NULL,
   action_hash TEXT NOT NULL,
   decision JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (session_id, action_id)
 );
+-- Replays schema.sql on boot, including databases with the checkpoint schema.
+ALTER TABLE preview_action_receipts DROP CONSTRAINT IF EXISTS preview_action_receipts_session_id_fkey;
 CREATE TABLE IF NOT EXISTS preview_flow_decisions (
   id BIGSERIAL PRIMARY KEY,
   session_id INTEGER NOT NULL,

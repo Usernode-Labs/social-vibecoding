@@ -1,8 +1,9 @@
 'use strict';
 
 const { randomUUID, createHash } = require('node:crypto');
-const { parseAction, runtimeReceipt, resourceIntent } = require('./actions');
+const { parseAction, runtimeReceipt, resourceIntent, isResourceAction } = require('./actions');
 const { reduce, REDUCER_VERSION } = require('./reducer');
+const { DELETED_SESSION_ACTION_LOCK } = require('../advisory-locks');
 
 const normalizeSha = value => value ? String(value).toLowerCase() : null;
 function snapshot(row, flowRow, resourceRow) {
@@ -12,7 +13,10 @@ function snapshot(row, flowRow, resourceRow) {
       reviewedHeadSha: normalizeSha(row.reviewed_head_sha) } : null,
     flow: flowRow ? { id: flowRow.id, generation: Number(flowRow.generation),
       headSha: flowRow.head_sha, startedStatus: flowRow.started_status, state: flowRow.state } : null,
-    resource: resourceRow ? { cleanupStarted: !!resourceRow.cleanup_started_at } : null,
+    resource: resourceRow ? { flowId: resourceRow.flow_id, sessionId: resourceRow.session_id,
+      intent: resourceRow.intent, receipt: resourceRow.receipt, published: !!resourceRow.published_at,
+      cleanupStarted: !!resourceRow.cleanup_started_at, cleanupCompleted: !!resourceRow.cleanup_completed_at,
+      disposition: resourceRow.cleanup_disposition } : null,
     preview: row ? {
       stagingUrl: row.staging_url, containerId: row.staging_container_id,
       runtimeKind: row.staging_runtime_kind, runtimeName: row.staging_runtime_name,
@@ -21,16 +25,24 @@ function snapshot(row, flowRow, resourceRow) {
     } : null,
   };
 }
-async function readState(client, sessionId, lock = false) {
+async function readState(client, sessionId, lock = false, resourceFlowId = null) {
   // Always lock the aggregate first, before flow/receipt rows. The enclosing
   // legacy lifecycle also uses this order. This serializes independent Pods.
   const { rows } = lock
     ? await client.query('SELECT * FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId])
     : await client.query('SELECT * FROM chat_sessions WHERE id = $1', [sessionId]);
+  if (lock && !rows.length && resourceFlowId) {
+    // Orphan obligations still need original-decision deduplication, even when
+    // two actions target different resources of the deleted aggregate. Original
+    // session IDs must not be recycled. This does not fence external I/O.
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [DELETED_SESSION_ACTION_LOCK, sessionId]);
+  }
   const flow = await client.query(`SELECT f.* FROM preview_flow_heads h
     JOIN preview_flows f ON f.id = h.flow_id WHERE h.session_id = $1`, [sessionId]);
-  const resource = flow.rows.length ? await client.query(
-    'SELECT cleanup_started_at FROM preview_flow_resources WHERE flow_id = $1', [flow.rows[0].id]) : { rows: [] };
+  const target = resourceFlowId || flow.rows[0]?.id;
+  const resource = !target ? { rows: [] } : lock
+    ? await client.query('SELECT * FROM preview_flow_resources WHERE flow_id = $1 AND session_id = $2 FOR UPDATE', [target, sessionId])
+    : await client.query('SELECT * FROM preview_flow_resources WHERE flow_id = $1 AND session_id = $2', [target, sessionId]);
   return snapshot(rows[0], flow.rows[0], resource.rows[0]);
 }
 const digest = action => createHash('sha256').update(JSON.stringify(action)).digest('hex');
@@ -45,8 +57,8 @@ function createPreviewFlow(pool, {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const state = await readState(client, action.sessionId, true);
-      if (!state.session) throw Object.assign(new Error('Preview session does not exist'), { code: 'PREVIEW_SESSION_MISSING' });
+      const resourceFlowId = isResourceAction(action) ? action.flowId : null;
+      const state = await readState(client, action.sessionId, true, resourceFlowId);
       const { rows: replay } = await client.query(`SELECT action_hash, decision
         FROM preview_action_receipts WHERE session_id = $1 AND action_id = $2`,
       [action.sessionId, action.actionId]);
@@ -57,21 +69,31 @@ function createPreviewFlow(pool, {
         await client.query('COMMIT');
         return { decision: replay[0].decision, current: state, replayed: true };
       }
+      if (!state.session && !isResourceAction(action)) {
+        throw Object.assign(new Error('Preview session does not exist'), { code: 'PREVIEW_SESSION_MISSING' });
+      }
       const facts = { newFlowId: newId() };
       const decision = reduce(state, action, facts);
       if (decision.accepted) {
-        if (decision.flow.id !== state.flow?.id) {
-          if (state.flow) await client.query(`UPDATE preview_flows SET state = 'superseded'
-            WHERE id = $1`, [state.flow.id]);
+        if (decision.supersededFlow) await client.query('UPDATE preview_flows SET state = $1 WHERE id = $2',
+          [decision.supersededFlow.state, decision.supersededFlow.id]);
+        if (decision.flow && decision.flow.id !== state.flow?.id) {
           await client.query(`INSERT INTO preview_flows (id, session_id, generation, head_sha, started_status, state)
             VALUES ($1, $2, $3, $4, $5, $6)`, [decision.flow.id, action.sessionId,
             decision.flow.generation, decision.flow.headSha, decision.flow.startedStatus, decision.flow.state]);
           await client.query(`INSERT INTO preview_flow_heads (session_id, flow_id)
             VALUES ($1, $2) ON CONFLICT (session_id) DO UPDATE SET flow_id = EXCLUDED.flow_id`,
           [action.sessionId, decision.flow.id]);
-        } else {
+        } else if (decision.flow && !isResourceAction(action)) {
           await client.query('UPDATE preview_flows SET state = $1 WHERE id = $2',
             [decision.flow.state, decision.flow.id]);
+        }
+        if (decision.resourceChange?.cleanup === 'start') {
+          await client.query('UPDATE preview_flow_resources SET cleanup_started_at = NOW() WHERE flow_id = $1',
+            [decision.resourceChange.flowId]);
+        } else if (decision.resourceChange?.cleanup === 'complete') {
+          await client.query(`UPDATE preview_flow_resources SET cleanup_completed_at = NOW(), cleanup_disposition = $2
+            WHERE flow_id = $1`, [decision.resourceChange.flowId, decision.resourceChange.disposition]);
         }
         if (decision.checkFailure && await persistFailure(client, action) === false) {
           throw new Error('Preview failure admission and check-state write disagree');
@@ -101,7 +123,7 @@ function createPreviewFlow(pool, {
       await client.query(`INSERT INTO preview_flow_decisions (session_id, action_id, reducer_version, pre_state, action, facts, decision)
         VALUES ($1, $2, $3, $4, $5, $6, $7)`, [action.sessionId, action.actionId, REDUCER_VERSION,
         JSON.stringify(state), JSON.stringify(action), JSON.stringify(facts), JSON.stringify(decision)]);
-      const current = await readState(client, action.sessionId);
+      const current = await readState(client, action.sessionId, false, resourceFlowId);
       await client.query('COMMIT');
       return { decision, current, replayed: false };
     } catch (err) {

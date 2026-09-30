@@ -324,7 +324,7 @@ function makeHarness() {
         const row = state.previewResources[params[0]];
         return { rows: row ? [row] : [] };
       }
-      if (/SELECT cleanup_started_at FROM preview_flow_resources/.test(text)) {
+      if (/SELECT \* FROM preview_flow_resources/.test(text)) {
         const row = state.previewResources[params[0]];
         return { rows: row ? [row] : [] };
       }

@@ -32,6 +32,10 @@ test('preview actions validate exact SHA, identity, runtime tuple and reject raw
   assert.throws(() => parseAction({ ...ready, receipt: { ...resource(), containerId: null } }));
   assert.throws(() => parseAction({ ...ready, receipt: { ...resource(), env: { SECRET: 'no' } } }));
   assert.equal(parseAction({ ...ready, receipt: resource(HEAD, 'kubernetes') }).receipt.containerId, null);
+  const cleanup = action('RequestPreviewCleanup', { flowId: randomUUID() });
+  assert.equal(parseAction(cleanup).type, 'RequestPreviewCleanup');
+  assert.throws(() => parseAction({ ...cleanup, intent: { runtimeName: 'another-owner' } }));
+  assert.throws(() => parseAction({ ...cleanup, type: 'PreviewCleanupCompleted', disposition: 'unknown' }));
 });
 
 test('pure reducer joins eligible requests; explicit same-SHA retry advances identity', () => {
@@ -54,11 +58,37 @@ test('pure reducer joins eligible requests; explicit same-SHA retry advances ide
   const retried = reduce({ ...state, flow: requested.flow }, parseAction(request('RetryPreview')), { newFlowId: randomUUID() });
   assert.equal(retried.flow.generation, 2);
   assert.notEqual(retried.flow.id, requested.flow.id);
+  assert.deepEqual(retried.supersededFlow, { ...requested.flow, state: 'superseded' },
+    'supersession is part of the captured decision, not an invented persistence side effect');
   const stale = reduce({ ...state, flow: retried.flow }, parseAction(action('PreviewReady', {
     ...identity(requested.flow), receipt: resource(),
   })), {});
   assert.equal(stale.reason, 'superseded_flow');
   assert.equal(stale.projection, 'unchanged');
+});
+
+test('checkpoint version-one traces retain their original policy and decision shape', () => {
+  const flowId = '00000000-0000-4000-8000-000000000001';
+  const nextId = '00000000-0000-4000-8000-000000000002';
+  const a = { type: 'RetryPreview', actionId: '00000000-0000-4000-8000-000000000003',
+    sessionId: 1, headSha: HEAD, startedStatus: 'active' };
+  const pre = { ...initial(), resource: { cleanupStarted: false },
+    flow: { id: flowId, generation: 1, headSha: HEAD, startedStatus: 'active', state: 'preparing' } };
+  const facts = { newFlowId: nextId };
+  const expected = { accepted: true, reason: 'preparation_requested',
+    flow: { ...pre.flow, id: nextId, generation: 2 }, projection: 'unchanged',
+    effects: [{ type: 'BuildPreview', effectKey: `${nextId}:build`, causedBy: a.actionId,
+      sessionId: 1, flowId: nextId, generation: 2, headSha: HEAD }] };
+  assert.deepEqual(replayDecision({ reducer_version: 1, pre_state: pre, action: a, facts }), expected);
+  assert.deepEqual(reduce(pre, a, facts), { ...expected, supersededFlow: { ...pre.flow, state: 'superseded' } });
+  const ready = { ...a, type: 'PreviewReady', ...identity(pre.flow), receipt: resource() };
+  delete ready.startedStatus;
+  assert.deepEqual(replayDecision({ reducer_version: 1, pre_state: pre, action: ready, facts: {} }),
+    { accepted: true, reason: 'runtime_published', flow: { ...pre.flow, state: 'ready' },
+      projection: 'publish', receipt: resource(), effects: [] });
+  const retiring = { ...pre, resource: { cleanupStarted: true } };
+  assert.deepEqual(replayDecision({ reducer_version: 1, pre_state: retiring, action: ready, facts: {} }),
+    { accepted: false, reason: 'resource_retiring', flow: pre.flow, projection: 'unchanged', effects: [] });
 });
 
 test('native policy preserves paused submission and promotion only on the reviewed commit', () => {
@@ -113,6 +143,7 @@ test('preview flow transactions across independent PostgreSQL connections', { sk
     const other = createPreviewFlow(db, { persistFailure });
     const reset = async () => {
       await db.query('TRUNCATE chat_sessions, preview_flow_resources CASCADE');
+      await db.query('TRUNCATE preview_action_receipts CASCADE');
       await db.query(`INSERT INTO chat_sessions (id, status, source, checks_commit_sha)
         VALUES (1, 'active', 'cli_handoff', $1)`, [HEAD]);
     };
@@ -121,6 +152,28 @@ test('preview flow transactions across independent PostgreSQL connections', { sk
       const receipt = await api.recordRuntime(1, f.id, resource());
       return api.apply(action('PreviewReady', { ...identity(f), receipt }));
     };
+    const intent = { runtimeKind: 'docker', runtimeName: 'runtime-1', dbName: 'app_demo_staging_s1_aaaaaa', namespace: null };
+    const reserve = async () => {
+      const f = await start();
+      await owner.recordIntent(1, f.id, intent);
+      return f;
+    };
+    const cleanup = f => action('RequestPreviewCleanup', { flowId: f.id });
+    const completed = (f, disposition = 'removed') => action('PreviewCleanupCompleted', { flowId: f.id, disposition });
+
+    await t.test('boot migration removes the checkpoint receipt cascade and is safe to replay', async () => {
+      await reset();
+      const f = await reserve();
+      await db.query(`ALTER TABLE preview_action_receipts ADD CONSTRAINT preview_action_receipts_session_id_fkey
+        FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE`);
+      const migration = source.match(/ALTER TABLE preview_action_receipts DROP CONSTRAINT IF EXISTS preview_action_receipts_session_id_fkey;/);
+      assert.ok(migration, 'checkpoint schema must migrate as well as fresh installs');
+      await db.query(migration[0]);
+      await db.query(migration[0]);
+      await db.query('DELETE FROM chat_sessions WHERE id = 1');
+      assert.equal((await owner.trace(1)).length, 1);
+      assert.equal((await owner.apply(cleanup(f))).decision.accepted, true);
+    });
 
     await t.test('duplicate admission delivers one decision, one trace and one build description', async () => {
       await reset();
@@ -144,6 +197,10 @@ test('preview flow transactions across independent PostgreSQL connections', { sk
       await reset();
       const old = await start();
       const current = await start(other);
+      const retryTrace = (await owner.trace(1)).at(-1);
+      assert.deepEqual(retryTrace.decision.supersededFlow, { ...old, state: 'superseded' });
+      assert.equal((await db.query('SELECT state FROM preview_flows WHERE id = $1', [old.id])).rows[0].state,
+        retryTrace.decision.supersededFlow.state);
       await ready(current, other);
       assert.equal((await ready(old)).decision.reason, 'superseded_flow');
       const failure = await owner.apply(action('PreparationFailed', { ...identity(old), detail: 'old boot failure' }));
@@ -153,6 +210,127 @@ test('preview flow transactions across independent PostgreSQL connections', { sk
       assert.equal(rows[0].failure_count, 0);
       assert.equal((await db.query('SELECT * FROM preview_flow_resources')).rows.length, 2,
         'rejected resource observation remains discoverable');
+    });
+
+    await t.test('retirement refuses caller-selected resources and completion without accepted work', async () => {
+      await reset();
+      const f = await reserve();
+      assert.equal((await owner.apply(completed(f))).decision.reason, 'cleanup_not_requested');
+      assert.equal((await owner.apply({ ...cleanup(f), sessionId: 2 })).decision.reason, 'resource_missing');
+      assert.equal((await owner.apply(cleanup({ id: randomUUID() }))).decision.reason, 'resource_missing');
+      assert.equal((await owner.read(1)).resource.cleanupStarted, false);
+      for (const entry of await owner.trace(1)) assert.deepEqual(replayDecision(entry), entry.decision);
+    });
+
+    await t.test('cleanup authorization, receipt and trace roll back together before any effect is returned', async () => {
+      await reset();
+      const f = await reserve();
+      const a = cleanup(f);
+      await db.query(`ALTER TABLE preview_flow_decisions ADD CONSTRAINT reject_cleanup_trace
+        CHECK (action->>'type' != 'RequestPreviewCleanup')`);
+      try {
+        await assert.rejects(owner.apply(a), /reject_cleanup_trace/);
+        assert.equal((await owner.read(1)).resource.cleanupStarted, false);
+        assert.equal((await db.query('SELECT * FROM preview_action_receipts WHERE action_id = $1', [a.actionId])).rows.length, 0);
+      } finally { await db.query('ALTER TABLE preview_flow_decisions DROP CONSTRAINT reject_cleanup_trace'); }
+      const [first, duplicate] = await Promise.all([owner.apply(a), other.apply(a)]);
+      assert.deepEqual(first.decision, duplicate.decision);
+      assert.equal([first, duplicate].filter(r => r.replayed).length, 1);
+      assert.equal(first.decision.effects[0].effectKey, `${f.id}:cleanup`);
+      assert.equal((await owner.read(1)).resource.cleanupStarted, true);
+      assert.equal((await ready(f)).decision.reason, 'resource_retiring');
+      const resumed = await other.apply(cleanup(f));
+      assert.equal(resumed.decision.reason, 'cleanup_resumed');
+      assert.equal(resumed.decision.resourceChange, undefined, 'a retry does not invent a new retirement claim');
+      assert.equal(resumed.decision.effects[0].effectKey, first.decision.effects[0].effectKey);
+    });
+
+    await t.test('a published predecessor stays protected after a newer flow is admitted', async () => {
+      await reset();
+      const f = await reserve();
+      await ready(f);
+      const successor = await start(other);
+      const rejected = await owner.apply(cleanup(f));
+      assert.equal(rejected.decision.reason, 'resource_published');
+      assert.equal(rejected.current.flow.id, successor.id);
+      assert.equal(rejected.current.resource.cleanupStarted, false);
+      assert.equal(rejected.current.preview.stagingUrl, resource().stagingUrl);
+      for (const entry of await owner.trace(1)) assert.deepEqual(replayDecision(entry), entry.decision);
+    });
+
+    await t.test('concurrent publication and retirement cannot both receive permission', async () => {
+      await reset();
+      const f = await reserve();
+      await owner.recordRuntime(1, f.id, resource());
+      const [published, retired] = await Promise.all([
+        owner.apply(action('PreviewReady', { ...identity(f), receipt: resource() })), other.apply(cleanup(f)),
+      ]);
+      assert.equal(Number(published.decision.accepted) + Number(retired.decision.accepted), 1);
+      const current = await owner.read(1);
+      if (published.decision.accepted) {
+        assert.equal(retired.decision.reason, 'resource_published');
+        assert.equal(current.resource.cleanupStarted, false);
+        assert.deepEqual(current.preview, resource());
+      } else {
+        assert.equal(published.decision.reason, 'resource_retiring');
+        assert.equal(current.resource.cleanupStarted, true);
+        assert.equal(current.preview.stagingUrl, null);
+      }
+    });
+
+    await t.test('historical retirement leaves the successor alone and completion is idempotent, immutable and replayable', async () => {
+      await reset();
+      const old = await reserve();
+      const successor = await start(other);
+      await ready(successor, other);
+      const retired = await owner.apply(cleanup(old));
+      assert.equal(retired.decision.accepted, true);
+      assert.equal(retired.current.flow.id, successor.id);
+      assert.equal(retired.current.flow.state, 'ready');
+      assert.deepEqual(retired.current.preview, resource());
+      const done = completed(old, 'replaced');
+      await owner.apply(done);
+      assert.equal((await other.apply(done)).replayed, true);
+      assert.equal((await other.apply(completed(old, 'replaced'))).decision.reason, 'cleanup_already_completed');
+      assert.equal((await other.apply(completed(old, 'removed'))).decision.reason, 'cleanup_result_conflict');
+      const retried = await other.apply(cleanup(old));
+      assert.equal(retried.decision.disposition, 'replaced');
+      assert.deepEqual(retried.decision.effects, []);
+      assert.equal(retried.current.resource.cleanupCompleted, true);
+      assert.deepEqual(retried.current.preview, resource());
+      for (const entry of await owner.trace(1)) assert.deepEqual(replayDecision(entry), entry.decision);
+    });
+
+    await t.test('deleted aggregates retain original decisions and serialize concurrent orphan actions', async () => {
+      await reset();
+      const oldRequest = request('RetryPreview');
+      const f = (await owner.apply(oldRequest)).decision.flow;
+      await owner.recordIntent(1, f.id, intent);
+      const second = await reserve();
+      const tracesBefore = await owner.trace(1);
+      await db.query('DELETE FROM chat_sessions WHERE id = 1');
+      assert.deepEqual(await owner.trace(1), tracesBefore, 'deletion does not erase historical decisions');
+      assert.equal((await owner.apply(oldRequest)).replayed, true, 'original request still has its receipt');
+      await assert.rejects(owner.apply(request('RequestPreview')), { code: 'PREVIEW_SESSION_MISSING' });
+      const a = cleanup(f);
+      const pair = await Promise.all([owner.apply(a), other.apply(a)]);
+      assert.equal(pair.filter(r => r.replayed).length, 1);
+      assert.deepEqual(pair[0].decision, pair[1].decision);
+      assert.equal(pair[0].current.session, null);
+      await owner.apply(completed(f));
+      for (const entry of await owner.trace(1)) assert.deepEqual(replayDecision(entry), entry.decision);
+      // Same receipt key, different resource input: the orphan aggregate lock
+      // serializes this even though no session or second resource row exists.
+      await assert.rejects(other.apply({ ...a, flowId: randomUUID() }), { code: 'PREVIEW_ACTION_CONFLICT' });
+      const sharedId = randomUUID();
+      const conflicting = await Promise.allSettled([
+        owner.apply({ ...cleanup(f), actionId: sharedId }),
+        other.apply({ ...cleanup(second), actionId: sharedId }),
+      ]);
+      assert.equal(conflicting.filter(r => r.status === 'fulfilled').length, 1);
+      assert.equal(conflicting.find(r => r.status === 'rejected').reason.code, 'PREVIEW_ACTION_CONFLICT');
+      assert.equal((await db.query('SELECT * FROM preview_action_receipts WHERE action_id = $1', [sharedId])).rows.length, 1);
+      for (const entry of await owner.trace(1)) assert.deepEqual(replayDecision(entry), entry.decision);
     });
 
     await t.test('publication locks the aggregate and rejects a head changed by another owner', async () => {

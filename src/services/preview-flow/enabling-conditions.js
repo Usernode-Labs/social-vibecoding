@@ -17,6 +17,21 @@ function nativeHeadCondition(session, startedStatus, headSha) {
 
 function enablingCondition(state, action) {
   const { session, flow } = state;
+  if (action.type === 'RequestPreviewCleanup' || action.type === 'PreviewCleanupCompleted') {
+    const resource = state.resource;
+    if (!resource || resource.flowId !== action.flowId || resource.sessionId !== action.sessionId) return 'resource_missing';
+    if (!resource.intent) return 'resource_intent_missing';
+    if (resource.cleanupCompleted) {
+      return action.type === 'PreviewCleanupCompleted' && resource.disposition !== action.disposition
+        ? 'cleanup_result_conflict' : null;
+    }
+    if (resource.published && state.preview?.stagingUrl === resource.receipt?.stagingUrl
+        && state.preview?.runtimeKind === resource.receipt?.runtimeKind
+        && state.preview?.runtimeName === resource.receipt?.runtimeName
+        && state.preview?.commitSha === resource.receipt?.commitSha) return 'resource_published';
+    if (action.type === 'PreviewCleanupCompleted' && !resource.cleanupStarted) return 'cleanup_not_requested';
+    return null;
+  }
   if (action.type === 'RequestPreview' || action.type === 'RetryPreview') {
     return nativeHeadCondition(session, action.startedStatus, action.headSha);
   }

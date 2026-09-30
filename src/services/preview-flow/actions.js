@@ -44,8 +44,14 @@ const actionSchema = z.discriminatedUnion('type', [
   z.object({ ...envelope, type: z.literal('PreparationFailed'), ...identity,
     detail: z.string().min(1).max(4096) }).strict(),
   z.object({ ...envelope, type: z.literal('ClearPreview'), ...identity }).strict(),
+  // Historical resources outlive their session/current flow. The stored
+  // obligation supplies locators; callers cannot choose a runtime to delete.
+  z.object({ ...envelope, type: z.literal('RequestPreviewCleanup'), flowId: z.string().uuid() }).strict(),
+  z.object({ ...envelope, type: z.literal('PreviewCleanupCompleted'), flowId: z.string().uuid(),
+    disposition: z.enum(['removed', 'replaced']) }).strict(),
 ]);
 
 // Internal action boundary. HTTP/MCP authentication remains at the adapters;
 // payloads cannot supply a capability, a SQL patch, or an enabling condition.
-module.exports = { parseAction: value => actionSchema.parse(value), runtimeReceipt, resourceIntent };
+const isResourceAction = action => ['RequestPreviewCleanup', 'PreviewCleanupCompleted'].includes(action.type);
+module.exports = { parseAction: value => actionSchema.parse(value), runtimeReceipt, resourceIntent, isResourceAction };

@@ -1,6 +1,8 @@
 'use strict';
 
 const { resourceIntent } = require('./actions');
+const { randomUUID } = require('node:crypto');
+const { createPreviewFlow } = require('./store');
 const { withResourceUse } = require('../build-retention-guard');
 const { STAGING_BUILD_LOCK, PREVIEW_LIFECYCLE_LOCK } = require('../advisory-locks');
 const log = require('../logger');
@@ -12,38 +14,20 @@ function createCleanup({ runtime = require('../application-runtime'), db = requi
   // Called only while staging holds STAGING_BUILD_LOCK. Never clear a session
   // projection here: historical resource ownership is separate from publication.
   async function underBuildLock({ pool, config, sessionId, flowId }) {
-    let row;
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      // Same aggregate-first order as action admission. Claim retirement in a
-      // transaction before I/O so a reported Ready cannot publish while removing.
-      await client.query('SELECT id FROM chat_sessions WHERE id = $1 FOR UPDATE', [sessionId]);
-      row = (await client.query(`SELECT r.*, s.staging_url, s.staging_runtime_kind,
-        s.staging_runtime_name, s.staging_commit_sha
-        FROM preview_flow_resources r LEFT JOIN chat_sessions s ON s.id = r.session_id
-        WHERE r.flow_id = $1 AND r.session_id = $2`, [flowId, sessionId])).rows[0];
-      if (!row?.intent) throw new Error('Preview cleanup requires its stored pre-create intent');
-      if (row.cleanup_completed_at) {
-        await client.query('COMMIT');
-        return { disposition: row.cleanup_disposition };
-      }
-      if (row.published_at && row.staging_url === row.receipt?.stagingUrl
-          && row.staging_runtime_kind === row.receipt.runtimeKind
-          && row.staging_runtime_name === row.receipt.runtimeName
-          && row.staging_commit_sha === row.receipt.commitSha) {
-        await client.query('COMMIT');
-        return { protected: true };
-      }
-      await client.query('UPDATE preview_flow_resources SET cleanup_started_at = NOW() WHERE flow_id = $1', [flowId]);
-      await client.query('COMMIT');
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      throw err;
-    } finally { client.release(); }
+    const owner = createPreviewFlow(pool);
+    // The reducer decides retirement under the aggregate/resource transaction;
+    // this executor only consumes accepted work and reports observed completion.
+    const { decision } = await owner.apply({ type: 'RequestPreviewCleanup',
+      actionId: randomUUID(), sessionId, flowId });
+    if (!decision.accepted) {
+      if (decision.reason === 'resource_published') return { protected: true };
+      throw new Error(`Preview cleanup not authorized: ${decision.reason}`);
+    }
+    const effect = decision.effects.find(value => value.type === 'CleanupPreview');
+    if (!effect) return { disposition: decision.disposition };
     // A DB outage defers removal; durable intent survives. Guessing whether an
     // unacknowledged publication committed would risk deleting a live preview.
-    const intent = resourceIntent.parse(row.intent);
+    const intent = resourceIntent.parse(effect.intent);
     const runtimeConfig = { ...config, appRuntime: intent.runtimeKind,
       kubernetes: { ...config?.kubernetes, appNamespace: intent.namespace } };
     const state = await runtime.inspect(runtimeConfig, intent);
@@ -61,8 +45,9 @@ function createCleanup({ runtime = require('../application-runtime'), db = requi
     }
     // A different/absent label is never authority to delete by shared name.
     // Leave its DB too: that runtime may use the same six-character SHA clone.
-    await pool.query(`UPDATE preview_flow_resources SET cleanup_completed_at = NOW(), cleanup_disposition = $2
-      WHERE flow_id = $1`, [flowId, disposition]);
+    const completion = await owner.apply({ type: 'PreviewCleanupCompleted',
+      actionId: randomUUID(), sessionId, flowId, disposition });
+    if (!completion.decision.accepted) throw new Error(`Preview cleanup completion rejected: ${completion.decision.reason}`);
     return { disposition };
   }
 

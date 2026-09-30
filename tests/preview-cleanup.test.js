@@ -134,6 +134,7 @@ test('native cleanup across Docker and Kubernetes with independent PostgreSQL re
         const owner = createPreviewFlow(pool);
         const reset = async () => {
           await pool.query('TRUNCATE chat_sessions, preview_flow_resources CASCADE');
+          await pool.query('TRUNCATE preview_action_receipts CASCADE');
           await pool.query(`INSERT INTO chat_sessions (id, status, source, checks_commit_sha)
             VALUES (1, 'active', 'cli_handoff', $1)`, [HEAD]);
           liveFlow = null; removeFails = false; inspectFails = false; dropFails = false; removeGate = null;
@@ -152,13 +153,13 @@ test('native cleanup across Docker and Kubernetes with independent PostgreSQL re
           session: { id: 1, status: 'active' }, headSha: HEAD, build, cleanup: cleanup.underBuildLock });
         const failQuery = (predicate, message, after = false) => ({
           query: async (sql, args) => {
-            if (predicate(String(sql))) throw new Error(message);
+            if (predicate(String(sql), args)) throw new Error(message);
             return pool.query(sql, args);
           },
           connect: async () => {
             const client = await pool.connect();
             return { release: () => client.release(), query: async (sql, args) => {
-              if (predicate(String(sql))) {
+              if (predicate(String(sql), args)) {
                 if (after) await client.query(sql, args);
                 throw new Error(message);
               }
@@ -289,6 +290,54 @@ test('native cleanup across Docker and Kubernetes with independent PostgreSQL re
           assert.equal((await resourceRow()).cleanup_disposition, 'removed');
           assert.equal((await owner.read(1)).preview.stagingUrl, null);
           if (kind === 'kubernetes') assert.deepEqual(deletedKinds.sort(), ['deployment', 'ingress', 'secret', 'service']);
+          const decisions = await owner.trace(1);
+          assert.deepEqual(decisions.slice(-2).map(entry => entry.action.type),
+            ['RequestPreviewCleanup', 'PreviewCleanupCompleted']);
+          assert.equal(decisions.at(-2).decision.resourceChange.cleanup, 'start');
+          assert.equal(decisions.at(-1).decision.resourceChange.disposition, 'removed');
+        });
+
+        await t.test('cleanup cannot perform I/O if its authorization trace fails to persist', async () => {
+          await reset();
+          const broken = failQuery((sql, args) => /INSERT INTO preview_flow_decisions/.test(sql)
+            && JSON.parse(args[4]).type === 'RequestPreviewCleanup', 'cleanup trace unavailable');
+          await run(broken, executor(async () => { await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = 1`); }));
+          assert.equal(removals, 0); assert.equal(drops, 0);
+          assert.equal((await resourceRow()).cleanup_started_at, null);
+          assert.ok(!(await owner.trace(1)).some(entry => entry.action.type === 'RequestPreviewCleanup'));
+          await cleanup.sweep({ pool, config });
+          assert.equal(liveFlow, null); assert.equal(drops, 1);
+        });
+
+        await t.test('lost retirement acknowledgement defers I/O and a fresh owner resumes the recorded effect', async () => {
+          await reset();
+          let commitCount = 0;
+          const broken = failQuery(sql => sql === 'COMMIT' && ++commitCount === 3, 'retirement acknowledgement lost', true);
+          await run(broken, executor(async () => { await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = 1`); }));
+          assert.equal(removals, 0); assert.equal(drops, 0);
+          assert.ok((await resourceRow()).cleanup_started_at);
+          const original = (await owner.trace(1)).at(-1);
+          assert.equal(original.action.type, 'RequestPreviewCleanup');
+          const recovered = createCleanup({ runtime, lock: rivalGuard.withResourceUse,
+            db: { dropDatabase: async () => { drops++; } } });
+          await recovered.sweep({ pool, config });
+          assert.equal(liveFlow, null); assert.equal(drops, 1);
+          const resumed = (await owner.trace(1)).at(-2);
+          assert.equal(resumed.decision.reason, 'cleanup_resumed');
+          assert.equal(resumed.decision.effects[0].effectKey, original.decision.effects[0].effectKey);
+        });
+
+        await t.test('completion trace failure rolls back settlement and remains recoverable after removal', async () => {
+          await reset();
+          const broken = failQuery((sql, args) => /INSERT INTO preview_flow_decisions/.test(sql)
+            && JSON.parse(args[4]).type === 'PreviewCleanupCompleted', 'completion trace unavailable');
+          await run(broken, executor(async () => { await pool.query(`UPDATE chat_sessions SET status = 'archived' WHERE id = 1`); }));
+          assert.equal(liveFlow, null); assert.equal(drops, 1);
+          assert.equal((await resourceRow()).cleanup_completed_at, null);
+          assert.ok(!(await owner.trace(1)).some(entry => entry.action.type === 'PreviewCleanupCompleted'));
+          await cleanup.sweep({ pool, config });
+          assert.equal((await resourceRow()).cleanup_disposition, 'removed');
+          assert.equal(drops, 2, 'retry performs the same safe idempotent removal under existing locks');
         });
 
         await t.test('publication transaction failure cleans the runtime; the receipt survives rollback', async () => {
@@ -313,7 +362,7 @@ test('native cleanup across Docker and Kubernetes with independent PostgreSQL re
 
         await t.test('database outage during cleanup defers deletion until recovery can establish publication ownership', async () => {
           await reset();
-          const broken = failQuery(sql => /UPDATE chat_sessions SET staging_url = \$1|SELECT r\.\*, s\.staging_url/.test(sql), 'database unavailable');
+          const broken = failQuery(sql => /UPDATE chat_sessions SET staging_url = \$1|SELECT \* FROM preview_flow_resources.*FOR UPDATE/.test(sql), 'database unavailable');
           await assert.rejects(run(broken), /database unavailable/);
           assert.equal(removals, 0); assert.equal(drops, 0);
           assert.ok((await resourceRow()).intent);
