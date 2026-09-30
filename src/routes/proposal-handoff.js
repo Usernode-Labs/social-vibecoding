@@ -435,7 +435,7 @@ function parseShareInProgressBody(body) {
 }
 
 function parseUpdateFromForkBody(body) {
-  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
+  exactKeys(body, ['branch', 'forkRepo', 'expectedHeadSha', 'testingPaths', 'testingSteps', 'title', 'description', 'summary', 'linkedIssues', 'recheck', 'visibleChanges', 'visualEvidence'], 'body');
   const branch = boundedText(body.branch, { label: 'branch', min: 1, max: 255, trim: true });
   const forkRepo = body.forkRepo == null
     ? null
@@ -476,6 +476,14 @@ function parseUpdateFromForkBody(body) {
   const description = body.description == null
     ? null
     : boundedText(body.description, { label: 'description', min: 1, max: 4000, trim: true });
+  // #3344. The plain-English summary a voter reads first. Normalized by the
+  // pr-import route's own parser, so the same 600-character cap applies and a
+  // revision cannot store what the first submission would have clipped. Empty
+  // after trimming is "said nothing", never "blank it", as for description.
+  if (body.summary != null && typeof body.summary !== 'string') {
+    throw new ValidationError('summary must be a string');
+  }
+  const summary = require('./votes').parseImportSummary(body);
   // #1323. A re-run of the checks against the commit already on the proposal.
   // Until this existed the only way an agent could get one was to CHANGE a
   // capture route so the testing-metadata write happened to trigger it.
@@ -489,7 +497,7 @@ function parseUpdateFromForkBody(body) {
     : parseImportLinkedIssues({ linkedIssues: body.linkedIssues });
   const testing = require('../services/testing-notes').parseSubmitted(body);
   return { branch, forkRepo, expectedHeadSha, testing, title,
-    description,
+    description, summary,
     recheck, linkedIssues, visibleChanges: parseVisibleChanges(visibleChangesContract.declaredChanges(body)) };
 }
 
@@ -875,6 +883,7 @@ function proposalHandoffRoutes(config) {
           visibleChanges: input.visibleChanges,
           title: input.title,
           description: input.description,
+          summary: input.summary,
           recheck: input.recheck,
           linkedIssues: input.linkedIssues,
           origin: config.cliAuthOrigin || null,

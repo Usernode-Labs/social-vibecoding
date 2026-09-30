@@ -4179,3 +4179,43 @@ test('the demo tools sit behind the right scopes, write nothing shortened, and t
   assert.ok(Object.values(charter).some((v) => typeof v === 'string' && v.includes('never present the partner as a person')),
     'the charter section is rendered into the full charter text');
 });
+
+// #3344. An update carries the plain-English summary to the route, which
+// until now only the FIRST submission could set, and the answer says whether
+// it landed.
+test('submit_work forwards an update\'s summary and reports whether it landed', async () => {
+  const gh = require('../src/services/github');
+  const githubLink = require('../src/services/github-link');
+  const realGh = gh.isEnabled; const realLink = githubLink.isEnabled;
+  gh.isEnabled = () => true; githubLink.isEnabled = () => true;
+  const pool = { async query() { return { rows: [{ app_slug: 'recipe-box' }] }; } };
+  const answer = (over) => ({
+    updated: false, unchanged: true, proposalId: 4208, appSlug: 'recipe-box', prNumber: 91,
+    votesCleared: 0, submittedVia: 'update_branch', targetKind: 'proposal', ...over,
+  });
+  const revise = async (platformAnswer, args) => {
+    const calls = [];
+    const { handlers, restore } = connector(() => platformAnswer, { scopes: [READ_SCOPE, WRITE_SCOPE], pool, calls });
+    try {
+      const res = await handlers.get('submit_work')({ proposalId: 4208, branch: 'my-fix', ...args });
+      return { res, update: calls.find((c) => /\/update-from-fork$/.test(c.pathname)) };
+    } finally {
+      restore();
+    }
+  };
+  try {
+    const own = await revise(answer({ summaryUpdated: true }), { summary: '  The toggle now remembers your choice.  ' });
+    assert.equal(own.update.body.summary, 'The toggle now remembers your choice.');
+    assert.equal(own.res.structuredContent.summaryUpdated, true);
+    assert.equal(own.res.structuredContent.summaryRejected, null);
+    assert.match(own.res.structuredContent.nextStep, /summary now reads as you submitted it/);
+
+    const theirs = await revise(answer({ summaryUpdated: false, summaryRejected: 'imported_pr' }), { summary: 'Mine' });
+    assert.match(theirs.res.structuredContent.nextStep, /Your summary was NOT applied: .*another GitHub account/);
+
+    const silent = await revise(answer({}), { summary: '   ' });
+    assert.equal('summary' in silent.update.body, false, 'a blank summary is "said nothing", never "blank it"');
+  } finally {
+    gh.isEnabled = realGh; githubLink.isEnabled = realLink;
+  }
+});

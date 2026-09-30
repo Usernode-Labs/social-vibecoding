@@ -7079,6 +7079,8 @@ module.exports = {
   strandedPendingChecks,
   // The request an imported pull request implements (#1217), likewise.
   parseImportLinkedIssues,
+  parseImportSummary,
+  MAX_IMPORT_SUMMARY,
   MAX_IMPORT_LINKED_ISSUES,
   recordVote,
   parseExpectedEpoch,
