@@ -3,7 +3,7 @@
 // The Workshop screen's two numbers per app, and the rows behind them.
 //
 //   GET /api/workshop/counts
-//        → { counts: { '<slug>': { working, needs }, … } }
+//        → { counts: { '<slug>': { working, needs, owed }, … } }
 //   GET /api/workshop/items   (#3051, see ITEMS_SQL below)
 //        → { items: { '<slug>': { working: Item[], needs: Item[] }, … } }
 //
@@ -94,7 +94,11 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 // Display-only: nothing in the platform reads these back, and strictly a
 // no-op in production.
 const DEMO_COUNTS = {
-  'staging-demo-your-app': { working: 2, needs: 3 },
+  // `owed` names DEMO_NEEDS_FEED's three, below, so a vote swiped past in
+  // the demo feed takes its count off the row, as a real one does (#3526).
+  'staging-demo-your-app': {
+    working: 2, needs: 3, owed: ['proposal:-103@0', 'proposal:-104@0', 'governance:-105'],
+  },
   'staging-demo-emoji-icon': { working: 0, needs: 5 },
   'staging-demo-image-icon': { working: 1, needs: 0 },
   'staging-demo-long-name': { working: 4, needs: 1 },
@@ -154,6 +158,16 @@ const VISIBLE_APP_WHERE = `a.moderation_suspended_at IS NULL
 // `chat_sessions` are different tables, and the two owed counts each need
 // their own NOT EXISTS. Each CTE groups by app_id, so the join at the bottom
 // is over at most one row per app per source.
+//
+// `owed` (#3526) names the votes `needs` counts, in the keys the client's
+// Needs you record uses (frontend/src/features/workshop/needs-seen.ts): a
+// change as `proposal:<id>@<approval epoch>`, a group decision as
+// `governance:<id>`. A vote swiped past in a Needs you feed is remembered on
+// the viewer's device, and every badge leaves it out; with only a number
+// the badges could not tell a vote seen from a new one that took its place,
+// and would have taken the new one off. The epoch is in the key because it
+// is what moves when a change is rewritten, which is when a vote seen
+// before counts again (as a vote cast before stops counting).
 const COUNTS_SQL = `
   WITH my_sessions AS (
     SELECT cs.app_id, COUNT(*)::int AS n
@@ -174,20 +188,23 @@ const COUNTS_SQL = `
      GROUP BY i.app_id
   ),
   owed_proposals AS (
-    SELECT cs.app_id, COUNT(*)::int AS n
+    SELECT cs.app_id, COUNT(*)::int AS n,
+           array_agg('proposal:' || cs.id || '@' || cs.approval_epoch) AS keys
       FROM chat_sessions cs
      WHERE ${OWED_PROPOSALS_WHERE}
      GROUP BY cs.app_id
   ),
   owed_governance AS (
-    SELECT i.app_id, COUNT(*)::int AS n
+    SELECT i.app_id, COUNT(*)::int AS n,
+           array_agg('governance:' || i.id) AS keys
       FROM issues i
      WHERE ${OWED_GOVERNANCE_WHERE}
      GROUP BY i.app_id
   )
   SELECT a.slug,
          (COALESCE(ms.n, 0) + COALESCE(mp.n, 0) + COALESCE(mg.n, 0)) AS working,
-         (COALESCE(op.n, 0) + COALESCE(og.n, 0)) AS needs
+         (COALESCE(op.n, 0) + COALESCE(og.n, 0)) AS needs,
+         (COALESCE(op.keys, '{}'::text[]) || COALESCE(og.keys, '{}'::text[])) AS owed
     FROM apps a
     LEFT JOIN app_collaborators me
       ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
@@ -466,6 +483,7 @@ function workshopOverviewRoutes(config) {
         counts[row.slug] = {
           working: Number(row.working) || 0,
           needs: Number(row.needs) || 0,
+          owed: Array.isArray(row.owed) ? row.owed.map(String) : [],
         };
       }
       if (IS_STAGING && req.query.demo === '1') {

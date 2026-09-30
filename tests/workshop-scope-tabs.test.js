@@ -230,7 +230,11 @@ test('the Needs you row totals every project, and says nothing over a zero', () 
     'no totals with no apps: the empty card already says why the screen is bare');
   assert.match(decl, /acc\.needs \+ \(row\.needs \|\| 0\)/);
   assert.ok(!decl.includes('rows'), 'it sums `all`, every project');
-  assert.match(SCREEN, /\{totals && totals\.needs > 0 \? \(\n\s*<section data-workshop-needs-door=""/);
+  // #3526: drawn while ANY vote is owed (`owed`), the ones swiped past too:
+  // it is the screen's only door to the feed, and a skipped vote is still
+  // one you can cast. `needs`, what the title counts, is the unseen ones.
+  assert.match(decl, /acc\.owed \+ \(row\.owedCount \|\| 0\)/);
+  assert.match(SCREEN, /\{totals && totals\.owed > 0 \? \(\n\s*<section data-workshop-needs-door=""/);
   const dapp = JSON.parse(read('dapp.json'));
   assert.ok(!dapp.tests.some((t) => t.expectText === 'Votes waiting on you'),
     'no declared check waits for the retired legend');

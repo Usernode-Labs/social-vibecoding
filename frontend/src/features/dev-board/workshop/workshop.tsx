@@ -79,6 +79,7 @@ import { CardSkeleton } from '../card/skeleton';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity } from '../../workshop/community-scope';
+import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
 import { ChannelCard, NeedsCard, NothingToVote, owesVote, YourWorkCard } from './hub-cards';
@@ -1867,8 +1868,15 @@ function plural(n: number, one: string, many: string): string {
  * the feed, above), and `leftVotes` the proposals among those, so the ring
  * can say where the viewer stands against `total` — everything they could
  * vote on, answered or not. The headline is one of three: the pass had
- * things in it and answered them all, it left some waiting, or there was
- * nothing to begin with.
+ * things in it and answered them all, it skipped some, or there was nothing
+ * to begin with.
+ *
+ * #3526: WHAT THE PASS WENT PAST IS SKIPPED, NOT WAITING. A vote swiped past
+ * unanswered stops counting on every badge (../../workshop/needs-seen.ts),
+ * and "5 are still waiting on you above" under a Needs you count that had
+ * just dropped by five said two things at once. The line says what the
+ * reader did and where those items are: above, still open, for a change of
+ * mind; the way back up says the same.
  */
 function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: {
   total: number;
@@ -1883,7 +1891,7 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
   const line = left > 0 ? 'That’s it for now.' : (acted > 0 ? 'That’s it!' : 'You’re all caught up.');
   const parts: string[] = [];
   if (acted > 0) parts.push(`You voted on ${plural(acted, 'proposal', 'proposals')} this time.`);
-  if (left > 0) parts.push(`${left} ${left === 1 ? 'is' : 'are'} still waiting on you above.`);
+  if (left > 0) parts.push(`You skipped ${left}. ${left === 1 ? 'It stays' : 'They stay'} above if you change your mind.`);
   else if (acted > 0) parts.push('Nothing else needs you right now.');
   else parts.push('Every proposal you can vote on has your answer, and every open issue has somebody on it.');
   return (
@@ -1908,7 +1916,7 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: 
       <button type="button" className="dev-ws-done-cta" onClick={onDone}>{doneLabel || 'See what changed this week'}</button>
       {left > 0 ? (
         <button type="button" className="dev-ws-done-back" data-ws-done-back="" onClick={onBack}>
-          Back to the first one waiting
+          Back to the first one you skipped
         </button>
       ) : null}
     </section>
@@ -2314,6 +2322,15 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
 
   const landOn = (idx: number) => {
     const c = Math.min(Math.max(idx, 0), items.length);
+    // #3526: A VOTE YOU MOVE ON FROM UNANSWERED IS SEEN. Only the one you
+    // were on, and only going forward: a swipe back up, the end card's way
+    // back and a route that opens on the end card pass nothing over. It
+    // stays where it is and can still be voted on; what changes is that the
+    // badges stop counting it (../../workshop/needs-seen.ts), as an unread
+    // count stops counting what you have read.
+    if (c > i && row && !answered[row.key] && !sendingRef.current.has(row.key)) {
+      markNeedsSeen(rowSlug(row, slug), needsRowKey(row));
+    }
     curKeyRef.current = items[c] ? items[c].key : (items.length ? END_KEY : null);
     setAt(c);
     // A sheet stays with its item: arriving on the end card closes it, so
@@ -3550,15 +3567,26 @@ export function DevWorkshop(): ReactNode {
   // The votes waiting on you: the band's Needs you count, the hub's row,
   // and the Communities tab's badge and switcher (features/workshop/
   // community-scope.ts), which learn it from here while the page is up.
-  const owed = (v.queue || []).filter((row) => row.kind === 'vote').length;
+  //
+  // #3526: LESS THE ONES YOU HAVE SWIPED PAST. `owed` is the band's number,
+  // so it counts only the votes not yet seen (../../workshop/needs-seen.ts,
+  // which this re-renders on). The scope is handed every vote and which ones
+  // rather than this page's answer, and works the same number out itself, so
+  // the tab's badge and the band cannot disagree about a vote seen elsewhere.
+  useNeedsSeen();
+  const owedRows = (v.queue || []).filter((row) => row.kind === 'vote');
+  const owedKeys = owedRows.map(needsRowKey).filter((k): k is string => !!k);
+  const owed = unseenNeeds(v.slug || '', owedRows.length, owedKeys);
+  const owedSig = owedKeys.join(' ');
   useEffect(() => {
     if (!v.slug || v.loading) return;
     describeCommunity(v.slug, {
-      needs: owed,
+      owedCount: owedRows.length,
+      owed: owedKeys,
       ...(own && app.name ? { name: app.name, iconUrl: app.iconUrl, iconEmoji: app.iconEmoji, iconColor: app.iconColor } : {}),
       ...(community ? { audience: community.audience, memberCount: Number(community.member_count) || 0 } : {}),
     });
-  }, [v.slug, v.loading, owed, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]);
+  }, [v.slug, v.loading, owedRows.length, owedSig, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
@@ -3689,7 +3717,7 @@ export function DevWorkshop(): ReactNode {
         <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} onMore={() => openTab('workshop')} />
       ) : null}
       {owesVote(v.queue)
-        ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
+        ? <NeedsCard queue={v.queue} slug={slug} canPost={canPost} onOpen={() => openTab('needs')} />
         : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
       {slug && community?.audience !== 'solo' ? (
         <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('discussion')} />
