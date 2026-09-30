@@ -35,6 +35,43 @@ const port = Number(process.env.SHOTS_PROXY_PORT || 17891);
 const readyFile = process.env.SHOTS_PROXY_READY || '';
 const originList = [...origins];
 const hostedFile = process.env.SHOTS_HOSTED_ORIGINS_FILE || '';
+
+// One listener per fixture persona, so the proxy knows whose browser a
+// request comes from: Chromium's --proxy-server cannot carry credentials, so
+// the port is the identity. run-cc.sh names the ports; the verifiers that
+// start this proxy without them get the single shared listener, as before.
+const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin']);
+const PERSONA_TOKEN_ENV = Object.freeze({
+  member: 'SHOTS_MEMBER_TOKEN',
+  read_only_admin: 'SHOTS_ADMIN_TOKEN',
+  full_admin: 'SHOTS_FULL_ADMIN_TOKEN',
+});
+function personaPorts() {
+  let parsed;
+  try { parsed = JSON.parse(process.env.SHOTS_PROXY_PERSONA_PORTS || '{}'); } catch { return {}; }
+  const ports = {};
+  for (const persona of PERSONAS) {
+    const value = parsed?.[persona];
+    if (Number.isSafeInteger(value) && value >= 0 && value <= 65535) ports[persona] = value;
+  }
+  return ports;
+}
+// A hosted app is told who is signed in only by the `?token=` on its first
+// iframe load, which its frontend keeps in memory and forwards as
+// x-usernode-token; the app's server refuses its own page without one
+// ("Open this app inside Homeroom", services/template.js). The shots browser
+// signs in once, so every later page the shots agent opens arrived with no
+// token. Each persona's listener adds that persona's token to requests for
+// the pair's two origins instead. The tokens are the run's non-loginable
+// fixture identities, already in this process's environment from the
+// runner; they stay here: the header is added after the browser has sent
+// the request, so the page, the browser and the shots agent never see it,
+// and nothing below logs a header.
+const personaTokens = {};
+for (const persona of PERSONAS) {
+  const value = String(process.env[PERSONA_TOKEN_ENV[persona]] || '');
+  if (/^[A-Za-z0-9._-]{1,8192}$/.test(value)) personaTokens[persona] = value;
+}
 let hostedOrigins = new Set();
 let hostedAuthorities = new Set();
 let hostedLoaded = !hostedFile;
@@ -189,8 +226,17 @@ function reject(socketOrResponse, code = 403) {
   }
 }
 
-const server = http.createServer((req, res) => {
-  if (req.url === controlPath) return controlRequest(req, res);
+// Only a hosted-app pair, only the pair's own two origins (never a hosted
+// production app's), and never over a token the page sent itself.
+function identityToken(persona, target, headers) {
+  if (!persona || !childAppPair || !origins.has(target.origin)) return null;
+  if (headers['x-usernode-token']) return null;
+  return personaTokens[persona] || null;
+}
+
+const handleRequest = (persona) => (req, res) => {
+  // The control plane answers on the shared listener only.
+  if (req.url === controlPath) return persona ? reject(res) : controlRequest(req, res);
   let target;
   try {
     target = new URL(req.url);
@@ -212,10 +258,15 @@ const server = http.createServer((req, res) => {
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
   const startedAt = performance.now();
-  if (isDocument) diagnostic({ kind: 'document_request', documentOrdinal: ordinal, side });
   const headers = { ...req.headers, host: target.host };
   delete headers['proxy-authorization'];
   delete headers['proxy-connection'];
+  const token = identityToken(persona, target, headers);
+  if (token) headers['x-usernode-token'] = token;
+  // Whether this page load carried the persona's identity: a boolean, never
+  // the token.
+  if (isDocument) diagnostic({ kind: 'document_request', documentOrdinal: ordinal, side,
+    ...(persona ? { identityAttached: !!token } : {}) });
   const transport = target.protocol === 'https:' ? https : http;
   const upstream = transport.request(target, { method: req.method, headers }, (upstreamResponse) => {
     let bodyBytes = 0;
@@ -237,9 +288,11 @@ const server = http.createServer((req, res) => {
     reject(res, 502);
   });
   req.pipe(upstream);
-});
+};
 
-server.on('connect', (req, client, head) => {
+// A CONNECT tunnel is opaque, so no persona adds anything to one: the pair's
+// origins are plain HTTP inside the cluster.
+const handleConnect = (req, client, head) => {
   const authority = String(req.url || '').toLowerCase();
   const legacyCdn = childAppPair && authority === LEGACY_TAILWIND_CDN;
   if (!legacyCdn && !permittedAuthority(authority)) return reject(client);
@@ -255,14 +308,37 @@ server.on('connect', (req, client, head) => {
   });
   upstream.on('error', () => client.destroy());
   client.on('error', () => upstream.destroy());
+};
+
+function listener(persona) {
+  const server = http.createServer(handleRequest(persona));
+  server.on('connect', handleConnect);
+  return server;
+}
+
+const server = listener(null);
+const personaServers = Object.entries(personaPorts())
+  .map(([persona, personaPort]) => ({ persona, personaPort, server: listener(persona) }));
+const listening = (target, targetPort) => new Promise((resolve, reject_) => {
+  target.once('error', reject_);
+  target.listen(targetPort, '127.0.0.1', () => resolve(target.address().port));
 });
 
-server.listen(port, '127.0.0.1', () => {
-  if (readyFile) fs.writeFileSync(readyFile, String(server.address().port), { mode: 0o600 });
+// Ready only once every listener is up: the runner starts the browsers as
+// soon as this file exists. It holds the shared port, as it always has.
+Promise.all([
+  listening(server, port),
+  ...personaServers.map(({ server: personaServer, personaPort }) => listening(personaServer, personaPort)),
+]).then(([sharedPort]) => {
+  if (readyFile) fs.writeFileSync(readyFile, String(sharedPort), { mode: 0o600 });
+}, () => {
+  process.stderr.write('Shots proxy could not listen on its ports.\n');
+  process.exit(1);
 });
 
 function stop() {
   if (readyFile) { try { fs.unlinkSync(readyFile); } catch {} }
+  for (const { server: personaServer } of personaServers) personaServer.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1000).unref();
 }

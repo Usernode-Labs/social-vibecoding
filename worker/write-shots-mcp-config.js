@@ -34,6 +34,18 @@ const clipSize = /^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(process.env.SHOTS_CLIP
 for (const persona of ['member', 'admin', 'full_admin']) {
   fs.mkdirSync(path.join(shotsDir, persona), { recursive: true, mode: 0o700 });
 }
+// Each persona's browser reaches its own proxy listener, which is how the
+// proxy knows whose identity a hosted app's page load should carry. Without
+// the ports (the image-build verifiers) every browser shares one listener
+// and nothing is attached, as before.
+let personaPorts = {};
+try { personaPorts = JSON.parse(process.env.SHOTS_PROXY_PERSONA_PORTS || '{}') || {}; } catch { personaPorts = {}; }
+const proxyFor = (persona) => {
+  const personaPort = personaPorts[persona];
+  if (!Number.isSafeInteger(personaPort) || personaPort <= 0 || personaPort > 65535) return proxy;
+  const shared = new URL(proxy);
+  return `${shared.protocol}//${shared.hostname}:${personaPort}`;
+};
 const browserArgs = (persona) => {
   const observed = persona === 'read_only_admin' ? 'admin' : persona;
   return [
@@ -43,7 +55,7 @@ const browserArgs = (persona) => {
     '--storage-state', path.join(stateDir, `${persona}.json`),
     '--allowed-origins', origins.join(';'),
     '--block-service-workers', '--image-responses', 'allow',
-    '--proxy-server', proxy,
+    '--proxy-server', proxyFor(persona),
     '--timeout-action', '10000', '--timeout-navigation', '30000',
     '--output-dir', path.join(shotsDir, observed),
     ...(recordClips ? [`--save-video=${clipSize}`] : []),

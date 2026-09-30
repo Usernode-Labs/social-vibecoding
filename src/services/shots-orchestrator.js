@@ -660,6 +660,11 @@ function recordAgentDiagnostic(metrics, raw) {
     }
   }
   if (typeof raw.truncated === 'boolean') event.truncated = raw.truncated;
+  // Whether the shots proxy attached the persona's identity to a hosted
+  // app's page load (worker/shots-origin-proxy.js).
+  if (kind === 'document_request' && typeof raw.identityAttached === 'boolean') {
+    event.identityAttached = raw.identityAttached;
+  }
   if (kind === 'controlled_failure_set' && typeof raw.enabled === 'boolean') {
     event.enabled = raw.enabled;
   }
