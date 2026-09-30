@@ -281,7 +281,7 @@ export function NothingToVote({ queue, onOpen }: {
     <p className="dev-ws-week-note" data-ws-hub-needs-none="">
       {claims ? 'Nothing more to vote on · ' : 'Nothing more to vote on.'}
       {claims ? (
-        <button type="button" className="dev-ws-link" onClick={onOpen} data-ws-hub-needs-requests="">
+        <button type="button" className="dev-ws-link un-touch-target" onClick={onOpen} data-ws-hub-needs-requests="">
           {`${plural(claims, 'request', 'requests')} nobody has picked up`}
         </button>
       ) : null}

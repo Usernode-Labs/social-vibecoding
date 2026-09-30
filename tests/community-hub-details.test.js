@@ -137,7 +137,7 @@ test('Needs you counts the votes you owe, not the requests nobody has claimed', 
   assert.equal(owesVote(claims), false, 'requests alone owe no vote');
   assert.equal(owesVote([...claims, row('v1', 'Dark mode', 'vote')]), true);
   const claimsOnly = renderToHtml(createElement(NothingToVote, { queue: claims, onOpen: () => {} }));
-  assert.match(claimsOnly, /^<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on · <button type="button" class="dev-ws-link" data-ws-hub-needs-requests="">2 requests nobody has picked up<\/button><\/p>$/);
+  assert.match(claimsOnly, /^<p class="dev-ws-week-note" data-ws-hub-needs-none="">Nothing more to vote on · <button type="button" class="dev-ws-link un-touch-target" data-ws-hub-needs-requests="">2 requests nobody has picked up<\/button><\/p>$/);
   assert.doesNotMatch(claimsOnly, /dev-ws-head-n|Needs you/, 'no card, no count');
   const one = renderToHtml(createElement(NothingToVote, { queue: [claims[0]], onOpen: () => {} }));
   assert.match(one, />1 request nobody has picked up</);
