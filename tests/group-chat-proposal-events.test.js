@@ -525,3 +525,59 @@ test('every class in the components is a complete literal, so Tailwind compiles 
     }
   }
 });
+
+// ── #3411: a vote line that no longer counts says so ──────────────────
+//
+// The line is posted when the vote is cast and stays; the tally counts only
+// votes on the current version. Once the proposal changed, the page read
+// "Voted yes" beside "Yes 0". The roster the page already loads names the
+// people whose vote is from an earlier version, and their lines say so.
+
+const voteRow = (over) => row({
+  kind: 'vote', systemText: 'bob voted yes on PR #12: Custom tier colors',
+  voteRef: { sessionId: '5', prNumber: '12' },
+  event: { type: 'vote', vote: 'yes', reason: '', here: true, sessionId: '5', prNumber: '12', title: '', actor: 'bob', sender: 'bob', mine: false, force: false, votes: '', icon: null },
+  ...(over || {}),
+});
+
+test('a vote on an earlier version is marked "not counted"; a current one is not', () => {
+  const { eventText, eventTail } = loadTsx(EVENT);
+  const earlier = voteRow({ event: { ...voteRow().event, earlier: true } });
+  assert.equal(eventText(earlier), 'Voted yes', 'the act itself is unchanged');
+  assert.equal(eventTail(earlier), '· on an earlier version, not counted');
+  const html = renderComponent(EVENT, 'EventRow', { msg: earlier });
+  assert.match(html, /data-vote="yes" data-earlier="1"/);
+  assert.match(html, /<span class="gc-event-text">Voted yes<span class="gc-event-tail"> · on an earlier version, not counted<\/span><\/span>/);
+
+  const current = voteRow();
+  assert.equal(eventTail(current), '');
+  const plainHtml = renderComponent(EVENT, 'EventRow', { msg: current });
+  assert.doesNotMatch(plainHtml, /data-earlier|not counted|gc-event-tail/);
+  assert.match(plainHtml, /<span class="gc-event-text">Voted yes<\/span>/);
+});
+
+test('the Discussion reads who voted on an earlier version from the roster the page already loaded', () => {
+  const roster = { phase: 'ready', earlierVoters: ['bob'] };
+  const gc = loadGroupChat({ _voteRoster: { 5: roster }, voteState: voteState(promoted) });
+  const meta = { vote: { sessionId: 5 } };
+  const bob = gc._threadEvent({ content: 'bob voted yes on PR #12: Custom tier colors', metadata: meta }, 'vote');
+  assert.equal(bob.type, 'vote');
+  assert.equal(bob.earlier, true, 'bob\'s only vote is from before the change');
+  // alice re-cast on the current version, so she is not on the roster's
+  // earlier list and no line of hers is marked, even her older one.
+  const alice = gc._threadEvent({ content: 'alice voted no: “needs a test”', metadata: meta }, 'vote');
+  assert.equal(alice.earlier, false);
+  assert.equal(alice.reason, 'needs a test');
+
+  // A line from before the metadata tag resolves through the open thread.
+  gc.activeThread = { type: 'session', ref: 5, language: 'chat' };
+  assert.equal(gc._threadEvent({ content: 'bob voted yes on PR #12' }, 'vote').earlier, true);
+  // Before the roster answers, nothing is marked.
+  const bare = loadGroupChat({ _voteRoster: {}, voteState: voteState(promoted) });
+  assert.equal(bare._threadEvent({ content: 'bob voted yes on PR #12', metadata: meta }, 'vote').earlier, false);
+
+  // The roster keeps the names, and repaints the open thread when they move.
+  const av = read('public/js/app-view.js');
+  assert.match(av, /earlierVoters: \[\.\.\.earlierYes, \.\.\.earlierNo\],/);
+  assert.match(av, /before !== \(view\.earlierVoters \|\| \[\]\)\.join\('\\n'\)\)\s*\{\s*GroupChat\.renderThread\(\);/);
+});

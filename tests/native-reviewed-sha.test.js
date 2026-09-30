@@ -84,7 +84,7 @@ function repo() {
 
 // A pool that records what the reconciler writes, and answers the one
 // conditional UPDATE it depends on.
-function makePool({ epoch = 0 }) {
+function makePool({ epoch = 0, voters = 0 }) {
   const writes = [];
   let currentEpoch = epoch;
   return {
@@ -98,6 +98,10 @@ function makePool({ epoch = 0 }) {
         if (!keeps) currentEpoch += 1;
         return { rows: [{ approval_epoch: currentEpoch }], rowCount: 1 };
       }
+      if (/SELECT 1 FROM pr_votes WHERE session_id = \$1 AND approval_epoch = \$2/.test(text)) {
+        // `voters` votes were cast under the epoch the proposal started in.
+        return { rows: params[1] === epoch && voters ? [{ '?column?': 1 }] : [], rowCount: 0 };
+      }
       if (/SELECT reviewed_head_sha, approval_epoch/.test(text)) {
         return { rows: [{ reviewed_head_sha: null, approval_epoch: currentEpoch }], rowCount: 1 };
       }
@@ -109,12 +113,16 @@ function makePool({ epoch = 0 }) {
   };
 }
 
-function load(r) {
+function load(r, posted = []) {
   const rebuilds = [];
   const restores = [
     stub('src/services/github.js', { isEnabled: () => true }),
     stub('src/services/ws.js', {
-      pushVoteUpdate() {}, pushSessionUpdate() {}, async sendSystemMessage() {},
+      pushVoteUpdate() {},
+      pushSessionUpdate() {},
+      async sendSystemMessage(pool_, appId, content, type, meta, thread) {
+        posted.push({ appId, content, type, meta, thread });
+      },
     }),
     stub('src/services/visuals.js', {
       async setChecksPending(pool_, id, sha) { rebuilds.push(sha); }, notifyChecksPending() {},
@@ -401,4 +409,56 @@ test('a caller that has just pushed asks the mirror for a fetch of its own (#261
     });
     assert.equal(asked[0].fresh, false);
   } finally { restore(); r.cleanup(); }
+});
+
+// #3411: the tally counts only votes on the current version, while the
+// Discussion keeps each "Voted yes" line forever. A silent caller (the merge
+// queue's re-pin) used to retire those votes with no word in the thread, so
+// the page read "Voted yes" beside "Yes 0" and nothing said why.
+test('a silent caller that retires votes still says so, in the proposal\'s own thread', async () => {
+  const r = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const posted = [];
+  const { votes, restore } = load(r, posted);
+  try {
+    const out = await votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 3, voters: 1 }), session: session(r, { approval_epoch: 3 }), notify: false,
+    });
+    assert.equal(out.epoch, 4);
+    assert.equal(posted.length, 1, 'one notice, not one per path');
+    assert.match(posted[0].content, /^PR #99: A proposal was updated on GitHub\. Earlier votes were cleared/);
+    assert.deepEqual(posted[0].thread, { type: 'session', ref: 42 }, 'the proposal\'s thread, never a channel');
+  } finally { restore(); r.cleanup(); }
+});
+
+test('a silent caller posts nothing when the move cleared no votes, kept them, or its caller announces it', async () => {
+  const pushed = repo().writeOnFeature('a.txt', 'PROPOSAL CHANGED\nl2\nl3\n');
+  const posted = [];
+  let loaded = load(pushed, posted);
+  try {
+    await loaded.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 0, voters: 0 }), session: session(pushed), notify: false,
+    });
+    assert.equal(posted.length, 0, 'nobody had voted, so nothing was cleared');
+    await loaded.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 0, voters: 2 }), session: session(pushed), notify: false,
+      announceClearedVotes: false,
+    });
+    assert.equal(posted.length, 0, 'the merge\'s 409 writes its own line about the cleared votes');
+  } finally { loaded.restore(); pushed.cleanup(); }
+
+  const synced = repo().moveMain('b.txt', 'main moved b\n').syncIntoFeature();
+  loaded = load(synced, posted);
+  try {
+    const out = await loaded.votes.reconcileNativeReviewedHead({
+      config: {}, pool: makePool({ epoch: 0, voters: 2 }), session: session(synced), notify: false,
+    });
+    assert.equal(out.votesKept, true);
+    assert.equal(posted.length, 0, 'a clean sync keeps the votes, so a silent caller stays silent');
+  } finally { loaded.restore(); synced.cleanup(); }
+});
+
+test('the merge\'s head-moved 409 announces the cleared votes itself, so the reconciler does not', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/routes/votes.js'), 'utf8');
+  assert.match(src, /nativeRefresh = await reconcileNativeReviewedHead\(\{\s*config, pool, session, fresh: true, notify: false,\s*announceClearedVotes: false,\s*\}\)/);
+  assert.match(src, /Earlier-revision votes were cleared and the new commit is being checked/);
 });
