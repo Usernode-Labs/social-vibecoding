@@ -182,6 +182,8 @@ const STALE_CLAIM_MARGIN_SECONDS = 10 * 60;
 // repository's own instructions ask for, having spent $0.29. Time, not
 // money, is what those builds run out of.
 const PLATFORM_BUILD_TIME_FACTOR = 2;
+// The queue reason of an issue a restart sent back to be looked at again.
+const RESTART_REASON = 'restart';
 
 // Bounds on what a verdict may carry into the ledger.
 const MAX_FIELD_CHARS = 4000;
@@ -1460,7 +1462,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       });
       return { ran: false, reason: 'has_proposal' };
     }
-    const looked = await live.post({
+    // An issue a restart sent back (#3471) was already told the bot is
+    // looking; it is not told twice.
+    const looked = item.reason === RESTART_REASON ? null : await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
       kind: 'looking', text: live.lookingText(), sender: bot,
     }).catch((err) => {
@@ -2328,6 +2332,9 @@ async function debitRecovered(pool, session, costUsd, deps = {}) {
  */
 async function finishRecoveredTurn({ pool, session, activeTurn, result = {}, timedOut = false, deps = {} }) {
   const run = await runOfSession(pool, session.id);
+  if (!run && await noteRecoveredLive(pool, session, { mode: activeTurn?.mode, result, timedOut })) {
+    return 'live_pending';
+  }
   if (!run) {
     await putAwayRecoveredSession(pool, session, { archive: false });
     log.info('homeroom-bot', 'Recovered a bot turn no build owns; left for the queue', { sessionId: session.id });
@@ -2385,9 +2392,152 @@ async function finishRecoveredTurn({ pool, session, activeTurn, result = {}, tim
  */
 async function abandonRecoveredTurn({ pool, session, why }) {
   const run = await runOfSession(pool, session.id);
+  if (!run && await noteRecoveredLive(pool, session, { lost: true, why })) return 'live_pending';
   if (run) await handBackRun(pool, run.id, why);
   await putAwayRecoveredSession(pool, session, { archive: !!run });
   return run ? 'requeued' : 'released';
+}
+
+// ── A live build after a restart (#3471) ─────────────────────────────────
+//
+// A live build is the live path's, not the lane's: its triage pass already
+// dropped the issue's queue row, said it was looking and posted the spec,
+// and meant to promote the build and say so. A restart ends that pass, so
+// recovery does the rest. It is noted while the journal is followed and done
+// once recovery has let go of the session (completeRecoveredLive, called by
+// server.js's adoptBotOrphan), the order the live path promotes in: after
+// the build turn, not inside it.
+
+// sessionId → what recovery found, until completeRecoveredLive acts on it.
+const pendingLive = new Map();
+
+/** The live run a session is the build of, while it has no proposal yet. */
+async function liveRunOfSession(pool, sessionId) {
+  const { rows } = await pool.query(
+    `SELECT id, app_id, issue_number
+       FROM homeroom_bot_runs
+      WHERE build_session_id = $1 AND mode = 'live' AND proposal_session_id IS NULL
+      ORDER BY id DESC LIMIT 1`,
+    [sessionId],
+  );
+  return rows[0] || null;
+}
+
+/** Note a recovered live build for completeRecoveredLive. False when the session is no live build's. */
+async function noteRecoveredLive(pool, session, outcome) {
+  const run = await liveRunOfSession(pool, session.id);
+  if (!run) return false;
+  pendingLive.set(Number(session.id), { runId: run.id, appId: run.app_id, issueNumber: run.issue_number, ...outcome });
+  return true;
+}
+
+/** Send an issue back to be triaged again, without saying "looking" twice. */
+async function requeueForRestart(pool, appId, issueNumber) {
+  await pool.query(
+    `INSERT INTO homeroom_bot_queue (app_id, issue_number, priority, reason)
+     VALUES ($1, $2, 1, $3)
+     ON CONFLICT (app_id, issue_number) DO UPDATE
+       SET priority = LEAST(homeroom_bot_queue.priority, 1), reason = EXCLUDED.reason,
+           started_at = NULL, enqueued_at = NOW()`,
+    [appId, issueNumber, RESTART_REASON],
+  );
+  wake({ appId });
+}
+
+/**
+ * Finish a live build recovery noted, once the session is free:
+ *   - a build turn that pushed commits is proposed, and the proposal (and its
+ *     spec) said on the issue, as the live path would have;
+ *   - a build turn that pushed nothing, or ran out of time, is said to have
+ *     failed;
+ *   - a spec turn that found the request impossible says so;
+ *   - any other spec turn, and a turn recovery could not follow at all, sends
+ *     the issue back to be triaged again: its queue row is gone, and without
+ *     this the issue would sit on "looking into it" for good.
+ * Never throws; returns what it did, or null when nothing was noted.
+ */
+async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }) {
+  const plan = pendingLive.get(Number(sessionId));
+  if (!plan) return null;
+  pendingLive.delete(Number(sessionId));
+  try {
+    const { rows: [session] } = await pool.query(
+      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md,
+              (SELECT MAX(version) FROM chat_session_specs WHERE session_id = cs.id) AS spec_version
+         FROM chat_sessions cs WHERE cs.id = $1`,
+      [sessionId],
+    );
+    const { rows: [app] } = await pool.query(
+      'SELECT id, slug, name, repo_url, self_hosted FROM apps WHERE id = $1', [plan.appId],
+    );
+    if (!session || !app) return 'gone';
+    const archive = () => putAwayRecoveredSession(pool, session, { archive: true });
+    await debitRecovered(pool, session, await sessionCostUsd(pool, session.id), deps);
+
+    const specRead = plan.mode === 'scout' && !plan.lost && !plan.timedOut
+      ? live.readSpec(plan.result?.lastResultText) : null;
+    if (plan.lost || (plan.mode === 'scout' && !specRead?.blocked)) {
+      await archive();
+      await requeueForRestart(pool, plan.appId, plan.issueNumber);
+      log.info('homeroom-bot', 'Sent a live issue back to be triaged after a restart', {
+        app: app.slug, issueNumber: plan.issueNumber, sessionId, why: plan.why || plan.mode,
+      });
+      return 'requeued';
+    }
+
+    const github = deps.github || require('./github');
+    const repo = parseRepo(app.repo_url);
+    const fetched = repo ? await github.fetchPublicIssue(repo.owner, repo.repo, plan.issueNumber).catch(() => null) : null;
+    const issue = fetched?.issue || null;
+    if (!issue || (issue.state && issue.state !== 'open')) {
+      await archive();
+      return 'not_open';
+    }
+    // The session's own user: recovery hands the bot only its own sessions
+    // (isRecoveredBotSession checks the name and the synthetic flag).
+    const bot = { id: session.user_id, username: live.BOT_USERNAME };
+    const liveD = liveDeps(deps);
+    const say = liveSayer({
+      pool, github, ws: liveD.ws, app, repo, issueNumber: plan.issueNumber, issue, runId: plan.runId, bot,
+      botLogin: await live.botUsernameOf(github), notifications: deps.notifications || null,
+    });
+    const note = ' (finished after a restart)';
+    let built;
+    if (plan.mode === 'scout') {
+      built = { ok: false, blocked: specRead.blocked };
+    } else if (plan.result?.pushOk === true && Number(plan.result?.ahead) > 0 && !plan.timedOut) {
+      const promoted = await live.promoteAsBot({ config, bot, sessionId, router: liveD.votesRouter });
+      if (promoted.status === 200 && promoted.body?.ok) {
+        built = {
+          ok: true, sessionId: Number(sessionId), prNumber: promoted.body.prNumber || null,
+          specMd: session.spec_md || null, specVersion: session.spec_version || null,
+        };
+      } else {
+        // Built but not proposed: left as the live path leaves it, for a
+        // person to open and propose.
+        const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
+        await putAwayRecoveredSession(pool, session, { archive: false });
+        built = { ok: false, sessionId: Number(sessionId), error: `the change was built but could not be proposed: ${why}` };
+      }
+    } else {
+      await archive();
+      built = {
+        ok: false, sessionId: Number(sessionId),
+        error: (plan.timedOut ? 'the build ran past its time limit' : 'the build produced no change to propose') + note,
+      };
+    }
+    if (built.blocked) await archive();
+    const acted = await announceBuilt({
+      pool, ws: liveD.ws, app, bot, issueNumber: plan.issueNumber, runId: plan.runId, built, say, domain: liveD.domain,
+    });
+    log.info('homeroom-bot', 'Finished a live build a restart interrupted', {
+      app: app.slug, issueNumber: plan.issueNumber, sessionId, acted,
+    });
+    return acted;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not finish a recovered live build', { sessionId, err: err.message });
+    return 'error';
+  }
 }
 
 /**
@@ -2727,15 +2877,17 @@ async function runFollowUp(pool, config, {
  * the bot's newest post there: a held issue is retried whenever its cap has
  * room, and a retry that is held again has nothing new to say.
  */
-async function actOnVerdict({
-  pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
-  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, deps,
+/**
+ * How the live path speaks on an issue: a post on GitHub and the issue's
+ * thread. Whoever filed the issue, and whoever took part in its discussion,
+ * are tagged on the posts that concern them, so they are notified
+ * (live.mentionTargets), except anybody who asked the bot to stop. Looked up
+ * once, when the first such post goes out, and read fresh on each run.
+ * `postedAt` collects what was posted, so it is not read back as a change.
+ */
+function liveSayer({
+  pool, github, ws, app, repo, issueNumber, issue, runId, bot, botLogin = null, notifications = null, postedAt = [],
 }) {
-  const { github, ws } = deps;
-  // Whoever filed the issue, and whoever took part in its discussion, are
-  // tagged on the posts that concern them, so they are notified
-  // (live.mentionTargets), except anybody who asked the bot to stop. Looked
-  // up once, when the first such post goes out, and read fresh on each run.
   let targets;
   const targetsOnce = async () => {
     if (targets === undefined) {
@@ -2747,15 +2899,66 @@ async function actOnVerdict({
     }
     return targets;
   };
-  const say = async (kind, text, extra = {}) => {
+  return async (kind, text, extra = {}) => {
     const mentions = live.tagsPoster(kind) ? await targetsOnce() : [];
     const posted = await live.post({
       pool, github, ws, app, repo, issueNumber, kind, runId, text, mentions, senderId: bot.id, sender: bot,
-      notifications: deps.notifications || null, ...extra,
+      notifications, ...extra,
     });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
     return posted;
   };
+}
+
+/**
+ * What a live build came to, said on its issue: the proposal (and the spec
+ * on it, where the group votes), the request found impossible, or the build
+ * that did not become a proposal. Shared by the live path and the recovery
+ * of a live build a restart interrupted (#3471). Returns what was done.
+ */
+async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain }) {
+  if (built.ok) {
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET proposal_session_id = $2 WHERE id = $1',
+      [runId, built.sessionId],
+    ).catch(() => {});
+    // The vote-card metadata the promote route's own activity rows carry,
+    // so the issue's thread shows the live proposal card, not only a link.
+    await say('proposal', live.proposalText({
+      link: live.proposalLink(domain, app.slug, built.sessionId), prNumber: built.prNumber,
+    }), { msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } } });
+    // And the spec on the proposal itself, where the group votes.
+    if (built.specMd && built.specVersion) {
+      await live.postSpecOnProposal({
+        pool, ws, app, bot, sessionId: built.sessionId, version: built.specVersion, spec: built.specMd,
+      }).catch((err) => log.warn('homeroom-bot', 'Could not post the spec on the proposal', {
+        app: app.slug, issueNumber, sessionId: built.sessionId, err: err.message,
+      }));
+    }
+    return 'proposed';
+  }
+  if (built.blocked) {
+    // Impossible as written, which only reading the code showed: said on
+    // the issue like a question, so a reply sends it round again.
+    await say('blocked', live.blockedText(built.blocked));
+    return 'blocked';
+  }
+  log.warn('homeroom-bot', 'Live build did not become a proposal', {
+    app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
+  });
+  await say('build_failed', live.buildFailedText(built.error));
+  return 'build_failed';
+}
+
+async function actOnVerdict({
+  pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
+  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, deps,
+}) {
+  const { github, ws } = deps;
+  const say = liveSayer({
+    pool, github, ws, app, repo, issueNumber, issue, runId, bot, botLogin,
+    notifications: deps.notifications || null, postedAt,
+  });
   let acted = capSuppressed ? 'held' : parsed.verdict;
   if (capSuppressed) {
     const kind = live.heldKind(capSuppressed);
@@ -2788,6 +2991,11 @@ async function actOnVerdict({
     const built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
       ...buildBudgets(app, config, turnBudgetMs), model, deps, onSpec,
+      // Linked before any turn runs, so a restart mid-build can find the run
+      // (#3471): the build's worker outlives the restart; this process does not.
+      onSession: (session) => pool.query(
+        'UPDATE homeroom_bot_runs SET build_session_id = $2 WHERE id = $1', [runId, session.id],
+      ),
     });
     if (built.specMd) {
       await pool.query('UPDATE homeroom_bot_runs SET build_spec_md = $2 WHERE id = $1', [runId, built.specMd])
@@ -2802,37 +3010,7 @@ async function actOnVerdict({
         log.warn('homeroom-bot', 'Build spend debit failed', { err: err.message });
       }
     }
-    if (built.ok) {
-      acted = 'proposed';
-      await pool.query(
-        'UPDATE homeroom_bot_runs SET proposal_session_id = $2 WHERE id = $1',
-        [runId, built.sessionId],
-      ).catch(() => {});
-      // The vote-card metadata the promote route's own activity rows carry,
-      // so the issue's thread shows the live proposal card, not only a link.
-      await say('proposal', live.proposalText({
-        link: live.proposalLink(deps.domain, app.slug, built.sessionId), prNumber: built.prNumber,
-      }), { msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } } });
-      // And the spec on the proposal itself, where the group votes.
-      if (built.specMd && built.specVersion) {
-        await live.postSpecOnProposal({
-          pool, ws, app, bot, sessionId: built.sessionId, version: built.specVersion, spec: built.specMd,
-        }).catch((err) => log.warn('homeroom-bot', 'Could not post the spec on the proposal', {
-          app: app.slug, issueNumber, sessionId: built.sessionId, err: err.message,
-        }));
-      }
-    } else if (built.blocked) {
-      // Impossible as written, which only reading the code showed: said on
-      // the issue like a question, so a reply sends it round again.
-      acted = 'blocked';
-      await say('blocked', live.blockedText(built.blocked));
-    } else {
-      acted = 'build_failed';
-      log.warn('homeroom-bot', 'Live build did not become a proposal', {
-        app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
-      });
-      await say('build_failed', live.buildFailedText(built.error));
-    }
+    acted = await announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain: deps.domain });
   }
   await live.advanceSeen({
     pool, github, threadContext: deps.threadContext, app, repo, issueNumber, runId,
@@ -3543,6 +3721,10 @@ module.exports = {
   buildBudgets,
   PLATFORM_BUILD_TIME_FACTOR,
   isRecoveredBotSession,
+  completeRecoveredLive,
+  liveSayer,
+  announceBuilt,
+  RESTART_REASON,
   recoveryDeadline,
   finishRecoveredTurn,
   abandonRecoveredTurn,
@@ -3583,6 +3765,7 @@ module.exports = {
     appBackoff.clear(); lastRefusals = []; platformFault = null; lastVolumeSweepAt = 0;
     if (timer) clearTimeout(timer);
     timer = null; loopConfig = null; pendingApps.clear(); refreshAllRequested = false; wakeRequested = false;
+    pendingLive.clear();
     buildsInFlight.clear(); buildLaneOn = false; buildDrainRunning = false; buildDrainAgain = false;
     buildFault = null; lastBuildDrain = null;
     if (buildTimer) clearTimeout(buildTimer);

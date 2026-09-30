@@ -2641,6 +2641,9 @@ async function adoptBotOrphan({
     await bot.holdSlotDuringRecovery(pool, sessionId, resumeDetachedTurn({
       config, pool, staging, broadcastGlobal, session, sessionId, containerName, activeTurn,
     }));
+    // #3471: a live build is proposed (or said to have failed) only now,
+    // with the session free, the order the live path promotes in.
+    await bot.completeRecoveredLive({ pool, config, sessionId });
     return;
   }
   if (activeTurn) {
@@ -2654,6 +2657,7 @@ async function adoptBotOrphan({
   await bot.abandonRecoveredTurn({
     pool, session, why: containerState === 'running' ? 'no turn was in flight' : 'the worker is gone',
   });
+  await bot.completeRecoveredLive({ pool, config, sessionId });
 }
 
 async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcastGlobal }) {
