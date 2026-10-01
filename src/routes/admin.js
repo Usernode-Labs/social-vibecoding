@@ -1443,7 +1443,7 @@ function adminRoutes(config) {
     try {
       const { rows: featured } = await pool.query(
         `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order,
-                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.featured_illustration, a.main_sha, a.last_deploy_at, a.directory_review_status,
                 a.directory_reviewed_at, a.directory_reviewed_sha
            FROM featured_apps fa
            JOIN apps a ON a.id = fa.app_id
@@ -1452,7 +1452,7 @@ function adminRoutes(config) {
       );
       const { rows: available } = await pool.query(
         `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id,
-                a.main_sha, a.last_deploy_at, a.directory_review_status,
+                a.featured_illustration, a.main_sha, a.last_deploy_at, a.directory_review_status,
                 a.directory_reviewed_at, a.directory_reviewed_sha
            FROM apps a
           WHERE NOT a.self_hosted
@@ -1468,6 +1468,10 @@ function adminRoutes(config) {
         icon_emoji: r.icon_emoji || null,
         icon_url: r.icon_image_id ? `/app-icons/${r.icon_image_id}` : null,
         sort_order: r.sort_order ?? null,
+        // Whether the Discover card has its own art (#2615). Without one it
+        // draws the app icon, and the section flags that so the gap is
+        // visible. A boolean, not the record: the list has no use for framing.
+        has_illustration: !!(r.featured_illustration && r.featured_illustration.url),
         main_sha: r.main_sha || null,
         last_deploy_at: r.last_deploy_at || null,
         directory_review_status: r.directory_review_status || 'unreviewed',

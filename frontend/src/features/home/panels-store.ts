@@ -119,7 +119,7 @@ export interface ChallengeRowView {
    * challenge's own end, else its event's, else the season's; null on a
    * finished or not-open challenge, or with no end in the future. Also null
    * under a This week, Always open or Season challenges header, which owns
-   * the clock; only Get started's cards keep their own.
+   * the clock; only the First challenges cards keep their own.
    */
   deadline: string | null;
   /** "Earned N pts" on a finished challenge the viewer scored on. */
@@ -128,7 +128,7 @@ export interface ChallengeRowView {
 
 /**
  * One group of the block's cards under the board's group header. Every group
- * is headed, a block of one group included, so `heading` ("Get started", "This
+ * is headed, a block of one group included, so `heading` ("First challenges", "This
  * week", "Always open", "Season challenges") is null only on the renderer's
  * fallback for a view built before groups existed. `meta` is the header's
  * clock ("3d left", "no deadline") or null; never a count.
@@ -153,18 +153,25 @@ export interface ChallengesView {
    */
   summary: string | null;
   /**
-   * "Finish these to unlock the rest of the season." while setup gates the
-   * season; null once unlocked or with no gate. Drawn only when the locked
-   * placeholder is not, which says the same thing.
+   * "Finish Getting started to unlock the rest of the season." while the
+   * gate is closed and the block has no locked card to say it (nothing
+   * hidden to count); null once unlocked or with no gate.
    */
   onboardingNote?: string | null;
   /**
-   * How many challenges setup still hides (the server's
+   * How many challenges Getting started still hides (the server's
    * `onboarding.hidden_count`), 0 once unlocked or when the payload has no
-   * count. Above 0 the block draws the dashed placeholder, whose second line
-   * replaces the unlock note.
+   * count. Above 0 the block is `locked`.
    */
   lockedCount?: number;
+  /** The first few of their names (`onboarding.hidden_names`), for the locked card's second line. */
+  lockedNames?: string[];
+  /**
+   * A new account's season, still behind its Getting started list
+   * (2026-10-01): the block draws ONE dashed locked card and nothing else,
+   * because the card on top of Home already lists the First challenges.
+   */
+  locked?: boolean;
   /** Null between seasons, and on the empty block. */
   season: SeasonView | null;
   /** How many challenges are OPEN — what "See all N challenges" counts. */

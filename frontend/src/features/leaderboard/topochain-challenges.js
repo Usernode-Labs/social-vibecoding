@@ -419,9 +419,9 @@ const TopochainChallenges = {
   // screen reader says the words. The keys are not the headings: ids
   // (`tc-se-group-<key>`) and tests name the keys, so a heading can change
   // without them. `order` is each group's rank while setup is unfinished;
-  // _groupRankOf moves a finished Get started to the end.
+  // _groupRankOf moves a finished First challenges group to the end.
   GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'Get started', order: 0 },
+    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
     WEEKLY: { key: 'week', heading: 'This week', order: 1 },
     PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
   },
@@ -444,7 +444,7 @@ const TopochainChallenges = {
       && list.some((c) => TopochainChallenges._groupOf(c) !== TopochainChallenges.OTHER_GROUP);
   },
 
-  // Whether setup is behind the viewer, which decides where Get started
+  // Whether setup is behind the viewer, which decides where First challenges
   // sits. With an onboarding summary the server's gate says so
   // (`unlocked === true`); without one, the list must hold at least one setup
   // card and every one of them must be done.
@@ -455,8 +455,8 @@ const TopochainChallenges = {
     return setup.length > 0 && setup.every((c) => TopochainChallenges._isDone(c));
   },
 
-  // A group's rank in the board's order: Get started while unfinished (0),
-  // This week (1), Always open (2), Season challenges (3), then Get started
+  // A group's rank in the board's order: First challenges while unfinished (0),
+  // This week (1), Always open (2), Season challenges (3), then First challenges
   // once finished (4, last), so the grid leads with what is left to do.
   // Pure: a group from GROUPS/OTHER_GROUP and the _setupFinished answer.
   // HomePanels keeps the same rule for Home's block, and
@@ -472,9 +472,9 @@ const TopochainChallenges = {
     return grouped ? TopochainChallenges._groupRankOf(TopochainChallenges._groupOf(c), setupFinished) : 0;
   },
 
-  // The group first (a grouped grid only, by _groupRankOf: Get started while
+  // The group first (a grouped grid only, by _groupRankOf: First challenges while
   // unfinished, This week, Always open, Season challenges, then a finished
-  // Get started), then unfinished challenges, then organiser-featured, then
+  // First challenges), then unfinished challenges, then organiser-featured, then
   // the public payload's order (display_order, then id) — the retired
   // #challenges screen's ordering with the completed split added in front of
   // it (#981). The group key keeps each group contiguous, so a grouped grid's
@@ -609,23 +609,27 @@ const TopochainChallenges = {
     }
     return {
       kind: 'cards',
-      // Get started is its own scope while it gates the rest; once unlocked
+      // First challenges is its own scope while it gates the rest; once unlocked
       // the grid is the whole event again, and so is the progress.
       progress: onboarding.unlocked
         ? TopochainChallenges._progressView(doneCount, ordered.length)
-        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'Get started'),
+        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'First challenges'),
       onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'setup')
         ? onboarding.event_id : null,
       // While the gate is closed: the note, and how many of this event's
       // challenges it hides, the server's additive `hidden_count`, which the
-      // pane draws as one locked placeholder after the groups. The
-      // placeholder's second line is the note, so the pane draws the note only
-      // without one; a payload without the field (an older server) is 0,
-      // which draws no placeholder. Unlocked, nothing hides and there is
-      // nothing to say: no notice, no count.
+      // pane draws as one locked placeholder after the groups, naming the
+      // first few (`hidden_names`) as Home's does. The placeholder says what
+      // opens them, so the pane draws the note only without one; a payload
+      // without the field (an older server) is 0, which draws no placeholder.
+      // Unlocked, nothing hides and there is nothing to say: no notice, no
+      // count. Only a new account is gated at all, and what it finishes is
+      // its Getting started list on Home (the tour as well as these), so
+      // that is what the words name (2026-10-01).
       ...(onboarding.unlocked ? {} : {
-        notice: 'Finish these to unlock the rest of the season.',
+        notice: 'Finish Getting started to unlock the rest of the season.',
         lockedCount: Number(onboarding.hidden_count) || 0,
+        lockedNames: Array.isArray(onboarding.hidden_names) ? onboarding.hidden_names : [],
       }),
       groups,
     };
@@ -633,9 +637,9 @@ const TopochainChallenges = {
 
   // One group's header, from its challenges: how many are done, whether all
   // are, the clock, and the meta string composed from them: "2/2 done" for a
-  // finished group, "1/3" for Get started (which has no clock), "1/4 · 3d left"
+  // finished group, "1/3" for First challenges (which has no clock), "1/4 · 3d left"
   // or "0/2 · no deadline" for the rest. `left` is the time-left words alone,
-  // or null (Get started, a finished group, no deadline); the detail page's eyebrow
+  // or null (First challenges, a finished group, no deadline); the detail page's eyebrow
   // reads it.
   _groupSummary(key, challenges) {
     const list = Array.isArray(challenges) ? challenges : [];
@@ -717,7 +721,7 @@ const TopochainChallenges = {
       ...TopochainChallenges._stateOf(c),
       // On a grouped grid the header over This week, Always open and Season
       // challenges says when the group ends, so those cards leave it out.
-      // Get started's header has no clock, and its cards keep theirs.
+      // The First challenges header has no clock, and its cards keep theirs.
       deadline: TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)
         || (TopochainChallenges._grouped() && TopochainChallenges._groupOf(c).key !== 'setup')
         ? null : TopochainChallenges._deadlineOf(c),
@@ -725,33 +729,38 @@ const TopochainChallenges = {
     };
   },
 
-  // The line under the rail of a challenge the background scorer counts
-  // (#3185): "Updates every 15 min · last 10:42". Progress on such a card
-  // moves only when a run writes credits, so it can sit on "1/3" for a whole
-  // interval — and a viewer who is not told that redoes what they finished.
+  // When a challenge the background scorer counts is next counted (#3185),
+  // said on the card's meta line after the reward: "500 pts · next count
+  // 9:37". Progress on such a card moves only when a run writes credits, so
+  // it can sit on "1/3" for a whole interval, and a viewer who is not told
+  // that redoes what they finished. "Next" rather than "last" because the
+  // question on a card someone just acted on is when it will move.
   //
   // From the row's `scoring` ({ interval_minutes, last_scored_at }), which
-  // the server sends only for a challenge a rule counts right now. null — no
-  // line — when it sends none, when either field is missing or malformed, and
-  // on a finished card, whose count has nothing left to move. The time is in
-  // the viewer's own locale and zone, with the date added once it is not
-  // today's, so a stalled schedule reads as stale rather than as this
-  // morning. Short on purpose: it is one truncating line, like the rail's.
+  // the server sends only for a challenge a rule counts right now. null (say
+  // nothing) when it sends none, when either field is missing or malformed,
+  // and on a finished card, whose count has nothing left to move. Times are
+  // in the viewer's own locale and zone, with the date added once it is not
+  // today's. A run that is late by less than one interval is "counting now";
+  // later than that the schedule has stalled, and the card says when it last
+  // counted, dated, rather than promise a time that has passed.
   _cadenceOf(c, now = Date.now()) {
     const s = c && c.scoring;
     if (!s || TopochainChallenges._isDone(c)) return null;
     const minutes = Number(s.interval_minutes);
     const last = s.last_scored_at ? Date.parse(s.last_scored_at) : NaN;
     if (!Number.isInteger(minutes) || minutes <= 0 || !Number.isFinite(last)) return null;
-    let every = `${minutes} min`;
-    if (minutes === 1) every = 'minute';
-    else if (minutes === 60) every = 'hour';
-    else if (minutes % 60 === 0) every = `${minutes / 60} hours`;
-    const at = new Date(last);
-    const time = at.toDateString() === new Date(now).toDateString()
-      ? at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
-      : at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
-    return `Updates every ${every} · last ${time}`;
+    const every = minutes * 60000;
+    const clock = (ms) => {
+      const at = new Date(ms);
+      return at.toDateString() === new Date(now).toDateString()
+        ? at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+        : at.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    };
+    const next = last + every;
+    if (next > now) return `next count ${clock(next)}`;
+    if (now - next < every) return 'counting now';
+    return `last count ${clock(last)}`;
   },
 
   // Open right now, by the rule Home's server applies (OPEN_ONLY_WHERE in
@@ -799,7 +808,7 @@ const TopochainChallenges = {
   // The progress over the grid, as the board's quiet season summary draws it
   // ("3/9 done in Season 2", one segment per challenge, in
   // ./season-progress.tsx, which Home's block shares). `scope` names a scope
-  // of its own ("Get started"); otherwise it is the selected event, whose name
+  // of its own ("First challenges"); otherwise it is the selected event, whose name
   // can land after the grid does. The onChange redraw in open() fills it in
   // then, and until it has, the caption is plain "done".
   //
@@ -808,7 +817,7 @@ const TopochainChallenges = {
   // season's; production names its season event after the season ("Season
   // 1"), so "done in Season 1" here and "done in Season 1" on Home were two
   // different counts under one label. The event's tally reads "done in this
-  // event · <name>" now. A named scope ("Get started") is unchanged.
+  // event · <name>" now. A named scope ("First challenges") is unchanged.
   _progressView(done, total, scope) {
     if (scope) return { done, total, caption: `done in ${scope}` };
     const ctx = window.TopochainEventContext;
@@ -956,7 +965,7 @@ const TopochainChallenges = {
   // check can't reach it by URL alone. Opens one card once, right after the
   // grid first paints: the first UNFINISHED card when the event has one
   // (#981), which is the better capture either way. That is looked up, not
-  // assumed to be `ordered[0]`: a grouped grid leads with Get started while
+  // assumed to be `ordered[0]`: a grouped grid leads with First challenges while
   // the gate reads locked, even over setup cards that are all done, and a
   // finished group starts collapsed. Scoped to
   // that one param value so a real user's
@@ -1563,7 +1572,7 @@ const TopochainChallenges = {
     // The eyebrow, uppercase on the page. Ungrouped it is the category label,
     // and the meta line carries the card's deadline. Grouped it is the
     // challenge's group with that group's clock ("This week · 3d left"), and
-    // the meta line leaves the deadline to it; Get started has no clock, so its
+    // the meta line leaves the deadline to it; First challenges has no clock, so its
     // page keeps the card's deadline.
     let eyebrow = cp.label ? str(cp.label) : null;
     let deadline = TopochainChallenges._isDone(challenge) || !TopochainChallenges._isOpen(challenge)

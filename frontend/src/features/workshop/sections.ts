@@ -6,7 +6,9 @@
  * each; three shown, then "Show N more". "Your communities"
  * (./community-switcher.tsx, through ./community-scope.ts) lists the same
  * communities in the same newest-first order, reading `orderRows` from here
- * rather than from the screen, which it must not import.
+ * rather than from the screen, which it must not import — and draws the same
+ * sections and the same fold (#3519), with `sectionFloor` / `sectionFoldFrom`
+ * keeping the community you are on out of any fold.
  *
  * Generic over the row: the screen's rows carry their counts, the panel's do
  * not, and neither the order nor the grouping reads them.
@@ -55,6 +57,33 @@ export function sectionFold(total: number, limit: number): { shown: number; labe
   if (total <= SECTION_LIMIT) return { shown: total, label: null, next: SECTION_LIMIT };
   const hidden = total - shown;
   if (!hidden) return { shown, label: 'Show fewer', next: SECTION_LIMIT };
+  return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
+}
+
+/**
+ * The fewest rows a section of "Your communities" ever shows (#3519): three,
+ * or as many as it takes to reach the community you are on, so no press of
+ * "Show fewer" folds away the row with the tick. It was #3363's pickerFloor,
+ * for the "Which project?" panel the switcher replaced (#3455).
+ */
+export function sectionFloor(rows: Array<{ slug: string }>, current: string | null): number {
+  const at = current ? rows.findIndex((row) => row.slug === current) : -1;
+  return Math.max(SECTION_LIMIT, at + 1);
+}
+
+/**
+ * `sectionFold`, collapsing to `floor` rather than to three. With the floor
+ * at three (nothing ticked, or the ticked row among the three most recent) it
+ * IS `sectionFold`, answer for answer. A section whose floor already shows
+ * every row has no fold row at all: a "Show fewer" that could show nothing
+ * fewer is a dead control.
+ */
+export function sectionFoldFrom(total: number, limit: number, floor: number): { shown: number; label: string | null; next: number } {
+  if (floor <= SECTION_LIMIT) return sectionFold(total, limit);
+  if (total <= floor) return { shown: total, label: null, next: floor };
+  const shown = Math.min(total, Math.max(floor, limit));
+  const hidden = total - shown;
+  if (!hidden) return { shown, label: 'Show fewer', next: floor };
   return { shown, label: `Show ${Math.min(hidden, SECTION_STEP)} more`, next: shown + SECTION_STEP };
 }
 

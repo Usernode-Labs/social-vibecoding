@@ -79,6 +79,37 @@ test('a person who replied while it worked still gets looked at again', async ()
   }
 });
 
+test('its own comment is its own even when the login lookup fails (#3509)', async () => {
+  // todo #78: with getBotUsername failing, the bot's held note read as a
+  // person's reply, the run's thread_seen_at stayed put, and the next
+  // refresh triaged the issue again 3.5 minutes later.
+  const since = '2026-09-25T17:00:00Z';
+  const updates = [];
+  const pool = { async query(sql, params) { updates.push({ sql: String(sql), params }); return { rows: [] }; } };
+  const threadContext = { async loadIssueThread() { return { messages: [] }; } };
+  const ownOnly = [{ author: 'usernode-bot', createdAt: '2026-09-25T17:00:05Z' }];
+  for (const getBotUsername of [async () => { throw new Error('rate limited'); }, async () => null]) {
+    updates.length = 0;
+    const out = await live.advanceSeen({
+      pool, github: { getBotUsername, async fetchIssueComments() { return { comments: ownOnly }; } },
+      threadContext, app: APP, repo: REPO, issueNumber: 78, runId: 560, since, postedAt: ['2026-09-25T17:00:05Z'],
+    });
+    assert.deepEqual(out, { advanced: true, seen: '2026-09-25T17:00:05.000Z' },
+      'the comment this run posted is recognised by its own timestamp');
+    assert.ok(updates.some((u) => /UPDATE homeroom_bot_runs/.test(u.sql)));
+  }
+  // A person's reply beside it still counts, with or without the login.
+  const out = await live.advanceSeen({
+    pool: { async query() { throw new Error('must not record anything'); } },
+    github: {
+      getBotUsername: async () => null,
+      async fetchIssueComments() { return { comments: [...ownOnly, { author: 'alice', createdAt: '2026-09-25T17:00:07Z' }] }; },
+    },
+    threadContext, app: APP, repo: REPO, issueNumber: 78, runId: 560, since, postedAt: ['2026-09-25T17:00:05Z'],
+  });
+  assert.deepEqual(out, { advanced: false, reason: 'someone_replied' });
+});
+
 test('its Homeroom posts are system messages, which the queue never counts as activity', () => {
   assert.match(LIVE_SRC, /msgType = 'system'/, 'posts default to system messages');
   const activity = BOT_SRC.slice(BOT_SRC.indexOf('async function threadActivityByIssue'));
@@ -362,6 +393,19 @@ function guardedRouter({ app, sessionUserId }) {
 const PRIVATE_COLLAB = { id: 9, slug: 'rss-reader-4113da', name: 'RSS reader', community_id: 48, collab_visibility: 'private', view_visibility: 'public' };
 const PUBLIC_COLLAB = { ...PRIVATE_COLLAB, collab_visibility: 'public' };
 
+test('promoteAsBot hands the route the bot\'s own proposal ceiling, only when it has one (#3576)', async () => {
+  const { BOT_PROMOTED_CEILING, effectiveSessionCaps } = require('../src/services/session-caps');
+  const users = [];
+  const router = express.Router();
+  router.post('/api/sessions/:id/promote', (req, res) => { users.push(req.user); res.json({ ok: true }); });
+  await live.promoteAsBot({ config: {}, bot: BOT, sessionId: 5001, router, ceiling: 20 });
+  await live.promoteAsBot({ config: {}, bot: BOT, sessionId: 5001, router });
+  assert.equal(users[0][BOT_PROMOTED_CEILING], 20);
+  assert.equal(effectiveSessionCaps({}, users[0]).promotedSessions, 20);
+  assert.ok(!(BOT_PROMOTED_CEILING in users[1]), 'no ceiling given, the per-user cap stands');
+  assert.equal(effectiveSessionCaps({}, users[1]).promotedSessions, 5);
+});
+
 test('the bot proposes its own build on an app it is not a collaborator or member of', async () => {
   for (const app of [PRIVATE_COLLAB, PUBLIC_COLLAB]) {
     const { router, reached } = guardedRouter({ app, sessionUserId: BOT.id });
@@ -500,7 +544,8 @@ test('a ready request is built in a session of its own and proposed', async () =
   const h = buildHarness();
   const out = await live.buildAndPropose({ pool: h.pool, deps: h.deps, ...BUILD_ARGS });
   assert.deepEqual(out, {
-    ok: true, sessionId: 5001, prNumber: 42, costUsd: 0.05,
+    ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'a'.repeat(40), commits: 1,
+    costUsd: 0.05,
     specNote: 'no spec (the spec turn returned nothing); the build worked from the plan',
   }, 'this harness writes no spec, and the result says so');
 
@@ -575,11 +620,11 @@ function actHarness() {
   return { pool, deps, posts, queries };
 }
 
-async function act(h, parsed, { capSuppressed = null } = {}) {
+async function act(h, parsed, { capSuppressed = null, quietHold = false } = {}) {
   return bot.actOnVerdict({
     pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
     parsed, capSuppressed, runId: 900, seed: 'seed', seedReadAt: '2026-09-25T17:00:00Z', postedAt: [],
-    turnBudgetMs: 1000, model: 'm', deps: h.deps,
+    turnBudgetMs: 1000, model: 'm', quietHold, deps: h.deps,
   });
 }
 
@@ -601,7 +646,7 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.deepEqual(h.posts.map((p) => p.kind), ['held_question_tripwire', 'held_proposals_per_app'],
     'the caps hold the question and the build, and say so in one line (#3152)');
   assert.ok(!/Which feed/.test(h.posts[0].text), 'the held question itself is not posted');
-  assert.match(h.posts[1].text, /would build this, but it already has 2 proposals open on this app/);
+  assert.match(h.posts[1].text, /would build this, but it already has 5 proposals open on this app/);
   assert.match(h.posts[1].text, /come back to this issue when one of them is merged or closed/);
 
   live.buildAndPropose = async (args) => {
@@ -644,6 +689,127 @@ test('a held issue is told once, not again on every retry that is held again (#3
   assert.deepEqual(h.posts.map((p) => p.kind), ['held_proposals_per_app', 'held_question_tripwire']);
 });
 
+test('a backlog pass holds silently, and still speaks when it has something to say (#3509)', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  t.after(() => { live.post = realPost; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind }); return { githubCreatedAt: '2026-09-25T17:00:05Z' }; };
+  const quiet = { quietHold: true };
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }, { ...quiet, capSuppressed: 'proposals_per_app' }), 'held');
+  assert.equal(await act(h, { verdict: 'question', question: 'q' }, { ...quiet, capSuppressed: 'question_tripwire' }), 'held');
+  assert.deepEqual(h.posts, [], 'held is still the verdict, and the cap_freed refresh brings it back; no note');
+  assert.equal(await act(h, { verdict: 'question', question: 'Which feed?' }, quiet), 'question');
+  assert.deepEqual(h.posts.map((p) => p.kind), ['question'], 'a verdict that is not held is said as ever');
+  // Anything else held still says so once.
+  await act(h, { verdict: 'ready', buildNote: 'x' }, { capSuppressed: 'proposals_per_app' });
+  assert.deepEqual(h.posts.map((p) => p.kind), ['question', 'held_proposals_per_app']);
+});
+
+test('a "Triage this app again" item is triaged without the "looking" post, and held quietly', () => {
+  assert.equal(bot.APP_AGAIN_REASON, 'app_again');
+  assert.match(BOT_SRC, /SELECT \$1, q\.n, 0, 'app_again', \$4/, 'retriageApp queues with that reason');
+  assert.match(BOT_SRC, /const looked = item\.reason === RESTART_REASON \|\| item\.reason === APP_AGAIN_REASON \? null : await live\.post\(/);
+  assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,/);
+  // The refresh keeps a priority-0 row's reason, so a comment before the
+  // row runs does not turn it back into a "looking" one mid-pass.
+  assert.match(BOT_SRC, /reason = CASE WHEN homeroom_bot_queue\.priority = 0\s+THEN homeroom_bot_queue\.reason ELSE EXCLUDED\.reason END/);
+});
+
+test('a live build\'s outcome is recorded on its run, in the shadow build\'s columns (#3509)', async (t) => {
+  const h = actHarness();
+  const realPost = live.post;
+  const realBuild = live.buildAndPropose;
+  t.after(() => { live.post = realPost; live.buildAndPropose = realBuild; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind }); return { githubCreatedAt: '2026-09-25T17:00:05Z' }; };
+  const recorded = () => {
+    const u = h.queries.filter((q) => /SET build_ok = \$2, build_error = \$3/.test(q.sql)).at(-1);
+    return u && u.params;
+  };
+
+  live.buildAndPropose = async () => ({
+    ok: true, sessionId: 5001, prNumber: 42, branchName: 'homeroom_bot/s5001', sha: 'b'.repeat(40), commits: 2,
+    costUsd: 0.3, specNote: 'no spec (the spec ran past its time limit); the build worked from the plan',
+  });
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
+  assert.deepEqual(recorded(), [900, true, 'no spec (the spec ran past its time limit); the build worked from the plan',
+    'homeroom_bot/s5001', 'b'.repeat(40), 2, 0.3, 5001, null], 'a proposal built without a spec says why');
+
+  live.buildAndPropose = async () => ({ ok: false, sessionId: 5002, error: 'the build ran past its time limit', costUsd: 0.2 });
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
+  assert.deepEqual(recorded().slice(0, 3), [900, false, 'the build ran past its time limit']);
+
+  live.buildAndPropose = async () => ({
+    ok: false, sessionId: 5003, blocked: 'the app has no image generation', error: 'the spec found it impossible', costUsd: 0.1,
+  });
+  assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'blocked');
+  assert.deepEqual(recorded().slice(0, 3), [900, false, 'blocked: the app has no image generation'],
+    'blocked and failed are told apart');
+
+  // Recorded before anything is said: a post that throws cannot lose it.
+  const src = BOT_SRC.slice(BOT_SRC.indexOf('async function announceBuilt'));
+  assert.match(src.slice(0, 200), /\{\n  await recordLiveBuild\(pool, runId, built\);/);
+  // Never the lane's markers: build_at is how the lane and its restart
+  // recovery (runOfSession) tell a build of theirs under way.
+  const rec = BOT_SRC.slice(BOT_SRC.indexOf('async function recordLiveBuild'));
+  assert.doesNotMatch(rec.slice(0, rec.indexOf('\n}\n')), /build_at|build_queued_at/);
+});
+
+test('a ready verdict is held before it is built when the bot is at its ceiling across apps (#3576)', async (t) => {
+  let perApp = 0;
+  let total = 0;
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      if (/FROM chat_sessions\s+WHERE app_id = \$1/.test(s)) return { rows: [{ cnt: perApp }] };
+      if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) {
+        assert.match(s, /status IN \('promoted', 'merging'\) AND is_headless = FALSE/, 'counted as the Propose route counts');
+        return { rows: [{ cnt: total }] };
+      }
+      return { rows: [{ cnt: 0 }] };
+    },
+  };
+  const settings = { liveApps: ['a', 'b', 'c', 'd'] };
+  assert.equal(bot.PROPOSALS_PER_APP_CAP, 5);
+  assert.equal(bot.botProposalCeiling(settings), 20, '5 per live app');
+  assert.equal(bot.botProposalCeiling(null), 5, 'never below one app\'s cap');
+  total = 19;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), null);
+  total = 20;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), 'proposals_total');
+  perApp = 5;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), 'proposals_per_app', 'the app\'s own cap is named first');
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'question', settings), null, 'only a build is held by them');
+
+  // Held, it says so and builds nothing; the line names the ceiling.
+  const h = actHarness();
+  const realPost = live.post;
+  const realBuild = live.buildAndPropose;
+  t.after(() => { live.post = realPost; live.buildAndPropose = realBuild; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind, text: args.text }); return { githubCreatedAt: '2026-09-25T17:00:05Z' }; };
+  const built = [];
+  live.buildAndPropose = async (args) => { built.push(args.proposalCeiling); return { ok: true, sessionId: 5001, prNumber: 42 }; };
+  assert.equal(await bot.actOnVerdict({
+    pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
+    parsed: { verdict: 'ready', buildNote: 'x' }, capSuppressed: 'proposals_total', runId: 900, seed: 's',
+    seedReadAt: '2026-09-25T17:00:00Z', postedAt: [], turnBudgetMs: 1000, model: 'm', proposalCeiling: 20, deps: h.deps,
+  }), 'held');
+  assert.deepEqual(built, []);
+  assert.equal(h.posts[0].kind, 'held_proposals_total');
+  assert.match(h.posts[0].text, /already has 20 proposals open across Homeroom/);
+  // Not held, the build carries the ceiling to its promote.
+  assert.equal(await bot.actOnVerdict({
+    pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
+    parsed: { verdict: 'ready', buildNote: 'x' }, capSuppressed: null, runId: 900, seed: 's',
+    seedReadAt: '2026-09-25T17:00:00Z', postedAt: [], turnBudgetMs: 1000, model: 'm', proposalCeiling: 20, deps: h.deps,
+  }), 'proposed');
+  assert.deepEqual(built, [20]);
+  assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,\n\s+proposalCeiling: botProposalCeiling\(settings\),/);
+  assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, parsed\.verdict, settings\)/);
+  assert.match(BOT_SRC, /live\.promoteAsBot\(\{\n\s+config, bot, sessionId, router: liveD\.votesRouter, ceiling: botProposalCeiling\(/,
+    'a build recovery finishes is proposed under the same ceiling');
+  assert.match(LIVE_SRC, /router: deps\.votesRouter \|\| null, ceiling: proposalCeiling,/);
+});
+
 test('the held lines name the limit and never promise more than the refresh does', () => {
   assert.match(live.heldText({ cap: 'proposals_per_app', verdict: 'ready', limit: 2 }), /already has 2 proposals open on this app/);
   const q = live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10 });
@@ -671,4 +837,14 @@ test('runTriage acts only through the live module, and only when the app is live
   assert.match(BOT_SRC, /const liveMode = live\.isLiveFor\(settings, app\);/);
   assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+const open = await live\.openBotProposal/);
   assert.match(BOT_SRC, /if \(liveMode\) \{\n\s+try \{\n\s+acted = await actOnVerdict\(/);
+});
+
+test('the dashboard says what a live build came to, and never calls it a shadow build (#3509)', () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /\{run\.mode === 'live' \? <LiveBuild run=\{run\} \/> : <ShadowBuild run=\{run\} \/>\}/);
+  const fn = tsx.slice(tsx.indexOf('function LiveBuild('), tsx.indexOf('/** A question\'s "user_facing: why" as words. */'));
+  assert.match(fn, /data-live-build=\{why\.startsWith\('blocked: '\) \? 'blocked' : 'failed'\}/);
+  assert.match(fn, /Live build did not become a proposal: \$\{why\}\./);
+  assert.match(fn, /data-live-build="built"/);
+  assert.doesNotMatch(fn, /Shadow|href=/, 'the proposal link below the note is the one link');
 });

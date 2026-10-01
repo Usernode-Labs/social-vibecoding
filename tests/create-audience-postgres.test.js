@@ -158,8 +158,11 @@ test('creating a project for someone, against the full schema', { timeout: 18000
     const plain = await create({ name: 'Undescribed', audience: 'open' });
     const bare = await pool.query(`SELECT manifest_snapshot FROM apps WHERE id = $1`, [plain.data.app.id]);
     assert.equal(bare.rows[0].manifest_snapshot, null, 'no line, no seeded snapshot');
-    const long = await create({ name: 'Too long', audience: 'open', description: 'x'.repeat(101) });
+    // #3572: 90 is the limit now (two lines of the hub hero on a phone), so
+    // 91 is the first length refused, with the sentence that says so.
+    const long = await create({ name: 'Too long', audience: 'open', description: 'x'.repeat(91) });
     assert.equal(long.status, 400);
+    assert.match(long.data.error, /90 characters or fewer/);
   });
 
   await t.test('a group invited by address: an account is invited as itself, anyone else is stored and mailed', async () => {

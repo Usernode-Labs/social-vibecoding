@@ -14,6 +14,19 @@
  *
  * PURE ON PURPOSE, for the reason inbox.ts is: the order and the cut are the
  * whole argument, and a test should drive them with plain arrays.
+ *
+ * A CHANNEL OPENS ITS PROJECT'S DISCUSSION TAB (#3555). A project's channel
+ * is its page's Discussion tab now, drawn in place under the page's own
+ * header (../dev-board/workshop/project-discussion.tsx), and #general is
+ * Homeroom's (#3494). These rows still went to the room's Messages address,
+ * `#messages/app/<slug>` or `#messages/<id>`, which draws it on the Messages
+ * screen with a chevron back up to the hub: the header of a level BELOW the
+ * community, for a room that is one of its tabs. So a channel row carries
+ * the project whose tab it is (`discussion`), and the list presses it as a
+ * door to that tab (./recents-list.tsx). #general's project is the
+ * platform's, whose slug the caller passes once the shell knows it; until
+ * then, and for Homeroom's own app chat (its tab holds #general, not that),
+ * a row keeps the Messages address it always had.
  */
 
 import { agentActivity, type AgentActivity } from '../agent-session/activity';
@@ -35,8 +48,9 @@ export interface RecentItem {
   key: string;
   kind: RecentKind;
   label: string;
-  /** Where the row goes. Apps resume through the router instead, but keep a
-   *  real address so a modified click opens a tab. */
+  /** Where the row goes. Apps resume through the router instead, and a
+   *  channel opens its project's Discussion tab, but both keep a real
+   *  address so a modified click opens a tab. */
   href: string;
   /** ISO, or null when the source has no clock. */
   at: string | null;
@@ -47,6 +61,9 @@ export interface RecentItem {
   app?: { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
   /** Only for an Active row (#3074): the app the viewer is in right now. */
   current?: boolean;
+  /** Only for a channel that is a project's Discussion tab (#3555): that
+   *  project, whose page the row opens on the tab. */
+  discussion?: { slug: string };
 }
 
 /** The part of a conversation summary the merge reads. */
@@ -89,6 +106,16 @@ function stamp(value: string | null | undefined): number {
   return Number.isFinite(at) ? at : Number.NEGATIVE_INFINITY;
 }
 
+/**
+ * A project's page on its Discussion tab, as an address a new tab can open
+ * (#3555): the page's clean path with the `?ws=` deep link the tabs keep
+ * (AppView._workshopTabParam). A plain press does not follow it; it goes
+ * through the door (./recents-list.tsx), which keeps the window's own query.
+ */
+export function discussionHref(slug: string): string {
+  return `/app/${encodeURIComponent(slug)}/workshop?ws=discussion`;
+}
+
 function directLabel(item: RecentConversation, viewerId: number | null): string {
   // QA 2026-09-24 Q33a: a request the viewer has not answered carries no
   // peer and no roster, but it does carry who sent it — name them, as the
@@ -112,9 +139,13 @@ export function buildRecents(input: {
   /** #3074: the apps listed under Active, which Recents leaves out. Dropped
    *  BEFORE the cut, so an active app never costs Recents a row. */
   active?: string[];
+  /** #3555: the platform project's slug, whose Discussion tab is #general;
+   *  null until the shell knows it (../messages/channel-hub.ts). */
+  platformSlug?: string | null;
 }): RecentItem[] {
   const viewerId = input.viewerId ?? null;
   const active = input.active || [];
+  const platformSlug = input.platformSlug || null;
   const items: RecentItem[] = [];
   for (const app of input.apps) {
     if (active.includes(app.slug)) continue;
@@ -133,15 +164,19 @@ export function buildRecents(input: {
     // in any sense they would recognise.
     if (item.archived) continue;
     const kind: RecentKind = item.kind === 'channel' ? 'channel' : item.kind === 'group' ? 'group' : 'direct';
+    // #3555: #general is Homeroom's Discussion tab (#3494), so it opens
+    // there once the platform's slug is known.
+    const general = kind === 'channel' && item.channelKey === 'general' && platformSlug;
     items.push({
       key: `conversation:${item.id}`,
       kind,
       label: kind === 'channel'
         ? `#${item.channelKey || item.title}`
         : kind === 'direct' ? directLabel(item, viewerId) : item.title,
-      href: `#messages/${item.id}`,
+      href: general ? discussionHref(general) : `#messages/${item.id}`,
       at: item.lastActivityAt || null,
       unread: item.unreadCount > 0,
+      ...(general ? { discussion: { slug: general } } : null),
     });
   }
   // An app's channel carries no unread count: `chat_messages` has no
@@ -150,13 +185,17 @@ export function buildRecents(input: {
   // and it is left out rather than padding the list.
   for (const item of input.discussions) {
     if (!item.lastAt) continue;
+    // #3555: the project's own Discussion tab — except Homeroom's app chat,
+    // which an admin can see listed: its tab holds #general, not this room.
+    const tab = item.slug !== platformSlug;
     items.push({
       key: `discussion:${item.slug}`,
       kind: 'channel',
       label: `#${item.channel || item.slug}`,
-      href: `#messages/app/${encodeURIComponent(item.slug)}`,
+      href: tab ? discussionHref(item.slug) : `#messages/app/${encodeURIComponent(item.slug)}`,
       at: item.lastAt,
       unread: false,
+      ...(tab ? { discussion: { slug: item.slug } } : null),
     });
   }
   for (const item of input.agents) {

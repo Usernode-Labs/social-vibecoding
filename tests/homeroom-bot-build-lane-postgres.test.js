@@ -341,4 +341,35 @@ test('the shadow-build lane against the full PostgreSQL schema', { timeout: 1800
     assert.ok(rows.length > 0);
     assert.ok('build_queued_at' in rows[0]);
   });
+
+  await t.test('a live build is recorded in the same columns, and the lane never counts it (#3509)', async () => {
+    const before = await bot.buildLaneSummary(pool);
+    const liveRun = async (issue) => (await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, build_note, build_spec_md)
+       VALUES ($1, $2, 'live', 'ready', 'build it', 'the spec') RETURNING id`, [todo.id, issue],
+    )).rows[0].id;
+    const proposed = await liveRun(801);
+    await bot.recordLiveBuild(pool, proposed, {
+      ok: true, sessionId: null, branchName: 'homeroom_bot/s1', sha: 'c'.repeat(40), commits: 3, costUsd: 0.4,
+    });
+    const blocked = await liveRun(802);
+    await bot.recordLiveBuild(pool, blocked, {
+      ok: false, blocked: 'no image generation', costUsd: 0.05,
+      specNote: 'no spec (x); the build worked from the plan',
+    });
+    const { rows: [p] } = await pool.query(
+      `SELECT build_ok, build_error, build_branch, build_sha, build_commits, build_cost_usd::float8 AS cost,
+              build_spec_md, build_at, build_queued_at
+         FROM homeroom_bot_runs WHERE id = $1`, [proposed],
+    );
+    assert.deepEqual(
+      { ...p },
+      { build_ok: true, build_error: null, build_branch: 'homeroom_bot/s1', build_sha: 'c'.repeat(40), build_commits: 3,
+        cost: 0.4, build_spec_md: 'the spec', build_at: null, build_queued_at: null },
+      'the spec already on the run is kept; the lane\'s own markers stay empty',
+    );
+    assert.equal((await row(blocked)).build_error, 'blocked: no image generation; no spec (x); the build worked from the plan');
+    assert.equal((await row(blocked)).build_ok, false);
+    assert.deepEqual(await bot.buildLaneSummary(pool), before, 'the shadow lane\'s counts and cost are its own');
+  });
 });

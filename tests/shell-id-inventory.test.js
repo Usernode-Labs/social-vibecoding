@@ -322,6 +322,9 @@ const ADDED_IDS = {
   // #3230: the spend card's reset line, rewritten by Settings._refreshSpend()
   // in the viewer's own clock (it prerenders the server's UTC boundary).
   'settings-spend-reset': '#3230 spend card reset line, localized at reveal',
+  // #3319: Settings → Theme's "Keep sidebar open in apps" switch, React-wired
+  // (features/settings/sections/theme.tsx) and desktop only.
+  'settings-rail-pinned': '#3319 keep-sidebar-open-in-apps switch',
   // ── #2718: the platform's destinations leave the app's menu ──────
   //
   // Eleven ids leave THIS map rather than entering RETIRED_IDS, because the
@@ -432,6 +435,8 @@ const ADDED_IDS = {
   // ── QA 2026-09-24 Q11: the register form states the account rules ──
   'reg-username-hint': 'The line under the register form\'s username field: the handle rule (letters, numbers and underscores, 3 to 32 characters) while the field is fine, and the server\'s sentence about the name when POST /api/auth/register refuses it (`field: "username"`). Registration now applies the same rule a rename does; the input names it through aria-describedby.',
   'reg-password-hint': 'The same line under the password field: "At least 8 characters", the rule Change password already enforced and registration now does too, or the server\'s refusal when it is `field: "password"`.',
+  // ── #3575: the person chooses the handle, and is told it is public ──
+  'reg-username-public': '#3575: "Your username will be public to other users on Homeroom." directly under the register form\'s username field, ahead of #reg-username-hint. Its own element rather than a clause of the hint, because the hint is swapped whole for the server\'s refusal and this sentence has to stay beside the field while the person fixes the name. The input names both lines through aria-describedby. The email sign-up\'s set-password step and the first-run gate say the same sentence beside their fields.',
   // ── #1911: the create-app dialog unfolds in steps ─────────────────
   'create-step-indicator': 'The "Step N of M" line under the create dialog\'s title. The dialog used to show every choice on one page; its steps unfold in one card now (since communities, stage 3: who it is for, what and how to start, the details, and for a group or a community made new who approves), and this names how far it has unfolded and how far these answers go.',
   'create-next': 'The create dialog\'s Next pill, which unfolds the next step. The details step runs the guards the old single page ran at submit, one step earlier. Hidden once the last step for the answers so far is showing (app.css keys it off #create-card[data-final]), when Create takes its place, and on the two question steps, where pressing a row moves on by itself (request #3160).',
@@ -441,7 +446,7 @@ const ADDED_IDS = {
   'create-approve-block': 'The create dialog\'s last step for a group or a community made new: Members vote, or People I pick (starting with the creator), with "at least N yes votes" as its follow-up. Written into the new repository\'s dapp.json (POST /api/apps `governance`).',
   'create-approvals-n': 'The "Yes votes needed" number under People I pick → At least a number (1 to 50).',
   // ── Communities, stage 5: the first run ─────────────────────────────
-  'home-getting-started': 'Home\'s Getting started card: the welcome tour and three first steps for an account that came through "What communities do you want to join?", ticked off from what it did (GET /api/me/getting-started). Ships empty and hidden; a React island (features/home/getting-started.tsx).',
+  'home-getting-started': 'Home\'s Getting started card: the welcome tour and the season\'s First challenges for a new account that came through "What communities do you want to join?", ticked off from their credits (GET /api/me/getting-started; the one list, 2026-10-01). Ships empty and hidden; a React island (features/home/getting-started.tsx).',
   // ── #1374: per-app notification settings ─────────────────────────
   // One switch per category governs the bell here AND the phone push,
   // because the preference gates whether the notification is CREATED and

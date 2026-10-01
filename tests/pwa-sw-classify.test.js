@@ -206,6 +206,52 @@ test('the installed worker leaves a CSV download to the browser (#3381)', () => 
   assert.equal(fetches, 0);
 });
 
+// #3585: clicking an issue's screenshot opens /issue-images/<id> in a new tab.
+// That navigation got the cached shell, which has no route for it, so the tab
+// showed the home screen instead of the image.
+test('a navigation to a server-served file (an issue screenshot) never gets the shell', () => {
+  const id = '0123456789abcdef0123456789abcdef';
+  for (const prefix of ['issue-images', 'visuals', 'app-icons', 'avatars', 'app-files']) {
+    assert.equal(classify('GET', `/${prefix}/${id}`, 'text/html', 'navigate'), 'bypass', prefix);
+  }
+  // Only navigations: as images on a page the content-addressed ones keep
+  // their cache-first lane.
+  for (const prefix of ['visuals', 'app-icons', 'avatars']) {
+    assert.equal(classify('GET', `/${prefix}/${id}`, 'image/*', 'no-cors'), 'immutable', prefix);
+  }
+  // Near misses are not file routes and still fall back to the shell.
+  for (const path of [
+    `/issue-images/${id}/extra`,
+    `/issue-images/${id.slice(1)}`,
+    `/issue-images/${id.toUpperCase()}`,
+    `/issue-imagesx/${id}`,
+    '/issue-images/',
+  ]) {
+    assert.equal(classify('GET', path, 'text/html', 'navigate'), 'navigate', path);
+  }
+});
+
+test('the installed worker leaves an issue screenshot to the browser (#3585)', () => {
+  const handlers = {};
+  const intercepted = [];
+  vm.runInNewContext(fs.readFileSync(require.resolve('../public/sw.js'), 'utf8'), {
+    self: { location: { origin: ORIGIN }, addEventListener: (name, fn) => { handlers[name] = fn; } },
+    URL, Headers, Response, Map, Set, Promise,
+    caches: { open: async () => ({ match: async () => new Response('<!DOCTYPE html><title>Homeroom</title>') }) },
+    fetch: () => new Promise(() => {}),
+    setTimeout: () => 1, clearTimeout: () => {},
+  });
+  handlers.fetch({
+    request: {
+      method: 'GET', url: `${ORIGIN}/issue-images/${'f'.repeat(32)}`,
+      headers: new Headers({ accept: 'text/html' }), mode: 'navigate',
+    },
+    respondWith: (response) => intercepted.push(response),
+    waitUntil: () => {},
+  });
+  assert.equal(intercepted.length, 0, 'the browser receives the image, not a cached document');
+});
+
 test('shell assets classify as shell', () => {
   assert.equal(classify('GET', '/js/app.js'), 'shell');
   assert.equal(classify('GET', '/css/app.css'), 'shell');

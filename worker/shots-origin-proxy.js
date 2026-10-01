@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 
-// Mandatory egress boundary for shots-browser MCP servers. Playwright's
-// allowed-origins option is useful filtering but explicitly is not a security
-// boundary; this proxy independently rejects HTTP requests and CONNECT
-// tunnels outside the paired internal origins and their authenticated,
-// public deployed-app catalog. The catalog arrives after browser bootstrap.
+// Mandatory egress boundary for shots-browser MCP servers. The browsers send
+// everything through here. The paired internal origins and the
+// authenticated, public deployed-app catalog (which arrives after browser
+// bootstrap) are reached as before. Anything else is the public internet: a
+// web port, and a name whose every address is public, connected to at the
+// address that was checked (shots-boundary.js). The network the worker runs
+// in is never reachable from the browser.
 
 const fs = require('node:fs');
 const http = require('node:http');
@@ -14,6 +16,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const { parseHostedOriginsFile } = require('./shots-hosted-origins');
+const { vetPublicDestination } = require('./shots-boundary');
 
 const DIAGNOSTIC_MARKER = '__USERNODE_SHOTS_BROWSER__ ';
 
@@ -35,6 +38,43 @@ const port = Number(process.env.SHOTS_PROXY_PORT || 17891);
 const readyFile = process.env.SHOTS_PROXY_READY || '';
 const originList = [...origins];
 const hostedFile = process.env.SHOTS_HOSTED_ORIGINS_FILE || '';
+
+// One listener per fixture persona, so the proxy knows whose browser a
+// request comes from: Chromium's --proxy-server cannot carry credentials, so
+// the port is the identity. run-cc.sh names the ports; the verifiers that
+// start this proxy without them get the single shared listener, as before.
+const PERSONAS = Object.freeze(['member', 'read_only_admin', 'full_admin']);
+const PERSONA_TOKEN_ENV = Object.freeze({
+  member: 'SHOTS_MEMBER_TOKEN',
+  read_only_admin: 'SHOTS_ADMIN_TOKEN',
+  full_admin: 'SHOTS_FULL_ADMIN_TOKEN',
+});
+function personaPorts() {
+  let parsed;
+  try { parsed = JSON.parse(process.env.SHOTS_PROXY_PERSONA_PORTS || '{}'); } catch { return {}; }
+  const ports = {};
+  for (const persona of PERSONAS) {
+    const value = parsed?.[persona];
+    if (Number.isSafeInteger(value) && value >= 0 && value <= 65535) ports[persona] = value;
+  }
+  return ports;
+}
+// A hosted app is told who is signed in only by the `?token=` on its first
+// iframe load, which its frontend keeps in memory and forwards as
+// x-usernode-token; the app's server refuses its own page without one
+// ("Open this app inside Homeroom", services/template.js). The shots browser
+// signs in once, so every later page the shots agent opens arrived with no
+// token. Each persona's listener adds that persona's token to requests for
+// the pair's two origins instead. The tokens are the run's non-loginable
+// fixture identities, already in this process's environment from the
+// runner; they stay here: the header is added after the browser has sent
+// the request, so the page, the browser and the shots agent never see it,
+// and nothing below logs a header.
+const personaTokens = {};
+for (const persona of PERSONAS) {
+  const value = String(process.env[PERSONA_TOKEN_ENV[persona]] || '');
+  if (/^[A-Za-z0-9._-]{1,8192}$/.test(value)) personaTokens[persona] = value;
+}
 let hostedOrigins = new Set();
 let hostedAuthorities = new Set();
 let hostedLoaded = !hostedFile;
@@ -90,7 +130,8 @@ const platformAssetsOrigin = (() => {
 })();
 const childAppPair = process.env.SHOTS_PLATFORM_ASSETS === '1';
 // A legacy child app still on the Tailwind CDN script renders with it in
-// staging and production; the same one host is reachable for a child-app pair.
+// staging and production. It is an ordinary public host now; its use is
+// still counted, since apps are meant to move off it.
 const LEGACY_TAILWIND_CDN = 'cdn.tailwindcss.com:443';
 const FORWARDED_ASSET_HEADERS = Object.freeze(['accept', 'accept-encoding', 'if-none-match', 'if-modified-since', 'user-agent']);
 const RETURNED_ASSET_HEADERS = Object.freeze(['content-type', 'content-length', 'content-encoding', 'cache-control', 'etag', 'last-modified']);
@@ -189,8 +230,29 @@ function reject(socketOrResponse, code = 403) {
   }
 }
 
-const server = http.createServer((req, res) => {
-  if (req.url === controlPath) return controlRequest(req, res);
+// Only a hosted-app pair, only the pair's own two origins (never a hosted
+// production app's), and never over a token the page sent itself.
+function identityToken(persona, target, headers) {
+  if (!persona || !childAppPair || !origins.has(target.origin)) return null;
+  if (headers['x-usernode-token']) return null;
+  return personaTokens[persona] || null;
+}
+
+// A destination outside the pair and the catalog: reachable only when public.
+// The refusal is counted by reason, never with the destination.
+async function vetOutside(hostname, targetPort) {
+  const vetted = await vetPublicDestination(hostname, targetPort);
+  if (!vetted.ok) diagnostic({ kind: 'egress_blocked', blockReason: vetted.reason });
+  return vetted;
+}
+
+const handleRequest = (persona) => (req, res) => {
+  handleRequestAsync(persona, req, res).catch(() => { if (!res.headersSent) reject(res, 502); else res.destroy(); });
+};
+
+async function handleRequestAsync(persona, req, res) {
+  // The control plane answers on the shared listener only.
+  if (req.url === controlPath) return persona ? reject(res) : controlRequest(req, res);
   let target;
   try {
     target = new URL(req.url);
@@ -198,7 +260,15 @@ const server = http.createServer((req, res) => {
     try { target = new URL(req.url || '/', `http://${req.headers.host}`); }
     catch { return reject(res, 400); }
   }
-  if (!permittedOrigin(target.origin)) return reject(res);
+  // The pair and the catalog are reached by name, as they always were; any
+  // other destination only at the public address that was checked.
+  let vetted = null;
+  if (!permittedOrigin(target.origin)) {
+    if (!['http:', 'https:'].includes(target.protocol)) return reject(res);
+    vetted = await vetOutside(target.hostname,
+      Number(target.port) || (target.protocol === 'https:' ? 443 : 80));
+    if (!vetted.ok) return reject(res);
+  }
   if (origins.has(target.origin) && req.method === 'GET'
       && controlledFailures.has(`${target.pathname}${target.search}`)) {
     controlledFailureHits += 1;
@@ -207,17 +277,29 @@ const server = http.createServer((req, res) => {
     return res.destroy();
   }
   const side = target.origin === originList[0] ? 'base'
-    : target.origin === originList[1] ? 'head' : 'hosted';
+    : target.origin === originList[1] ? 'head' : vetted ? 'outside' : 'hosted';
   if (routesPlatformAsset(target, req.method)) return forwardPlatformAsset(req, res, target, side);
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
   const startedAt = performance.now();
-  if (isDocument) diagnostic({ kind: 'document_request', documentOrdinal: ordinal, side });
   const headers = { ...req.headers, host: target.host };
   delete headers['proxy-authorization'];
   delete headers['proxy-connection'];
+  const token = identityToken(persona, target, headers);
+  if (token) headers['x-usernode-token'] = token;
+  // Whether this page load carried the persona's identity: a boolean, never
+  // the token.
+  if (isDocument) diagnostic({ kind: 'document_request', documentOrdinal: ordinal, side,
+    ...(persona ? { identityAttached: !!token } : {}) });
   const transport = target.protocol === 'https:' ? https : http;
-  const upstream = transport.request(target, { method: req.method, headers }, (upstreamResponse) => {
+  // Pin a public destination to the address that was checked, so a second
+  // lookup cannot answer with an internal one.
+  const pinned = vetted ? {
+    lookup: (_hostname, options, callback) => (options?.all
+      ? callback(null, [{ address: vetted.address, family: vetted.family }])
+      : callback(null, vetted.address, vetted.family)),
+  } : {};
+  const upstream = transport.request(target, { method: req.method, headers, ...pinned }, (upstreamResponse) => {
     let bodyBytes = 0;
     upstreamResponse.on('data', (chunk) => { bodyBytes += chunk.length; });
     if (isDocument) res.once('finish', () => diagnostic({
@@ -237,32 +319,72 @@ const server = http.createServer((req, res) => {
     reject(res, 502);
   });
   req.pipe(upstream);
-});
+}
 
-server.on('connect', (req, client, head) => {
+// A CONNECT tunnel is opaque, so no persona adds anything to one: the pair's
+// origins are plain HTTP inside the cluster.
+const handleConnect = (req, client, head) => {
+  let upstream = null;
+  client.on('error', () => upstream?.destroy());
+  connectTunnel(req, client, head, (socket) => { upstream = socket; })
+    .catch(() => client.destroy());
+};
+
+async function connectTunnel(req, client, head, onUpstream) {
   const authority = String(req.url || '').toLowerCase();
-  const legacyCdn = childAppPair && authority === LEGACY_TAILWIND_CDN;
-  if (!legacyCdn && !permittedAuthority(authority)) return reject(client);
-  if (legacyCdn) diagnostic({ kind: 'legacy_tailwind_cdn' });
   const split = authority.lastIndexOf(':');
-  const host = authority.slice(0, split);
+  if (split <= 0) return reject(client);
+  const host = authority.slice(0, split).replace(/^\[(.*)\]$/, '$1');
   const targetPort = Number(authority.slice(split + 1));
-  const upstream = net.connect(targetPort, host, () => {
+  // The pair and the catalog by name; anything else at its checked address.
+  let address = host;
+  if (!permittedAuthority(authority)) {
+    const vetted = await vetOutside(host, targetPort);
+    if (!vetted.ok) return reject(client);
+    if (authority === LEGACY_TAILWIND_CDN) diagnostic({ kind: 'legacy_tailwind_cdn' });
+    address = vetted.address;
+  }
+  if (client.destroyed) return undefined;
+  const upstream = net.connect(targetPort, address, () => {
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     if (head?.length) upstream.write(head);
     upstream.pipe(client);
     client.pipe(upstream);
   });
+  onUpstream(upstream);
   upstream.on('error', () => client.destroy());
-  client.on('error', () => upstream.destroy());
+  return undefined;
+}
+
+function listener(persona) {
+  const server = http.createServer(handleRequest(persona));
+  server.on('connect', handleConnect);
+  return server;
+}
+
+const server = listener(null);
+const personaServers = Object.entries(personaPorts())
+  .map(([persona, personaPort]) => ({ persona, personaPort, server: listener(persona) }));
+const listening = (target, targetPort) => new Promise((resolve, reject_) => {
+  target.once('error', reject_);
+  target.listen(targetPort, '127.0.0.1', () => resolve(target.address().port));
 });
 
-server.listen(port, '127.0.0.1', () => {
-  if (readyFile) fs.writeFileSync(readyFile, String(server.address().port), { mode: 0o600 });
+// Ready only once every listener is up: the runner starts the browsers as
+// soon as this file exists. It holds the shared port, as it always has.
+Promise.all([
+  listening(server, port),
+  ...personaServers.map(({ server: personaServer, personaPort }) => listening(personaServer, personaPort)),
+]).then(([sharedPort]) => {
+  if (readyFile) fs.writeFileSync(readyFile, String(sharedPort), { mode: 0o600 });
+}, () => {
+  process.stderr.write('Shots proxy could not listen on its ports.\n');
+  process.exit(1);
 });
 
 function stop() {
   if (readyFile) { try { fs.unlinkSync(readyFile); } catch {} }
+  for (const { server: personaServer } of personaServers) personaServer.close();
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 1000).unref();
 }

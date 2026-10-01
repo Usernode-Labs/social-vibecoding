@@ -30,6 +30,23 @@
  * with conversation tabs here; issue/governance routes mount the thread
  * panel and put their topic card into its `#gc-thread-head` slot.
  *
+ * ── The shared-spec reader has a slot here too ────────────────────────
+ *
+ * Both of those Discussions draw spec cards (the Homeroom bot posts its spec
+ * into a request's thread and into its proposal's), and "View full spec"
+ * opens `GroupChat._showSpecPanel`, which fills `#gc-spec-side-panel` and
+ * does nothing at all when that slot is not in the document. It used to be
+ * only in the general chat pane (../group-chat/general-chat.tsx), so every
+ * spec card in a request's or a proposal's Discussion had a button that
+ * went dead. The row below is that pane's row, repeated: the topic column,
+ * the divider, the panel, with the same ids and classes, so app.css lays it
+ * out the same way (docked beside the topic at 1024px and up, over it
+ * below) and group-chat.js fills, resizes and closes it the same way. The
+ * two frames are sub-views of the same `#app-content`, never on screen
+ * together, so the ids stay unique. Both hosts are empty leaves React never
+ * looks inside: the panel's contents are the spec reader's portal
+ * (../group-chat/spec-panel.tsx), and its open class is group-chat.js's.
+ *
  * ── Why this was the LAST hand-written #app-content in Dev ────────────
  *
  * Three of the four Dev sub-views were already React frames; this one stayed a
@@ -65,17 +82,28 @@ const THREAD_INITIAL = { __html: skeletonListHtml(1) };
 export function DevTopicSubView() {
   return (
     <div className="flex flex-col h-full min-h-0 dc-lift dc-lift-strip">
-      {/*
-          The topic page's host. The dev-board or group-chat bridge mounts
-          its page into it, so React renders it as
-          an empty leaf and never looks inside — the same arrangement
-          `#dev-chat-body` has in ./chat-frame.tsx.
-      */}
-      <div
-        id="dev-topic-thread"
-        className="flex-1 min-h-0"
-        dangerouslySetInnerHTML={THREAD_INITIAL}
-      />
+      <div className="gc-tab-body flex-1 flex min-h-0">
+        {/*
+            The topic page's host. The dev-board or group-chat bridge mounts
+            its page into it, so React renders it as
+            an empty leaf and never looks inside — the same arrangement
+            `#dev-chat-body` has in ./chat-frame.tsx. `min-w-0` lets it give
+            way to the spec panel beside it rather than push it off screen.
+        */}
+        <div
+          id="dev-topic-thread"
+          className="flex-1 min-w-0 min-h-0"
+          dangerouslySetInnerHTML={THREAD_INITIAL}
+        />
+        <div
+          id="gc-spec-resizer"
+          className="gc-spec-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize spec panel"
+        />
+        <div id="gc-spec-side-panel" className="gc-spec-side-panel" />
+      </div>
     </div>
   );
 }

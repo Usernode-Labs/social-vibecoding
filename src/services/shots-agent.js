@@ -85,6 +85,14 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+The copies hold demo data for each persona. The brief's availableFixtures
+lists it: who it is for (persona, alsoFor), what it shows and its path. Look
+there for a state the steps need before you decide a change cannot be
+reached, such as an agent run in progress or a proposal with votes. The
+declaredChecks are the app's own checks, run as read_only_admin: their paths
+can show data only that persona has, so another persona may find nothing
+there.
+
 If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with
 enabled false once the error is on screen.

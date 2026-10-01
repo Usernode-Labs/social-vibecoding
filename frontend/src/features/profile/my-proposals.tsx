@@ -35,6 +35,7 @@ import { useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
+import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { createStore } from '../../lib/plain-store.js';
 import { useStoreState } from '../../lib/use-store-state';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
@@ -99,8 +100,14 @@ function demoQuery(url: string): string {
   return url + (url.includes('?') ? '&' : '?') + 'demo=1';
 }
 
-type Row = { key: string; href: string | null; title: string; meta: string };
+/** The project a Your changes row belongs to, in app-card.js's field names. */
+type RowApp = { slug: string; name: string; icon_emoji: string | null; icon_url: string | null };
+type Row = { key: string; href: string | null; title: string; meta: string; app?: RowApp };
 type Section = { key: string; label: string; rows: Row[] };
+
+/** The project's icon tile, drawn as the Communities list draws it. */
+const ICON_TILE = 'app-icon-tile w-11 h-11 shrink-0 rounded-xl overflow-hidden '
+  + 'flex items-center justify-center font-bold text-lg';
 
 function viewOf(kind: WorkKind, data: unknown): { loaded: boolean; sections: Section[]; empty: boolean } {
   if (kind === 'requests') return requestsView(data);
@@ -122,6 +129,20 @@ function Group({ kind, section }: { kind: WorkKind; section: Section }): ReactNo
             key={row.key}
             as={row.href ? 'a' : 'div'}
             href={row.href || undefined}
+            // The tile is the project's icon, not a second link: the row
+            // already opens the change, and the line under it names the
+            // project for a screen reader, so the tile only carries a title.
+            leading={row.app ? (
+              <span
+                className={ICON_TILE}
+                data-icon={appIconKind(row.app as never)}
+                data-profile-work-app={row.app.slug}
+                title={row.app.name}
+                aria-hidden="true"
+              >
+                <AppIconContent app={row.app as never} />
+              </span>
+            ) : undefined}
             title={row.title}
             titleClassName={TITLE}
             subtitle={row.meta}
@@ -161,8 +182,14 @@ export function ProfileProposalsScreen(): ReactNode {
       data-profile-work={kind}
     >
       {/* `pt-5` clears the header's notch, as on the Workshop screen. The bar
-          is the title, so the screen draws no heading of its own. */}
-      <div className="max-w-2xl mx-auto pt-5 pb-8">
+          is the title, so the screen draws no heading of its own.
+
+          `px-4` IS PROFILE'S COLUMN (#3498). The lists below pass `mx-0`, as
+          Profile's do, because #profile-root's own `px-4` is their gutter.
+          This column copied the `mx-0` without the gutter, so the cards ran
+          edge to edge on a phone with no margin. The column is now
+          #profile-root's, class for class. */}
+      <div className="max-w-2xl mx-auto px-4 pt-5 pb-8">
         {state.error ? (
           <div className={NOTE}>
             <p>{`${WORK_TITLES[kind]} could not be loaded.`}</p>

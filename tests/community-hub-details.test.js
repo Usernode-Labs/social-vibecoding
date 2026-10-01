@@ -152,6 +152,18 @@ test('Needs you counts the votes you owe, not the requests nobody has claimed', 
   assert.match(one, />1 request nobody has picked up</);
 });
 
+test('#3489: Your work stays on the hub with nothing in progress, and says so', () => {
+  const { YourWorkCard } = loadTsx(HUB);
+  const props = { slug: 'garden', canPost: true, openKey: null, onToggleRow: () => {}, all: false, onAll: () => {} };
+  const empty = renderToHtml(createElement(YourWorkCard, { ...props, rows: [] }));
+  assert.match(empty, /^<section class="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">/);
+  assert.match(empty, /<span class="dev-ws-head-title">Your work<\/span>/);
+  assert.match(empty, /<p class="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">No work in progress\.<\/p>/);
+  assert.doesNotMatch(empty, /dev-ws-head-n|data-ws-lane|data-ws-mine-more/, 'no count of zero, no empty lane, no reveal');
+  // Only a signed-in viewer's hub draws it: a visitor has no work to list.
+  assert.match(LANDER, /\{v\.mine && \(v\.mine\.rows\.length \|\| v\.mine\.viewer\) \? \(\s*<YourWorkCard/);
+});
+
 test('the channel card\'s composer sends to the room and re-reads the hub', () => {
   const src = read(HUB);
   const composer = src.slice(src.indexOf('function HubComposer('), src.indexOf('export function NeedsCard('));

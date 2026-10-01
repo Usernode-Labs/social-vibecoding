@@ -781,21 +781,23 @@ async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, pr
     });
     return 'github_unreadable';
   }
-  if (existing === summary || existing.startsWith(`${summary}\n\n`)) return null;
+  const alreadySynced = existing === summary || existing.startsWith(`${summary}\n\n`);
   const prev = previousSummary ? previousSummary.trim() : '';
   let rest = existing;
   if (prev && existing.startsWith(`${prev}\n\n`)) rest = existing.slice(prev.length + 2);
   else if (prev && existing === prev) rest = '';
-  const body = rest ? `${summary}\n\n${rest}` : summary;
-  if (body === existing) return null;
-  try {
-    await gh.updatePR(owner, repo, session.pr_number, { body });
-  } catch (err) {
-    log.warn('proposal-update', 'summary stored but the pull request body could not be rewritten', {
-      sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
-    });
-    return 'github_write_failed';
+  const body = alreadySynced ? existing : (rest ? `${summary}\n\n${rest}` : summary);
+  if (body !== existing) {
+    try {
+      await gh.updatePR(owner, repo, session.pr_number, { body });
+    } catch (err) {
+      log.warn('proposal-update', 'summary stored but the pull request body could not be rewritten', {
+        sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+      });
+      return 'github_write_failed';
+    }
   }
+  if (alreadySynced && session.pr_body === body) return null;
   try {
     await pool.query(
       'UPDATE chat_sessions SET pr_body = $1, pr_summary_source_body_hash = $2 WHERE id = $3',
@@ -806,6 +808,7 @@ async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, pr
     log.warn('proposal-update', 'pull request body rewritten but the mirror write failed', {
       sessionId: Number(session.id), err: err.message,
     });
+    return 'github_mirror_failed';
   }
   return null;
 }
@@ -2203,6 +2206,7 @@ module.exports = {
   applyLinkedIssues,
   // #3344's author summary, likewise.
   applyProposedSummary,
+  syncSummaryIntoBody,
   // The post-creation issue association seam shared by the UI + connector.
   updateLinkedIssues,
 };

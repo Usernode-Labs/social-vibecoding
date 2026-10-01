@@ -100,7 +100,7 @@ function makeDevChat() {
   // renderMarkdown is irrelevant to the card path; keep it cheap + safe.
   DevChat.renderMarkdown = (t) => String(t || '');
   return {
-    DevChat, AppView: sandbox.AppView,
+    DevChat, AppView: sandbox.AppView, sandbox,
     alerts: sandbox.__alerts,
     setFetch(fn) { sandbox.__fetchImpl = fn; },
     getHtml() { return t.html(); },
@@ -670,4 +670,66 @@ test('a new card lands in its own turn and the earlier one becomes the record (#
   assert.equal(count(html, 'dc-pr-btn-promote'), 1, 'one Submit for review');
   assert.ok(at(html, 'dc-pr-btn-promote') > at(html, 'nearest hour'), 'on the newest card, in place');
   assert.match(html, /Earlier build result/, 'the first card is the record it always was');
+});
+
+// #3605: once proposed, the card's status opens the vote page, and the
+// requests the change closes open in Homeroom rather than on GitHub.
+test('a proposed card links its lifecycle badge to the vote page (#3605)', () => {
+  const h = makeDevChat();
+  h.sandbox.MergeStatus = {
+    lifecycle: () => ({ key: 'in_vote', label: 'In vote' }),
+    badgeHtml: (l) => `<span class="ms-badge ms-badge-violet">${l.label}</span>`,
+  };
+  const opened = [];
+  h.AppView.openTopic = (kind, id) => { opened.push([kind, id]); };
+  const html = h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'vote001' },
+  ], activeSession({ id: 31, status: 'promoted', pr_number: 78, pr_url: 'https://github.com/x/y/pull/78' }));
+
+  assert.equal(h.changesRow().proposalId, 31);
+  assert.match(html, /<button[^>]*data-open-vote="31"[^>]*>.*In vote/s,
+    'the In vote badge sits inside a control that opens the vote page');
+  assert.match(html, />View on GitHub</, 'the GitHub action is still there');
+  h.DevChat.openProposalVote(h.changesRow().proposalId);
+  assert.deepEqual(opened, [['proposal', 31]]);
+});
+
+test('an underway card has no vote link (#3605)', () => {
+  const h = makeDevChat();
+  const html = h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'vote002' },
+  ], activeSession({ id: 32 }));
+  assert.equal(h.changesRow().proposalId, null);
+  assert.doesNotMatch(html, /data-open-vote/);
+});
+
+test('the requests a change closes are in-app refs (#3605)', () => {
+  const h = makeDevChat();
+  const opened = [];
+  h.AppView.openTopic = (kind, id) => { opened.push([kind, id]); };
+  const html = h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'refs001' },
+  ], activeSession({
+    id: 33, status: 'promoted', pr_number: 78, pr_url: 'https://github.com/x/y/pull/78',
+    linked_issues: [56, '12', 56, -1],
+    pr_title: 'Fit the list on a phone. Fixes #90',
+  }));
+
+  assert.deepEqual(h.changesRow().closes.map((c) => c.n), [12, 56, 90],
+    'linked issues and a "Fixes #N" in the title, deduped and sorted');
+  assert.match(html, /<button[^>]*data-issue-chip="56"[^>]*>Closes #56</);
+  assert.doesNotMatch(html, /github\.com\/x\/y\/issues\/56/, 'the ref no longer leaves Homeroom');
+  h.DevChat.openIssueRef(56);
+  assert.deepEqual(opened, [['issue', 56]]);
+});
+
+test('a merged card says Closed for its refs (#3605)', () => {
+  const h = makeDevChat();
+  h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true, _slug: 'refs002' },
+  ], activeSession({ id: 34, status: 'merged', linked_issues: [5] }));
+  assert.deepEqual(h.changesRow().closes, [{ n: 5, verb: 'Closed' }]);
 });

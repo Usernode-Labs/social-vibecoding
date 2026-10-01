@@ -416,7 +416,8 @@ test('GET returns display-ordered featured rows plus what is available', async (
   reset();
   currentUser = FULL_ADMIN;
   featuredRows = [
-    { ...appsBySlug.alpha, slug: 'alpha', name: 'Alpha', icon_emoji: '🎯', icon_image_id: null, sort_order: 0 },
+    { ...appsBySlug.alpha, slug: 'alpha', name: 'Alpha', icon_emoji: '🎯', icon_image_id: null, sort_order: 0,
+      featured_illustration: { url: '/app-illustrations/' + 'f'.repeat(32), zoom: 1, x: 0, y: 0 } },
     { slug: 'beta', name: 'Beta', status: 'running', icon_emoji: null, icon_image_id: 'abc123', sort_order: 1 },
   ];
   availableRows = [
@@ -439,6 +440,11 @@ test('GET returns display-ordered featured rows plus what is available', async (
     assert.equal(body.featured[0].last_deploy_at, appsBySlug.alpha.last_deploy_at);
     assert.equal(body.available[0].directory.state, 'missing_icon');
     assert.deepEqual(body.available.map((a) => a.slug), ['gamma']);
+    // #2615: whether Discover has art for the card, as a boolean only.
+    assert.equal(body.featured[0].has_illustration, true);
+    assert.equal(body.featured[1].has_illustration, false);
+    assert.equal(body.available[0].has_illustration, false);
+    assert.equal(body.featured[0].featured_illustration, undefined, 'the record itself is not echoed');
   } finally {
     server.close();
   }
@@ -487,4 +493,24 @@ test('the section gates its mutating controls on canWrite', () => {
     'the picker/Add/Save footer is gated');
   // Save PUTs the ordered slug array — the array IS the display order.
   assert.match(src, /body: JSON\.stringify\(\{ slugs: featured \|\| \[\] \}\)/);
+});
+
+// ── "No illustration" badge (#2615) ──────────────────────────────
+
+test('a featured row without a Discover illustration carries a No illustration badge', () => {
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { NoIllustrationBadge } = loadTsx('frontend/src/features/admin/admin-featured-apps.tsx');
+  const missing = renderToHtml(createElement(NoIllustrationBadge, { meta: { slug: 'alpha', has_illustration: false } }));
+  assert.match(missing, /data-featured-no-illustration="alpha"/);
+  assert.match(missing, />No illustration</);
+  assert.equal(renderToHtml(createElement(NoIllustrationBadge, { meta: { slug: 'alpha', has_illustration: true } })), '',
+    'absent when the app has an illustration');
+  assert.equal(renderToHtml(createElement(NoIllustrationBadge, { meta: { slug: 'alpha' } })), '',
+    'absent before the read says either way');
+
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'frontend/src/features/admin/admin-featured-apps.tsx'), 'utf8'
+  );
+  assert.match(src, /AdminUI\.badge\.warn/, 'drawn from the console badge recipe');
+  assert.match(src, /<NoIllustrationBadge meta=\{m\} \/>/, 'drawn on each featured row');
 });

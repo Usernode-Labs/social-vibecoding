@@ -14,12 +14,12 @@ if (!output || !stateDir || !proxy || !hostedFile) {
 }
 const baseOrigin = new URL(process.env.SHOTS_BASE_ORIGIN).origin;
 const headOrigin = new URL(process.env.SHOTS_HEAD_ORIGIN).origin;
-// A child-app pair may also load the legacy Tailwind CDN script, the one
-// third-party host the shots proxy admits (and only for such a pair).
-const origins = [
-  ...browserAllowedOrigins(baseOrigin, headOrigin, hostedFile),
-  ...(process.env.SHOTS_PLATFORM_ASSETS === '1' ? ['https://cdn.tailwindcss.com'] : []),
-];
+// The browsers carry no origin allowlist of their own: they may load the
+// public internet (a CDN script, map tiles), and the shots proxy is the
+// boundary that keeps them off every non-public address (shots-boundary.js).
+// The pair and the hosted-app catalog are still checked here, so a run whose
+// catalog does not match its pair fails before any browser starts.
+browserAllowedOrigins(baseOrigin, headOrigin, hostedFile);
 // Each persona's browser saves the shots agent's named screenshots, and
 // its clips when a browser session closes, into its own directory, where the
 // shots bridge (and nothing else) reads them back. Video is recorded only
@@ -34,6 +34,18 @@ const clipSize = /^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}$/.test(process.env.SHOTS_CLIP
 for (const persona of ['member', 'admin', 'full_admin']) {
   fs.mkdirSync(path.join(shotsDir, persona), { recursive: true, mode: 0o700 });
 }
+// Each persona's browser reaches its own proxy listener, which is how the
+// proxy knows whose identity a hosted app's page load should carry. Without
+// the ports (the image-build verifiers) every browser shares one listener
+// and nothing is attached, as before.
+let personaPorts = {};
+try { personaPorts = JSON.parse(process.env.SHOTS_PROXY_PERSONA_PORTS || '{}') || {}; } catch { personaPorts = {}; }
+const proxyFor = (persona) => {
+  const personaPort = personaPorts[persona];
+  if (!Number.isSafeInteger(personaPort) || personaPort <= 0 || personaPort > 65535) return proxy;
+  const shared = new URL(proxy);
+  return `${shared.protocol}//${shared.hostname}:${personaPort}`;
+};
 const browserArgs = (persona) => {
   const observed = persona === 'read_only_admin' ? 'admin' : persona;
   return [
@@ -41,9 +53,12 @@ const browserArgs = (persona) => {
     observed,
     '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
     '--storage-state', path.join(stateDir, `${persona}.json`),
-    '--allowed-origins', origins.join(';'),
     '--block-service-workers', '--image-responses', 'allow',
-    '--proxy-server', proxy,
+    '--proxy-server', proxyFor(persona),
+    // Chromium sends loopback addresses past a proxy unless told not to.
+    // Playwright adds this rule by default; naming it here keeps the worker's
+    // own loopback services behind the proxy's refusal if that default goes.
+    '--proxy-bypass', '<-loopback>',
     '--timeout-action', '10000', '--timeout-navigation', '30000',
     '--output-dir', path.join(shotsDir, observed),
     ...(recordClips ? [`--save-video=${clipSize}`] : []),

@@ -30,6 +30,7 @@ import { ShareItemDialog } from './share-dialog';
 import {
   agentThreadAddress,
   closeThread,
+  embed,
   fullScreenAddress,
   initializeMessagesStore,
   finishDirectBlock,
@@ -44,6 +45,7 @@ import {
   openAgentThread,
   renameConversation,
   openThread,
+  release,
   respond,
   setUserBlocked,
   selectConversation,
@@ -1553,7 +1555,14 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
   );
 }
 
-function ConversationThread() {
+/**
+ * The open conversation. `embedded` is the copy a community's page mounts
+ * (#3494, EmbeddedConversation below): the same thread, drawn without this
+ * screen's header because the page's own header and tabs already name it.
+ * Exactly one copy draws the thread at a time — the store's route says
+ * which — so the ids its rows carry are never on the page twice.
+ */
+function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
@@ -1610,6 +1619,12 @@ function ConversationThread() {
     });
   }
 
+  // #3494: the room is up in its community's page, so this screen (hidden)
+  // draws no second copy of it; and the page's copy draws nothing once
+  // Messages has taken the store back.
+  if (!!snap.route.embedded !== embedded) {
+    return embedded ? null : <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2></section>;
+  }
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
   if (snap.route.agent?.kind === 'chat') return <AgentChatThread key={snap.route.agent.id} id={snap.route.agent.id} />;
   if (snap.route.agent?.kind === 'agent') return <MayorSessionThread key={`agent/${snap.route.agent.id}`} id={snap.route.agent.id} />;
@@ -1699,8 +1714,8 @@ function ConversationThread() {
     }
   }
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}`} aria-label={snap.active?.title || 'Conversation'}>
-      <ThreadHeader />
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || 'Conversation'}>
+      {embedded ? null : <ThreadHeader />}
       <InvitationBanner />
       {/* No `un-kb-avoid` here: the column reserves the keyboard inset now
           (`platform-kb-column` above), and the kit's class would pad the
@@ -1906,6 +1921,40 @@ function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number })
   );
 }
 
+/**
+ * A conversation drawn IN ITS COMMUNITY'S PAGE (#3494): #general, on
+ * Homeroom's Discussion tab (features/dev-board/workshop/project-discussion.tsx).
+ *
+ * Every other project's Discussion tab mounts its own chat in place, under
+ * the page's header and tabs. #general is a conversation of this store
+ * rather than an app chat, so it went to the Messages screen instead, which
+ * swapped the header, the tabs and the tint for Messages' own (#3491). This
+ * is the same thread, composer and reply threads, mounted in the page:
+ * while `active` it holds the store's one route (`embed`), and it gives it
+ * back when it leaves the screen or unmounts (`release`). The Messages
+ * screen takes the store back whenever it opens — its route() replaces an
+ * embedded one — and the effect below re-embeds once it has closed again.
+ *
+ * `messages-layout` carries the thread's surface tokens; it is not this
+ * screen's strip, so none of the strip's own classes come with it.
+ */
+export function EmbeddedConversation({ conversationId, active }: { conversationId: number; active: boolean }) {
+  const snap = useMessagesSnapshot();
+  const here = !!snap.route.embedded && snap.route.conversationId === conversationId;
+  const messagesOpen = snap.route.open;
+  useEffect(() => {
+    if (!active || messagesOpen) return undefined;
+    embed(conversationId);
+    return () => release(conversationId);
+  }, [active, messagesOpen, conversationId]);
+  return (
+    <div className={`messages-layout messages-layout-embedded${here && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`}>
+      {here ? <ConversationThread embedded /> : null}
+      {here && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
+    </div>
+  );
+}
+
 export function MessagesScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const snap = useMessagesSnapshot();
@@ -1974,7 +2023,7 @@ export function MessagesScreen() {
         <div className={layout}>
           <ConversationList />
           <ConversationThread />
-          {snap.route.conversationId && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
+          {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? <ReplyThreadPanel /> : null}
           {snap.route.appSlug && snap.route.threadRootId ? <AppReplyThreadPanel slug={snap.route.appSlug} rootId={snap.route.threadRootId} /> : null}
         </div>
       </main>

@@ -2,7 +2,8 @@
 
 // A project's notices on its Workshop tab (services/app-notices.js,
 // GET /api/apps/:slug/notices, dev-board/workshop/notices.tsx), and the doors
-// to a project's hub that open the hub (AppView._landOnHub).
+// to a project's hub that open the hub (AppView._landOnHub, which is
+// AppView._landOnTab turned to the hub since #3555).
 //
 // Channels carry no activity, so the two app-wide notices that had nowhere
 // else to be seen — settings changed lately and the Friday card — are this
@@ -118,15 +119,25 @@ test('the panel: nothing to say draws nothing; otherwise the card first, then ea
   // Loaded in an effect, so the first render is nothing.
   assert.match(read(PANEL), /const \[notices, setNotices\] = useState<Notices \| null>\(null\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(lander, /\{tab === 'workshop' \? \(\n\s*<>\n[\s\S]{0,400}\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'at the head of the Workshop tab');
+  // At the head of the Workshop tab, straight under the approval rules that
+  // open it (#3528).
+  assert.match(lander, /\{tab === 'workshop' \? \(\n\s*<>\n[\s\S]{0,600}\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}\n\s*\{\/\*[^]{0,400}?\*\/\}\n\s*\{slug \? <WorkshopNotices slug=\{slug\} \/> : null\}/, 'at the head of the Workshop tab');
 });
 
 test('a door to a project\'s hub opens the hub; a page opened again reads the tab last shown', () => {
   const view = read('public/js/app-view.js');
-  assert.match(view, /_landOnHub\(slug\) \{\n\s*AppView\._setWorkshopTab\('status'\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: 'status' \} \}\)\);/);
+  // #3555: the hub's door is the general one turned to the hub, so a Recents
+  // channel can open its project's Discussion tab the same way.
+  assert.match(view, /_landOnHub\(slug\) \{\n\s*AppView\._landOnTab\(slug, 'status'\);\n\s*\},/);
+  assert.match(view, /_landOnTab\(slug, tab\) \{\n\s*const key = AppView\.WORKSHOP_TABS\.indexOf\(tab\) !== -1 \? tab : 'status';\n\s*AppView\._setWorkshopTab\(key\);\n\s*try \{\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: key \} \}\)\);/);
   const lander = read('frontend/src/features/dev-board/workshop/workshop.tsx');
   assert.match(lander, /if \(!door \|\| \(door\.slug && door\.slug !== v\.slug\)\) return;\n\s*setTab\(door\.tab\);/, 'a page already open switches; another project\'s door is not its');
   assert.match(lander, /window\.addEventListener\('usernode:workshop-tab', onDoor\);/);
+  // #3555: ...and is read when the page turns to that project. Going
+  // straight from one project's page to another's keeps the host, so the
+  // page is not mounted again; it reads the tab afresh when its project
+  // changes, as a mount does.
+  assert.match(lander, /useLayoutEffect\(\(\) => \{\n\s*if \(!v\.slug\) return;\n\s*const was = tabSlug\.current;\n\s*tabSlug\.current = v\.slug;\n\s*if \(was && was !== v\.slug\) setTab\(freshTab\(\) \|\| 'status'\);\n\s*\}, \[v\.slug\]\);/);
   // Seeded from a fresh read, not the store's last publish: that one can be
   // a tab the viewer has since left, which is what Back used to reopen on.
   assert.match(lander, /useState<TabKey>\(\(\) => freshTab\(\) \|\| v\.tab \|\| 'status'\)/);
@@ -136,5 +147,5 @@ test('a door to a project\'s hub opens the hub; a page opened again reads the ta
   assert.match(read('frontend/src/features/app-context/app-context-sheet.tsx'), /onClick=\{\(e\) => \{\n\s*if \(slug\) \(window as any\)\.AppView\?\._landOnHub\?\.\(slug\);\n\s*followThenDismiss\(e,/);
   assert.match(read('frontend/src/features/apps/browse.js'), /if \(typeof AppView !== 'undefined' && AppView\._landOnHub\) AppView\._landOnHub\(view\.slug\);\n\s*location\.hash = href;/);
   assert.match(read('frontend/src/features/workshop/index.tsx'), /win\.AppView\?\._landOnHub\?\.\(row\.slug\);\n\s*win\.App\?\.navigateToApp\?\.\(row\.slug, 'dev'\);/);
-  assert.match(read('frontend/src/features/workshop/needs-reel.tsx'), /onClick=\{\(\) => \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(item\.app\.slug\); \}\}/);
+  assert.match(read('frontend/src/features/workshop/needs-reel.tsx'), /onClick=\{\(\) => \{ \(window as any\)\.AppView\?\._landOnHub\?\.\(app\.slug\); \}\}/);
 });

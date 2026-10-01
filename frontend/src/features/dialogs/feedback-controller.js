@@ -1355,6 +1355,10 @@ export function init() {
       disableSubmit(); feedbackBtn.textContent = 'Posting…';
       const submittedPresentation = presentation;
       const submittedBy = App.user?.id;
+      const telemetryAttempt = window.UITelemetry?.attempt?.('feedback_submit', {
+        screen: 'feedback_dialog', appSlug: App.currentApp || undefined,
+        timeoutMs: 15_000, abandonOnHide: true,
+      });
       try {
         // Capture the target + slug at submit time so navigating away
         // while the modal is open can't retarget an in-flight request.
@@ -1421,7 +1425,11 @@ export function init() {
         // round trip and a red error message finding out. Straight to the
         // outbox.
         if (isOfflineNow()) {
-          if (await saveForLater(body)) return;
+          if (await saveForLater(body)) {
+            window.UITelemetry?.outcome?.(telemetryAttempt, 'success');
+            return;
+          }
+          window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode: 'offline' });
           enableSubmit();
           feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
           return;
@@ -1435,11 +1443,18 @@ export function init() {
         try {
           res = await fetch('/api/feedback', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              ...window.UITelemetry?.contextHeaders?.(telemetryAttempt),
+            },
             body: JSON.stringify(body),
           });
         } catch (err) {
-          if (await saveForLater(body)) return;
+          if (await saveForLater(body)) {
+            window.UITelemetry?.outcome?.(telemetryAttempt, 'success');
+            return;
+          }
+          window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode: 'network' });
           enableSubmit();
           feedbackBtn.textContent = isOfflineNow() ? 'Save for later' : 'Post request';
           return;
@@ -1451,8 +1466,12 @@ export function init() {
         if (res.ok && submittedBy === App.user?.id) forgetSentDraft(text);
         // An old response must not replace a reopened draft or another
         // account's dialog after sign-out/sign-in.
-        if (submittedPresentation !== presentation || submittedBy !== App.user?.id) return;
+        if (submittedPresentation !== presentation || submittedBy !== App.user?.id) {
+          window.UITelemetry?.cancel?.(telemetryAttempt);
+          return;
+        }
         if (res.ok) {
+          window.UITelemetry?.outcome?.(telemetryAttempt, 'success');
           // #964: report both outcomes on one line. A declined bounty
           // (allowance ran out between opening and submitting, repo isn't
           // an app the platform can attach one to) never reads as a
@@ -1515,10 +1534,14 @@ export function init() {
           }
           return;
         }
+        window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', {
+          errorCode: window.UITelemetry?.errorCodeFor?.(res.status),
+        });
         feedbackStatus.textContent = submitErrorText(res.status, data.error);
         feedbackStatus.className = 'text-sm mt-2 text-red-400';
         feedbackStatus.classList.remove('hidden');
       } catch {
+        window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
         // Reached only when the request itself completed and something about
         // the RESPONSE was unusable (non-JSON error body from a proxy, say).
         // A transport failure was already handled above, by saving.
@@ -1539,6 +1562,7 @@ export function init() {
     // and lifted the card into the kit shell.
     Feedback._open = (opts = {}) => {
       presentation += 1;
+      window.UITelemetry?.screen?.('feedback_dialog', { appSlug: App.currentApp || undefined });
       clearTimeout(closeTimer);
       firstFeedback = null;
       // Every open hands back an editable composer (showFirstFeedback re-locks).
@@ -1614,6 +1638,13 @@ export function init() {
         if (!modal.classList.contains('hidden') && !bountyCheckbox.checked) resetBountyRow();
       }).catch(() => { /* budget unavailable — row stays as painted */ });
       applyTargetAvailability(canTargetApp, appData);
+      // A caller whose own button already named the app opens on it: the
+      // Getting started card's Suggest ("Suggest a change to City garden",
+      // features/home/getting-started.tsx) opens that app, then this with
+      // `target: 'app'`. That press was the choice #2707 asks for, not a
+      // guess about intent, so asking again would only be a second tap.
+      // Only when "This app" is really there to choose.
+      if (opts.target === 'app' && canTargetApp) setFeedbackTarget('app');
 
       // #1054: the outbox state — the offline hint, the "Save for later"
       // button label, and anything already waiting to send. Painted last so

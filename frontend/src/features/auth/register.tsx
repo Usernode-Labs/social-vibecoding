@@ -35,6 +35,7 @@ import {
   PASSWORD_RULE,
   sessionMintFailureMessage,
   useAuthScreensPatch,
+  USERNAME_PUBLIC_NOTE,
   USERNAME_RULE,
 } from './shared';
 
@@ -205,12 +206,21 @@ export function RegisterScreen() {
                 autoComplete="username"
                 {...HANDLE_FIELD}
                 maxLength={32}
-                aria-describedby="reg-username-hint"
+                aria-describedby="reg-username-public reg-username-hint"
                 aria-invalid={fieldError?.field === 'username' ? true : undefined}
                 onInput={() => setFieldError((f) => (f?.field === 'username' ? null : f))}
                 {...AUTHFIELD}
                 placeholder="choose a username"
               />
+              {/*
+                #3575: who sees the name, said next to the field where it is
+                chosen. Its own line ahead of the rule, because the rule's
+                line below is swapped for the server's refusal and this one
+                stays put while the person fixes the name.
+              */}
+              <p id="reg-username-public" className={FIELD_HINT}>
+                {USERNAME_PUBLIC_NOTE}
+              </p>
               <p
                 id="reg-username-hint"
                 className={fieldError?.field === 'username' ? FIELD_HINT_ERROR : FIELD_HINT}

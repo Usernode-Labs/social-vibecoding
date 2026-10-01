@@ -585,6 +585,7 @@ const App = {
     }
     App.user = user;
     App._syncViewer();
+    window.UsernodeReact?.appOpenings?.setUser?.(user.id, true);
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
     // than reading /api/auth/me for themselves. Published HERE on an
@@ -592,7 +593,7 @@ const App = {
     // not a confirmed one.
     App._publishBootSession({ user });
     document.dispatchEvent(new CustomEvent('sv:session', {
-      detail: { user: App.user },
+      detail: { user: App.user, verifiedSession: true },
     }));
     App.connectEvents();
     if (window.Kudos?.Budget?.init) Kudos.Budget.init();
@@ -647,12 +648,13 @@ const App = {
   async enterAnonymous() {
     let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
-      // enterAnonymous closes the private native realm synchronously before
-      // returning its Promise. Publish null only after that hard boundary.
+      // Close native authority before publishing the signed-out web identity.
       nativeBoundary = NativeChrome.enterAnonymous();
     }
     App.user = null;
     App._syncViewer();
+    window.UsernodeReact?.appOpenings?.setUser?.(null, true);
+    window.UITelemetry?.clearUser?.();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
@@ -852,6 +854,7 @@ const App = {
     // A snapshot is display-only and unverified. _reconcileSession publishes
     // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
+    window.UsernodeReact?.appOpenings?.setUser?.(user.id, !App._sessionFromSnapshot);
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
     // for client-side UI gating (admin buttons, retry, delete, lock,
     // app-secrets edit, etc. — see grep for App.user?.isAdmin) so
@@ -896,7 +899,7 @@ const App = {
     // for waiting-room users too (apps are usable without platform
     // access; only the SV social/build surfaces are gated).
     document.dispatchEvent(new CustomEvent('sv:session', {
-      detail: { user: App.user },
+      detail: { user: App.user, verifiedSession: !App._sessionFromSnapshot },
     }));
 
     // Platform-access gate (onboarding flow alignment): a released
@@ -5144,11 +5147,20 @@ const App = {
     // navigateToApp commits the destination while the click is still
     // synchronous (see its note), and switchTab re-syncs after assigning it.
     const inApp = screen === 'app-view' && App.currentTab === 'app';
+    // …UNLESS THE VIEWER PINNED IT (#3319). Settings → Theme's "Keep sidebar
+    // open in apps" keeps the desktop rail docked beside a running app. Off
+    // by default, and desktop only: below 768px the bar is the phone's
+    // bottom bar, and an app keeps the whole screen there whatever is stored.
+    // `rail-pinned` on the body is what app.css keys the frame's own padding
+    // off (no gutter around somebody's program).
+    const railPinned = inApp && !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout();
+    document.body?.classList?.toggle('rail-pinned', railPinned);
+    App._watchRailBreakpoint();
     App.Visibility.publish(
       'platform-tabs',
       // …and never in the side panel's document, which draws no chrome at
       // all: the top window's bar and rail are the navigation.
-      App.embeddedPanel ? false : !!screen && !App.chromeless && !inApp,
+      App.embeddedPanel ? false : !!screen && !App.chromeless && (!inApp || railPinned),
     );
     // Published even when the bar is down: the store keeps the last screen
     // otherwise, and the bar coming back for a tab that has since changed
@@ -5192,6 +5204,48 @@ const App = {
     // whether it is on screen. Last, so the handle lands in the same callback
     // as the bar it rides on.
     App._syncParkedApp(inApp);
+  },
+
+  // ── "Keep sidebar open in apps" (#3319) ─────────────────────────────
+  //
+  // A per-browser display preference, like the theme: localStorage, read at
+  // every _syncPlatformTabs. Every access is guarded — storage throws in a
+  // private window or with site data blocked, and that must read as "off",
+  // the old behaviour, never as a broken router.
+  RAIL_PINNED_KEY: 'usernode:rail-pinned',
+
+  _railPinned() {
+    try {
+      return window.localStorage?.getItem(App.RAIL_PINNED_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  },
+
+  // Written by the Settings switch (features/settings/sections/theme.tsx),
+  // which re-decides at once so an app already open behind Settings is right
+  // the moment the viewer goes back to it.
+  setRailPinned(on) {
+    try {
+      if (on) window.localStorage?.setItem(App.RAIL_PINNED_KEY, '1');
+      else window.localStorage?.removeItem(App.RAIL_PINNED_KEY);
+    } catch (_) { /* unwritable storage: the switch simply does not stick */ }
+    App._syncPlatformTabs();
+  },
+
+  // A window resized across 768px inside an app changes the answer above
+  // (a pinned rail on the desktop, the full-screen app on a phone), so the
+  // breakpoint re-decides too. Installed once, lazily, where it is needed.
+  _railBreakpointWatched: false,
+  _watchRailBreakpoint() {
+    if (App._railBreakpointWatched) return;
+    App._railBreakpointWatched = true;
+    try {
+      const mql = window.matchMedia?.('(min-width: 768px)');
+      mql?.addEventListener?.('change', () => {
+        if (App._railPinned()) App._syncPlatformTabs();
+      });
+    } catch (_) { /* no matchMedia: nothing to watch */ }
   },
 
   // The two `#app-view` routes that are THREADS OF MESSAGES rather than the
@@ -6675,6 +6729,12 @@ const App = {
       requestedTab = launchRecord?.self_hosted ? 'dev' : 'app';
     }
     const initialRoute = App._normalizeTab(requestedTab, ref, subTab);
+    // Capture the user's intent before app metadata/token waits. It is only
+    // committed after the accessible App tab renders below, so a failed,
+    // blocked, self-hosted or superseded navigation leaves no event.
+    const opening = initialRoute.tab === 'app'
+      ? window.UsernodeReact?.appOpenings?.begin?.(App.user?.id) || null
+      : null;
     App.currentTab = initialRoute.tab;
     App.currentSubTab = initialRoute.tab === 'dev'
       ? (initialRoute.subTab || 'forum') : null;
@@ -6873,6 +6933,7 @@ const App = {
       // navigation. Replace it so Back returns to the launch origin in one go.
       replaceRoute: App._normalizeTab(actualFinalTab, ref, subTab).tab
         !== initialRoute.tab,
+      opening,
     });
   },
 
@@ -7290,6 +7351,15 @@ const App = {
       App._forwardAppTab(App.currentApp, 'app');
       return false;
     }
+    const wasLiveApp = tab === 'app'
+      && App.currentTab === 'app'
+      && AppView.appData?.slug === App.currentApp
+      && App._isScreenVisible?.('app-view');
+    const opening = tab === 'app'
+      ? (options?.opening || (!wasLiveApp
+        ? window.UsernodeReact?.appOpenings?.begin?.(App.user?.id) || null
+        : null))
+      : null;
     // #771: a docked staging preview is pinned to the dev-chat session
     // layout, which every tab switch re-renders or unmounts — close it.
     // (A fullscreen preview keeps floating above the tabs, as before.)
@@ -7360,6 +7430,10 @@ const App = {
       // App.closeApp goes: the page the app was opened from.
       App.setBackIcon('close', App._closeAppHref());
       AppView.renderAppTab();
+      if (opening && AppView.appData?.slug === App.currentApp
+          && App._isScreenVisible?.('app-view')) {
+        window.UsernodeReact?.appOpenings?.commit?.(App.currentApp, opening);
+      }
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);
     }

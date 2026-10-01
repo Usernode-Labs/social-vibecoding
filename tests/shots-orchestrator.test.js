@@ -1573,3 +1573,29 @@ test('a failed shots sign-in reaches the trace and the failure reason with its s
   assert.match(runner, /export SHOTS_BOOTSTRAP_FAILURE_FILE="\$SHOTS_TMP\/browser-bootstrap\.failure"/);
   assert.match(runner, /\|\| die "\$\(head -c 300 "\$SHOTS_BOOTSTRAP_FAILURE_FILE"/);
 });
+
+test('the trace keeps whether a hosted app\'s page load carried the persona identity, as a boolean only', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'head', identityAttached: true });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'base', identityAttached: 'member.jwt' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', identityAttached: true });
+  const [attached, junk, other] = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.equal(attached.identityAttached, true);
+  assert.equal(junk.identityAttached, undefined, 'anything but a boolean is dropped');
+  assert.equal(other.identityAttached, undefined, 'and only a page load carries it');
+});
+
+test('the trace counts the shots proxy\'s refusals of a destination by reason only', () => {
+  const metrics = orchestrator.newRunMetrics();
+  for (const blockReason of ['private_address', 'port', 'dns']) {
+    orchestrator.recordAgentDiagnostic(metrics, { kind: 'egress_blocked', blockReason });
+  }
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'egress_blocked', blockReason: '10.0.0.5', host: 'internal.example' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', blockReason: 'port' });
+  const events = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.deepEqual(events.map((event) => [event.kind, event.blockReason]), [
+    ['egress_blocked', 'private_address'], ['egress_blocked', 'port'], ['egress_blocked', 'dns'],
+    ['egress_blocked', undefined], ['tool_start', undefined],
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /internal\.example|10\.0\.0\.5/);
+});

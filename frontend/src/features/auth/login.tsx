@@ -75,6 +75,7 @@ import {
   type NativeLoginFailureDetails,
   sessionMintFailureMessage,
   useAuthScreensPatch,
+  USERNAME_PUBLIC_NOTE,
   USERNAME_RULE,
 } from './shared';
 
@@ -98,10 +99,12 @@ type OtpStep = 'email' | 'code' | 'password';
 interface OtpSignup {
   /** The code just CREATED the account: no account used this address. */
   created: boolean;
-  /** The account has never chosen its handle, so this step asks for it. */
+  /**
+   * The account has never chosen its handle, so this step asks for it, with
+   * an empty field (#3575: the server no longer suggests one, and will not
+   * finish the step without it).
+   */
   needsUsername: boolean;
-  /** The prefill for that field; null when none could be derived. */
-  suggestedUsername: string | null;
   /** It will land in the waiting room; null when the server could not tell. */
   waitlisted: boolean | null;
 }
@@ -117,7 +120,6 @@ const OTP_PASSWORD_INTRO_HANDLE = 'Code verified. Choose a username and a passwo
 // signed in to a queue, not to the platform.
 const OTP_WAITLIST_NOTE =
   "New accounts join a short waitlist. After this step you'll wait in the queue, and you'll get in automatically when it's your turn.";
-const OTP_USERNAME_HINT = `Your @handle, the name other members see. ${USERNAME_RULE}`;
 
 /** Which reset path the recovery view offers. */
 type RecoveryPath = 'wallet' | 'email';
@@ -912,7 +914,6 @@ export function LoginScreen() {
       setOtpSignup({
         created: data.created === true,
         needsUsername: data.needsUsername === true,
-        suggestedUsername: typeof data.suggestedUsername === 'string' ? data.suggestedUsername : null,
         waitlisted: typeof data.waitlisted === 'boolean' ? data.waitlisted : null,
       });
       // Past the code: nothing left to resend, and setOtpStatus(null) above
@@ -1727,13 +1728,20 @@ export function LoginScreen() {
                   a code used to get a derived name and meet it for the first
                   time in the waiting room ("Your account qaflowfive doesn't
                   have platform access yet"); the first-run gate that asks for
-                  it only runs at release. Prefilled with the same suggestion
-                  that gate would offer, and keyed on it so a second verify
-                  starts from the new one. `data-username-suggested` mirrors
-                  the prefill for the declared check, as the gate's does.
+                  it only runs at release.
+
+                  #3575: the field starts EMPTY. It used to arrive holding a
+                  name derived from the address, which "Create account"
+                  accepted with one press — a username generated from the
+                  email, the thing the request asked us not to do. The person
+                  types their own, the server refuses to finish without one
+                  (`username_required`), and the line under the field says
+                  who will see it. That line is its own <p>, ahead of the
+                  rule: the rule's line is swapped whole for the server's
+                  refusal, and the public note has to stay put meanwhile.
               */}
               {otpSignup?.needsUsername ? (
-                <div key={otpSignup.suggestedUsername || ''}>
+                <div>
                   <label htmlFor="otp-username" className="block text-[15px] font-medium text-zinc-500 dark:text-zinc-400 mb-1">
                     Username
                   </label>
@@ -1744,16 +1752,17 @@ export function LoginScreen() {
                     autoComplete="username"
                     maxLength={32}
                     {...HANDLE_FIELD}
-                    defaultValue={otpSignup.suggestedUsername || ''}
-                    data-username-suggested={otpSignup.suggestedUsername || undefined}
-                    aria-describedby="otp-username-hint"
+                    aria-describedby="otp-username-public otp-username-hint"
                     aria-invalid={otpUsernameError ? true : undefined}
                     onInput={() => setOtpUsernameError(null)}
                     {...FIELD}
                     placeholder="yourname"
                   />
+                  <p id="otp-username-public" className={FIELD_HINT}>
+                    {USERNAME_PUBLIC_NOTE}
+                  </p>
                   <p id="otp-username-hint" className={otpUsernameError ? FIELD_HINT_ERROR : FIELD_HINT}>
-                    {otpUsernameError || OTP_USERNAME_HINT}
+                    {otpUsernameError || USERNAME_RULE}
                   </p>
                 </div>
               ) : null}

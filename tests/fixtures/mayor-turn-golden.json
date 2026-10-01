@@ -40,8 +40,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "39220de3c88f0b69",
-          "length": 182309
+          "sha": "72f4aa8e791e8305",
+          "length": 182955
         },
         "tools": [
           "dispatch_claude_code",
@@ -133,8 +133,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -168,8 +168,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -290,8 +290,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -375,8 +375,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -457,8 +457,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -544,8 +544,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -637,8 +637,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -716,8 +716,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -792,8 +792,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -967,8 +967,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -1002,8 +1002,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "2002a107e0e24cec",
-          "length": 181044
+          "sha": "ca8b086b4b904d92",
+          "length": 181690
         },
         "tools": [
           "suggest_replies"
@@ -1192,8 +1192,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "2002a107e0e24cec",
-          "length": 181044
+          "sha": "ca8b086b4b904d92",
+          "length": 181690
         },
         "tools": [
           "dispatch_claude_code",
@@ -1235,8 +1235,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "04ee35dac648eb94",
-          "length": 181778
+          "sha": "ee41a1be6111a266",
+          "length": 182424
         },
         "tools": [
           "suggest_replies"
@@ -1430,8 +1430,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "2002a107e0e24cec",
-          "length": 181044
+          "sha": "ca8b086b4b904d92",
+          "length": 181690
         },
         "tools": [
           "dispatch_claude_code",
@@ -1465,8 +1465,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "2002a107e0e24cec",
-          "length": 181044
+          "sha": "ca8b086b4b904d92",
+          "length": 181690
         },
         "tools": [
           "suggest_replies"
@@ -1622,8 +1622,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "2002a107e0e24cec",
-          "length": 181044
+          "sha": "ca8b086b4b904d92",
+          "length": 181690
         },
         "tools": [
           "dispatch_claude_code",
@@ -1723,8 +1723,8 @@
         "model": "claude-opus-5-5",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "b12bc8ea24bf3091",
-          "length": 180744
+          "sha": "9a4f5756e9bbb99e",
+          "length": 181390
         },
         "tools": [
           "suggest_answers",
@@ -1802,8 +1802,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -1933,8 +1933,8 @@
         "model": "openai/gpt-5.3-codex",
         "apiKey": null,
         "systemPrompt": {
-          "sha": "dc8b8fa7bea3eb90",
-          "length": 180682
+          "sha": "fc953f6e6d354c08",
+          "length": 181328
         },
         "tools": [
           "dispatch_claude_code",
@@ -1964,7 +1964,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"d6dc96607fc166d6\",\"length\":187861},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"baa90fff581d497d\",\"length\":188507},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2080,7 +2080,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"d6dc96607fc166d6\",\"length\":187861},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"baa90fff581d497d\",\"length\":188507},\"systemPrompt\":null,\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
@@ -2193,7 +2193,7 @@
       "{\"fn\":\"ensureWorkerImage\"}",
       "{\"fn\":\"ensureWorker\",\"id\":4242}",
       "{\"fn\":\"syncUserAgentFiles\"}",
-      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"965270113e289e3e\",\"length\":11457},\"systemPrompt\":{\"sha\":\"04d7741745185457\",\"length\":167726},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
+      "{\"fn\":\"execInWorker\",\"id\":4242,\"mode\":\"build\",\"model\":\"openai/gpt-5.3-codex\",\"branchName\":\"dev/tester-4242\",\"resumeSessionId\":null,\"prompt\":{\"sha\":\"965270113e289e3e\",\"length\":11457},\"systemPrompt\":{\"sha\":\"6845995a61f23f4f\",\"length\":168372},\"holdTurnRecord\":true,\"telemetryComponent\":\"coding_agent_build\"}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"prNumber\":42,\"prOpenedEventRecorded\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"stagingUrl\":\"https://whiteboard-pr42.staging.test\"},\"opts\":{\"turnId\":\"turn-or-1\"}}",
       "{\"fn\":\"noteTailMilestone\",\"id\":4242,\"milestone\":{\"completionRowPosted\":true},\"opts\":{\"turnId\":\"turn-or-1\"}}",

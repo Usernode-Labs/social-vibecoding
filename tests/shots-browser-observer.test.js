@@ -210,3 +210,109 @@ test('observer exits after a client stops the browser while stdin remains open',
     child.kill('SIGKILL');
   }
 });
+
+// With the shots browser open to the public internet, the shots bridge
+// publishes a shot only from the run's own address for its side. The
+// observer is what knows where each screenshot was taken: Playwright reports
+// the page after most tools, and names the file a screenshot was saved as.
+test('the observer stamps each screenshot with the site it was taken on, and each session with every site it showed', (t) => {
+  const boundary = require('../worker/shots-boundary');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-observer-provenance-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const outputDir = path.join(dir, 'member');
+  fs.mkdirSync(outputDir);
+  const events = [];
+  const observer = createObserver({ persona: 'member', origins: [], emit: (event) => events.push(event), outputDir });
+  let id = 0;
+  const call = (name, text, { isError = false } = {}) => {
+    id += 1;
+    observer.request(JSON.stringify({ id, method: 'tools/call', params: { name, arguments: {} } }));
+    observer.response(JSON.stringify({ id, result: { content: [{ type: 'text', text }], isError } }), { bytes: 100 });
+  };
+  const pageState = (url) => `### Ran Playwright code\n\`\`\`js\nawait page.goto('${url}');\n\`\`\`\n\n### Page state\n- Page URL: ${url}\n- Page Title: T\n- Page Snapshot:\n\`\`\`yaml\n- heading "T"\n\`\`\``;
+  const shot = (name, pixels) => {
+    const file = path.join(outputDir, name);
+    fs.writeFileSync(file, pixels);
+    call('browser_take_screenshot', `### Result\nTook the viewport screenshot and saved it as ${file}\n\n### Ran Playwright code\n\`\`\`js\nawait page.screenshot();\n\`\`\``);
+  };
+  const origin = (name, pixels) => boundary.screenshotOrigin(outputDir, name, Buffer.from(pixels));
+
+  call('browser_navigate', pageState('http://head.internal:3000/lists?id=7'));
+  shot('lists-after.png', 'head pixels');
+  assert.equal(origin('lists-after.png', 'head pixels'), 'http://head.internal:3000');
+
+  call('browser_navigate', pageState('https://example.com/'));
+  shot('elsewhere.png', 'other pixels');
+  assert.equal(origin('elsewhere.png', 'other pixels'), 'https://example.com');
+
+  // A failed screenshot, or one saved outside the browser's directory, is not stamped.
+  fs.writeFileSync(path.join(outputDir, 'failed.png'), 'x');
+  call('browser_take_screenshot', `### Result\nTook the viewport screenshot and saved it as ${path.join(outputDir, 'failed.png')}`, { isError: true });
+  assert.equal(origin('failed.png', 'x'), null);
+  fs.mkdirSync(path.join(outputDir, 'nested'));
+  fs.writeFileSync(path.join(outputDir, 'nested', 'deep.png'), 'x');
+  call('browser_take_screenshot', `### Result\nTook the viewport screenshot and saved it as ${path.join(outputDir, 'nested', 'deep.png')}`);
+  assert.deepEqual(fs.readdirSync(boundary.provenanceDir(outputDir)).sort(), ['elsewhere.png.json', 'lists-after.png.json']);
+
+  // Closing the session records every site it showed, as its clip is written.
+  call('browser_close', '### Open tabs\nNo open tabs. Use the "browser_navigate" tool to navigate to a page first.\n');
+  assert.deepEqual(boundary.sessionOrigins(outputDir), ['http://head.internal:3000', 'https://example.com']);
+  // The next session starts empty, and a screenshot before any page has no site.
+  shot('blank.png', 'blank');
+  assert.equal(origin('blank.png', 'blank'), null);
+  call('browser_navigate', pageState('http://head.internal:3000/'));
+  call('browser_close', '### Open tabs\nNo open tabs.\n');
+  assert.deepEqual(boundary.sessionOrigins(outputDir), ['http://head.internal:3000']);
+  // A second close ended no session: the record stands.
+  call('browser_close', '### Open tabs\nNo open tabs.\n');
+  assert.deepEqual(boundary.sessionOrigins(outputDir), ['http://head.internal:3000']);
+
+  // None of this reaches the diagnostics.
+  assert.doesNotMatch(JSON.stringify(events), /head\.internal|example\.com|lists|\.png/);
+});
+
+test('a screenshot result over the capture limit is still stamped from its leading text', async (t) => {
+  const boundary = require('../worker/shots-boundary');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-observer-provenance-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const outputDir = path.join(dir, 'admin');
+  fs.mkdirSync(outputDir);
+  const observer = createObserver({ persona: 'admin', origins: [], emit: () => {}, outputDir });
+  observer.request(JSON.stringify({ id: 1, method: 'tools/call', params: { name: 'browser_navigate', arguments: {} } }));
+  observer.response(JSON.stringify({ id: 1, result: { content: [{ type: 'text',
+    text: '### Page state\n- Page URL: http://base.internal:3000/admin\n- Page Title: Admin' }] } }), { bytes: 80 });
+
+  const file = path.join(outputDir, 'admin-before.png');
+  fs.writeFileSync(file, 'big screenshot');
+  observer.request(JSON.stringify({ id: 2, method: 'tools/call', params: { name: 'browser_take_screenshot', arguments: {} } }));
+  const tap = lineTap((line, meta) => observer.response(line, meta));
+  tap.resume();
+  tap.end(`${JSON.stringify({ jsonrpc: '2.0', result: { content: [
+    { type: 'text', text: `### Result\nTook the viewport screenshot and saved it as ${file}\n\n### Ran Playwright code` },
+    { type: 'image', data: 'x'.repeat(2 * 1024 * 1024), mimeType: 'image/png' },
+  ] }, id: 2 })}\n`);
+  await once(tap, 'end');
+  assert.equal(boundary.screenshotOrigin(outputDir, 'admin-before.png', Buffer.from('big screenshot')),
+    'http://base.internal:3000');
+});
+
+test('the page Playwright reports is its page state, else the current tab', () => {
+  const { reportedPageUrl, savedScreenshotPath } = require('../worker/shots-browser-observer');
+  assert.equal(reportedPageUrl('### Open tabs\n- 0: [A] (http://a.internal/)\n- 1: (current) [B] (https://b.example/x)\n\n### Page state\n- Page URL: https://b.example/x\n'),
+    'https://b.example/x');
+  assert.equal(reportedPageUrl('### Open tabs\n- 0: (current) [Home] (http://head.internal:3000/#home)\n- 1: [Docs] (https://docs.example/)\n'),
+    'http://head.internal:3000/#home');
+  assert.equal(reportedPageUrl('### Result\nTook the viewport screenshot and saved it as /tmp/x.png'), null);
+  assert.equal(savedScreenshotPath('### Result\nTook the element screenshot and saved it as /out/member/a-b.png\n\n### Ran'), '/out/member/a-b.png');
+  assert.equal(savedScreenshotPath('{"text":"### Result\\nTook the viewport screenshot and saved it as /out/member/c.jpeg\\n\\n'), '/out/member/c.jpeg');
+  assert.equal(savedScreenshotPath('### Result\nClicked'), null);
+});
+
+test('the observer starts the installed Playwright server unless the dry run names another', () => {
+  const { browserCommand } = require('../worker/shots-browser-observer');
+  assert.deepEqual(browserCommand(undefined), ['mcp-server-playwright']);
+  assert.deepEqual(browserCommand('not json'), ['mcp-server-playwright']);
+  assert.deepEqual(browserCommand('[]'), ['mcp-server-playwright']);
+  assert.deepEqual(browserCommand('["npx",""]'), ['mcp-server-playwright']);
+  assert.deepEqual(browserCommand('["npx","@playwright/mcp@0.0.41"]'), ['npx', '@playwright/mcp@0.0.41']);
+});

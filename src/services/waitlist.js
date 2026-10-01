@@ -26,6 +26,37 @@ function normalizeEmail(raw) {
   return trimmed;
 }
 
+// Split a pasted blob of addresses — one per line, comma- or
+// space-separated, a column copied out of a spreadsheet, or a mail
+// client's `Jane Doe <jane@example.com>` list — into candidates, in the
+// order they were pasted. A word with no `@` in it (the "Jane Doe", a
+// header row) is skipped and counted rather than reported as a bad
+// address; anything with an `@` is a candidate, and goes through
+// normalizeEmail — the rule the join form applies — so it is matched
+// against the row exactly as that row was stored. `email` is null for a
+// candidate that rule rejects. Repeats of an address already seen are
+// dropped and counted.
+function parseEmailList(text) {
+  const entries = [];
+  const seen = new Set();
+  let skipped = 0;
+  let duplicates = 0;
+  for (const raw of String(text == null ? '' : text).split(/[\s,;]+/)) {
+    const token = raw
+      .replace(/^[<(["']+/, '')
+      .replace(/[>)\]"'.:]+$/, '')
+      .replace(/^mailto:/i, '');
+    if (!token) continue;
+    if (!token.includes('@')) { skipped += 1; continue; }
+    const email = normalizeEmail(token);
+    const key = email || token.toLowerCase();
+    if (seen.has(key)) { duplicates += 1; continue; }
+    seen.add(key);
+    entries.push({ input: token, email });
+  }
+  return { entries, skipped, duplicates };
+}
+
 // Join the platform waitlist. Idempotent by email: re-joining is a
 // silent no-op at the DATABASE level (the original submitted_at is kept).
 // Returns { created, moreToken, submittedAt } — created=false means the
@@ -452,6 +483,7 @@ module.exports = {
   MAX_CODE_ATTEMPTS,
   CODE_REUSE_WINDOW_SECONDS,
   normalizeEmail,
+  parseEmailList,
   joinWaitlist,
   getSignupByMoreToken,
   getSignupByEmail,

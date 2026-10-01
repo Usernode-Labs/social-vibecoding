@@ -161,7 +161,9 @@ const PAUSED_SESSION_WINDOW_DAYS = 7;
 // The live caps the dashboard SIMULATES in shadow mode: a run reports
 // whether these would have suppressed it, so the dashboard shows the live
 // bot's behaviour and not only the raw model's.
-const PROPOSALS_PER_APP_CAP = 2;
+// 5 since #3576: 2 left most of a backlog held, a slot freeing only when
+// the group voted.
+const PROPOSALS_PER_APP_CAP = 5;
 // Questions and `empty` verdicts share this one allowance, so the bot
 // cannot answer a quiet board with ten questions AND ten close proposals in
 // the same day. Both are a demand on somebody's attention.
@@ -184,6 +186,14 @@ const STALE_CLAIM_MARGIN_SECONDS = 10 * 60;
 const PLATFORM_BUILD_TIME_FACTOR = 2;
 // The queue reason of an issue a restart sent back to be looked at again.
 const RESTART_REASON = 'restart';
+// The queue reason of an issue an admin's "Triage this app again" queued
+// (retriageApp). Such a pass takes a whole backlog at once, and the proposal
+// cap fills within two builds, so the rest were each told "looking into it"
+// and then "held" (9 of the first 24 live runs, #3509). The cap_freed
+// refresh already brings a held issue back when there is room, so these
+// are triaged without either post: they speak only when they have
+// something to say (a question, a spec, a proposal).
+const APP_AGAIN_REASON = 'app_again';
 
 // Bounds on what a verdict may carry into the ledger.
 const MAX_FIELD_CHARS = 4000;
@@ -860,7 +870,7 @@ async function refreshQueue(pool, settings, deps = {}) {
     summary.apps += 1;
     try {
       const capRoom = deps.bot && live.isLiveFor(settings, app)
-        ? await capRoomFor(pool, deps.bot, app.id) : null;
+        ? await capRoomFor(pool, deps.bot, app.id, settings) : null;
       const r = await refreshApp(pool, app, { ...deps, capRoom });
       summary.queued += r.queued;
       summary.removed += r.removed;
@@ -883,7 +893,7 @@ async function refreshApps(pool, settings, appIds, deps = {}) {
     summary.apps += 1;
     try {
       const capRoom = deps.bot && live.isLiveFor(settings, app)
-        ? await capRoomFor(pool, deps.bot, app.id) : null;
+        ? await capRoomFor(pool, deps.bot, app.id, settings) : null;
       const r = await refreshApp(pool, app, { ...deps, capRoom });
       summary.queued += r.queued;
       summary.removed += r.removed;
@@ -1071,14 +1081,29 @@ async function insertRun(pool, run) {
 }
 
 /**
- * Which live cap would have stopped this verdict from being posted. Both
+ * The most proposals the bot may have up for a vote at once, across every
+ * app (#3576): the per-app cap on each live app. It stands in for the
+ * platform's per-user cap (session-caps.js, 5), which the bot ran into with
+ * four live apps and found out about only after a paid build could not be
+ * proposed. The Propose route honours it for the bot's own in-process
+ * promote only (promoteAsBot); the bot checks it before it builds.
+ */
+function botProposalCeiling(settings) {
+  return PROPOSALS_PER_APP_CAP * Math.max(1, (settings?.liveApps || []).length);
+}
+
+/**
+ * Which live cap would have stopped this verdict from being posted. The
  * counts are over the bot's own rows, so in shadow mode they read zero
  * until the tripwire on questions trips — which is exactly the number the
- * dashboard exists to show.
+ * dashboard exists to show. A ready verdict is checked against both
+ * proposal caps before anything is built: a hold costs nothing, and the
+ * cap_freed refresh brings the issue back when there is room.
  */
-async function simulateCaps(pool, bot, appId, verdict) {
+async function simulateCaps(pool, bot, appId, verdict, settings = null) {
   if (verdict === 'ready') {
     if (await openBotProposalCount(pool, bot, appId) >= PROPOSALS_PER_APP_CAP) return 'proposals_per_app';
+    if (await openBotProposalTotal(pool, bot) >= botProposalCeiling(settings)) return 'proposals_total';
   }
   if (TRIPWIRE_VERDICTS.includes(verdict)) {
     if (await tripwireCount(pool, appId) >= QUESTION_TRIPWIRE_PER_DAY) return 'question_tripwire';
@@ -1091,6 +1116,17 @@ async function openBotProposalCount(pool, bot, appId) {
     `SELECT COUNT(*)::int AS cnt FROM chat_sessions
       WHERE app_id = $1 AND user_id = $2 AND status IN ('promoted', 'merging')`,
     [appId, bot.id],
+  );
+  return rows[0]?.cnt || 0;
+}
+
+// The bot's proposals up for a vote on every app, counted as the Propose
+// route counts a user's (#3576).
+async function openBotProposalTotal(pool, bot) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS cnt FROM chat_sessions
+      WHERE user_id = $1 AND status IN ('promoted', 'merging') AND is_headless = FALSE`,
+    [bot.id],
   );
   return rows[0]?.cnt || 0;
 }
@@ -1111,16 +1147,21 @@ async function tripwireCount(pool, appId) {
 
 /**
  * How many more verdicts each cap would let through on this app now, keyed
- * by the name simulateCaps records (#3152). The same two counts, so a held
- * issue is only brought back when the check it failed would now pass.
+ * by the name simulateCaps records (#3152). The same counts, so a held
+ * issue is only brought back when the check it failed would now pass. The
+ * bot-wide room is the same number for every app; an app refreshed after
+ * another took it may bring one back that is held again, at the price of
+ * one triage and no post.
  */
-async function capRoomFor(pool, bot, appId) {
-  const [proposals, questions] = await Promise.all([
+async function capRoomFor(pool, bot, appId, settings = null) {
+  const [proposals, total, questions] = await Promise.all([
     openBotProposalCount(pool, bot, appId),
+    openBotProposalTotal(pool, bot),
     tripwireCount(pool, appId),
   ]);
   return {
     proposals_per_app: Math.max(0, PROPOSALS_PER_APP_CAP - proposals),
+    proposals_total: Math.max(0, botProposalCeiling(settings) - total),
     question_tripwire: Math.max(0, QUESTION_TRIPWIRE_PER_DAY - questions),
   };
 }
@@ -1463,8 +1504,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       return { ran: false, reason: 'has_proposal' };
     }
     // An issue a restart sent back (#3471) was already told the bot is
-    // looking; it is not told twice.
-    const looked = item.reason === RESTART_REASON ? null : await live.post({
+    // looking; it is not told twice. A backlog pass says nothing yet (#3509).
+    const looked = item.reason === RESTART_REASON || item.reason === APP_AGAIN_REASON ? null : await live.post({
       pool, github, ws: liveD.ws, app, repo, issueNumber,
       kind: 'looking', text: live.lookingText(), sender: bot,
     }).catch((err) => {
@@ -1732,7 +1773,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       sessionId: session.id, costUsd, ...usage,
     });
   }
-  const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict);
+  const capSuppressed = await simulateCaps(pool, bot, app.id, parsed.verdict, settings);
   const runId = await insertRun(pool, {
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
@@ -1767,6 +1808,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       acted = await actOnVerdict({
         pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
         seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin: botUsername,
+        quietHold: item.reason === APP_AGAIN_REASON,
+        proposalCeiling: botProposalCeiling(settings),
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
           activeWorkers, ...liveD,
@@ -2411,12 +2454,13 @@ async function abandonRecoveredTurn({ pool, session, why }) {
 // sessionId → what recovery found, until completeRecoveredLive acts on it.
 const pendingLive = new Map();
 
-/** The live run a session is the build of, while it has no proposal yet. */
+/** The live run a session is the build of, while it has no proposal or recorded outcome yet. */
 async function liveRunOfSession(pool, sessionId) {
   const { rows } = await pool.query(
     `SELECT id, app_id, issue_number
        FROM homeroom_bot_runs
       WHERE build_session_id = $1 AND mode = 'live' AND proposal_session_id IS NULL
+        AND build_ok IS NULL
       ORDER BY id DESC LIMIT 1`,
     [sessionId],
   );
@@ -2462,7 +2506,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
   pendingLive.delete(Number(sessionId));
   try {
     const { rows: [session] } = await pool.query(
-      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md,
+      `SELECT cs.id, cs.user_id, cs.status, cs.branch_name, cs.spec_md, cs.agent_model,
               (SELECT MAX(version) FROM chat_session_specs WHERE session_id = cs.id) AS spec_version
          FROM chat_sessions cs WHERE cs.id = $1`,
       [sessionId],
@@ -2472,7 +2516,8 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     );
     if (!session || !app) return 'gone';
     const archive = () => putAwayRecoveredSession(pool, session, { archive: true });
-    await debitRecovered(pool, session, await sessionCostUsd(pool, session.id), deps);
+    const costUsd = await sessionCostUsd(pool, session.id);
+    await debitRecovered(pool, session, costUsd, deps);
 
     const specRead = plan.mode === 'scout' && !plan.lost && !plan.timedOut
       ? live.readSpec(plan.result?.lastResultText) : null;
@@ -2504,20 +2549,34 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     const note = ' (finished after a restart)';
     let built;
     if (plan.mode === 'scout') {
-      built = { ok: false, blocked: specRead.blocked };
+      built = { ok: false, sessionId: Number(sessionId), blocked: specRead.blocked };
     } else if (plan.result?.pushOk === true && Number(plan.result?.ahead) > 0 && !plan.timedOut) {
-      const promoted = await live.promoteAsBot({ config, bot, sessionId, router: liveD.votesRouter });
+      const pushed = {
+        branchName: session.branch_name || null, sha: plan.result.sha || null, commits: Number(plan.result.ahead) || 0,
+      };
+      // Named and described from the spec and the build's own message, as
+      // the live path does before it proposes (#3518).
+      await live.prepareProposal({
+        pool, bot, sessionId, spec: session.spec_md || null,
+        buildText: plan.result.lastResultText, model: session.agent_model || null,
+      });
+      const promoted = await live.promoteAsBot({
+        config, bot, sessionId, router: liveD.votesRouter, ceiling: botProposalCeiling(await readSettings(pool).catch(() => null)),
+      });
       if (promoted.status === 200 && promoted.body?.ok) {
         built = {
           ok: true, sessionId: Number(sessionId), prNumber: promoted.body.prNumber || null,
-          specMd: session.spec_md || null, specVersion: session.spec_version || null,
+          specMd: session.spec_md || null, specVersion: session.spec_version || null, ...pushed,
         };
       } else {
         // Built but not proposed: left as the live path leaves it, for a
         // person to open and propose.
         const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
         await putAwayRecoveredSession(pool, session, { archive: false });
-        built = { ok: false, sessionId: Number(sessionId), error: `the change was built but could not be proposed: ${why}` };
+        built = {
+          ok: false, sessionId: Number(sessionId), ...pushed,
+          error: `the change was built but could not be proposed: ${why}`,
+        };
       }
     } else {
       await archive();
@@ -2527,6 +2586,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       };
     }
     if (built.blocked) await archive();
+    built.costUsd = costUsd;
     const acted = await announceBuilt({
       pool, ws: liveD.ws, app, bot, issueNumber: plan.issueNumber, runId: plan.runId, built, say, domain: liveD.domain,
     });
@@ -2614,15 +2674,20 @@ async function queueShadowBackfill(pool, config = {}) {
   };
 }
 
-/** The lane as the dashboard shows it: counts, and what is building now. */
+/**
+ * The lane as the dashboard shows it: counts, and what is building now.
+ * Only the lane's own builds: every one was queued, and a live build, whose
+ * outcome is recorded in the same columns (#3509), never is.
+ */
 async function buildLaneSummary(pool) {
   const { rows } = await pool.query(
-    `SELECT COUNT(*) FILTER (WHERE build_queued_at IS NOT NULL AND build_at IS NULL AND build_ok IS NULL)::int AS queued,
-            COUNT(*) FILTER (WHERE build_queued_at IS NOT NULL AND build_at IS NOT NULL AND build_ok IS NULL)::int AS building,
+    `SELECT COUNT(*) FILTER (WHERE build_at IS NULL AND build_ok IS NULL)::int AS queued,
+            COUNT(*) FILTER (WHERE build_at IS NOT NULL AND build_ok IS NULL)::int AS building,
             COUNT(*) FILTER (WHERE build_ok)::int AS built,
             COUNT(*) FILTER (WHERE build_ok = FALSE)::int AS failed,
             COALESCE(SUM(build_cost_usd), 0)::float8 AS cost_usd
-       FROM homeroom_bot_runs`,
+       FROM homeroom_bot_runs
+      WHERE build_queued_at IS NOT NULL`,
   );
   const t = rows[0] || {};
   return {
@@ -2911,12 +2976,44 @@ function liveSayer({
 }
 
 /**
+ * What a live build came to, recorded on its run in the columns a shadow
+ * build fills (#3509): before this it was only said on the issue, so an
+ * export could not tell a build that failed from one found impossible, nor
+ * say why a proposal had no spec. build_at and build_queued_at stay NULL:
+ * those are the lane's, and a live build never went through it. A spec
+ * that failed is noted beside a build that went ahead, as a shadow
+ * build's is (#3396). Never throws.
+ */
+async function recordLiveBuild(pool, runId, built) {
+  if (!runId || !built) return;
+  const error = built.ok
+    ? (built.specNote ? clip(built.specNote, MAX_ERROR_CHARS) : null)
+    : clip([
+      built.blocked ? `blocked: ${built.blocked}` : (built.error || 'unknown'),
+      built.specNote,
+    ].filter(Boolean).join('; '), MAX_ERROR_CHARS);
+  await pool.query(
+    `UPDATE homeroom_bot_runs
+        SET build_ok = $2, build_error = $3,
+            build_branch = COALESCE($4, build_branch), build_sha = COALESCE($5, build_sha),
+            build_commits = COALESCE($6, build_commits), build_cost_usd = COALESCE($7, build_cost_usd),
+            build_session_id = COALESCE(build_session_id, $8), build_spec_md = COALESCE($9, build_spec_md)
+      WHERE id = $1`,
+    [runId, !!built.ok, error, built.branchName || null, built.sha || null,
+      Number.isFinite(built.commits) ? built.commits : null,
+      Number.isFinite(built.costUsd) ? built.costUsd : null,
+      built.sessionId || null, built.specMd || null],
+  ).catch((err) => log.warn('homeroom-bot', 'Could not record the live build on its run', { runId, err: err.message }));
+}
+
+/**
  * What a live build came to, said on its issue: the proposal (and the spec
  * on it, where the group votes), the request found impossible, or the build
  * that did not become a proposal. Shared by the live path and the recovery
  * of a live build a restart interrupted (#3471). Returns what was done.
  */
 async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, say, domain }) {
+  await recordLiveBuild(pool, runId, built);
   if (built.ok) {
     await pool.query(
       'UPDATE homeroom_bot_runs SET proposal_session_id = $2 WHERE id = $1',
@@ -2952,7 +3049,8 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
 
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
-  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, deps,
+  seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, quietHold = false,
+  proposalCeiling = PROPOSALS_PER_APP_CAP, deps,
 }) {
   const { github, ws } = deps;
   const say = liveSayer({
@@ -2964,13 +3062,14 @@ async function actOnVerdict({
     const kind = live.heldKind(capSuppressed);
     const already = await live.lastPostKind(pool, app.id, issueNumber) === kind;
     log.info('homeroom-bot', 'Live verdict held by a cap', {
-      app: app.slug, issueNumber, verdict: parsed.verdict, cap: capSuppressed, noted: !already,
+      app: app.slug, issueNumber, verdict: parsed.verdict, cap: capSuppressed, noted: !already && !quietHold,
     });
-    if (!already) {
+    if (!already && !quietHold) {
       await say(kind, live.heldText({
         cap: capSuppressed,
         verdict: parsed.verdict,
-        limit: capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP : QUESTION_TRIPWIRE_PER_DAY,
+        limit: capSuppressed === 'proposals_per_app' ? PROPOSALS_PER_APP_CAP
+          : capSuppressed === 'proposals_total' ? proposalCeiling : QUESTION_TRIPWIRE_PER_DAY,
       }));
     }
   } else if (parsed.verdict === 'question') {
@@ -2990,7 +3089,7 @@ async function actOnVerdict({
     };
     const built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-      ...buildBudgets(app, config, turnBudgetMs), model, deps, onSpec,
+      ...buildBudgets(app, config, turnBudgetMs), model, deps, onSpec, proposalCeiling,
       // Linked before any turn runs, so a restart mid-build can find the run
       // (#3471): the build's worker outlives the restart; this process does not.
       onSession: (session) => pool.query(
@@ -3527,7 +3626,11 @@ async function adminPayload(pool, config, {
     queue: { depth: depthRows[0]?.depth || 0, items: queueRows },
     runs: runRows.map((r) => ({ ...r, issueUrl: issueUrlFor(r), buildUrl: buildUrlFor(r) })),
     apps: appRows,
-    caps: { proposalsPerApp: PROPOSALS_PER_APP_CAP, questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY },
+    caps: {
+      proposalsPerApp: PROPOSALS_PER_APP_CAP,
+      proposalsTotal: botProposalCeiling(settings),
+      questionsPerAppPerDay: QUESTION_TRIPWIRE_PER_DAY,
+    },
     builds: await buildLaneSummary(pool),
     mentionOptOuts: await mentionOptOutList(pool),
   };
@@ -3639,7 +3742,9 @@ async function retriageQuestions(pool, { actorId = null } = {}) {
  *
  * Nothing new is scheduled: the issues go in the app's queue, oldest first,
  * and the loop takes them the way it takes new ones, one at a time, back to
- * back, with the live path and its caps as usual. They go in at priority 0,
+ * back, with the live path and its caps as usual, except that it posts no
+ * "looking" and no cap's "held" note on them (APP_AGAIN_REASON, #3509).
+ * They go in at priority 0,
  * as Run now's do, because the refresh drops an unchanged issue's row
  * otherwise. What the regular refresh leaves out stays out: a closed issue,
  * and one somebody is working on (busyIssueNumbers). A row the bot is on
@@ -3796,6 +3901,8 @@ module.exports = {
   liveSayer,
   announceBuilt,
   RESTART_REASON,
+  APP_AGAIN_REASON,
+  recordLiveBuild,
   recoveryDeadline,
   finishRecoveredTurn,
   abandonRecoveredTurn,
@@ -3815,6 +3922,7 @@ module.exports = {
   classifyIssue,
   BLOCKERS,
   capRoomFor,
+  simulateCaps,
   parseVerdict,
   parseRepo,
   BOT_USERNAME,
@@ -3830,6 +3938,7 @@ module.exports = {
   IDLE_PASS_DELAY_MS,
   BUSY_PASS_DELAY_MS,
   PROPOSALS_PER_APP_CAP,
+  botProposalCeiling,
   QUESTION_TRIPWIRE_PER_DAY,
   _resetForTests() {
     lastRefreshAt = 0; triagePromptCache = null; stopped = false; passInFlight = false; lastPass = null;

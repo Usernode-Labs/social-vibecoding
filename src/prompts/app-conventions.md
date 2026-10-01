@@ -882,6 +882,18 @@ rename takes effect when that PR is voted in, merged, and redeployed —
 not before. Don't add code that mutates the display name through any
 other channel; edit `dapp.json`'s `name` and let the deploy apply it.
 
+### Top-level `description` — one line about what the app is
+
+`dapp.json` may carry an optional top-level `"description"` string: one
+plain sentence saying what the app is ("A shared shopping list for the
+house"). The project's page, Discover, the join screen and the About
+pane show it. Keep it to **90 characters or fewer**, which is two lines
+on a phone; the create screen enforces that limit. A longer line still
+deploys, but each surface cuts it off with an ellipsis (two lines on the
+project's page, Discover and the join screen, three in the About pane), so
+the rest is never read. Change it like the name: edit this field in a
+proposal.
+
 ### Top-level `visibility` — who can build / see & use the app
 
 `dapp.json` may carry an optional top-level `visibility` block — the

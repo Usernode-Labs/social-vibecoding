@@ -606,6 +606,17 @@ export async function promoteChange(changeId: number): Promise<void> {
 }
 
 /**
+ * Name a change as its owner chose (#3251): the owner's title route, which
+ * sets the title the proposal goes to the vote with.
+ */
+export async function renameChange(changeId: number, title: string): Promise<void> {
+  await json(
+    await request(`/api/sessions/${changeId}/title`, { method: 'PATCH', body: JSON.stringify({ title }) }),
+    'Could not change the title.',
+  );
+}
+
+/**
  * Rebuild a change's preview when it is not running (the staging card's
  * Retry): the owner's ensure route. `rebuilding` means a build started and
  * its staging_ready or staging_failed reaches the conversation.

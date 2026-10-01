@@ -58,6 +58,12 @@ const EXPORT_COLUMNS = Object.freeze([
   'fixture_fingerprint', 'base_image_digest', 'head_image_digest',
   'overridden_by', 'overridden_at', 'override_reason',
   'intent_json', 'diagnostics_path',
+  // Last, so an analysis that reads the earlier columns by position is not
+  // shifted: `shutdown` when a Homeroom restart interrupted the run (the
+  // shutdown handler's tag, which the automatic retry counts against its
+  // larger budget). Blank on an interrupted run means nothing explained the
+  // interruption, or that it predates the tag.
+  'interrupted_by',
 ]);
 
 // The agent's own event ring holds up to 128 entries; the tail is what
@@ -290,6 +296,8 @@ function exportRecord(row) {
     overridden_at: row.overridden_at,
     override_reason: row.override_reason,
     intent_json: json(row.intent),
+    interrupted_by: typeof trace.interruptedBy === 'string' && /^[a-z_]{1,32}$/.test(trace.interruptedBy)
+      ? trace.interruptedBy : null,
     diagnostics_path: slug && row.session_id
       ? `/api/apps/${slug}/proposals/${row.session_id}/shots/diagnostics?runId=${row.id}`
       : null,

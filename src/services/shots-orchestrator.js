@@ -593,7 +593,7 @@ const AGENT_DIAGNOSTIC_KINDS = new Set([
   'browser_call_start', 'browser_call_pending', 'browser_call_end', 'browser_server_exit',
   'auth_bootstrap', 'hosted_app_catalog', 'hosted_app_allowlist',
   'document_request', 'document_response', 'controlled_failure_set', 'controlled_failure_hit',
-  'platform_asset', 'legacy_tailwind_cdn',
+  'platform_asset', 'legacy_tailwind_cdn', 'egress_blocked',
   'provider_request_start', 'provider_request_pending', 'provider_response_headers',
   'provider_response_first_byte', 'provider_request_end',
   'worker_stop_requested', 'worker_stop_returned',
@@ -660,6 +660,16 @@ function recordAgentDiagnostic(metrics, raw) {
     }
   }
   if (typeof raw.truncated === 'boolean') event.truncated = raw.truncated;
+  // Whether the shots proxy attached the persona's identity to a hosted
+  // app's page load (worker/shots-origin-proxy.js).
+  if (kind === 'document_request' && typeof raw.identityAttached === 'boolean') {
+    event.identityAttached = raw.identityAttached;
+  }
+  // Why the shots proxy refused a destination outside the pair, by reason
+  // only (worker/shots-boundary.js): never which destination.
+  if (kind === 'egress_blocked' && ['port', 'dns', 'private_address'].includes(raw.blockReason)) {
+    event.blockReason = raw.blockReason;
+  }
   if (kind === 'controlled_failure_set' && typeof raw.enabled === 'boolean') {
     event.enabled = raw.enabled;
   }

@@ -208,7 +208,10 @@ export type TranscriptRow =
     prUrl: string | null;
     prNumber: number | null;
     title: string;
-    closesHtml: string;
+    /** #3605: the requests this change closes, each opening in Homeroom. */
+    closes: { n: number; verb: 'Closes' | 'Closed' }[];
+    /** #3605: the session id whose vote page the status opens, once proposed. */
+    proposalId: number | null;
     stamp: string;
     visualsHtml: string;
     preview: { enabled: boolean; url: string; title: string };

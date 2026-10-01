@@ -1109,12 +1109,16 @@ test('capRoomFor counts the same two things the live check does', async () => {
   const pool = {
     async query(sql) {
       const s = String(sql);
-      if (/FROM chat_sessions/.test(s)) return { rows: [{ cnt: 1 }] };
+      if (/FROM chat_sessions\s+WHERE app_id = \$1/.test(s)) return { rows: [{ cnt: 1 }] };
+      if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) return { rows: [{ cnt: 7 }] };
       if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ cnt: 12 }] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
   };
-  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9), { proposals_per_app: 1, question_tripwire: 0 });
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9),
+    { proposals_per_app: 4, proposals_total: 0, question_tripwire: 0 }, 'shadow: a ceiling of one app\'s cap');
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { liveApps: ['a', 'b'] }),
+    { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, '#3576: 5 per live app, across them all');
   const tripwire = SRC.slice(SRC.indexOf('async function tripwireCount'), SRC.indexOf('async function capRoomFor'));
   assert.match(tripwire, /AND cap_suppressed IS NULL/,
     'a held question is not a posted one; counting it would let every retry keep the window full');

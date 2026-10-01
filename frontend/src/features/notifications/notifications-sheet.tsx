@@ -101,7 +101,7 @@
  */
 
 import { OverlayScrim } from '../../lib/overlay-scrim-view';
-import { useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { IconTile } from '@/components/ui/icon-tile';
@@ -121,6 +121,8 @@ import type { SessionRowView } from '../improve/session-row';
 import type { NotificationRowView } from './notifications-list';
 
 type ScreenRowView = NotificationRowView & {
+  /** The unelided instant for the `<time>`'s title (#1808, stampFields). */
+  timeTitle?: string;
   createdAtMs: number;
   who: string;
   appLine: string;
@@ -157,6 +159,10 @@ type MessagesEntry =
 
 function controller(): any {
   return (typeof window !== 'undefined' ? (window as any).Notifications : null) || null;
+}
+
+function kit(): any {
+  return (typeof window !== 'undefined' ? (window as any).PlatformUI : null) || null;
 }
 
 /** Local-midnight boundary — rows at or after it are "Today". */
@@ -236,7 +242,118 @@ function RowActions({ view, actions }: {
   return <>{buttons}</>;
 }
 
-function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
+/**
+ * The row after `id` in the sheet (or before it, at the end of the list),
+ * read off the document before a clear changes the list under it (#3538).
+ */
+function neighbourRowId(sheet: Element, id: number): string | null {
+  const rows = Array.from(sheet.querySelectorAll('[data-notif-id]'));
+  const at = rows.findIndex((row) => row.getAttribute('data-notif-id') === String(id));
+  if (at < 0) return null;
+  const next = rows[at + 1] || rows[at - 1] || null;
+  return next ? next.getAttribute('data-notif-id') : null;
+}
+
+/**
+ * Where focus goes after the × clears a row from the keyboard (#3538). The ×
+ * goes with what it cleared (on Unread the whole row leaves; elsewhere the
+ * row stays and stops being clearable), and a focused node that leaves the
+ * document drops focus on <body>, outside the dialog. So focus moves to the
+ * row itself while it is still there, else to its neighbour, else to the
+ * sheet's close disc.
+ */
+function refocusAfterClear(sheet: Element, id: number, neighbourId: string | null): void {
+  const focusable = (row: Element | null): HTMLElement | null => {
+    if (!row) return null;
+    return (row.matches('button') ? row : row.querySelector('button')) as HTMLElement | null;
+  };
+  const target = focusable(sheet.querySelector(`[data-notif-id="${id}"]`))
+    || (neighbourId ? focusable(sheet.querySelector(`[data-notif-id="${neighbourId}"]`)) : null)
+    || (sheet.querySelector('#notifications-sheet-close') as HTMLElement | null);
+  target?.focus();
+}
+
+type ScreenRowProps = {
+  view: ScreenRowView;
+  /** PlatformUI.isTouch() at render time: the swipe on touch, else the ×. */
+  touch: boolean;
+  /** True on Unread, the one tab a cleared row leaves. */
+  removes: boolean;
+};
+
+/**
+ * One notification row, in a SLOT of its own (#3538).
+ *
+ * CLEARING. An unread row can be cleared without opening it. Clearing is
+ * marking read (clearNotification in ./notifications.js), so the row leaves
+ * Unread and stays in All without its dot; a read row has nothing to clear
+ * and offers nothing. There are two ways to do it, one per kind of hand,
+ * each the way the system the request pointed at does it:
+ *
+ *   - ON A PHONE, the swipe. iOS clears a notification with a swipe to the
+ *     left, and a long swipe clears it outright. The swipe is the kit's
+ *     (PlatformUI.swipeActions), wired the way the Saved and Invite rows in
+ *     ./notifications-list.tsx wire theirs: on touch only, from an effect,
+ *     after mount. The kit gives the row `touch-action: pan-y` and puts its
+ *     drag through the gesture arbiter, so an up-and-down drag on a row
+ *     still scrolls the list, and the kit sheet still pulls down from its
+ *     grabber as it did; the row takes only a drag that reads as sideways.
+ *     The sheet has no sideways gesture of its own (its tabs are tapped), so
+ *     nothing else wants that one.
+ *
+ *     On Unread the long swipe COMMITS, because there the row leaves: it
+ *     slides out and collapses, as on the lock screen. On Messages and All
+ *     the row stays, so the swipe reveals Clear and a tap on it clears. A
+ *     row that slid away and then came straight back without its dot would
+ *     say two different things in half a second. The button is the kit's
+ *     neutral grey on every tab, not the red of its destructive action,
+ *     because clearing deletes nothing.
+ *
+ *   - AT A DESK, the ×. macOS Notification Center puts a small round × on a
+ *     notification's corner while the pointer is over it, and this is that:
+ *     the sheet's own white close disc in miniature, on the corner of the
+ *     row's tile, drawn on hover. It is a real button BESIDE the row, never
+ *     inside it (the row is a button), so it is its own tab stop right after
+ *     the row, drawn while either of them has keyboard focus, and named
+ *     "Clear notification". It is not rendered on touch at all: there is no
+ *     hover there, and an invisible target on a tile's corner is an
+ *     accidental clear waiting to happen.
+ *
+ * WHY THE SLOT. The kit wraps the element it is handed: it moves it into a
+ * `.un-swipe` container it inserts in its place, beside the action tray, and
+ * a full swipe takes that container out of the document before its handler
+ * runs. So the row cannot be a node React places among its siblings, or
+ * React would go on removing it from a parent it is no longer in. That is
+ * why app-context-sheet.tsx's session rows sit in a <div> of their own
+ * (#3515), and it is the same answer here; the × needs a positioned box to
+ * sit in anyway. The slot is KEYED on what decides the kit's hold on the
+ * row, its read state and its shape, so a row that changes either is a new
+ * slot and React drops the old one whole instead of swapping out an element
+ * the kit may still be holding. The hairline between rows follows the
+ * slot's place in the list rather than the row's (app.css).
+ */
+function ScreenRow({ view, touch, removes }: ScreenRowProps): ReactNode {
+  const clearable = view.unread;
+  const shape = view.actions && view.actions.length ? 'actions' : 'plain';
+  const rowRef = useRef<HTMLElement | null>(null);
+  const setRow = useCallback((el: HTMLElement | null) => { rowRef.current = el; }, []);
+  useEffect(() => {
+    const el = rowRef.current;
+    const ui = kit();
+    if (!clearable || !touch || !el || !ui?.swipeActions) return undefined;
+    const swipe = ui.swipeActions(el, {
+      actions: [{
+        label: 'Clear',
+        // The kit's full swipe belongs to its destructive action, and it
+        // takes the row out of the document; only Unread wants that.
+        destructive: removes,
+        color: 'var(--un-action-neutral)',
+        handler: () => { void controller()?.clearNotification(view.id); },
+      }],
+    });
+    return () => swipe.detach();
+  }, [clearable, touch, removes, shape, view.id]);
+
   // Everything between the row's left edge and its chevron: the tile, the
   // three lines, the count, the dot.
   const body = (
@@ -324,31 +441,30 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
   // keeps the row as the tap that opens the thing, and puts the action
   // beside it as a real button — never a button inside a button.
   const actions = view.actions || [];
-  if (actions.length) {
-    return (
-      <div
-        data-notif-id={view.id}
-        // #2386: two actions (a friend request's Accept and Decline) stack
-        // under the text; see RowActions.
-        className={actions.length > 1
-          ? 'notifications-row w-full px-4 py-3.5 flex flex-col gap-2'
-          : 'notifications-row w-full px-4 py-3.5 flex items-center gap-3'}
+  const row = actions.length ? (
+    <div
+      ref={setRow}
+      data-notif-id={view.id}
+      // #2386: two actions (a friend request's Accept and Decline) stack
+      // under the text; see RowActions.
+      className={actions.length > 1
+        ? 'notifications-row w-full px-4 py-3.5 flex flex-col gap-2'
+        : 'notifications-row w-full px-4 py-3.5 flex items-center gap-3'}
+    >
+      <button
+        className="min-w-0 flex-1 text-left flex items-center gap-4"
+        onClick={(event) => {
+          event.stopPropagation();
+          controller()?._onItemClick(view.id);
+        }}
       >
-        <button
-          className="min-w-0 flex-1 text-left flex items-center gap-4"
-          onClick={(event) => {
-            event.stopPropagation();
-            controller()?._onItemClick(view.id);
-          }}
-        >
-          {body}
-        </button>
-        <RowActions view={view} actions={actions} />
-      </div>
-    );
-  }
-  return (
+        {body}
+      </button>
+      <RowActions view={view} actions={actions} />
+    </div>
+  ) : (
     <button
+      ref={setRow}
       data-notif-id={view.id}
       className={'notifications-row w-full text-left px-4 py-3.5 '
         + 'hover:bg-black/[.03] dark:hover:bg-white/[.04] transition-colors flex items-center gap-4'}
@@ -359,6 +475,46 @@ function ScreenRow({ view }: { view: ScreenRowView }): ReactNode {
     >
       {body}
     </button>
+  );
+  return (
+    <div key={`${clearable ? 'unread' : 'read'}:${shape}`} className="notifications-row-slot group/notif relative">
+      {row}
+      {clearable && !touch ? (
+        <button
+          type="button"
+          data-notification-clear={view.id}
+          aria-label="Clear notification"
+          // Hidden until the pointer is over the slot or something in it has
+          // keyboard focus, and untouchable while hidden, so a click on the
+          // tile's corner opens the row as it always did.
+          className={'absolute left-1.5 top-2 flex h-5 w-5 items-center justify-center rounded-full '
+            + 'bg-white text-zinc-900 shadow-sm ring-1 ring-black/10 hover:bg-zinc-50 '
+            + 'dark:bg-zinc-900 dark:text-zinc-100 dark:ring-white/15 dark:hover:bg-zinc-800 '
+            + 'pointer-events-none opacity-0 transition-opacity '
+            + 'group-hover/notif:pointer-events-auto group-hover/notif:opacity-100 '
+            + 'group-has-[:focus-visible]/notif:pointer-events-auto group-has-[:focus-visible]/notif:opacity-100 '
+            + 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500'}
+          onClick={(event) => {
+            // Stopped for the reason every handler in this sheet stops its
+            // click: the re-render takes this node out of the document before
+            // the event finishes bubbling, and an outside-click listener
+            // would then dismiss the sheet under the viewer. The row's own
+            // click is not in the way at all; the × is beside it, not in it.
+            event.stopPropagation();
+            const sheet = event.currentTarget.closest('#notifications-sheet');
+            // `detail` is 0 for a click the keyboard made (Enter or Space).
+            const fromKeyboard = event.detail === 0;
+            const neighbourId = sheet ? neighbourRowId(sheet, view.id) : null;
+            void controller()?.clearNotification(view.id);
+            if (fromKeyboard && sheet) {
+              requestAnimationFrame(() => refocusAfterClear(sheet, view.id, neighbourId));
+            }
+          }}
+        >
+          <XIcon aria-hidden="true" className="h-3 w-3" strokeWidth="2.5" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -374,6 +530,10 @@ export function NotificationsSheetView() {
     screenList: ScreenRowView[] | null;
     screenCanLoadMore?: boolean;
     loadingMore: boolean;
+    messagesCanLoadMore?: boolean;
+    loadingOlderMessages?: boolean;
+    /** #3538: the rows' clear is a swipe on touch and a × everywhere else. */
+    touch?: boolean;
   };
   // Unread, not All: the bell is tapped because it has a count.
   const [tab, setTab] = useState<Tab>('unread');
@@ -445,7 +605,14 @@ export function NotificationsSheetView() {
       showApp
       onNavigate={() => { NotificationsSheet.close?.(); }}
     />
-  ) : <ScreenRow key={entry.key} view={entry.view} />);
+  ) : (
+    <ScreenRow
+      key={entry.key}
+      view={entry.view}
+      touch={!!snap.touch}
+      removes={tab === 'unread'}
+    />
+  ));
 
   // `whitespace-nowrap`: "Unread (12)" is two words and the strip is a flex
   // row inside a phone-width sheet, so the count wrapped onto a second line

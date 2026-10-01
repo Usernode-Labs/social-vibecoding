@@ -82,21 +82,51 @@ function formatSignup(row) {
   };
 }
 
-// The `?status=` / `?only=` narrowing, shared by the list and the CSV export
-// so a download always holds exactly the rows the screen's filters select.
-// Every clause is a fixed literal chosen by an exact match — no request
-// text reaches the SQL.
-function waitlistWhere(query) {
+// Escape LIKE metacharacters so a literal %, _ or \ typed into the search box
+// matches itself rather than widening the match. Paired with an explicit
+// ESCAPE '\' in the clause below (services/user-directory.js does the same).
+function escapeLike(s) {
+  return s.replace(/([\\%_])/g, '\\$1');
+}
+
+// Longest search the list accepts. Longer than any address (255), so it
+// never truncates a real query; it only bounds what a pasted wall of text
+// can make Postgres pattern-match against every row.
+const SEARCH_MAX = 320;
+
+// The `?status=` / `?only=` / `?q=` narrowing, shared by the list and the CSV
+// export so a download always holds exactly the rows the screen's filters
+// select. The status and only clauses are fixed literals chosen by an exact
+// match; the search text is the one piece of request text, and it only ever
+// reaches the SQL as a bound parameter. `firstParam` is the placeholder
+// number that parameter takes, because the list query binds LIMIT and OFFSET
+// ahead of it.
+//
+// The search matches the signup's address or its linked account's username,
+// anywhere in either, case-insensitively. The username half is an EXISTS
+// rather than a join so the count query, which has no join to users, can
+// share the clause unchanged.
+function waitlistWhere(query, firstParam = 1) {
   const status = typeof query.status === 'string' ? query.status : '';
   const only = typeof query.only === 'string' ? query.only : '';
+  const q = typeof query.q === 'string' ? query.q.trim().slice(0, SEARCH_MAX) : '';
   const clauses = [];
+  const params = [];
   if (status === 'pending') clauses.push('w.released_at IS NULL');
   else if (status === 'released') clauses.push('w.released_at IS NOT NULL');
   if (only === 'confirmed') clauses.push('w.confirmed_at IS NOT NULL');
   else if (only === 'invited') {
     clauses.push('EXISTS (SELECT 1 FROM waitlist_signups c WHERE c.invited_by = w.id)');
   }
-  return clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
+  if (q) {
+    params.push(`%${escapeLike(q)}%`);
+    const p = `$${firstParam}`;
+    clauses.push(`(w.email ILIKE ${p} ESCAPE '\\'
+                   OR EXISTS (SELECT 1 FROM users su
+                               WHERE su.id = w.linked_user_id
+                                 AND su.username ILIKE ${p} ESCAPE '\\'))`);
+  }
+  return { sql: clauses.length ? `WHERE ${clauses.join(' AND ')}` : '', params };
 }
 
 function plainObject(v) {
@@ -182,6 +212,70 @@ function exportRow(r) {
   ];
 }
 
+// The batch-admit tool's two bounds.
+//
+// RESOLVE_MAX bounds a lookup, which is read-only: two indexed ANY() queries
+// over at most this many addresses.
+//
+// BULK_ADMIT_MAX is lower on purpose, because admitting mails. Every newly
+// admitted row gets its "you're in" mail, and the platform's outbound
+// ceiling (services/mail/rate-limit.js, DEFAULT_MAX_PER_HOUR = 300) is ONE
+// budget shared by every kind of mail, login codes included. A batch that
+// spent the whole hour's budget would silently stop everyone's sign-in
+// codes until it rolled over. A hundred leaves most of it standing.
+const RESOLVE_MAX = 500;
+const BULK_ADMIT_MAX = 100;
+// How many "you're in" mails a batch has in flight at once: enough that a
+// hundred of them finish well inside a request timeout, few enough that the
+// provider sees a trickle rather than a burst.
+const BULK_MAIL_CONCURRENCY = 5;
+
+// Run `fn` over `items` with at most `limit` calls in flight.
+async function eachLimit(items, limit, fn) {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const item = items[next];
+      next += 1;
+      await fn(item);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
+
+// One resolved row of a pasted list, in paste order. `match` is what the
+// address turned out to be: `waiting` / `admitted` (a waitlist row, whose
+// fields ride along as `signup`), `not_found` (no row — `account` then says
+// whether a Homeroom account has the address anyway), or `invalid` (the
+// join form's own rule rejects it).
+function formatResolved(entry, signup, account) {
+  if (!entry.email) return { input: entry.input, email: null, match: 'invalid' };
+  if (signup) {
+    return {
+      input: entry.input,
+      email: entry.email,
+      match: signup.released_at ? 'admitted' : 'waiting',
+      signup: {
+        id: Number(signup.id),
+        email: signup.email,
+        submitted_at: iso(signup.submitted_at),
+        released_at: iso(signup.released_at),
+        confirmed_at: iso(signup.confirmed_at),
+        linked_username: signup.linked_username ?? null,
+        has_platform_access: signup.has_platform_access ?? null,
+      },
+    };
+  }
+  return {
+    input: entry.input,
+    email: entry.email,
+    match: 'not_found',
+    account: account
+      ? { username: account.username ?? null, has_platform_access: !!account.has_platform_access }
+      : null,
+  };
+}
+
 function formatBpUser(row) {
   return {
     id: Number(row.id),
@@ -198,6 +292,33 @@ function waitlistAdminRoutes(config) {
   const router = Router();
   const pool = getPool(config);
 
+  // "You're in" notification for a row admitting just released — first
+  // release only (re-releases are idempotent no-ops and must not re-email).
+  // Degrades silently when no mail transport is configured; never fails the
+  // release. `mobile` is the store-listing lookup, done once by the caller
+  // so a batch does not repeat it per row.
+  async function sendReleaseMail(released, mobile) {
+    await sendWaitlistReleaseMail(config, released.email, {
+      mobile,
+      hasAccount: released.linked_user_id != null,
+      // #1548: lets the signup screen prefill the address and send the
+      // code without a second step. An unguessable capability already
+      // delivered to this address, so it carries nothing the recipient
+      // does not already hold — and unlike the address itself it is safe
+      // in a query string, which is what survives a link rewriter.
+      moreToken: released.more_token || null,
+    });
+  }
+
+  // The mail's mobile steps link the published store listings; a failed
+  // lookup drops those steps rather than the mail or the release.
+  function loadReleaseMailMobile() {
+    return loadMobileAppUrls(pool).catch((err) => {
+      log.error('topochain-admin', 'release mail mobile links failed', { message: err.message });
+      return null;
+    });
+  }
+
   // ── GET /api/v4/admin/waitlist ────────────────────────────────────────
   // `?status=pending|released` filters; default lists everything,
   // pending first, oldest submission first within each group (FIFO —
@@ -207,10 +328,15 @@ function waitlistAdminRoutes(config) {
   // admin's manual lens over the same rows — how much someone filled in,
   // which is a coarse proxy and deliberately NOT a score. Nothing here
   // ranks the queue automatically.
+  //
+  // `?q=` searches the address and the linked username (see waitlistWhere).
   router.get('/api/v4/admin/waitlist', async (req, res) => {
     try {
       const { page, perPage } = paginate(req, { defaultPerPage: 200 });
-      const where = waitlistWhere(req.query);
+      // The count binds only the search; the page query binds LIMIT and
+      // OFFSET first, so its search parameter is $3.
+      const countWhere = waitlistWhere(req.query);
+      const where = waitlistWhere(req.query, 3);
 
       // The key count is computed in SQL rather than from signalsFor
       // because the list is PAGINATED: sorting the 200 rows a page happens
@@ -231,7 +357,8 @@ function waitlistAdminRoutes(config) {
         : 'ORDER BY (w.released_at IS NOT NULL), w.submitted_at ASC, w.id ASC';
 
       const { rows: countRows } = await pool.query(
-        `SELECT COUNT(*)::int AS c FROM waitlist_signups w ${where}`
+        `SELECT COUNT(*)::int AS c FROM waitlist_signups w ${countWhere.sql}`,
+        countWhere.params
       );
       const total = countRows[0].c;
 
@@ -254,10 +381,10 @@ function waitlistAdminRoutes(config) {
               ORDER BY d.created_at DESC, d.id DESC
               LIMIT 1
            ) m ON TRUE
-          ${where}
+          ${where.sql}
           ${order}
           LIMIT $1 OFFSET $2`,
-        [perPage, (page - 1) * perPage]
+        [perPage, (page - 1) * perPage, ...where.params]
       );
 
       return ok(res, { data: rows.map(formatSignup) }, { meta: meta(page, perPage, total) });
@@ -327,7 +454,7 @@ function waitlistAdminRoutes(config) {
   });
 
   // ── GET /api/v4/admin/waitlist/export-csv ─────────────────────────────
-  // Every signup the `?status=` / `?only=` filters select, unpaginated, as
+  // Every signup the `?status=` / `?only=` / `?q=` filters select, unpaginated, as
   // a CSV — newest signup first, which is the order someone cross-checking
   // recent requests for access wants. Carries the X handle a signup
   // connected (see exportRow for where it is read from).
@@ -354,8 +481,9 @@ function waitlistAdminRoutes(config) {
              ON sx.user_id = w.linked_user_id AND sx.provider = 'x'
            LEFT JOIN user_social_identities sg
              ON sg.user_id = w.linked_user_id AND sg.provider = 'github'
-          ${where}
-          ORDER BY w.submitted_at DESC, w.id DESC`
+          ${where.sql}
+          ORDER BY w.submitted_at DESC, w.id DESC`,
+        where.params
       );
 
       const status = req.query.status === 'pending' || req.query.status === 'released'
@@ -388,26 +516,8 @@ function waitlistAdminRoutes(config) {
       log.info('topochain-admin', 'Waitlist entry released', {
         signupId: id, linkedUserId: released.linked_user_id, adminId: req.user?.id,
       });
-      // "You're in" notification — first release only (re-releases are
-      // idempotent no-ops and must not re-email). Degrades silently when
-      // no mail transport is configured; never fails the release.
       if (released.newly_released) {
-        // The mail's mobile steps link the published store listings; a failed
-        // lookup drops those steps rather than the mail or the release.
-        const mobile = await loadMobileAppUrls(pool).catch((err) => {
-          log.error('topochain-admin', 'release mail mobile links failed', { message: err.message });
-          return null;
-        });
-        await sendWaitlistReleaseMail(config, released.email, {
-          mobile,
-          hasAccount: released.linked_user_id != null,
-          // #1548: lets the signup screen prefill the address and send the
-          // code without a second step. An unguessable capability already
-          // delivered to this address, so it carries nothing the recipient
-          // does not already hold — and unlike the address itself it is safe
-          // in a query string, which is what survives a link rewriter.
-          moreToken: released.more_token || null,
-        });
+        await sendReleaseMail(released, await loadReleaseMailMobile());
       }
       return ok(res, {
         data: {
@@ -419,6 +529,127 @@ function waitlistAdminRoutes(config) {
       });
     } catch (err) {
       log.error('topochain-admin', 'POST /admin/waitlist/:id/release failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── POST /api/v4/admin/waitlist/resolve ───────────────────────────────
+  // The batch-admit tool's lookup. Takes `{ text }`, a pasted list of
+  // addresses (see waitlist.parseEmailList for what it accepts), and says
+  // what each one is: a waiting row, an admitted row, no row at all (and
+  // whether an account has the address anyway), or not an address. Changes
+  // nothing — admitting is the separate bulk-release call, on the ids this
+  // returns.
+  //
+  // `adminWriteGate` although it only reads, for the export's reason: the
+  // tool exists to admit, which only a write admin can do, and answering
+  // "which of these 500 addresses are on the waitlist" in one call is a
+  // bulk-membership lookup a view-only admin has no use for.
+  router.post('/api/v4/admin/waitlist/resolve', adminWriteGate, async (req, res) => {
+    try {
+      const { entries, skipped, duplicates } = waitlist.parseEmailList(req.body?.text);
+      if (!entries.length) return fail(res, 422, 'No email addresses found in what was pasted.');
+      if (entries.length > RESOLVE_MAX) {
+        return fail(res, 422, `Paste at most ${RESOLVE_MAX} addresses at a time (this has ${entries.length}).`);
+      }
+      const emails = entries.map((e) => e.email).filter(Boolean);
+      const { rows: signups } = emails.length
+        ? await pool.query(
+          `SELECT w.id, w.email, w.submitted_at, w.released_at, w.confirmed_at,
+                  u.username AS linked_username, u.has_platform_access
+             FROM waitlist_signups w
+             LEFT JOIN users u ON u.id = w.linked_user_id
+            WHERE w.email = ANY($1::text[])`,
+          [emails]
+        )
+        : { rows: [] };
+      const bySignup = new Map(signups.map((s) => [s.email, s]));
+      // Addresses with no row may still belong to an account — somebody who
+      // signed up another way. Worth saying: admitting cannot reach them,
+      // and one that already has access needs nothing at all.
+      const missing = emails.filter((e) => !bySignup.has(e));
+      const { rows: accounts } = missing.length
+        ? await pool.query(
+          `SELECT lower(email) AS email, username, has_platform_access
+             FROM users
+            WHERE lower(email) = ANY($1::text[])`,
+          [missing]
+        )
+        : { rows: [] };
+      const byAccount = new Map(accounts.map((a) => [a.email, a]));
+      const data = entries.map((e) => formatResolved(
+        e,
+        e.email ? bySignup.get(e.email) : null,
+        e.email ? byAccount.get(e.email) : null,
+      ));
+      // `admit_max` travels with the answer so the screen can size its Admit
+      // button to the bound bulk-release enforces without a copy of it.
+      return ok(res, { data: { entries: data, skipped, duplicates, admit_max: BULK_ADMIT_MAX } });
+    } catch (err) {
+      log.error('topochain-admin', 'POST /admin/waitlist/resolve failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
+  // ── POST /api/v4/admin/waitlist/bulk-release ──────────────────────────
+  // Admits several signups at once — the batch-admit tool's "Admit all".
+  // Each id goes through the same releaseWaitlistSignup as the single route,
+  // so everything admitting one row does (the access grant, the account
+  // backfill, the invite tree's skips) happens per row here too, and each
+  // newly admitted row gets its one "you're in" mail. Already-admitted ids
+  // are idempotent no-ops and are not mailed again; ids that don't parse or
+  // don't exist are skipped. The response counts each outcome.
+  //
+  // One row failing does not abandon the rest: the rows before it are
+  // already admitted, and stopping there would leave them admitted but
+  // unmailed.
+  router.post('/api/v4/admin/waitlist/bulk-release', adminWriteGate, async (req, res) => {
+    try {
+      const raw = Array.isArray(req.body?.ids) ? req.body.ids : [];
+      const ids = [...new Set(raw.map(toIntId).filter((n) => n != null))];
+      if (!ids.length) return fail(res, 422, 'No valid waitlist entry ids given.');
+      if (ids.length > BULK_ADMIT_MAX) {
+        return fail(res, 422, `Admit at most ${BULK_ADMIT_MAX} signups at a time (this has ${ids.length}).`);
+      }
+
+      const fresh = [];
+      const already = [];
+      const missing = [];
+      const failed = [];
+      for (const id of ids) {
+        try {
+          const released = await waitlist.releaseWaitlistSignup(pool, id);
+          if (!released) missing.push(id);
+          else if (released.newly_released) fresh.push(released);
+          else already.push(id);
+        } catch (err) {
+          log.error('topochain-admin', 'bulk release: one entry failed', { signupId: id, message: err.message });
+          failed.push(id);
+        }
+      }
+
+      if (fresh.length) {
+        const mobile = await loadReleaseMailMobile();
+        await eachLimit(fresh, BULK_MAIL_CONCURRENCY, (released) => sendReleaseMail(released, mobile));
+      }
+
+      log.info('topochain-admin', 'Waitlist entries bulk-released', {
+        signupIds: fresh.map((r) => Number(r.id)),
+        alreadyAdmitted: already.length,
+        missing: missing.length,
+        failed: failed.length,
+        adminId: req.user?.id,
+      });
+      return ok(res, {
+        data: {
+          admitted: fresh.map((r) => Number(r.id)),
+          already_admitted: already,
+          not_found: missing,
+          failed,
+        },
+      });
+    } catch (err) {
+      log.error('topochain-admin', 'POST /admin/waitlist/bulk-release failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
   });
@@ -575,4 +806,4 @@ function waitlistAdminRoutes(config) {
   return router;
 }
 
-module.exports = { waitlistAdminRoutes };
+module.exports = { waitlistAdminRoutes, RESOLVE_MAX, BULK_ADMIT_MAX };

@@ -31,8 +31,12 @@ const { renderComponent } = require('./lib/render-tsx');
 
 const TRANSCRIPT = 'frontend/src/features/group-chat/transcript.tsx';
 
-/** group-chat.js in a vm, with just enough shimmed to evaluate it. */
-function loadGroupChat() {
+/**
+ * group-chat.js in a vm, with just enough shimmed to evaluate it. `over`
+ * replaces any of the shims (a document with elements in it, a fetch that
+ * answers, the React bridge).
+ */
+function loadGroupChat(over = {}) {
   const sandbox = {
     console,
     App: { user: { id: 1, username: 'admin' } },
@@ -61,6 +65,7 @@ function loadGroupChat() {
     addEventListener: () => {},
     removeEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
+    ...over,
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
@@ -176,4 +181,111 @@ test('View full spec owns its in-flight state, and the module owns the fetch', (
   // round-trip it needed to find the card's title.
   assert.doesNotMatch(gc, /_attachSpecCardHandlers\(/);
   assert.doesNotMatch(gc, /card\.dataset\.specTitle/);
+});
+
+// ── #3495: "View full spec" did nothing in a request's Discussion ─────────
+//
+// The Homeroom bot posts its spec as this card into a request's thread and
+// into its proposal's, and a person's share can land there too. Both
+// Discussions are threads in the Dev topic frame. The button calls
+// `GroupChat.openSharedSpec`, which fills `#gc-spec-side-panel` and returns
+// early when that slot is not in the document, and the slot was only in the
+// general chat pane. So the button showed "Loading…" for a moment and then
+// nothing happened, on every card in every request's and proposal's
+// Discussion. The frame carries the general chat's row now.
+
+const TOPIC_FRAME = 'frontend/src/features/dev-board/topic-frame.tsx';
+const GENERAL_CHAT = 'frontend/src/features/group-chat/general-chat.tsx';
+
+test('the topic frame carries the spec panel slot, as the general chat pane does', () => {
+  const topic = renderComponent(TOPIC_FRAME, 'DevTopicSubView', {});
+  const chat = renderComponent(GENERAL_CHAT, 'GeneralChat',
+    { introAppName: null, readOnly: true, notice: null, maxLength: 4000 });
+
+  // The general chat's row ends with the divider and the panel. That tail is
+  // what app.css lays out (docked at 1024px and up, over the row below) and
+  // what group-chat.js looks up by id, so the topic frame ends with it too.
+  const at = chat.indexOf('<div id="gc-spec-resizer"');
+  assert.ok(at > 0, 'the general chat pane still has its divider');
+  const tail = chat.slice(at);
+  assert.match(tail, /^<div id="gc-spec-resizer" class="gc-spec-resizer"[^>]*><\/div><div id="gc-spec-side-panel" class="gc-spec-side-panel"><\/div><\/div><\/div>$/);
+  assert.ok(topic.endsWith(tail),
+    'the topic frame ends with the same divider and panel, closing the same row');
+
+  // …in the same kind of row, beside the topic's own host, which can shrink
+  // to make room for the panel instead of pushing it off screen.
+  assert.match(topic, /^<div class="flex flex-col h-full min-h-0 dc-lift dc-lift-strip"><div class="gc-tab-body flex-1 flex min-h-0"><div id="dev-topic-thread" class="flex-1 min-w-0 min-h-0">/);
+  assert.match(chat, /<div class="gc-tab-body flex-1 flex min-h-0">/);
+  // One slot per frame: the lookup is by id.
+  assert.equal(topic.split('id="gc-spec-side-panel"').length, 2);
+  assert.equal(topic.split('id="gc-spec-resizer"').length, 2);
+});
+
+/** A DOM element with just what the spec panel code touches. */
+function fakeEl() {
+  const classes = new Set();
+  const listeners = {};
+  return {
+    style: {},
+    dataset: {},
+    classes,
+    listeners,
+    classList: {
+      add: (c) => classes.add(c),
+      remove: (c) => classes.delete(c),
+      contains: (c) => classes.has(c),
+    },
+    addEventListener: (type, fn) => { (listeners[type] ||= []).push(fn); },
+    getBoundingClientRect: () => ({ width: 560 }),
+  };
+}
+
+test('View full spec opens the panel wherever the slot is, and binds its divider', async () => {
+  // The topic frame never runs `GroupChat.mount`, which is where the general
+  // chat binds the divider; opening the panel binds it instead.
+  const panel = fakeEl();
+  const handle = fakeEl();
+  const ids = { 'gc-spec-side-panel': panel, 'gc-spec-resizer': handle };
+  const published = [];
+  const mounted = [];
+  const fetched = [];
+  const GC = loadGroupChat({
+    document: {
+      getElementById: (id) => ids[id] || null,
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      body: { appendChild() {}, style: {} },
+    },
+    fetch: async (url) => {
+      fetched.push(url);
+      return {
+        ok: true,
+        json: async () => ({ spec: { content: '# Hourly feed refresh\n\nFeeds refresh.', built_at: null, pr_number: null } }),
+      };
+    },
+    UsernodeReact: {
+      groupChat: {
+        mountSpecPanel: (host) => mounted.push(host),
+        publishSpecPanel: (state) => published.push(state),
+      },
+    },
+  });
+
+  await GC.openSharedSpec(7, 3, 'Hourly feed refresh');
+
+  assert.deepEqual(fetched, ['/api/sessions/7/specs/3']);
+  assert.equal(mounted[0], panel, 'the reader is mounted into the slot it found');
+  const last = published[published.length - 1];
+  assert.equal(last.open, true);
+  assert.equal(last.title, 'Hourly feed refresh');
+  assert.equal(last.subtitle, 'v3');
+  assert.ok(panel.classes.has('gc-spec-side-panel-open'), 'the host is marked open');
+  assert.ok(handle.classes.has('gc-spec-resizer-open'), 'and so is its divider');
+  assert.equal((handle.listeners.pointerdown || []).length, 1, 'the divider drags');
+
+  // Opening a second spec does not bind the divider twice.
+  await GC.openSharedSpec(7, 4, 'Hourly feed refresh');
+  assert.equal(handle.listeners.pointerdown.length, 1);
 });

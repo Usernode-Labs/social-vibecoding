@@ -100,13 +100,14 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
     'the summary card\'s Week by week is the Workshop tab');
   assert.match(hub, /<ChannelCard slug=\{slug\} name=\{app\.name \|\| slug\} data=\{community\} compact onOpen=\{\(\) => openTab\('discussion'\)\} \/>/,
     'the discussion is a preview whose Open is the Discussion tab');
-  assert.match(hub, /\{v\.mine && v\.mine\.rows\.length \? \(\s*<YourWorkCard/, 'your work only when you have some');
+  assert.match(hub, /\{v\.mine && \(v\.mine\.rows\.length \|\| v\.mine\.viewer\) \? \(\s*<YourWorkCard/,
+    'your work for any signed-in viewer, with work or without (#3489)');
   assert.doesNotMatch(hub, /<WorkshopDoor|dev-ws-hub-side|data-ws-since=""/, 'no Workshop door, no second column, and the since list is the Workshop\'s');
   assert.doesNotMatch(read('public/css/app.css'), /dev-ws-hub-side/);
   // Discussion is the channel whole.
   assert.match(LANDER, /\{tab === 'discussion' \? \(\s*<ProjectDiscussion slug=\{slug\}/);
-  // The Workshop tab: your work (its first three, #852 review), All items
-  // with See all, then the since list by week.
+  // The Workshop tab: the approval rules, your work (its first three, #852
+  // review), All items with See all, then the since list by week.
   const ws = LANDER.slice(LANDER.indexOf("{tab === 'workshop' ? ("), LANDER.indexOf("{tab === 'needs' ? ("));
   const w = (x) => ws.indexOf(x);
   assert.ok(w('data-ws-mine=""') < w('data-ws-dashboard=""') && w('data-ws-dashboard=""') < w('data-ws-since=""'),
@@ -114,12 +115,15 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   assert.match(ws, /v\.mine\.rows\.slice\(0, mineAll \? undefined : WORKSHOP_WORK_FIRST\)/, 'your work shows its first rows');
   assert.equal(loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx').WORKSHOP_WORK_FIRST, 3);
   assert.match(ws, /data-ws-mine-more=""[\s\S]{0,160}onClick=\{\(\) => setMineAll\(!mineAll\)\}/, 'and the rest behind Show N more');
-  assert.doesNotMatch(ws, /<ApprovalRules/);
   assert.match(ws, /<span className="dev-ws-head-title">All items<\/span>\s*<button[\s\S]*?data-ws-all-open=""\s*onClick=\{\(\) => openTab\('all'\)\}/);
-  // All items leads with the approval rules, above the categories.
+  // The approval rules are the Workshop page's head (#3528): the page's foot
+  // for a round (#3487), and not the head of All items, where they sat before.
+  assert.ok(w('<ApprovalRules') >= 0 && w('<ApprovalRules') < w('<WorkshopNotices') && w('<ApprovalRules') < w('data-ws-mine=""'),
+    'the approval rules open the Workshop page');
+  assert.match(ws, /<>\s*\{\/\*[\s\S]*?\*\/\}\s*\{slug \? <ApprovalRules slug=\{slug\} \/> : null\}/, 'as its first section');
+  assert.equal(ws.split('<ApprovalRules').length - 1, 1, 'and only there');
   const all = LANDER.slice(LANDER.indexOf("{tab === 'all' ? ("));
-  assert.ok(all.indexOf('<ApprovalRules') >= 0 && all.indexOf('<ApprovalRules') < all.indexOf('data-ws-pane=""'),
-    'the approval rules above the categories');
+  assert.ok(!all.slice(0, all.indexOf('data-ws-pane=""')).includes('<ApprovalRules'), 'and All items no longer leads with them');
   // `?ws=discussion` is a deep link like the others.
   assert.match(read('public/js/app-view.js'), /WORKSHOP_TABS: \['status', 'discussion', 'workshop', 'needs', 'all'\],/);
 });
@@ -236,25 +240,15 @@ test('#general needs the Homeroom community to post in; Homeroom\'s old channel 
   assert.doesNotMatch(route2, /archive_href/, 'the hub names no archive (#3406)');
 });
 
-test('#852 review: Homeroom\'s Discussion is #general itself, and a project\'s own is a fitted pane', () => {
-  // #general is a conversation of Messages, which the page cannot mount (its
-  // thread reads Messages' one route, and its composer's ids are global), so
-  // the tab, the hub card's doors and a deep link all go to it there.
-  const { discussionElsewhere } = loadTsx('frontend/src/features/dev-board/workshop/project-discussion.tsx');
-  const general = { channel: { handle: 'general', href: '#messages/1', post_url: '/api/conversations/1/messages' } };
-  assert.equal(discussionElsewhere(general), '#messages/1', '#general is elsewhere: its thread in Messages');
-  assert.equal(discussionElsewhere({ channel: { handle: 'garden', href: '#messages/app/garden' } }), null,
-    'an app\'s own channel is mounted in place');
-  assert.equal(discussionElsewhere({ channel: null }), null, 'no channel, nowhere to go');
-  assert.equal(discussionElsewhere(null), null);
-  assert.match(LANDER, /const elsewhere = next === 'discussion' \? discussionElsewhere\(community\) : null;\s*if \(elsewhere\) \{ openDiscussionElsewhere\(elsewhere\); return; \}/,
-    'the tab and the hub card\'s Open go there rather than turning the page');
+test('#852 review: a project\'s own Discussion is a fitted pane, and Homeroom\'s is #general in place (#3494)', () => {
+  // #general is a conversation of Messages rather than an app chat. #3491
+  // made the tab a door to it on the Messages screen, which swapped the
+  // page's header and tabs; #3494 mounts it in the page instead, like any
+  // project's own channel (tests/homeroom-discussion-in-place.test.js).
   const PD = read('frontend/src/features/dev-board/workshop/project-discussion.tsx');
-  assert.match(PD, /callAppView\('_setWorkshopTab', 'status'\);/, 'and the page reopens on its hub after');
-  // A cold `?ws=discussion` is a door rather than a forward: forwarding raced
-  // the router on a fresh load, and a pushed forward would trap Back.
+  assert.doesNotMatch(LANDER, /discussionElsewhere|openDiscussionElsewhere/, 'the tab turns the page for Homeroom too');
+  assert.match(PD, /<EmbeddedConversation conversationId=\{room\} active=\{onShow\} \/>/);
   assert.doesNotMatch(PD, /location\.replace/);
-  assert.match(PD, /data-ws-discussion-open=""\s*onClick=\{\(\) => openDiscussionElsewhere\(elsewhere\)\}/);
   // A project's own channel fills the reading area like Needs you: no guessed
   // height, the chain may shrink it, and the composer's tab-bar reserve is not
   // taken twice.
@@ -263,4 +257,110 @@ test('#852 review: Homeroom\'s Discussion is #general itself, and a project\'s o
   assert.match(CSS, /#dev-workshop > \.dev-ws\[data-ws-tab="discussion"\] \{ min-height: 0; \}/);
   assert.match(CSS, /html\[data-browser-scroller\] \.dev-ws\[data-ws-tab="discussion"\] \{\s*height: var\(--ws-fit\);/);
   assert.match(CSS, /\.dev-ws-discussion \.platform-safe-bar \{ padding-bottom: 0\.5rem !important; \}/);
+});
+
+test('#3499: the band and the Discussion pane bleed to the screen\'s edges, not past them', () => {
+  // Holding the Workshop, #dev-body narrows its sides from `px-3`'s 12px to
+  // 4px. The band and the Discussion pane bled 12 against it and ran 8px
+  // past both edges of a phone, and where #dev-forum-scroll is the scroller
+  // (an installed app, the native WebView) the hub scrolled sideways by 8px.
+  // Each bleed has to cancel exactly the padding it sits in.
+  const CSS = read('public/css/app.css');
+  const body = CSS.match(/^#dev-body:has\(> #dev-workshop\) \{ padding: \S+ (\d+)px /m);
+  assert.ok(body, '#dev-body has its Workshop padding');
+  const side = Number(body[1]);
+  const band = CSS.match(/^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px -(\d+)px 0;/m);
+  assert.ok(band, 'the band bleeds under the header and to the sides');
+  assert.equal(Number(band[1]), side, 'the band cancels #dev-body\'s side padding, no more');
+  const pane = CSS.match(/^@media \(max-width: 767\.98px\) \{\s*\.dev-ws-discussion \{ margin: 0 -(\d+)px; \}/m);
+  assert.ok(pane, 'the Discussion pane bleeds on a phone');
+  assert.equal(Number(pane[1]), side, 'and so does the Discussion pane, to the band\'s width');
+});
+
+test('#3522: on a phone the band pins where it rests', () => {
+  // Renamed in place (pull-to-refresh under the tabs, evan, 2026-10-01): this
+  // test also pinned #3514's half, "and a pull stretches it from the header",
+  // the community-coloured gap under the header and the hook that sized it.
+  // A pull no longer moves the band, so that gap never opens; the test below
+  // pins what a pull does now, and that the old paint and hook are gone.
+  const CSS = read('public/css/app.css');
+  const phone = CSS.slice(CSS.indexOf('@media (max-width: 699.98px) {\n  #dev-workshop { --ws-band-top'));
+  assert.ok(phone.length > 0, 'a phone block for the band');
+  const block = phone.slice(0, phone.indexOf('\n}\n') + 3);
+  // Where it rests: 10px above #dev-forum-scroll's top where that scrolls
+  // (the -18px tuck less #dev-body's 8px), and the header's height less the
+  // 17px tuck where the document scrolls.
+  assert.match(block, /#dev-workshop \{ --ws-band-top: -10px; \}/);
+  assert.match(block, /html\[data-browser-scroller="dev-forum-scroll"\] #dev-workshop \{\s*--ws-band-top: calc\(var\(--browser-banner-h\) \+ var\(--platform-header-h\) \+ var\(--platform-safe-top\) - 17px\);/);
+  assert.match(block, /\.dev-ws-tabs\.dev-ws-band \{\s*position: sticky;\s*top: var\(--ws-band-top\);\s*z-index: 29;/, 'sticky, over the cards, under the header');
+  assert.match(block, /#dev-workshop \.dev-ws-pane-head \{ top: calc\(var\(--ws-band-top\) \+ 58px\); \}/, 'All items\' head pins under the band');
+  // The two numbers the offsets are built from.
+  assert.match(CSS, /^#dev-body:has\(> #dev-workshop\) \{ padding: 8px /m, '#dev-body\'s 8px top padding');
+  assert.match(CSS, /^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px /m, 'the band\'s 18px tuck');
+});
+
+test('a pull to refresh moves only the page under the tabs (pull-to-refresh under the tabs, evan, 2026-10-01)', () => {
+  // "When you pull down on a community page, the tabs move down too? I think
+  // the tabs should be fixed, and only the page under them move and reveal
+  // the refresh." The kit slid the whole of #dev-forum-scroll, and the sticky
+  // band lives in it. Measured at 390x844 with an iPhone agent and real touch
+  // drags (Hub, Workshop and All items; installed and phone-browser layouts):
+  // before, header 0 / band +76.5 / tab body +76.5 at a 76.5px pull; after,
+  // header 0 / band 0 / tab body +76.5, the spinner between band and page.
+  const CSS = read('public/css/app.css');
+  const APP_VIEW = read('public/js/app-view.js');
+  // The project page opts into the kit's two options, and no other pull does.
+  assert.match(APP_VIEW, /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{\s*pullProperty: '--dev-ptr-pull',\s*topEl: \(\) => devScroll\.querySelector\('\.dev-ws > \.dev-ws-band'\),\s*\}\);/,
+    'the scroller carries the pull as a property, and the spinner hangs from the band');
+  assert.equal((APP_VIEW.match(/pullProperty:/g) || []).length, 1);
+  assert.doesNotMatch(read('public/js/app.js'), /pullProperty/, 'Home, Discover and Standings keep the kit\'s own pull');
+  // What slides: everything after the band, and with no band (the Workshop
+  // still loading) everything in the scroller. No fallback in the var(), so
+  // at rest the declaration is invalid at computed-value time and leaves
+  // `transform: none`: no stacking context or containing block until a pull.
+  assert.match(CSS, /\n#dev-forum-scroll \.dev-ws > \.dev-ws-band ~ \*,\n#dev-forum-scroll:not\(:has\(\.dev-ws-band\)\) > \* \{\n  transform: translateY\(var\(--dev-ptr-pull\)\);\n\}/);
+  assert.doesNotMatch(CSS, /var\(--dev-ptr-pull,/, 'no fallback: a 0px one would transform the tab body at rest');
+  // #3514's paint for the gap under the header, and the hook that sized it,
+  // are gone with the gap: a pull no longer opens one there.
+  assert.doesNotMatch(CSS, /var\(--ptr-gap/, 'nothing paints by the old gap');
+  assert.doesNotMatch(CSS, /> \.un-ptr-layer \{/, 'the kit\'s layer paints only its spinner again');
+  const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
+  assert.doesNotMatch(ws, /function usePullGap|usePullGap\(hostRef\)|setProperty\('--ptr-gap'/, 'nor reads the kit\'s transform back');
+  assert.match(ws, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);\s*\/\/ NO PULL HOOK HERE ANY MORE/);
+});
+
+test('#3520: a short growing tab keeps one pixel to scroll, so the installed app bounces it', () => {
+  // "Unable to over scroll down on hub page (but can on workshop)", in the
+  // installed iPhone app, at both ends. Measured at 390x844 in that layout:
+  // one scroller (#dev-forum-scroll) with the same overflow, overscroll and
+  // touch-action on both tabs, no nested scroller on either, and the Hub at
+  // scrollHeight 799 against clientHeight 799. The flex chain fills the
+  // scroller with a short tab to exactly its height, iOS only rubber-bands a
+  // box that can scroll, and the document under it is held still. With the
+  // rule below the same Hub measured 800 against 799: one pixel of range.
+  const CSS = read('public/css/app.css');
+  const at = CSS.indexOf('@media (max-width: 699.98px) and (pointer: coarse) {\n  html:not([data-browser-scroller]) #dev-forum-scroll:has(');
+  assert.ok(at > -1, 'a phone block for the scroller holding a growing tab');
+  const block = CSS.slice(at, CSS.indexOf('\n}\n', at) + 3);
+  const growing = '#dev-forum-scroll:has\\(> #dev-body > #dev-workshop > \\.dev-ws:not\\(\\[data-ws-tab="needs"\\]\\):not\\(\\[data-ws-tab="discussion"\\]\\)\\)';
+  // Only where the scroller is the element, not the document (a phone
+  // browser pages the document, and the pixel would lengthen the page), and
+  // not the two fitted tabs, which scroll inside themselves.
+  assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing} \\{\\s*position: relative;\\s*\\}`),
+    'the scroller is the sentinel\'s containing block');
+  assert.match(block, new RegExp(`html:not\\(\\[data-browser-scroller\\]\\) ${growing}::after \\{\\s*content: '';\\s*position: absolute; left: 0; bottom: -1px;\\s*width: 1px; height: 1px;\\s*pointer-events: none;\\s*\\}`),
+    'a 1px box hung 1px below the scroller\'s bottom edge');
+  // No percentage: a percentage floor in this chain is what Firefox dropped
+  // (tests/dev-workshop.test.js), and the grow would absorb a spacer in flow.
+  // Nor the scroller's padding, which is the tab-bar clearance (#3053).
+  assert.doesNotMatch(block, /%/);
+  assert.doesNotMatch(block, /padding|z-index/);
+  // The two conditions it answers are still the case: the chain that fills a
+  // short tab, and the installed shell's still document.
+  assert.match(CSS, /#dev-forum-scroll:has\(> #dev-body > #dev-workshop\) \{ display: flex; flex-direction: column; \}/);
+  assert.match(CSS, /html, body \{\s*height: 100dvh;\s*overflow: hidden;[\s\S]*?overscroll-behavior-y: none;\s*\}/);
+  // And the pull at the top binds to that same scroller on every tab. (The
+  // call takes options now: the tabs hold still during a pull, pinned in the
+  // test above. Still that scroller, so still its one pixel of range.)
+  assert.match(read('public/js/app-view.js'), /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{/);
 });

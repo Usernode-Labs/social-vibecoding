@@ -106,8 +106,11 @@ test('"What is it?" is one optional line, tidied and bounded', () => {
   assert.equal(desc(undefined).description, null);
   assert.equal(desc('   ').description, null, 'blank is no line');
   assert.equal(desc('  A shared\n\tlist  for our house ').description, 'A shared list for our house');
-  assert.equal(desc('x'.repeat(options.DESCRIPTION_MAX)).description.length, 100);
-  assert.match(desc('x'.repeat(101)).error, /100 characters or fewer/);
+  // #3572: 90, two lines of the hub hero on a phone (it was 100).
+  assert.equal(options.DESCRIPTION_MAX, 90);
+  assert.equal(desc('x'.repeat(options.DESCRIPTION_MAX)).description.length, 90);
+  assert.match(desc('x'.repeat(91)).error, /^Say what it is in 90 characters or fewer\.$/);
+  assert.equal(desc(`  ${'x'.repeat(90)}  `).description.length, 90, 'counted after tidying, so edge spaces cost nothing');
   assert.match(desc(42).error, /line of text/);
   // An import sends it only when its repo's dapp.json has no description.
   assert.equal(desc('A fork of ours', { imported: true }).description, 'A fork of ours');
