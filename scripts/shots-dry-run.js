@@ -148,21 +148,28 @@ function localBridge(runtimeDir) {
   const source = fs.readFileSync(path.join(ROOT, 'worker', 'shots-mcp.js'), 'utf8')
     .replaceAll('/usr/local/lib/node_modules/', `${path.join(ROOT, 'node_modules')}/`)
     .replace("require('./shots-hosted-origins')",
-      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-hosted-origins.js'))})`);
+      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-hosted-origins.js'))})`)
+    .replace("require('./shots-boundary')",
+      `require(${JSON.stringify(path.join(ROOT, 'worker', 'shots-boundary.js'))})`);
   const file = path.join(runtimeDir, 'shots-mcp.js');
   fs.writeFileSync(file, source, { mode: 0o600 });
   return file;
 }
 
+// Each browser runs inside the same observer the worker uses, so a dry run's
+// screenshots carry the page-site stamps the shots bridge requires before it
+// publishes one (worker/shots-boundary.js).
 function browserServer(options, persona, shotsDir, clipSize) {
   const statePath = options.stateDir ? path.join(options.stateDir, `${persona}.json`) : null;
-  const [command, ...prefix] = options.playwrightMcp;
   return {
-    command,
+    command: process.execPath,
     args: [
-      ...prefix,
+      path.join(ROOT, 'worker', 'shots-browser-observer.js'), PERSONAS[persona].dir,
       '--browser', options.browser, '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
       ...(statePath && fs.existsSync(statePath) ? ['--storage-state', statePath] : []),
+      // No shots proxy runs here to keep a page off this machine's own
+      // network, so the dry run's browsers keep to the pair (the worker's
+      // reach the public internet through that proxy instead).
       '--allowed-origins', `${options.before};${options.after}`,
       '--block-service-workers', '--image-responses', 'allow',
       '--timeout-action', '10000', '--timeout-navigation', '30000',
@@ -170,7 +177,11 @@ function browserServer(options, persona, shotsDir, clipSize) {
       ...(clipSize ? [`--save-video=${clipSize}`] : []),
       ...(options.executablePath ? ['--executable-path', options.executablePath] : []),
     ],
-    env: { PATH: process.env.PATH || '' },
+    env: {
+      PATH: process.env.PATH || '',
+      SHOTS_BROWSER_MCP_COMMAND: JSON.stringify(options.playwrightMcp),
+      SHOTS_ALLOWED_ORIGINS: JSON.stringify([options.before, options.after]),
+    },
   };
 }
 

@@ -27,6 +27,7 @@ const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
 const communities = require('../services/communities');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
@@ -3281,6 +3282,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
       if (joined) {
         await communities.join(pool, app, req.user.id);
+        // "Find people to build with" counts the join now, not on the
+        // rule's next pass (#3564; challengeScorer.scoreOnJoin). Never
+        // throws, so the join answers the same either way.
+        await challengeScorer.scoreOnJoin(pool, config);
       } else {
         const result = await communities.leave(pool, app, req.user.id);
         if (!result.ok) return res.status(result.status).json({ error: result.error });

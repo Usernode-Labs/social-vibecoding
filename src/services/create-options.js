@@ -55,8 +55,27 @@
  * repository's dapp.json, so a community changes it later with a vote like
  * any other line there. The join screen, Discover and the project's page
  * read it off the manifest snapshot. Whitespace collapses to single spaces;
- * at most DESCRIPTION_MAX characters, the length the join screen shows
- * whole. An import sends it on the same terms as the rule above.
+ * at most DESCRIPTION_MAX characters. An import sends it on the same terms as
+ * the rule above.
+ *
+ * #3572: DESCRIPTION_MAX is two lines on a phone, measured where the line is
+ * read largest: the project's hub hero (community-card.tsx
+ * `.dev-ws-hero-desc`, 15px over 21px, the page's full width less 16px). That
+ * column is 344px wide on a 360px Android phone and 359px on a 375px iPhone,
+ * and two lines of it hold 99 to 112 characters of real one-line
+ * descriptions in a phone's system font (measured in Chromium with a
+ * Helvetica-metric face, the nearest stand-in for SF Pro and Roboto). 90
+ * leaves a tenth of that room for long words and capitals, so a description
+ * that passes here is two lines on a common phone. It was 100, which the
+ * narrowest of those could already push onto a third line.
+ *
+ * A dapp.json can still say more: an import keeps its repository's line,
+ * and a later proposal can lengthen it (services/app-manifest.js
+ * readDescription keeps up to 280). Rejecting either would turn a sentence
+ * into a failed import or a failed deploy. Instead every surface clamps what
+ * it shows (two lines in the hub hero, on Discover and on the join screen,
+ * three beside the icon in the About pane), and the line in dapp.json stays
+ * as it was written.
  */
 
 const AUDIENCES = new Set(['solo', 'invited', 'open']);
@@ -64,7 +83,7 @@ const VISIBILITIES = new Set(['public', 'private']);
 const MAX_INVITEES = 20;
 const MAX_APPROVALS_REQUIRED = 50;
 const USERNAME_MAX = 64;
-const DESCRIPTION_MAX = 100;
+const DESCRIPTION_MAX = 90;
 const EMAIL_MAX = 254;
 const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 

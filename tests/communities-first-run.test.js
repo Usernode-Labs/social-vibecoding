@@ -102,7 +102,8 @@ test('one filled button that says what it will do, and a quiet Skip for now', ()
   // Skip is an answer: it posts `{ skip: true }` through the same path.
   assert.match(GATE, /'Skip for now'\);\s*\n\s*skip\.type = 'button';\s*\n\s*skip\.setAttribute\('data-join-communities-skip', ''\);/);
   assert.match(GATE, /skip\.addEventListener\('click', \(\) => \{ void answer\(\{ skip: true \}\); \}\);/);
-  assert.ok(GATE.indexOf("panel.appendChild(save);") < GATE.indexOf("panel.appendChild(skip);"),
+  // Both in the screen's foot since #3563 (the test below), Skip after Join.
+  assert.ok(GATE.indexOf("foot.appendChild(save);") < GATE.indexOf("foot.appendChild(skip);"),
     'under the Join button, not beside it');
   // Home re-reads its pins and the card appears.
   assert.match(GATE, /new CustomEvent\('sv:communities-joined'/);
@@ -110,6 +111,43 @@ test('one filled button that says what it will do, and a quiet Skip for now', ()
   const code = GATE.split('\n').filter((line) => !/^\s*\/\//.test(line)).join('\n');
   assert.doesNotMatch(code, /console\.error/, 'a console error on any route fails proposal checks');
   assert.doesNotMatch(code, /—/, 'no em dash in the copy');
+});
+
+// #3563: on a short screen (Safari with its bars showing, a 667px or 568px
+// phone) the column ran past the kit card's bottom edge, Join cut in half
+// and Skip under it, and the rows were a scroller of their own that took
+// the swipe meant for the card. The screen is a body that scrolls and a foot
+// that does not, inside a card laid out as a column.
+test('Join and Skip stay on screen however short it is: the body scrolls, the foot does not', () => {
+  // The body holds the welcome, the question, the rows and the line under
+  // them, and is the one thing that scrolls, down to a floor.
+  assert.match(GATE, /const panel = el\('div', 'flex min-h-0 flex-col px-4 pb-5'\);/);
+  assert.match(GATE, /const scroller = el\('div', 'min-h-\[7\.5rem\] overflow-y-auto overscroll-y-contain'\);/);
+  assert.ok(GATE.indexOf('panel.appendChild(scroller);') < GATE.indexOf('panel.appendChild(foot);'),
+    'the foot is under the body');
+  for (const part of ["'Welcome to Homeroom!'", 'scroller.appendChild(group);', "'You can join or leave any time"]) {
+    const at = GATE.indexOf(part);
+    assert.ok(at > 0 && GATE.lastIndexOf('scroller.appendChild(', at) > GATE.lastIndexOf('foot.appendChild(', at),
+      `${part} is in the body`);
+  }
+  // The rows are not a scroller of their own any more.
+  const group = GATE.match(/const group = el\('div', '([^']*)'\);/)[1];
+  assert.doesNotMatch(group, /overflow|max-h/);
+  assert.match(group, /^rounded-\[20px\] shadow-\[inset_0_0_0_1px_var\(--app-sheet-line\)\]/);
+  // The foot: the error line, Join, Skip, and never shrinks.
+  assert.match(GATE, /const foot = el\('div',\s*\n\s*'shrink-0 border-t border-transparent data-\[more\]:border-\[color:var\(--app-sheet-line\)\]'\);/);
+  assert.match(GATE, /foot\.appendChild\(status\);[\s\S]*foot\.appendChild\(save\);[\s\S]*foot\.appendChild\(skip\);/);
+  // The kit's card is a column, so the body can be told what is left. Only
+  // the modal: the fallback sheet scrolls by itself.
+  const modal = GATE.slice(GATE.indexOf("sheet = PlatformUI.modal({ contentEl: panel, dismissible: false });"),
+    GATE.indexOf("if (!sheet && window.PlatformUI && typeof PlatformUI.sheet === 'function')"));
+  assert.match(modal, /sheet\.el\.style\.display = 'flex';\s*\n\s*sheet\.el\.style\.flexDirection = 'column';/);
+  // The hairline over the foot: on while there is more body below it,
+  // re-read on scroll and on resize, and the watcher goes with the screen.
+  assert.match(GATE, /foot\.toggleAttribute\('data-more',\s*\n\s*scroller\.scrollHeight - scroller\.clientHeight - scroller\.scrollTop > 1\);/);
+  assert.match(GATE, /scroller\.addEventListener\('scroll', edge, \{ passive: true \}\);/);
+  assert.match(GATE, /watch = new ResizeObserver\(edge\);\s*\n\s*watch\.observe\(scroller\);/);
+  assert.match(GATE, /CommunitiesFirstRun\._answered = true;\s*\n\s*if \(watch\) watch\.disconnect\(\);/);
 });
 
 // ── the Getting started card ───────────────────────────────────────────

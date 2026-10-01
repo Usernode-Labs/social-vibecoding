@@ -41,7 +41,10 @@ test('#3079: the pill says the thinking level after the model, muted, centred, o
   const high = pill('High');
   assert.match(high, /aria-label="Model: GPT-5, thinking High"/);
   assert.match(high, /^<button[^>]*class="inline-flex h-10 [^"]*items-center /, 'the label block is centred in the pill');
-  assert.match(high, /<span class="flex min-w-0 items-baseline gap-1\.5"><span class="truncate">GPT-5<\/span><span class="shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-model-effort="true">High<\/span><\/span>/,
+  // #3574: the block is one clipped, wrapping line, so a level with no room
+  // beside the name wraps out of sight rather than squeezing the name
+  // (tests/agent-session-model-pill-room.test.js).
+  assert.match(high, /<span class="flex h-6 min-w-0 flex-wrap items-baseline justify-center gap-x-1\.5 overflow-hidden leading-6"><span class="truncate">GPT-5<\/span><span class="shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-model-effort="true">High<\/span><\/span>/,
     'the two words share a baseline; the level is small, in paired muted ink');
 
   const none = pill('');

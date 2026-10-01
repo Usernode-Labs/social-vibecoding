@@ -1819,7 +1819,10 @@ function Composer({ id }: { id: string }) {
           }
         }}
       />
-      <div className="flex items-center gap-2">
+      {/* #3574: the row is a size container so the model pill can tighten
+          its padding on the narrowest phones (composer-parts.tsx ModelPill).
+          Its width is the composer's, never its contents'. */}
+      <div className="flex items-center gap-2 [container-type:inline-size]">
         {/* One picker, no menu of our own: a phone's own file picker already
             offers the photo library, the camera and files. */}
         <button
@@ -1857,8 +1860,16 @@ function Composer({ id }: { id: string }) {
           />
         ) : null}
         {/* The credits pill doubles as the row's spacer: it takes the free
-            space and decides from it how much to say. */}
-        {credit ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
+            space and decides from it how much to say.
+
+            #3574: not while a draft is being saved. Stop and "Save draft"
+            take Send's place then, about 130px more, and on a phone the
+            row has no room left for the model's name AND the credits: the
+            credits pill used to be drawn over the name, and now that it keeps
+            its own width the name would be squeezed to an empty pill. It is
+            back the moment the draft is saved or the field is cleared, and
+            the model sheet says the same figures meanwhile. */}
+        {credit && kind !== 'save' ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
         {kind === 'save' ? (
           <>
           <Button type="button" variant="pillDanger" ink="dangerTint" size="icon" className="inline-flex h-10 w-10 shrink-0 items-center justify-center" aria-label="Stop" title="Stop"
