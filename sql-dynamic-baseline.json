@@ -677,16 +677,16 @@
     {
       "source": "src/routes/topochain/admin/users.js",
       "kind": "structural-template",
-      "fingerprint": "57fd149df51e5ddab236",
+      "fingerprint": "82cee40867caa7ceba3c",
       "count": 1,
-      "preview": "`INSERT INTO users (username, password, password_set, email, telegram, discord, display_name, accept_logs, is_admin, created_at, updated_at) VALUES ($1, $2, FAL"
+      "preview": "`UPDATE users SET exclude_podium = NOT exclude_podium, updated_at = NOW() WHERE id = $1 RETURNING ${USER_SELECT}`"
     },
     {
       "source": "src/routes/topochain/admin/users.js",
       "kind": "structural-template",
-      "fingerprint": "82cee40867caa7ceba3c",
+      "fingerprint": "b055c1befa7d4a0abef3",
       "count": 1,
-      "preview": "`UPDATE users SET exclude_podium = NOT exclude_podium, updated_at = NOW() WHERE id = $1 RETURNING ${USER_SELECT}`"
+      "preview": "`INSERT INTO users (username, password, password_set, email, telegram, discord, display_name, accept_logs, is_admin, created_at, updated_at, needs_username_choi"
     },
     {
       "source": "src/routes/topochain/admin/users.js",

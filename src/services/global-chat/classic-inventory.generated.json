@@ -6793,21 +6793,6 @@
     },
     {
       "source": "src/routes/profile.js",
-      "method": "GET",
-      "path": "/api/me/username/suggestion",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "apps.get.me.username.suggestion.fde733e9",
-      "domain": "apps",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "app",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#apps"
-    },
-    {
-      "source": "src/routes/profile.js",
       "method": "POST",
       "path": "/api/me/username/choose",
       "expression": null,

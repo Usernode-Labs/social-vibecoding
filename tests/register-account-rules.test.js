@@ -97,6 +97,9 @@ test('the register form states both rules and shows a field refusal under its fi
   assert.match(shared, /export const USERNAME_RULE = 'Letters, numbers and underscores, 3 to 32 characters\.';/);
   assert.match(shared, /export const PASSWORD_RULE = 'At least 8 characters\.';/);
   assert.match(src, /id="reg-username-hint"[\s\S]{0,200}?fieldError\.message : USERNAME_RULE/);
+  // #3575: and, directly under the field, ahead of the rule, who will see it.
+  assert.match(src, /<p id="reg-username-public" className=\{FIELD_HINT\}>\s*\{USERNAME_PUBLIC_NOTE\}\s*<\/p>\s*<p\s+id="reg-username-hint"/);
+  assert.match(src, /aria-describedby="reg-username-public reg-username-hint"/);
   assert.match(src, /id="reg-password-hint"[\s\S]{0,200}?fieldError\.message : PASSWORD_RULE/);
   assert.match(src, /data\.field === 'username' \|\| data\.field === 'password'/);
   // And the handle field does not let a phone capitalise or correct it.

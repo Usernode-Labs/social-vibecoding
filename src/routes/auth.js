@@ -403,19 +403,23 @@ function authRoutes(config) {
       });
       // QA 2026-09-24 Q12: say what the next step IS. `created` means this
       // code just made the account (no account used the address), so the
-      // screen can say so instead of implying one already existed; the
-      // username pair lets it ask for the handle, prefilled, rather than the
-      // waiting room introducing one the person never chose; `waitlisted`
-      // lets it say plainly, before the waiting room, that new accounts
-      // queue. All additive: `ok` and `next` are unchanged, and a client
-      // that ignores the rest behaves exactly as before. Nothing here leaks
-      // to somebody who does not hold the mailbox: the code was just proved.
+      // screen can say so instead of implying one already existed;
+      // `needsUsername` makes it ask for the handle rather than the waiting
+      // room introducing one the person never chose; `waitlisted` lets it
+      // say plainly, before the waiting room, that new accounts queue. `ok`
+      // and `next` are unchanged. Nothing here leaks to somebody who does
+      // not hold the mailbox: the code was just proved.
+      //
+      // #3575: there is no `suggestedUsername` any more. It was a handle
+      // derived from the address that the field arrived holding, and one
+      // press accepted it; the person now types their own into an empty
+      // field, and set-password refuses to finish without it. A shell cached
+      // from before reads the missing field as null — an empty field.
       return res.json({
         ok: true,
         next: 'set-password',
         created: !!verified.created,
         needsUsername: !!verified.needsUsernameChoice,
-        suggestedUsername: verified.suggestedUsername || null,
         waitlisted: typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null,
         ...(invite ? { invite } : {}),
       });
@@ -437,8 +441,10 @@ function authRoutes(config) {
       const completed = await emailSignup.completePassword(pool, {
         signupToken: req.cookies?.[SIGNUP_COOKIE],
         password,
-        // Optional (QA 2026-09-24 Q12): the handle the set-password step
-        // asks a new account for. Absent, the first-run gate asks later.
+        // The handle the set-password step asks a new account for (QA
+        // 2026-09-24 Q12). Required since #3575 for an account that has
+        // never chosen one: absent, the service answers `username_required`
+        // and nothing is spent. Ignored for an account that already has one.
         username: typeof req.body?.username === 'string' ? req.body.username : null,
         createSession,
       });
@@ -455,7 +461,10 @@ function authRoutes(config) {
       if (error instanceof emailSignup.EmailSignupError) {
         // A username refusal leaves the signup session unspent, so the
         // person corrects the field and submits again on the same cookie.
-        if (error.code === 'invalid_username' || error.code === 'username_taken') {
+        // `username_required` (#3575) is the same kind of refusal: the
+        // field was left empty, and filling it is the fix.
+        if (error.code === 'invalid_username' || error.code === 'username_taken'
+            || error.code === 'username_required') {
           return res.status(422).json({ error: error.message, code: error.code, field: 'username' });
         }
         clearSignupCookie(res);

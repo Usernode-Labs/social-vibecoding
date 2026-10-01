@@ -41,6 +41,19 @@ export const USERNAME_RULE = 'Letters, numbers and underscores, 3 to 32 characte
 export const PASSWORD_RULE = 'At least 8 characters.';
 
 /**
+ * Said next to every field where a new account types its handle (#3575):
+ * the register form, the email sign-up's set-password step, and the
+ * first-run "Choose your username" gate. The requester's own sentence, in
+ * the platform's sentence case. Its own line under the field rather than a
+ * clause of the rule above, because the rule's line is swapped whole for
+ * the server's refusal and this has to stay put while the person fixes the
+ * name. username-first-run.js is a classic module with no imports, so it
+ * spells the same words; tests/username-first-choice.test.js holds the two
+ * copies together.
+ */
+export const USERNAME_PUBLIC_NOTE = 'Your username will be public to other users on Homeroom.';
+
+/**
  * The attributes every username field carries, so a phone does not
  * capitalise, autocorrect or underline a handle (QA 2026-09-24 Q11).
  * Sign-in matches handles case-insensitively now, but a corrected or
