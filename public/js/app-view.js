@@ -1386,6 +1386,58 @@ const AppView = {
           AppView._fillFeedComments(slot);
         }, 300);
       }
+      // #3620: `?shot=tab-back` walks the reported flow, which a declared check
+      // cannot (the runner loads a route and looks; it has no steps): with the
+      // page on its hub, press the Workshop tab through its own button, wait
+      // for the Workshop to show, then go Back (history.back(), which is what
+      // the browser's Back and page.goBack() do). Once the traversal has
+      // landed it writes what Back showed onto <html> — the tab, or `left`
+      // when Back took the page off this project — so the check asserts the
+      // hub came back rather than finding the hub it started on. Pure UI
+      // state, no writes, once per load, and over at the first real gesture.
+      if (shot === 'tab-back' && !AppView._tabBackShotRan) {
+        AppView._tabBackShotRan = true;
+        let tries = 0;
+        let stage = 'hub';
+        const done = () => {
+          clearInterval(tick);
+          document.removeEventListener('pointerdown', onUserInput, true);
+          document.removeEventListener('keydown', onUserInput, true);
+        };
+        const onUserInput = (e) => { if (!e || e.isTrusted) done(); };
+        document.addEventListener('pointerdown', onUserInput, true);
+        document.addEventListener('keydown', onUserInput, true);
+        const shown = () => {
+          const page = document.querySelector('#dev-workshop .dev-ws[data-ws-tab]');
+          return page ? page.getAttribute('data-ws-tab') : null;
+        };
+        const press = (tab) => {
+          const btn = document.querySelector(`#dev-workshop [data-ws-tab-btn="${tab}"]`);
+          if (btn) btn.click();
+        };
+        const tick = setInterval(() => {
+          if ((tries += 1) > 60) { done(); return; }
+          if (stage === 'back') {
+            const onPage = App.currentApp === slug && AppView._onProjectPage(slug);
+            document.documentElement.setAttribute('data-shot-tab-back', onPage ? (shown() || 'none') : 'left');
+            done();
+            return;
+          }
+          if (App.currentApp !== slug) { done(); return; }
+          const now = shown();
+          if (!now) return; // the page's data has not landed yet
+          if (stage === 'hub') {
+            if (now !== 'status') { press('status'); return; }
+            stage = 'workshop';
+            press('workshop');
+            return;
+          }
+          if (stage === 'workshop' && now === 'workshop') {
+            stage = 'back';
+            window.history.back();
+          }
+        }, 300);
+      }
       if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
         setTimeout(() => {
           // Gate on the ROUTE, not on appData: the dev tab clears appData
@@ -8148,6 +8200,115 @@ const AppView = {
    */
   _landOnHub(slug) {
     AppView._landOnTab(slug, 'status');
+  },
+  /**
+   * #3620: A TAB OF THE PROJECT PAGE IS A PAGE, SO BACK RETURNS TO IT.
+   *
+   * Hub, Discussion, Needs you, the Workshop and All items share one address
+   * (/app/<slug>/workshop): which one is up is the page's own state. So a tab
+   * press used to leave history where it was, and Back from the Workshop tab
+   * skipped the hub you had just been on and left the project for whatever
+   * came before it (Communities, Home).
+   *
+   * A press now pushes an entry at the SAME address that names the tab it
+   * shows, after writing the tab being left onto the entry it leaves. Back and
+   * Forward walk those entries, and the router (App._routeFromHash) shows the
+   * tab an entry names without pushing anything. The address is unchanged, so
+   * a link copied from any tab is the same link it always was, and `?ws=`
+   * stays the way to link to one.
+   *
+   * Only on the project page itself: a door pressed from another screen
+   * (_landOnHub before a navigation) changes no history here, because the
+   * navigation that follows pushes the page's own entry.
+   */
+  WORKSHOP_TAB_STATE_KEY: '__unProjectTab',
+  // Is the address the project page of `slug`? The clean path, or the hash
+  // spellings restoreFromHash canonicalises to it.
+  _onProjectPage(slug) {
+    if (!slug || typeof window === 'undefined' || !window.location) return false;
+    const loc = window.location;
+    const hash = String(loc.hash || '').replace(/^#/, '').split('?')[0];
+    const segs = (hash || String(loc.pathname || '').replace(/^\/+/, '').replace(/\/+$/, '')).split('/');
+    if (segs.length !== 3 || segs[0] !== 'app') return false;
+    let at;
+    try { at = decodeURIComponent(segs[1]); } catch { return false; }
+    return at === slug && (segs[2] === 'workshop' || segs[2] === 'board' || segs[2] === 'dev');
+  },
+  // The tab an entry's state names, or null: `{ slug, tab, from }`.
+  _workshopTabStamp(state) {
+    const raw = state && typeof state === 'object' ? state[AppView.WORKSHOP_TAB_STATE_KEY] : null;
+    if (!raw || typeof raw !== 'object' || typeof raw.slug !== 'string' || !raw.slug) return null;
+    if (AppView.WORKSHOP_TABS.indexOf(raw.tab) === -1) return null;
+    const from = AppView.WORKSHOP_TABS.indexOf(raw.from) !== -1 ? raw.from : null;
+    return { slug: raw.slug, tab: raw.tab, from };
+  },
+  // Write `tab` onto the entry the page is standing on, keeping whatever else
+  // that entry's state carries (a dismissible surface's marker included).
+  _stampWorkshopTab(slug, tab) {
+    if (!AppView._onProjectPage(slug) || AppView.WORKSHOP_TABS.indexOf(tab) === -1) return false;
+    try {
+      const prev = window.history.state && typeof window.history.state === 'object' ? window.history.state : {};
+      const had = AppView._workshopTabStamp(prev);
+      const from = had && had.slug === slug ? had.from : null;
+      window.history.replaceState({
+        ...prev,
+        [AppView.WORKSHOP_TAB_STATE_KEY]: { slug, tab, from },
+      }, '');
+      return true;
+    } catch { return false; }
+  },
+  // A press on the page: stamp the entry being left with `from`, then push
+  // one for `to`. Nothing when the tab does not change, or off the page.
+  _pushWorkshopTab(slug, from, to) {
+    if (!slug || from === to || AppView.WORKSHOP_TABS.indexOf(to) === -1) return false;
+    if (!AppView._onProjectPage(slug)) return false;
+    const left = AppView.WORKSHOP_TABS.indexOf(from) !== -1 ? from : null;
+    try {
+      if (left) AppView._stampWorkshopTab(slug, left);
+      window.history.pushState({
+        [AppView.WORKSHOP_TAB_STATE_KEY]: { slug, tab: to, from: left },
+      }, '');
+      return true;
+    } catch { return false; }
+  },
+  // A page's own way back (All items' "Workshop"): when the entry below is
+  // the page it names, that is a step Back, not a new entry on top. True when
+  // it went back; the caller pushes otherwise.
+  _upWorkshopTab(slug, parent) {
+    if (!AppView._onProjectPage(slug)) return false;
+    let here = null;
+    try { here = AppView._workshopTabStamp(window.history.state); } catch { here = null; }
+    if (!here || here.slug !== slug || here.from !== parent) return false;
+    try { window.history.back(); return true; } catch { return false; }
+  },
+  // What Back or Forward landed on: the tab its entry names, when the entry
+  // is that project's page. Read by App._routeFromHash, which shows it.
+  _historyWorkshopTab() {
+    let stamp = null;
+    try { stamp = AppView._workshopTabStamp(window.history.state); } catch { stamp = null; }
+    if (!stamp || !AppView._onProjectPage(stamp.slug)) return null;
+    return { slug: stamp.slug, tab: stamp.tab };
+  },
+  // A route that ARRIVED at the page (a door's navigation, a link) leaves an
+  // entry with nothing on it, and nothing could write it later: once Back has
+  // left an entry, the page is already standing on another. So the router
+  // writes the tab the page opens on onto it as it arrives, and Forward back
+  // onto it shows that tab rather than whichever one Back last showed.
+  _stampArrivedWorkshopTab() {
+    if (AppView._historyWorkshopTab()) return false;
+    const slug = (typeof App !== 'undefined' && App && App.currentApp) || null;
+    if (!slug || !AppView._onProjectPage(slug)) return false;
+    return AppView._stampWorkshopTab(slug, AppView._workshopTab());
+  },
+  // Show an entry's tab after a traversal. Remembered the way a press is (so
+  // the page mounts on it), and told to a page already up as a TRAVERSAL, so
+  // the page switches without pushing an entry of its own.
+  _showHistoryWorkshopTab(slug, tab) {
+    if (AppView.WORKSHOP_TABS.indexOf(tab) === -1) return;
+    AppView._setWorkshopTab(tab);
+    try {
+      window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab, traversal: true } }));
+    } catch {}
   },
   /**
    * THE SAME DOOR, TO ANOTHER OF THE PAGE'S TABS (#3555). A Recents row for

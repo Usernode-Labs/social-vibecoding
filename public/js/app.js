@@ -3691,6 +3691,7 @@ const App = {
       // home is the fallback for a screen that named no parent.
       const href = e.currentTarget?.getAttribute?.('href');
       if (href && href.startsWith('#') && href.length > 1) {
+        if (App._stepBackTo(href)) return; // #3620: step Back to it
         window.location.hash = href;
         return;
       }
@@ -3758,7 +3759,17 @@ const App = {
       App._previousRoute = App._currentRoute;
       App._currentRoute = arriving;
     }
+    // #3620: an entry a project page's tab press pushed names that tab (see
+    // AppView._pushWorkshopTab). Remembered BEFORE the router runs, so a page
+    // it mounts opens on it, and shown to a page already up after it. Shown,
+    // never pushed: Back and Forward are not doors. An entry that names no
+    // tab (one a door's navigation just made) is given the one it opens on.
+    const pageTab = typeof AppView !== 'undefined' && AppView._historyWorkshopTab
+      ? AppView._historyWorkshopTab() : null;
+    if (pageTab) AppView._setWorkshopTab(pageTab.tab);
     App.restoreFromHash();
+    if (pageTab) AppView._showHistoryWorkshopTab(pageTab.slug, pageTab.tab);
+    else if (typeof AppView !== 'undefined' && AppView._stampArrivedWorkshopTab) AppView._stampArrivedWorkshopTab();
     App._applyRouteShots();
   },
 
@@ -5973,6 +5984,44 @@ const App = {
       return nav && typeof nav.entries === 'function' && nav.currentEntry
         && typeof nav.traverseTo === 'function' ? nav : null;
     } catch (_) { return null; }
+  },
+
+  // #3620: AN UP ARROW IS A STEP BACK WHEN THE ENTRY UNDER THIS ONE IS WHERE
+  // IT POINTS. The header's arrow names its parent (a conversation's is
+  // #messages, Settings' is #profile), and following that href pushed it: the
+  // list opened on top of the thread you had just left, so the next Back
+  // reopened the thread instead of leaving Messages. When the entry directly
+  // below is that same address, in this document, going back to it is the
+  // same screen and leaves no loop. Anything else (a cold deep link, a parent
+  // further down the stack, a browser without the Navigation API) keeps the
+  // push it always made. True when it went back.
+  _stepBackTo(href) {
+    const nav = App._navigationApi();
+    if (!nav || typeof href !== 'string') return false;
+    let below = null;
+    try { below = nav.entries()[nav.currentEntry.index - 1] || null; } catch (_) { return false; }
+    if (!below || below.sameDocument === false || !below.url) return false;
+    const wanted = [];
+    try {
+      if (href.startsWith('#') || href === '') {
+        wanted.push(new URL(App._rootUrl(href), location.origin).href);
+        // An app route's hash is canonicalised to its clean path on arrival,
+        // and the project page answers to all of its aliases (restoreFromHash).
+        const m = /^#(app\/[^/?]+)(\/[^?]*)?$/.exec(href);
+        if (m) {
+          const rest = m[2] || '';
+          const forms = /^\/(dev|board|workshop|activity)$/.test(rest)
+            ? ['/workshop', '/board'] : [rest];
+          for (const form of forms) {
+            wanted.push(new URL(`/${m[1]}${form}${App._routeSearch(null)}`, location.origin).href);
+          }
+        }
+      } else if (href.startsWith('/')) {
+        wanted.push(new URL(href, location.origin).href);
+      }
+    } catch (_) { return false; }
+    if (wanted.indexOf(below.url) === -1) return false;
+    try { history.back(); return true; } catch (_) { return false; }
   },
 
   // Where the ✕ goes, and how: { how, url, key }.

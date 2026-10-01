@@ -230,6 +230,9 @@ const Browse = {
       App.navigateHome();
       return true;
     }
+    // #3620: up to the list is a step Back when the list is the entry below,
+    // so Back afterwards leaves Discover rather than reopening the page.
+    if (typeof App !== 'undefined' && App._stepBackTo && App._stepBackTo('#apps')) return true;
     location.hash = '#apps';
     return true;
   },

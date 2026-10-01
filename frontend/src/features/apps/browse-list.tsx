@@ -81,17 +81,27 @@ function Row({ view, headingSays }: {
   const rowRef = useRef<HTMLDivElement | null>(null);
 
   // NavLink.wireModified binds its own listeners to the node, so it runs in an
-  // effect against the mounted element. It re-binds whenever the descriptor
-  // changes identity, which is also when the guards it closes over change.
+  // effect against the mounted element. ONCE PER NODE (#3620): it has no way
+  // to unbind, and this effect used to re-run whenever the descriptor changed
+  // identity, which every list render does. Each run added another click
+  // listener, so one tap opened the row two or three times, and each open was
+  // a history entry at the same address: Back from the hub it opened stayed on
+  // the hub, two and three times over, before it reached Discover. The
+  // listeners read the descriptor through a ref instead, so the guards they
+  // apply are always the current row's.
+  const latest = useRef<RowView>(view);
+  latest.current = view;
   useEffect(() => {
     const node = rowRef.current;
     if (!node) return;
     const nav = (window as any).NavLink;
     const hrefFor = (e: MouseEvent) => {
+      const view = latest.current;
       if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return null;
       return controller()?.rowHref(view) ?? null;
     };
     const activate = (e: MouseEvent) => {
+      const view = latest.current;
       if ((e.target as Element)?.closest?.('.browse-add-btn, .app-icon-link')) return;
       controller()?.openRow(view);
     };
@@ -100,7 +110,7 @@ function Row({ view, headingSays }: {
     return () => {
       if (!nav) node.removeEventListener('click', activate as EventListener);
     };
-  }, [view]);
+  }, []);
 
   const warm = () => controller()?.warmRow(view);
 

@@ -3427,9 +3427,24 @@ export function DevWorkshop(): ReactNode {
   // offset was the OLD tab's, and coming back to the page later (Back from
   // another screen) laid it over the new one: the hub again, scrolled under
   // its own strip. A zero is how that memory is told the page is at its top.
+  //
+  // #3620: AND A PRESS IS A STEP BACK CAN UNDO. The tabs share the page's
+  // address, so AppView._pushWorkshopTab pushes an entry at it naming the tab,
+  // after writing the one being left onto the entry it leaves: Back from the
+  // Workshop is the hub again, not the screen the project was opened from.
+  // Up from All items to the Workshop (its back bar, or the Workshop tab lit
+  // over it) is a step Back instead when the Workshop is the entry below
+  // (AppView._upWorkshopTab), so it leaves no loop. `tabRef` is the tab up
+  // now: it is read before the render this press causes, and by the listener
+  // below, which outlives the render it was made in.
+  const tabRef = useRef<TabKey>(tab);
+  tabRef.current = tab;
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
+    const was = tabRef.current;
+    const up = was === 'all' && next === pageParent(was) && !!callAppView('_upWorkshopTab', v.slug, next);
+    if (!up) callAppView('_pushWorkshopTab', v.slug, was, next);
     callAppView('_saveFeedScroll', v.slug, 0);
     scrollToHead(hostRef.current);
   };
@@ -3455,9 +3470,17 @@ export function DevWorkshop(): ReactNode {
   // A DOOR TO THIS PROJECT'S HUB, pressed while its page is already open —
   // the logo menu's "Go to community hub" changes no address, so no route
   // runs. AppView._landOnHub says so; a door to another project is not ours.
+  //
+  // #3620: AND BACK OR FORWARD LANDING ON ONE OF THIS PAGE'S ENTRIES, which
+  // the router announces the same way, marked `traversal`. That shows the
+  // entry's tab and pushes nothing: Back and Forward are not doors, and a
+  // traversal onto the tab already up leaves the page (and its scroll) alone.
+  // A door pushes nothing here either: every door goes on to navigate to the
+  // page's address, and that navigation is its entry.
   useEffect(() => {
     const onDoor = (event: Event) => {
-      const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
+      const door = (event as CustomEvent<{ slug: string | null; tab: TabKey; traversal?: boolean } | null>).detail;
+      if (door && door.traversal && door.tab === tabRef.current) return;
       if (!door || (door.slug && door.slug !== v.slug)) return;
       setTab(door.tab);
       // #3583: the scroller that is really there (see scrollToHead). AppView

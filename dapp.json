@@ -2564,6 +2564,12 @@
       "expectSelector": "#app-view:not(.hidden) .dev-ws[data-ws-tab=\"discussion\"] section[data-ws-discussion-room=\"general\"] > .messages-layout-embedded > .messages-thread-embedded:not(:has(.messages-thread-header))"
     },
     {
+      "name": "Back from a project's Workshop tab returns to its Hub, not the screen the project was opened from (#3620): ?shot=tab-back presses the Workshop tab, then goes Back",
+      "path": "/?demo=1&ws=status&shot=tab-back#app/usernode-2d5619/workshop",
+      "expectSelector": "html[data-shot-tab-back=\"status\"] #app-view:not(.hidden) .dev-ws[data-ws-tab=\"status\"] [data-ws-tab-btn=\"status\"][aria-selected=\"true\"]",
+      "expectText": "Hub"
+    },
+    {
       "name": "The Workshop does not draw the discussion card too — one fact, one shape per view",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-forum-scroll:not(:has(#dev-chat-card)) #dev-workshop"
