@@ -52,6 +52,7 @@ function intent() {
 function externalApi() {
   const objects = new Map();
   const pods = new Map();
+  const deployments = new Map();
   let creates = 0;
   const clients = {
     custom: {
@@ -76,6 +77,13 @@ function externalApi() {
         return pods.get(name);
       },
     },
+    apps: {
+      async readNamespacedDeployment({ namespace, name }) {
+        const deployment = deployments.get(`${namespace}/${name}`);
+        if (!deployment) throw Object.assign(new Error('Deployment not found'), { code: 404 });
+        return structuredClone(deployment);
+      },
+    },
   };
   function object(resource) {
     const body = buildManifest(resource);
@@ -89,7 +97,7 @@ function externalApi() {
       latestImage: `${resource.buildOperation.repository}@sha256:${'c'.repeat(64)}`,
     };
   }
-  return { clients, objects, pods, object, succeed, creates: () => creates };
+  return { clients, objects, pods, deployments, object, succeed, creates: () => creates };
 }
 
 async function preparation(service, resource, checkpoint = {}) {
@@ -229,7 +237,11 @@ test('real HTTP client: API timeout aborts its pending request rather than detac
   assert.ok(Date.now() - started < 2000);
 });
 
-async function fixture(t, settings = config(), { replyLoss = false, decisionLoss = false } = {}) {
+async function fixture(t, settings = config(), {
+  replyLoss = false,
+  decisionLoss = false,
+  runtimeReceiptLoss = null,
+} = {}) {
   const db = await createExecutionDatabase(databaseUrl);
   t.after(() => db.close());
   const sessionId = 2000000 + process.pid;
@@ -244,6 +256,26 @@ async function fixture(t, settings = config(), { replyLoss = false, decisionLoss
   };
   const images = createImageBuildOperations({ clients: () => api.clients });
   const owner = createPreviewFlow(db.pool);
+  if (runtimeReceiptLoss) {
+    const kubernetes = require('../src/services/kubernetes');
+    kubernetes._setClientsForTest(api.clients);
+    t.after(() => kubernetes._setClientsForTest(null));
+    t.mock.method(require('../src/services/application-runtime'), 'probeHealth', async () => true);
+    const recordRuntime = owner.recordRuntime;
+    let lostRuntimeReceipt = false;
+    owner.recordRuntime = async (...args) => {
+      if (!lostRuntimeReceipt && runtimeReceiptLoss === 'before') {
+        lostRuntimeReceipt = true;
+        throw new Error('Injected failure before runtime receipt persistence');
+      }
+      const receipt = await recordRuntime(...args);
+      if (!lostRuntimeReceipt && runtimeReceiptLoss === 'after') {
+        lostRuntimeReceipt = true;
+        throw new Error('Injected reply loss after runtime receipt persistence');
+      }
+      return receipt;
+    };
+  }
   let lostDecision = false;
   const apply = owner.apply;
   if (decisionLoss) owner.apply = async action => {
@@ -259,16 +291,32 @@ async function fixture(t, settings = config(), { replyLoss = false, decisionLoss
     owner,
     images,
     clones: { prepare: async () => ({ status: 'complete', databaseOid: '123' }), inspect: async () => ({ status: 'complete' }) },
-    inspect: async () => ({ present: false, receipt: null }),
-    async prepare(_config, _session, _app, head, candidate) {
+    inspect: runtimeReceiptLoss ? require('../src/services/preview-flow/candidate-runtime').observePreparedCandidate
+      : async () => ({ present: false, receipt: null }),
+    async prepare(_config, _session, _app, head, candidate, identity) {
       if (!candidate.prepareImage) return assert.fail('legacy preparation not expected');
       const build = await candidate.prepareImage(null);
       await candidate.onRuntimeStarting();
       deploys++;
+      const physicalId = randomUUID();
+      if (runtimeReceiptLoss) {
+        api.deployments.set(`${candidate.intent.namespace}/${candidate.intent.runtimeName}`, {
+          metadata: {
+            uid: physicalId,
+            labels: {
+              'social.usernode.io/preview-flow': identity.flowId,
+              'social.usernode.io/preview-head': head,
+            },
+          },
+          spec: { template: { spec: { containers: [{ name: 'app', image: build.imageRef }] } } },
+        });
+      }
       return {
-        commitSha: head, stagingUrl: `http://${candidate.intent.runtimeName}:3000`,
+        commitSha: head,
+        stagingUrl: runtimeReceiptLoss ? require('../src/services/application-runtime').appOrigin(settings, candidate.intent)
+          : `http://${candidate.intent.runtimeName}:3000`,
         runtimeKind: 'kubernetes', runtimeName: candidate.intent.runtimeName, containerId: null,
-        imageRef: build.imageRef, buildRef: build.buildRef, physicalId: randomUUID(),
+        imageRef: build.imageRef, buildRef: build.buildRef, physicalId,
       };
     },
   });
@@ -582,3 +630,113 @@ test('injected kpack: failed or rejected submission checkpoint prevents external
   await assert.rejects(service.prepare(resource, { checkpoint: async () => { throw new Error('Database checkpoint failed'); } }), /checkpoint failed/);
   assert.equal(api.creates(), 0);
 });
+
+for (const loss of ['before', 'after']) {
+  test(`real PostgreSQL / production observer: healthy runtime adoption repairs ${loss}-persistence receipt loss`, { skip: !databaseUrl }, async t => {
+    const f = await fixture(t, config(), { runtimeReceiptLoss: loss });
+    await f.work.request(f.action);
+    const servingPreview = (await f.owner.read(f.action.sessionId)).preview;
+    await f.run();
+    const resource = (await f.owner.read(f.action.sessionId)).resource.intent;
+    f.api.succeed(resource);
+    await assert.rejects(f.run(), loss === 'before' ? /before runtime receipt persistence/ : /after runtime receipt persistence/);
+    const interrupted = await f.owner.read(f.action.sessionId);
+    assert.equal(interrupted.flow.state, 'preparing');
+    assert.equal(interrupted.resource.receipt === null, loss === 'before');
+    const deployment = f.api.deployments.get(`${resource.namespace}/${resource.runtimeName}`);
+    const build = f.api.object(resource);
+    const observed = await require('../src/services/preview-flow/candidate-runtime').observePreparedCandidate(
+      f.settings, resource, interrupted.flow.id, HEAD);
+    assert.equal(observed.receipt.buildRef, null, 'the real observer cannot establish build provenance by itself');
+    const recovered = await f.run();
+    assert.equal(recovered.result.accepted, true);
+    assert.equal(recovered.result.prepared, true);
+    const current = await f.owner.read(f.action.sessionId);
+    assert.equal(current.flow.state, 'candidate');
+    assert.equal(current.resource.receipt.buildRef, `${build.metadata.namespace}/${build.metadata.name}`);
+    assert.equal(current.resource.receipt.imageRef, build.status.latestImage);
+    assert.equal(current.resource.receipt.physicalId, deployment.metadata.uid);
+    assert.equal(current.resource.intent.buildOperation.receipt.uid, build.metadata.uid);
+    assert.equal(f.api.creates(), 1);
+    assert.equal(f.deploys(), 1);
+    assert.deepEqual(current.preview, servingPreview);
+    assert.equal(current.binding, null);
+    const completions = (await f.owner.trace(f.action.sessionId)).filter(entry => entry.action.type === 'PreviewCandidatePrepared');
+    assert.equal(completions.length, 1);
+    assert.equal(completions[0].decision.accepted, true);
+  });
+}
+
+const adoptionConflicts = [
+  'build UID', 'build recipe', 'build generation', 'build digest',
+  'runtime image', 'runtime owner', 'runtime head', 'runtime UID',
+  'stored Build reference', 'health', 'lifecycle',
+];
+
+for (const conflict of adoptionConflicts) {
+  test(`real PostgreSQL / production observer: recovery rejects conflicting ${conflict}`, { skip: !databaseUrl }, async t => {
+    const persistedReceipt = conflict === 'runtime UID' || conflict === 'stored Build reference';
+    const f = await fixture(t, config(), { runtimeReceiptLoss: persistedReceipt ? 'after' : 'before' });
+    await f.work.request(f.action);
+    await f.run();
+    const resource = (await f.owner.read(f.action.sessionId)).resource.intent;
+    f.api.succeed(resource);
+    await assert.rejects(f.run(), /runtime receipt persistence/);
+
+    const build = f.api.object(resource);
+    const deployment = f.api.deployments.get(`${resource.namespace}/${resource.runtimeName}`);
+    switch (conflict) {
+      case 'build UID':
+        build.metadata.uid = randomUUID();
+        break;
+      case 'build recipe':
+        build.spec.source.git.revision = 'd'.repeat(40);
+        break;
+      case 'build generation':
+        build.status.observedGeneration = 0;
+        break;
+      case 'build digest':
+        build.status.latestImage = `${resource.buildOperation.repository}@sha256:${'d'.repeat(64)}`;
+        break;
+      case 'runtime image':
+        deployment.spec.template.spec.containers[0].image = `other/image@sha256:${'c'.repeat(64)}`;
+        break;
+      case 'runtime owner':
+        deployment.metadata.labels['social.usernode.io/preview-flow'] = randomUUID();
+        break;
+      case 'runtime head':
+        deployment.metadata.labels['social.usernode.io/preview-head'] = 'd'.repeat(40);
+        break;
+      case 'runtime UID':
+        deployment.metadata.uid = randomUUID();
+        break;
+      case 'stored Build reference':
+        await f.pool.query(`UPDATE preview_flow_resources
+          SET receipt = jsonb_set(receipt, '{buildRef}', '"conflicting/other-build"'::jsonb)`);
+        break;
+      case 'health':
+        t.mock.method(require('../src/services/application-runtime'), 'probeHealth', async () => false);
+        break;
+      case 'lifecycle':
+        await f.pool.query('UPDATE chat_sessions SET checks_commit_sha = $2 WHERE id = $1', [f.action.sessionId, 'd'.repeat(40)]);
+        break;
+    }
+
+    const observationError = ['runtime owner', 'runtime head', 'runtime UID', 'stored Build reference'].includes(conflict);
+    if (observationError) {
+      await assert.rejects(f.run(), error => error.permanent === true);
+    } else {
+      const result = await f.run();
+      assert.notEqual(result.result?.prepared, true);
+    }
+    const current = await f.owner.read(f.action.sessionId);
+    assert.notEqual(current.flow.state, 'candidate');
+    assert.equal(current.resource.receipt === null, !persistedReceipt);
+    assert.equal(f.api.creates(), 1);
+    assert.equal(f.deploys(), 1);
+    assert.equal(current.preview.runtimeName, 'serving');
+    assert.equal(current.binding, null);
+    assert.equal((await f.owner.trace(f.action.sessionId)).filter(entry =>
+      entry.action.type === 'PreviewCandidatePrepared' && entry.decision.accepted).length, 0);
+  });
+}

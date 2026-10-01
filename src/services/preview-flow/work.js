@@ -171,21 +171,54 @@ function createPreviewWork(pool, config, {
       const observed = await inspect(resourceConfig, intent, identity.flowId, identity.headSha);
       const adoptable = observed.receipt && state.resource.clonePrepared;
       if (adoptable) {
+        let observedReceipt = candidateReceipt.parse(observed.receipt);
+
         if (recoverClone) {
           const clone = await clones.inspect(intent);
           if (clone.status === 'uncertain' && clone.reason === 'busy') return cloneDeferred(attempt);
           if (clone.status !== 'complete') return retired(attempt, 'clone_completion_unconfirmed');
         }
+
         if (recoverImage) {
+          // Deployment was authorized only after this image fact committed.
+          // Runtime health alone cannot establish the candidate's provenance.
+          if (!state.resource.intent.buildOperation.receipt) {
+            return retired(attempt, 'image_completion_unconfirmed');
+          }
           const image = await images.inspect(state.resource.intent);
           if (image.status === 'uncertain' && image.reason === 'ownership_conflict') {
             return retired(attempt, 'image_ownership_changed');
           }
           if (image.status !== 'succeeded') return imageDeferred(attempt);
-          if (observed.receipt.imageRef !== image.imageRef) return retired(attempt, 'runtime_image_mismatch');
+          if (attempt.checkpoint.imageUid && attempt.checkpoint.imageUid !== image.uid) {
+            return retired(attempt, 'image_ownership_changed');
+          }
+          const matchingRuntime = observedReceipt.runtimeKind === intent.runtimeKind
+            && observedReceipt.runtimeName === intent.runtimeName
+            && observedReceipt.attemptId === intent.attemptId
+            && observedReceipt.commitSha === identity.headSha;
+          if (!matchingRuntime) return retired(attempt, 'runtime_identity_mismatch');
+          if (observedReceipt.imageRef !== image.imageRef) return retired(attempt, 'runtime_image_mismatch');
+          if (observedReceipt.buildRef !== null && observedReceipt.buildRef !== image.buildRef) {
+            return retired(attempt, 'runtime_build_mismatch');
+          }
+
+          // The real runtime observer does not know the Build. Join its
+          // healthy runtime identity to the independently verified output.
+          observedReceipt = candidateReceipt.parse({ ...observedReceipt, buildRef: image.buildRef });
         }
-        const receipt = state.resource.receipt || candidateReceipt.parse(observed.receipt);
-        if (receipt.physicalId !== observed.receipt.physicalId || receipt.imageRef !== observed.receipt.imageRef) {
+
+        const receipt = state.resource.receipt || observedReceipt;
+        const changedRuntime = receipt.physicalId !== observedReceipt.physicalId
+          || receipt.imageRef !== observedReceipt.imageRef;
+        const changedProvenance = recoverImage && (
+          receipt.buildRef !== observedReceipt.buildRef
+          || receipt.commitSha !== observedReceipt.commitSha
+          || receipt.attemptId !== observedReceipt.attemptId
+          || receipt.runtimeKind !== observedReceipt.runtimeKind
+          || receipt.runtimeName !== observedReceipt.runtimeName
+        );
+        if (changedRuntime || changedProvenance) {
           throw Object.assign(new Error('Candidate observation conflicts with its receipt'), { permanent: true });
         }
         await owner.recordRuntime(attempt.session_id, identity.flowId, receipt);

@@ -60,7 +60,35 @@ the server, the checkpoint may conservatively retire an absent operation; this
 slice does not claim exactly-once creation or solve ambiguous absence with a new
 build supervisor. Persist an observed UID checkpoint before waiting on output.
 Execution after image completion still uses one-shot runtime preparation; an
-interruption there retains its existing conservative retirement behavior.
+interruption before a verifiable healthy runtime exists retains conservative
+retirement. A healthy runtime can be adopted as described below; recovery never
+repeats its deployment.
+
+### Healthy runtime after a lost receipt
+
+Deployment can succeed before its candidate receipt is persisted. The runtime
+observer establishes health, flow/head labels, reserved runtime identity, physical
+UID and deployed image, but returns `buildRef: null`: it cannot establish Build
+provenance by itself. Do not persist that incomplete observation as the candidate
+receipt or relax `PreviewCandidatePrepared` to accept it.
+
+Recovery first requires the already accepted image-completion fact and a complete
+clone. It re-inspects the reserved Build against its accepted UID, full recipe,
+observed generation and digest. A recorded execution UID must also match. The
+runtime's attempt, kind, name and source revision must match the reservation, and
+its image must equal that verified digest. Only then does recovery attach the
+verified namespace/Build name to the runtime observation and persist the complete
+candidate receipt. A non-null, conflicting Build reference is rejected.
+
+If the earlier receipt write committed but its acknowledgment was lost, its
+physical runtime identity, image and provenance must match the reconstructed
+receipt. Recovery adopts that immutable receipt; it does not overwrite conflicts.
+If no write committed, recovery stores the reconstructed receipt. Both paths use
+the existing completion action, so current head/generation/lifecycle and image
+provenance remain enforced at decision commit, including changes during inspection.
+Neither path creates another runtime or Build, activates a candidate, or changes
+the serving preview. This joins two verified observations; it is not an atomic
+snapshot of Kubernetes and PostgreSQL or protection against cluster compromise.
 
 ## Ownership and cleanup
 
@@ -164,6 +192,15 @@ and successor-preserving cleanup with injected runtime/clone removal. Staging
 adapter regressions are also injected. These establish control flow and database
 coordination, not actual Kubernetes building, Pod termination or runtime serving.
 
+Healthy-runtime adoption regressions use the **production runtime observer** with
+injected Kubernetes Deployments/Builds and injected health responses, backed by
+real PostgreSQL. Failures are injected both before receipt persistence and after
+its SQL commit. Recovery accepts candidate completion with the same Build UID,
+runtime UID and digest, one Build creation and one deployment, and an unchanged
+serving preview. Conflicting Build UID/recipe/digest, runtime image/flow/head/UID,
+stored Build reference, failed health and changed lifecycle cannot complete the
+candidate. This is database/adoption evidence, not actual deployment or kpack proof.
+
 The actual-resource job is
 `scripts/test-recoverable-preview-build.js`. It requires both a disposable
 `PREVIEW_FLOW_TEST_DATABASE_URL` and `KPACK_RECOVERY_TEST_CONFIG`, a JSON file with:
@@ -184,10 +221,32 @@ the verified terminal test Build using UID/resourceVersion preconditions; that
 teardown is separate from production retirement. Failed runs can leave their
 attempt-specific Build/Pod and registry artifacts in the disposable namespace.
 
-**Integration checkpoint not demonstrated:** this host has no selected Kubernetes
-context, and no labeled kpack fixture/configuration was supplied. The job reports
-missing prerequisites and exits 1; directly running its optional test skips it.
-Neither outcome counts as proof. Before calling this operation integration-ready,
-run the job on actual isolated kpack resources, verify fleet defaulting/ownership,
-and add actual failure/late-creation/successor cases. Existing protections and
-experimental admission stay in place until that evidence is available.
+**C4 integration remains pending.** Rechecked after the adoption correction:
+`kubectl config get-contexts -o name` is empty and `current-context` is unset;
+`KPACK_RECOVERY_TEST_CONFIG`, `KUBECONFIG` and `KUBERNETES_SERVICE_HOST` are unset.
+There is no local kind/k3d/minikube fixture. Disposable PostgreSQL is available;
+the actual-resource job still exits 1 for the missing explicit kpack configuration.
+An optional test skip or an injected resource is not actual-resource proof.
+
+The missing inputs are:
+
+- An explicit test-cluster context/access with compatible kpack controller and
+  Build CRD. Do not select a production cluster implicitly.
+- A disposable `preview-recovery-test-*` build namespace with the required label,
+  a build service account and registry push/pull access, plus reserved output and
+  cache repository prefixes. If testing actual deployment, also supply a labeled
+  disposable runtime namespace and its dependencies.
+- A compatible builder image pinned by digest, node version and bounded deadline.
+- A reachable fixture repository, full successful revision, matching `runScript`,
+  and a full revision that predictably fails a detect/build phase. Record these
+  with the explicit configuration file path in `KPACK_RECOVERY_TEST_CONFIG`.
+
+Once provided, extend and run the isolated job for actual terminal failure,
+delayed creation and successor-preserving retirement as well as its existing
+worker-interruption and lost-decision-acknowledgment scenario. Delay/loss may be
+injected at the client boundary, but Build/Pod creation and completion must occur
+in the real cluster; record that distinction. Verify that absent retired work
+remains discoverable when delayed creation arrives, that it is not recreated,
+and that retirement leaves the successor's UID/output intact. The current job
+does not yet establish those cases. Preserve protections and experimental admission
+until the expanded evidence and fleet-defaulting checks pass.
