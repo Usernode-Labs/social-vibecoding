@@ -19700,7 +19700,7 @@ const AppView = {
 
   // Reverse "#N" issue chips for session/proposal cards: one compact pill
   // per linked issue, opening the issue's IN-APP discussion topic (the
-  // same navigation as tapping the issue row). Unlike closesPillHtml
+  // same navigation as tapping the issue row). Unlike closesPillSpecs
   // below this never needs pr_url (session cards have none pre-PR) and
   // never leaves the app. opts.label prefixes each chip (proposal cards use
   // 'Closes' / 'Closed'); opts.cls preserves the completed card's emerald
@@ -19731,7 +19731,8 @@ const AppView = {
   },
 
   // The GitHub "Closes #N" links, as SPECS. The merged proposal DETAIL head
-  // and the dev-chat session header use these as explicit external links;
+  // uses these as explicit external links (the dev-chat session card opens
+  // its requests in-app since #3605);
   // Board cards use issueChipSpecs so their linked issues stay in-platform.
   closesPillSpecs(pr) {
     if (!pr || !pr.pr_url) return [];
@@ -19752,15 +19753,6 @@ const AppView = {
       });
     }
     return out;
-  },
-
-  // The same links as an HTML string, for the ONE caller outside the card
-  // family: the dev chat's session header (features/dev-chat/dev-chat.js),
-  // which is still an innerHTML template.
-  closesPillHtml(pr) {
-    return AppView.closesPillSpecs(pr).map((p) =>
-      `<a href="${p.href}" target="_blank" rel="noopener" class="${p.cls}" title="${escapeAttr(p.title)}">${p.verb} #${p.n}</a>`
-    ).join(' ');
   },
 
   voteButtonsHtml(pr, opts) {
