@@ -698,6 +698,24 @@ test('reconcileImportedHead: an authored move under `defer` still kicks the rebu
   });
 });
 
+test('reconcileImportedHead: `fresh` reaches the mirror fetch, and only when asked (#2619)', async () => {
+  // submit_work reads back its OWN push through this. A coalesced fetch that
+  // started before the push resolves to the old tip, and the re-pin would
+  // decide nothing moved. The merge queue and the sweeps keep coalescing.
+  mirrorBranchHead = SESSION_HEAD;
+  const seen = [];
+  await withStubs([
+    [fakeMirror, 'ensureMirror', async (_owner, _repo, opts) => { seen.push(opts); return '/nonexistent/mirror'; }],
+  ], async () => {
+    await prImportSync.reconcileImportedHead({ config: {}, pool: recordingPool(), session: { ...IN_APP_REPO }, fresh: true });
+    await prImportSync.reconcileImportedHead({ config: {}, pool: recordingPool(), session: { ...IN_APP_REPO } });
+  });
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].fresh, true);
+  assert.deepEqual(seen[0].refs, [SESSION_HEAD]);
+  assert.equal(seen[1].fresh, false);
+});
+
 test('reconcileImportedHead: an unreadable mirror leaves the pin alone rather than guessing', async () => {
   await withStubs([
     [fakeMirror, 'ensureMirror', async () => { throw new Error('clone failed'); }],
