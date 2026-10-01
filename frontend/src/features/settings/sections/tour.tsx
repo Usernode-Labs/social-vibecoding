@@ -1,5 +1,5 @@
 /**
- * Settings → Welcome tour: the way back to the four-step tour that Home's
+ * Settings → Welcome tour: the way back to the five-step tour that Home's
  * Getting started card offers a new account (../../home/tour, #3240).
  *
  * The tour's own Skip says "You can reopen this from Settings", and the card
