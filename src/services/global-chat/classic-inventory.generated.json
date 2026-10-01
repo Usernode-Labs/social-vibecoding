@@ -9054,6 +9054,21 @@
       "classicPath": "#admin"
     },
     {
+      "source": "src/routes/topochain/admin/programme-export.js",
+      "method": "GET",
+      "path": "/api/v4/admin/programme/export.csv",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.v4.admin.programme.export.csv.8c012062",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
       "source": "src/routes/topochain/admin/season-events.js",
       "method": "GET",
       "path": "/api/v4/admin/season-events",
