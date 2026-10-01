@@ -219,7 +219,7 @@ test('the card counts steps and points, says what finishing unlocks, and closes 
   assert.equal(card.nextStepId(card.SHOT_MODELS['getting-started-done']), null);
   // Close: only the done state draws it, and only off a fixture does it post.
   assert.match(CARD_SRC, /<Header title="Getting started" model=\{model\} onClose=\{null\} \/>/);
-  assert.match(CARD_SRC, /<Header title="You’re all set" model=\{model\} onClose=\{onClose\} \/>/);
+  assert.match(CARD_SRC, /<Header title="You’re all set" model=\{model\} onClose=\{onClose\} celebrate \/>/);
   assert.match(CARD_SRC, /if \(!isShot\(shot\(\)\)\) void post\('\/api\/me\/getting-started\/close'\);/);
   assert.doesNotMatch(CARD_SRC, /getting-started\/seen|seenKeyFor/, 'no recorded visits any more');
   // The fixtures: just joined (1 of 5, Join ticked, the tour next), three in,
@@ -332,8 +332,13 @@ test('the card draws the type and colour rules: 15 over 13, the lit tint on the 
   // of their own under the step's words.
   assert.match(CARD_SRC, /'mt-1 block text-\[0\.8125rem\] font-semibold leading-\[1\.125rem\] text-amber-800 dark:text-amber-300'/);
   assert.match(CARD_SRC, /'mt-1 block text-\[0\.8125rem\] font-semibold leading-\[1\.125rem\] text-emerald-700 dark:text-emerald-400'/);
-  // The done state's label over its list is small caps.
-  assert.match(CARD_SRC, /text-xs font-bold uppercase tracking-\[0\.06em\] text-zinc-500 dark:text-zinc-400" data-getting-started-unlocked=/);
+  // The done state is the count alone (version D, 2026-10-01): one 15/650
+  // line with an open lock, and no list of names under it.
+  assert.match(CARD_SRC, /text-\[0\.9375rem\] font-\[650\] leading-5 text-zinc-900 dark:text-zinc-100"\s*\n\s*data-getting-started-unlocked=/);
+  assert.match(CARD_SRC, /<LockOpenIcon className="h-4 w-4" \/>/);
+  assert.doesNotMatch(CARD_SRC, /unlocks\.names/, 'the done card names no challenges');
+  // Its points read as won: "+1,500 pts" in the earned green.
+  assert.match(CARD_SRC, /<span className="font-semibold text-emerald-700 dark:text-emerald-400">\+\{pts\(earned\)\}<\/span> earned/);
   // Rows come from ListRow (15/650 over 13), and the card is the plane card.
   assert.match(CARD_SRC, /<GroupedList\s*\n\s*tone="plane"/);
   assert.doesNotMatch(CARD_SRC, /\b(gray|indigo)-\d/);

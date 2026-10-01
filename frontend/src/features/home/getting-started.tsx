@@ -69,9 +69,11 @@
  *   * The foot: what finishing unlocks, "Finish all 5 to unlock 6 more
  *     challenges", or "Two more steps unlock…" near the end. Nothing when the
  *     season hides nothing.
- *   * Done: "You’re all set", the full bar, the challenges that just
- *     unlocked under a small-caps label, "See challenges", and the close
- *     button. Closing ends the card for good, on every device. Before then
+ *   * Done: "You’re all set" with the points earned in the earned green, the
+ *     full bar, one line saying how many challenges just unlocked ("7
+ *     challenges unlocked", an open lock beside it), "See challenges ›", and
+ *     the close button (evan, 2026-10-01, version D: no list of names; Home's
+ *     Challenges section right under the card lists them). Closing ends the card for good, on every device. Before then
  *     there is no close button, and the server refuses one: the season waits
  *     on this list, and a card closed half-way would leave it locked behind
  *     a list nobody can see.
@@ -107,7 +109,7 @@ import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
-import { CheckIcon, ChevronRightIcon, LockIcon, PlayIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, LockIcon, LockOpenIcon, PlayIcon, XIcon } from '@/components/ui/icons';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
@@ -266,7 +268,7 @@ export function unlockText(model: Pick<GettingStartedModel, 'done' | 'total' | '
   return `Finish all ${model.total} to unlock ${what}`;
 }
 
-/** The small-caps label over the done state's list: "6 challenges unlocked". */
+/** The done state's one line: "6 challenges unlocked". */
 export function unlockedLabel(count: number): string | null {
   const n = Math.floor(Number(count) || 0);
   if (n < 1) return null;
@@ -555,13 +557,22 @@ function Segments({ model }: { model: GettingStartedModel }) {
   );
 }
 
-function Header({ title, model, onClose }: { title: string; model: GettingStartedModel; onClose: (() => void) | null }) {
+function Header({ title, model, onClose, celebrate = false }: {
+  title: string; model: GettingStartedModel; onClose: (() => void) | null; celebrate?: boolean;
+}) {
+  const earned = Number(model.earned_points) || 0;
   return (
     <div className="flex items-start gap-3 px-4 pb-3 pt-4">
       <div className="min-w-0 flex-1">
         <div className="text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100">{title}</div>
         <div className="mt-0.5 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400" data-getting-started-count="">
-          {counterText(model)}
+          {/* Done, the points read as won: "+1,500 pts" in the earned green. */}
+          {celebrate && earned > 0 ? (
+            <>
+              {model.done} of {model.total} done ·{' '}
+              <span className="font-semibold text-emerald-700 dark:text-emerald-400">+{pts(earned)}</span> earned
+            </>
+          ) : counterText(model)}
         </div>
       </div>
       {onClose ? (
@@ -644,39 +655,36 @@ function Progress({ model, onGo }: { model: GettingStartedModel; onGo: (go: Step
 }
 
 function Done({ model, onClose }: { model: GettingStartedModel; onClose: () => void }) {
+  // Just the count (version D): the challenges themselves are listed in
+  // Home's Challenges section right under the card, and on the Challenges tab.
   const label = unlockedLabel(model.unlocks.count);
-  const names = model.unlocks.names.slice(0, 4);
-  const more = Math.max(0, Math.floor(Number(model.unlocks.count) || 0) - names.length);
   return (
     <>
-      <Header title="You’re all set" model={model} onClose={onClose} />
+      <Header title="You’re all set" model={model} onClose={onClose} celebrate />
       <Segments model={model} />
       {label ? (
-        <>
-          <div className="px-4 pb-1 pt-3 text-xs font-bold uppercase tracking-[0.06em] text-zinc-500 dark:text-zinc-400" data-getting-started-unlocked={String(model.unlocks.count)}>
-            {label}
-          </div>
-          <ul className="px-4">
-            {names.map((name) => (
-              <li key={name} className="truncate py-1 text-[0.9375rem] leading-5 text-zinc-900 dark:text-zinc-100">{name}</li>
-            ))}
-          </ul>
-          {more > 0 ? (
-            <div className="px-4 pt-0.5 text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400">
-              {more === 1 ? 'and 1 more' : `and ${more} more`}
-            </div>
-          ) : null}
-        </>
+        <div
+          className="flex items-center gap-2.5 px-4 pb-0.5 pt-3.5 text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100"
+          data-getting-started-unlocked={String(model.unlocks.count)}
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-violet-600/10 text-violet-600 dark:bg-violet-400/15 dark:text-violet-400" aria-hidden="true">
+            <LockOpenIcon className="h-4 w-4" />
+          </span>
+          {label}
+        </div>
       ) : null}
       <div className="px-4 pb-4 pt-3">
         <Button
           type="button"
-          variant="pillAccent"
-          size="sm"
+          layout="step"
+          variant="step"
+          size="step"
+          ink="solid"
           data-getting-started-see=""
           onClick={() => { location.hash = '#leaderboard/challenges'; }}
         >
           See challenges
+          <ChevronRightIcon className="-mr-1 h-[15px] w-[15px]" strokeWidth="2.8" aria-hidden="true" />
         </Button>
       </div>
     </>
