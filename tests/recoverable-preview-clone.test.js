@@ -257,6 +257,33 @@ for (const phase of ['retirement_committed', 'database_removed']) {
   });
 }
 
+for (const changed of ['login_enabled', 'role_replaced']) {
+  test(`real clone: post-drop ${changed} cannot produce a release receipt`, { skip: !databaseUrl }, async t => {
+    const resource = await resources(t);
+    const intent = resource.intent();
+    const clones = resource.operations();
+    await clones.prepare(intent, password);
+    const name = `${intent.dbName}_owner`;
+    const changedRole = resource.operations({
+      async onPhase(phase) {
+        if (phase !== 'database_removed') return;
+        if (changed === 'login_enabled') {
+          await resource.admin.query(`ALTER ROLE ${name} LOGIN`);
+          return;
+        }
+        const { rows: [role] } = await resource.admin.query(
+          "SELECT shobj_description(oid, 'pg_authid') AS marker FROM pg_roles WHERE rolname = $1", [name]);
+        await resource.admin.query(`DROP ROLE ${name}`);
+        await resource.admin.query(`CREATE ROLE ${name} NOLOGIN`);
+        await resource.admin.query(`COMMENT ON ROLE ${name} IS '${role.marker.replace(/'/g, "''")}'`);
+      },
+    });
+    assert.deepEqual(await changedRole.remove(intent), { status: 'uncertain', reason: 'release_unconfirmed' });
+    assert.equal((await resource.admin.query('SELECT 1 FROM pg_database WHERE datname = $1', [intent.dbName])).rowCount, 0);
+    assert.equal((await clones.prepare(intent, password)).status, 'retired');
+  });
+}
+
 test('real clone: unmarked or physically replaced databases cannot be adopted or deleted', { skip: !databaseUrl }, async t => {
   const resource = await resources(t);
   const foreign = resource.intent();

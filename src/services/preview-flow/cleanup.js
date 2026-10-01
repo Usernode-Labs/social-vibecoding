@@ -43,6 +43,10 @@ function createCleanup({
     // A DB outage defers removal; durable intent survives. Guessing whether an
     // unacknowledged publication committed would risk deleting a live preview.
     const intent = resourceIntent.parse(effect.intent);
+    const recoverableRuntime = !!intent.runtimeOperation?.desired;
+    if (recoverableRuntime && !intent.cloneOperation) {
+      throw new Error('Recoverable runtime retirement requires its clone operation');
+    }
     const runtimeConfig = {
       ...config,
       appRuntime: intent.runtimeKind,
@@ -68,7 +72,7 @@ function createCleanup({
         const retirement = await imageService.retire(intent);
         if (retirement.status !== 'retained') throw new Error('Candidate image build may still be running');
       }
-      if (intent.runtimeOperation?.desired) {
+      if (recoverableRuntime) {
         const service = runtimes || require('./runtime-operation').createRuntimeOperations({ dataKey: config.dataEncryptionKey });
         const retirement = await service.retire(intent, {
           async observe(resource, uid) {
@@ -81,7 +85,7 @@ function createCleanup({
             return result.decision.accepted;
           },
         });
-        if (retirement.status !== 'removed') throw new Error(`Candidate runtime retirement pending: ${retirement.reason || 'uncertain'}`);
+        if (retirement.status !== 'absent') throw new Error(`Candidate runtime retirement pending: ${retirement.reason || 'uncertain'}`);
       } else {
         await require('./candidate-runtime').removeCandidate(runtimeConfig, intent, flowId, authorized.resource?.receipt);
       }
@@ -94,6 +98,11 @@ function createCleanup({
       }
       await require('./candidate-runtime').removeCandidateImage(intent);
       if (intent.checkoutDir) await require('../docker').execFileAsync('rm', ['-rf', intent.checkoutDir]);
+      if (recoverableRuntime) {
+        // Database release is a separate conclusion from Kubernetes creator
+        // closure. Preserve the domain obligation and its original locators.
+        return { databaseReleased: true, runtimeObservedAbsent: true, creationEnded: false };
+      }
       const completion = await owner.apply({
         type: 'PreviewCleanupCompleted',
         actionId: randomUUID(),

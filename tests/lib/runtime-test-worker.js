@@ -1,7 +1,7 @@
 'use strict';
 
-// Test-only adapter assembly. Build/clone inputs are injected explicitly; all
-// runtime resources, HTTP health and SQL decisions are actual in C5 integration.
+// Test-only adapter assembly. Build is injected; C5 also injects clone inputs,
+// while C6 supplies the actual clone service. Runtime and SQL decisions are real.
 const { createPreviewWork } = require('../../src/services/preview-flow/work');
 const { createRuntimeOperations } = require('../../src/services/preview-flow/runtime-operation');
 const { createCleanup } = require('../../src/services/preview-flow/cleanup');
@@ -10,7 +10,10 @@ const SERVER_COMMAND = ['node', '-e',
   "require('http').createServer((request,response)=>{response.end(process.env.TOKEN || 'missing')}).listen(3000,'0.0.0.0')",
 ];
 
-function runtimeTestWorker(pool, fixture, clients, { owner, onObservation, loseCreate = null } = {}) {
+function runtimeTestWorker(pool, fixture, clients, {
+  owner, onObservation, loseCreate = null, clones: actualClones,
+  runtimeEnvironment = () => ({}), command = SERVER_COMMAND,
+} = {}) {
   const config = {
     ...fixture.config,
     databaseUrl: pool.options.connectionString,
@@ -62,7 +65,7 @@ function runtimeTestWorker(pool, fixture, clients, { owner, onObservation, loseC
     inspect: async intent => image(intent),
     retire: async () => ({ status: 'retained' }),
   };
-  const clones = {
+  const clones = actualClones || {
     prepare: async () => ({ status: 'complete', databaseOid: '123' }),
     inspect: async () => ({ status: 'complete' }),
     async remove() { counts.cloneRemovals++; return { status: 'removed' }; },
@@ -79,8 +82,8 @@ function runtimeTestWorker(pool, fixture, clients, { owner, onObservation, loseC
         app,
         sessionId: session.id,
         imageRef: built.imageRef,
-        env: { TOKEN: 'candidate' },
-        command: SERVER_COMMAND,
+        env: { TOKEN: 'candidate', ...runtimeEnvironment(candidate.intent, candidate.password) },
+        command,
       });
     },
   });

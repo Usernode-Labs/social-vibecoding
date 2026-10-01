@@ -213,7 +213,7 @@ async function database(state) {
     console.log('[fixture] creating disposable PostgreSQL');
     const id = await docker(state, ['run', '-d', '--label', `${LABEL}=${state.fixtureId}`, '--name', `${state.clusterName}-postgres`,
       '--network', `${state.clusterName}-network`, '--tmpfs', '/var/lib/postgresql/data:rw',
-      '-p', '127.0.0.1::5432', '--env-file', filename, ref]);
+      '-p', '127.0.0.1::5432', '--env-file', filename, ref, 'postgres', '-c', 'max_prepared_transactions=10']);
     state.database = { containerId: id, image: ref, password, name: dbName };
     save(state);
   }
@@ -366,6 +366,39 @@ async function seedRuntime(state, clients) {
   });
 }
 
+async function seedDatabaseRuntime(state, clients) {
+  if (state.databaseRuntimeImage) return;
+  const layer = path.join(state.directory, 'database-runtime-layer');
+  const modules = path.join(layer, 'opt/evidence/node_modules');
+  const copied = new Set();
+
+  function copyPackage(name) {
+    if (copied.has(name)) return;
+    check(/^[a-z0-9-]+$/.test(name), 'unexpected test dependency name');
+    copied.add(name);
+    const source = path.resolve(__dirname, '../node_modules', name);
+    const pkg = JSON.parse(fs.readFileSync(path.join(source, 'package.json'), 'utf8'));
+    fs.cpSync(source, path.join(modules, name), { recursive: true });
+    for (const dependency of Object.keys(pkg.dependencies || {})) copyPackage(dependency);
+  }
+
+  fs.mkdirSync(modules, { recursive: true });
+  copyPackage('pg');
+  // Test-only pure-JS database client. No production image or registry changes.
+  const archive = path.join(state.directory, 'database-runtime-layer.tar');
+  await run(state, 'tar', ['-cf', archive, '-C', layer, 'opt']);
+  await withRegistryForward(state, clients, async port => {
+    const crane = path.join(state.directory, 'tools/crane');
+    const repo = `preview-recovery-${state.fixtureId}/images/demo`;
+    const baseDigest = state.runtimeImage.split('@')[1];
+    await run(state, crane, ['append', '-b', `127.0.0.1:${port}/${repo}@${baseDigest}`,
+      '-f', archive, '-t', `127.0.0.1:${port}/${repo}:database-runtime`]);
+    const digest = await run(state, crane, ['digest', `127.0.0.1:${port}/${repo}:database-runtime`]);
+    state.databaseRuntimeImage = `${state.registry.host}/${repo}@${digest}`;
+    save(state);
+  });
+}
+
 async function controllers(state) {
   console.log('[fixture] installing pinned kpack into disposable cluster');
   const objects = [];
@@ -419,6 +452,7 @@ async function manifest(state) {
     revision: state.revision,
     runScript: null,
     runtimeImage: state.runtimeImage,
+    databaseRuntimeImage: state.databaseRuntimeImage,
     config: {
       appRuntime: 'kubernetes',
       kubernetes: {
@@ -458,6 +492,7 @@ async function setup(state) {
   await registry(state, clients);
   await seedBuilder(state, clients);
   await seedRuntime(state, clients);
+  await seedDatabaseRuntime(state, clients);
   await controllers(state);
   await manifest(state);
 }
@@ -528,7 +563,7 @@ async function teardown(state) {
   console.log('[fixture] verified local containers/network removed; evidence retained');
 }
 
-async function integration(state, runtime = false) {
+async function integration(state, mode = 'test') {
   const filename = path.join(state.directory, 'fixture.json');
   const fixture = JSON.parse(fs.readFileSync(filename, 'utf8'));
   const env = {
@@ -536,7 +571,8 @@ async function integration(state, runtime = false) {
     KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: fixture.isolation.database.url,
   };
   await verifyIsolatedBuildFixture({ env });
-  const child = spawn(process.execPath, ['scripts/test-recoverable-preview-build.js', ...(runtime ? ['--runtime'] : [])], { env, stdio: 'inherit' });
+  const option = { 'test-runtime': '--runtime', 'test-release': '--release' }[mode];
+  const child = spawn(process.execPath, ['scripts/test-recoverable-preview-build.js', ...(option ? [option] : [])], { env, stdio: 'inherit' });
   const [code] = await once(child, 'exit');
   state.lastIntegration = { completedAt: new Date().toISOString(), exitCode: code };
   save(state);
@@ -557,8 +593,8 @@ async function main() {
     console.log(directory);
     return;
   }
-  check(['setup', 'teardown', 'test', 'test-runtime'].includes(mode) && argument,
-    'use init <local-socket>, setup <directory>, test <directory>, test-runtime <directory>, or teardown <directory>');
+  check(['setup', 'teardown', 'test', 'test-runtime', 'test-release'].includes(mode) && argument,
+    'use init <local-socket>, setup/test/test-runtime/test-release/teardown <directory>');
   const directory = fs.realpathSync(argument);
   const state = JSON.parse(fs.readFileSync(path.join(directory, 'setup-state.json'), 'utf8'));
   check(state.version === 1 && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(state.fixtureId)
@@ -567,7 +603,7 @@ async function main() {
     && directory.startsWith(`${fs.realpathSync(os.tmpdir())}${path.sep}`), 'fixture directory identity mismatch');
   try {
     if (mode === 'setup') await setup(state);
-    else if (mode === 'test' || mode === 'test-runtime') await integration(state, mode === 'test-runtime');
+    else if (['test', 'test-runtime', 'test-release'].includes(mode)) await integration(state, mode);
     else await teardown(state);
   } catch (error) {
     state.lastError = error.message;

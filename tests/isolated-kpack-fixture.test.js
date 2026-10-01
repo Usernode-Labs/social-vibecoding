@@ -143,6 +143,7 @@ const destinationConflicts = {
   'production cache': f => { f.config.kubernetes.cacheRepositoryPrefix = 'production.example/cache'; },
   'production builder': f => { f.config.kubernetes.builderImage = `production.example/builder@sha256:${'c'.repeat(64)}`; },
   'production namespace': f => { f.config.kubernetes.appNamespace = 'apps'; },
+  'production database runtime image': f => { f.databaseRuntimeImage = `production.example/images/demo@sha256:${'a'.repeat(64)}`; },
   'production runtime image': f => { f.runtimeImage = `production.example/images/demo@sha256:${'a'.repeat(64)}`; },
   'ambient runtime service account': f => {
     f.runtimeImage = `${f.config.kubernetes.repositoryPrefix}/demo@sha256:${'a'.repeat(64)}`;

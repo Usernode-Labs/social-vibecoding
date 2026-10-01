@@ -556,9 +556,9 @@ function createPreviewWork(pool, config, {
   async function runCleanup({ attempt, signal }) {
     return guarded(attempt, async () => {
       if (signal.aborted) return { outcome: 'retry' };
-      await cleanup({ pool, config, sessionId: attempt.session_id, flowId: attempt.input.flowId });
+      const result = await cleanup({ pool, config, sessionId: attempt.session_id, flowId: attempt.input.flowId });
       // Absence is not creator termination. Retain and revisit this obligation.
-      return { outcome: 'waiting', code: 'tombstone_retained', delayMs: 60000 };
+      return { outcome: 'waiting', code: 'tombstone_retained', delayMs: 60000, result };
     });
   }
 

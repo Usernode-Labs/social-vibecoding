@@ -104,7 +104,7 @@ function createCloneOperations({
 
   async function observe(client, operation) {
     const roleName = db.ownerRoleName(operation.dbName);
-    const role = (await client.query(`SELECT oid::text, shobj_description(oid, 'pg_authid') AS marker
+    const role = (await client.query(`SELECT oid::text, rolcanlogin, shobj_description(oid, 'pg_authid') AS marker
       FROM pg_roles WHERE rolname = $1`, [roleName])).rows[0];
     const database = (await client.query(`SELECT oid::text, datdba::text,
       shobj_description(oid, 'pg_database') AS marker FROM pg_database WHERE datname = $1`,
@@ -249,6 +249,11 @@ function createCloneOperations({
       await onPhase('retirement_committed');
       if (observed.database) await control.query(`DROP DATABASE ${operation.dbName} WITH (FORCE)`);
       await onPhase('database_removed');
+      const released = await observe(control, operation);
+      if (released.status !== 'retired' || released.database || released.role.rolcanlogin
+          || (observed.role && released.role.oid !== observed.role.oid)) {
+        return { status: 'uncertain', reason: 'release_unconfirmed' };
+      }
       // Keep the role even after absence. It rejects delayed creation using
       // this operation ID; absence alone cannot revoke earlier external work.
       return { status: 'removed' };

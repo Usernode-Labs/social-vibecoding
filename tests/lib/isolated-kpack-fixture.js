@@ -71,8 +71,8 @@ function validateDestinations(fixture, databaseUrl, now = Date.now()) {
     && runtime.builderImage?.startsWith(`${prefix}/builder@sha256:`) && DIGEST.test(runtime.builderImage),
   'builder, output and cache must use only the dedicated test registry');
   requireIsolation(runtime.buildServiceAccount === 'recovery-builder', 'dedicated build service account required');
-  if (fixture.runtimeImage) {
-    requireIsolation(fixture.runtimeImage.startsWith(`${prefix}/images/demo@sha256:`) && DIGEST.test(fixture.runtimeImage)
+  for (const image of [fixture.runtimeImage, fixture.databaseRuntimeImage].filter(Boolean)) {
+    requireIsolation(image.startsWith(`${prefix}/images/demo@sha256:`) && DIGEST.test(image)
       && runtime.generatedAppServiceAccount === 'recovery-builder', 'runtime fixture must use the dedicated registry/account');
   }
   const repo = new URL(fixture.repoUrl);
@@ -280,6 +280,7 @@ async function verifyDatabase(isolation, databaseContainer, databaseUrl, ClientT
       && identity.port === 5432 && addresses.includes(identity.address)
       && identity.identifier === isolation.database.systemIdentifier, 'PostgreSQL server/database identity mismatch');
     recentlyCreated(identity.started, isolation);
+    return identity.address;
   } finally {
     await client.end();
   }
@@ -308,8 +309,8 @@ async function verifyIsolatedBuildFixture({ env = process.env, databaseUrl, depe
   'invalid test database schema options');
   scoped.search = '';
   requireIsolation(scoped.href === base.href, 'worker database destination mismatch');
-  await (dependencies.verifyDatabase || verifyDatabase)(isolation, inventory.database, connectionString);
-  return { fixture, clients };
+  const databaseAddress = await (dependencies.verifyDatabase || verifyDatabase)(isolation, inventory.database, connectionString);
+  return { fixture, clients, databaseAddress };
 }
 
 module.exports = {

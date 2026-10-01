@@ -188,3 +188,25 @@ recovery, SQL persistence, foreground cleanup and successor protection. Its
 clone/Build inputs and delayed POST/reply-loss timing are injected. The runtime
 contract and ledger record precise evidence and retained-dependency limitations;
 it does not extend C4's actual Build proof to a full production pipeline.
+
+C6's fixed `test-release` job uses the same parent/child live preflight. Setup adds
+`max_prepared_transactions=10` only to the new disposable PostgreSQL container,
+so a real forced-drop blocker can be tested. It also appends the repository's
+installed pure-JS `pg` client/dependencies to the dedicated non-root runtime image,
+under `/opt/evidence/node_modules`, using fixture-local files and registry artifacts.
+The extra digest must use the same verified dedicated registry/account. A verified
+server address from PostgreSQL identity inspection connects test Pods to that
+owned container; it is not an ambient database destination. Missing image/address
+fails before C6 schema or resource creation. Existing fixture manifests remain
+usable for other fixed jobs, while C6 requires its extra prerequisites.
+
+```sh
+node scripts/kpack-local-fixture.js test-release /absolute/path/to/preview-recovery-test-UUID
+```
+
+The job proves actual clone/database ownership, SQL-backed runtime health,
+connections, delayed Pods, forced drop, interruption/restart and retained cleanup.
+Build output/template selection and reply-loss/timing injections are identified
+separately. It does not establish a complete actual kpack preparation path or
+production compatibility. No default credentials, contexts or deployment settings
+are changed; teardown uses the existing immutable ownership verification.

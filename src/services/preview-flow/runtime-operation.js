@@ -226,10 +226,9 @@ function createRuntimeOperations({
     const after = await inventory(intent, { retiring: true });
     if (after.status !== 'inspected') return after;
     if (RESOURCE_KINDS.some(kind => after.resources[kind])) return { status: 'waiting', reason: 'resources_remaining' };
-    // A submitted Deployment may have a late controller consumer. C5 retains
-    // its DB clone until a subsequent checkpoint demonstrates consumer closure.
-    if (intent.runtimeOperation.resources.deployment?.submitted) return { status: 'waiting', reason: 'dependency_retained' };
-    return { status: 'removed' };
+    // Current absence does not prove creator termination. Clone retirement can
+    // independently fence database access; keep reconciling late resources.
+    return { status: 'absent', creationEnded: false };
   }
 
   return { prepare, inspect, inventory, retire };

@@ -175,9 +175,9 @@ test('injected Kubernetes: pre-Deployment retirement can release dependencies wh
   const service = createRuntimeOperations({ clients: () => api.clients, dataKey: KEY });
   f.apply('RequestCandidateRuntimeResourceCreation', { resource: 'secret' });
   f.state.flow.state = 'failed';
-  assert.equal((await service.retire(f.state.resource.intent, context(f))).status, 'removed');
+  assert.equal((await service.retire(f.state.resource.intent, context(f))).status, 'absent');
   await api.clients.core.createNamespacedSecret({ body: runtimeManifests(f.state.resource.intent, KEY).secret });
-  assert.equal((await service.retire(f.state.resource.intent, context(f))).status, 'removed');
+  assert.equal((await service.retire(f.state.resource.intent, context(f))).status, 'absent');
   assert.deepEqual(api.deletes, ['secret']);
   assert.equal(api.objects.size, 0);
   assert.ok(f.state.resource.intent.runtimeOperation.resources.secret.uid);
@@ -234,14 +234,14 @@ test('injected Kubernetes: durable submission without visible resource never rec
   assert.deepEqual(api.creates, []);
 });
 
-test('injected Kubernetes: cleanup retains dependencies after Deployment submission and rejects successor UIDs', async () => {
+test('injected Kubernetes: cleanup reports current absence independently of creator closure and rejects successor UIDs', async () => {
   const f = stateFixture();
   const api = externalApi();
   const service = createRuntimeOperations({ clients: () => api.clients, dataKey: KEY, probe: async () => true });
   await service.prepare(settings(), f.state.resource.intent, context(f));
   f.state.flow.state = 'failed';
   assert.equal((await service.retire(f.state.resource.intent, context(f))).reason, 'consumers_terminating');
-  assert.equal((await service.retire(f.state.resource.intent, context(f))).reason, 'dependency_retained');
+  assert.deepEqual(await service.retire(f.state.resource.intent, context(f)), { status: 'absent', creationEnded: false });
   assert.deepEqual(api.deletes, ['deployment', 'service', 'secret']);
   const successor = runtimeManifests(f.state.resource.intent, KEY).secret;
   await api.clients.core.createNamespacedSecret({ body: successor });

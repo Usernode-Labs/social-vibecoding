@@ -124,3 +124,10 @@ Deployment was submitted, clone release, orphan-consumer closure and retention
 bounds remain the next required resource-lifecycle proof before rollout. B2/C2's
 shared decision/execution reuse remains demonstrated; the overall refactor is
 incomplete and Temporal remains deferred under C0's recorded conditions.
+
+C6 supersedes the submitted-Deployment **database retention** limitation above:
+[retired database release](retired-database-release-contract.md) reuses the existing
+clone fence and verifies absence plus the retained NOLOGIN role. Runtime absence
+still does not prove creator closure, so locators and recurring cleanup remain.
+C5's six actual runtime scenarios were rerun after this change; clone/Build inputs
+in those cases remain injected. C6 adds its separate actual SQL dependency proof.
