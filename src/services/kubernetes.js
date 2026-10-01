@@ -842,7 +842,13 @@ async function deployApplication(config, {
       template: {
         metadata: {
           labels: { ...resourceLabels, ...selectorLabels },
-          annotations: { 'social.usernode.io/env-checksum': envChecksum(env) },
+          // A setup retry re-applies an otherwise identical Deployment, which
+          // would leave the stuck Pod in place. Stamping the attempt changes
+          // the template, so the Recreate strategy stops that Pod and starts a
+          // fresh one on the same Deployment, Secret and volume: a retry owns
+          // exactly the objects a first dispatch does.
+          annotations: { 'social.usernode.io/env-checksum': envChecksum(env),
+            ...(retryAttempt ? { 'social.usernode.io/setup-attempt': String(retryAttempt) } : {}) },
         },
         spec: {
           serviceAccountName: cfg.generatedAppServiceAccount,
@@ -1175,7 +1181,7 @@ const VOLUME_QUOTA_RETRIES = 10;
 // drops only once the controller observes those deletions, so the claim is
 // retried for a short while rather than once.
 async function ensureWorker(config, { sessionId, env, onProgress, temporary = false,
-  reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS }) {
+  reclaimVolumes = null, retryDelayMs = VOLUME_QUOTA_RETRY_MS, timeoutMs, retryAttempt = null }) {
   const cfg = config.kubernetes;
   if (!cfg.workerImage?.includes('@sha256:')) throw new Error('KUBERNETES_WORKER_IMAGE must be an immutable digest');
   const namespace = cfg.workerNamespace;
@@ -1229,7 +1235,13 @@ async function ensureWorker(config, { sessionId, env, onProgress, temporary = fa
       template: {
         metadata: {
           labels: { ...resourceLabels, ...selectorLabels, ...workerContractLabels },
-          annotations: { 'social.usernode.io/env-checksum': envChecksum(env) },
+          // A setup retry re-applies an otherwise identical Deployment, which
+          // would leave the stuck Pod in place. Stamping the attempt changes
+          // the template, so the Recreate strategy stops that Pod and starts a
+          // fresh one on the same Deployment, Secret and volume: a retry owns
+          // exactly the objects a first dispatch does.
+          annotations: { 'social.usernode.io/env-checksum': envChecksum(env),
+            ...(retryAttempt ? { 'social.usernode.io/setup-attempt': String(retryAttempt) } : {}) },
         },
         spec: {
           serviceAccountName: cfg.workerServiceAccount,
@@ -1254,7 +1266,7 @@ async function ensureWorker(config, { sessionId, env, onProgress, temporary = fa
   });
   await waitForWorkerBootstrap(core, apps, { namespace, name, onProgress,
     imageRef: cfg.workerImage, environmentChecksum: envChecksum(env),
-    generation: deployed?.metadata?.generation || 0 });
+    generation: deployed?.metadata?.generation || 0, timeoutMs });
   return { runtimeKind: 'kubernetes', runtimeName: name, pvcName: temporary ? null : pvcName };
 }
 
