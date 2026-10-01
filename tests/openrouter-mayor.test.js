@@ -318,3 +318,39 @@ test('a session gets a Mayor only with a usable key and a model that calls tools
   meta = { status: 'invalid', revision: 3 };
   assert.deepEqual(await mayor.resolveForSession({ pool: {}, config, session, userId: 1 }), { error: 'credential_required' });
 });
+
+test('#3557: a PDF goes to OpenRouter as a file part only for a model listed as taking files', async () => {
+  const pdf = {
+    type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0xLjc=' }, title: 'brief.pdf',
+  };
+  const messages = [{ role: 'user', content: [pdf, { type: 'text', text: 'what does it say?' }] }];
+  const send = async (catalogModel) => {
+    const { fetchImpl, calls } = fakeFetch(completion({ content: 'It says hi.' }));
+    const client = mayor.createClient({
+      apiKey: 'sk-or-v1-session', model: 'vendor/reader', catalogModel, fetchImpl,
+    });
+    await client.streamChat({ messages, systemPrompt: 'You are the Mayor.' });
+    return calls[0].body;
+  };
+
+  const reads = await send({ supportsFiles: true });
+  assert.deepEqual(reads.messages[1], {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'what does it say?' },
+      { type: 'file', file: { filename: 'brief.pdf', file_data: 'data:application/pdf;base64,JVBERi0xLjc=' } },
+    ],
+  });
+  assert.deepEqual(reads.plugins, [{ id: 'file-parser', pdf: { engine: 'native' } }],
+    'the model reads it itself, never a paid OCR fallback');
+
+  for (const catalogModel of [null, { supportsFiles: false }, { supportsImages: true }]) {
+    const text = await send(catalogModel);
+    assert.deepEqual(text.messages[1], {
+      role: 'user',
+      content: '[PDF attachment omitted: brief.pdf — this model cannot read PDFs]\n\nwhat does it say?',
+    });
+    assert.equal(text.plugins, undefined);
+    assert.equal(JSON.stringify(text).includes('JVBERi0'), false, 'no PDF bytes reach a model that cannot read them');
+  }
+});

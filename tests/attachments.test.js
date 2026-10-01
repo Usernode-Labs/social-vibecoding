@@ -608,3 +608,112 @@ test('validateChatUpload: empty file and bad filename rejected', () => {
   assert.equal(att.validateChatUpload({ filename: '', data: Buffer.from('x') }).ok, false);
   assert.equal(att.validateChatUpload({ filename: 'x'.repeat(300), data: Buffer.from('x') }).ok, false);
 });
+
+// ── PDFs (#3557) ────────────────────────────────────────────────────
+
+// Starts with the `%PDF-` magic and carries a byte that is not UTF-8, as a
+// real PDF's binary comment line does.
+const PDF = Buffer.concat([Buffer.from('%PDF-1.7\n%'), Buffer.from([0xe2, 0xe3, 0xcf, 0xd3]), Buffer.from('\n1 0 obj\n<<>>\nendobj\n%%EOF\n')]);
+
+test('#3557 validateUpload: a PDF is told by its bytes and stored as application/pdf', () => {
+  for (const validate of [att.validateUpload, att.validateChatUpload]) {
+    const v = validate({ filename: 'brief.pdf', data: PDF });
+    assert.deepEqual(v, { ok: true, kind: 'binary', contentType: 'application/pdf', meta: null });
+    // The name does not decide it either way.
+    assert.equal(validate({ filename: 'brief', data: PDF }).contentType, 'application/pdf');
+    // A PDF whose bytes all happen to be text is still a PDF, not inlined source.
+    const asciiPdf = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n');
+    assert.deepEqual(validate({ filename: 'plain.pdf', data: asciiPdf }),
+      { ok: true, kind: 'binary', contentType: 'application/pdf', meta: null });
+  }
+});
+
+test('#3557 validateUpload: a fake .pdf that is not one stays an opaque binary', () => {
+  const fake = Buffer.from([0x00, 0x01, 0x02, 0xff, 0x25, 0x50, 0x44, 0x46, 0x2d]);
+  for (const validate of [att.validateUpload, att.validateChatUpload]) {
+    assert.equal(validate({ filename: 'invoice.pdf', data: fake }).contentType, 'application/octet-stream');
+    // A text file named .pdf stays text.
+    assert.equal(validate({ filename: 'notes.pdf', data: Buffer.from('hello') }).kind, 'text');
+  }
+  assert.equal(att.isPdf(Buffer.from('%PDF')), false, 'truncated magic');
+  assert.equal(att.isPdf('%PDF-1.7'), false, 'only a Buffer');
+});
+
+test('#3557 validateUpload: a PDF over the binary cap is rejected', () => {
+  const big = Buffer.concat([PDF, Buffer.alloc(att.MAX_BINARY_BYTES)]);
+  assert.equal(att.validateUpload({ filename: 'big.pdf', data: big }).ok, false);
+  assert.equal(att.validateChatUpload({ filename: 'big.pdf', data: big }).ok, false);
+});
+
+function pdfAtt(extra = {}) {
+  return {
+    kind: 'binary', filename: 'brief.pdf', contentType: 'application/pdf',
+    sizeBytes: PDF.length, data: PDF, ...extra,
+  };
+}
+
+test('#3557 buildUserMessageContent: a PDF in the window is a document block before the text', () => {
+  const content = att.buildUserMessageContent({
+    text: 'read this', attachments: [pdfAtt()], includeImages: true, includeDocuments: true,
+  });
+  assert.deepEqual(content[0], {
+    type: 'document',
+    source: { type: 'base64', media_type: 'application/pdf', data: PDF.toString('base64') },
+    title: 'brief.pdf',
+  });
+  assert.deepEqual(content[1], { type: 'text', text: 'read this' });
+});
+
+test('#3557 buildUserMessageContent: outside the window, a PDF is a line naming it', () => {
+  const content = att.buildUserMessageContent({
+    text: 'read this', attachments: [pdfAtt()], includeImages: true, includeDocuments: false,
+  });
+  assert.equal(content.length, 1);
+  assert.match(content[0].text, /\[attached file: brief\.pdf — PDF, .*Not resent in this turn\./);
+  // Default: no document unless asked for.
+  const byDefault = att.buildUserMessageContent({ text: 'x', attachments: [pdfAtt()], includeImages: true });
+  assert.equal(byDefault.some((b) => b.type === 'document'), false);
+});
+
+test('#3557 buildUserMessageContent: the size cap and the bytes, not the stored type, decide', () => {
+  const big = Buffer.concat([PDF, Buffer.alloc(att.MAX_DOCUMENT_BYTES)]);
+  const tooBig = att.buildUserMessageContent({
+    text: 'x', attachments: [pdfAtt({ data: big, sizeBytes: big.length })], includeImages: true, includeDocuments: true,
+  });
+  assert.equal(tooBig.some((b) => b.type === 'document'), false);
+  assert.match(tooBig[0].text, /Too large for you to read directly \(over 5 MB\)/);
+  // A row labelled application/pdf whose bytes are not a PDF is never sent.
+  const lying = att.buildUserMessageContent({
+    text: 'x', attachments: [pdfAtt({ data: Buffer.from('not a pdf at all') })], includeImages: true, includeDocuments: true,
+  });
+  assert.equal(lying.some((b) => b.type === 'document'), false);
+  assert.match(lying[0].text, /binary file/);
+});
+
+test('#3557 buildMayorMessages: PDFs replay on the last two user turns only, two at most', () => {
+  const { buildMayorMessages } = require('../src/services/mayor/messages');
+  const history = [];
+  const map = new Map();
+  for (let i = 1; i <= 4; i++) {
+    history.push({ id: i * 10, role: 'user', content: `turn ${i}`, metadata: {} });
+    history.push({ id: i * 10 + 1, role: 'assistant', content: 'ok', metadata: {} });
+    map.set(i * 10, [pdfAtt({ filename: `t${i}.pdf` })]);
+  }
+  // The newest turn carries two more: over the per-request budget, so that
+  // turn degrades whole and the budget goes to the turn before it.
+  map.set(40, [pdfAtt({ filename: 'a.pdf' }), pdfAtt({ filename: 'b.pdf' }), pdfAtt({ filename: 'c.pdf' })]);
+  const users = buildMayorMessages(history, map).filter((m) => m.role === 'user');
+  const docs = users.map((m) => m.content.filter((b) => b.type === 'document').map((b) => b.title));
+  assert.deepEqual(docs, [[], [], ['t3.pdf'], []]);
+  assert.match(users[0].content.at(-1).text, /t1\.pdf — PDF/);
+  assert.match(users[3].content.at(-1).text, /c\.pdf — PDF/);
+});
+
+test('#3557 buildDispatchBlock: a PDF tells the coding agent to Read it, with a way out', () => {
+  const id = 'b2'.repeat(16);
+  const block = att.buildDispatchBlock([{ id, ...pdfAtt() }]);
+  assert.ok(block.includes(`PDF: brief.pdf (id ${id})`));
+  assert.ok(block.includes(`usernode-attachments ${id} /home/node/attachments/brief.pdf`));
+  assert.ok(block.includes('use your Read tool on /home/node/attachments/brief.pdf'));
+  assert.ok(block.includes('cannot read PDFs'));
+});

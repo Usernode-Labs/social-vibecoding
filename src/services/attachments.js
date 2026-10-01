@@ -45,6 +45,15 @@ const INLINE_TOTAL_CHAR_CAP = 80000;
 // placeholder — bounds recurring vision cost on long conversations.
 const IMAGE_REPLAY_TURNS = 4;
 const IMAGE_REPLAY_MAX = 8;
+// PDF replay policy (#3557), the same shape and tighter: a PDF costs far
+// more than an image (every page is read as text and as a picture), so it
+// is sent as a document block only on the last DOCUMENT_REPLAY_TURNS user
+// turns, at most DOCUMENT_REPLAY_MAX per request, and only up to
+// MAX_DOCUMENT_BYTES. Anything else keeps the one-line placeholder.
+const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
+const DOCUMENT_REPLAY_TURNS = 2;
+const DOCUMENT_REPLAY_MAX = 2;
+const PDF_CONTENT_TYPE = 'application/pdf';
 
 // The stored text a user row gets when the user sent attachments with no
 // typed message — downstream code never sees empty content.
@@ -74,6 +83,20 @@ function sniffImageType(buf) {
   if (buf.subarray(0, 4).toString('latin1') === 'RIFF'
       && buf.subarray(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
   return null;
+}
+
+// #3557: a PDF is told by its first bytes (`%PDF-`), never by its name or
+// the client's Content-Type. It stays kind 'binary' (the kind every
+// consumer and serve route already handles); only its content type says
+// what it is.
+function isPdf(buf) {
+  return Buffer.isBuffer(buf) && buf.length >= 5
+    && buf.subarray(0, 5).toString('latin1') === '%PDF-';
+}
+
+// The stored content type for a 'binary' upload.
+function binaryContentType(buf) {
+  return isPdf(buf) ? PDF_CONTENT_TYPE : 'application/octet-stream';
 }
 
 // Valid UTF-8 with no NUL bytes — the gate for `kind: 'text'` uploads.
@@ -255,6 +278,15 @@ function validateUpload({ filename, data }) {
     if (!zv.ok) return zv;
     return { ok: true, kind: 'zip', contentType: 'application/zip', meta: zv.manifest };
   }
+  // #3557: a PDF (by its magic bytes) is binary even when every byte is
+  // readable text, so its source is never inlined; its content type
+  // records that it is a PDF, which is what lets an agent read it.
+  if (isPdf(data)) {
+    if (data.length > MAX_BINARY_BYTES) {
+      return { ok: false, error: `File too large (max ${Math.round(MAX_BINARY_BYTES / 1024 / 1024)} MB)` };
+    }
+    return { ok: true, kind: 'binary', contentType: binaryContentType(data), meta: null };
+  }
   // Any readable UTF-8 file small enough to inline is text, regardless
   // of extension (including .svg and extensionless files). Stored
   // content_type is always text/plain so serving can never execute
@@ -314,6 +346,15 @@ function validateChatUpload({ filename, data }) {
       return { ok: false, error: `"${name}" isn't valid UTF-8 text` };
     }
     return { ok: true, kind: 'html', contentType: 'text/html', meta: null };
+  }
+  // #3557: a PDF (by its magic bytes) is binary even when every byte is
+  // readable text, so its source is never inlined; its content type
+  // records that it is a PDF, which is what lets an agent read it.
+  if (isPdf(data)) {
+    if (data.length > MAX_BINARY_BYTES) {
+      return { ok: false, error: `File too large (max ${Math.round(MAX_BINARY_BYTES / 1024 / 1024)} MB)` };
+    }
+    return { ok: true, kind: 'binary', contentType: binaryContentType(data), meta: null };
   }
   // Any other readable UTF-8 file under the text cap is 'text' (stored
   // text/plain — keeps the .svg-is-text rule: SVG never serves as an
@@ -386,18 +427,46 @@ function zipPlaceholderLine(att) {
 
 function binaryPlaceholderLine(att) {
   const size = humanSize(att.sizeBytes != null ? att.sizeBytes : (att.data ? att.data.length : 0));
+  if (isPdfAttachment(att)) {
+    const why = readableDocument(att)
+      ? 'Not resent in this turn.'
+      : `Too large for you to read directly (over ${Math.round(MAX_DOCUMENT_BYTES / 1024 / 1024)} MB).`;
+    return `[attached file: ${att.filename} — PDF, ${size}. ${why} It is made available to the coding agent on dispatch.]`;
+  }
   return `[attached file: ${att.filename} — binary file, ${size}. It is made available to the coding agent on dispatch.]`;
+}
+
+// #3557: a stored PDF, re-checked against its bytes so a row's content type
+// alone never decides what is sent to a model.
+function isPdfAttachment(att) {
+  return !!att && att.kind === 'binary'
+    && (att.contentType || att.content_type) === PDF_CONTENT_TYPE && isPdf(att.data);
+}
+
+// A PDF small enough to send to the Mayor as a document block.
+function readableDocument(att) {
+  return isPdfAttachment(att) && att.data.length <= MAX_DOCUMENT_BYTES;
+}
+
+// An Anthropic document block. `title` carries the filename, which is how
+// the model (and an adapter that cannot pass the bytes on) names it.
+function documentBlock(att) {
+  return {
+    type: 'document',
+    source: { type: 'base64', media_type: PDF_CONTENT_TYPE, data: att.data.toString('base64') },
+    title: String(att.filename || 'document.pdf'),
+  };
 }
 
 // Build the Mayor-facing content for one user row that has attachments.
 // `attachments` entries: { kind, filename, contentType, data: Buffer }.
 // Returns a plain string when there are no attachments, otherwise an
-// Anthropic content-block array: image blocks first, then a single text
-// block carrying the user's text + inlined text files (+ placeholders for
-// images excluded by the replay policy and for zip/binary attachments,
-// which are never inlined). Only user rows ever become arrays —
+// Anthropic content-block array: image and document (PDF) blocks first,
+// then a single text block carrying the user's text + inlined text files
+// (+ placeholders for images and PDFs excluded by the replay policy and
+// for zip/other binary attachments, which are never inlined). Only user rows ever become arrays —
 // assistant rows stay strings (buildMayorMessages merges them).
-function buildUserMessageContent({ text, attachments, includeImages }) {
+function buildUserMessageContent({ text, attachments, includeImages, includeDocuments = false }) {
   const atts = attachments || [];
   if (!atts.length) return text;
 
@@ -421,7 +490,11 @@ function buildUserMessageContent({ text, attachments, includeImages }) {
     } else if (att.kind === 'zip') {
       textParts.push(zipPlaceholderLine(att));
     } else if (att.kind === 'binary') {
-      textParts.push(binaryPlaceholderLine(att));
+      // #3557: a PDF inside the replay window goes as a document block,
+      // which a model that reads PDFs reads and an adapter for one that
+      // does not turns back into a line naming the file.
+      if (includeDocuments && readableDocument(att)) blocks.push(documentBlock(att));
+      else textParts.push(binaryPlaceholderLine(att));
     } else {
       textParts.push(attachedFileBlock(att.filename, att.data.toString('utf8')));
     }
@@ -468,6 +541,11 @@ function buildDispatchBlock(attachments) {
         : '';
       const dirName = safeName.replace(/\.zip$/i, '') || 'archive';
       parts.push(`zip archive: ${att.filename} (id ${att.id}${count}${top}) — extract it with \`usernode-attachments ${att.id} --unzip /home/node/attachments/${dirName}/\` (run via Bash), then browse that directory with your normal tools. Treat it as read-only reference material — do not copy it wholesale into the repo unless asked.`);
+    } else if (att.kind === 'binary' && isPdfAttachment(att)) {
+      // #3557: Claude Code's Read tool shows a PDF to a model that reads
+      // them; the adapter tells a text-only model it cannot.
+      hasCliRefs = true;
+      parts.push(`PDF: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash), then use your Read tool on /home/node/attachments/${safeName} to read it. If the tool says this model cannot read PDFs, use a command-line text extractor if one is installed, or work from what the user said about it.`);
     } else if (att.kind === 'binary') {
       hasCliRefs = true;
       parts.push(`binary file: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash).`);
@@ -574,9 +652,16 @@ module.exports = {
   INLINE_TOTAL_CHAR_CAP,
   IMAGE_REPLAY_TURNS,
   IMAGE_REPLAY_MAX,
+  MAX_DOCUMENT_BYTES,
+  DOCUMENT_REPLAY_TURNS,
+  DOCUMENT_REPLAY_MAX,
+  PDF_CONTENT_TYPE,
   ATTACHMENTS_ONLY_TEXT,
   fileExt,
   sniffImageType,
+  isPdf,
+  isPdfAttachment,
+  readableDocument,
   isUtf8Text,
   humanSize,
   validateZip,
