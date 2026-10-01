@@ -17169,18 +17169,44 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   }
   #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-band-top) + 58px); }
 }
-/* A PULL TO REFRESH KEEPS THE BAND ON THE HEADER (#3514). The kit slides the
-   whole page down to show its spinner, band included, and what it uncovered
-   between the coloured header and the coloured band was the plain page: the
-   four tabs came loose from the header they belong to. The layer the spinner
-   sits in hangs from the scroller's top edge, which is where the gap opens,
-   so it is painted in the community's colour exactly as tall as the gap
-   (`--ptr-gap`, which workshop.tsx usePullGap reads off the kit's transform)
-   and no further: the layer is 240px, and painted whole it would show
-   through the page's transparent hero below the band. Header, gap and band
-   read as one band that stretches. */
-html[data-community-tint] :has(> #dev-forum-scroll) > .un-ptr-layer {
-  background: linear-gradient(var(--community-tint), var(--community-tint)) top left / 100% var(--ptr-gap, 0px) no-repeat;
+/* A PULL TO REFRESH MOVES ONLY THE PAGE UNDER THE TABS (pull-to-refresh
+   under the tabs, evan, 2026-10-01). "When you pull down on a community
+   page, the tabs move down too? I think the tabs should be fixed, and only
+   the page under them move and reveal the refresh."
+
+   The kit's pull slid the whole of #dev-forum-scroll, and the band lives in
+   it, so the header stayed and the band rode down with the page. #3514 then
+   painted the gap that opened between them in the community's colour (a
+   `--ptr-gap` that workshop.tsx read back off the kit's transform), so the
+   two read as one band stretching. That rule is gone with the gap it
+   painted: nothing opens under the header any more.
+
+   app-view.js now opts the scroller into the kit's `pullProperty`: the
+   scroller holds still and carries the pull as `--dev-ptr-pull`, and this
+   slides what comes after the band (the tab body, and All items' back bar
+   with it) by exactly that much. The header, the band and anything above
+   the band stay where they are. The gap opens between the band and the
+   page, and shows the page's own plane, as the air around its cards does:
+   every box from the tab body up to the scroller is transparent, so the
+   kit's layer behind them (anchored at the band's bottom edge, where the
+   spinner hangs) is what shows, and it paints only the spinner.
+
+   UNSET AT REST, so at rest this is no rule at all: `var()` with no
+   fallback and nothing to read is invalid at computed-value time, which
+   leaves `transform: none`, so no stacking context and no containing block
+   where there was none before. A fallback of 0px would make both permanent
+   on the tab body (none of these boxes has a transform of its own for this
+   to override).
+
+   NO BAND (the Workshop still loading, an app that could not load): the
+   kit hangs the spinner from the scroller's top instead (app-view.js's
+   `topEl` finds no band), and everything in the scroller slides, as it all
+   did. AT EVERY WIDTH, outside the phone block above: the kit only pulls on
+   a touch device, and an iPad's row of tabs holds still the same way (the
+   row the band becomes from 768px is the same `.dev-ws-band`). */
+#dev-forum-scroll .dev-ws > .dev-ws-band ~ *,
+#dev-forum-scroll:not(:has(.dev-ws-band)) > * {
+  transform: translateY(var(--dev-ptr-pull));
 }
 
 /* ON A WIDE WINDOW THE TABS ARE THE PANEL'S FIRST ROW (#852 review: they
