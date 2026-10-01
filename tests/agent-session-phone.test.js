@@ -10,6 +10,10 @@
 // panel may shrink below its content, and an empty message box is as tall as
 // its hint, which wraps on a phone and was cut off mid-line.
 //
+// #3559: the same failure from inside the transcript. A row holding one
+// unbroken run of text (a pasted link, a path) made the conversation wider
+// than the phone, and since it scrolls it slid sideways instead of clipping.
+//
 // #3015: the working cue on the mark (a pulsing emerald dot then, a blue
 // corner spinner since the #2779 follow-up, and for the viewer's own changes
 // only) means an agent is mid-turn. It said so nowhere. The mark says it on hover,
@@ -79,4 +83,33 @@ test('#3075: the menu no longer says it in words; the mark\'s own spinner stays'
   assert.match(renderToHtml(createElement(wired.UpdateStatus)), /A new version of the platform is downloading\./);
   store.improveStore.set({ ...store.improveStore.get(), versionState: 'ready' });
   assert.match(renderToHtml(createElement(wired.UpdateStatus)), /There is a new version available\./);
+});
+
+// #3559: "can overscroll horizontally on mobile on agent chats". The
+// transcript scrolls down, and `overflow-y: auto` makes `overflow-x` auto
+// too, so one unbroken run of text held the whole conversation wider than a
+// phone and it slid sideways under a finger. Measured at 390px: a staging
+// link pasted into the reader's own bubble took the scroller to 690px; a
+// failed turn's note and a card titled with a path did the same. The
+// Mayor's markdown never did (`.dc-msg-content` breaks its words); the rows
+// around it did, because nothing told them to.
+test('#3559: the transcript breaks a long word in its own row instead of growing sideways', () => {
+  const scroller = panel.match(/<div ref=\{scroll\} className="([^"]*)"/);
+  assert.ok(scroller, 'the transcript scroller is found');
+  const classes = scroller[1].split(/\s+/);
+  assert.ok(classes.includes('[overflow-wrap:anywhere]'),
+    'set once on the scroller and inherited by every row, including rows added later');
+  assert.ok(!classes.includes('break-words'),
+    'anywhere, not break-word: the note beside Retry is a flex item and a request title a centred block, held at their longest word otherwise');
+  assert.ok(classes.includes('overflow-y-auto'), 'it still scrolls down');
+  assert.ok(!classes.some((c) => /^overflow-(x-)?(hidden|clip)$/.test(c)),
+    'nothing is hidden to get there: the rows fit, so there is nothing to clip');
+
+  // The two boxes that SHOULD scroll sideways still do, inside themselves,
+  // because overflow-wrap cannot reach text that never wraps.
+  const css = read('public/css/app.css');
+  const code = css.match(/\.dc-code-block \{[^}]*\}/)[0];
+  assert.match(code, /overflow-x: auto;/, 'a long code line scrolls inside its block');
+  assert.doesNotMatch(code, /white-space|overflow-wrap/, 'and the block is a <pre> that never wraps');
+  assert.match(css, /\.dc-table \{[^}]*display: block; overflow-x: auto; \}/, 'a wide table scrolls inside itself');
 });
