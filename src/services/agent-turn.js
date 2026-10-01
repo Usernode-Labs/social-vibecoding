@@ -80,6 +80,8 @@ function runtimeModelMetadataForModel(model, requestedModelId) {
     supportsReasoning: model ? model.supportsReasoning === true : null,
     reasoningEfforts: efforts,
     supportsTools: model ? model.supportsTools === true : null,
+    // #3426: false (text only) unless the catalog says the model takes images.
+    supportsImages: model ? model.supportsImages === true : null,
   };
 }
 

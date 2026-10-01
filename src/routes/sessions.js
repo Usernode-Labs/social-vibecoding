@@ -6498,7 +6498,10 @@ ${SCREENSHOT_FETCH_NOTE}`;
 // effort, so the note says what to do when they are absent.
 const HOMEROOM_READ_NOTE = 'Read-only Homeroom tools may also be available to you, as the MCP server `homeroom`: get_platform_conventions, get_app, list_requests, get_request, get_proposal and get_change. They read what the platform knows about THIS change\'s app: a section of the platform conventions on demand, the full discussion on a request, a proposal and its check results. They cannot write anything, and a call about any other app is refused. If they are not in your tool list this turn, carry on without them. Questions for the user still go in your final message.';
 
-const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `https://…/issue-images/<id>` (a **Screenshot:** image line), it is a screenshot the reporter captured as context — the agent working the issue should download it with `curl -sS -o /tmp/issue-screenshot.png <url>` (run via Bash) and use its Read tool on /tmp/issue-screenshot.png to view it before working.';
+// #3426: Codex views a local image with view_image, Claude Code with Read;
+// both work only for a model that takes images. A text-only model that is
+// told so stops there, instead of spending its turn decoding the PNG by hand.
+const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `https://…/issue-images/<id>` (a **Screenshot:** image line), it is a screenshot the reporter captured as context — the agent working the issue should download it with `curl -sS -o /tmp/issue-screenshot.png <url>` (run via Bash) and view /tmp/issue-screenshot.png with its image tool (view_image, or the Read tool) before working. If the tool says this model cannot take images, do not try to decode the file another way (by hand, as ASCII art or with OCR): work from the text, and say what the screenshot would have needed to show.';
 
 // #170: the addendum for the headless DECISION turn — the one extra Mayor
 // call offered after a successful scout, where the run may proceed straight

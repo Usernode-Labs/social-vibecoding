@@ -83,22 +83,25 @@ function presentedToken(headers) {
   return typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : null;
 }
 
-// The platform gives every OpenRouter model text only, as Codex's model
-// catalog does (input_modalities: ['text']). Claude Code would otherwise send
-// a screenshot or an image it Read as an image block, which a text-only model
-// refuses and which fails the whole request. A PDF arrives the same way.
+// The platform gives an OpenRouter model text only unless OpenRouter lists
+// image input for it (#3426: AGENT_MODEL_SUPPORTS_IMAGES, as Codex's model
+// catalog declares it). Claude Code would otherwise send a screenshot or an
+// image it Read as an image block, which a text-only model refuses and which
+// fails the whole request. A PDF arrives the same way, and stays text only:
+// image input says nothing about documents.
 const NON_TEXT_BLOCKS = new Map([
   ['image', '[image omitted: this model reads text only]'],
   ['document', '[document omitted: this model reads text only]'],
 ]);
 
-function textOnly(blocks) {
+function textOnly(blocks, { images = false } = {}) {
   if (!Array.isArray(blocks)) return blocks;
   return blocks.map((block) => {
     if (!block || typeof block !== 'object') return block;
+    if (images && block.type === 'image') return block;
     if (NON_TEXT_BLOCKS.has(block.type)) return { type: 'text', text: NON_TEXT_BLOCKS.get(block.type) };
     if (block.type === 'tool_result' && Array.isArray(block.content)) {
-      return { ...block, content: textOnly(block.content) };
+      return { ...block, content: textOnly(block.content, { images }) };
     }
     return block;
   });
@@ -138,11 +141,13 @@ function openRouterWebSearch(tool) {
 
 // Pin the model, cap the reply, keep the input text, set the thinking level
 // and route web search to OpenRouter. Exported for tests: this is the policy.
-function applyTurnPolicy(body, { model, maxOutputTokens, countTokens, reasoningEffort = null }) {
+function applyTurnPolicy(body, {
+  model, maxOutputTokens, countTokens, reasoningEffort = null, imageInput = false,
+}) {
   body.model = model;
   if (Array.isArray(body.messages)) {
     body.messages = body.messages.map((message) => (message && Array.isArray(message.content)
-      ? { ...message, content: textOnly(message.content) }
+      ? { ...message, content: textOnly(message.content, { images: imageInput === true }) }
       : message));
   }
   if (countTokens) return body;
@@ -181,7 +186,7 @@ function applyTurnPolicy(body, { model, maxOutputTokens, countTokens, reasoningE
 
 async function startMessagesAdapter({
   baseUrl, apiKey, model, maxOutputTokens = null, reasoningEffort = null, localToken,
-  onTiming = null, timingIntervalMs = 15_000, fetchImpl = fetch,
+  onTiming = null, timingIntervalMs = 15_000, fetchImpl = fetch, imageInput = false,
 }) {
   const base = new URL(baseUrl);
   if (!['https:', 'http:'].includes(base.protocol) || base.username || base.password || base.search || base.hash) {
@@ -228,7 +233,7 @@ async function startMessagesAdapter({
         replyError(res, 400, 'invalid_request_error', 'Invalid OpenRouter request body');
         return;
       }
-      applyTurnPolicy(body, { model, maxOutputTokens, countTokens, reasoningEffort });
+      applyTurnPolicy(body, { model, maxOutputTokens, countTokens, reasoningEffort, imageInput });
       const serializedBody = JSON.stringify(body);
       if (onTiming && !countTokens) {
         // Sizes and counts only: the request's content never leaves here.
@@ -380,6 +385,7 @@ async function runClaude(args, env = process.env) {
     model,
     maxOutputTokens: Number.isSafeInteger(maxOutputTokens) && maxOutputTokens > 0 ? maxOutputTokens : null,
     reasoningEffort: env.AGENT_REASONING_EFFORT || null,
+    imageInput: env.AGENT_MODEL_SUPPORTS_IMAGES === '1',
     localToken,
     // The same content-free request timing a Codex turn reports, so a quiet
     // model call shows in the owner's progress log either way.

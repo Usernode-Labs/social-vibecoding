@@ -75,6 +75,7 @@ test('rules are ordered: understand, scope, prove, hand off', () => {
     /Work only on the branch you were given/,
     /Run the tests that cover/,
     /exercise the app's existing main flow/,
+    /Browser features that need a user gesture/,
     /Do not change a lockfile/,
     /A test or check you add must fail/,
     /does not test\n\s+your feature/,
@@ -140,4 +141,17 @@ test('a dev chat build carries the contract, and the first prompt is gone', () =
   assert.match(dispatched, /choose the reading that changes the least existing behaviour, and say which you chose/);
   assert.match(sessions.DEV_CHAT_SUMMARY_RULE, /before any block it ends with/);
   assert.match(sessions.DEV_CHAT_SUMMARY_RULE, /name anything you noticed but left alone/);
+});
+
+test('#3426: a feature that needs a user gesture is started in a tap handler', () => {
+  // gym-tracker #42: the end-of-rest beep created its AudioContext from the
+  // 1 Hz timer, which phones keep silent.
+  assert.equal(buildContract.RULES.userGesture, [
+    '- Browser features that need a user gesture (sound through an AudioContext, notification permission,',
+    '  clipboard, fullscreen) must be started or unlocked inside a tap or click handler. Started later, from a',
+    '  timer or a render, phones refuse them or keep them silent.',
+  ].join('\n'));
+  for (const commits of ['agent', 'harness']) {
+    assert.ok(buildContract.buildContractBlock({ commits }).includes(buildContract.RULES.userGesture));
+  }
 });

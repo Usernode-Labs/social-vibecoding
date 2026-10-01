@@ -210,10 +210,30 @@ function lastActivity() {
   };
 }
 
+// #3426: a reporter's screenshot (feedback's `/issue-images/<id>` line) is
+// often the only description of what they mean, and the bot used to guess
+// past it: recipebot #47 ("Can not comment", a phone screenshot) was built
+// on an assumption. Said only when the thread has one, in each turn that
+// reads the request: triage, spec and build.
+const ISSUE_IMAGE_URL = /https?:\/\/[^\s)]+\/issue-images\/[A-Za-z0-9_-]+/;
+
+function screenshotNote(seed) {
+  if (!ISSUE_IMAGE_URL.test(String(seed || ''))) return [];
+  return [
+    'The request includes a screenshot (an `/issue-images/<id>` link above). Download each one, for example',
+    '`curl -sS -o /tmp/issue-shot-1.png <url>`, and look at it with your image tool (view_image, or the Read',
+    'tool) before you decide anything: it is often the clearest description of what the reporter means. If the',
+    'tool says this model cannot take images, do not try to decode the file another way (by hand, as ASCII art',
+    'or with OCR): treat what it shows as unknown, and say so.',
+    '',
+  ];
+}
+
 function specPrompt({ seed, buildNote }) {
   return [
     seed,
     '',
+    ...screenshotNote(seed),
     'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
     '',
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
@@ -1049,6 +1069,7 @@ function buildPrompt({ seed, buildNote, spec = null }) {
   return [
     seed,
     '',
+    ...screenshotNote(seed),
     'You are the Homeroom bot, building this request so the app\'s group can review it as a proposal.',
     'Your triage of the request concluded it is ready to build, with this plan:',
     '',
@@ -1446,6 +1467,7 @@ module.exports = {
   specUserFacing,
   buildDescription,
   buildPrompt,
+  screenshotNote,
   buildAndPropose,
   draftSpec,
   specPrompt,

@@ -135,6 +135,13 @@ function compareByCost(a, b) {
   return String(a.name || a.id).localeCompare(String(b.name || b.id));
 }
 
+// OpenRouter's own word on what a model takes in: architecture.input_modalities
+// (e.g. ['text', 'image']). Absent means text only.
+function acceptsImages(m) {
+  const modalities = m?.architecture?.input_modalities;
+  return Array.isArray(modalities) && modalities.includes('image');
+}
+
 // Sanitize a raw OpenRouter model into the UI-friendly shape.
 function sanitizeModel(m, compatibility, { recommended = false } = {}) {
   const pricing = m.pricing || {};
@@ -191,6 +198,15 @@ function sanitizeModel(m, compatibility, { recommended = false } = {}) {
   // model metadata remain exactly as before this feature.
   Object.defineProperty(sanitized, 'globalChatReasoningEfforts', {
     value: globalChatReasoningEfforts,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  // #3426: whether OpenRouter lists image input for the model, read by the
+  // coding turn's runtime metadata (agent-turn.js) so a model that sees
+  // images is declared able to. Non-enumerable for the same reason.
+  Object.defineProperty(sanitized, 'supportsImages', {
+    value: acceptsImages(m),
     enumerable: false,
     configurable: false,
     writable: false,
