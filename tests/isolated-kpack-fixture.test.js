@@ -16,6 +16,7 @@ const {
 function fixture(t) {
   const id = randomUUID();
   const name = `preview-recovery-test-${id}`;
+  const clusterName = `c4-preview-${id}`;
   const createdAt = new Date(Date.now() - 1000).toISOString();
   const directory = path.join(os.tmpdir(), name);
   fs.mkdirSync(directory);
@@ -30,7 +31,7 @@ function fixture(t) {
       version: 1, fixtureId: id, createdAt, directory,
       kubeconfigPath: path.join(directory, 'kubeconfig'),
       dockerHost: 'unix:///tmp/injected-docker.sock', dockerDaemonId: 'local-daemon',
-      cluster: { name, context: `kind-${name}`, server: 'https://127.0.0.1:64439', uid: 'cluster-uid', nodeContainerIds: [nodeId] },
+      cluster: { name: clusterName, context: `kind-${clusterName}`, server: 'https://127.0.0.1:64439', uid: 'cluster-uid', nodeContainerIds: [nodeId] },
       namespace: { name, uid: 'namespace-uid' },
       database: { url: databaseUrl, containerId: dbId, systemIdentifier: '1234567', image: `postgres@sha256:${'d'.repeat(64)}` },
       registry: { host, serviceUid: 'service-uid', podUid: 'pod-uid', image: `registry@sha256:${'e'.repeat(64)}` },
@@ -47,20 +48,20 @@ function fixture(t) {
   };
   const kubeconfig = {
     apiVersion: 'v1', kind: 'Config',
-    'current-context': `kind-${name}`,
-    clusters: [{ name: `kind-${name}`, cluster: { server: value.isolation.cluster.server, 'certificate-authority-data': 'Y2E=' } }],
-    contexts: [{ name: `kind-${name}`, context: { cluster: `kind-${name}`, user: 'fixture' } }],
+    'current-context': `kind-${clusterName}`,
+    clusters: [{ name: `kind-${clusterName}`, cluster: { server: value.isolation.cluster.server, 'certificate-authority-data': 'Y2E=' } }],
+    contexts: [{ name: `kind-${clusterName}`, context: { cluster: `kind-${clusterName}`, user: 'fixture' } }],
     users: [{ name: 'fixture', user: { 'client-certificate-data': 'Y2VydA==', 'client-key-data': 'a2V5' } }],
   };
   const metadata = uid => ({ uid, labels: { [LABEL]: id }, creationTimestamp: new Date().toISOString() });
   const containers = [
     {
-      Id: nodeId, Name: `/${name}-control-plane`, Created: new Date().toISOString(), State: { Running: true },
-      Config: { Labels: { 'io.x-k8s.kind.cluster': name } }, Mounts: [],
+      Id: nodeId, Name: `/${clusterName}-control-plane`, Created: new Date().toISOString(), State: { Running: true },
+      Config: { Labels: { 'io.x-k8s.kind.cluster': clusterName } }, Mounts: [],
       NetworkSettings: { Ports: { '6443/tcp': [{ HostIp: '127.0.0.1', HostPort: '64439' }] } },
     },
     {
-      Id: dbId, Name: `/${name}-postgres`, Created: new Date().toISOString(), State: { Running: true },
+      Id: dbId, Name: `/${clusterName}-postgres`, Created: new Date().toISOString(), State: { Running: true },
       Config: { Labels: { [LABEL]: id }, Image: value.isolation.database.image }, Mounts: [],
       NetworkSettings: { Ports: { '5432/tcp': [{ HostIp: '127.0.0.1', HostPort: '55449' }] }, Networks: { isolated: { IPAddress: '172.18.0.3' } } },
     },
@@ -83,7 +84,7 @@ function fixture(t) {
     core: {
       readNamespace: async ({ name: requested }) => ({ metadata: metadata(requested === 'kube-system' ? 'cluster-uid' : 'namespace-uid') }),
       readNamespacedServiceAccount: async () => ({ metadata: metadata('account-uid') }),
-      listNode: async () => ({ items: [{ metadata: { name: `${name}-control-plane` } }] }),
+      listNode: async () => ({ items: [{ metadata: { name: `${clusterName}-control-plane` } }] }),
       readNamespacedService: async () => service,
       listNamespacedPod: async () => ({ items: [pod] }),
       readNamespacedEndpoints: async () => ({ subsets: [{ ports: [{ port: 5000 }], addresses: [endpoint] }] }),

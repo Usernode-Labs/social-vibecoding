@@ -9,7 +9,8 @@ test starts. A namespace name or a loopback URL alone is not sufficient.
 The harness currently supports one narrow fixture layout: local Docker-backed
 kind, a new Docker PostgreSQL container, and a registry Pod with emptyDir storage
 inside that kind cluster. Other layouts fail closed. Provisioning is not performed
-by the test runner. No local cluster or fixture has yet been provisioned for C4.
+by the test runner. The fixture provisioner is a separate, explicit local command.
+Live preflight and the bounded C4 actual-resource scenarios passed on 1 October 2026.
 
 ## Required manifest
 
@@ -29,7 +30,7 @@ plus an `isolation` object with these fields:
 | `directory` | Absolute path to the new temporary directory. |
 | `kubeconfigPath`, `kubeconfigSha256` | Its `kubeconfig` file and SHA-256 of those exact bytes. |
 | `dockerHost`, `dockerDaemonId` | Explicit local Unix socket and expected daemon ID. No ambient Docker context/SSH/TCP endpoint. |
-| `cluster.name`, `cluster.context` | `preview-recovery-test-<UUID>` and `kind-preview-recovery-test-<UUID>`. |
+| `cluster.name`, `cluster.context` | `c4-preview-<UUID>` and `kind-c4-preview-<UUID>`. The shorter cluster name keeps its node hostname within Docker's 64-character limit; namespace/directory names keep the full prefix. |
 | `cluster.server`, `cluster.uid` | Explicit `https://127.0.0.1:<port>` and kube-system namespace UID read from the new cluster. |
 | `cluster.nodeContainerIds` | Full Docker IDs of its newly created kind nodes. |
 | `namespace.name`, `namespace.uid` | `preview-recovery-test-<UUID>` and its new namespace UID. |
@@ -79,8 +80,10 @@ In `config.kubernetes`, both namespaces must equal the fixture namespace and
 
 Keep node version/deadline and the remaining recipe settings explicit. Provision
 compatible kpack into the new local cluster only. The production installation is
-never a fixture. A successful source revision and a predictable failing revision
-are still needed for C4's actual-resource scenarios.
+never a fixture. The fixture pins a successful public source revision. A deliberately unsupported
+Node version produces a real build-phase failure against the same revision.
+Paketo skips requested scripts missing from package.json, so a missing script
+is not a reliable failure fixture.
 
 ## Admission to the test
 
@@ -105,11 +108,66 @@ run flag directly cannot bypass preflight. Offline guard tests use injected
 read-only observations and local temporary files; their success does not establish
 actual fixture isolation or C4 integration evidence.
 
-## Current blocker
+## Reproducible local provisioner
 
-No new local kind cluster, dedicated kubeconfig/isolation manifest, new container
-database or local registry fixture is available. No integration mutations ran.
-The previously used native PostgreSQL instance is **not** accepted by this new
-harness. Establish and verify the above local fixture before resuming C4. Actual
-terminal failures, delayed creation and successor-preserving retirement remain
-pending alongside the unrun worker-interruption/lost-acknowledgment job.
+`scripts/kpack-local-fixture.js` supports Darwin ARM64 with Docker Desktop on an
+**explicit local Unix socket**. It records a fresh UUID, creation boundary and
+Docker daemon ID before provisioning. No Docker or Kubernetes context is selected
+implicitly. Commands are:
+
+```sh
+node scripts/kpack-local-fixture.js init unix:///absolute/path/to/local/docker.sock
+# Use exactly the new directory printed by init:
+node scripts/kpack-local-fixture.js setup /absolute/path/to/preview-recovery-test-UUID
+node scripts/kpack-local-fixture.js test /absolute/path/to/preview-recovery-test-UUID
+node scripts/kpack-local-fixture.js teardown /absolute/path/to/preview-recovery-test-UUID
+```
+
+Setup downloads checksum-verified kind 0.33.0 and crane 0.20.3 inside that
+private temporary directory, copies the installed kubectl there, and downloads
+kpack 0.17.2. It creates one dedicated kind node, one tmpfs-backed PostgreSQL 15.15
+container, one labelled Docker network and one registry 2.8.3 Pod with emptyDir.
+Resolved infrastructure image digests, physical IDs and credentials are recorded
+in private fixture files. Default kubeconfig, host daemon settings and deployment
+configuration are never edited. Public image reads require no ambient credentials.
+
+It seeds a pinned ARM64 Paketo Noble builder into the local registry and derives
+a fixture-only configuration with `CNB_INSECURE_REGISTRIES` set to exactly that
+registry host. This is required by the [buildpack lifecycle](https://github.com/buildpacks/spec/blob/main/platform.md)
+for local HTTP; it does not change production recipes or registry security.
+Containerd DNS/HTTP configuration is changed only inside the new fixture node.
+Kpack CRDs must reach Established before applying the lifecycle object. Builder
+source digest and sample revision are constants in the provisioner; dependency
+resolution remains non-hermetic.
+
+Every bootstrap phase rechecks its recorded cluster/container identities. Resumed
+setup refuses namespace/registry successors or replaced database storage. A
+completed teardown cannot be reused; init must create another fresh fixture.
+Setup/test logs and credential/configuration files remain in the private temporary
+directory for inspection. Treat those files as local secrets, not repository inputs.
+
+Teardown verifies daemon, exact container IDs, labels/names/images and creation
+boundaries, network ownership/membership, volume creation and consumers **before
+any removal**. It deletes by immutable IDs. Same-name successors and volumes with
+unrelated consumers are refused. Missing recorded IDs are tolerated after partial
+teardown without adopting replacements; repeat teardown is safe. It does not
+prune images, other networks or other volumes. Shared base-image download caches
+remain. Registry artifacts disappear with the owned node/emptyDir, not by remote
+registry deletion. Fixture files/tooling/logs are retained.
+
+## Actual evidence and limits
+
+The isolated job now covers actual worker SIGKILL/reclaim, lost decision reply,
+lost Build-create reply, a terminal build-phase failure, and creation arriving
+after cleanup records absence. It checks the retained SQL cleanup obligation,
+revisits the actual late Build, defers retirement while running, and preserves the
+successor Build UID/output and stored serving-preview tuple. All three integration
+tests passed without skips. The ledger records concrete UIDs/digests and log paths.
+
+Delay and reply loss are injected at the client/service boundary; Builds, Pods,
+completion/output and PostgreSQL persistence are real. Clone/checkout/runtime
+preparation remains injected. This does not demonstrate real serving traffic,
+runtime deployment/activation, arbitrary API-server timing or production fleet
+compatibility. Offline guard tests are separate evidence. Admission stays
+experimental; no caller migration, production rollout, generic executor or old
+lock/timer removal is part of this fixture checkpoint.

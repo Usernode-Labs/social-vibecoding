@@ -34,7 +34,8 @@ function validateDestinations(fixture, databaseUrl, now = Date.now()) {
   requireIsolation(Number.isFinite(created) && created <= now && now - created < 24 * 3600000,
     'fixture must have been created within the last 24 hours');
   const name = `preview-recovery-test-${id}`;
-  requireIsolation(isolation.cluster.name === name && isolation.cluster.context === `kind-${name}`,
+  const clusterName = `c4-preview-${id}`;
+  requireIsolation(isolation.cluster.name === clusterName && isolation.cluster.context === `kind-${clusterName}`,
     'expected dedicated kind cluster identity required');
   const server = loopbackUrl(isolation.cluster.server, 'https:');
   requireIsolation(!server.username && !server.password && server.pathname === '/' && !server.search,
@@ -267,7 +268,7 @@ async function verifyDatabase(isolation, databaseContainer, databaseUrl, ClientT
   try {
     await client.connect();
     const { rows: [identity] } = await client.query(`SELECT current_database() AS name,
-      inet_server_addr()::text AS address, inet_server_port() AS port,
+      host(inet_server_addr()) AS address, inet_server_port() AS port,
       pg_postmaster_start_time() AS started, system_identifier::text AS identifier
       FROM pg_control_system()`);
     const addresses = Object.values(databaseContainer.NetworkSettings.Networks).map(network => network.IPAddress);

@@ -175,8 +175,9 @@ cluster/registry endpoints beneath admitted work remains unsupported.
 
 The kpack controller/API is trusted to enforce immutable recipes and report
 completed output. Comparison fails closed on unexpected recipe changes or
-behavior-bearing admission mutations; actual fleet/CRD compatibility is not yet
-proven. Source/builder pinning does not make dependencies or the builder's run
+behavior-bearing admission mutations. The isolated kpack 0.17.2 proof accepts
+its empty `runImage: {}` default without weakening recipe/UID/output checks;
+production fleet/CRD compatibility is not established. Source/builder pinning does not make dependencies or the builder's run
 image hermetic. A nonzero detect/build phase is a build-step failure, not proof
 that application source is at fault. Confirmed missing diagnostic Pods yield an
 unclassified terminal failure; transport failures reading them remain retryable.
@@ -207,7 +208,7 @@ an explicit isolation manifest, dedicated kubeconfig and identity verification i
 the runner, test process and worker before any mutations. No ambient context,
 in-cluster credentials or database URL is a fallback. Production must remain
 untouched. [The isolation contract](kpack-test-isolation.md) specifies every field,
-destination, fresh-storage check and the currently missing fixture. It requires
+destination, fresh-storage check and reproducible fixture provisioner. It requires
 `PREVIEW_FLOW_TEST_DATABASE_URL` and `KPACK_RECOVERY_TEST_CONFIG`, a JSON file with:
 
 - `config`: explicit `appRuntime: "kubernetes"` and the existing `kubernetes`
@@ -229,33 +230,43 @@ the verified terminal test Build using UID/resourceVersion preconditions; that
 teardown is separate from production retirement. Failed runs can leave their
 attempt-specific Build/Pod and registry artifacts in the disposable namespace.
 
-**C4 integration remains pending.** Rechecked after the adoption correction:
-`kubectl config get-contexts -o name` is empty and `current-context` is unset;
-`KPACK_RECOVERY_TEST_CONFIG`, `KUBECONFIG` and `KUBERNETES_SERVICE_HOST` are unset.
-There is no new local fixture. The previously used native PostgreSQL instance
-does not meet the tightened harness contract. The job exits 1 for missing inputs
-before any integration mutations.
-An optional test skip or an injected resource is not actual-resource proof.
+**Bounded C4 actual-resource evidence passed on 1 October 2026.** A newly created
+local kind cluster, dedicated kubeconfig, tmpfs Docker PostgreSQL and namespace-local
+registry passed all live isolation proofs. The expanded job passed three tests:
 
-The missing inputs are:
+- Kill the real worker after actual Build creation; expire its claim and recover
+  the same UID/digest. Inject a lost reply after the real `CandidateImageBuilt`
+  commit; candidate completion succeeds without another Build.
+- An explicitly unsupported, pinned Node version causes a real owned build Pod's
+  build-phase failure. The worker retires preparation, records domain failure and
+  performs no runtime deployment. The serving projection remains unchanged.
+- Delay actual creation at the service boundary; retire the attempt and complete
+  cleanup while observation says absent. Its cleanup request stays in SQL and
+  census discovers it again. Create a successor and lose the actual create reply;
+  inspection adopts the same UID without another POST. Release the late creator;
+  cleanup defers while its real Build runs, then retains its terminal record and
+  preserves the successor UID/digest and serving projection.
 
-- A newly created local kind cluster with dedicated kubeconfig, verified local
-  identities and compatible kpack controller/Build CRD. No default kubeconfig edits.
-- Its new disposable namespace, dedicated account, local registry/emptyDir and
-  verified UIDs/routing; a fresh local Docker PostgreSQL/database with verified
-  container/volume/system identity. Both runtime/build namespaces stay in this fixture.
-- A compatible builder seeded into that test registry, pinned by digest, node
-  version and bounded deadline; output/cache prefixes in the same dedicated registry.
-- A reachable fixture repository, full successful revision, matching `runScript`,
-  and a full revision that predictably fails a detect/build phase. Record these
-  with the explicit configuration file path in `KPACK_RECOVERY_TEST_CONFIG`.
+The delayed case deliberately interleaves **named service execution** with
+retirement; it does not bypass a long-held worker lock or simulate an API server
+continuing after client cancellation. Submission checkpoints and lifecycle
+permissions use the shared execution store and validated decision actions. Clone
+completion/removal and checkout/runtime work are injected. The SIGKILL case uses
+the actual worker. This is actual Build/Pod/registry/database evidence, not actual
+runtime adoption, serving traffic or activation proof. Healthy-runtime adoption
+still has the separately recorded real-PostgreSQL/injected-Deployment evidence.
 
-Once provided, extend and run the isolated job for actual terminal failure,
-delayed creation and successor-preserving retirement as well as its existing
-worker-interruption and lost-decision-acknowledgment scenario. Delay/loss may be
-injected at the client boundary, but Build/Pod creation and completion must occur
-in the real cluster; record that distinction. Verify that absent retired work
-remains discoverable when delayed creation arrives, that it is not recreated,
-and that retirement leaves the successor's UID/output intact. The current job
-does not yet establish those cases. Preserve protections and experimental admission
-until the expanded evidence and fleet-defaulting checks pass.
+Fixture failures uncovered and fixed: too-long kind node hostname, missing CRD
+establishment wait, PostgreSQL inet formatting, node HTTP-registry configuration,
+and lifecycle HTTP configuration. Paketo ignores absent script names; failure is
+therefore induced by a pinned unsupported Node version, not an assumed script exit.
+These were fixture/harness changes; production action/reducer/runtime checks were
+not weakened. No source lifecycle implementation changed in this checkpoint.
+
+Setup and ownership-verified repeatable teardown are in
+`scripts/kpack-local-fixture.js`; see the [isolation contract](kpack-test-isolation.md).
+The ledger retains concrete log paths, source/builder pins, Build UIDs and outputs.
+No old locks, timers, caller paths or cleanup protections are removed. Admission
+stays experimental, Temporal remains deferred, and B2/C2 reuse does not complete
+the migration. Retention bounds, endpoint changes, hermetic builds, durable runtime
+resumption, supervised deployment and production fleet compatibility remain open.
