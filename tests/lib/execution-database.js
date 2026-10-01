@@ -30,7 +30,8 @@ async function createExecutionDatabase(databaseUrl) {
   const source = fs.readFileSync(require.resolve('../../src/db/schema.sql'), 'utf8');
   for (const table of ['preview_flows', 'preview_bindings', 'preview_flow_heads', 'preview_flow_resources',
     'preview_action_receipts', 'preview_flow_decisions', 'execution_work_requests', 'execution_work_attempts',
-    'execution_work_events', 'proposal_review_receipts', 'proposal_review_decisions']) {
+    'execution_work_events', 'proposal_review_receipts', 'proposal_review_decisions',
+    'cli_preview_handoffs', 'cli_preview_receipts', 'cli_preview_decisions']) {
     await pool.query(source.match(new RegExp(String.raw`CREATE TABLE IF NOT EXISTS ${table} \([\s\S]*?\n\);`))[0]);
   }
   return {

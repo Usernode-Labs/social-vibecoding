@@ -644,7 +644,7 @@ function revisionBuildState(session, checks, runtime) {
   if (!headSha) return 'draft';
   if (['failing', 'error'].includes(session.check_state)) return 'failed';
   if (checks.stalled) return 'stalled';
-  if (runtime.build || !session.staging_url) return 'deploying';
+  if (runtime.build || !session.staging_url || (!runtime.inFlight && session.check_phase === 'building')) return 'deploying';
   if (runtime.inFlight
       || !session.check_state || session.check_state === 'pending') return 'checking';
   if (session.check_state === 'passing' || session.check_state === 'skipped') return 'ready';
@@ -811,6 +811,34 @@ async function snapshotSpec(pool, sessionId, content, commitSha = null) {
     [sessionId, version, content, commitSha]
   );
   return version;
+}
+
+async function persistDurableSubmission(client, { session, input, config }) {
+  await insertHistoryRows(client, session.id, input.history);
+  const summary = testsSummary(input.tests);
+  if (summary) {
+    const summaryId = crypto.createHash('sha256').update(summary).digest('hex').slice(0, 16);
+    await insertHistoryRows(client, session.id, [{
+      id: `tests:${input.headSha}:${summaryId}`,
+      kind: 'summary',
+      phase: 'test',
+      content: summary,
+    }]);
+  }
+  const spec = input.spec || session.spec_md;
+  if (input.spec) await client.query('UPDATE chat_sessions SET spec_md = $1 WHERE id = $2', [input.spec, session.id]);
+  await snapshotSpec(client, session.id, spec, input.headSha);
+  // A query-only facade joins the decision transaction. Shots may
+  // not open or commit an independent transaction on this client.
+  return applyShotsRevision({
+    pool: { query: client.query.bind(client) },
+    config,
+    session: { ...session },
+    headSha: input.headSha,
+    visibleChanges: input.visibleChanges,
+    headChanged: currentCheckedHead(session) !== input.headSha,
+    transactional: true,
+  });
 }
 
 async function loadOwnedHandoff(pool, sessionId, userId) {
@@ -1581,6 +1609,9 @@ function proposalHandoffRoutes(config) {
         if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
           return res.status(404).json({ error: 'Active handoff session not found' });
         }
+        const durableHandoff = require('../services/cli-preview-handoff/work');
+        const alreadyEnrolled = await durableHandoff.enrolled(pool, session.id);
+        const useDurableHandoff = alreadyEnrolled || durableHandoff.selected(config, session);
         let shotsApplied = null;
         if (currentCheckedHead(session) === input.headSha && input.visibleChanges !== undefined) {
           shotsApplied = await applyShotsRevision({
@@ -1596,6 +1627,28 @@ function proposalHandoffRoutes(config) {
             ...status,
             ...shotsResponse(shotsApplied, session),
           });
+        }
+        let retryDurablePreparation = false;
+        if (alreadyEnrolled && currentCheckedHead(session) === input.headSha) {
+          const owner = durableHandoff.createCliHandoffWork(pool, config);
+          const work = await owner.recover(session.id);
+          retryDurablePreparation = work?.status === 'succeeded'
+            && (work.result?.prepared === false || ['handoff_obsolete', 'status_changed'].includes(work.last_code));
+          if (!retryDurablePreparation) {
+            const continuation = ['error', 'failing'].includes(session.check_state)
+              ? await owner.recover(session.id, { force: true }) : work;
+            const currentSession = continuation?.id !== work?.id
+              ? await loadOwnedHandoff(pool, sessionId, req.user.id) : session;
+            const status = publicSessionStatus(currentSession || session);
+            return res.status(status.revisionState === 'ready' ? 200 : 202).json({
+              ...status,
+              workId: continuation?.id,
+              ...shotsResponse(shotsApplied, session),
+            });
+          }
+        }
+        if (alreadyEnrolled && !durableHandoff.selected(config, session)) {
+          return res.status(409).json({ error: 'durable_revision_admission_disabled' });
         }
         const localPipelineBusy = hasInFlightHandoffPipeline(session.id);
         const stagingBusy = staging.hasInFlightBuild(Number(session.id));
@@ -1663,6 +1716,29 @@ function proposalHandoffRoutes(config) {
               return res.status(409).json({
                 error: 'branch_moved',
                 message: 'The proposal branch changed after this managed commit was uploaded.',
+              });
+            }
+
+            if (useDurableHandoff) {
+              const accepted = await durableHandoff.createCliHandoffWork(pool, config).admit({
+                session,
+                headSha: input.headSha,
+                retryPreparation: retryDurablePreparation,
+                async persistDetails(client) {
+                  shotsApplied = await persistDurableSubmission(client, { session, input, config });
+                },
+              });
+              if (!accepted.accepted) return res.status(409).json({ error: accepted.reason });
+              return res.status(202).json({
+                ok: true,
+                state: 'promoted',
+                status: 'promoted',
+                revisionState: 'deploying',
+                sessionId: Number(session.id),
+                headSha: input.headSha,
+                workId: accepted.work.id,
+                ...shotsResponse(shotsApplied, session),
+                webPath: changeHashPath(session.app_slug, session.id),
               });
             }
 
@@ -1774,6 +1850,28 @@ function proposalHandoffRoutes(config) {
             return res.status(503).json({ error: 'github_unavailable' });
           }
 
+          if (useDurableHandoff) {
+            const accepted = await durableHandoff.createCliHandoffWork(pool, config).admit({
+              session,
+              headSha: input.headSha,
+              retryPreparation: retryDurablePreparation,
+              async persistDetails(client) {
+                shotsApplied = await persistDurableSubmission(client, { session, input, config });
+              },
+            });
+            if (!accepted.accepted) return res.status(409).json({ error: accepted.reason });
+            visuals.notifyChecksPending(session.id, input.headSha, 'building', 'commit-push');
+            return res.status(202).json({
+              ok: true,
+              status: 'deploying',
+              sessionId: Number(session.id),
+              headSha: input.headSha,
+              workId: accepted.work.id,
+              ...shotsResponse(shotsApplied, session),
+              webPath: changeHashPath(session.app_slug, session.id),
+            });
+          }
+
           await insertHistory(pool, session.id, input.history);
           const summary = testsSummary(input.tests);
           if (summary) {
@@ -1861,6 +1959,9 @@ function proposalHandoffRoutes(config) {
     } catch (err) {
       if (err instanceof HandoffConflictError) {
         return res.status(409).json({ error: 'history_event_conflict', message: err.message });
+      }
+      if (err.code === 'CLI_PREVIEW_ADMISSION_REJECTED') {
+        return res.status(409).json({ error: err.message });
       }
       log.error('proposal-handoff', 'Failed to submit build', { err: err.message });
       res.status(500).json({ error: 'Internal server error' });

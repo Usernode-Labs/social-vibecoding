@@ -576,7 +576,7 @@ function visibleChangesSubmissionFields(result = {}) {
 // the new SHA. This is best-effort after a Git push: metadata storage must not
 // falsely report that code which already landed did not land.
 async function applyShotsRevision({
-  pool, config, session, headSha, visibleChanges, headChanged = false,
+  pool, config, session, headSha, visibleChanges, headChanged = false, transactional = false,
 }) {
   const submitted = visibleChanges !== undefined;
   if (!config?.shots?.collect) {
@@ -623,6 +623,7 @@ async function applyShotsRevision({
       }),
     };
   } catch (err) {
+    if (transactional) throw err;
     log.error('proposal-update', 'could not store before & after shots intent', {
       sessionId: Number(session.id), headSha, err: err.message,
     });

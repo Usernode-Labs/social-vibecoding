@@ -287,6 +287,11 @@ const FORCED_RECHECK_REASONS = new Set(['manual-recheck', 'testing-update']);
 // (pushSessionUpdate) so the Preview button reappears on the PR card
 // without anyone needing to reload.
 async function rebuildSessionStaging({ config, pool, session, reason }) {
+  const handoff = require('./cli-preview-handoff/work');
+  if (session.source === 'cli_handoff' && await handoff.enrolled(pool, session.id)) {
+    await handoff.createCliHandoffWork(pool, config).recover(session.id, { repair: true, expectedRuntimeName: session.staging_runtime_name || null });
+    return 'durable';
+  }
   const staging = require('./staging');
   const { broadcastGlobal, pushSessionUpdate } = require('./ws');
 
@@ -846,6 +851,13 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
 // no-op cases (no repo / no bot token → rebuildSessionStaging returns
 // 'skipped'); a genuine build failure propagates to the caller.
 async function recheckSessionChecks({ config, pool, session, reason }) {
+  const handoff = require('./cli-preview-handoff/work');
+  if (session.source === 'cli_handoff' && await handoff.enrolled(pool, session.id)) {
+    await handoff.createCliHandoffWork(pool, config).recover(session.id, {
+      force: FORCED_RECHECK_REASONS.has(reason) || session.check_state === 'error',
+    });
+    return 'durable';
+  }
   // #607: stamp 'pending' + tell open clients the moment the re-run is
   // requested — a needed staging rebuild can take minutes, and before this
   // the badge kept showing the stale verdict (or nothing at all for a

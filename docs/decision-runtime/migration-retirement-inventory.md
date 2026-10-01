@@ -78,3 +78,44 @@ worker restart cannot create duplicate work or lose the continuation; supersessi
 cannot activate an obsolete candidate; every selected rebuild/cleanup entry has
 one owner; record the old branches/flags/process ownership actually removed and
 the retained compatibility obligations. No production rollout is authorized here.
+
+## C8: selected ownership replaced, default-off
+
+The Kubernetes/kpack CLI submit route now accepts its head, details, pending checks
+and `native-preview-kubernetes-prepare` request in one shared transaction. Accepted
+candidate completion atomically admits `native-cli-preview-continuation` on the
+existing execution store. This is a named handler using shared scheduling,
+deduplication, claims and traces; it adds no execution framework or unrelated flow.
+
+| Old ownership removed for enrolled sessions | Replacement / retained boundary |
+| --- | --- |
+| Submit route's detached `startHandoffPipeline` preparation and promoted managed revision's import checker dispatch | Atomic CLI admission; the external worker owns preparation and its durable completion handoff. GitHub/submission serialization remains. |
+| `native` → `candidate-native` → synchronous `staging.buildAndDeployStaging`, its local queue and inline cleanup/activation | Attempt-specific preparation, recurring retirement work and separately authorized continuation activation. Those old functions remain for unenrolled callers. |
+| Preview-click rebuild, `staging-recovery` rebuild/recheck and native `pr-import-sync` preparation dispatch | Join the persisted CLI owner. An explicit retry/repair may admit a fresh attempt only under current domain permission and observed-runtime guard. No fallback with switches off. |
+| Old request paths superseding an enrolled preview before reaching the builder fence | Preview v10 checks the persisted admission identity under the shared aggregate transaction. A rejected competing action creates no new flow. |
+| Web activation recovery timer consuming an enrolled desired binding | The durable continuation worker inspects/reconciles activation. Timer dispatch remains for other callers; bounded cleanup already belongs to worker discovery. |
+| Preparation/check continuation depending on `handoffPipelines` and `active-workers` process lifetime | Durable work identities after admission. Short GitHub/admission coordination and unrelated caller coordination retain their process-local protections. |
+| Layered preparation flags required to enable this caller | One default-off CLI admission switch scopes the complete preparation capabilities inside this owner. Recovery follows persisted enrollment; other experiments retain their old admission flags. |
+| Expected image/runtime waiting logged as staging build failure | Informational waiting diagnostics; actual adapter errors still log failure. |
+
+The continuation kind remains necessary until activation/checks have another proven
+durable owner. Retire it only after draining retained work and moving every pending
+obligation. Old preparation payloads remain interpreted by their original work
+kind; C8 emits only the complete runtime preparation kind. The worker's behavior
+is selected by persisted payload/kind, not by reopening old caller dispatch.
+
+Retained compatibility review: v10 is the live preview reducer; v9 is frozen and
+has an explicit replay regression. No production refactor rollout occurred. The
+disposable test schemas are dropped and their trace samples remain in test/log
+evidence. This is not proof that all retained developer work/exported traces are
+gone, so existing historical replay remains pending a concrete retention audit.
+Neither C8's new CLI reducer v1 nor preview v10 is a permanent production support
+promise merely because it existed at a checkpoint.
+
+**Still retained:** shared resource/session locks, legacy callers, orphan-check
+harvest/cancellation, at-least-once capture/notification delivery, and recurring
+late-creation/database retirement obligations. Public capture/check Jobs and
+production ingress behavior were not proved by injected checks/local API binding.
+Next, review retained obligations and prove the real checks continuation for this
+same caller before considering wider rollout or more workflows. Prune only owners
+whose replacement and retained-data gate have both been demonstrated.

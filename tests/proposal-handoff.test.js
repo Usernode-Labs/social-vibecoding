@@ -36,7 +36,7 @@ function routeHandler(router, routePath, method) {
   return layer.route.stack[layer.route.stack.length - 1].handle;
 }
 
-function makeHarness() {
+function makeHarness({ durable = false } = {}) {
   const ids = {
     pool: require.resolve('../src/db/pool'),
     github: require.resolve('../src/services/github'),
@@ -57,6 +57,7 @@ function makeHarness() {
     // real staging and github services and the stubs below quietly stop
     // applying to everything the route delegates.
     pipeline: require.resolve('../src/services/handoff-pipeline'),
+    durable: require.resolve('../src/services/cli-preview-handoff/work'),
     subject: require.resolve('../src/routes/proposal-handoff'),
   };
   const original = new Map(Object.values(ids).map((id) => [id, require.cache[id]]));
@@ -93,6 +94,8 @@ function makeHarness() {
     rejectPending: false,
     persistStagingError: false,
     uploadHead: '3'.repeat(40),
+    durableAdmissions: [],
+    durableEnrolled: false,
     reconciliations: [],
     promotedChecks: [],
     votes: 0,
@@ -569,6 +572,25 @@ function makeHarness() {
     async rerunChecksForNewHead(args) { state.promotedChecks.push(args); },
   });
   delete require.cache[ids.pipeline];
+  stubModule(ids.durable, {
+    selected: () => durable,
+    enrolled: async () => state.durableEnrolled,
+    createCliHandoffWork: () => ({
+      async admit(args) {
+        // Route test only: actual transaction/admission is covered on PostgreSQL.
+        state.durableAdmissions.push(args.headSha);
+        await args.persistDetails(pool);
+        const row = state.sessions.find(session => session.id === args.session.id);
+        row.handoff_head_sha = args.headSha;
+        row.checks_commit_sha = args.headSha;
+        row.check_state = 'pending';
+        row.check_phase = 'building';
+        state.durableEnrolled = true;
+        return { accepted: true, work: { id: 'durable-preparation' } };
+      },
+      async recover() { return { id: 'durable-preparation', status: 'queued' }; },
+    }),
+  });
   delete require.cache[ids.subject];
   const subject = require('../src/routes/proposal-handoff');
   const router = subject.proposalHandoffRoutes({ maxGlobalSessions: 100 });
@@ -2113,3 +2135,41 @@ test('publishableStatus: the status a run started in, or promoted on its own com
   }
   assert.equal(publishableStatus(null, 'active', head), false);
 });
+
+for (const status of ['active', 'promoted']) {
+  test(`C8 selected ${status} CLI submission delegates only to durable admission`, async () => {
+    const { router, state, restore } = makeHarness({ durable: true });
+    try {
+      await routeHandler(router, '/api/apps/:slug/proposal-handoffs', 'post')({
+        params: { slug: 'demo' }, body: START_BODY, cliAuthenticated: true,
+        user: { id: 7, username: 'maker' },
+      }, mockRes());
+      markUploaded(state);
+      const session = state.sessions[0];
+      const servingUrl = 'https://old-preview.example';
+      session.staging_url = servingUrl;
+      session.status = status;
+      if (status === 'promoted') {
+        session.reviewed_head_sha = HEAD;
+        session.checks_commit_sha = HEAD;
+        session.handoff_head_sha = BASE;
+        state.remoteHead = HEAD;
+      }
+      const submit = routeHandler(router, '/api/sessions/:id/proposal-handoff/build', 'post');
+      const request = { params: { id: '101' }, cliAuthenticated: true, user: { id: 7, username: 'maker' },
+        body: { schemaVersion: 1, headSha: HEAD, history: [{ id: 'durable-history', kind: 'summary', phase: 'build', content: 'Ready.' }], tests: [] } };
+      const response = mockRes();
+      await submit(request, response);
+      assert.equal(response.statusCode, 202);
+      assert.equal(response.body.workId, 'durable-preparation');
+      assert.deepEqual(state.durableAdmissions, [HEAD]);
+      assert.equal(state.staging.length, 0);
+      assert.equal(state.captures.length, 0);
+      assert.equal(state.promotedChecks.length, 0);
+      assert.equal(session.staging_url, servingUrl);
+      assert.ok(state.messages.some(message => message.content === 'Ready.'));
+      await submit(request, mockRes());
+      assert.deepEqual(state.durableAdmissions, [HEAD], 'Lost reply joins the enrolled owner');
+    } finally { restore(); }
+  });
+}

@@ -6212,6 +6212,17 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       const inspected = await inspectPreview(session, { repairDockerAlias: true });
       if (inspected.status !== 'missing') return res.json(inspected);
 
+      const durableHandoff = require('../services/cli-preview-handoff/work');
+      if (session.source === 'cli_handoff' && await durableHandoff.enrolled(pool, sessionId)) {
+        const work = await durableHandoff.createCliHandoffWork(pool, config).recover(sessionId, { repair: true, expectedRuntimeName: session.staging_runtime_name || null });
+        const pending = work && ['queued', 'running'].includes(work.status);
+        return res.json({
+          status: pending ? 'rebuilding' : 'unavailable',
+          reason: pending ? 'durable_preparation' : 'durable_resource_recovery_required',
+          workId: work?.id,
+        });
+      }
+
       // Dedup concurrent clicks: at most one rebuild per session in flight.
       if (ensureStagingInFlight.has(sessionId)) {
         return res.json({ status: 'rebuilding' });

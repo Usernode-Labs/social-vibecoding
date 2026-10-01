@@ -171,7 +171,7 @@ test('native isolated candidates and activation recovery on real PostgreSQL', { 
         staging_image_ref TEXT, staging_build_ref TEXT, staging_commit_sha TEXT, last_activity_at TIMESTAMPTZ)`);
     const source = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
     const tables = ['preview_flows', 'preview_bindings', 'preview_flow_heads', 'preview_flow_resources',
-      'preview_action_receipts', 'preview_flow_decisions'];
+      'preview_action_receipts', 'preview_flow_decisions', 'execution_work_requests', 'cli_preview_handoffs'];
     for (const table of tables) {
       await pool.query(source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\n\\);`))[0]);
     }

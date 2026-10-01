@@ -36,6 +36,7 @@ function loadStaging({
   existsImpl = async () => false,
   dropImpl = null,
   runtimeKind = 'docker',
+  durableEnrolled = false,
   inspectClone = async () => ({ status: 'complete' }),
 } = {}) {
   const ids = {
@@ -51,12 +52,14 @@ function loadStaging({
     appSecrets: require.resolve('../src/services/app-secrets'),
     appLlmEnv: require.resolve('../src/services/app-llm-env'),
     pool: require.resolve('../src/db/pool'),
+    handoff: require.resolve('../src/services/cli-preview-handoff/work'),
     subject: require.resolve('../src/services/staging'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const events = [];
+  const logs = [];
   const deployments = [];
   const queries = [];
   const checkoutHeads = new Map();
@@ -70,7 +73,10 @@ function loadStaging({
     if (total > maxConcurrent) maxConcurrent = total;
   };
 
-  stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  stub(ids.logger, Object.fromEntries(['info', 'warn', 'error', 'debug'].map(level => [level,
+    (_scope, message) => logs.push({ level, message }),
+  ])));
+  stub(ids.handoff, { enrolled: async () => durableEnrolled });
   stub(ids.cloneOperation, { createCloneOperations: () => ({ inspect: inspectClone }) });
   stub(ids.guard, { withResourceUse: async (_config, _classifier, _resource, fn) => fn() });
   stub(ids.github, { getCloneUrl: async () => 'https://x/clone.git', isEnabled: () => true });
@@ -171,7 +177,7 @@ function loadStaging({
     }
   };
   return {
-    subject, events, queries, deployments, restore,
+    subject, events, queries, deployments, logs, restore,
     maxConcurrent: () => maxConcurrent,
   };
 }
@@ -575,7 +581,7 @@ for (const outcome of ['complete', 'clone waiting', 'image waiting', 'wrong revi
       buildOperation: { revision: outcome === 'wrong revision' ? 'b'.repeat(40) : headSha },
     };
     const legacyForbidden = async () => { throw new Error('Legacy database owner must not run'); };
-    const { subject, events, queries, restore } = loadStaging({
+    const { subject, events, queries, logs, restore } = loadStaging({
       runtimeKind: 'kubernetes',
       existsImpl: legacyForbidden,
       cloneImpl: legacyForbidden,
@@ -588,12 +594,12 @@ for (const outcome of ['complete', 'clone waiting', 'image waiting', 'wrong revi
       preparationOwner: 'bounded',
       async prepareClone() {
         phases.push('clone');
-        if (outcome === 'clone waiting') throw new Error('Clone still uncertain');
+        if (outcome === 'clone waiting') throw Object.assign(new Error('Clone still uncertain'), { previewPreparationOutcome: { outcome: 'waiting' } });
         return { password: 'owned-password', via: 'recovered-template' };
       },
       async prepareImage() {
         phases.push('image');
-        if (outcome === 'image waiting') throw new Error('Build still running');
+        if (outcome === 'image waiting') throw Object.assign(new Error('Build still running'), { previewImageOutcome: 'waiting' });
         return { imageRef: 'verified-image', buildRef: 'verified-build' };
       },
       async prepareRuntime() {
@@ -619,6 +625,10 @@ for (const outcome of ['complete', 'clone waiting', 'image waiting', 'wrong revi
         await assert.rejects(result, expected[outcome]);
         const visited = { 'clone waiting': ['clone'], 'image waiting': ['clone', 'image'], 'wrong revision': [] };
         assert.deepEqual(phases, visited[outcome]);
+        if (outcome.endsWith('waiting')) {
+          assert.equal(logs.some(log => log.level === 'error' && log.message === 'Staging build failed'), false);
+          assert.equal(logs.some(log => log.level === 'info' && log.message === 'Candidate preparation is waiting'), true);
+        }
       }
       assert.equal(events.some(event => event[0] === 'clone' || event[0] === 'drop'), false);
       assert.equal(queries.length, 0, 'preparation must not publish serving state');
@@ -721,3 +731,14 @@ for (const outcome of ['complete', 'waiting', 'runtime unauthorized', 'wrong rev
     }
   });
 }
+
+test('enrolled CLI callers cannot enter a legacy builder with admission disabled', async () => {
+  const { subject, events, restore } = loadStaging({ durableEnrolled: true });
+  try {
+    await assert.rejects(subject.buildAndDeployStaging({ nativeCliPreviewHandoffEnabled: false },
+      { ...mkSession(7), source: 'cli_handoff' }, mkApp, 'a'.repeat(40)), {
+      code: 'CLI_PREVIEW_DURABLE_OWNER',
+    });
+    assert.equal(events.length, 0, 'No source, clone, build, deployment or cleanup may start');
+  } finally { restore(); }
+});

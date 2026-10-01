@@ -1,9 +1,21 @@
 'use strict';
 
-const REDUCER_VERSION = 9;
+const REDUCER_VERSION = 10;
 
 // Domain state and guards remain separate from persistence and external I/O.
 function reduce(state, action, facts) {
+  const preparation = require('./actions').isPreparationRequest(action)
+    || action.type === 'RequestCandidatePreview';
+  if (preparation && state.cliAdmission && (action.type !== 'RequestCandidatePreview'
+      || action.actionId !== state.cliAdmission.actionId || action.headSha !== state.cliAdmission.headSha)) {
+    return {
+      accepted: false,
+      reason: 'durable_owner_required',
+      flow: state.flow,
+      projection: 'unchanged',
+      effects: [],
+    };
+  }
   return require('./candidate-reducer').reduceCandidate(state, action, facts);
 }
 
@@ -31,6 +43,9 @@ function replayDecision(entry) {
   }
   if (entry.reducer_version === 8) {
     return require('./versions/v8').reduce(entry.pre_state, entry.action, entry.facts);
+  }
+  if (entry.reducer_version === 9) {
+    return require('./versions/v9').reduce(entry.pre_state, entry.action, entry.facts);
   }
   if (entry.reducer_version === REDUCER_VERSION) {
     return reduce(entry.pre_state, entry.action, entry.facts);

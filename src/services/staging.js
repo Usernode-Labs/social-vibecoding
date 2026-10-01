@@ -126,6 +126,14 @@ function previewDisplayState(row) {
 }
 
 async function buildAndDeployStaging(config, session, app, commitHash, options = {}) {
+  // Every alternate caller is fenced, even after admission is switched off.
+  if (session.source === 'cli_handoff' && await require('./cli-preview-handoff/work').enrolled(
+    require('../db/pool').getPool(config), session.id,
+  )) {
+    throw Object.assign(new Error('Enrolled CLI preview is owned by the durable worker'), {
+      code: 'CLI_PREVIEW_DURABLE_OWNER',
+    });
+  }
   const lifecycle = require('./preview-lifecycle');
   if (lifecycle.enabled(config) && !lifecycle.current()) {
     return lifecycle.run(config, session, commitHash, 'build', async (operation, fresh) => {
@@ -783,7 +791,13 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     };
   } catch (err) {
     if (require('./preview-lifecycle').isCancelled(err)) throw err;
-    log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
+    const preparationWaiting = candidate?.preparationOwner === 'bounded'
+      && (err.previewImageOutcome === 'waiting' || err.previewPreparationOutcome?.outcome === 'waiting');
+    if (preparationWaiting) {
+      log.info('staging', 'Candidate preparation is waiting', { sessionId: session.id, code: err.code || 'preparation_pending' });
+    } else {
+      log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
+    }
     // Cleanup on failure — short grace, this container is being discarded.
     // Best-effort (the build already failed; nothing downstream forgets this
     // container, and the by-name sweeper is the backstop) but logged rather

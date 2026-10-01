@@ -577,7 +577,7 @@ async function integration(state, mode = 'test') {
     KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: fixture.isolation.database.url,
   };
   await verifyIsolatedBuildFixture({ env });
-  const option = { 'test-runtime': '--runtime', 'test-release': '--release', 'test-preparation': '--preparation' }[mode];
+  const option = { 'test-runtime': '--runtime', 'test-release': '--release', 'test-preparation': '--preparation', 'test-handoff': '--handoff' }[mode];
   const child = spawn(process.execPath, ['scripts/test-recoverable-preview-build.js', ...(option ? [option] : [])], { env, stdio: 'inherit' });
   const [code] = await once(child, 'exit');
   state.lastIntegration = { completedAt: new Date().toISOString(), exitCode: code };
@@ -599,8 +599,8 @@ async function main() {
     console.log(directory);
     return;
   }
-  check(['setup', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation'].includes(mode) && argument,
-    'use init <local-socket>, setup/test/test-runtime/test-release/test-preparation/teardown <directory>');
+  check(['setup', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff'].includes(mode) && argument,
+    'use init <local-socket>, setup/test/test-runtime/test-release/test-preparation/test-handoff/teardown <directory>');
   const directory = fs.realpathSync(argument);
   const state = JSON.parse(fs.readFileSync(path.join(directory, 'setup-state.json'), 'utf8'));
   check(state.version === 1 && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(state.fixtureId)
@@ -609,7 +609,7 @@ async function main() {
     && directory.startsWith(`${fs.realpathSync(os.tmpdir())}${path.sep}`), 'fixture directory identity mismatch');
   try {
     if (mode === 'setup') await setup(state);
-    else if (['test', 'test-runtime', 'test-release', 'test-preparation'].includes(mode)) await integration(state, mode);
+    else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff'].includes(mode)) await integration(state, mode);
     else await teardown(state);
   } catch (error) {
     state.lastError = error.message;

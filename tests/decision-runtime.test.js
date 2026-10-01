@@ -120,7 +120,7 @@ test('preview and review share one decision runtime over real PostgreSQL', { ski
   const peerReview = createProposalReview(peerPool, { isBusy: () => false });
   const config = { appRuntime: 'docker' };
   const tables = ['preview_flows', 'preview_bindings', 'preview_flow_heads', 'preview_flow_resources',
-    'preview_action_receipts', 'preview_flow_decisions', 'proposal_review_receipts', 'proposal_review_decisions'];
+    'preview_action_receipts', 'preview_flow_decisions', 'proposal_review_receipts', 'proposal_review_decisions', 'execution_work_requests', 'cli_preview_handoffs'];
 
   try {
     await pool.query(`CREATE TABLE apps (id INTEGER PRIMARY KEY, slug TEXT);

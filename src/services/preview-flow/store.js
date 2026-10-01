@@ -85,7 +85,11 @@ async function readState(client, sessionRow, sessionId, { lock = false, resource
   const retained = await client.query(`SELECT COUNT(*) AS count FROM preview_flow_resources
     WHERE session_id = $1 AND intent->>'attemptId' IS NOT NULL
       AND published_at IS NOT NULL AND cleanup_completed_at IS NULL`, [sessionId]);
-  return snapshot(sessionRow, flowRow, resourceRow, binding.rows[0], Number(retained.rows[0].count));
+  const state = snapshot(sessionRow, flowRow, resourceRow, binding.rows[0], Number(retained.rows[0].count));
+  const enrollment = (await client.query(`SELECT admission_id, head_sha FROM cli_preview_handoffs
+    WHERE session_id = $1`, [sessionId])).rows[0];
+  if (enrollment?.admission_id) state.cliAdmission = { actionId: enrollment.admission_id, headSha: enrollment.head_sha };
+  return state;
 }
 
 function persistPreparationFailure(client, action) {
@@ -366,4 +370,4 @@ function createPreviewFlow(pool, {
   };
 }
 
-module.exports = { createPreviewFlow };
+module.exports = { createPreviewFlow, readState };

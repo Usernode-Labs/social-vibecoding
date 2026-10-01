@@ -26,77 +26,80 @@ function createPreviewWork(pool, config, {
   clones = require('./clone-operation').createCloneOperations(),
   images = require('./image-build-operation').createImageBuildOperations(),
   runtimes = require('./runtime-operation').createRuntimeOperations({ dataKey: config.dataEncryptionKey }),
+  candidateAccepted = null,
 } = {}) {
   const runtime = createSessionDecisionRuntime(pool);
 
   async function request(action) {
+    return runtime.transact(transaction => requestInTransaction(transaction, action));
+  }
+
+  async function requestInTransaction(transaction, action) {
     if (config.nativePreviewWorkerEnabled !== true || !require('./activation').enabled(config)) {
       throw new Error('Durable native preview admission is experimentally disabled');
     }
     if (action.type !== 'RequestCandidatePreview') throw new Error('Native candidate request required');
 
-    return runtime.transact(async transaction => {
-      const admission = await owner.applyInTransaction(transaction, action);
-      if (!admission.decision.accepted) return admission;
-      const effect = admission.decision.effects.find(value => value.type === 'BuildPreview');
-      const existing = await store.find(transaction, action.sessionId, effect.effectKey);
-      if (existing) return { ...admission, work: existing };
-      if (admission.replayed) throw new Error('Cannot enroll an already accepted synchronous preparation');
+    const admission = await owner.applyInTransaction(transaction, action);
+    if (!admission.decision.accepted) return admission;
+    const effect = admission.decision.effects.find(value => value.type === 'BuildPreview');
+    const existing = await store.find(transaction, action.sessionId, effect.effectKey);
+    if (existing) return { ...admission, work: existing };
+    if (admission.replayed) throw new Error('Cannot enroll an already accepted synchronous preparation');
 
-      return transaction.withSession(action.sessionId, async client => {
-        const session = (await client.query('SELECT * FROM chat_sessions WHERE id = $1', [action.sessionId])).rows[0];
-        const app = (await client.query('SELECT * FROM apps WHERE id = $1', [session.app_id])).rows[0];
-        if (session.source !== 'cli_handoff' || !app?.repo_url) {
-          throw new Error('This experiment accepts native CLI handoff preparation only');
-        }
-        const flow = admission.decision.flow;
-        const recoverClone = config.nativePreviewRecoverableClone === true;
-        const recoverImage = config.nativePreviewRecoverableBuild === true;
-        const recoverRuntime = config.nativePreviewRecoverableRuntime === true;
-        if (recoverRuntime && !recoverImage) throw new Error('Recoverable runtime requires recoverable image preparation');
-        if (recoverImage && !recoverClone) throw new Error('Recoverable image preparation requires the recoverable clone');
-        let workflow = PREPARE;
-        if (recoverClone) workflow = PREPARE_CLONE;
-        if (recoverImage) workflow = PREPARE_IMAGE;
-        if (recoverRuntime) workflow = PREPARE_RUNTIME;
-        const intent = {
-          ...candidateResources(config, session.id, flow.attemptId),
-          ...(recoverClone ? {
-            cloneOperation: {
-              kind: 'template-v1',
-              sourceDb: require('../db-manager').appDbName(app.slug),
-            },
-          } : {}),
-          ...(recoverImage ? {
-            buildOperation: require('./image-build-intent').reserveImageBuild(config, app, flow.headSha),
-          } : {}),
-        };
-        if (recoverRuntime) intent.runtimeOperation = { kind: 'kubernetes-v1', resources: {} };
-        const credentialEnc = encrypt(randomBytes(24).toString('hex'), config.dataEncryptionKey);
-        await owner.reserveCandidateInTransaction(transaction, session.id, flow.id, intent, {
-          credentialEnc,
-          preparationOwner: 'bounded',
-        });
-        const work = await store.enqueue(transaction, {
-          id: randomUUID(),
-          effectKey: effect.effectKey,
-          sessionId: session.id,
-          workflow,
-          version: 1,
-          causedBy: action.actionId,
-          input: {
-            identity: { flowId: flow.id, generation: flow.generation, headSha: flow.headSha },
-            intent,
-            app: { id: app.id, slug: app.slug, repo_url: app.repo_url },
-            session: { id: session.id, branch_name: session.branch_name, pr_number: session.pr_number },
-            preparedActionId: randomUUID(),
-            failedActionId: randomUUID(),
-            ...(recoverClone ? { clonePreparedActionId: randomUUID() } : {}),
-            ...(recoverImage ? { imageBuiltActionId: randomUUID() } : {}),
+    return transaction.withSession(action.sessionId, async client => {
+      const session = (await client.query('SELECT * FROM chat_sessions WHERE id = $1', [action.sessionId])).rows[0];
+      const app = (await client.query('SELECT * FROM apps WHERE id = $1', [session.app_id])).rows[0];
+      if (session.source !== 'cli_handoff' || !app?.repo_url) {
+        throw new Error('This experiment accepts native CLI handoff preparation only');
+      }
+      const flow = admission.decision.flow;
+      const recoverClone = config.nativePreviewRecoverableClone === true;
+      const recoverImage = config.nativePreviewRecoverableBuild === true;
+      const recoverRuntime = config.nativePreviewRecoverableRuntime === true;
+      if (recoverRuntime && !recoverImage) throw new Error('Recoverable runtime requires recoverable image preparation');
+      if (recoverImage && !recoverClone) throw new Error('Recoverable image preparation requires the recoverable clone');
+      let workflow = PREPARE;
+      if (recoverClone) workflow = PREPARE_CLONE;
+      if (recoverImage) workflow = PREPARE_IMAGE;
+      if (recoverRuntime) workflow = PREPARE_RUNTIME;
+      const intent = {
+        ...candidateResources(config, session.id, flow.attemptId),
+        ...(recoverClone ? {
+          cloneOperation: {
+            kind: 'template-v1',
+            sourceDb: require('../db-manager').appDbName(app.slug),
           },
-        });
-        return { ...admission, work };
+        } : {}),
+        ...(recoverImage ? {
+          buildOperation: require('./image-build-intent').reserveImageBuild(config, app, flow.headSha),
+        } : {}),
+      };
+      if (recoverRuntime) intent.runtimeOperation = { kind: 'kubernetes-v1', resources: {} };
+      const credentialEnc = encrypt(randomBytes(24).toString('hex'), config.dataEncryptionKey);
+      await owner.reserveCandidateInTransaction(transaction, session.id, flow.id, intent, {
+        credentialEnc,
+        preparationOwner: 'bounded',
       });
+      const work = await store.enqueue(transaction, {
+        id: randomUUID(),
+        effectKey: effect.effectKey,
+        sessionId: session.id,
+        workflow,
+        version: 1,
+        causedBy: action.actionId,
+        input: {
+          identity: { flowId: flow.id, generation: flow.generation, headSha: flow.headSha },
+          intent,
+          app: { id: app.id, slug: app.slug, repo_url: app.repo_url },
+          session: { id: session.id, branch_name: session.branch_name, pr_number: session.pr_number },
+          preparedActionId: randomUUID(),
+          failedActionId: randomUUID(),
+          ...(recoverClone ? { clonePreparedActionId: randomUUID() } : {}),
+          ...(recoverImage ? { imageBuiltActionId: randomUUID() } : {}),
+        },
+      });
+      return { ...admission, work };
     });
   }
 
@@ -568,6 +571,9 @@ function createPreviewWork(pool, config, {
     const completion = await owner.applyInTransaction(transaction, {
       ...action, sessionId: attempt.session_id, ...identity,
     });
+    if (proposed.result.prepared && completion.decision.accepted && candidateAccepted) {
+      await candidateAccepted(transaction, attempt, completion);
+    }
     if (!proposed.result.prepared || !completion.decision.accepted) {
       await admitCleanup(transaction, attempt.session_id, identity.flowId);
     }
@@ -585,6 +591,8 @@ function createPreviewWork(pool, config, {
 
   return {
     request,
+    requestInTransaction,
+    guarded,
     census,
     store,
     handlers: {

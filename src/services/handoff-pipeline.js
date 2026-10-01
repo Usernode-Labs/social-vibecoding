@@ -97,6 +97,11 @@ function publishableStatus(row, expectedStatus, headSha) {
 }
 
 async function runStaging(config, pool, session, app, headSha, trigger = 'commit-push') {
+  const handoff = require('./cli-preview-handoff/work');
+  if (session.source === 'cli_handoff' && await handoff.enrolled(pool, session.id)) {
+    const work = await handoff.createCliHandoffWork(pool, config).recover(session.id);
+    return { durable: true, workId: work?.id };
+  }
   // Explicit paused submissions are allowed; a later lifecycle change still
   // cancels this run's right to publish (see publishableStatus). Never resume
   // coding here.
@@ -148,6 +153,16 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
     .catch((err) => log.warn('handoff-pipeline', 'Staging certificate warm failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
+  notifyStagingReady(session, app, result);
+
+  // captureForSession owns its terminal error verdict and never lets a test
+  // runner failure escape. Awaiting it here keeps status honest while still
+  // running entirely outside the original HTTP request.
+  await visuals.captureForSession(config, session, app, headSha, result, { trigger });
+  return result;
+}
+
+function notifyStagingReady(session, app, result) {
   // The caller may have no open SSE response (the CLI handoff never does; a
   // local agent turn only does while the browser tab that started it is
   // still open), so use the global/session buses to make an optionally-open
@@ -167,12 +182,6 @@ async function runStaging(config, pool, session, app, headSha, trigger = 'commit
       sessionId: session.id, err: err.message,
     });
   }
-
-  // captureForSession owns its terminal error verdict and never lets a test
-  // runner failure escape. Awaiting it here keeps status honest while still
-  // running entirely outside the original HTTP request.
-  await visuals.captureForSession(config, session, app, headSha, result, { trigger });
-  return result;
 }
 
 module.exports = {
@@ -182,4 +191,5 @@ module.exports = {
   startHandoffPipeline,
   publishableStatus,
   runStaging,
+  notifyStagingReady,
 };

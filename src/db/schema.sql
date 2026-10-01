@@ -10956,3 +10956,38 @@ COMMENT ON TABLE execution_work_attempts IS 'staging:private';
 COMMENT ON TABLE execution_work_events IS 'staging:private';
 ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS preparation_owner TEXT
   CHECK (preparation_owner IS NULL OR preparation_owner = 'bounded');
+
+-- Default-off native CLI preview handoff. Enrollment outlives admission flags.
+CREATE TABLE IF NOT EXISTS cli_preview_handoffs (
+  session_id INTEGER PRIMARY KEY CHECK (session_id > 0),
+  head_sha TEXT NOT NULL,
+  started_status TEXT NOT NULL CHECK (started_status IN ('active', 'paused')),
+  admission_id UUID NOT NULL,
+  flow_id UUID,
+  preparation_work_id UUID REFERENCES execution_work_requests(id),
+  continuation_work_id UUID REFERENCES execution_work_requests(id),
+  phase TEXT NOT NULL CHECK (phase IN ('preparing', 'continuing', 'checking', 'complete'))
+);
+CREATE TABLE IF NOT EXISTS cli_preview_receipts (
+  session_id INTEGER NOT NULL CHECK (session_id > 0),
+  action_id UUID NOT NULL,
+  action_hash TEXT NOT NULL,
+  decision JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (session_id, action_id)
+);
+CREATE TABLE IF NOT EXISTS cli_preview_decisions (
+  id BIGSERIAL PRIMARY KEY,
+  session_id INTEGER NOT NULL CHECK (session_id > 0),
+  action_id UUID NOT NULL,
+  reducer_version INTEGER NOT NULL,
+  pre_state JSONB NOT NULL,
+  action JSONB NOT NULL,
+  facts JSONB NOT NULL,
+  decision JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (session_id, action_id)
+);
+COMMENT ON TABLE cli_preview_handoffs IS 'staging:private';
+COMMENT ON TABLE cli_preview_receipts IS 'staging:private';
+COMMENT ON TABLE cli_preview_decisions IS 'staging:private';

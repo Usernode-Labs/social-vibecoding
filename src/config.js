@@ -531,6 +531,8 @@ function load() {
     appRuntime,
     workerRuntime: process.env.WORKER_RUNTIME || appRuntime,
     captureRuntime: process.env.CAPTURE_RUNTIME || appRuntime,
+    // Local, default-off CLI cutover. Recovery follows persisted enrollment.
+    nativeCliPreviewHandoffEnabled: process.env.PREVIEW_CLI_HANDOFF_ENABLED === 'true',
     // #2380 agent-authored before & after shots. The mechanism is ON by default:
     // authors can submit intent, the platform executes it, and reviewers see
     // the verified result without an operator rollout step. One emergency

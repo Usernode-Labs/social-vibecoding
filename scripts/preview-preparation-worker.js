@@ -5,6 +5,7 @@
 const { createExecutionService } = require('../src/services/execution/service');
 const { createReviewWork } = require('../src/services/proposal-review/work');
 const { createPreviewWork } = require('../src/services/preview-flow/work');
+const { createCliHandoffWork } = require('../src/services/cli-preview-handoff/work');
 
 async function runWorker({
   pool,
@@ -17,12 +18,13 @@ async function runWorker({
 }) {
   const { createDiscoveryPool } = require('../src/services/execution/discovery-pool');
   const discoveryPool = createDiscoveryPool(config.databaseUrl, discoveryOptions);
-  const preview = createPreviewWork(pool, config, previewOptions);
+  const handoff = createCliHandoffWork(pool, config, { previewOptions });
+  const preview = handoff.preview;
   const discovery = createPreviewWork(discoveryPool, config);
   const review = createReviewWork(pool, config, { store: preview.store });
   const execution = createExecutionService({
     store: preview.store,
-    handlers: { ...preview.handlers, ...review.handlers },
+    handlers: { ...handoff.handlers, ...review.handlers },
     discover: () => discovery.census(),
     pollMs,
     discoveryMs: censusMs,

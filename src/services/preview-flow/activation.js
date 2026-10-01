@@ -90,7 +90,9 @@ function createActivation({
   async function recover({ pool, config, limit = 25 }) {
     const batchSize = Math.max(1, Math.min(100, Math.trunc(Number(limit) || 25)));
     const { rows } = await pool.query(`WITH candidates AS (
-      SELECT session_id FROM preview_bindings WHERE desired IS NOT NULL
+      SELECT session_id FROM preview_bindings b WHERE desired IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM cli_preview_handoffs h
+          WHERE h.session_id = b.session_id AND h.flow_id::text = b.desired->>'flowId')
         AND desired->>'activationId' IS DISTINCT FROM observed->>'activationId'
         ORDER BY recovery_queue_position LIMIT $1 FOR UPDATE SKIP LOCKED
       ) UPDATE preview_bindings b SET recovery_queue_position = DEFAULT

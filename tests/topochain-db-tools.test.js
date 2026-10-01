@@ -769,6 +769,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'shot_runs.plan_hash',                 // SHA-256 naming the published shots, not authentication material
     'preview_action_receipts.action_hash', // digest of a validated lifecycle action; no credentials in the action schema
     'proposal_review_receipts.action_hash', // digest of an author/lifecycle request; no credentials in the action schema
+    'cli_preview_receipts.action_hash',    // digest of a validated CLI admission/lifecycle action; no credentials in the action schema
 
     // Counters and flags.
     'chat_session_messages.token_count',   // an LLM token COUNT

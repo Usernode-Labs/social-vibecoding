@@ -72,7 +72,7 @@ test('native cleanup across Docker and Kubernetes with independent PostgreSQL re
       staging_image_ref TEXT, staging_build_ref TEXT, staging_commit_sha TEXT, last_activity_at TIMESTAMPTZ)`);
     const source = fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8');
     for (const table of ['preview_flows', 'preview_bindings', 'preview_flow_heads', 'preview_flow_resources',
-      'preview_action_receipts', 'preview_flow_decisions']) {
+      'preview_action_receipts', 'preview_flow_decisions', 'execution_work_requests', 'cli_preview_handoffs']) {
       await pool.query(source.match(new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\([\\s\\S]*?\\n\\);`))[0]);
     }
     for (const runtimeKind of ['docker', 'kubernetes']) {
