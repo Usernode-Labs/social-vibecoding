@@ -250,12 +250,17 @@ export function OpenAppButton({ target }: { target: { slug: string; name: string
       type="button"
       data-agent-session-open-app
       data-open-app={target.slug}
-      className="hidden lg:inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+      className="hidden lg:inline-flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-200 bg-white px-3 py-1 [@container(max-width:32rem)]:px-2 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
       title={`Open ${target.name || target.slug} with this chat docked beside it`}
+      aria-label="Open app"
       onClick={open}
     >
       <AppWindowIcon className="h-3.5 w-3.5" aria-hidden="true" />
-      <span className="truncate">Open app</span>
+      {/* #3577: in a pill row narrower than 32rem (the Messages pane on a
+          1024px screen) the words go and the window mark stays, so the row
+          still fits on one line without squeezing the pills that name things
+          down to nothing. The row is the container (SessionBar). */}
+      <span className="truncate [@container(max-width:32rem)]:hidden">Open app</span>
     </button>
   );
 }
@@ -292,59 +297,97 @@ function SessionBar({ session, about, embedded, action }: {
   const active = session?.activeChange || null;
   const count = session?.changes?.length || 0;
   const target = openAppTarget(active, about);
-  // It wraps on both surfaces (#3016). On a phone its five controls are wider
-  // than the screen, and a bar that cannot wrap made the whole conversation
-  // that wide: the right edge of every message and the Send button were off
-  // screen. Changes and the ⋯ sit at the end of whichever row they land on;
-  // from `sm` up everything fits on one, as before. (The Build picker that
-  // started the second row is the composer's "Build with" now, #3078.)
+  // #3577: THE PILLS ARE ONE ROW, at every width and on both surfaces.
+  //
+  // #3016 let the bar wrap, because a bar that could not wrap made the whole
+  // conversation as wide as its controls and pushed every message's right
+  // edge and the Send button off a phone. Wrapping fixed that, but at 390px
+  // it did so by dropping the ⋯ onto a second line of its own (the focus
+  // pill, the change pill and Changes came to 376px of a 358px row), and in
+  // the Messages pane it split the pills in two around the conversation's
+  // title.
+  //
+  // So the pills sit in a row of their own that never wraps, and the
+  // controls — Changes, Open app, the pane's toggle, the ⋯ — keep their
+  // width, so each stays on screen and tappable. What gives way is the two
+  // pills that NAME things, in an order rather than together:
+  //
+  //  - The focus pill first. Its basis is zero and it GROWS into what the
+  //    row has left, up to its own content (`max-w-fit`, with the name capped
+  //    at 7rem, the pill's old 10rem less its mark and padding), so its name
+  //    truncates before anything else does, down to a floor of its mark.
+  //  - The change pill only after that, also to a floor. Its status word is
+  //    the fact the row is read for, so in a row under 24rem (every phone)
+  //    it drops the " · PR #12" after it; the full text is its tooltip, and
+  //    the PR is a tap away in Changes. A shared shrink would have clipped
+  //    "In progress" to "In progr…" to save the app name a few pixels.
+  //  - Open app keeps its window mark and drops its words in a row under
+  //    32rem (the Messages pane on a 1024px screen).
+  //
+  // Truncating, not scrolling sideways: a row that scrolls hides the ⋯ past
+  // its right edge, which is the failure being fixed.
+  //
+  // The row is `min-w-0`, so whatever it holds it cannot widen the panel
+  // (#3016). The Messages pane's title is a line of its own above it rather
+  // than a sibling the pills wrap around.
+  const focusTitle = 'The app this conversation is about when a request does not name one. The Mayor moves it when you ask.';
+  const changeText = active
+    ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}`
+    : 'No change yet';
   return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-2 border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
+    <div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>
       {embedded ? (
-        <div className="mr-auto min-w-0 basis-full sm:basis-auto">
+        <div className="mb-2 min-w-0">
           <h2 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-100">{session?.title || 'New session'}</h2>
           <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
             Agent session{about?.focusApp?.name ? ` · started from ${about.focusApp.name}` : ''}
           </p>
         </div>
       ) : null}
-      <span
-        data-agent-session-focus
-        className="inline-flex min-w-0 max-w-[10rem] items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
-        title="The app this conversation is about when a request does not name one. The Mayor moves it when you ask."
-      >
-        {about?.focusApp ? (
-          <AppMark
-            name={about.focusApp.name}
-            slug={about.focusApp.selfHosted ? null : about.focusApp.slug}
-            iconUrl={about.focusApp.iconUrl}
-            iconEmoji={about.focusApp.iconEmoji}
-          />
-        ) : null}
-        <span className="truncate">{about?.focusApp?.name || 'Any app'}</span>
-      </span>
-      <span
-        data-agent-session-change-pill
-        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
-      >
-        {active ? `${changeStatusLabel(active.status, building)}${active.prNumber ? ` · PR #${active.prNumber}` : ''}` : 'No change yet'}
-      </span>
-      {/* Siblings of the pills, not a group of their own: a declared check
-          reads the bar as focus ~ change pill ~ Changes. Where the work is
-          built is the composer's "Build with" now (#3078), not a pill here. */}
-      <button
-        type="button"
-        data-agent-session-changes-button
-        className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
-        onClick={() => setDrawerOpen(true)}
-        disabled={!session}
-        aria-haspopup="dialog"
-      >
-        Changes · {count}
-      </button>
-      <OpenAppButton target={target} />
-      {action}
-      <SessionMenu session={session} />
+      {/* Siblings of one another in this row, not split into groups: a
+          declared check reads it as focus ~ change pill ~ Changes, another
+          as Changes ~ ⋯. Where the work is built is the composer's
+          "Build with" now (#3078), not a pill here. */}
+      <div className="flex min-w-0 flex-nowrap items-center gap-2 [container-type:inline-size]" data-agent-session-pills>
+        <span
+          data-agent-session-focus
+          className="inline-flex min-w-[2.75rem] max-w-fit grow basis-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-800 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-200"
+          title={about?.focusApp?.name ? `${about.focusApp.name}. ${focusTitle}` : focusTitle}
+        >
+          {about?.focusApp ? (
+            <AppMark
+              name={about.focusApp.name}
+              slug={about.focusApp.selfHosted ? null : about.focusApp.slug}
+              iconUrl={about.focusApp.iconUrl}
+              iconEmoji={about.focusApp.iconEmoji}
+            />
+          ) : null}
+          <span className="min-w-0 max-w-[7rem] truncate">{about?.focusApp?.name || 'Any app'}</span>
+        </span>
+        <span
+          data-agent-session-change-pill
+          className={`inline-flex min-w-[3.5rem] items-center whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${statusTone(active?.status)}`}
+          title={changeText}
+        >
+          <span className="min-w-0 truncate">
+            {active ? changeStatusLabel(active.status, building) : 'No change yet'}
+            {active?.prNumber ? <span className="[@container(max-width:24rem)]:hidden">{` · PR #${active.prNumber}`}</span> : null}
+          </span>
+        </span>
+        <button
+          type="button"
+          data-agent-session-changes-button
+          className="ml-auto inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-zinc-200 bg-white px-3 py-1 text-xs font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:hover:bg-zinc-800"
+          onClick={() => setDrawerOpen(true)}
+          disabled={!session}
+          aria-haspopup="dialog"
+        >
+          Changes · {count}
+        </button>
+        <OpenAppButton target={target} />
+        {action}
+        <SessionMenu session={session} />
+      </div>
     </div>
   );
 }
