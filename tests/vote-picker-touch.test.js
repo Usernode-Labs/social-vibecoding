@@ -167,3 +167,14 @@ test('the switch has two filled states, the popover one even inset, and the shee
   assert.doesNotMatch(block, /position: fixed|bottom: |un-kb-inset|touch-action/, 'the kit owns the sheet\'s placement and keyboard inset; nothing here fights it');
   assert.doesNotMatch(block, /#[0-9a-f]{3,6}\b|rgb\(/i, 'tokens only');
 });
+
+test('#3585: the placement hint is the height the panel actually draws — one number, pinned to its CSS floor', () => {
+  const fn = SRC.slice(SRC.indexOf('export function VoteButton('), SRC.indexOf('export function VotePicker('));
+  const hint = (/\n\s*const h = (\d+);/.exec(fn) || [])[1];
+  assert.ok(hint, 'one fixed height hint: the panel is one drawing, and the demoted no-line panel is gone');
+  const rule = (new RegExp('\\n\\.dev-vote-pop \\{([^}]*)\\}')).exec(CSS) || [];
+  const floor = (/min-height: (\d+)px/.exec(rule[1] || '') || [])[1];
+  assert.equal(floor, hint,
+    '.dev-vote-pop never draws shorter than the hint promises, so the flip decision never sees a phantom-short panel');
+});
+

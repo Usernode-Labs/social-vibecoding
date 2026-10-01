@@ -13978,6 +13978,11 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
   position: fixed;
   z-index: 2000;
   width: 312px;
+  /* #3585: the floor the placement hint promises — the panel must never
+     draw shorter than the height VoteButton told placeUnderAnchor, or the
+     flip decision lands its bottom edge on the card's action row. The two
+     numbers move together. */
+  min-height: 206px;
   box-sizing: border-box;
   padding: 10px 10px 8px;
   border-radius: 16px;

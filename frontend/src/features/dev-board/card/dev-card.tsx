@@ -619,7 +619,18 @@ export function VoteButton({ yes, no }: { yes: ActionSpec; no: ActionSpec }): Re
   // lib/anchor-popover.ts — the helper the Homeroom menu shares — exactly as
   // `_toggleCardMenu` places the ⋯ menu.
   const w = 312;
-  const h = isVote ? 190 : 100;
+  // #3585: the hint must be the height the panel actually draws. It said 190
+  // while the panel renders ~205px (the reason box's line height grew it), so
+  // placeUnderAnchor flipped it above the button with a phantom-short panel
+  // and its bottom edge landed on the card's action row — and near the
+  // viewport's bottom edge the same shortfall let it open "below" into space
+  // it did not fit. 206 is .dev-vote-pop's min-height floor in app.css: the
+  // two numbers move together, so the flip decision is never taken on a
+  // panel shorter than the one that appears. One hint for both panels — a
+  // hint LARGER than the drawn panel is the safe direction (it flips a
+  // little eagerly and never overlaps), and nothing is demoted into the
+  // no-line panel today.
+  const h = 206;
   const pos = rect
     ? placeUnderAnchor(rect, { width: w, height: h }, { width: window.innerWidth, height: window.innerHeight })
     : null;
