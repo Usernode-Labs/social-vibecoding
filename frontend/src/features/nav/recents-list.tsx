@@ -61,6 +61,14 @@
  * so the rail's children and the declared checks that walk them are
  * unchanged, and like every row it arrives one commit after mount. There is
  * no close button: a frame goes the way it always has.
+ *
+ * ── A channel opens its project's Discussion tab (#3555) ─────────────
+ *
+ * A channel is a tab of its project's page (#3494), so its row lands there,
+ * under the page's header and tab strip with Discussion lit, the way the
+ * hub's Open does — not on the Messages screen with a chevron back up to
+ * the hub. onDiscussionClick is the door; ./recents.ts decides which rows
+ * are one.
  */
 
 import { Fragment, useEffect, useRef, useState, type MouseEvent } from 'react';
@@ -80,6 +88,7 @@ import { ACTIVITY_LABEL } from '../agent-session/activity';
 import { AgentActivityIcon } from '../agent-session/activity-mark';
 import { useGlobalChatSelector } from '../global-chat/store';
 import { improveStore } from '../improve/improve-store.js';
+import { usePlatformSlug } from '../messages/channel-hub';
 import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
 import { navStore } from './nav-store.js';
@@ -117,6 +126,33 @@ function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
   window.App?.openAppTab?.(slug, 'app');
 }
 
+/**
+ * A channel's row is a DOOR TO ITS PROJECT'S DISCUSSION TAB (#3555), not to
+ * the room on the Messages screen (./recents.ts says why). The door the
+ * hub's links use, turned to the Discussion: AppView._landOnTab writes the
+ * remembered tab and tells a page already open for the project to switch,
+ * then the hub's own address (App._hubHref's spelling) opens the page, which
+ * reads that tab when it mounts. The window's query rides along, which the
+ * row's `?ws=` href, there for a new tab, would have dropped. Back and
+ * Forward are not doors: the page reopens on the tab last shown. Exported
+ * for tests/nav-recents.test.js, which presses it against a stand-in window.
+ */
+export function onDiscussionClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
+  const win = window as unknown as {
+    NavLink?: { isNativeClick?: (e: unknown) => boolean };
+    AppView?: { _landOnTab?: (slug: string, tab: string) => void };
+  };
+  if (win.NavLink?.isNativeClick?.(event)) return;
+  event.preventDefault();
+  win.AppView?._landOnTab?.(slug, 'discussion');
+  // Already on that page (the router keeps it at its clean path, with no
+  // fragment): the door has turned it, and a second address for the same
+  // page would only be a Back press that goes nowhere.
+  const page = `/app/${encodeURIComponent(slug)}/workshop`;
+  if (window.location.pathname === page && !window.location.hash) return;
+  window.location.hash = `#app/${encodeURIComponent(slug)}/workshop`;
+}
+
 /** The app's own icon, as the launcher draws it. */
 function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   const record = { icon_url: app.iconUrl, icon_emoji: app.iconEmoji, name: app.name };
@@ -146,7 +182,9 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
-      onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
+      onClick={item.app
+        ? (event) => onAppClick(event, item.app!.slug)
+        : item.discussion ? (event) => onDiscussionClick(event, item.discussion!.slug) : undefined}
     >
       {/* #2779: an agent session working (a spinner) or finished unseen (a
           green dot), either IN PLACE of the row's icon (#3028, #3076)
@@ -294,6 +332,9 @@ export function RecentsList() {
   useEffect(() => {
     if (viewer) void loadAgentSessions();
   }, [viewer]);
+  // #3555: #general's project, whose Discussion tab its row opens. Late on a
+  // cold load (#3407), so the row is re-drawn when it lands.
+  const platformSlug = usePlatformSlug(!!viewer);
   // #3074: the open app's header record names it before it has ever been
   // left, which is when Recents first learns it.
   const active = mounted && viewer
@@ -315,6 +356,7 @@ export function RecentsList() {
       agentSessions,
       viewerId: Number(window.App?.user?.id) || null,
       active: active.map((item) => item.app!.slug),
+      platformSlug,
     })
     : [];
   useHiddenClass(ref, items.length === 0 && active.length === 0);

@@ -8024,9 +8024,22 @@ const AppView = {
    * they reopen on the tab last shown, which the page reads when it mounts.
    */
   _landOnHub(slug) {
-    AppView._setWorkshopTab('status');
+    AppView._landOnTab(slug, 'status');
+  },
+  /**
+   * THE SAME DOOR, TO ANOTHER OF THE PAGE'S TABS (#3555). A Recents row for
+   * a community's channel is a door to that project's Discussion: the room
+   * is the page's own tab now (#3494), so the row opens the page on it,
+   * under the page's coloured header and its tab strip, rather than the
+   * room on the Messages screen with a chevron back up to the hub. It writes
+   * the remembered tab and tells a page already open for that project to
+   * switch, exactly as the hub's door does; an unknown key is the hub.
+   */
+  _landOnTab(slug, tab) {
+    const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status';
+    AppView._setWorkshopTab(key);
     try {
-      window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: 'status' } }));
+      window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
     } catch {}
   },
   // Rows per lane per theme before "+N more · Open on Board".

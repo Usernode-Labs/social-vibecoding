@@ -3459,6 +3459,23 @@ export function DevWorkshop(): ReactNode {
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
   }, [v.slug]);
+  // ANOTHER PROJECT IN THE SAME PAGE (#3555). Going straight from one
+  // project's page to another's keeps the host (#app-view keeps
+  // #dev-workshop and republishes into it), so this is not mounted again,
+  // and the seed above — which is how a door to ANOTHER project's tab is
+  // read, since the listener leaves those alone — never ran for the new
+  // one: it opened on whatever tab the last project was on. A Recents
+  // channel's Discussion pressed beside one project's page, or the
+  // community switcher's hub, landed on the previous project's tab. So when
+  // the project changes, the tab is read afresh as a mount reads it, before
+  // paint, so the old tab never shows under the new name.
+  const tabSlug = useRef<string | null>(v.slug || null);
+  useLayoutEffect(() => {
+    if (!v.slug) return;
+    const was = tabSlug.current;
+    tabSlug.current = v.slug;
+    if (was && was !== v.slug) setTab(freshTab() || 'status');
+  }, [v.slug]);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
   // the kanban view model only when the stage pane is up. See
