@@ -43,6 +43,7 @@ function snapshot(sessionRow, flowRow, resourceRow, bindingRow, retainedPublishe
       cleanupCompleted: !!resourceRow.cleanup_completed_at,
       disposition: resourceRow.cleanup_disposition,
       clonePrepared: !!resourceRow.clone_prepared,
+      ...(resourceRow.preparation_owner ? { preparationOwner: resourceRow.preparation_owner } : {}),
     } : null,
     retainedPublishedAttempts,
     binding: bindingRow ? { desired: bindingRow.desired, observed: bindingRow.observed } : null,
@@ -256,23 +257,33 @@ function createPreviewFlow(pool, {
   const applyInTransaction = (transaction, input) => transaction.apply(machine, input);
   const readInTransaction = (transaction, sessionId) => transaction.read(machine, sessionId);
 
+  async function reserveCandidateInTransaction(transaction, sessionId, flowId, input, {
+    credentialEnc,
+    preparationOwner = null,
+  }) {
+    return transaction.withSession(sessionId, async client => {
+      const intent = resourceIntent.parse(input);
+      if (!intent.attemptId || !credentialEnc) {
+        throw new Error('Candidate identity and encrypted credential must precede creation');
+      }
+      const { rows } = await client.query(`INSERT INTO preview_flow_resources
+        (flow_id, session_id, intent, clone_credential_enc, preparation_owner)
+        SELECT id, session_id, $3::jsonb, $4, $6 FROM preview_flows
+        WHERE id = $1 AND session_id = $2 AND attempt_id = $5 AND state = 'preparing'
+        ON CONFLICT (flow_id) DO NOTHING RETURNING flow_id`, [
+        flowId, sessionId, JSON.stringify(intent), credentialEnc, intent.attemptId, preparationOwner,
+      ]);
+      if (!rows.length) throw new Error('Candidate attempt already reserved or no longer belongs to this flow');
+      return intent;
+    });
+  }
+
   async function recordIntent(sessionId, flowId, input, { credentialEnc = null } = {}) {
     const intent = resourceIntent.parse(input);
-
     if (intent.attemptId) {
-      if (!credentialEnc) throw new Error('Candidate clone credential must be reserved before creation');
-      // Reservation must serialize with both admission and review retirement.
-      // A checked SELECT alone can read 'preparing' before cancellation commits
-      // and insert locators afterward. Lock the aggregate before that decision.
-      await runtime.transact(transaction => transaction.withSession(sessionId, async client => {
-        const { rows } = await client.query(`INSERT INTO preview_flow_resources (flow_id, session_id, intent, clone_credential_enc)
-          SELECT id, session_id, $3::jsonb, $4 FROM preview_flows
-          WHERE id = $1 AND session_id = $2 AND attempt_id = $5 AND state = 'preparing'
-          ON CONFLICT (flow_id) DO NOTHING RETURNING flow_id`,
-          [flowId, sessionId, JSON.stringify(intent), credentialEnc, intent.attemptId]);
-        if (!rows.length) throw new Error('Candidate attempt already reserved or no longer belongs to this flow');
-      }));
-      return intent;
+      return runtime.transact(transaction => reserveCandidateInTransaction(
+        transaction, sessionId, flowId, intent, { credentialEnc },
+      ));
     }
 
     const { rows } = await pool.query(`INSERT INTO preview_flow_resources (flow_id, session_id, intent)
@@ -325,6 +336,7 @@ function createPreviewFlow(pool, {
     applyInTransaction,
     readInTransaction,
     recordIntent,
+    reserveCandidateInTransaction,
     recordRuntime,
     markClonePrepared,
     trace,

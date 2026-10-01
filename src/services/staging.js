@@ -276,7 +276,7 @@ function imageStepLabel(detail, index) {
   return text.length > IMAGE_STEP_LABEL_MAX ? `${text.slice(0, IMAGE_STEP_LABEL_MAX - 1)}…` : text;
 }
 
-function makeImageProgressReporter(config, session, timings, startedAt, now = () => Date.now()) {
+function makeImageProgressReporter(config, session, timings, startedAt, now = () => Date.now(), publish = reportBuildStep) {
   let last = null;
   let lastAt = 0;
   let timer = null;
@@ -295,7 +295,7 @@ function makeImageProgressReporter(config, session, timings, startedAt, now = ()
   const flush = () => {
     timer = null;
     lastAt = now();
-    reportBuildStep(config, session, 'image_build', timings, startedAt, last);
+    publish(config, session, 'image_build', timings, startedAt, last);
   };
   return {
     report(image) {
@@ -332,6 +332,7 @@ function makeImageProgressReporter(config, session, timings, startedAt, now = ()
 
 async function buildAndDeployStagingInner(config, session, app, commitHash, options = {}) {
   const candidate = options.candidate;
+  const publishProgress = options.reportProgress === false ? () => {} : reportBuildStep;
   const containerName = candidate?.intent.runtimeName || `usernode-staging-${app.slug}--${session.id}`;
   const imageName = candidate?.intent.imageName || `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
 
@@ -342,7 +343,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
   // proposal-checks slowdown meant reading a container log tail.
   const buildStartedAt = Date.now();
   const timings = {};
-  reportBuildStep(config, session, 'source_fetch', timings, buildStartedAt);
+  publishProgress(config, session, 'source_fetch', timings, buildStartedAt);
 
   try {
     // 1. Clone the PR branch
@@ -527,8 +528,8 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     }
     const imageBuildStartedAt = Date.now();
     timings.sourceFetchMs = imageBuildStartedAt - buildStartedAt;
-    reportBuildStep(config, session, 'image_build', timings, imageBuildStartedAt);
-    const imageProgress = makeImageProgressReporter(config, session, timings, imageBuildStartedAt);
+    publishProgress(config, session, 'image_build', timings, imageBuildStartedAt);
+    const imageProgress = makeImageProgressReporter(config, session, timings, imageBuildStartedAt, () => Date.now(), publishProgress);
     let imageFinished = false;
     let cloneFinished = false;
     let cloneStartedAt;
@@ -549,12 +550,12 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
         const countedSteps = reportedPhases ? null : imageProgress.slowestSteps();
         if (reportedPhases) timings.imagePhases = reportedPhases;
         else if (countedSteps && countedSteps.length) timings.imagePhases = countedSteps;
-        if (cloneStartedAt && !cloneFinished) reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
+        if (cloneStartedAt && !cloneFinished) publishProgress(config, session, 'clone', timings, cloneStartedAt);
       }
     };
     const cloneDatabase = async () => {
       cloneStartedAt = Date.now();
-      if (imageFinished) reportBuildStep(config, session, 'clone', timings, cloneStartedAt);
+      if (imageFinished) publishProgress(config, session, 'clone', timings, cloneStartedAt);
       try {
         // Each clone retains its own role/password and template redaction.
         const cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, {
@@ -646,12 +647,16 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     const platformEnv = stagingEnv.platformStagingEnv(app, config);
 
     const healthStartedAt = Date.now();
-    reportBuildStep(config, session, 'health', timings, healthStartedAt);
+    publishProgress(config, session, 'health', timings, healthStartedAt);
     const runtimeLabels = {
       [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
     };
     if (options.previewFlow) {
       runtimeLabels[require('./preview-flow/cleanup').FLOW_LABEL] = options.previewFlow.flowId;
+    }
+
+    if (candidate?.preparationOwner === 'bounded') {
+      runtimeLabels[require('./preview-flow/candidate-runtime').HEAD_LABEL] = resolvedRevision;
     }
 
     const deployed = await applicationRuntime.deploy(config, {
@@ -715,7 +720,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     // phase flips to testing (see visuals.finishPrepareChecks).
     const deployedAt = Date.now();
     timings.deployedAt = deployedAt;
-    reportBuildStep(config, session, 'prepare_checks', timings, deployedAt);
+    publishProgress(config, session, 'prepare_checks', timings, deployedAt);
     log.info('staging', 'Staging deployed', {
       sessionId: session.id, url: stagingUrl, ...timings,
     });
@@ -1335,7 +1340,19 @@ async function rebuildProductionInner(config, app, options = {}) {
   }
 }
 
+// The durable preview worker already holds lifecycle/build guards. This entry
+// prepares an isolated runtime only; publication and activation are separate.
+async function prepareCandidateUnderBuildLock(config, session, app, headSha, candidate, identity) {
+  if (!candidate.intent.attemptId) throw new Error('Isolated candidate identity required');
+  return buildAndDeployStagingInner(config, session, app, headSha, {
+    candidate,
+    previewFlow: identity,
+    reportProgress: false,
+  });
+}
+
 module.exports = {
+  prepareCandidateUnderBuildLock,
   _makeImageProgressReporterForTest: makeImageProgressReporter,
   _imageStepLabelForTest: imageStepLabel,
   buildAndDeployStaging,

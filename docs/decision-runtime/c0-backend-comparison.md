@@ -1,6 +1,13 @@
 # C0: execution-backend decision
 
-**Recommendation: use Temporal for durable preparation/check orchestration. Keep
+**Current decision, 1 October 2026:** Temporal adoption is deferred. Continue with
+the bounded PostgreSQL alternative under the [native preparation contract](bounded-preview-contract.md).
+The comparison and its original recommendation below remain historical evidence.
+Reconsider for durable waits/signals/fan-out, versioned history/replay needs, or
+when maintaining the bounded runtime outweighs operating Temporal; evaluate those
+against the same failures and service/storage/security/retention costs.
+
+**Original C0 recommendation (deferred): use Temporal for durable preparation/check orchestration. Keep
 PostgreSQL, the B2 action API, and the resource adapters authoritative for domain
 state and resource safety.** This selects an execution direction; it does not
 approve a production Temporal deployment or expand the preview experiment.

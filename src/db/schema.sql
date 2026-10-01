@@ -9611,6 +9611,7 @@ CREATE TABLE IF NOT EXISTS preview_flow_resources (
   intent JSONB,
   receipt JSONB,
   clone_credential_enc TEXT,
+  preparation_owner TEXT CHECK (preparation_owner IS NULL OR preparation_owner = 'bounded'),
   clone_prepared BOOLEAN NOT NULL DEFAULT FALSE,
   published_at TIMESTAMPTZ,
   cleanup_started_at TIMESTAMPTZ,
@@ -10902,3 +10903,56 @@ BEGIN
       EXECUTE FUNCTION enqueue_welcome_dm();
   END IF;
 END $$;
+
+-- Bounded execution for explicitly enrolled native preview work. Domain states
+-- and authority remain in their own machines; these rows describe delivery only.
+CREATE TABLE IF NOT EXISTS execution_work_requests (
+  id UUID PRIMARY KEY,
+  effect_key TEXT NOT NULL UNIQUE,
+  session_id INTEGER NOT NULL CHECK (session_id > 0),
+  workflow TEXT NOT NULL,
+  contract_version INTEGER NOT NULL CHECK (contract_version > 0),
+  caused_by UUID NOT NULL,
+  input JSONB NOT NULL,
+  input_hash TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'succeeded', 'blocked')),
+  checkpoint JSONB NOT NULL DEFAULT '{}',
+  result JSONB,
+  last_code TEXT,
+  due_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  queue_position BIGINT GENERATED ALWAYS AS IDENTITY,
+  claim_id UUID,
+  lease_until TIMESTAMPTZ,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  CHECK ((claim_id IS NULL) = (lease_until IS NULL)),
+  CHECK ((status = 'running') = (claim_id IS NOT NULL))
+);
+CREATE INDEX IF NOT EXISTS execution_work_due ON execution_work_requests (queue_position)
+  WHERE status IN ('queued', 'running');
+CREATE TABLE IF NOT EXISTS execution_work_attempts (
+  id UUID PRIMARY KEY,
+  work_id UUID NOT NULL REFERENCES execution_work_requests(id),
+  worker_id UUID NOT NULL,
+  number INTEGER NOT NULL CHECK (number > 0),
+  outcome TEXT NOT NULL DEFAULT 'running'
+    CHECK (outcome IN ('running', 'interrupted', 'succeeded', 'waiting', 'retry', 'blocked')),
+  code TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  finished_at TIMESTAMPTZ,
+  UNIQUE (work_id, number)
+);
+CREATE TABLE IF NOT EXISTS execution_work_events (
+  id BIGSERIAL PRIMARY KEY,
+  work_id UUID NOT NULL REFERENCES execution_work_requests(id),
+  attempt_id UUID REFERENCES execution_work_attempts(id),
+  kind TEXT NOT NULL CHECK (kind IN ('admitted', 'claimed', 'checkpoint', 'settled')),
+  detail JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+COMMENT ON TABLE execution_work_requests IS 'staging:private';
+COMMENT ON TABLE execution_work_attempts IS 'staging:private';
+COMMENT ON TABLE execution_work_events IS 'staging:private';
+ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS preparation_owner TEXT
+  CHECK (preparation_owner IS NULL OR preparation_owner = 'bounded');

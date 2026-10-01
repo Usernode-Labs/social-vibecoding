@@ -281,6 +281,33 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
   });
 }
 
+for (const runtimeKind of ['docker', 'kubernetes']) {
+  test(`${runtimeKind}: durable preparation entry labels the exact head and does not publish progress or serving state`, async () => {
+    const config = { jwtSecret: 's', appRuntime: runtimeKind, kubernetes: { appNamespace: 'test-apps' } };
+    const intent = require('../src/services/preview-flow/candidate-resources').candidateResources(config, 7, randomUUID());
+    const { subject, deployments, events, queries, restore } = loadStaging({ runtimeKind });
+    const headSha = 'a'.repeat(40);
+    const identity = { flowId: randomUUID(), generation: 1, headSha };
+    let cloned = false;
+    try {
+      await subject.prepareCandidateUnderBuildLock(config,
+        { ...mkSession(7), staging_runtime_name: 'old-serving' }, mkApp, headSha, {
+          intent,
+          password: '1'.repeat(48),
+          preparationOwner: 'bounded',
+          onClonePrepared: async () => { cloned = true; },
+        }, identity);
+      assert.equal(cloned, true);
+      assert.equal(deployments[0].labels['social.usernode.io/preview-flow'], identity.flowId);
+      assert.equal(deployments[0].labels['social.usernode.io/preview-head'], headSha);
+      assert.equal(events.some(event => event[0] === 'drop'), false);
+      assert.equal(queries.length, 0, 'preparation performs no unguarded progress or projection writes');
+    } finally {
+      restore();
+    }
+  });
+}
+
 test('two concurrent builds for one session run sequentially, both to completion', async () => {
   const { subject, events, maxConcurrent, restore } = loadStaging({ cloneDelayMs: 30 });
   try {

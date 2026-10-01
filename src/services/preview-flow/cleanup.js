@@ -29,7 +29,7 @@ function createCleanup({
       flowId,
     });
     if (!decision.accepted) {
-      if (['resource_published', 'resource_bound', 'consumer_retirement_required'].includes(decision.reason)) {
+      if (['resource_published', 'resource_bound', 'consumer_retirement_required', 'preparation_owned'].includes(decision.reason)) {
         return { protected: true };
       }
       throw new Error(`Preview cleanup not authorized: ${decision.reason}`);
@@ -139,6 +139,7 @@ function createCleanup({
     const { rows: obligations } = await pool.query(`WITH candidates AS (
       SELECT r.flow_id FROM preview_flow_resources r LEFT JOIN chat_sessions s ON s.id = r.session_id
         WHERE r.intent IS NOT NULL
+          AND r.preparation_owner IS DISTINCT FROM 'bounded'
           AND (r.cleanup_completed_at IS NULL OR r.intent->>'attemptId' IS NOT NULL)
           AND NOT (r.published_at IS NOT NULL
             AND s.staging_url IS NOT DISTINCT FROM r.receipt->>'stagingUrl'

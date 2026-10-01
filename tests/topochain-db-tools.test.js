@@ -728,6 +728,8 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
   // Each is a reviewed decision; the comment is the reason.
   const REVIEWED_READABLE = new Set([
     // Public/derived identifiers and non-secret metadata.
+    'execution_work_requests.input_hash', // digest of immutable work input, never an authentication credential
+    'execution_work_attempts.code',       // bounded diagnostic class, never raw errors or authorization codes
     'apps.storage_bucket',                 // bucket NAME, not a key
     'mcp_authorization_codes.code_challenge', // the public half of PKCE
     'mcp_clients.client_id',               // public OAuth client identifier

@@ -555,10 +555,12 @@ test('the finished build rides every testing-half snapshot, from the timings sta
   const src = read('src/services/visuals.js');
   assert.match(src, /build: buildProgressFromTimings\(stagingResult && stagingResult\.timings\),/);
   const staging = read('src/services/staging.js');
+  assert.match(staging, /const publishProgress = options\.reportProgress === false \? \(\) => \{\} : reportBuildStep;/,
+    'legacy progress remains the default; the contained worker disables unowned writes');
   for (const step of ['source_fetch', 'image_build', 'clone', 'health', 'prepare_checks']) {
-    assert.match(staging, new RegExp(`reportBuildStep\\(config, session, '${step}', timings,`), `the build reports ${step}`);
+    assert.match(staging, new RegExp(`publishProgress\\(config, session, '${step}', timings,`), `the build reports ${step}`);
   }
-  assert.doesNotMatch(staging, /reportBuildStep\(config, session, 'done'/, 'the build no longer closes itself: captureForSession closes the fifth step');
+  assert.doesNotMatch(staging, /publishProgress\(config, session, 'done'/, 'the build no longer closes itself: captureForSession closes the fifth step');
 });
 
 // ── 2d. the fifth step: the hand-off to the checks ──────────────────────
@@ -641,7 +643,7 @@ test('the build opens prepare_checks when the container is up, and the capture c
     'and it actually aborts the in-flight operation');
   // Closed right after the phase flips, before anything slow (the compare, the capture image).
   assert.match(src, /notifyChecksPending\(session\.id, commitHash, 'testing', trigger\);[\s\S]{0,600}await finishPrepareChecks\(pool, session, commitHash, stagingResult, trigger\);/);
-  assert.match(read('src/services/staging.js'), /timings\.deployedAt = deployedAt;\n\s+reportBuildStep\(config, session, 'prepare_checks', timings, deployedAt\);/);
+  assert.match(read('src/services/staging.js'), /timings\.deployedAt = deployedAt;\n\s+publishProgress\(config, session, 'prepare_checks', timings, deployedAt\);/);
 });
 
 test('the fifth step reads "prepare checks", names the queued wait, and keeps the build total to the build', () => {

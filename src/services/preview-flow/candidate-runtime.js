@@ -3,6 +3,7 @@
 const docker = require('../docker');
 const kubernetes = require('../kubernetes');
 const { FLOW_LABEL } = require('./cleanup');
+const HEAD_LABEL = 'social.usernode.io/preview-head';
 
 function absent(error) {
   return error.code === 404 || error.statusCode === 404 || error.response?.statusCode === 404;
@@ -14,11 +15,56 @@ async function inspectDocker(intent) {
       'inspect', '--format', '{{json .}}', intent.runtimeName,
     ], { timeout: 5000 });
     const container = JSON.parse(stdout);
-    return { uid: container.Id, labels: container.Config.Labels || {} };
+    return { uid: container.Id, labels: container.Config.Labels || {}, imageRef: container.Config.Image };
   } catch (error) {
     if (/no such (container|object)/i.test(error.stderr || error.message)) return null;
     throw error;
   }
+}
+
+// Observation never treats a transport failure as absence or infers a head
+// from the request. The creator labels the actual runtime with its built head.
+async function observePreparedCandidate(config, intent, flowId, headSha) {
+  let object;
+  if (intent.runtimeKind === 'docker') {
+    object = await inspectDocker(intent);
+  } else {
+    try {
+      const deployment = await kubernetes._getClients().apps.readNamespacedDeployment({
+        name: intent.runtimeName,
+        namespace: intent.namespace,
+      });
+      object = {
+        uid: deployment.metadata.uid,
+        labels: deployment.metadata.labels || {},
+        imageRef: deployment.spec.template.spec.containers.find(container => container.name === 'app')?.image,
+      };
+    } catch (error) {
+      if (!absent(error)) throw error;
+      object = null;
+    }
+  }
+  if (!object) return { present: false, receipt: null };
+  if (object.labels[FLOW_LABEL] !== flowId || object.labels[HEAD_LABEL] !== headSha || !object.uid) {
+    throw Object.assign(new Error('Candidate ownership cannot be established'), { permanent: true });
+  }
+  if (!object.imageRef || !await require('../application-runtime').probeHealth(config, intent)) {
+    return { present: true, receipt: null };
+  }
+  return {
+    present: true,
+    receipt: {
+      commitSha: headSha,
+      stagingUrl: require('../application-runtime').appOrigin(config, intent),
+      runtimeKind: intent.runtimeKind,
+      runtimeName: intent.runtimeName,
+      containerId: intent.runtimeKind === 'docker' ? intent.runtimeName : null,
+      imageRef: object.imageRef,
+      buildRef: null,
+      physicalId: object.uid,
+      attemptId: intent.attemptId,
+    },
+  };
 }
 
 async function verifyCandidate(config, intent, flowId, receipt) {
@@ -138,4 +184,4 @@ async function removeCandidateImage(intent) {
   }
 }
 
-module.exports = { removeCandidate, verifyCandidate, removeCandidateImage };
+module.exports = { HEAD_LABEL, observePreparedCandidate, removeCandidate, verifyCandidate, removeCandidateImage };
