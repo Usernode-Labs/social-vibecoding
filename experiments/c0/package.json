@@ -1,0 +1,17 @@
+{
+  "name": "homeroom-c0-execution-comparison",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Contained execution-backend comparison; no production entry point",
+  "scripts": {
+    "test": "node --test --test-timeout=180000 comparison.test.js"
+  },
+  "dependencies": {
+    "@temporalio/activity": "1.24.0",
+    "@temporalio/client": "1.24.0",
+    "@temporalio/common": "1.24.0",
+    "@temporalio/testing": "1.24.0",
+    "@temporalio/worker": "1.24.0",
+    "@temporalio/workflow": "1.24.0"
+  }
+}
