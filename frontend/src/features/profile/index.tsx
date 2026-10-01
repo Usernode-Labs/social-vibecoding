@@ -35,6 +35,7 @@ export function ProfileScreen() {
       id="profile-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: "relative" }}
+      data-page-bounce=""
     >
       {/*
           THE COLUMN IS THE WORKSHOP TAB'S (#2832). Me is a tab like Workshop,

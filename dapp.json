@@ -3331,9 +3331,9 @@
       "expectText": "Public communities"
     },
     {
-      "name": "The Communities screen draws no empty-state line while it has rows, and the header's Communities opens Your communities, with no chip on the page (#3051, #852)",
+      "name": "The Communities screen draws no empty-state line while it has rows, and the header's Communities opens Your communities, no chip on the page, and the page bounces (#3051, #852, #3566)",
       "path": "/?demo=1#workshop",
-      "expectSelector": "body:has(#header-scope-switch[aria-controls=\"community-switcher\"]) #workshop-screen:not(.hidden):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
+      "expectSelector": "body:has(#header-scope-switch[aria-controls=\"community-switcher\"]) #workshop-screen[data-page-bounce]:not(.hidden):has(#workshop-list [data-workshop-app]) [data-workshop-pane=\"status\"]:not(.hidden) #workshop-empty.hidden"
     },
     {
       "name": "Communities: Needs you is a project’s own feed, every project mixed, each item naming its project, with the rail from Vote to More (#3270, #3488)",

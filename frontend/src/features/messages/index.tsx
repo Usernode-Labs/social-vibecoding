@@ -865,6 +865,7 @@ function ConversationList() {
           open, so this is a two-pane (md+) gesture. */}
       <div
         className="messages-list-scroll platform-safe-scroll"
+        data-page-bounce=""
         onClick={(e) => {
           if (e.target === e.currentTarget && snap.route.conversationId) openConversation(null);
         }}
