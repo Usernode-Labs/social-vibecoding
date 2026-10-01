@@ -652,8 +652,8 @@ const App = {
       nativeBoundary = NativeChrome.enterAnonymous();
     }
     App.user = null;
-    window.UITelemetry?.clearUser?.();
     App._syncViewer();
+    window.UITelemetry?.clearUser?.();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });

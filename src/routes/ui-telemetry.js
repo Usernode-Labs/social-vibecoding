@@ -13,7 +13,7 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
   const json = express.json({ limit: `${telemetry.MAX_BODY_BYTES}b`, strict: true });
 
-  router.post('/api/ui-telemetry/batch', sameOriginBrowserOnly, uiTelemetryLimiter, json, async (req, res) => {
+  router.post('/api/ui-telemetry/batch', uiTelemetryLimiter, sameOriginBrowserOnly, json, async (req, res) => {
     let batch;
     try {
       batch = telemetry.parseBatch(req.body);
