@@ -2,7 +2,7 @@
 //
 // A freshly created app used to deploy as a bare "Press!" demo that looked
 // like the finished product — nothing on screen said it was placeholder
-// content or that tapping Improve is how you build the real app. The
+// content or showed how you build the real app. The
 // scaffold now ships a template welcome screen: a "Starter template" hero,
 // a "What's already working" explainer, and the demo reframed as a
 // clearly-labelled example card — plus a repo README and a CLAUDE.md
@@ -46,7 +46,8 @@ test('index.html carries the starter-notice sentinel block before the example ca
   // The template messaging lives inside the block…
   const block = html.slice(open, close);
   assert.match(block, /Starter template/, 'hero badge names the starter template');
-  assert.match(block, /Improve/, 'hero copy names the Improve button');
+  assert.match(block, /platform icon/, 'hero copy points at the platform icon in the header');
+  assert.match(block, /Start a new change/, 'hero copy names the Start a new change row');
   assert.match(block, /What's already working/, 'explainer card inside the sentinel block');
   // #1418: the welcome copy is product-focused — it describes the outcome,
   // never the AI that produces it.
@@ -77,7 +78,7 @@ test('the scaffold ships a README that names the app and the template state', ()
   const readme = file(files(), 'README.md');
   assert.match(readme, /^# My App/m, 'README titled with the app name');
   assert.match(readme, /Starter template/, 'README states this is the starter template');
-  assert.match(readme, /Improve/, 'README says Improve is how to replace it');
+  assert.match(readme, /Start a new change/, 'README says Start a new change is how to replace it');
   assert.match(readme, /rewrite this README/i,
     'README instructs its own rewrite once the real app exists');
   // #1418: the product promise never names Claude as the actor. "Claude Code"

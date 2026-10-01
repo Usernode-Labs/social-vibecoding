@@ -444,9 +444,9 @@ The scaffold is a small working demo that proves the plumbing works:
 
 ## Replacing the template
 
-Open the app on Homeroom, tap **Improve** in the header, and describe
-the app you want in plain English — the template will be replaced with
-your real app. You can also run Claude Code against this repo directly;
+Open the app on Homeroom, tap the platform icon in the header, and
+click **Start a new change** to start building your game. You can also
+run Claude Code against this repo directly;
 start with \`CLAUDE.md\`, which carries the app-specific notes and
 points at the platform rules.
 
@@ -886,7 +886,7 @@ start().catch(err => { console.error(err); process.exit(1); });
       <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
       <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
       <p class="text-sm text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-sm text-zinc-300 leading-relaxed">Tap <strong class="text-violet-300 font-semibold">Improve</strong> in the header, describe what you'd like in plain English, and it will be turned into your real app.</p>
+      <p class="text-sm text-zinc-300 leading-relaxed">Tap the platform icon in the header and click <strong class="text-violet-300 font-semibold">Start a new change</strong> to start building your game.</p>
     </section>
 
     <section>
