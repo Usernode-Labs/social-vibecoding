@@ -3277,6 +3277,46 @@ html[data-browser-scroller] body {
   isolation: isolate;
   background: var(--home-ground) !important;
 }
+/* ── THE BOTTOM STILL BOUNCES, SO SAFARI CAN TUCK ITS BAR AWAY (#3565) ──
+   "On mobile Safari, if already scrolled to the bottom of the page, cannot
+   scroll down more to make the address bar shrink."
+
+   Safari tucks its toolbar away when a drag moves the page. At the end of
+   an ordinary page there is nothing left to scroll, but the drag still
+   moves the rubber band, and that is enough. This document has no rubber
+   band. `html, body { overscroll-behavior-y: none }` above was written for
+   the bounded shell, whose document never scrolls, to keep the browser's own
+   refresh out of the kit's pull (#737). #1518 made the document the scroller
+   in a phone browser, and on <html> that one rule now switches off the
+   viewport's bounce at BOTH ends: WebKit's main scroll view bounces
+   vertically unless the root's `overscroll-behavior-y` is `none` (WKWebView
+   `_updateScrollViewForTransaction` -> `_setBouncesInternal`). So at the
+   foot of Home, Discover or a project page, with the bar showing, an upward
+   drag moved nothing and the bar stayed.
+
+   The TOP keeps `none`. The kit's pull-to-refresh lives there, and a native
+   bounce or the browser's own refresh would join it. There is no per-edge
+   `overscroll-behavior`, so the edge is told apart by where the page is:
+   lib/browser-scroll.ts marks <html> `data-browser-past-top` while the
+   document sits PAST_TOP_PX (64px) or more below its top, and only then does
+   the viewport take `contain`. That is not `none`, so the far edge bounces
+   (WebKit applies a change to the root's value from the next commit; its
+   own fast/scrolling/ios/overscroll-behavior-on-body.html flips it the other
+   way mid-page). `contain` rather than `auto` so Chrome's refresh stays off
+   if a flick ever outruns the mark to the top. A pull that starts at the
+   top always meets `none`, exactly as before, and a page with less than
+   64px to scroll keeps `none` everywhere. On Android the bottom edge gets
+   the system's stretch back, as on any other page. Body takes the value too
+   only because the rule it overrides names both; WebKit reads <html>.
+
+   Phones only: a narrow desktop window also pages the document, and its
+   trackpad has no toolbar to tuck away. */
+@media (pointer: coarse) {
+  html[data-browser-scroller][data-browser-past-top],
+  html[data-browser-scroller][data-browser-past-top] body {
+    overscroll-behavior-y: contain;
+  }
+}
 /* Body padding reserves these fixed strips at the start of a page. Sticky
    headers must keep reserving them after that padding scrolls away. */
 html[data-browser-scroller] body.has-install-strip {
