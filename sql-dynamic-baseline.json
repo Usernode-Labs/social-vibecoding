@@ -1312,6 +1312,20 @@
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
     },
     {
+      "source": "src/services/shots-demo-states.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 1,
+      "preview": "sql"
+    },
+    {
+      "source": "src/services/shots-demo-states.js",
+      "kind": "runtime-expression",
+      "fingerprint": "8face6269db1d474eb87",
+      "count": 1,
+      "preview": "TAKEN_SQL[table]"
+    },
+    {
       "source": "src/services/shots-state.js",
       "kind": "structural-template",
       "fingerprint": "5b50577c563dc7e02307",

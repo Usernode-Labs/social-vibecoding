@@ -19,6 +19,7 @@ const log = require('./logger');
 const pendingSecrets = require('./pending-secrets');
 const stagingEnv = require('./staging-env');
 const shotsFixtures = require('./shots-fixtures');
+const shotsDemoStates = require('./shots-demo-states');
 const { getPool } = require('../db/pool');
 
 const IMAGE_RECIPE = 'v1';
@@ -511,6 +512,24 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
           })));
         fixtureProfiles.push(shotsFixtures.FULL_ADMIN_SESSION_PROFILE);
         availableFixtures.push(adminSeeded[0]);
+      }
+      // The demo states (shots-demo-states.js) a screen needs and these
+      // copies cannot reach by themselves. Each goes in only where both
+      // revisions can hold it.
+      onProgress?.({ stage: 'seed_shots_demo_states' });
+      const demoInputs = Object.fromEntries(['base', 'head'].map((side) =>
+        [side, { ...fixtureInputs[side], selfAppSlug: config.selfAppSlug }]));
+      const demoReady = await allSettledValues(['base', 'head'].map((side) =>
+        shotsDemoStates.inspectDemoStates(demoInputs[side])));
+      const stateIds = shotsDemoStates.STATE_IDS.filter((id) =>
+        demoReady.every((ready) => ready.includes(id)));
+      if (stateIds.length) {
+        const demo = await shotsDemoStates.installDemoStates(demoInputs, stateIds);
+        fixtureProfiles.push(...demo.installed.map((state) => state.id));
+        availableFixtures.push(...demo.installed);
+        if (demo.skipped.length) {
+          log.warn('shots', 'Shots demo states left out of a pair', { runId: pair.runId, skipped: demo.skipped });
+        }
       }
       fixtureProfile = fixtureProfiles.join('+');
     }

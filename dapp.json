@@ -2206,30 +2206,30 @@
     {
       "name": "A passed close proposal whose window elapsed shows the closing spinner (#1010)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc",
+      "expectSelector": "[data-gov-row='9100074'] .gc-merging-badge .dc-status-spinner-arc",
       "expectText": "Closing issue #900011"
     },
     {
       "name": "A long-stalled close proposal degrades to the retry copy, no spinner (#1010)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100006'] .gc-checks-running-badge",
+      "expectSelector": "[data-gov-row='9100075'] .gc-checks-running-badge",
       "expectText": "Close pending, will retry automatically"
     },
     {
       "name": "The closing state also renders on the proposal's own discussion page (#1010)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100005",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100074",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100074'] .gc-merging-badge .dc-status-spinner-arc"
     },
     {
       "name": "An illustration proposal card previews the proposed image beside the current one (#2086)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='proposed'] img[alt]",
+      "expectSelector": "[data-gov-row='9100077'] [data-illustration-preview] [data-illustration-side='proposed'] img[alt]",
       "expectText": "Proposed"
     },
     {
       "name": "An illustration proposal's discussion page carries the same preview (#2086)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100008",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100077",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100077'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
       "expectText": "Change the featured illustration"
     },
     {
@@ -2246,12 +2246,12 @@
     {
       "name": "#2603: a governance card's vote is the same picker a change's is, so the reason box opens with it",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100003'] .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
+      "expectSelector": "[data-gov-row='9100072'] .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
       "expectText": "Vote"
     },
     {
       "name": "#2603: a close proposal's page lists the votes cast on it, each in the voter's own words",
-      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100003",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100072",
       "expectSelector": "#gc-thread-head .dev-topic-about .dev-topic-roster .dev-ledger-reason[data-vote=\"yes\"]",
       "expectText": "Checked it myself, nothing left to fix."
     },

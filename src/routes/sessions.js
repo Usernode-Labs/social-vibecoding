@@ -2653,10 +2653,11 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
       // Staging-only demo row (?demo=1): a mock archived session so the
       // "Show archived" toggle — the anchor the visible-sessions group
       // renders beneath — is present for any demo viewer. Same read-only
-      // 99xxxx convention as the other mocks (Unarchive 404s server-side).
+      // 99xxxx convention as the other mocks (Unarchive 404s server-side),
+      // with an id of its own: 990104 is the chat-shared session mock.
       if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
         listed.push({
-          id: 990104, branch_name: 'mock/archived-session', pr_number: null,
+          id: 990109, branch_name: 'mock/archived-session', pr_number: null,
           pr_url: null, pr_title: null,
           session_title: '[Mock] Archived session',
           staging_url: null, status: 'archived', linked_issues: [],

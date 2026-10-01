@@ -148,6 +148,11 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /including anything\s+drawn over its edges/, "a corner badge overflows its button");
   assert.match(prompt, /pick the\s+bar or card around it/);
   assert.match(prompt, /create it\s+the same way on both addresses before you shoot either/);
+  // Each persona's demo data, and where the checks' data belongs: a member
+  // story once 404'd on a check path whose fixture is the read-only admin's.
+  assert.match(prompt, /availableFixtures\s+lists it: who it is for \(persona, alsoFor\), what it shows and its path/);
+  assert.match(prompt, /before you decide a change cannot be\s+reached/);
+  assert.match(prompt, /declaredChecks are the app's own checks, run as read_only_admin/);
   assert.match(prompt, /call\s+note_change with the change id and what they leave out/);
   assert.match(prompt, /turn out not to show it, call skip_change/);
   assert.match(prompt, /nothing saved for that change is published/);
