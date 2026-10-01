@@ -33,6 +33,7 @@ const createOptions = require('../services/create-options');
 const collabInvites = require('../services/collab-invites');
 const emailInvites = require('../services/email-invites');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const appActivity = require('../services/app-activity');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -492,8 +493,7 @@ async function sweepStuckCreatingApps(pool) {
 // native app returning from the background, say — without leaving the door
 // open. It is the DAILY cap that actually holds the line, because a ceiling
 // on one request is defeated by sending many.
-const ACTIVITY_MAX_PER_POST = 3600;
-const ACTIVITY_MAX_PER_DAY = 86400;
+const { ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY } = appActivity;
 
 /**
  * The seconds to credit for one heartbeat, or `null` to refuse the body.
@@ -505,12 +505,7 @@ const ACTIVITY_MAX_PER_DAY = 86400;
  * was a 400. `Infinity` took the same route. A numeric STRING is refused too:
  * this body comes from our own client, which sends a number.
  */
-function activitySeconds(raw) {
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-  const rounded = Math.round(raw);
-  if (rounded <= 0) return null;
-  return Math.min(rounded, ACTIVITY_MAX_PER_POST);
-}
+const { activitySeconds } = appActivity;
 
 function appRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
@@ -3364,11 +3359,34 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
   });
 
   router.post('/api/apps/:slug/activity', sameOriginBrowserOnly, async (req, res) => {
-    const seconds = activitySeconds(req.body?.seconds);
-
-    if (seconds === null) {
-      return res.status(400).json({ error: 'Invalid seconds value' });
+    const modern = req.body && Object.prototype.hasOwnProperty.call(req.body, 'batchId');
+    const legacySeconds = modern ? null : activitySeconds(req.body?.seconds);
+    const activityRequest = modern
+      ? appActivity.parseActivityRequest(req.body)
+      : (legacySeconds === null ? null : { legacy: true, seconds: legacySeconds });
+    if (!activityRequest) {
+      return res.status(400).json({
+        error: modern ? 'Invalid activity payload' : 'Invalid seconds value',
+      });
     }
+    if (!activityRequest.legacy) {
+      try {
+        const stored = await appActivity.recordActivityBatch(pool, {
+          slug: req.params.slug,
+          user: req.user,
+          request: activityRequest,
+        });
+        return res.json({ ok: true, duplicate: stored.duplicate });
+      } catch (err) {
+        if (err?.code === 'not_found') return res.status(404).json({ error: 'App not found' });
+        if (err?.code === 'batch_id_reused') {
+          return res.status(409).json({ error: 'Batch ID was reused' });
+        }
+        log.error('apps', 'Failed to track activity batch', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+    const seconds = activityRequest.seconds;
 
     try {
       const appRow = await appAccess.getAppForUser(

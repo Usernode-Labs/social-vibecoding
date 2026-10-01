@@ -633,6 +633,23 @@ CREATE TABLE IF NOT EXISTS app_activity (
   UNIQUE(app_id, user_id, date)
 );
 
+-- Delivery receipts for engaged-use batches. A browser retains the same UUID
+-- until acknowledgement, so a response lost after COMMIT can be retried
+-- without adding its seconds twice. The payload hash also prevents a caller
+-- from reusing a receipt for different data. Receipts contain user-level
+-- analytics delivery history and therefore do not copy into staging.
+CREATE TABLE IF NOT EXISTS app_activity_receipts (
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  batch_id        UUID NOT NULL,
+  payload_sha256  CHAR(64) NOT NULL,
+  received_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(user_id, batch_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_activity_receipts_received
+  ON app_activity_receipts(received_at);
+COMMENT ON TABLE app_activity_receipts IS 'staging:private';
+
 -- Per-check history: which of an app's declared dapp.json checks have ever
 -- been OBSERVED PASSING, and are therefore allowed to block a merge.
 --
