@@ -8973,6 +8973,21 @@ function describeTurnError(err) {
       return 'Setting up the coding agent failed while checking out this session\'s branch, so the agent never started and no code was changed.'
         + `${git} Retrying will not help until the branch problem is resolved.`;
     }
+    // The machine the agent runs on never started. The typed reason is set
+    // by the Kubernetes bootstrap wait; the raw kubelet reason, node and log
+    // stay in the platform log, never in this copy.
+    const couldNotStart = {
+      image_unavailable: 'its software image could not be downloaded',
+      config_error: 'of a problem in its platform configuration',
+      unschedulable: 'the platform had no free capacity to run it',
+    }[err.bootstrapReason];
+    if (couldNotStart) {
+      return `The coding agent's machine could not start because ${couldNotStart}, so the agent never started and no code was changed. `
+        + 'This is a platform problem, not your change.'
+        + (err.bootstrapReason === 'unschedulable'
+          ? ' Try again in a few minutes.'
+          : ' Retrying will not help until the platform is fixed.');
+    }
     if (message.startsWith('warm-ready timeout')) {
       return 'Setting up the coding agent timed out before it was ready, so the agent never started and no code was changed. Try again in a minute.';
     }

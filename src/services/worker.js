@@ -2238,6 +2238,9 @@ const BOOTSTRAP_ERROR_PREFIXES = Object.freeze([
   'checkout failed',
   'warm-ready timeout',
   'warm wrapper exited before warm-ready',
+  // Kubernetes only: the kubelet could not start the worker container at
+  // all. Carries a typed `bootstrapReason` (see kubernetes-worker-bootstrap).
+  'worker could not start',
 ]);
 
 // Only the two failure modes with a plausible transient cause. A private
@@ -2375,28 +2378,46 @@ async function _bootstrapWarmContainer(sessionId, {
     PLATFORM_URL: PLATFORM_INTERNAL_URL,
   };
   if (usesKubernetesWorkers()) {
-    try {
-      const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
-        sessionId, env: safeEnv, onProgress, temporary,
-        reclaimVolumes: async () => {
-          const pool = _getPoolSafe();
-          if (!pool) return 0;
-          const freed = await require('./worker-volume-reclaim').reclaimWorkerVolumes({
-            pool, excludeSessionId: sessionId,
-          });
-          return freed.length;
-        },
-      });
-      containerName = result.runtimeName;
-      log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName });
-      return containerName;
-    } catch (err) {
-      Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
-      log.error('worker', 'Bootstrap failed', { sessionId, containerName,
-        phase: err.bootstrapPhase || null, message: log.redactString(err.message),
-        logTail: err.bootstrapLog?.join('\n') || null });
-      throw attachBootstrapContext(err, { containerName, attempts: 1 });
+    // Same bounded retry as the Docker path below: same attempts, same
+    // backoff, same halved budget after the first, and only for the
+    // transient failures. A Pod the kubelet cannot even start (no image, no
+    // node, broken config) fails fast with a typed reason and is not retried.
+    const progress = typeof onProgress === 'function' ? onProgress : () => {};
+    for (let attempt = 1; attempt <= BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const result = await kubernetes.ensureWorker(kubernetesWorkerConfig(), {
+          sessionId, env: safeEnv, onProgress, temporary,
+          timeoutMs: attempt === 1 ? WARM_READY_TIMEOUT_MS : Math.round(WARM_READY_TIMEOUT_MS / 2),
+          retryAttempt: attempt === 1 ? null : attempt,
+          reclaimVolumes: async () => {
+            const pool = _getPoolSafe();
+            if (!pool) return 0;
+            const freed = await require('./worker-volume-reclaim').reclaimWorkerVolumes({
+              pool, excludeSessionId: sessionId,
+            });
+            return freed.length;
+          },
+        });
+        containerName = result.runtimeName;
+        log.info('worker', 'Warm worker Pod ready', { runtimeName: containerName, pvc: result.pvcName, attempt });
+        return containerName;
+      } catch (err) {
+        Object.defineProperty(err, 'bootstrapFailed', { value: true, configurable: true });
+        const retryable = isRetryableBootstrapError(err);
+        const willRetry = retryable && attempt < BOOTSTRAP_MAX_ATTEMPTS;
+        log.error('worker', 'Bootstrap failed', { sessionId, containerName,
+          attempt, maxAttempts: BOOTSTRAP_MAX_ATTEMPTS, retryable, willRetry,
+          phase: err.bootstrapPhase || null, reason: err.bootstrapReason || null,
+          message: log.redactString(err.message),
+          logTail: err.bootstrapLog?.join('\n') || null });
+        if (!willRetry) throw attachBootstrapContext(err, { containerName, attempts: attempt });
+        progress(`[retrying setup (attempt ${attempt + 1} of ${BOOTSTRAP_MAX_ATTEMPTS})]`);
+        const backoffMs = BOOTSTRAP_RETRY_BASE_MS * (2 * attempt - 1);
+        await new Promise((r) => setTimeout(r, backoffMs + Math.floor(Math.random() * 250)));
+      }
     }
+    // Unreachable: the loop either returns or throws on its last attempt.
+    throw new Error(`warm bootstrap exhausted ${BOOTSTRAP_MAX_ATTEMPTS} attempts for ${containerName}`);
   }
   const safeEnvArgs = Object.entries(safeEnv).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
 
