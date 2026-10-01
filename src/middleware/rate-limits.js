@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const log = require('../services/logger');
 const { clientIp } = require('../services/client-ip');
+const uiTelemetry = require('../services/ui-telemetry');
 
 // Retry-delay phrase for throttle messages: minutes rounded up, with
 // anything ≤ 60s collapsing to "in under a minute".
@@ -31,7 +32,7 @@ function retryPhrase(seconds) {
 // a falsy value to fall through to the keyByUser / IP default below. That
 // fallthrough is load-bearing: the waitlist token bucket keys on the path
 // token, and one route in the same family carries no token.
-function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, key = null, v4Envelope = false }) {
+function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFailedRequests = false, skipSuccessfulRequests = false, exemptAdmins = false, skip = null, key = null, v4Envelope = false }) {
   const options = {
     windowMs,
     max,
@@ -102,7 +103,9 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
       });
     },
   };
-  if (exemptAdmins) options.skip = (req) => !!req.user?.canAdminWrite;
+  if (exemptAdmins || skip) {
+    options.skip = (req, res) => (exemptAdmins && !!req.user?.canAdminWrite) || !!skip?.(req, res);
+  }
   return rateLimit(options);
 }
 
@@ -1359,6 +1362,10 @@ const uiTelemetryLimiter = makeLimiter({
   max: 60,
   name: 'ui-telemetry',
   keyByUser: true,
+  // The collector discards these fixed browser-check identities, so do not
+  // throttle data we intentionally throw away. Every retained human account,
+  // including human admins, keeps the exact same per-user limit.
+  skip: (req) => !!req.user?.id && !uiTelemetry.isEligibleUser(req.user),
   skipFailedRequests: true,
   message: 'Telemetry is arriving too quickly. It will retry shortly.',
 });

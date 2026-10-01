@@ -70,6 +70,9 @@ const RESERVED_PREFIXES = ['usernode', 'staging'];
 const SERVICE_IDENTITIES = new Set([
   'usernode-capture',
   'usernode-capture-admin',
+  // Exists only in disposable paired-shots databases, where the browser
+  // needs a real full-admin session to review protected surfaces.
+  'usernode-shots-full-admin',
   'staging-demo-user',
 ]);
 

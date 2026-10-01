@@ -58,15 +58,20 @@
     const visitId = randomId();
     let sequence = 0;
     let currentUser = null;
+    let pendingUser = null;
     let queue = [];
     let droppedEvents = 0;
     let failedBatches = 0;
     let flushTimer = null;
     let retryMs = 1000;
+    let nextDeliveryAt = 0;
     let sending = false;
     let pendingBatch = null;
     let userEpoch = 0;
     let activeRequest = null;
+    // Boot observations are held in memory until the verified session says
+    // whether this is a product user or a synthetic browser-check identity.
+    let collectionDisabled = false;
     const attempts = new Map();
     const lastAttempts = new Map();
     const troubledActions = new Set();
@@ -95,7 +100,7 @@
     }
 
     function persist() {
-      if (!storage || !currentUser) return;
+      if (!storage || !currentUser || collectionDisabled) return;
       try { storage.setItem(storeKey(currentUser), JSON.stringify(queue)); } catch (_) { /* memory queue remains */ }
     }
 
@@ -112,6 +117,19 @@
       try { storage.removeItem(storeKey(userId)); } catch (_) { /* best effort */ }
     }
 
+    function resetObservations() {
+      queue = [];
+      pendingBatch = null;
+      attempts.forEach((record) => { if (record.timer) clearTimer(record.timer); });
+      attempts.clear();
+      lastAttempts.clear();
+      troubledActions.clear();
+      droppedEvents = 0;
+      failedBatches = 0;
+      retryMs = 1000;
+      nextDeliveryAt = 0;
+    }
+
     function cancelInFlight() {
       if (!activeRequest) return;
       try { activeRequest.controller?.abort(); } catch (_) { /* the deadline still releases it */ }
@@ -120,7 +138,7 @@
     }
 
     function schedule(delay) {
-      if (!currentUser || sending || flushTimer || !queue.length || adminRoute()) return;
+      if (collectionDisabled || !currentUser || sending || flushTimer || !queue.length || adminRoute()) return;
       flushTimer = setTimer(() => {
         flushTimer = null;
         void flush(false);
@@ -140,7 +158,7 @@
     }
 
     function emit(kind, screen, detail) {
-      if (adminRoute() || !SCREENS.has(screen)) return null;
+      if (collectionDisabled || adminRoute() || !SCREENS.has(screen)) return null;
       detail = detail || {};
       const item = {
         id: randomId(),
@@ -174,7 +192,7 @@
 
     function attempt(action, context) {
       context = context || {};
-      if (adminRoute() || !ACTIONS.has(action) || !SCREENS.has(context.screen)) return null;
+      if (collectionDisabled || adminRoute() || !ACTIONS.has(action) || !SCREENS.has(context.screen)) return null;
       const id = randomId();
       const startedAt = clock();
       const appSlug = safeAppSlug(context.appSlug);
@@ -256,26 +274,73 @@
     }
 
     function contextHeaders(attemptId) {
+      if (collectionDisabled) return {};
       const headers = { 'X-UI-Visit-ID': visitId };
       if (attempts.has(attemptId)) headers['X-UI-Attempt-ID'] = attemptId;
       return headers;
     }
 
-    function setUser(userId) {
+    function setUser(user, verifiedSession = true) {
+      const descriptor = user && typeof user === 'object' ? user : null;
+      const userId = descriptor ? descriptor.id : user;
       const next = userId == null ? null : String(userId);
       if (!next) { clearUser(); return; }
+      // Product wiring passes the /api/auth/me user object. Only an explicit
+      // server-owned TRUE enables delivery. An old/offline snapshot has no
+      // decision: keep its bounded observations in memory for same-account
+      // reconciliation, but do not load storage or send. Numeric/string
+      // callers remain supported for the small public API and isolated tests.
+      const decision = descriptor && verifiedSession === true
+        && typeof descriptor.uiTelemetryEligible === 'boolean'
+        ? descriptor.uiTelemetryEligible : (descriptor ? null : true);
+      if (decision === null) {
+        cancelInFlight();
+        if (flushTimer) clearTimer(flushTimer);
+        flushTimer = null;
+        if ((currentUser && currentUser !== next) || (pendingUser && pendingUser !== next)) {
+          clearStored(currentUser);
+          clearStored(pendingUser);
+          resetObservations();
+        }
+        currentUser = null;
+        pendingUser = next;
+        userEpoch += 1;
+        collectionDisabled = false;
+        return;
+      }
+      if (!decision) {
+        cancelInFlight();
+        if (flushTimer) clearTimer(flushTimer);
+        flushTimer = null;
+        clearStored(currentUser);
+        clearStored(pendingUser);
+        clearStored(next);
+        currentUser = null;
+        pendingUser = null;
+        userEpoch += 1;
+        resetObservations();
+        collectionDisabled = true;
+        return;
+      }
+      collectionDisabled = false;
+      const samePendingUser = pendingUser === next;
+      if (pendingUser && pendingUser !== next) {
+        clearStored(pendingUser);
+        resetObservations();
+      }
+      pendingUser = null;
       if (currentUser === next) { schedule(0); return; }
       cancelInFlight();
       if (currentUser) {
         clearStored(currentUser);
-        queue = [];
-        droppedEvents = 0;
-        failedBatches = 0;
+        resetObservations();
       }
       currentUser = next;
       userEpoch += 1;
-      attempts.forEach((record) => { if (record.timer) clearTimer(record.timer); });
-      attempts.clear();
+      if (!samePendingUser) {
+        attempts.forEach((record) => { if (record.timer) clearTimer(record.timer); });
+        attempts.clear();
+      }
       pendingBatch = null;
       queue = load(next).concat(queue);
       trim(clock());
@@ -288,20 +353,35 @@
       if (flushTimer) clearTimer(flushTimer);
       flushTimer = null;
       clearStored(currentUser);
+      clearStored(pendingUser);
       currentUser = null;
+      pendingUser = null;
       userEpoch += 1;
-      queue = [];
-      pendingBatch = null;
-      attempts.forEach((record) => { if (record.timer) clearTimer(record.timer); });
-      attempts.clear();
-      lastAttempts.clear();
-      troubledActions.clear();
-      droppedEvents = 0;
-      failedBatches = 0;
+      resetObservations();
+      collectionDisabled = false;
+    }
+
+    function retryAfterDelay(response) {
+      if (response?.status !== 429) return 0;
+      let raw = null;
+      try { raw = response.headers?.get?.('retry-after'); } catch (_) { return 0; }
+      if (typeof raw !== 'string' || !raw.trim()) return 0;
+      const value = raw.trim();
+      const seconds = Number(value);
+      const delay = Number.isFinite(seconds)
+        ? seconds * 1000
+        : Date.parse(value) - clock();
+      if (!Number.isFinite(delay) || delay <= 0) return 0;
+      return Math.max(1000, Math.min(60_000, Math.ceil(delay)));
     }
 
     async function flush(keepalive) {
-      if (!fetcher || !currentUser || sending || !queue.length || adminRoute()) return false;
+      if (collectionDisabled || !fetcher || !currentUser || sending || !queue.length || adminRoute()) return false;
+      const cooldown = nextDeliveryAt - clock();
+      if (cooldown > 0) {
+        schedule(cooldown);
+        return false;
+      }
       // A direct flush (pagehide, reconnect, or a caller) supersedes the
       // ordinary debounce. Its result installs the next appropriate timer.
       if (flushTimer) clearTimer(flushTimer);
@@ -355,6 +435,7 @@
           failedBatches = 0;
           droppedEvents = 0;
           retryMs = 1000;
+          nextDeliveryAt = 0;
           persist();
           drainImmediately = queue.length > 0;
           return true;
@@ -370,6 +451,7 @@
           persist();
           drainImmediately = queue.length > 0;
         }
+        retryMs = Math.max(retryMs, retryAfterDelay(response));
         failedBatches = Math.min(10_000, failedBatches + 1);
       } catch (_) {
         if (sendingEpoch === userEpoch && sendingUser === currentUser) {
@@ -385,6 +467,7 @@
         return false;
       }
       if (drainImmediately) return false;
+      nextDeliveryAt = clock() + retryMs;
       schedule(retryMs);
       retryMs = Math.min(60_000, retryMs * 2);
       return false;
@@ -420,7 +503,10 @@
     }
 
     if (doc && typeof doc.addEventListener === 'function') {
-      doc.addEventListener('sv:session', (event) => setUser(event?.detail?.user?.id));
+      doc.addEventListener('sv:session', (event) => setUser(
+        event?.detail?.user,
+        event?.detail?.verifiedSession === true,
+      ));
       doc.addEventListener('visibilitychange', () => {
         // A hidden document may only be a tab switch. Flush while the browser
         // gives us time, but reserve navigation_abandonment for pagehide.

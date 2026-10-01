@@ -14,6 +14,12 @@ function uiTelemetryRoutes(config, { pool = getPool(config) } = {}) {
   const json = express.json({ limit: `${telemetry.MAX_BODY_BYTES}b`, strict: true });
 
   router.post('/api/ui-telemetry/batch', uiTelemetryLimiter, sameOriginBrowserOnly, json, async (req, res) => {
+    // Capture and paired-shots sessions are real authenticated users so they
+    // can exercise protected UI, but their scripted traffic is not product
+    // experience data. Answer successfully so old clients drop their queue.
+    if (!telemetry.isEligibleUser(req.user)) {
+      return res.status(202).json({ ok: true, accepted: 0, submitted: 0, discarded: true });
+    }
     let batch;
     try {
       batch = telemetry.parseBatch(req.body);

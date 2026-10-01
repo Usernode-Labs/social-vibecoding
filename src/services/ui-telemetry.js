@@ -2,6 +2,7 @@
 
 const crypto = require('node:crypto');
 const events = require('./events');
+const usernames = require('./usernames');
 
 const MAX_BATCH_EVENTS = 25;
 const MAX_BODY_BYTES = 32 * 1024;
@@ -38,6 +39,13 @@ const EVENT_KEYS = Object.freeze([
 ]);
 
 class TelemetryValidationError extends Error {}
+
+// Browser checks use real authenticated sessions so protected screens can be
+// exercised. Their fixed handles are the authoritative boundary: role is not
+// one, because human full/view admins still produce useful journey evidence.
+function isEligibleUser(user) {
+  return !!user?.id && !usernames.isServiceIdentity(user.username);
+}
 
 function plainObject(value) {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -274,7 +282,9 @@ function requestOpaqueId(req, header) {
 }
 
 function recordServerFailure(pool, req, { screen, action, status, message }) {
-  if (!req?.user?.id || !SCREENS.has(screen) || !ACTIONS.has(action)) return Promise.resolve();
+  if (!isEligibleUser(req?.user) || !SCREENS.has(screen) || !ACTIONS.has(action)) {
+    return Promise.resolve();
+  }
   const metadata = {
     eventId: crypto.randomUUID(),
     visitId: requestOpaqueId(req, 'x-ui-visit-id') || crypto.randomUUID(),
@@ -300,8 +310,9 @@ function daysWindow(raw) {
 
 async function aggregate(pool, { days = 14, includeAdmins = false } = {}) {
   const adminClause = includeAdmins ? '' : 'AND NOT u.is_admin';
-  const params = [days];
-  const base = `e.created_at >= NOW() - ($1::int * INTERVAL '1 day') ${adminClause}`;
+  const params = [days, [...usernames.SERVICE_IDENTITIES]];
+  const base = `e.created_at >= NOW() - ($1::int * INTERVAL '1 day') ${adminClause}
+    AND NOT (LOWER(u.username) = ANY($2::text[]))`;
   const [overall, journeys, screens, contexts, errors, delivery] = await Promise.all([
     pool.query(
       `WITH ui AS (
@@ -534,6 +545,7 @@ module.exports = {
   aggregate,
   daysWindow,
   insertBatch,
+  isEligibleUser,
   parseBatch,
   recordServerFailure,
   safeServerError,

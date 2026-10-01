@@ -27,6 +27,7 @@ const communityInvites = require('../services/community-invites');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
+const uiTelemetry = require('../services/ui-telemetry');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
@@ -755,6 +756,10 @@ function authRoutes(config) {
       user: {
         id: req.user.id,
         username: req.user.username,
+        // Browser-check accounts authenticate normally to exercise protected
+        // screens, but their scripted journeys must not enter product UI
+        // analytics. The client waits for this server-owned decision.
+        uiTelemetryEligible: uiTelemetry.isEligibleUser(req.user),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating
