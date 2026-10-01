@@ -182,24 +182,42 @@ The platform checks:
   browser output directory, named by the agent. For a clip, it reads only the
   newest `.webm` in the change's persona directory. Taking a clip retires
   every older recording there, so a stale session can never be published
-  later.
+  later;
+- a shot was taken on its own side's address: a "before" on the before
+  address, an "after" on the after address. The browser observer stamps each
+  screenshot with the site of the page Playwright last reported, and each
+  closed recording session with every site it showed. The bridge publishes a
+  still only when its stamp names that address and the image is still the
+  one stamped, and a clip only when the record written as its session closed
+  names that address alone (`worker/shots-boundary.js`). Anything else is
+  refused with `shot_not_on_app`.
 
-The browsers reach only the two addresses and the deployed apps the brief
-lists, through the worker's egress proxy. Two routes mirror what the
-production edge does: for a child app (and a hosted app), GET/HEAD of
+The browsers reach the public internet, through the worker's egress proxy,
+so a page that loads a CDN script, a font or map tiles renders as it does in
+production. The two addresses and the deployed apps the brief lists are
+reached by name, as before. Any other destination is reached only on port 80
+or 443, only when every address its name resolves to is public, and at the
+address that was checked, so a second lookup cannot move it inside: the
+network the worker runs in (cluster services, the cloud metadata endpoint,
+private and link-local ranges) is never reachable, and each refusal is
+counted in the trace as `egress_blocked` with its reason (`private_address`,
+`port` or `dns`), never the destination. The persona identity goes only to a
+child-app pair's own two addresses. Two routes mirror what the production
+edge does: for a child app (and a hosted app), GET/HEAD of
 `/usernode-bridge/`, `/usernode-native/` and `/usernode-tailwind/` is
 answered by the platform, without the page's cookies, since the app's own
-server would return its SPA fallback and leave the page unstyled; and a
-child app still on the Tailwind CDN script may reach `cdn.tailwindcss.com`,
-the one third-party host admitted. The platform's own proposals serve the
-assets their revision carries.
+server would return its SPA fallback and leave the page unstyled. A child
+app still on the Tailwind CDN script reaches `cdn.tailwindcss.com` like any
+public host, and that use is still counted (`legacy_tailwind_cdn`). The
+platform's own proposals serve the assets their revision carries.
 
-It does **not** prove that a "before" shot was taken on the before address,
-or that the shot shows the change. These are the shots agent's
-observations, and people are the judges, which is also how the replay
-pipeline ended: people still had to look. The builds are platform-made from
-exact revisions with fixture data, so no author's local data or credentials
-can appear in them.
+It does **not** prove that a shot shows the change, or what a page drew on
+its own address. The address check guards against the agent's mistakes and
+steering, not against the page: a proposal's own page can already show
+anything there. What the shots show is the shots agent's observation, and
+people are the judges, which is also how the replay pipeline ended: people
+still had to look. The builds are platform-made from exact revisions with
+fixture data, so no author's local data or credentials can appear in them.
 
 ## What people see
 
@@ -282,7 +300,8 @@ browser). Each persona's browser saves files under
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
 | Browser servers (`--output-dir`, `--save-video`) | `worker/write-shots-mcp-config.js` |
-| Egress proxy (origins, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
+| Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
+| Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |
 | Local dry run: the pair, then the shots | `scripts/shots-dry-run-pair.js`, `scripts/shots-dry-run.js` |
 | States, storage, public summary | `src/services/shots-state.js`, `src/services/shots-view.js` |
 | Where before and after differ, per screen (`screensFor`) | `src/services/shots-diff.js` |
