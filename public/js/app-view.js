@@ -8029,6 +8029,19 @@ const AppView = {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: 'status' } }));
     } catch {}
   },
+  /**
+   * A DOOR TO A PROJECT'S DISCUSSION TAB, the same door `_landOnHub` is to
+   * the hub: the rail's Recents row for the project's channel opens the
+   * project's own page on its Discussion tab rather than the Messages
+   * screen's app-channel thread (#3555). It writes the remembered tab, and
+   * a page already open for that project is told to switch, in place.
+   */
+  _landOnDiscussion(slug) {
+    AppView._setWorkshopTab('discussion');
+    try {
+      window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: 'discussion' } }));
+    } catch {}
+  },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
   // Cards in the "Needs your vote" strip; the rest are a count.

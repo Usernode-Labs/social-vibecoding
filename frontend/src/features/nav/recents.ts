@@ -45,6 +45,9 @@ export interface RecentItem {
   activity?: AgentActivity;
   /** Only for `app`: what the tile draws and what resuming opens. */
   app?: { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
+  /** Only for an app's channel row: the project whose page its Discussion
+   *  tab lives on (#3555). A conversation channel has none. */
+  appSlug?: string;
   /** Only for an Active row (#3074): the app the viewer is in right now. */
   current?: boolean;
 }
@@ -153,6 +156,7 @@ export function buildRecents(input: {
     items.push({
       key: `discussion:${item.slug}`,
       kind: 'channel',
+      appSlug: item.slug,
       label: `#${item.channel || item.slug}`,
       href: `#messages/app/${encodeURIComponent(item.slug)}`,
       at: item.lastAt,

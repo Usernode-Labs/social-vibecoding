@@ -117,6 +117,19 @@ function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
   window.App?.openAppTab?.(slug, 'app');
 }
 
+/** A channel row for an app's discussion opens the project page's Discussion
+ *  tab, as the hub's channel-card door does (#3555). A modified click keeps
+ *  the href, so middle-click and a new tab still open the channel's address. */
+function onDiscussionClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
+  const nav = (window as unknown as {
+    NavLink?: { isNativeClick?: (e: unknown) => boolean };
+  }).NavLink;
+  if (nav?.isNativeClick?.(event)) return;
+  event.preventDefault();
+  window.AppView?._landOnDiscussion?.(slug);
+  window.App?.openAppTab?.(slug, 'dev');
+}
+
 /** The app's own icon, as the launcher draws it. */
 function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   const record = { icon_url: app.iconUrl, icon_emoji: app.iconEmoji, name: app.name };
@@ -146,7 +159,9 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       aria-label={`${KIND_NAMES[item.kind]}: ${item.label}${loaded}${doing}${unread}`}
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
-      onClick={item.app ? (event) => onAppClick(event, item.app!.slug) : undefined}
+      onClick={item.app
+        ? (event) => onAppClick(event, item.app!.slug)
+        : item.appSlug ? (event) => onDiscussionClick(event, item.appSlug) : undefined}
     >
       {/* #2779: an agent session working (a spinner) or finished unseen (a
           green dot), either IN PLACE of the row's icon (#3028, #3076)

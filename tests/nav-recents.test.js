@@ -353,6 +353,55 @@ test('unread shows on conversations; archived and silent channels stay out', () 
   assert.equal(items[0].unread, true);
 });
 
+// #3555: an app's channel row in Recents opens the project's own page on its
+// Discussion tab, not the Messages screen's app-channel thread (whose header
+// offers a back arrow to the community). A conversation channel keeps its
+// plain Messages address and no door.
+test('#3555: an app\'s channel row carries the project\'s slug; a conversation channel does not', () => {
+  const items = buildRecents({
+    apps: [],
+    conversations: [conversation(3, 'channel', '2026-09-20T11:00:00Z', { channelKey: 'general' })],
+    discussions: [{
+      slug: 'chess', name: 'Chess', channel: 'chess', iconUrl: null, iconEmoji: null,
+      lastMessage: 'gg', lastAt: '2026-09-20T08:00:00Z', lastBy: 'bo',
+    }],
+    agents: [],
+  });
+  const discussion = items.find((i) => i.kind === 'channel' && i.key === 'discussion:chess');
+  assert.ok(discussion, 'the discussion row is in the list');
+  assert.equal(discussion.href, '#messages/app/chess', 'the channel address stays, for a modified click');
+  assert.equal(discussion.appSlug, 'chess', 'the row knows which project to open');
+  const plain = items.find((i) => i.kind === 'channel' && i.key === 'conversation:3');
+  assert.ok(plain, 'the conversation channel is in the list');
+  assert.equal(plain.appSlug, undefined, 'a conversation channel has no project to open');
+});
+
+test('#3555: the discussion row renders as before and its press opens the Discussion tab', () => {
+  const items = buildRecents({
+    apps: [],
+    conversations: [],
+    discussions: [{
+      slug: 'chess', name: 'Chess', channel: 'chess', iconUrl: null, iconEmoji: null,
+      lastMessage: 'gg', lastAt: '2026-09-20T08:00:00Z', lastBy: 'bo',
+    }],
+    agents: [],
+  });
+  const { RecentsByDay } = loadTsx('frontend/src/features/nav/recents-list.tsx');
+  const html = renderToHtml(createElement(RecentsByDay, {
+    items, live: [], showOlder: false, onToggleOlder: () => {}, now: NOW,
+  }));
+  assert.match(html, /href="#messages\/app\/chess"/, 'the channel address is unchanged');
+  assert.match(html, /<span class="platform-recent-label">#chess<\/span>/);
+  assert.match(html, /aria-label="Channel: #chess"/);
+
+  const list = read('frontend/src/features/nav/recents-list.tsx');
+  assert.match(list, /function onDiscussionClick\(event: MouseEvent<HTMLAnchorElement>, slug: string\): void \{\s*\n\s*const nav = \(window as unknown as \{\s*\n\s*NavLink\?: \{ isNativeClick\?: \(e: unknown\) => boolean \};\s*\n\s*\}\)\.NavLink;\s*\n\s*if \(nav\?\.isNativeClick\?\.\(event\)\) return;\s*\n\s*event\.preventDefault\(\);\s*\n\s*window\.AppView\?\._landOnDiscussion\?\.\(slug\);\s*\n\s*window\.App\?\.openAppTab\?\.\(slug, 'dev'\);/);
+  assert.match(list, /item\.appSlug \? \(event\) => onDiscussionClick\(event, item\.appSlug\) : undefined\}/);
+  // The door itself, shaped like the hub's: same body, the other tab.
+  const view = read('public/js/app-view.js');
+  assert.match(view, /_landOnDiscussion\(slug\) \{\s*\n\s*AppView\._setWorkshopTab\('discussion'\);\s*\n\s*try \{\s*\n\s*window\.dispatchEvent\(new CustomEvent\('usernode:workshop-tab', \{ detail: \{ slug: slug \|\| null, tab: 'discussion' \} \}\)\);/);
+});
+
 test('the rail renders Recents between Workshop and Me, empty until mounted', () => {
   const bar = read('frontend/src/features/nav/tab-bar.tsx');
   assert.match(bar, /key === 'me' \? <RecentsList key="recents" \/> : null,/);
