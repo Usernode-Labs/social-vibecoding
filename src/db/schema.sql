@@ -2784,6 +2784,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_llm_invocation_key
   ON events ((metadata->>'invocation_key'))
   WHERE event_type = 'llm_invocation' AND metadata ? 'invocation_key';
 
+-- A navigation keeps one browser-generated UUID through offline / transport
+-- retries. Scope it to its authenticated viewer and app: the same opaque UUID
+-- from another account is unrelated, while an exact replay is one opening.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dapp_opening_key
+  ON events (user_id, app_id, (metadata->>'openingId'))
+  WHERE event_type = 'dapp_opened' AND metadata ? 'openingId';
+
 -- UI telemetry is uploaded in retryable batches. Both ids are opaque random
 -- client values validated by services/ui-telemetry.js; these indexes make a
 -- lost response safe to replay without double-counting either observations

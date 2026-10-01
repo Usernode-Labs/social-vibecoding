@@ -2,10 +2,11 @@
 //
 // Writes rows into the `events` table (see schema.sql) that power the
 // admin /dashboard growth, retention, and funnel views. Emission is
-// deliberately fire-and-forget: a missed analytics row must NEVER break
-// or slow down the user action that produced it, so `record()` swallows
-// every error (logging at debug) and callers do not await it on the hot
-// path — they invoke it and move on.
+// `record()` is deliberately fire-and-forget: a missed ordinary analytics row
+// must NEVER break or slow down the user action that produced it, so it
+// swallows every error (logging at debug). A dapp_opened signal is the one
+// delivery exception: services/app-openings.js awaits an idempotent insert so
+// its client retry queue can distinguish "durable" from "try again".
 //
 // Historical rows for the original event vocabulary are synthesized once
 // by backfillEvents() in src/db/migrate.js. Newer action types can have no
@@ -25,6 +26,9 @@ const EVENT_TYPES = Object.freeze({
   // shared #leaderboard/users/<name> link used to mean — `username_history`
   // holds the reservation, this holds the WHEN and the audit trail.
   USERNAME_CHANGED: 'username_changed',
+  // A successful top-level App-tab entry. Written through app-openings.js;
+  // created_at is the bounded occurrence time, while metadata.receivedAt is
+  // the server receipt time after any retry.
   DAPP_OPENED: 'dapp_opened',
   DAPP_ACTIVE_DAY: 'dapp_active_day',
   CHAT_MESSAGE_SENT: 'chat_message_sent',

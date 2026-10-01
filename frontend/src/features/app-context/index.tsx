@@ -18,6 +18,7 @@ import { useStoreState } from '../../lib/use-store-state';
 import { improveStore } from '../improve/improve-store.js';
 import { AppsSwitcherSheet } from './app-context-sheet';
 import { appContextStore, AppContext } from './mount';
+import './app-openings';
 
 export { appContextStore, AppContext } from './mount';
 
