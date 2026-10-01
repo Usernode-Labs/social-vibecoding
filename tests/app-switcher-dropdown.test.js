@@ -207,7 +207,9 @@ test('a kit-adopted sheet is never left invisible by the dropdown state', () => 
 
 test('the island measures the mark with the vote popover\'s arithmetic', () => {
   // One helper, two callers: the popover and the menu cannot drift apart.
-  assert.match(VOTE, /import \{ placeUnderAnchor \} from '\.\.\/\.\.\/\.\.\/lib\/anchor-popover';/);
+  // (#3595 also brings the popover's height clamp in from the same module,
+  // so the pin is on placeUnderAnchor being in the named set, not alone.)
+  assert.match(VOTE, /import \{[^}]*\bplaceUnderAnchor\b[^}]*\} from '\.\.\/\.\.\/\.\.\/lib\/anchor-popover';/);
   assert.match(VOTE, /placeUnderAnchor\(rect,/, 'the vote popover places itself through it');
   assert.match(ISLAND, /import \{ placeUnderAnchor \} from '\.\.\/\.\.\/lib\/anchor-popover';/);
   assert.match(ISLAND, /getElementById\(MARK_ID\)/, 'the menu reads the mark\'s rect');
