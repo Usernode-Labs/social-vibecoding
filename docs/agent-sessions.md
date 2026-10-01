@@ -174,7 +174,7 @@ The Mayor is today's Mayor loop, moved out of the route and run with a conversat
 
 | Tool | Source | Confirmed by user | Notes |
 | --- | --- | --- | --- |
-| `list_apps`, `get_app`, `list_requests`, `get_request`, `get_proposal`, `list_my_proposals`, `get_platform_conventions`, `get_change` | Shared MCP (read) | No | These replace `list_github_issues`/`get_github_issue`, and the MCP versions also include the Homeroom discussion |
+| `list_apps`, `get_app`, `list_requests`, `get_request`, `get_discussion`, `get_proposal`, `list_my_proposals`, `get_platform_conventions`, `get_change` | Shared MCP (read) | No | These replace `list_github_issues`/`get_github_issue`, and the MCP versions also include the Homeroom discussion |
 | `start_change {app, title, linkedIssues?}` | Shared MCP (new) | **Yes** | Creates a change with `agent_session_id` and makes it active. It parks the previous active change. It counts against the active-session cap. |
 | `promote_change`, `sync_change`, `recheck_change`, `withdraw_change` | Shared MCP (new) | **Yes** (except recheck) | Promotion and withdrawal are the user's decision. Sync revises the change, which clears votes, so it needs a yes. |
 | `create_request`, `claim_request`, `release_request`, `propose_close_request`, `update_proposal_issues` | Shared MCP (existing) | **Yes** | They post publicly in the user's name. `propose_close_request` opens a group vote on closing a request; it closes nothing by itself |
