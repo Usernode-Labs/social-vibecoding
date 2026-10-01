@@ -5849,6 +5849,15 @@ body:has(#platform-header.hidden) #app-frame-host {
   gap: 6px;
 }
 
+/* #3559: a status row's sentence, and only its sentence (StatusLine in
+   frontend/src/features/dev-chat/transcript.tsx). It is a flex item, so it
+   was held at the width of its longest word: a step naming a link or a
+   branch pushed the row past the transcript's edge, and the transcript,
+   which scrolls, then slid sideways on a phone. `anywhere` lets the word
+   break inside the row, and lowers the item's min-content with it, which
+   `break-word` would not. The stamp and the clock beside it keep theirs. */
+.dc-status-text { min-width: 0; overflow-wrap: anywhere; }
+
 /* #2597: the venue caption under a running row's heading.
    The heading says what is happening ("Coding agent is running"); this says
    where, in the same muted second-line treatment .dc-cc-note already gives
@@ -6023,7 +6032,10 @@ body:has(#platform-header.hidden) #app-frame-host {
   line-height: 1.45;
 }
 .dc-failure-body { flex: 1; min-width: 0; }
-.dc-failure-text { display: block; min-width: 0; }
+/* #3559: the body may shrink (min-width: 0) but its text did not follow it.
+   A failure that quotes a link, which a build error often does, ran past the
+   card and widened the whole transcript; `anywhere` breaks it in the card. */
+.dc-failure-text { display: block; min-width: 0; overflow-wrap: anywhere; }
 .dc-failure-text a { color: var(--accent); }
 
 /* THE STOP PAIR. Both are "the run did not finish", so both are this card
@@ -7525,11 +7537,17 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 /* Sibling of .dc-cc-attached-log for the post-turn ccOutput
    markdown summary (rather than a monospaced live-log). Same
    indent + muted color, but body font and a bit more room for
-   structured markdown elements (paragraphs, lists, code blocks). */
+   structured markdown elements (paragraphs, lists, code blocks).
+   #3559: it scrolls down, so it scrolled sideways too, and the agent's
+   summary is where a long path in backticks turns up: the block slid under
+   a finger on a phone. The log beside it breaks its words already; this
+   breaks the summary's inside the block, and a fenced code block, which
+   never wraps, still scrolls sideways inside its own box. */
 .dc-cc-attached-md {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
   max-height: 360px;
   overflow-y: auto;
   margin: 0 12px 12px;

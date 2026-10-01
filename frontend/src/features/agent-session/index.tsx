@@ -2117,6 +2117,28 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   const about: About = snapshot.session || snapshot.draft;
   const request = snapshot.draft ? draftRequest(snapshot.draft.hint) : null;
 
+  // ── Nothing in the transcript is wider than the transcript (#3559) ──
+  //
+  // The transcript scrolls down, and a box that scrolls on one axis scrolls
+  // on the other as well: `overflow-y: auto` makes `overflow-x` auto too. So
+  // one unbroken run of text (a link pasted into a message, a path in a
+  // note, a card whose title is an identifier) made the whole conversation
+  // wider than a phone, and it slid sideways under a finger. Measured at
+  // 390px: a pasted staging link in the reader's own bubble took this
+  // scroller to 690px, 300px of sideways travel; a failed turn's note and a
+  // card title carrying one did the same.
+  //
+  // `overflow-wrap: anywhere`, set on the scroller and inherited by every
+  // row, breaks such a run inside its own box when nothing else lets it
+  // fit. `anywhere` and not `break-words`, because it also lowers the run's
+  // min-content width: the note beside Retry is a flex item, and a request's
+  // title on the empty state is a centred block, and either would otherwise
+  // be held at the width of its longest word. The Mayor's markdown already
+  // broke this way (`.dc-msg-content`'s `word-break: break-word`), which is
+  // why a reply never overflowed and the rows around it did. A code block
+  // and a run's log are `white-space: pre`, which never wraps, so they keep
+  // scrolling sideways inside their own boxes, as a table does inside its.
+  //
   // Whether the reader is at the bottom, which FollowOutput keeps them at.
   const stick = useRef(true);
   const onScroll = () => {
@@ -2139,7 +2161,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
-        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite" onScroll={onScroll}>
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 [overflow-wrap:anywhere]" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
           ) : null}
