@@ -20411,13 +20411,13 @@ html.un-kb #platform-parked {
 }
 
 
-/* ── The rail, peeked back over an open app (#2718) ──────────────────
-   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
-   the rail, which is what makes it feel like a program rather than a page,
-   and on a laptop the pointer is already at the left edge half the time. The
-   navigation comes back on hover and stops spending width while you work —
-   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
-   rail are all this move. */
+/* ── The rail, peeked back over a folded rail (#2718, #2764) ─────────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: a rail the
+   viewer folded comes back on hover and stops spending width while they
+   work — an auto-hiding dock and Slack's own collapsed rail are this move.
+   NOT over a running app (#3138): an app's own controls put the pointer at
+   the left edge all the time, so the hot zone is not rendered there and the
+   way out is the header's ✕. */
 
 /* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
    it never intercepts a pointer heading for the app's own left edge, wide
