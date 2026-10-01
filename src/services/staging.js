@@ -686,7 +686,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     }
 
     if (candidate?.onRuntimeStarting) await candidate.onRuntimeStarting();
-    const deployed = await applicationRuntime.deploy(config, {
+    const deploy = candidate?.prepareRuntime
+      || (params => applicationRuntime.deploy(config, params));
+    const deployed = await deploy({
       app,
       environment: 'staging',
       sessionId: session.id,

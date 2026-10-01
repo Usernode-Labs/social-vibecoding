@@ -283,8 +283,7 @@ async function registry(state, clients) {
   save(state);
 }
 
-async function seedBuilder(state, clients) {
-  if (state.builderImage && state.builderSeedVersion === 2) return;
+async function withRegistryForward(state, clients, callback) {
   const pod = await clients.core.readNamespacedPod({ namespace: state.namespace.name, name: 'registry' });
   check(pod.metadata.uid === state.registry.podUid, 'registry successor must not be seeded');
   const logfile = fs.createWriteStream(path.join(state.directory, 'registry-forward.log'), { flags: 'a' });
@@ -308,6 +307,21 @@ async function seedBuilder(state, clients) {
   const timer = setTimeout(() => child.kill('SIGKILL'), 600000);
   try {
     const port = await ready;
+    return await callback(port);
+  } finally {
+    clearTimeout(timer);
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit');
+      child.kill('SIGTERM');
+      await exited;
+    }
+    logfile.end();
+  }
+}
+
+async function seedBuilder(state, clients) {
+  if (state.builderImage && state.builderSeedVersion === 2) return;
+  return withRegistryForward(state, clients, async port => {
     const crane = path.join(state.directory, 'tools/crane');
     if (!state.builderSource) {
       state.builderSource = BUILDER_SOURCE;
@@ -329,15 +343,27 @@ async function seedBuilder(state, clients) {
     state.builderImage = `${state.registry.host}/${repo}@${localDigest}`;
     state.builderSeedVersion = 2;
     save(state);
-  } finally {
-    clearTimeout(timer);
-    if (child.exitCode === null && child.signalCode === null) {
-      const exited = once(child, 'exit');
-      child.kill('SIGTERM');
-      await exited;
+  });
+}
+
+async function seedRuntime(state, clients) {
+  if (state.runtimeImage) return;
+  return withRegistryForward(state, clients, async port => {
+    const crane = path.join(state.directory, 'tools/crane');
+    if (!state.runtimeSource) {
+      const digest = await run(state, crane, ['digest', '--platform', 'linux/arm64', 'node:22.15.0-alpine']);
+      check(/^sha256:[a-f0-9]{64}$/.test(digest), 'runtime source digest required');
+      state.runtimeSource = `node@${digest}`;
+      save(state);
     }
-    logfile.end();
-  }
+    const repo = `preview-recovery-${state.fixtureId}/images/demo`;
+    console.log('[fixture] seeding dedicated non-root runtime image');
+    await run(state, crane, ['copy', '--platform', 'linux/arm64', state.runtimeSource, `127.0.0.1:${port}/${repo}:runtime-source`]);
+    await run(state, crane, ['mutate', `127.0.0.1:${port}/${repo}:runtime-source`, '--user', '1000:1000', '-t', `127.0.0.1:${port}/${repo}:runtime`]);
+    const digest = await run(state, crane, ['digest', `127.0.0.1:${port}/${repo}:runtime`]);
+    state.runtimeImage = `${state.registry.host}/${repo}@${digest}`;
+    save(state);
+  });
 }
 
 async function controllers(state) {
@@ -392,6 +418,7 @@ async function manifest(state) {
     repoUrl: state.repoUrl,
     revision: state.revision,
     runScript: null,
+    runtimeImage: state.runtimeImage,
     config: {
       appRuntime: 'kubernetes',
       kubernetes: {
@@ -399,6 +426,7 @@ async function manifest(state) {
         buildNamespace: state.namespace.name,
         appNamespace: state.namespace.name,
         buildServiceAccount: 'recovery-builder',
+        generatedAppServiceAccount: 'recovery-builder',
         builderImage: state.builderImage,
         repositoryPrefix: `${prefix}/images`,
         cacheRepositoryPrefix: `${prefix}/cache`,
@@ -429,6 +457,7 @@ async function setup(state) {
   await database(state);
   await registry(state, clients);
   await seedBuilder(state, clients);
+  await seedRuntime(state, clients);
   await controllers(state);
   await manifest(state);
 }
@@ -499,7 +528,7 @@ async function teardown(state) {
   console.log('[fixture] verified local containers/network removed; evidence retained');
 }
 
-async function integration(state) {
+async function integration(state, runtime = false) {
   const filename = path.join(state.directory, 'fixture.json');
   const fixture = JSON.parse(fs.readFileSync(filename, 'utf8'));
   const env = {
@@ -507,7 +536,7 @@ async function integration(state) {
     KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: fixture.isolation.database.url,
   };
   await verifyIsolatedBuildFixture({ env });
-  const child = spawn(process.execPath, ['scripts/test-recoverable-preview-build.js'], { env, stdio: 'inherit' });
+  const child = spawn(process.execPath, ['scripts/test-recoverable-preview-build.js', ...(runtime ? ['--runtime'] : [])], { env, stdio: 'inherit' });
   const [code] = await once(child, 'exit');
   state.lastIntegration = { completedAt: new Date().toISOString(), exitCode: code };
   save(state);
@@ -528,7 +557,8 @@ async function main() {
     console.log(directory);
     return;
   }
-  check(['setup', 'teardown', 'test'].includes(mode) && argument, 'use init <local-socket>, setup <directory>, test <directory>, or teardown <directory>');
+  check(['setup', 'teardown', 'test', 'test-runtime'].includes(mode) && argument,
+    'use init <local-socket>, setup <directory>, test <directory>, test-runtime <directory>, or teardown <directory>');
   const directory = fs.realpathSync(argument);
   const state = JSON.parse(fs.readFileSync(path.join(directory, 'setup-state.json'), 'utf8'));
   check(state.version === 1 && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(state.fixtureId)
@@ -537,7 +567,7 @@ async function main() {
     && directory.startsWith(`${fs.realpathSync(os.tmpdir())}${path.sep}`), 'fixture directory identity mismatch');
   try {
     if (mode === 'setup') await setup(state);
-    else if (mode === 'test') await integration(state);
+    else if (mode === 'test' || mode === 'test-runtime') await integration(state, mode === 'test-runtime');
     else await teardown(state);
   } catch (error) {
     state.lastError = error.message;

@@ -266,7 +266,9 @@ test('#816 the staging build passes explicit memory + cpus to the runtime dispat
   );
   // Scope to the staging container launch (the prod rebuild in the same
   // file deliberately keeps the app defaults).
-  const start = src.indexOf('const deployed = await applicationRuntime.deploy(config, {');
+  assert.match(src, /const deploy = candidate\?\.prepareRuntime\s*\|\| \(params => applicationRuntime\.deploy\(config, params\)\)/,
+    'the recoverable hook preserves the legacy runtime dispatcher fallback');
+  const start = src.indexOf('const deployed = await deploy({');
   assert.notStrictEqual(start, -1, 'staging runtime deploy call not found');
   const call = src.slice(start, src.indexOf('});', start));
   assert.match(call, /memory:\s*docker\.STAGING_MEMORY/, 'memory comes from the named constant');

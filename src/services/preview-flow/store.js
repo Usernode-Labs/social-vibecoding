@@ -200,6 +200,11 @@ function createPreviewFlow(pool, {
         WHERE flow_id = $1`, [decision.imageChange.flowId, JSON.stringify(decision.imageChange.operation)]);
     }
 
+    if (decision.runtimeChange) {
+      await client.query(`UPDATE preview_flow_resources SET intent = jsonb_set(intent, '{runtimeOperation}', $2::jsonb)
+        WHERE flow_id = $1`, [decision.runtimeChange.flowId, JSON.stringify(decision.runtimeChange.operation)]);
+    }
+
     if (decision.bindingChange) {
       await client.query(`INSERT INTO preview_bindings (session_id, desired, observed)
         VALUES ($1, $2, $3) ON CONFLICT (session_id) DO UPDATE
@@ -331,6 +336,12 @@ function createPreviewFlow(pool, {
     return receipt;
   }
 
+  async function readResourceIntent(sessionId, flowId) {
+    const { rows } = await pool.query('SELECT intent FROM preview_flow_resources WHERE session_id = $1 AND flow_id = $2', [sessionId, flowId]);
+    if (!rows.length) throw new Error('Preview resource locator is missing');
+    return resourceIntent.parse(rows[0].intent);
+  }
+
   async function markClonePrepared(sessionId, flowId) {
     const { rows } = await pool.query(`UPDATE preview_flow_resources SET clone_prepared = TRUE
       WHERE flow_id = $1 AND session_id = $2 AND clone_credential_enc IS NOT NULL
@@ -348,6 +359,7 @@ function createPreviewFlow(pool, {
     recordIntent,
     reserveCandidateInTransaction,
     recordRuntime,
+    readResourceIntent,
     markClonePrepared,
     trace,
     read,

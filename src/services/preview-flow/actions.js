@@ -1,6 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
+const { desiredRuntime, runtimeOperation, resourceKind } = require('./runtime-intent');
 const { imageBuildOperation, runScript } = require('./image-build-intent');
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/i).transform(value => value.toLowerCase());
@@ -32,6 +33,7 @@ const resourceIntent = z.object({
     sourceDb: z.string().regex(/^[a-z_][a-z0-9_]*$/).max(63),
   }).strict().optional(),
   buildOperation: imageBuildOperation.optional(),
+  runtimeOperation: runtimeOperation.optional(),
 }).strict().superRefine((value, ctx) => {
   if ((value.runtimeKind === 'docker' && value.namespace !== null)
       || (value.runtimeKind === 'kubernetes' && value.namespace === null)) {
@@ -75,6 +77,28 @@ const routeObservation = z.object({
 }).strict();
 
 const actionSchema = z.discriminatedUnion('type', [
+  z.object({
+    ...actionEnvelopeFields,
+    ...executionIdentityFields,
+    type: z.literal('RequestCandidateRuntimePreparation'),
+    operationId: z.string().uuid(),
+    desired: desiredRuntime,
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    ...executionIdentityFields,
+    type: z.literal('RequestCandidateRuntimeResourceCreation'),
+    operationId: z.string().uuid(),
+    resource: resourceKind,
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    ...executionIdentityFields,
+    type: z.literal('CandidateRuntimeResourceObserved'),
+    operationId: z.string().uuid(),
+    resource: resourceKind,
+    uid: z.string().min(1).max(128),
+  }).strict(),
   z.object({
     ...actionEnvelopeFields,
     type: z.literal('RequestCandidateImageBuild'),
@@ -193,7 +217,8 @@ function isPreparationRequest(action) {
 }
 
 function isResourceAction(action) {
-  return action.type === 'RequestPreviewCleanup' || action.type === 'PreviewCleanupCompleted';
+  return action.type === 'RequestPreviewCleanup' || action.type === 'PreviewCleanupCompleted'
+    || action.type === 'CandidateRuntimeResourceObserved';
 }
 
 module.exports = {

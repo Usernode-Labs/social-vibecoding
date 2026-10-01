@@ -13,6 +13,7 @@ const { STAGING_BUILD_LOCK, PREVIEW_LIFECYCLE_LOCK } = require('../advisory-lock
 const PREPARE = 'native-preview-prepare';
 const PREPARE_CLONE = 'native-preview-template-prepare';
 const PREPARE_IMAGE = 'native-preview-kpack-prepare';
+const PREPARE_RUNTIME = 'native-preview-kubernetes-prepare';
 const RETIRE = 'native-preview-retire';
 
 function createPreviewWork(pool, config, {
@@ -24,6 +25,7 @@ function createPreviewWork(pool, config, {
   cleanup = require('./cleanup').underBuildLock,
   clones = require('./clone-operation').createCloneOperations(),
   images = require('./image-build-operation').createImageBuildOperations(),
+  runtimes = require('./runtime-operation').createRuntimeOperations({ dataKey: config.dataEncryptionKey }),
 } = {}) {
   const runtime = createSessionDecisionRuntime(pool);
 
@@ -50,10 +52,13 @@ function createPreviewWork(pool, config, {
         const flow = admission.decision.flow;
         const recoverClone = config.nativePreviewRecoverableClone === true;
         const recoverImage = config.nativePreviewRecoverableBuild === true;
+        const recoverRuntime = config.nativePreviewRecoverableRuntime === true;
+        if (recoverRuntime && !recoverImage) throw new Error('Recoverable runtime requires recoverable image preparation');
         if (recoverImage && !recoverClone) throw new Error('Recoverable image preparation requires the recoverable clone');
         let workflow = PREPARE;
         if (recoverClone) workflow = PREPARE_CLONE;
         if (recoverImage) workflow = PREPARE_IMAGE;
+        if (recoverRuntime) workflow = PREPARE_RUNTIME;
         const intent = {
           ...candidateResources(config, session.id, flow.attemptId),
           ...(recoverClone ? {
@@ -66,6 +71,7 @@ function createPreviewWork(pool, config, {
             buildOperation: require('./image-build-intent').reserveImageBuild(config, app, flow.headSha),
           } : {}),
         };
+        if (recoverRuntime) intent.runtimeOperation = { kind: 'kubernetes-v1', resources: {} };
         const credentialEnc = encrypt(randomBytes(24).toString('hex'), config.dataEncryptionKey);
         await owner.reserveCandidateInTransaction(transaction, session.id, flow.id, intent, {
           credentialEnc,
@@ -166,9 +172,14 @@ function createPreviewWork(pool, config, {
         && !state.resource?.cleanupStarted;
       if (!current) return retired(attempt, 'preparation_obsolete');
 
-      const recoverImage = attempt.workflow === PREPARE_IMAGE;
+      const recoverRuntime = attempt.workflow === PREPARE_RUNTIME;
+      const recoverImage = attempt.workflow === PREPARE_IMAGE || recoverRuntime;
       const recoverClone = attempt.workflow === PREPARE_CLONE || recoverImage;
-      const observed = await inspect(resourceConfig, intent, identity.flowId, identity.headSha);
+      if (recoverRuntime && state.resource.intent.runtimeOperation.desired) {
+        return resumeCandidateRuntime(context, resourceConfig, state.resource.intent);
+      }
+      const observed = recoverRuntime ? { present: false, receipt: null }
+        : await inspect(resourceConfig, intent, identity.flowId, identity.headSha);
       const adoptable = observed.receipt && state.resource.clonePrepared;
       if (adoptable) {
         let observedReceipt = candidateReceipt.parse(observed.receipt);
@@ -246,8 +257,9 @@ function createPreviewWork(pool, config, {
         if (saved.lostClaim || signal.aborted) return { outcome: 'retry' };
       }
 
-      // The image-aware path may repeat source fetch and Build observation.
-      // Its runtime-start checkpoint still makes deployment a one-shot phase.
+      // Image recovery may repeat source fetch and Build observation. Existing
+      // work keeps its one-shot runtime checkpoint; C5 records each resource
+      // submission separately and reconciles partial runtime preparation.
       let result;
       try {
         result = await prepare(resourceConfig, session, app, identity.headSha, {
@@ -257,7 +269,8 @@ function createPreviewWork(pool, config, {
           ...(recoverClone ? { preparedClone: true } : {}),
           ...(recoverImage ? {
             prepareImage: runScript => prepareImage(context, runScript),
-            onRuntimeStarting: () => startCandidateRuntime(context),
+            onRuntimeStarting: recoverRuntime ? undefined : () => startCandidateRuntime(context),
+            ...(recoverRuntime ? { prepareRuntime: params => selectAndPrepareRuntime(context, resourceConfig, params) } : {}),
           } : {}),
           async onClonePrepared() {
             if (!recoverClone) await owner.markClonePrepared(attempt.session_id, identity.flowId);
@@ -266,7 +279,10 @@ function createPreviewWork(pool, config, {
       } catch (error) {
         if (!error.previewImageOutcome) throw error;
         const latest = (await store.read(attempt.id)).checkpoint;
-        if (error.previewImageOutcome === 'waiting') return imageDeferred({ ...attempt, checkpoint: latest });
+        if (error.previewImageOutcome === 'waiting') {
+          const waiting = { ...attempt, checkpoint: latest };
+          return error.code.startsWith('runtime_') ? runtimeDeferred(waiting, error.code) : imageDeferred(waiting);
+        }
         return {
           ...retired({ ...attempt, checkpoint: latest }, error.code),
           result: { prepared: false, ...(error.detail ? { detail: error.detail } : {}) },
@@ -288,6 +304,103 @@ function createPreviewWork(pool, config, {
     });
   }
 
+  function runtimeDeferred(attempt, code) {
+    return { outcome: 'waiting', checkpoint: attempt.checkpoint, code, delayMs: 1000 };
+  }
+
+  async function runtimeContext(context) {
+    const { attempt, signal } = context;
+    const { identity, intent } = attempt.input;
+    const envelope = {
+      sessionId: attempt.session_id,
+      ...identity,
+      operationId: intent.attemptId,
+    };
+    return {
+      signal,
+      async read() {
+        return owner.readResourceIntent(attempt.session_id, identity.flowId);
+      },
+      async authorize(resource) {
+        if (signal.aborted) return null;
+        const result = await owner.apply({
+          type: 'RequestCandidateRuntimeResourceCreation',
+          actionId: randomUUID(),
+          ...envelope,
+          resource,
+        });
+        return result.decision.effects.find(effect => effect.type === 'CreateCandidateRuntimeResource')?.intent || null;
+      },
+      async observe(resource, uid) {
+        const result = await owner.apply({
+          type: 'CandidateRuntimeResourceObserved',
+          actionId: randomUUID(),
+          ...envelope,
+          resource,
+          uid,
+        });
+        return result.decision.accepted;
+      },
+    };
+  }
+
+  async function runtimeReceiptFor(context, resourceConfig, intent) {
+    const observed = await runtimes.prepare(resourceConfig, intent, await runtimeContext(context));
+    if (observed.reason === 'ownership_conflict') throw imageExit('runtime_ownership_conflict');
+    if (observed.status !== 'healthy') throw imageExit(`runtime_${observed.reason || 'pending'}`, 'waiting');
+    return candidateReceipt.parse({
+      runtimeKind: 'kubernetes',
+      runtimeName: intent.runtimeName,
+      containerId: null,
+      physicalId: observed.physicalId,
+      attemptId: intent.attemptId,
+      commitSha: intent.runtimeOperation.desired.headSha,
+      imageRef: intent.runtimeOperation.desired.imageRef,
+      buildRef: `${intent.buildOperation.namespace}/sv-p-${intent.attemptId.replace(/-/g, '')}`,
+      stagingUrl: require('../application-runtime').appOrigin(resourceConfig, intent),
+    });
+  }
+
+  async function selectAndPrepareRuntime(context, resourceConfig, params) {
+    const { attempt } = context;
+    const state = await owner.read(attempt.session_id);
+    const desired = state.resource.intent.runtimeOperation.desired
+      || require('./runtime-intent').selectRuntime(resourceConfig, attempt.input.identity, params);
+    const permission = await owner.apply({
+      type: 'RequestCandidateRuntimePreparation',
+      actionId: randomUUID(),
+      sessionId: attempt.session_id,
+      ...attempt.input.identity,
+      operationId: attempt.input.intent.attemptId,
+      desired,
+    });
+    if (!permission.decision.accepted) throw imageExit('runtime_not_authorized');
+    const receipt = await runtimeReceiptFor(context, resourceConfig, permission.current.resource.intent);
+    return { ...receipt, url: receipt.stagingUrl, hostname: new URL(receipt.stagingUrl).hostname };
+  }
+
+  async function resumeCandidateRuntime(context, resourceConfig, intent) {
+    const { attempt } = context;
+    const clone = await clones.inspect(intent);
+    if (clone.status === 'uncertain' && clone.reason === 'busy') return cloneDeferred(attempt);
+    if (clone.status !== 'complete') return retired(attempt, 'clone_completion_unconfirmed');
+    const image = await images.inspect(intent);
+    if (image.reason === 'ownership_conflict') return retired(attempt, 'image_ownership_changed');
+    if (image.status !== 'succeeded') return imageDeferred(attempt);
+    if (image.uid !== intent.buildOperation.receipt?.uid || image.imageRef !== intent.runtimeOperation.desired.imageRef) {
+      return retired(attempt, 'image_ownership_changed');
+    }
+    try {
+      const receipt = await runtimeReceiptFor(context, resourceConfig, intent);
+      await owner.recordRuntime(attempt.session_id, attempt.input.identity.flowId, receipt);
+      return prepared(receipt, attempt);
+    } catch (error) {
+      if (!error.previewImageOutcome) throw error;
+      if (error.previewImageOutcome === 'waiting') return runtimeDeferred(attempt, error.code);
+      return retired(attempt, error.code);
+    }
+  }
+
   function cloneDeferred(attempt) {
     return { outcome: 'waiting', checkpoint: attempt.checkpoint, code: 'clone_uncertain', delayMs: 1000 };
   }
@@ -297,7 +410,7 @@ function createPreviewWork(pool, config, {
   }
 
   function imageExit(code, outcome = 'retired', detail) {
-    return Object.assign(new Error('Candidate image preparation did not complete'), {
+    return Object.assign(new Error('Candidate preparation did not complete'), {
       previewImageOutcome: outcome,
       code,
       detail,
@@ -409,7 +522,7 @@ function createPreviewWork(pool, config, {
       outcome: 'succeeded',
       checkpoint: {
         creationStarted: true,
-        ...([PREPARE_CLONE, PREPARE_IMAGE].includes(attempt.workflow) ? { runtimeCreationStarted: true } : {}),
+        ...([PREPARE_CLONE, PREPARE_IMAGE, PREPARE_RUNTIME].includes(attempt.workflow) ? { runtimeCreationStarted: true } : {}),
       },
       result: { prepared: true, receipt },
     };
@@ -457,9 +570,10 @@ function createPreviewWork(pool, config, {
       [PREPARE]: { version: 1, run: runPreparation, commit: commitPreparation },
       [PREPARE_CLONE]: { version: 1, run: runPreparation, commit: commitPreparation },
       [PREPARE_IMAGE]: { version: 1, run: runPreparation, commit: commitPreparation },
+      [PREPARE_RUNTIME]: { version: 1, run: runPreparation, commit: commitPreparation },
       [RETIRE]: { version: 1, run: runCleanup },
     },
   };
 }
 
-module.exports = { createPreviewWork, PREPARE, PREPARE_CLONE, PREPARE_IMAGE, RETIRE };
+module.exports = { createPreviewWork, PREPARE, PREPARE_CLONE, PREPARE_IMAGE, PREPARE_RUNTIME, RETIRE };

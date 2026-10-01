@@ -71,6 +71,10 @@ function validateDestinations(fixture, databaseUrl, now = Date.now()) {
     && runtime.builderImage?.startsWith(`${prefix}/builder@sha256:`) && DIGEST.test(runtime.builderImage),
   'builder, output and cache must use only the dedicated test registry');
   requireIsolation(runtime.buildServiceAccount === 'recovery-builder', 'dedicated build service account required');
+  if (fixture.runtimeImage) {
+    requireIsolation(fixture.runtimeImage.startsWith(`${prefix}/images/demo@sha256:`) && DIGEST.test(fixture.runtimeImage)
+      && runtime.generatedAppServiceAccount === 'recovery-builder', 'runtime fixture must use the dedicated registry/account');
+  }
   const repo = new URL(fixture.repoUrl);
   requireIsolation(repo.protocol === 'https:' && !repo.username && !repo.password && !repo.search && !repo.hash
     && /^[a-f0-9]{40}$/.test(fixture.revision) && [null, 'build', 'ensure:shell'].includes(fixture.runScript),

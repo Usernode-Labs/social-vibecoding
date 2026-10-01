@@ -71,6 +71,13 @@ async function verifyCandidate(config, intent, flowId, receipt) {
   if (!receipt || receipt.runtimeName !== intent.runtimeName || receipt.attemptId !== intent.attemptId) {
     throw new Error('Candidate receipt does not identify the reserved resources');
   }
+  if (intent.runtimeOperation?.desired) {
+    const observed = await require('./runtime-operation').createRuntimeOperations({ dataKey: config.dataEncryptionKey }).inspect(config, intent);
+    if (observed.status !== 'healthy' || observed.physicalId !== receipt.physicalId) {
+      throw new Error('Prepared candidate resources or health changed');
+    }
+    return;
+  }
   let object;
   if (intent.runtimeKind === 'docker') {
     object = await inspectDocker(intent);

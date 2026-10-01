@@ -580,9 +580,9 @@ test('staging.js preview labels use the fingerprint without raw secret values', 
   const code = stripComments(read('src/services/staging.js'));
   // The label map handed to the runtime references the digest helper. The
   // optional flow-identity label must not interpolate injected secret values.
-  const labelBlock = code.match(/const runtimeLabels = \{[\s\S]*?(?=const deployed = await applicationRuntime\.deploy)/);
+  const labelBlock = code.match(/const runtimeLabels = \{[\s\S]*?(?=const deploy = candidate)/);
   assert.ok(labelBlock, 'staging.js must construct its preview runtime labels');
-  assert.match(code, /const deployed = await applicationRuntime\.deploy\(config, \{[\s\S]*?labels: runtimeLabels,/,
+  assert.match(code, /const deployed = await deploy\(\{[\s\S]*?labels: runtimeLabels,/,
     'the runtime receives that label map');
   assert.match(labelBlock[0], /envFingerprint\(/,
     'the label value must be the digest, not a raw value');

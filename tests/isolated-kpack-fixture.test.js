@@ -112,6 +112,15 @@ test('isolated harness rejects missing configuration before starting integration
   assert.match(result.stderr, /No integration mutations were authorized/);
 });
 
+test('runtime worker assembly rejects a missing explicit database before creating adapters', () => {
+  const { runtimeTestWorker } = require('./lib/runtime-test-worker');
+  const forbiddenClients = new Proxy({}, {
+    get() { assert.fail('Runtime clients accessed before explicit database guard'); },
+  });
+  assert.throws(() => runtimeTestWorker({ options: {} }, { config: {} }, forbiddenClients),
+    /Explicit isolated database connection is required/);
+});
+
 test('worker environment strips ambient Kubernetes, Docker, PG, registry and preload credentials', () => {
   const env = sanitizedEnvironment({
     PATH: '/bin', KPACK_RECOVERY_TEST_CONFIG: '/fixture', PREVIEW_FLOW_TEST_DATABASE_URL: 'explicit',
@@ -134,6 +143,11 @@ const destinationConflicts = {
   'production cache': f => { f.config.kubernetes.cacheRepositoryPrefix = 'production.example/cache'; },
   'production builder': f => { f.config.kubernetes.builderImage = `production.example/builder@sha256:${'c'.repeat(64)}`; },
   'production namespace': f => { f.config.kubernetes.appNamespace = 'apps'; },
+  'production runtime image': f => { f.runtimeImage = `production.example/images/demo@sha256:${'a'.repeat(64)}`; },
+  'ambient runtime service account': f => {
+    f.runtimeImage = `${f.config.kubernetes.repositoryPrefix}/demo@sha256:${'a'.repeat(64)}`;
+    f.config.kubernetes.generatedAppServiceAccount = 'default';
+  },
 };
 for (const [reason, change] of Object.entries(destinationConflicts)) {
   test(`isolation rejects ${reason} before any client creation`, t => {

@@ -16,6 +16,7 @@ function createCleanup({
   lifecycle = require('../preview-lifecycle'),
   clones = null,
   images = null,
+  runtimes = null,
 } = {}) {
   // Called only while staging holds STAGING_BUILD_LOCK. Never clear a session
   // projection here: historical resource ownership is separate from publication.
@@ -67,7 +68,23 @@ function createCleanup({
         const retirement = await imageService.retire(intent);
         if (retirement.status !== 'retained') throw new Error('Candidate image build may still be running');
       }
-      await require('./candidate-runtime').removeCandidate(runtimeConfig, intent, flowId, authorized.resource?.receipt);
+      if (intent.runtimeOperation?.desired) {
+        const service = runtimes || require('./runtime-operation').createRuntimeOperations({ dataKey: config.dataEncryptionKey });
+        const retirement = await service.retire(intent, {
+          async observe(resource, uid) {
+            const desired = intent.runtimeOperation.desired;
+            const result = await owner.apply({
+              type: 'CandidateRuntimeResourceObserved', actionId: randomUUID(), sessionId, flowId,
+              generation: desired.generation, headSha: desired.headSha,
+              operationId: intent.attemptId, resource, uid,
+            });
+            return result.decision.accepted;
+          },
+        });
+        if (retirement.status !== 'removed') throw new Error(`Candidate runtime retirement pending: ${retirement.reason || 'uncertain'}`);
+      } else {
+        await require('./candidate-runtime').removeCandidate(runtimeConfig, intent, flowId, authorized.resource?.receipt);
+      }
       if (intent.cloneOperation) {
         const cloneService = clones || require('./clone-operation').createCloneOperations();
         const removed = await cloneService.remove(intent);

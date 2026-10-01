@@ -120,6 +120,7 @@ node scripts/kpack-local-fixture.js init unix:///absolute/path/to/local/docker.s
 # Use exactly the new directory printed by init:
 node scripts/kpack-local-fixture.js setup /absolute/path/to/preview-recovery-test-UUID
 node scripts/kpack-local-fixture.js test /absolute/path/to/preview-recovery-test-UUID
+node scripts/kpack-local-fixture.js test-runtime /absolute/path/to/preview-recovery-test-UUID
 node scripts/kpack-local-fixture.js teardown /absolute/path/to/preview-recovery-test-UUID
 ```
 
@@ -171,3 +172,19 @@ runtime deployment/activation, arbitrary API-server timing or production fleet
 compatibility. Offline guard tests are separate evidence. Admission stays
 experimental; no caller migration, production rollout, generic executor or old
 lock/timer removal is part of this fixture checkpoint.
+
+
+C5's `test-runtime` job uses the same full live preflight and a dedicated runtime
+image seeded into the fixture's own registry. Setup resolves and records the ARM64
+Node 22.15.0-alpine source digest, copies it locally, and derives a non-root image;
+that immutable local digest is the test input. Runtime-image destinations and
+service account are checked before mutation. The subprocess/worker never obtains
+ambient credentials or a default database connection. Only fixed test entry points
+are selectable.
+
+The runtime job separately demonstrates actual Secret/Service/Deployment creation,
+controller Pods/Endpoints, HTTP health, worker interruption and UID-preserving
+recovery, SQL persistence, foreground cleanup and successor protection. Its
+clone/Build inputs and delayed POST/reply-loss timing are injected. The runtime
+contract and ledger record precise evidence and retained-dependency limitations;
+it does not extend C4's actual Build proof to a full production pipeline.
