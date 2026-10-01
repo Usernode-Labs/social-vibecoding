@@ -3429,9 +3429,37 @@ const AppView = {
     AppView._wirePlusMenu(content);
     // Pull down on the dev feed to re-pull it (touch only; the scroller
     // is re-created on every render so this re-attaches each time).
+    //
+    // THE TABS HOLD STILL AND ONLY THE PAGE UNDER THEM MOVES (pull-to-refresh
+    // under the tabs, evan, 2026-10-01): "when you pull down on a community
+    // page, the tabs move down too? I think the tabs should be fixed, and
+    // only the page under them move and reveal the refresh". The kit's pull
+    // slid this whole scroller, and the project's tab band lives inside it
+    // (sticky, under the header: #3522), so the band rode down with the page
+    // and the spinner showed between it and the header. Two opt-ins of the
+    // kit change that here and nowhere else:
+    //   * `pullProperty`: the scroller stays where it is, and the kit writes
+    //     the pull to `--dev-ptr-pull` on it instead of a transform (the same
+    //     inline style its transform went to; board-frame.tsx renders no
+    //     style on #dev-forum-scroll, so nothing reconciles it). app.css
+    //     slides what is under the band by that property; the band and
+    //     everything above it do not move. The tab body is React's
+    //     (workshop.tsx), so it is moved by a stylesheet reading a property,
+    //     never by this module or the kit writing into it, and a tab body a
+    //     refresh re-mounts mid-pull is moved too, with nothing to re-find.
+    //   * `topEl` as a function: the spinner hangs from the band's bottom
+    //     edge, in the gap that opens under it. Asked at every pull rather
+    //     than captured here, because the band is not mounted yet when this
+    //     runs (the Workshop renders into #dev-body after it) and a repaint
+    //     replaces it. No band (the Workshop still loading, an app that
+    //     could not load) is the kit's default anchor, the scroller's top,
+    //     and app.css then slides everything in the scroller.
     const devScroll = document.getElementById('dev-forum-scroll');
     if (devScroll) {
-      PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed());
+      PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed(), {
+        pullProperty: '--dev-ptr-pull',
+        topEl: () => devScroll.querySelector('.dev-ws > .dev-ws-band'),
+      });
     }
     // The General-chat CARD is retired (Streamlined Concept): Activity is an
     // app-context sheet row and a first-class hash now, so the board no
