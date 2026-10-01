@@ -338,7 +338,7 @@ test('the card draws the type and colour rules: 15 over 13, the lit tint on the 
   assert.match(CARD_SRC, /<LockOpenIcon className="h-4 w-4" \/>/);
   assert.doesNotMatch(CARD_SRC, /unlocks\.names/, 'the done card names no challenges');
   // Its points read as won: "+1,500 pts" in the earned green.
-  assert.match(CARD_SRC, /<span className="font-semibold text-emerald-700 dark:text-emerald-400">\+\{pts\(earned\)\}<\/span> earned/);
+  assert.match(CARD_SRC, /<span className="font-semibold text-emerald-700 dark:text-emerald-400">\{`\+\$\{pts\(earned\)\}`\}<\/span>\s*\n\s*\{' earned'\}/);
   // Rows come from ListRow (15/650 over 13), and the card is the plane card.
   assert.match(CARD_SRC, /<GroupedList\s*\n\s*tone="plane"/);
   assert.doesNotMatch(CARD_SRC, /\b(gray|indigo)-\d/);

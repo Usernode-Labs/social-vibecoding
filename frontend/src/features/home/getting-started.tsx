@@ -569,8 +569,9 @@ function Header({ title, model, onClose, celebrate = false }: {
           {/* Done, the points read as won: "+1,500 pts" in the earned green. */}
           {celebrate && earned > 0 ? (
             <>
-              {model.done} of {model.total} done ·{' '}
-              <span className="font-semibold text-emerald-700 dark:text-emerald-400">+{pts(earned)}</span> earned
+              {`${model.done} of ${model.total} done · `}
+              <span className="font-semibold text-emerald-700 dark:text-emerald-400">{`+${pts(earned)}`}</span>
+              {' earned'}
             </>
           ) : counterText(model)}
         </div>
