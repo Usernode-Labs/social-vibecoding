@@ -194,6 +194,29 @@ export function pageTitle(tab: TabKey): string {
   return 'Workshop';
 }
 
+/**
+ * #3583: BACK TO THE HEAD OF THE PAGE, IN WHICHEVER ELEMENT SCROLLS IT.
+ *
+ * A tab press and a door both promise that the page they open starts at its
+ * own head, and both kept it with `window.scrollTo`. That moves the page only
+ * where the DOCUMENT scrolls: a phone or tablet browser, or a window under
+ * 768px (../../../lib/browser-scroll.ts). On a computer, and in the installed
+ * app and the native WebView, the page scrolls inside #dev-forum-scroll, so
+ * the call moved nothing and the new tab opened at the old one's offset.
+ * Press Hub from halfway down the Workshop and the hub came up scrolled past
+ * its own hero, the tab strip already pinned over it on its band, and nothing
+ * on screen to say why: "sometimes the hub looks like this".
+ *
+ * Both are reset; the one that is not scrolling has nothing to move. The
+ * scroller is found from the page itself rather than by id from the
+ * document, so a page that is not in one is left alone.
+ */
+export function scrollToHead(host: HTMLElement | null): void {
+  try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+  const feed = host?.closest<HTMLElement>('#dev-forum-scroll');
+  if (feed && feed.scrollTop) feed.scrollTop = 0;
+}
+
 // The shared ago ladder (#1808) — this file used to carry its own, with a
 // 90-second "just now" and a 48-hour bucket that read "36h ago" where every
 // other surface said "1d ago". Both call sites drop it into a SENTENCE, so
@@ -3286,6 +3309,15 @@ function useStripInsets(
  * The attribute is written straight onto the host, like useStripInsets's
  * properties: it changes on scroll, and a React state for it would re-render
  * the whole Workshop, board included, on the frame the strip sticks.
+ *
+ * #3583: NOT PINNED WHILE THE PAGE IS NOT DRAWN. A door pressed from another
+ * screen (the Communities tab, Messages) switches this page's tab while
+ * #app-view is still hidden, and the effect re-measured then: a hidden page
+ * has no box, every edge reads 0, and `0 < 0 + 10` said pinned. The page
+ * then came into view at its top with no scroll to correct it, and its band
+ * stood behind the tabs at rest. A strip with no height is not pinned; and
+ * the host is watched for size, which is how the page coming back into view
+ * — a box again — is heard when no scroll comes with it.
  */
 function usePinnedStrip(
   bar: HTMLElement | null,
@@ -3305,7 +3337,8 @@ function usePinnedStrip(
       frame = 0;
       const body = host.querySelector<HTMLElement>(':scope > .dev-ws-tabbody');
       if (!body) return;
-      const pinned = body.getBoundingClientRect().top < bar.getBoundingClientRect().bottom + WS_GAP_PX - 0.5;
+      const strip = bar.getBoundingClientRect();
+      const pinned = strip.height > 0 && body.getBoundingClientRect().top < strip.bottom + WS_GAP_PX - 0.5;
       if (pinned !== host.hasAttribute('data-ws-pinned')) host.toggleAttribute('data-ws-pinned', pinned);
     };
     const schedule = () => {
@@ -3313,10 +3346,13 @@ function usePinnedStrip(
     };
     document.addEventListener('scroll', schedule, { capture: true, passive: true });
     window.addEventListener('resize', schedule);
+    const seen = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    seen?.observe(host);
     check();
     return () => {
       document.removeEventListener('scroll', schedule, { capture: true });
       window.removeEventListener('resize', schedule);
+      seen?.disconnect();
       if (frame) cancelAnimationFrame(frame);
       host.removeAttribute('data-ws-pinned');
     };
@@ -3383,11 +3419,19 @@ export function DevWorkshop(): ReactNode {
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
-  // from a door lower down should start at its own head.
+  // from a door lower down should start at its own head — in the element
+  // that actually scrolls it (#3583, scrollToHead).
+  //
+  // And the page's memory of where it was goes with it (#3583). AppView keeps
+  // the feed's offset to put a reader back after an item and Back; that
+  // offset was the OLD tab's, and coming back to the page later (Back from
+  // another screen) laid it over the new one: the hub again, scrolled under
+  // its own strip. A zero is how that memory is told the page is at its top.
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
-    try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+    callAppView('_saveFeedScroll', v.slug, 0);
+    scrollToHead(hostRef.current);
   };
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
@@ -3416,7 +3460,10 @@ export function DevWorkshop(): ReactNode {
       const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
       if (!door || (door.slug && door.slug !== v.slug)) return;
       setTab(door.tab);
-      try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+      // #3583: the scroller that is really there (see scrollToHead). AppView
+      // has forgotten the offset already (_landOnTab), and a door that goes
+      // on to route reads this page at its top when it saves it.
+      scrollToHead(hostRef.current);
     };
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
@@ -3628,6 +3675,10 @@ export function DevWorkshop(): ReactNode {
       ref={hostRef}
       className="dev-ws"
       data-ws-tab={tab}
+      // #3583: whose page this is, beside which tab it is on. AppView reads
+      // both when it saves the list's offset on the way out (renderDevView),
+      // because by then App.currentApp already names the page coming in.
+      data-ws-slug={slug || undefined}
     >
       {band}
       {pageBar}
