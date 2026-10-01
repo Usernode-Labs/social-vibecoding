@@ -366,8 +366,13 @@ export function AboutPane({ label }: { label: string }): ReactNode {
           <div className="text-[1.0625rem] leading-snug font-semibold text-zinc-900 dark:text-zinc-100 break-words">
             {label}
           </div>
+          {/* #3572: three lines at most. A description made on the create
+              screen fits two lines of the hub hero (services/create-options.js
+              DESCRIPTION_MAX); this column, beside the icon and a size
+              smaller, needs a third for the same line. A longer one from a
+              repository's own dapp.json stops there with an ellipsis. */}
           {tagline ? (
-            <p id="app-about-tagline" className="mt-0.5 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
+            <p id="app-about-tagline" className="mt-0.5 line-clamp-3 text-[0.8125rem] leading-snug text-zinc-500 dark:text-zinc-400">
               {tagline}
             </p>
           ) : (!platform && slug ? (

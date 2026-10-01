@@ -434,6 +434,27 @@ const STEP_HEADING = 'text-[13px] font-semibold text-zinc-700 dark:text-zinc-300
 const SOON = 'create-soon-row w-full text-left ' + CARD + ' px-4 py-3 flex items-center gap-3 text-zinc-500 dark:text-zinc-400';
 const SOON_TAG = 'shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400';
 
+/*
+ * "What is it?" (#3572). DESCRIPTION_MAX is the server's limit
+ * (services/create-options.js, which says why it is 90: two lines of the
+ * project's hub hero on a phone), mirrored here for the field's maxLength;
+ * tests/create-description-limit.test.js keeps the two equal. The field counts
+ * down only for its last DESCRIPTION_COUNT_FROM characters. A count from the
+ * first keystroke would have the person writing to a number rather than
+ * saying what the project is; near the end it tells them how much is left
+ * before the field stops taking letters.
+ */
+export const DESCRIPTION_MAX = 90;
+const DESCRIPTION_COUNT_FROM = 20;
+const DESCRIPTION_LEFT = 'absolute right-4 top-3 text-[13px] tabular-nums';
+
+/** "12 characters left" once the line is near the limit, '' before then. */
+export function descriptionLeft(length: number): string {
+  const left = Math.max(0, DESCRIPTION_MAX - length);
+  if (left > DESCRIPTION_COUNT_FROM) return '';
+  return `${left} ${left === 1 ? 'character' : 'characters'} left`;
+}
+
 /** The three audiences, in the order and the words the screen uses. */
 const WHO: ReadonlyArray<{ key: Audience; title: string; caption: string }> = [
   { key: 'solo', title: 'Just me', caption: 'Only you can see it. Invite people or make it public later, from its page.' },
@@ -717,6 +738,7 @@ export function CreateAppDialog() {
   const [kind, setKind] = useState<Kind | null>(null);
   const [name, setName] = useState('');
   const [describe, setDescribe] = useState('');
+  const describeLeftText = descriptionLeft(describe.length);
   const [approvers, setApprovers] = useState<Approvers | null>(null);
   const [approvals, setApprovals] = useState<Approvals | null>(null);
   const [approvalsN, setApprovalsN] = useState(1);
@@ -1219,18 +1241,33 @@ export function CreateAppDialog() {
               </div>
               {/* What it is: optional. Written into the new repository's
                   dapp.json, where people read it on the join screen, in
-                  Discover and on its page. */}
-              <div className={ROW + ' create-describe-row shadow-[inset_0_1px_0_var(--app-sheet-line)]'}>
+                  Discover and on its page. #3572: at most DESCRIPTION_MAX
+                  characters, counted down on the label's line for the last
+                  few. The count is rendered only once it says something, so
+                  the prerendered row is the one the shell shipped. */}
+              <div className={ROW + ' create-describe-row relative shadow-[inset_0_1px_0_var(--app-sheet-line)]'}>
                 <label htmlFor="app-description" className={LABEL}>
                   What is it? (optional)
                 </label>
+                {describeLeftText ? (
+                  <span
+                    id="app-description-left"
+                    aria-live="polite"
+                    className={`${DESCRIPTION_LEFT} ${describe.length >= DESCRIPTION_MAX - 5
+                      ? 'text-amber-800 dark:text-amber-300'
+                      : 'text-zinc-500 dark:text-zinc-400'}`}
+                  >
+                    {describeLeftText}
+                  </span>
+                ) : null}
                 <Input
                   id="app-description"
                   ref={describeRef}
                   name="description"
                   type="text"
                   autoComplete="off"
-                  maxLength={100}
+                  maxLength={DESCRIPTION_MAX}
+                  aria-describedby={describeLeftText ? 'app-description-left' : undefined}
                   {...FIELD}
                   placeholder="Shared shopping list"
                   onInput={(e) => setDescribe(e.currentTarget.value)}

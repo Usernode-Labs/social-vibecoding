@@ -680,6 +680,12 @@ function readName(parsed) {
 // read() used to leave it out, and every deploy snapshots read()'s output
 // over `apps.manifest_snapshot`, so a description written into dapp.json
 // never reached any of those surfaces: the first deploy dropped it.
+//
+// #3572: the create screen takes at most 90 characters (two lines of the hub
+// hero on a phone; services/create-options.js DESCRIPTION_MAX). This reader
+// does NOT hold a repository to that: an imported repo's line, or one a
+// proposal lengthened, is kept up to 280 rather than failing the deploy, and
+// each surface clamps what it draws to its lines.
 const MAX_DESCRIPTION_LENGTH = 280;
 function readDescription(parsed) {
   if (typeof parsed?.description !== 'string') return null;
