@@ -3143,6 +3143,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           [appId, req.user.id]
         );
       }
+      // The state row can later be hidden or deleted. Record this explicit
+      // user toggle in the best-effort append-only analytics log so a
+      // successfully captured favorite day survives a later preference.
+      if (favorited) {
+        events.record(pool, {
+          type: events.EVENT_TYPES.APP_FAVORITED,
+          userId: req.user.id,
+          appId,
+          metadata: { source: 'user_favorite_toggle' },
+        });
+      }
       res.json({ ok: true, is_favorited: favorited });
     } catch (err) {
       log.error('apps', 'Failed to toggle favorite', { message: err.message });

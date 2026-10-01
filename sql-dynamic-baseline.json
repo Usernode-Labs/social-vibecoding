@@ -229,6 +229,13 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
+      "fingerprint": "249b0f87f80d3e02d98f",
+      "count": 1,
+      "preview": "`WITH cohorts AS ( SELECT id AS user_id, date_trunc('week', created_at AT TIME ZONE 'UTC')::date AS cohort_wk FROM users WHERE TRUE ${adminFilter('id', includeA"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
       "fingerprint": "24c21179da1659de72be",
       "count": 1,
       "preview": "`WITH weeks AS ( SELECT generate_series( date_trunc('week', NOW()) - INTERVAL '11 weeks', date_trunc('week', NOW()), INTERVAL '1 week' )::date AS wk ), per_give"
@@ -239,6 +246,13 @@
       "fingerprint": "260634e93c907012a1aa",
       "count": 1,
       "preview": "`WITH days AS ( SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d ), weeks AS (SELECT generate_series(0, 3) AS w), ${rollupCt"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "2c5b5898f202955d3743",
+      "count": 1,
+      "preview": "`WITH activity AS (${activityDaysSql(includeAdmins)}) SELECT COUNT(DISTINCT user_id) FILTER (WHERE day >= ${UTC_TODAY_SQL} - 6)::int AS wau, COUNT(DISTINCT user"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -264,13 +278,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "40a6ce13391b54b29031",
-      "count": 1,
-      "preview": "`WITH days AS ( SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d ), activity AS ( SELECT DISTINCT user_id, day FROM (${activ"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "63258cb606f0efd83fcf",
       "count": 1,
       "preview": "`WITH spine AS ( SELECT generate_series( CURRENT_DATE - 29, CURRENT_DATE, INTERVAL '1 day' )::date AS day ), agg AS ( SELECT lu.date AS day, SUM(lu.total_cost_c"
@@ -288,13 +295,6 @@
       "fingerprint": "6f5a10269c46c586d157",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS total FROM pr_kudos WHERE TRUE ${adminFilter('giver_user_id', includeAdmins)}`"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "74e233870d372d53f404",
-      "count": 1,
-      "preview": "`WITH activity AS (${activityDaysSql(includeAdmins)}) SELECT COUNT(DISTINCT user_id) FILTER (WHERE day >= CURRENT_DATE - 6)::int AS wau, COUNT(DISTINCT user_id)"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -348,16 +348,16 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "d4da12286fe69ae2c5c6",
+      "fingerprint": "d5accaf0d7be85f38b5e",
       "count": 1,
-      "preview": "`WITH cohorts AS ( SELECT id AS user_id, date_trunc('week', created_at)::date AS cohort_wk FROM users WHERE TRUE ${adminFilter('id', includeAdmins)} ), activity"
+      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
     },
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "d5accaf0d7be85f38b5e",
+      "fingerprint": "e6e828361a105e86586a",
       "count": 1,
-      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
+      "preview": "`WITH days AS ( SELECT generate_series(${UTC_TODAY_SQL} - 89, ${UTC_TODAY_SQL}, INTERVAL '1 day')::date AS d ), activity AS ( SELECT DISTINCT user_id, day FROM "
     },
     {
       "source": "src/routes/debug.js",
