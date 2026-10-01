@@ -332,7 +332,9 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
     /const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';/);
   // NO WIDTH IN IT. Until #3295 this was `onWorkshop && phone`, and a desktop
   // kept the name alone in the bar beside a chip in the page.
-  assert.match(header, /const appSwitch = onWorkshop;/);
+  // #3602: a card opened from it switches community too.
+  assert.match(header, /const onCard = inApp && tab === 'dev' && subTab === 'topic';/);
+  assert.match(header, /const appSwitch = onWorkshop \|\| onCard;/);
   assert.match(header, /const showTile = inApp;/);
 
   // A static render runs no effects, so the phone flag is still false: this
@@ -347,6 +349,17 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
   const kanban = renderHeader({ viewMode: 'kanban' });
   assert.doesNotMatch(kanban, /header-app-switch/);
   assert.match(kanban, /<span id="header-app-tile"[^>]*>[\s\S]*?<\/span><\/span><span class="min-w-0 flex items-baseline gap-1\.5"><span id="header-title-name" class="min-w-0 truncate">Recipe Box<\/span>/);
+
+  // #3602: a card (an issue, a proposal, a decision) opened from the
+  // Workshop keeps the switcher, whichever layout it was opened from.
+  for (const viewMode of ['workshop', 'kanban']) {
+    const card = renderHeader({ subTab: 'topic', viewMode });
+    assert.match(card, /<button id="header-app-switch" type="button"[^>]*aria-label="Recipe Box, switch community"><span id="header-app-tile"/);
+  }
+  // The general chat and an owner session still have no switcher.
+  for (const subTab of ['chat', 'sessions']) {
+    assert.doesNotMatch(renderHeader({ subTab }), /header-app-switch/);
+  }
 
   // No width anywhere in it now: the Communities screen's "All" is the
   // bar's at every width too (#852).
