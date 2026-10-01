@@ -88,11 +88,25 @@ const KEY_LIVE_APPS = 'homeroom_bot_live_apps';
 const KEY_SHADOW_BUILDS = 'homeroom_bot_shadow_builds';
 const KEY_BUILD_CONCURRENCY = 'homeroom_bot_build_concurrency';
 const KEY_SHADOW_BUILD_PLATFORM = 'homeroom_bot_shadow_build_platform';
+// #3624: the people the bot talks to in a DM (homeroom-bot-dm.js), one
+// at a time while it is tried out: their requests' questions and outcomes
+// reach them there, and a project they create can be built by the bot from
+// a description. Lower-cased usernames.
+const KEY_DM_USERS = 'homeroom_bot_dm_users';
+// #3624: what one person's requests may cost the bot in a week, in cents,
+// on top of (and apart from) their own weekly allowance for agents. The
+// platform pays; this is the ceiling that keeps one person from spending
+// it all.
+const KEY_USER_WEEKLY_CENTS = 'homeroom_bot_user_weekly_cents';
 const SETTING_KEYS = Object.freeze([
   KEY_MODE, KEY_CONCURRENCY, KEY_BATCH_SIZE, KEY_PAUSED_APPS,
   KEY_TURN_SECONDS, KEY_TURN_INPUT_TOKENS, KEY_LIVE_APPS,
   KEY_SHADOW_BUILDS, KEY_BUILD_CONCURRENCY, KEY_SHADOW_BUILD_PLATFORM,
+  KEY_DM_USERS, KEY_USER_WEEKLY_CENTS,
 ]);
+const MAX_DM_USERS = 50;
+const MAX_USER_WEEKLY_CENTS = 10_000_000;
+const USERNAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
 
 // batchSize is how many of ONE app's issues a pass takes before the loop
 // looks for the most urgent app again — the fairness knob between apps, not
@@ -109,6 +123,12 @@ const DEFAULTS = Object.freeze({
   shadowBuilds: false,
   buildConcurrency: 2,
   shadowBuildPlatform: false,
+  dmUsers: [],
+  userWeeklyCents: 5000,
+  // Not a stored setting: the projects the bot is building for a DM user
+  // (homeroom-bot-dm.js), live like the apps in liveApps. readSettings
+  // fills it in.
+  firstVersionApps: [],
 });
 const MAX_CONCURRENCY = 4;
 const MAX_BUILD_CONCURRENCY = 4;
@@ -201,6 +221,18 @@ const MAX_ERROR_CHARS = 600;
 
 const TRIAGE_PROMPT_PATH = path.join(__dirname, '..', 'prompts', 'homeroom-bot-triage.md');
 
+// #3624: a project's first version, filed by the bot from what its creator
+// described when they made it (homeroom-bot-dm.js). The repository is the
+// starter template, so "a small, bounded change" cannot hold: the whole
+// app is the change. Everything else in the ready criteria still does.
+const FIRST_VERSION_NOTE = [
+  'THIS REQUEST IS A NEW PROJECT\'S FIRST VERSION. Its creator just made the project and described what it should',
+  'be; the repository is still the platform\'s starter template. Read "a small, bounded change" in the `ready`',
+  'criteria as "a first version a person can try": the app the description asks for, kept to its core, built on the',
+  'template. Every other `ready` criterion still holds. Ask a `question` only for a real blocker, as above, with',
+  'suggested answers; otherwise decide, list your choices under `assumptions`, and answer `ready`.',
+].join('\n');
+
 let timer = null;
 let stopped = false;
 let passInFlight = false;
@@ -281,9 +313,23 @@ function parseSettings(rows) {
     map.get(KEY_BUILD_CONCURRENCY), DEFAULTS.buildConcurrency, 1, MAX_BUILD_CONCURRENCY,
   );
   const shadowBuildPlatform = map.get(KEY_SHADOW_BUILD_PLATFORM) === 'on';
+  let dmUsers = DEFAULTS.dmUsers;
+  try {
+    const parsed = JSON.parse(map.get(KEY_DM_USERS) || '[]');
+    if (Array.isArray(parsed)) {
+      dmUsers = [...new Set(parsed.filter((s) => typeof s === 'string' && USERNAME_RE.test(s))
+        .map((s) => s.toLowerCase()))].slice(0, MAX_DM_USERS);
+    }
+  } catch {
+    dmUsers = DEFAULTS.dmUsers;
+  }
+  const userWeeklyCents = clampInt(
+    map.get(KEY_USER_WEEKLY_CENTS), DEFAULTS.userWeeklyCents, 0, MAX_USER_WEEKLY_CENTS,
+  );
   return {
     mode, concurrency, batchSize, pausedApps, liveApps, turnSeconds, turnInputTokens,
-    shadowBuilds, buildConcurrency, shadowBuildPlatform,
+    shadowBuilds, buildConcurrency, shadowBuildPlatform, dmUsers, userWeeklyCents,
+    firstVersionApps: [],
   };
 }
 
@@ -299,7 +345,15 @@ async function readSettings(pool) {
       'SELECT key, value FROM platform_settings WHERE key = ANY($1)',
       [SETTING_KEYS],
     );
-    return parseSettings(rows);
+    const settings = parseSettings(rows);
+    // #3624: a project the bot builds for a DM user is live while that
+    // person is still on the list.
+    try {
+      settings.firstVersionApps = await require('./homeroom-bot-dm').firstVersionAppSlugs(pool, settings);
+    } catch (err) {
+      log.warn('homeroom-bot', 'first-version apps read failed', { err: err.message });
+    }
+    return settings;
   } catch (err) {
     // platform_settings may not exist on a very first boot before migrate()
     // has run; the defaults keep the loop idle, which is the safe answer.
@@ -382,6 +436,20 @@ function validateSettingsPatch(patch) {
       return { ok: false, error: 'shadowBuildPlatform must be true or false' };
     }
     updates.push([KEY_SHADOW_BUILD_PLATFORM, body.shadowBuildPlatform ? 'on' : 'off']);
+  }
+  if (body.dmUsers !== undefined) {
+    if (!Array.isArray(body.dmUsers) || body.dmUsers.length > MAX_DM_USERS
+        || !body.dmUsers.every((s) => typeof s === 'string' && USERNAME_RE.test(s.replace(/^@/, '')))) {
+      return { ok: false, error: `dmUsers must be an array of up to ${MAX_DM_USERS} usernames` };
+    }
+    updates.push([KEY_DM_USERS, JSON.stringify([...new Set(body.dmUsers.map((s) => s.replace(/^@/, '').toLowerCase()))])]);
+  }
+  if (body.userWeeklyCents !== undefined) {
+    const n = Number(body.userWeeklyCents);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_USER_WEEKLY_CENTS) {
+      return { ok: false, error: 'userWeeklyCents must be a non-negative integer' };
+    }
+    updates.push([KEY_USER_WEEKLY_CENTS, String(n)]);
   }
   let weeklyLimitCents;
   if (body.weeklyLimitCents !== undefined) {
@@ -544,6 +612,31 @@ function noteWithAssumptions(note, assumptions) {
   return clip(`${note || ''}\n\nAssumptions:\n${assumptions.map((a) => `- ${a}`).join('\n')}`.trim());
 }
 
+/**
+ * #3624: a question's suggested answers, as the DM offers them: two to
+ * four short distinct lines, the default first (added when the model left
+ * it out), each at most SUGGESTED_ANSWER_MAX characters. Never empty when
+ * there is a default: every question offers at least that.
+ */
+const SUGGESTED_ANSWER_MAX = 120;
+const MAX_SUGGESTED_ANSWERS = 4;
+function suggestedAnswers(raw, fallback = null) {
+  const out = [];
+  const add = (value) => {
+    const text = String(value || '').replace(/\s+/g, ' ').trim();
+    if (!text || text.length > SUGGESTED_ANSWER_MAX) return;
+    if (out.some((a) => a.toLowerCase() === text.toLowerCase())) return;
+    out.push(text);
+  };
+  const short = String(fallback || '').replace(/\s+/g, ' ').trim();
+  if (short && short.length <= SUGGESTED_ANSWER_MAX) add(short);
+  for (const value of Array.isArray(raw) ? raw : []) {
+    if (typeof value === 'string') add(value);
+    if (out.length >= MAX_SUGGESTED_ANSWERS) break;
+  }
+  return out;
+}
+
 function parseVerdict(text) {
   const raw = String(text || '');
   const candidates = [];
@@ -581,12 +674,15 @@ function parseVerdict(text) {
         if (assumptions.length > MAX_ASSUMPTIONS) assumptions.length = MAX_ASSUMPTIONS;
       }
     }
+    const questionDefault = verdict === 'question' ? clip(obj.default, 1000) : null;
     return {
       verdict,
       determined: typeof obj.determined === 'boolean' ? obj.determined : null,
       missingFact: missing && /^none\.?$/i.test(missing) ? null : missing,
       question: verdict === 'question' ? clip(obj.question, 2000) : null,
-      questionDefault: verdict === 'question' ? clip(obj.default, 1000) : null,
+      questionDefault,
+      // #3624: the replies a person can tap to answer, the default first.
+      questionAnswers: verdict === 'question' ? suggestedAnswers(obj.answers, questionDefault) : null,
       buildNote: verdict === 'ready' ? noteWithAssumptions(clip(obj.build_note), assumptions) : null,
       assumptions: verdict === 'ready' ? assumptions : [],
       // `person` says which criterion fails; `empty` says what a person
@@ -1077,7 +1173,16 @@ async function insertRun(pool, run) {
       run.durationMs ?? null, run.error ? clip(run.error, MAX_ERROR_CHARS) : null,
       run.budgetStop || null, run.proposalSessionId || null],
   );
-  return rows[0]?.id || null;
+  const id = rows[0]?.id || null;
+  // #3624: a question's suggested answers, beside the row rather than in
+  // its insert, which only a question run needs.
+  if (id && Array.isArray(run.questionAnswers) && run.questionAnswers.length) {
+    await pool.query(
+      'UPDATE homeroom_bot_runs SET question_answers = $2 WHERE id = $1',
+      [id, JSON.stringify(run.questionAnswers)],
+    ).catch((err) => log.warn('homeroom-bot', 'Could not record a question\'s answers', { runId: id, err: err.message }));
+  }
+  return id;
 }
 
 /**
@@ -1089,7 +1194,8 @@ async function insertRun(pool, run) {
  * promote only (promoteAsBot); the bot checks it before it builds.
  */
 function botProposalCeiling(settings) {
-  return PROPOSALS_PER_APP_CAP * Math.max(1, (settings?.liveApps || []).length);
+  const apps = (settings?.liveApps || []).length + (settings?.firstVersionApps || []).length;
+  return PROPOSALS_PER_APP_CAP * Math.max(1, apps);
 }
 
 /**
@@ -1480,6 +1586,27 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   // #3146: what this run has posted on GitHub, so its own comments are not
   // read back as a change (see homeroom-bot-live.js).
   const postedAt = [];
+  // #3624: who the request is for. Their requests' turns count against a
+  // weekly allowance of their own (the platform pays, up to that ceiling),
+  // and a project's first version is triaged as the whole first version.
+  let requester = null;
+  if (liveMode) {
+    const dm = deps.dm || require('./homeroom-bot-dm');
+    requester = await dm.recordRequester(pool, { app, repo, issueNumber, issue }).catch((err) => {
+      log.warn('homeroom-bot', 'Could not record who a request is for', { app: app.slug, issueNumber, err: err.message });
+      return null;
+    });
+    if (requester && await dm.overWeeklyAllowance(pool, settings, requester.userId)) {
+      await pool.query('DELETE FROM homeroom_bot_queue WHERE id = $1', [item.id]);
+      await dm.noteOverAllowance(pool, { settings, requester, app, issueNumber, bot }).catch((err) => {
+        log.warn('homeroom-bot', 'Could not say the allowance is spent', { app: app.slug, issueNumber, err: err.message });
+      });
+      log.info('homeroom-bot', 'Request held: its requester\'s weekly allowance is spent', {
+        app: app.slug, issueNumber, userId: requester.userId,
+      });
+      return { ran: false, reason: 'user_allowance' };
+    }
+  }
   if (liveMode) {
     const open = await live.openBotProposal(pool, bot.id, app.id, issueNumber);
     if (open) {
@@ -1525,7 +1652,9 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
   const prompt = [
-    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(), triageReference(), triageClosing(issueNumber),
+    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
+    requester?.firstVersion ? FIRST_VERSION_NOTE : null,
+    triageReference(), triageClosing(issueNumber),
   ].filter(Boolean).join('\n\n');
 
   let session;
@@ -1777,7 +1906,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const runId = await insertRun(pool, {
     appId: app.id, issueNumber, sessionId: session.id, mode: runMode,
     verdict: parsed.verdict, determined: parsed.determined, missingFact: parsed.missingFact,
-    question: parsed.question, questionDefault: parsed.questionDefault,
+    question: parsed.question, questionDefault: parsed.questionDefault, questionAnswers: parsed.questionAnswers,
     buildNote: parsed.buildNote, reason: parsed.reason, capSuppressed,
     threadSeenAt: item.thread_seen_at || null, model, costUsd,
     inputTokens: usage.inputTokens, outputTokens: usage.outputTokens,
@@ -1810,6 +1939,7 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
         seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin: botUsername,
         quietHold: item.reason === APP_AGAIN_REASON,
         proposalCeiling: botProposalCeiling(settings),
+        firstVersion: !!requester?.firstVersion,
         deps: {
           github, worker, agentTurn, limits, threadContext, managedOpenRouter, sessions,
           activeWorkers, ...liveD,
@@ -1902,8 +2032,10 @@ function shadowBuildSkipReason(settings, app, config = {}) {
  * budget, and the spec's, from its own cap. The platform gets
  * PLATFORM_BUILD_TIME_FACTOR times both.
  */
-function buildBudgets(app, config, turnBudgetMs) {
-  const factor = isPlatformRepo(app, config) ? PLATFORM_BUILD_TIME_FACTOR : 1;
+function buildBudgets(app, config, turnBudgetMs, { firstVersion = false } = {}) {
+  // #3624: a project's whole first version is a bigger build than any one
+  // request, so it gets the platform repository's longer clocks too.
+  const factor = isPlatformRepo(app, config) || firstVersion ? PLATFORM_BUILD_TIME_FACTOR : 1;
   return { turnBudgetMs: turnBudgetMs * factor, specBudgetMs: live.SPEC_TURN_MAX_MS * factor };
 }
 
@@ -2841,7 +2973,7 @@ async function runFollowUp(pool, config, {
 
   let runId = null;
   let targets;
-  const say = async (kind, text, postedAt) => {
+  const say = async (kind, text, postedAt, extra = {}) => {
     // The people on the issue and the proposal, as a verdict's posts tag them.
     if (targets === undefined) {
       targets = await live.mentionTargets({
@@ -2854,6 +2986,7 @@ async function runFollowUp(pool, config, {
       // Answered where it was asked: the proposal's thread too, when that
       // is where somebody wrote.
       proposalSessionId: replies.some((r) => r.where === 'proposal') ? session.id : null,
+      ...extra,
     });
     if (posted?.githubCreatedAt) postedAt.push(posted.githubCreatedAt);
   };
@@ -2901,9 +3034,11 @@ async function runFollowUp(pool, config, {
     }
   }
 
+  const askAnswers = action === 'ask' ? suggestedAnswers(parsed?.answers) : null;
   runId = await insertRun(pool, {
     appId: app.id, issueNumber, mode: runMode, verdict: followup.VERDICT_FOR[action],
     question: action === 'ask' ? reply : null,
+    questionAnswers: askAnswers,
     reason: reply,
     buildNote: action === 'revise' ? (parsed?.summary || null) : null,
     threadSeenAt: item.thread_seen_at || null, model,
@@ -2916,16 +3051,22 @@ async function runFollowUp(pool, config, {
   });
 
   const prNumber = session.pr_number;
+  const proposalUrl = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
   const text = action === 'revise'
     ? followup.revisedText({
-      summary: parsed?.summary, reply: parsed?.reply, prNumber,
-      link: deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null,
+      summary: parsed?.summary, reply: parsed?.reply, prNumber, link: proposalUrl,
     })
     : action === 'ask' ? followup.askText({ reply, prNumber })
       : action === 'person' ? followup.personText({ reply, prNumber })
         : followup.answerText({ reply, prNumber });
+  // #3624: what reaches the requester's DM. An answer is for whoever asked
+  // it, on the proposal, so it stays there.
+  const dm = action === 'ask' ? { question: reply, answers: askAnswers || [] }
+    : action === 'revise' ? { summary: parsed?.summary || reply, link: proposalUrl, sessionId: session.id }
+      : action === 'person' ? { reason: reply }
+        : null;
   const postedAt = [];
-  await say(`followup_${action}`, text, postedAt)
+  await say(`followup_${action}`, text, postedAt, dm ? { dm } : {})
     .catch((err) => log.warn('homeroom-bot', 'Follow-up post failed', { err: err.message }));
   await live.advanceSeen({
     pool, github, threadContext, app, repo, issueNumber, runId, since: seedReadAt, postedAt,
@@ -3021,9 +3162,11 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
     ).catch(() => {});
     // The vote-card metadata the promote route's own activity rows carry,
     // so the issue's thread shows the live proposal card, not only a link.
-    await say('proposal', live.proposalText({
-      link: live.proposalLink(domain, app.slug, built.sessionId), prNumber: built.prNumber,
-    }), { msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } } });
+    const link = live.proposalLink(domain, app.slug, built.sessionId);
+    await say('proposal', live.proposalText({ link, prNumber: built.prNumber }), {
+      msgType: 'vote', metadata: { vote: { sessionId: built.sessionId, prNumber: built.prNumber } },
+      dm: { link, prNumber: built.prNumber, sessionId: built.sessionId },
+    });
     // And the spec on the proposal itself, where the group votes.
     if (built.specMd && built.specVersion) {
       await live.postSpecOnProposal({
@@ -3037,20 +3180,20 @@ async function announceBuilt({ pool, ws, app, bot, issueNumber, runId, built, sa
   if (built.blocked) {
     // Impossible as written, which only reading the code showed: said on
     // the issue like a question, so a reply sends it round again.
-    await say('blocked', live.blockedText(built.blocked));
+    await say('blocked', live.blockedText(built.blocked), { dm: { reason: built.blocked } });
     return 'blocked';
   }
   log.warn('homeroom-bot', 'Live build did not become a proposal', {
     app: app.slug, issueNumber, sessionId: built.sessionId || null, error: built.error,
   });
-  await say('build_failed', live.buildFailedText(built.error));
+  await say('build_failed', live.buildFailedText(built.error), { dm: { reason: built.error } });
   return 'build_failed';
 }
 
 async function actOnVerdict({
   pool, config, bot, app, repo, issueNumber, issue, parsed, capSuppressed, runId,
   seed, seedReadAt, postedAt, turnBudgetMs, model, botLogin = null, quietHold = false,
-  proposalCeiling = PROPOSALS_PER_APP_CAP, deps,
+  proposalCeiling = PROPOSALS_PER_APP_CAP, firstVersion = false, deps,
 }) {
   const { github, ws } = deps;
   const say = liveSayer({
@@ -3073,11 +3216,15 @@ async function actOnVerdict({
       }));
     }
   } else if (parsed.verdict === 'question') {
-    await say('question', live.questionText(parsed));
+    // #3624: `dm` carries the question to the requester's DM too, with the
+    // answers they can tap (homeroom-bot-dm.js).
+    await say('question', live.questionText(parsed), {
+      dm: { question: parsed.question, answers: parsed.questionAnswers || [] },
+    });
   } else if (parsed.verdict === 'person') {
-    await say('person', live.personText(parsed));
+    await say('person', live.personText(parsed), { dm: { reason: parsed.reason } });
   } else if (parsed.verdict === 'empty') {
-    await say('empty', live.emptyText(parsed));
+    await say('empty', live.emptyText(parsed), { dm: { reason: parsed.reason } });
   } else if (parsed.verdict === 'ready') {
     // The spec is posted on the issue the moment it is written, and the
     // build goes straight on: it is there for reference, not for approval.
@@ -3085,11 +3232,12 @@ async function actOnVerdict({
       if (version) await live.shareSpecVersion(pool, sessionId, version);
       await say('spec', live.specCommentText(specMd), {
         threadMessage: version ? live.specCard({ sessionId, version, spec: specMd, bot }) : null,
+        dm: { building: true },
       });
     };
     const built = await live.buildAndPropose({
       pool, config, bot, app, repo, issueNumber, issue, seed, buildNote: parsed.buildNote,
-      ...buildBudgets(app, config, turnBudgetMs), model, deps, onSpec, proposalCeiling,
+      ...buildBudgets(app, config, turnBudgetMs, { firstVersion }), model, deps, onSpec, proposalCeiling,
       // Linked before any turn runs, so a restart mid-build can find the run
       // (#3471): the build's worker outlives the restart; this process does not.
       onSession: (session) => pool.query(
@@ -3168,6 +3316,16 @@ async function runOnce(pool, config, deps = {}) {
     // for the bot's held issues (#3152).
     const bot = await ensureBotUser(pool, config);
     if (forceAll || now - lastRefreshAt >= REFRESH_INTERVAL_MS) {
+      // #3624: a project waiting for its first version whose creation hook
+      // missed it is filed here, before the refresh that queues it.
+      if (settings.dmUsers?.length) {
+        try {
+          const filed = await (deps.dm || require('./homeroom-bot-dm')).sweepFirstVersions(pool, config, deps);
+          if (filed) log.info('homeroom-bot', 'First versions filed', { filed });
+        } catch (err) {
+          log.warn('homeroom-bot', 'First-version sweep failed', { err: err.message });
+        }
+      }
       const summary = await refreshQueue(pool, settings, { ...deps, bot });
       lastRefreshAt = now;
       out.refreshed = true;
@@ -3633,7 +3791,34 @@ async function adminPayload(pool, config, {
     },
     builds: await buildLaneSummary(pool),
     mentionOptOuts: await mentionOptOutList(pool),
+    dmUsers: await dmUserList(pool, settings),
   };
+}
+
+/**
+ * #3624: the people on the DM list, as the dashboard shows them: whether
+ * the name is an account at all, and what their requests cost the bot this
+ * week against the per-person allowance.
+ */
+async function dmUserList(pool, settings) {
+  const names = settings?.dmUsers || [];
+  if (!names.length) return [];
+  const dm = require('./homeroom-bot-dm');
+  const { rows } = await pool.query(
+    'SELECT id, username FROM users WHERE LOWER(username) = ANY($1::text[]) AND is_synthetic = FALSE',
+    [names],
+  );
+  const byName = new Map(rows.map((r) => [r.username.toLowerCase(), r]));
+  const out = [];
+  for (const name of names) {
+    const user = byName.get(name);
+    let weeklySpentCents = null;
+    if (user) {
+      try { weeklySpentCents = await dm.weeklySpentCents(pool, user.id); } catch { weeklySpentCents = null; }
+    }
+    out.push({ username: user ? user.username : name, exists: !!user, weeklySpentCents });
+  }
+  return out;
 }
 
 const MENTION_OPTOUTS_PAGE = 100;

@@ -1,0 +1,336 @@
+'use strict';
+
+// #3624: the Homeroom bot in a DM, without a database.
+//
+// The contract pieces: a triage question and a follow-up ask carry their
+// suggested answers (the default first); the settings hold the DM list and
+// the per-person weekly allowance; a project the bot builds for somebody on
+// the list is live; the bot's posts on a request carry `dm` to its
+// requester's DM; what the DM says is plain and has no em dash; a request
+// is held when its requester's allowance is spent; the create dialog sends
+// the longer description; and the DM draws a question's answers with the
+// line that says an answer is public.
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const bot = require('../src/services/homeroom-bot');
+const live = require('../src/services/homeroom-bot-live');
+const followup = require('../src/services/homeroom-bot-followup');
+const dm = require('../src/services/homeroom-bot-dm');
+const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+
+const root = path.join(__dirname, '..');
+const read = (p) => fs.readFileSync(path.join(root, p), 'utf8');
+const DASH = /—/;
+
+// ── The question contract ────────────────────────────────────────────────
+
+const fence = (obj) => `Done.\n\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\``;
+
+test('a triage question carries its suggested answers, the default first, short and distinct', () => {
+  const parsed = bot.parseVerdict(fence({
+    verdict: 'question', question: 'Which list do you mean?', default: 'The shopping list',
+    answers: ['The to-do list', 'the shopping list', 'The shopping list', 'x'.repeat(200), 'Both lists', 'Neither', 'Another'],
+    blocker: 'user_facing', why_default_fails: 'They are different screens.', build_note: 'Sort the shopping list.',
+  }));
+  assert.equal(parsed.verdict, 'question');
+  assert.deepEqual(parsed.questionAnswers, ['The shopping list', 'The to-do list', 'Both lists', 'Neither'],
+    'the default leads, duplicates and over-long lines are dropped, four at most');
+});
+
+test('a question with no answers list still offers its default', () => {
+  const parsed = bot.parseVerdict(fence({
+    verdict: 'question', question: 'Which list?', default: 'The shopping list',
+    blocker: 'user_facing', why_default_fails: 'Different screens.', build_note: 'x',
+  }));
+  assert.deepEqual(parsed.questionAnswers, ['The shopping list']);
+  const ready = bot.parseVerdict(fence({ verdict: 'ready', build_note: 'Do it.' }));
+  assert.equal(ready.questionAnswers, null, 'only a question has answers');
+});
+
+test('the triage prompt asks for answers a person can tap, in plain words', () => {
+  const prompt = read('src/prompts/homeroom-bot-triage.md');
+  assert.match(prompt, /give `answers`: two to four short replies/);
+  assert.match(prompt, /"answers": \[/);
+  assert.match(prompt, /plain words, with no file names, code or jargon/);
+});
+
+test('a follow-up ask carries answers too; its other actions keep their shape', () => {
+  const ask = followup.parseFollowUp(fence({ action: 'ask', reply: 'Darker or lighter?', answers: ['Darker', 'Lighter', 3] }));
+  assert.deepEqual(ask.answers, ['Darker', 'Lighter']);
+  const answer = followup.parseFollowUp(fence({ action: 'answer', reply: 'Because.' }));
+  assert.equal(Object.hasOwn(answer, 'answers'), false);
+  assert.match(followup.followUpPrompt({ seed: 's', replies: [] }), /"answers": \[/);
+});
+
+// ── Settings ─────────────────────────────────────────────────────────────
+
+test('the DM list is lower-cased usernames, and the per-person allowance defaults to $50', () => {
+  const s = bot.parseSettings([
+    { key: 'homeroom_bot_dm_users', value: JSON.stringify(['Evan', 'evan', 'bad name!', 7, 'ada_2']) },
+  ]);
+  assert.deepEqual(s.dmUsers, ['evan', 'ada_2']);
+  assert.equal(s.userWeeklyCents, 5000);
+  assert.equal(bot.parseSettings([{ key: 'homeroom_bot_user_weekly_cents', value: '-3' }]).userWeeklyCents, 0);
+});
+
+test('an admin sets the DM list and the allowance; anything else is refused', () => {
+  const ok = bot.validateSettingsPatch({ dmUsers: ['@Evan', 'ada'], userWeeklyCents: 2000 });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.updates, [
+    ['homeroom_bot_dm_users', '["evan","ada"]'],
+    ['homeroom_bot_user_weekly_cents', '2000'],
+  ]);
+  assert.equal(bot.validateSettingsPatch({ dmUsers: 'evan' }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ dmUsers: ['no spaces'] }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ dmUsers: Array.from({ length: 51 }, (_, i) => `u${i}`) }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ userWeeklyCents: 1.5 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ userWeeklyCents: -1 }).ok, false);
+});
+
+test('a project the bot builds for somebody on the list is live, like the live list; never on staging', () => {
+  const settings = { mode: 'shadow', liveApps: ['rss'], firstVersionApps: ['chore-wheel'] };
+  assert.equal(live.isLiveFor(settings, { slug: 'chore-wheel' }), true);
+  assert.equal(live.isLiveFor(settings, { slug: 'rss' }), true);
+  assert.equal(live.isLiveFor(settings, { slug: 'other' }), false);
+  assert.equal(live.isLiveFor({ ...settings, mode: 'off' }, { slug: 'chore-wheel' }), false);
+  const env = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  try { assert.equal(live.isLiveFor(settings, { slug: 'chore-wheel' }), false); } finally {
+    if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+  }
+});
+
+test('the bot talks in a DM only to people on the list, and only while it is on', () => {
+  assert.equal(dm.isDmUser({ mode: 'shadow', dmUsers: ['evan'] }, 'Evan'), true);
+  assert.equal(dm.isDmUser({ mode: 'off', dmUsers: ['evan'] }, 'evan'), false);
+  assert.equal(dm.isDmUser({ mode: 'shadow', dmUsers: [] }, 'evan'), false);
+});
+
+test('a first version gets the longer build clocks', () => {
+  const app = { repo_url: 'https://github.com/usernode-bot/x' };
+  const plain = bot.buildBudgets(app, {}, 60_000);
+  const first = bot.buildBudgets(app, {}, 60_000, { firstVersion: true });
+  assert.equal(first.turnBudgetMs, plain.turnBudgetMs * bot.PLATFORM_BUILD_TIME_FACTOR);
+  assert.equal(first.specBudgetMs, plain.specBudgetMs * bot.PLATFORM_BUILD_TIME_FACTOR);
+});
+
+// ── What the DM says ─────────────────────────────────────────────────────
+
+const KINDS = {
+  question: { question: 'Newest first?', answers: ['Yes'] },
+  followup_ask: { question: 'Darker?', answers: ['Yes'] },
+  spec: { building: true },
+  proposal: { link: 'https://app.onhomeroom.com/#app/x/dev/proposals/9' },
+  followup_revise: { summary: 'Made it darker.', link: 'https://app.onhomeroom.com/#app/x/dev/proposals/9' },
+  blocked: { reason: 'There is no calendar to read.' },
+  build_failed: { reason: 'tests failed' },
+  person: { reason: 'It is a policy choice.' },
+  followup_person: { reason: 'It is a policy choice.' },
+  empty: { reason: 'Nothing here.' },
+};
+
+test('every kind the DM carries reads plainly, names the request, and has no em dash', () => {
+  const context = { appName: 'Seed swap', issueNumber: 7, issueTitle: 'Sort by date', firstVersion: false };
+  for (const [kind, payload] of Object.entries(KINDS)) {
+    const text = dm.dmText(kind, payload, context);
+    assert.ok(text, kind);
+    assert.match(text, /^\*\*Seed swap\*\* · request #7: Sort by date/, kind);
+    assert.doesNotMatch(text, DASH, kind);
+  }
+  assert.equal(dm.dmText('looking', {}, context), null, 'not every post is DM news');
+  assert.match(dm.dmText('spec', {}, { ...context, firstVersion: true }), /^\*\*Seed swap\*\*, its first version\n\nI'm building the first version now/);
+  assert.match(dm.dmText('proposal', KINDS.proposal, context), /try the preview and vote on it: https:/);
+  for (const text of [dm.HELP_TEXT, dm.NOT_ENABLED_TEXT, dm.mirroredText('x', { question: true })]) {
+    assert.doesNotMatch(text, DASH);
+  }
+});
+
+test('an answer is posted on the request saying where it came from', () => {
+  assert.equal(dm.mirroredText('Oldest first', { question: true }), 'Oldest first\n\n(Answered in a chat with Homeroom bot.)');
+  assert.equal(dm.mirroredText('Also add dates'), 'Also add dates\n\n(Sent in a chat with Homeroom bot.)');
+});
+
+test('a description is something to build from only when it says something, and is kept to its limit', () => {
+  assert.equal(dm.normalizeBrief('  short '), null);
+  assert.equal(dm.normalizeBrief(42), null);
+  assert.equal(dm.normalizeBrief('A list of chores for the house.\r\n'), 'A list of chores for the house.');
+  assert.equal(dm.normalizeBrief('x'.repeat(5000)).length, dm.MAX_BRIEF_CHARS);
+});
+
+test('without the helper model, the suggested one-liner is the first sentence, cut at a word', async () => {
+  assert.equal(dm.firstSentence('A chore wheel for the house. It is fair.'), 'A chore wheel for the house');
+  const long = dm.firstSentence(`A ${'very '.repeat(30)}long sentence`, 40);
+  assert.ok(long.length <= 40);
+  assert.match(long, /…$/);
+  const out = await dm.suggestShortDescription({
+    name: 'Chore wheel', brief: 'Who does the dishes this week. Fairly.',
+    deps: { llm: { async generateShortDescription() { throw new Error('offline'); } } },
+  });
+  assert.equal(out.description, 'Who does the dishes this week');
+  const model = await dm.suggestShortDescription({
+    name: 'Chore wheel', brief: 'Who does the dishes this week. Fairly.',
+    deps: { llm: { async generateShortDescription() { return { description: 'A fair chore rota', usage: {}, model: 'm' }; } } },
+  });
+  assert.equal(model.description, 'A fair chore rota');
+});
+
+test('a staging copy never files a first version: a GitHub issue is an irreversible side effect', async () => {
+  const env = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
+  const pool = { async query() { throw new Error('nothing is read on staging'); } };
+  try {
+    assert.equal(await dm.fileFirstVersion(pool, {}, 1), null);
+    assert.equal(await dm.sweepFirstVersions(pool, {}), 0);
+  } finally {
+    if (env === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = env;
+  }
+});
+
+test('the weekly allowance message is keyed by the platform week, which starts on Monday', () => {
+  assert.equal(dm.weekKey(new Date('2026-10-01T12:00:00Z')), '20260928');
+  assert.equal(dm.weekKey(new Date('2026-09-28T00:00:00Z')), '20260928');
+  assert.equal(dm.weekKey(new Date('2026-09-27T23:59:00Z')), '20260921');
+});
+
+// ── The bot's posts carry the news to the DM ─────────────────────────────
+
+test('a post with `dm` is relayed to the requester\'s DM after it is posted; one without is not', async (t) => {
+  const relayed = [];
+  const real = dm.relayIssuePost;
+  dm.relayIssuePost = async (args) => { relayed.push(args); return null; };
+  t.after(() => { dm.relayIssuePost = real; });
+  const pool = { async query(s) { return /INSERT INTO homeroom_bot_posts/.test(s) ? { rows: [{ id: 11 }] } : { rows: [] }; } };
+  const github = { async createIssueComment() { return { id: 1, created_at: 'now' }; } };
+  const ws = { async sendBotMessage() { return { id: 5 }; } };
+  const sender = { id: 2, username: 'homeroom_bot' };
+  const app = { id: 1, slug: 'seed-swap' };
+  const repo = { owner: 'o', repo: 'r' };
+  await live.post({ pool, github, ws, app, repo, issueNumber: 7, kind: 'looking', text: 'Looking.', sender });
+  assert.equal(relayed.length, 0);
+  await live.post({
+    pool, github, ws, app, repo, issueNumber: 7, kind: 'question', text: 'Q?', sender, runId: 3,
+    dm: { question: 'Q?', answers: ['A'] },
+  });
+  assert.equal(relayed.length, 1);
+  assert.equal(relayed[0].kind, 'question');
+  assert.equal(relayed[0].postId, 11, 'keyed by the post, so a retry sends once');
+  assert.deepEqual(relayed[0].dm, { question: 'Q?', answers: ['A'] });
+  // A relay that throws never fails the post.
+  dm.relayIssuePost = async () => { throw new Error('boom'); };
+  const posted = await live.post({ pool, github, ws, app, repo, issueNumber: 7, kind: 'spec', text: 'S', sender, dm: { building: true } });
+  assert.equal(posted.postId, 11);
+});
+
+test('a live verdict hands its question, and its answers, to the DM', async () => {
+  const says = [];
+  const deps = {
+    github: {}, ws: {},
+    threadContext: { async loadIssueThread() { return { messages: [] }; } },
+  };
+  const realPost = live.post;
+  const realSeen = live.advanceSeen;
+  const realTargets = live.mentionTargets;
+  live.post = async (args) => { says.push(args); return {}; };
+  live.advanceSeen = async () => ({});
+  live.mentionTargets = async () => [];
+  try {
+    await bot.actOnVerdict({
+      pool: { async query() { return { rows: [] }; } }, config: {}, bot: { id: 2 }, app: { id: 1, slug: 'x' },
+      repo: { owner: 'o', repo: 'r' }, issueNumber: 7, issue: {},
+      parsed: { verdict: 'question', question: 'Which?', questionDefault: 'This', questionAnswers: ['This', 'That'] },
+      capSuppressed: null, runId: 3, seed: '', seedReadAt: 'now', postedAt: [], turnBudgetMs: 1000, model: 'm', deps,
+    });
+  } finally {
+    live.post = realPost; live.advanceSeen = realSeen; live.mentionTargets = realTargets;
+  }
+  assert.equal(says.length, 1);
+  assert.equal(says[0].kind, 'question');
+  assert.deepEqual(says[0].dm, { question: 'Which?', answers: ['This', 'That'] });
+});
+
+test('a request whose requester spent the week\'s allowance is held, said once, and costs nothing', async (t) => {
+  const queries = [];
+  const pool = { async query(s, p) { queries.push({ s, p }); return { rows: [] }; } };
+  const held = [];
+  const deps = {
+    github: {
+      isEnabled: () => true,
+      async fetchPublicIssue() { return { issue: { number: 7, title: 'Sort', body: 'b', state: 'open' } }; },
+    },
+    worker: {}, agentTurn: {}, threadContext: {}, managedOpenRouter: {}, sessions: {}, activeWorkers: new Set(),
+    limits: { async checkBudget() { return { ok: true }; } },
+    ws: {}, sessionLifecycle: {},
+    dm: {
+      async recordRequester() { return { userId: 9, username: 'ada', firstVersion: false }; },
+      async overWeeklyAllowance(_pool, settings, userId) { return settings.userWeeklyCents === 100 && userId === 9; },
+      async noteOverAllowance(_pool, args) { held.push(args); },
+    },
+  };
+  const out = await bot.runTriage(pool, {}, {
+    bot: { id: 2 }, app: { id: 1, slug: 'seed-swap', repo_url: 'https://github.com/o/r' },
+    item: { id: 31, issue_number: 7 }, mode: 'shadow',
+    settings: { mode: 'shadow', liveApps: ['seed-swap'], userWeeklyCents: 100 }, deps,
+  });
+  assert.deepEqual(out, { ran: false, reason: 'user_allowance' });
+  assert.equal(held.length, 1);
+  assert.ok(queries.some((q) => /DELETE FROM homeroom_bot_queue/.test(q.s) && q.p[0] === 31));
+  assert.ok(!queries.some((q) => /INSERT INTO homeroom_bot_runs/.test(q.s)), 'no run, nothing spent');
+});
+
+// ── The create dialog and the DM screen ──────────────────────────────────
+
+test('the create dialog sends the longer description, never with an import', () => {
+  const { createBody, BRIEF_MIN, BRIEF_MAX } = loadTsx('frontend/src/features/dialogs/create-app.tsx', {
+    stubs: { '../messages/store': { open() {} } },
+  });
+  assert.equal(BRIEF_MIN, dm.MIN_BRIEF_CHARS, 'the client and server agree on the minimum');
+  assert.equal(BRIEF_MAX, dm.MAX_BRIEF_CHARS, 'and on the maximum');
+  const base = { name: 'Chore wheel', mode: 'new', audience: 'solo', approvers: null, approvals: null };
+  assert.equal(createBody({ ...base, brief: '  A fair chore rota for the house.  ' }).brief, 'A fair chore rota for the house.');
+  assert.equal(createBody({ ...base, brief: 'short' }).brief, undefined);
+  assert.equal(createBody({ ...base, mode: 'import', repoUrl: 'https://github.com/o/r', brief: 'A fair chore rota for the house.' }).brief, undefined);
+  assert.equal(createBody(base).brief, undefined);
+});
+
+test('a question in the DM draws its answers, the default marked, and says an answer is public', () => {
+  const { BotQuestion } = loadTsx('frontend/src/features/messages/bot-question.tsx', {
+    stubs: { './store': { answerBotQuestion() {}, scopeKey: () => 'k', setReply() {} } },
+  });
+  const message = {
+    id: 5, conversationId: 3, content: 'Q', createdAt: 'now', reactions: [], attachments: [], objects: [],
+    sender: { id: 2, username: 'homeroom_bot', bot: true },
+    metadata: { homeroomBot: {
+      kind: 'question', appName: 'Seed swap', issueNumber: 7, question: 'Newest first?',
+      answers: ['Newest first', 'Oldest first'], status: 'open', mirrors: true,
+    } },
+  };
+  const html = renderToHtml(createElement(BotQuestion, { message, conversationId: 3 }));
+  assert.match(html, /data-bot-answer="default"[^>]*><span>Newest first<\/span><span class="messages-bot-default">suggested<\/span>/);
+  assert.match(html, /Oldest first/);
+  assert.match(html, /Something else/);
+  assert.match(html, /posted on Seed swap request #7’s public discussion, where the group can see it/);
+
+  const answered = { ...message, metadata: { homeroomBot: { ...message.metadata.homeroomBot, status: 'answered', answer: 'Oldest first' } } };
+  const after = renderToHtml(createElement(BotQuestion, { message: answered, conversationId: 3 }));
+  assert.doesNotMatch(after, /Something else/, 'no buttons once answered');
+  assert.match(after, /You answered: Oldest first/);
+
+  const person = { ...message, sender: { id: 4, username: 'ada' } };
+  assert.equal(renderToHtml(createElement(BotQuestion, { message: person, conversationId: 3 })), '', 'only the bot\'s own');
+});
+
+test('the DM screen draws the bot\'s question and badge, and the reply bar names where a reply goes', () => {
+  const row = read('frontend/src/features/messages/message-row.tsx');
+  assert.match(row, /message\.sender\.bot && message\.metadata\?\.homeroomBot\?\.question \? <BotQuestion/);
+  assert.match(row, /messages-bot-badge/);
+  const composer = read('frontend/src/features/messages/composer.tsx');
+  assert.match(composer, /Your reply is posted on \$\{requestPlace\(reply\.metadata\.homeroomBot\)\}’s public discussion\./);
+  const css = read('public/css/app.css');
+  for (const cls of ['.messages-bot-badge', '.messages-bot-answers button', '.messages-bot-note', '.messages-bot-default']) {
+    assert.ok(css.includes(cls), cls);
+  }
+});

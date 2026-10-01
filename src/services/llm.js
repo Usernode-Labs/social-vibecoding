@@ -1452,6 +1452,46 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
   return { title, usage: resp.usage, model };
 }
 
+// #3624: the one-line "What is it?" for a new project, suggested from the
+// longer description its creator gave the Homeroom bot to build from. The
+// same helper model and defensive parse as a session title; the caller
+// falls back to the description's first sentence when this throws.
+async function generateShortDescription({ name, brief, max = 90, apiKey, telemetryContext }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  const text = String(brief || '').trim();
+  if (!text) throw new Error('Nothing to describe');
+  const system = `You write the one-line description shown under a new app's name on its page and in a directory of apps. From the app's name and its creator's longer description, write one plain sentence fragment saying what the app is or does, for people deciding whether to open it: at most ${max} characters, no trailing period, no quotes, no markdown, no emoji. Never repeat the app's name.
+
+Respond with ONLY a JSON object: {"description": "..."}. No prose before or after.`;
+  const model = 'claude-haiku-4-5';
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 80,
+      system,
+      messages: [{ role: 'user', content: `APP NAME:\n${String(name || '').slice(0, 120)}\n\nDESCRIPTION:\n${text.slice(0, 4000)}` }],
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'short_description' },
+    apiKey,
+  });
+  const out = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  let description = '';
+  try {
+    const first = out.indexOf('{');
+    const last = out.lastIndexOf('}');
+    const obj = JSON.parse(first !== -1 && last > first ? out.slice(first, last + 1) : out);
+    description = typeof obj.description === 'string' ? obj.description : '';
+  } catch {
+    description = '';
+  }
+  description = description.replace(/\s+/g, ' ').replace(/^["']|["']$/g, '').replace(/[.]+$/, '').trim();
+  if (!description) throw new Error('No description in the reply');
+  return { description: description.slice(0, max), usage: resp.usage, model };
+}
+
 // One graded unit for the challenge scorer (services/topochain/
 // challenge-grader.js): a season challenge whose points depend on how useful
 // the thing somebody did was, rather than on whether they did it.
@@ -2708,7 +2748,7 @@ async function reviewContentRules({ system, diff, telemetryContext, apiKey }) {
 
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
-  generatePrMetadata, parsePrMetadataText, generateSessionTitle,
+  generatePrMetadata, parsePrMetadataText, generateSessionTitle, generateShortDescription,
   reviewContentRules,
   // The challenge scorer's one model call (services/topochain/
   // challenge-grader.js owns the rubrics; this owns the transport).

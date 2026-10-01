@@ -1398,9 +1398,14 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // in services/app-manifest.js. 831 leaves 29 slots against the new
   // MAX_DECLARED_TESTS (860), clear of the 20-slot floor.
   //
+  // 831 → 832: +1 (#3624): the Homeroom bot's DM with a question open on
+  // the staging fixture (#messages/910005): its Bot badge, its suggested
+  // answers with the default marked, and the line saying an answer is
+  // posted publicly on the request, folded into one check with :has().
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 831);
+  checkCap.assertPinned(DAPP.tests.length, 832);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

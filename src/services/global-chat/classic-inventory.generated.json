@@ -2331,6 +2331,21 @@
     {
       "source": "src/routes/apps.js",
       "method": "POST",
+      "path": "/api/apps/suggest-description",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.apps.suggest.description.0f08beb5",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "method": "POST",
       "path": "/api/apps",
       "expression": null,
       "status": "mapped",

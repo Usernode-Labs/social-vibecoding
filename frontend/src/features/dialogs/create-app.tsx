@@ -109,6 +109,7 @@ import {
   SpinnerArcIcon, UserGroupIcon, UserIcon, XIcon,
 } from '@/components/ui/icons';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 
 import { useHiddenClass, useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
@@ -124,6 +125,7 @@ import {
   watchCreation,
 } from './creation-progress-store.js';
 import { normalizeRepositoryUrl } from './repository-url';
+import { open as openMessages } from '../messages/store';
 import { useDialog } from './use-dialog';
 
 type Mode = 'new' | 'import';
@@ -269,10 +271,17 @@ export function createBody(answers: {
   approvalsN?: number;
   /** An import's dapp.json, as the check read it. */
   repo?: RepoManifest | null;
+  /**
+   * #3624: the longer description the Homeroom bot builds the first
+   * version from, for somebody it builds for. Never sent with an import.
+   */
+  brief?: string;
 }): Record<string, unknown> {
   const body: Record<string, unknown> = { name: answers.name, audience: answers.audience };
   const importing = answers.mode === 'import';
   if (importing && answers.repoUrl) body.repoUrl = answers.repoUrl;
+  const brief = (answers.brief || '').trim();
+  if (!importing && brief.length >= BRIEF_MIN) body.brief = brief.slice(0, BRIEF_MAX);
   const description = (answers.description || '').replace(/\s+/g, ' ').trim();
   if (description && !(importing && answers.repo?.description)) body.description = description;
   if (answers.audience === 'invited') {
@@ -445,6 +454,13 @@ const SOON_TAG = 'shrink-0 text-xs font-medium text-zinc-500 dark:text-zinc-400'
  * before the field stops taking letters.
  */
 export const DESCRIPTION_MAX = 90;
+/*
+ * #3624: the longer description somebody the Homeroom bot builds for gives
+ * it, from which it builds the first version (services/homeroom-bot-dm.js,
+ * whose MIN_BRIEF_CHARS and MAX_BRIEF_CHARS these mirror).
+ */
+export const BRIEF_MIN = 10;
+export const BRIEF_MAX = 4000;
 const DESCRIPTION_COUNT_FROM = 20;
 const DESCRIPTION_LEFT = 'absolute right-4 top-3 text-[13px] tabular-nums';
 
@@ -739,6 +755,16 @@ export function CreateAppDialog() {
   const [name, setName] = useState('');
   const [describe, setDescribe] = useState('');
   const describeLeftText = descriptionLeft(describe.length);
+  // #3624: whether the Homeroom bot builds this person's projects from a
+  // description (an admin's list; GET /api/auth/me says). False on the
+  // prerender and until the dialog opens, so the first render is the
+  // shell's: the description field exists only after a real open.
+  const [botBuild, setBotBuild] = useState(false);
+  const [brief, setBrief] = useState('');
+  const [suggesting, setSuggesting] = useState(false);
+  const [suggestNote, setSuggestNote] = useState('');
+  // The bot's DM, once a project it builds has been created.
+  const [botChat, setBotChat] = useState<number | null>(null);
   const [approvers, setApprovers] = useState<Approvers | null>(null);
   const [approvals, setApprovals] = useState<Approvals | null>(null);
   const [approvalsN, setApprovalsN] = useState(1);
@@ -799,6 +825,10 @@ export function CreateAppDialog() {
       setStep(initial.step);
       if (nameRef.current) nameRef.current.value = initial.name;
       setName(initial.name);
+      setBotBuild(!!(window.App?.user as { homeroomBotDm?: boolean } | undefined)?.homeroomBotDm);
+      setBrief('');
+      setSuggestNote('');
+      setBotChat(null);
       void invalidateAppAllowance();
       if (initial.step === 'details') setTimeout(() => nameRef.current?.focus(), 0);
     },
@@ -814,6 +844,9 @@ export function CreateAppDialog() {
       setKind(null);
       setName('');
       setDescribe('');
+      setBrief('');
+      setSuggestNote('');
+      setBotChat(null);
       setStep('who');
       setApprovers(null);
       setApprovals(null);
@@ -993,6 +1026,7 @@ export function CreateAppDialog() {
 
     const body = createBody({
       name: trimmed,
+      brief: botBuild ? brief : '',
       description: describeRef.current?.value || '',
       mode,
       repoUrl,
@@ -1013,7 +1047,10 @@ export function CreateAppDialog() {
       const reply = await postCreateApp(body);
       void invalidateAppAllowance();
       if (!reply.ok) return setError(reply.error);
-      const data = reply.data as { app?: { slug?: string; name?: string } };
+      const data = reply.data as { app?: { slug?: string; name?: string }; homeroomBot?: { conversationId?: number } };
+      // #3624: the bot is building it, and says so in its DM.
+      const chat = Number(data.homeroomBot?.conversationId);
+      setBotChat(Number.isInteger(chat) && chat > 0 ? chat : null);
       // The POST returns 201 with the row still in 'creating' — the build
       // runs async server-side. The dialog STAYS OPEN and reports the phases
       // app-creator broadcasts.
@@ -1038,6 +1075,40 @@ export function CreateAppDialog() {
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
+    }
+  }
+
+  /**
+   * #3624: a one-line "What is it?" suggested from the longer description,
+   * written into that field for the person to keep or change. `auto` is
+   * the suggestion offered on leaving the description: it never replaces a
+   * line already there.
+   */
+  async function suggestDescription(auto = false) {
+    const text = brief.trim();
+    if (text.length < BRIEF_MIN || suggesting) return;
+    if (auto && (describeRef.current?.value || '').trim()) return;
+    setSuggesting(true);
+    setSuggestNote('');
+    try {
+      const res = await fetch('/api/apps/suggest-description', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: (nameRef.current?.value || '').trim(), brief: text }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { description?: string; error?: string };
+      if (!res.ok || !data.description) {
+        if (!auto) setSuggestNote(data.error || 'Couldn’t suggest one just now. Write your own, or try again.');
+        return;
+      }
+      const line = data.description.slice(0, DESCRIPTION_MAX);
+      if (describeRef.current) describeRef.current.value = line;
+      setDescribe(line);
+      setSuggestNote('Suggested from your description. Change it if you like.');
+    } catch {
+      if (!auto) setSuggestNote('Couldn’t suggest one just now. Write your own, or try again.');
+    } finally {
+      setSuggesting(false);
     }
   }
 
@@ -1080,8 +1151,16 @@ export function CreateAppDialog() {
             mode={mode ?? 'new'}
             surface="pane"
             progress={progress}
-            openLabel="Open project"
+            openLabel={botChat ? 'Open my chat with Homeroom bot' : 'Open project'}
             onOpenApp={() => {
+              // #3624: the Homeroom bot is building this one, and its DM is
+              // where it asks and tells.
+              if (botChat) {
+                const chat = botChat;
+                dialog.close();
+                openMessages(chat);
+                return;
+              }
               // Stage 3: the new project's own page (its Workshop, which
               // opens on who it is for), not the running app. That is where
               // the first change is started.
@@ -1239,6 +1318,29 @@ export function CreateAppDialog() {
                   onInput={(e) => { setName(e.currentTarget.value); setError(''); }}
                 />
               </div>
+              {/* #3624: what it should do, for the Homeroom bot to build the
+                  first version from. Only for somebody it builds for, and
+                  only after a real open (botBuild starts false), so the
+                  prerendered card is the one the shell shipped. */}
+              {botBuild ? (
+                <div className={ROW + ' create-brief-row shadow-[inset_0_1px_0_var(--app-sheet-line)]'} data-create-brief="">
+                  <label htmlFor="app-brief" className={LABEL}>
+                    What should it do? Homeroom bot builds it from this
+                  </label>
+                  <Textarea
+                    id="app-brief"
+                    name="brief"
+                    rows={4}
+                    maxLength={BRIEF_MAX}
+                    {...FIELD}
+                    className="resize-none"
+                    placeholder="A shared shopping list for our house. Anyone can add items, tick them off, and see who added what."
+                    value={brief}
+                    onChange={(e) => { setBrief(e.currentTarget.value); setSuggestNote(''); }}
+                    onBlur={() => { void suggestDescription(true); }}
+                  />
+                </div>
+              ) : null}
               {/* What it is: optional. Written into the new repository's
                   dapp.json, where people read it on the join screen, in
                   Discover and on its page. #3572: at most DESCRIPTION_MAX
@@ -1270,8 +1372,21 @@ export function CreateAppDialog() {
                   aria-describedby={describeLeftText ? 'app-description-left' : undefined}
                   {...FIELD}
                   placeholder="Shared shopping list"
-                  onInput={(e) => setDescribe(e.currentTarget.value)}
+                  onInput={(e) => { setDescribe(e.currentTarget.value); setSuggestNote(''); }}
                 />
+                {botBuild ? (
+                  <div className="flex items-center justify-between gap-2 pb-1">
+                    <span className={CAPTION + ' px-0'} role="status">{suggesting ? 'Suggesting…' : suggestNote}</span>
+                    <button
+                      type="button"
+                      className={CHOICE_CHANGE + ' text-violet-700 dark:text-violet-300'}
+                      disabled={suggesting || brief.trim().length < BRIEF_MIN}
+                      onClick={() => { void suggestDescription(false); }}
+                    >
+                      Suggest from my description
+                    </button>
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>

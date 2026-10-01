@@ -5398,6 +5398,18 @@
       "expectText": "Invitation pending"
     },
     {
+      "name": "The Homeroom bot's question in its DM, under its name and Bot badge, carries its suggested answers to tap, the default marked, and says an answer is posted publicly on the request (#3624)",
+      "path": "/?demo=1#messages/910005",
+      "expectSelector": "#messages-screen:not(.hidden) .messages-message:has(.messages-message-head .messages-bot-badge) .messages-bot-question[data-bot-question=\"open\"] .messages-bot-answers button[data-bot-answer=\"default\"] .messages-bot-default",
+      "expectText": "public discussion",
+      "id": "homeroom-bot-dm-question",
+      "visual": true,
+      "impact": [
+        "frontend/src/features/messages/**",
+        "src/services/homeroom-bot-dm.js"
+      ]
+    },
+    {
       "name": "An agent session's own screen shows its app, its change and a Changes button, and the drawer links the active change to its proposal page (#2779) and says why its checks were skipped (#3180)",
       "path": "/#agent/990801/changes",
       "expectSelector": "#agent-session-screen:not(.hidden):has([data-agent-session-focus] ~ [data-agent-session-change-pill] ~ [data-agent-session-changes-button]) [data-agent-session-active-change]:has([data-agent-session-checks-reason]) a[href$=\"/dev/proposals/990802\"]"

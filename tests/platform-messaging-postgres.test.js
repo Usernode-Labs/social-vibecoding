@@ -19,7 +19,9 @@ const DSN = process.env.TEST_DATABASE_URL
 const DDL = `
   CREATE TABLE users (
     id SERIAL PRIMARY KEY,
-    username VARCHAR(255) NOT NULL UNIQUE
+    username VARCHAR(255) NOT NULL UNIQUE,
+    -- #3624: a platform account (the Homeroom bot) is drawn as one.
+    is_synthetic BOOLEAN NOT NULL DEFAULT FALSE
   );
   CREATE TABLE user_avatars (
     id SERIAL PRIMARY KEY,
