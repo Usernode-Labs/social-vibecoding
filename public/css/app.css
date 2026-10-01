@@ -17534,6 +17534,35 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      surface the cards already use — the same reason tabs.tsx's track is white
      rather than the recessed grey a control gets on a card. */
 
+  /* #3583: WHERE THE BAND PINS, which is the header's foot, and how far that
+     is from the top of whatever scrolls the page.
+
+     On a computer, and in the installed app and the native WebView, that is
+     #dev-forum-scroll, and the header's foot overlaps its top edge by 7px
+     (the header's `-mb-2`, 8px, less `.dc-lift`'s 1px hairline). The strip
+     pinned at 0 rose into the header by that much, and at z-index 30 over
+     the header's 10 its band painted there: a white slab biting the
+     coloured header, which is half of what #3583's screenshot shows.
+
+     Where the DOCUMENT scrolls instead (a tablet in its browser, a window
+     under 768px: lib/browser-scroll.ts) the scrollport is the whole window
+     and the header is sticky over it, so 0 was the top of the SCREEN: the
+     strip pinned there drew straight over the header and hid it. There it
+     is the header's own height, as everything else that sticks under the
+     header in that mode is measured (#browse-search-bar). */
+  #dev-workshop { --ws-pin-top: 7px; }
+  html[data-browser-scroller="dev-forum-scroll"] #dev-workshop {
+    --ws-pin-top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
+  }
+  /* Under 768px the strip is still the coloured band, tucked 18px up under
+     the header's foot, so it rests 15px above the foot (that tuck, less
+     #dev-body's 10px, plus the 7px the foot overlaps the page), and it pins
+     exactly there, the way a phone's does (#3522): it never moves, and its
+     tabs never drop. */
+  @media (max-width: 767.98px) {
+    .dev-ws-tabs.dev-ws-band { top: calc(var(--ws-pin-top, 0px) - 15px); }
+  }
+
   /* EVERYTHING PINS UP HERE, as one band: the tab strip (on All items, its
      back bar) and the head under it, with the grouping, the search and the
      filters. The controls belong WITH the list you are
@@ -17541,7 +17570,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
 
      THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
      it comes to rest: under the pinned strip, at the strip's measured height
-     plus the column gap. `top: 0` would slide it under the strip.
+     plus the column gap, counted from where the strip pins (`--ws-pin-top`,
+     #3583). `top: 0` would slide it under the strip.
 
      ABOVE THE STRIP IN PAINT ORDER at rest. The grouping tabs used to hang
      from the head into the strip's band as an "ear" (gone with #852), which
@@ -17552,7 +17582,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      hundred lines BELOW this block, and on equal specificity the later one
      wins — a bare-class override here would apply to nothing. */
   #dev-workshop .dev-ws-pane-head {
-    top: var(--dev-ws-head-top, 0px);
+    top: calc(var(--ws-pin-top, 0px) + var(--dev-ws-head-top, 0px));
     z-index: 31;
   }
   .dev-ws-tabs {
@@ -17592,9 +17622,10 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
        above, `top: 0` was reset to `auto` by the shorthand three lines later:
        the strip stayed `sticky`, pinned to nothing, and scrolled away while
        the head it is supposed to travel with stayed. Measured — the strip's
-       top went to -890 on a 900px scroll. `top: 0` is the scroller's own top;
-       there is no chrome inside it to clear. */
-    top: 0;
+       top went to -890 on a 900px scroll. It was `top: 0`, the scroller's
+       own top, on the reasoning that there was no chrome inside it to clear;
+       there is, the header's foot (#3583, `--ws-pin-top` above). */
+    top: var(--ws-pin-top, 0px);
     /* QA 2026-09-24 Q7: ABOVE THE CARDS, BELOW THE HEAD. Pinned with no
        z-index, the strip sat at the floor of the stacking order, and the
        pane and its cards come later in the tree, so everything that scrolled up past it painted over
