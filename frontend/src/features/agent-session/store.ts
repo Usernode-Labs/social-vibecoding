@@ -1066,8 +1066,14 @@ export function closeAgentSession() {
  * stays as it was).
  */
 async function createFromDraft(draft: AgentDraft): Promise<number | null> {
+  const telemetry = (window as any).UITelemetry;
+  telemetry?.screen?.('change_workspace');
+  const attemptId = telemetry?.attempt?.('change_create', {
+    screen: 'change_workspace', timeoutMs: 15_000, abandonOnHide: true,
+  });
   try {
     const session = await api.createSession(draft.hint, draft.agent);
+    telemetry?.outcome?.(attemptId, 'success');
     publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
     // Still on screen: this is the conversation now. Left meanwhile: it
     // still gets its message, it just is not what the screen shows.
@@ -1078,6 +1084,11 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
     }
     return session.id;
   } catch (error) {
+    const status = (error as { status?: number })?.status;
+    telemetry?.outcome?.(attemptId, 'failure', {
+      errorCode: status ? telemetry?.errorCodeFor?.(status)
+        : (navigator.onLine === false ? 'offline' : 'network'),
+    });
     if (state.draft === draft) publish({ error: errorText(error, 'Could not start an agent session.') });
     return null;
   }

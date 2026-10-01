@@ -115,6 +115,11 @@ const REVIEWED_ROUTE_EXEMPTIONS = [
     reason: 'credential mint used by the app iframe transport, never a model-visible capability',
   },
   {
+    matches: (route) => route.source === 'src/routes/ui-telemetry.js'
+      && route.path === '/api/ui-telemetry/batch',
+    reason: 'browser_telemetry: same-origin diagnostics transport, never a model-visible capability',
+  },
+  {
     matches: (route) => route.source === 'src/routes/auth.js'
       && route[REGISTRATION].pathCount > 1
       && route[REGISTRATION].shadowsLaterRoute,

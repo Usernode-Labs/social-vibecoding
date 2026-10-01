@@ -585,6 +585,12 @@ export function Shell() {
       */}
       <script src={assetUrl('/js/nav-link.js')} />
       <script src={assetUrl('/js/platform-ui.js')} />
+      {/**
+          Privacy-bounded UI experience collector. It has no dependencies and
+          listens for the session event app.js publishes, so load it before
+          every instrumented journey and before app.js begins boot.
+      */}
+      <script src={assetUrl('/js/ui-telemetry.js')} />
       {/*
           /js/offline.js used to load here. #1078 retired it: the banner it
           owned is a React island (features/shell/banners.tsx), the

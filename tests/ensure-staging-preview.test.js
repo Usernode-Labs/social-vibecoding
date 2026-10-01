@@ -64,13 +64,14 @@ function makeDom() {
 
 // `stubSwap: false` keeps the REAL swapToStaging so the verified fast path /
 // fallback poll can be exercised end to end (#816).
-function makeAppView(fetchImpl, { stubSwap = true } = {}) {
+function makeAppView(fetchImpl, { stubSwap = true, uiTelemetry = null } = {}) {
   const dom = makeDom();
   const sandbox = {
     console,
     relTime: () => 'now',
     App: { user: { id: 1 }, currentTab: 'dev' },
     Kudos: { renderButton: () => '' },
+    UITelemetry: uiTelemetry || undefined,
     document: dom.document,
     fetch: fetchImpl,
     alert: () => {},
@@ -340,6 +341,91 @@ test('#816 the loader clears on the iframe load event, and a stale load id is ig
   AppView._setStagingLoader(false);
   staleHandler();
   assert.equal(dom.els['staging-loader'].classList._hidden, true, 'stale load event is a no-op');
+});
+
+test('preview telemetry resolves only after the verified iframe paints', async () => {
+  const calls = [];
+  const uiTelemetry = {
+    attempt(action, context) { calls.push(['attempt', action, context]); return 'preview-attempt-1'; },
+    screen(screen, context) { calls.push(['screen', screen, context]); },
+    outcome(attemptId, outcome, detail) { calls.push(['outcome', attemptId, outcome, detail]); },
+    cancel(attemptId) { calls.push(['cancel', attemptId]); },
+    errorCodeFor() { return 'unavailable'; },
+  };
+  const { AppView, dom } = makeAppView(
+    okJson({ status: 'ready', url: 'https://live.example', verified: true }),
+    { stubSwap: false, uiTelemetry }
+  );
+  await AppView.ensureStaging(7, null, null, {});
+  assert.equal(calls.filter((call) => call[0] === 'outcome').length, 0,
+    'ensure and health success are not yet a painted preview');
+  dom.els['staging-iframe'].onload();
+  assert.deepEqual(calls.filter((call) => call[0] === 'outcome'), [
+    ['outcome', 'preview-attempt-1', 'success', undefined],
+  ]);
+});
+
+test('rebuild verification carries one preview attempt through to iframe readiness', async () => {
+  let ensures = 0;
+  const calls = [];
+  const uiTelemetry = {
+    attempt() { calls.push(['attempt']); return 'preview-rebuild-1'; },
+    screen() { calls.push(['screen']); },
+    outcome(attemptId, outcome, detail) { calls.push(['outcome', attemptId, outcome, detail]); },
+    cancel(attemptId) { calls.push(['cancel', attemptId]); },
+    errorCodeFor() { return 'unavailable'; },
+  };
+  const { AppView, dom } = makeAppView(async (url) => {
+    if (url.includes('ensure-staging')) {
+      ensures += 1;
+      return { ok: true, json: async () => ensures === 1
+        ? ({ status: 'rebuilding' })
+        : ({ status: 'ready', url: 'https://rebuilt.example', verified: true }) };
+    }
+    throw new Error(`unexpected request: ${url}`);
+  }, { stubSwap: false, uiTelemetry });
+  await AppView.ensureStaging(7, null, null, {});
+  await AppView.onStagingRebuildResult(7, { url: 'https://rebuilt.example' });
+  assert.equal(calls.filter((call) => call[0] === 'attempt').length, 1,
+    'the staging_ready verification does not start or finish a second attempt');
+  assert.equal(calls.filter((call) => call[0] === 'outcome').length, 0);
+  dom.els['staging-iframe'].onload();
+  assert.deepEqual(calls.filter((call) => call[0] === 'outcome'), [
+    ['outcome', 'preview-rebuild-1', 'success', undefined],
+  ]);
+});
+
+test('preview iframe navigation failure is a terminal failure, not a success', async () => {
+  const calls = [];
+  const uiTelemetry = {
+    attempt() { return 'preview-error-1'; }, screen() {},
+    outcome(attemptId, outcome, detail) { calls.push([attemptId, outcome, detail]); },
+    cancel() {}, errorCodeFor() { return 'unavailable'; },
+  };
+  const { AppView, dom } = makeAppView(
+    okJson({ status: 'ready', url: 'https://live.example', verified: true }),
+    { stubSwap: false, uiTelemetry }
+  );
+  await AppView.ensureStaging(7, null, null, {});
+  dom.els['staging-iframe'].onerror();
+  assert.equal(JSON.stringify(calls), JSON.stringify([
+    ['preview-error-1', 'failure', { errorCode: 'unavailable' }],
+  ]));
+});
+
+test('an invalid ensure response is a classified terminal preview failure', async () => {
+  const calls = [];
+  const uiTelemetry = {
+    attempt() { return 'preview-invalid-1'; }, screen() {},
+    outcome(attemptId, outcome, detail) { calls.push([attemptId, outcome, detail]); },
+    cancel() {}, errorCodeFor() { return 'unavailable'; },
+  };
+  const { AppView, dom } = makeAppView(okJson({}), { uiTelemetry });
+  await AppView.ensureStaging(7, null, null, {});
+  assert.equal(JSON.stringify(calls), JSON.stringify([
+    ['preview-invalid-1', 'failure', { errorCode: 'invalid_response' }],
+  ]));
+  assert.match(dom.els['staging-loader-sub'].textContent, /unexpected response/i);
 });
 
 test('#816 an UNVERIFIED {ready} falls back to the readiness poll', async () => {
