@@ -103,8 +103,12 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
       });
     },
   };
-  if (exemptAdmins || skip) {
-    options.skip = (req, res) => (exemptAdmins && !!req.user?.canAdminWrite) || !!skip?.(req, res);
+  if (exemptAdmins) options.skip = (req) => !!req.user?.canAdminWrite;
+  if (skip) {
+    // An extra exclusion composes with the explicit admin exemption; it
+    // never enables that exemption for a limiter that did not request it.
+    const skipAdmin = options.skip;
+    options.skip = (req, res) => !!skipAdmin?.(req, res) || !!skip(req, res);
   }
   return rateLimit(options);
 }
