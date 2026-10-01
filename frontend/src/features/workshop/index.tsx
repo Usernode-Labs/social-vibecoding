@@ -88,7 +88,7 @@ import { flushSync } from 'react-dom';
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import {
-  BallotIcon, ChevronLeftIcon, HandRaisedIcon, LockIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
+  BallotIcon, ChevronLeftIcon, HandRaisedIcon, LockIcon, PlusIcon, SpeechCheckIcon, UserGroupIcon, UserIcon,
 } from '@/components/ui/icons';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { AppsLoadError } from '../apps/load-error';
@@ -600,6 +600,32 @@ export function WorkshopScreen() {
                   <Section key={section.key} audience={section.key} label={section.label} rows={section.rows} />
                 ))}
           </div>
+          {/* JOIN OR START A COMMUNITY (#3543), where Your communities has it:
+              after the last community. The same row, the same words and the
+              same destination as the menu's (./community-switcher.tsx), so
+              the page and the menu that lists the same communities end the
+              same way: Discover, where you join one, and where "Start a
+              community" opens the create dialog.
+
+              OUTSIDE `#workshop-list`, whose direct children the sections
+              check reads, and drawn only once the list has rows: the empty
+              card above already says the same thing to someone in nothing,
+              and nothing here is in the prerendered document. */}
+          {rows && rows.length > 0 && !state.error ? (
+            <GroupedList tone="plane" className="mt-6">
+              <ListRow
+                as="a"
+                href="#apps"
+                data-workshop-join=""
+                leading={(
+                  <span className="community-switcher-tile-add w-11 h-11 shrink-0 rounded-xl flex items-center justify-center" aria-hidden="true">
+                    <PlusIcon className="w-5 h-5" />
+                  </span>
+                )}
+                title="Join or start a community"
+              />
+            </GroupedList>
+          ) : null}
         </div>
         {state.tab === 'needs' ? (
           <div data-workshop-pane="needs">

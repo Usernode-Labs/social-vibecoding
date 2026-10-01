@@ -867,6 +867,9 @@ const ADDED_IDS = {
   // choice, a ?sort= deep link and a hand change all show the same value.
   'browse-sort-bar': 'Sort row inside the browse search bar (#1383).',
   'browse-sort-select': 'The five-order Sort control for the all-apps directory (#1383).',
+  // #3543: "Join or start a community" lands on Discover, which offered
+  // only the joining half; this opens the create dialog from its Sort row.
+  'browse-start-community': 'Start a community, on the #apps Sort row; opens the create dialog (#3543).',
   // ── Streamlined Concept: the Board Filters dialog ────────────────
   // The Figma board (Streamlined Concept / Dev Sessions and Navigation)
   // moves the Board's filter selects and the needs-vote toggle off the

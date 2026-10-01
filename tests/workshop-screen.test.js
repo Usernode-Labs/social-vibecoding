@@ -1010,3 +1010,37 @@ test('#3270: the controller reads the Needs you feed alongside, and survives los
     global.fetch = priorFetch;
   }
 });
+
+test('#3543: the list ends with "Join or start a community", the same row as the menu\'s', () => {
+  const mod = loadTsx('frontend/src/features/workshop/index.tsx');
+  const html = () => renderToHtml(createElement(mod.WorkshopScreen, {}));
+  const join = (out) => /<a[^>]*data-workshop-join=""[^>]*>/.exec(out);
+
+  // Not in the prerendered document: nothing has loaded yet.
+  assert.equal(join(renderComponent('frontend/src/features/workshop/index.tsx', 'WorkshopScreen', {})), null,
+    'the first render carries no join row');
+
+  mod.workshopStore.set({
+    open: true, error: false, tab: 'status',
+    rows: [{ slug: 'garden', name: 'Garden', audience: 'open', member_count: 3, working: 0, needs: 0 }],
+  });
+  const out = html();
+  const tag = join(out);
+  assert.ok(tag, 'drawn once the list has rows');
+  assert.match(tag[0], /href="#apps"/, 'it goes where the menu row goes: Discover');
+  assert.match(out, /data-workshop-join=""[\s\S]*?>Join or start a community</, 'in the menu\'s own words');
+  assert.ok(out.indexOf('data-workshop-join') > out.indexOf('data-workshop-app="garden"'), 'after the last community');
+  const list = out.indexOf('id="workshop-list"');
+  assert.ok(list >= 0 && out.indexOf('data-workshop-join') > list);
+  assert.ok(!listChildren(out).some((k) => 'data-workshop-join' in k.attrs), 'outside #workshop-list, whose children the sections check reads');
+  // The menu row it mirrors.
+  assert.match(read('frontend/src/features/workshop/community-switcher.tsx'),
+    /window\.location\.hash = '#apps';[\s\S]*?>Join or start a community</);
+
+  // With nothing joined the empty card already says it; an error says nothing more.
+  mod.workshopStore.set({ rows: [] });
+  assert.equal(join(html()), null, 'not under the empty card');
+  mod.workshopStore.set({ rows: [{ slug: 'garden', name: 'Garden', working: 0, needs: 0 }], error: true });
+  assert.equal(join(html()), null, 'not under the error card');
+  mod.workshopStore.set({ error: false, rows: null });
+});

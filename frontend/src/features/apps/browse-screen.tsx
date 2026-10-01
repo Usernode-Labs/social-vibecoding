@@ -52,10 +52,11 @@
 
 import { useRef } from 'react';
 
+import { Button } from '@/components/ui/button';
 import { Chip, ChipRail } from '@/components/ui/chip';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
-import { SearchIcon } from '@/components/ui/icons';
+import { PlusIcon, SearchIcon } from '@/components/ui/icons';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { useStoreState } from '../../lib/use-store-state';
 import { BrowseDetail } from './browse-detail';
@@ -247,6 +248,27 @@ export function BrowseScreen() {
               <option key={o.key} value={o.key}>{o.label}</option>
             ))}
           </Select>
+          {/*
+              START A COMMUNITY (#3543). "Join or start a community", the last
+              row of Your communities, lands here, and this page used to offer
+              only the joining half. It opens the same create dialog as Home's
+              "+" tile (App.showCreateModal), which asks who the new project is
+              for first. On the Sort row, pushed to its end, so it costs the
+              phone's sticky head no extra line and stays out of the list it
+              is not part of.
+          */}
+          <Button
+            type="button"
+            id="browse-start-community"
+            variant="pillAccent"
+            size="sm"
+            layout="iconRow"
+            className="ml-auto shrink-0"
+            onClick={() => (window as any).App?.showCreateModal?.()}
+          >
+            <PlusIcon className="w-4 h-4" strokeWidth="2.5" aria-hidden="true" />
+            Start a community
+          </Button>
         </div>
       </div>
       {/*

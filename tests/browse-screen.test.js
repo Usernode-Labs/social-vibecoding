@@ -2120,3 +2120,18 @@ test('the cold deep-link fetch unwraps the { app } envelope the route sends', as
   assert.equal(state.detail.name, 'Cold App');
   assert.equal(Browse._detailMissing, false);
 });
+
+test('#3543: Discover offers "Start a community", which opens the create dialog', () => {
+  const src = read('frontend/src/features/apps/browse-screen.tsx');
+  const at = src.indexOf('id="browse-start-community"');
+  assert.ok(at > src.indexOf('id="browse-sort-bar"'), 'on the Sort row');
+  const button = src.slice(src.lastIndexOf('<Button', at), src.indexOf('</Button>', at));
+  assert.match(button, /type="button"/);
+  assert.match(button, /onClick=\{\(\) => \(window as any\)\.App\?\.showCreateModal\?\.\(\)\}/,
+    'the same dialog Home\'s + tile opens, which asks who the project is for');
+  assert.match(button, /Start a community$/m);
+  assert.match(src, /from '@\/components\/ui\/button'/, 'the shell\'s own Button');
+  // Prerendered with the search bar, at the end of the Sort row.
+  const bar = INDEX.slice(INDEX.indexOf('id="browse-sort-bar"'), INDEX.indexOf('id="browse-list-level"'));
+  assert.match(bar, /<button type="button" id="browse-start-community"[^>]*>[\s\S]*?Start a community<\/button>/);
+});
