@@ -333,3 +333,12 @@ test('the kit zooms keep the homescreen timing unless a duration is asked for', 
   assert.equal(plain.transition, 'transform 340ms ease, opacity 200ms ease 60ms, border-radius 340ms ease');
   assert.deepEqual(plain.timers, [480]);
 });
+
+test('a declared check pins the Resume pill on a kept app\'s Active row (folded into the kept-apps check)', () => {
+  const manifest = JSON.parse(read('dapp.json'));
+  const check = manifest.tests.find((t) => t.id === 'kept-apps.home-dot');
+  assert.equal(check.path, '/?demo=1&shot=apps-kept');
+  assert.match(check.expectSelector,
+    /^body:has\(#platform-recents \.platform-active > a\[data-live\]:not\(\[aria-current\]\) > \.platform-recent-resume\) /);
+  assert.ok(check.impact.includes('frontend/src/features/nav/**'));
+});
