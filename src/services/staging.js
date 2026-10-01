@@ -520,7 +520,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     let parallelPreparation = false;
     try {
       const exists = await dbManager.databaseExists(stagingDbNameStr, { strict: true });
-      if (candidate && exists) throw new Error('Candidate clone already exists; abandon this attempt rather than overwrite it');
+      if (candidate?.preparedClone && !exists) throw new Error('Prepared candidate clone is missing');
+      if (candidate && exists && !candidate.preparedClone) {
+        throw new Error('Candidate clone already exists; abandon this attempt rather than overwrite it');
+      }
       parallelPreparation = !exists;
     } catch (err) {
       if (candidate) throw err;
@@ -558,10 +561,17 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
       if (imageFinished) publishProgress(config, session, 'clone', timings, cloneStartedAt);
       try {
         // Each clone retains its own role/password and template redaction.
-        const cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, {
-          viaTemplate: true,
-          ...(candidate ? { password: candidate.password, createOnly: true } : {}),
-        });
+        let cloned;
+        if (candidate?.preparedClone) {
+          const inspection = await require('./preview-flow/clone-operation').createCloneOperations().inspect(candidate.intent);
+          if (inspection.status !== 'complete') throw new Error('Candidate clone completion is unconfirmed');
+          cloned = { password: candidate.password, via: 'recovered-template' };
+        } else {
+          cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, {
+            viaTemplate: true,
+            ...(candidate ? { password: candidate.password, createOnly: true } : {}),
+          });
+        }
         timings.cloneVia = cloned.via || 'direct';
         if (cloned.templateRefreshed) timings.templateRefreshed = true;
         if (cloned.templateStale) timings.templateRefreshQueued = true;

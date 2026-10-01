@@ -190,6 +190,11 @@ function createPreviewFlow(pool, {
         WHERE flow_id = $1`, [resourceChange.flowId, resourceChange.disposition]);
     }
 
+    if (decision.cloneChange) {
+      await client.query('UPDATE preview_flow_resources SET clone_prepared = TRUE WHERE flow_id = $1',
+        [decision.cloneChange.flowId]);
+    }
+
     if (decision.bindingChange) {
       await client.query(`INSERT INTO preview_bindings (session_id, desired, observed)
         VALUES ($1, $2, $3) ON CONFLICT (session_id) DO UPDATE

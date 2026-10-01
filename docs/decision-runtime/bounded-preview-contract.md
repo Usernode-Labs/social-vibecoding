@@ -32,12 +32,15 @@ activates or overwrites a serving runtime.
 - A verified healthy candidate with matching physical ID, flow/head labels and
   confirmed clone completion is adopted. Lost result/decision acknowledgments
   are repaired using the same reported-fact action ID and receipts.
-- The existing combined staging adapter is **not safely resumable**. It is called
+- The original work kind's combined staging adapter is **not safely resumable**. It is called
   at most once for this resource attempt. After interrupted/ambiguous creation,
   an incomplete candidate is retired through its domain owner, never overwritten
   or blindly recreated. Clone existence alone is not completion. Automatic
   resumption of partially completed source/clone/build phases remains subsequent
   resource-adapter work; an explicit new domain request creates a fresh attempt.
+  The separately opted-in template work kind now recovers its clone operation
+  before this later adapter starts; see the [clone contract](recoverable-clone-contract.md).
+  Source/build/runtime phases retain the original conservative behavior.
 - Expired execution claims do not revoke external ownership or prove a creator
   stopped. Resource/session/retention guards remain. Lock loss terminates the
   execution worker, not HTTP; supervised restart reconciles durable work.
@@ -134,14 +137,16 @@ The worker must be supervised and configured for the original external backend.
 Locators are runtime names and namespaces, not portable cluster/daemon identities;
 changing external endpoints underneath pending obligations is unsupported. This
 slice does not prove live-cluster fencing, failover, automatic blocked-work repair,
-partial-clone resumption, published-consumer retirement, journal/tombstone retention
+logical-copy resumption, published-consumer retirement, journal/tombstone retention
 limits, or production worker deployment. These are explicit subsequent contracts,
 not guarantees provided by queue leases. Repeatedly retired tombstones consume
 storage and reconciliation capacity until creator termination can be proven.
 
 The required regression job is `scripts/test-preview-flow.js` with a disposable
 `PREVIEW_FLOW_TEST_DATABASE_URL`. New tests use real PostgreSQL and process death;
-Docker/Kubernetes operations are injected transports. Existing runtime safety
+Docker/Kubernetes operations are injected transports. Template clone creation and
+transactional finalization now have real PostgreSQL integration evidence, with
+seeded template selection. Existing runtime safety
 suites remain required. A live deployment demonstration is still a rollout gate.
 
 ## Discovery liveness correction

@@ -26,6 +26,10 @@ const resourceIntent = z.object({
   attemptId: z.string().uuid().optional(),
   checkoutDir: z.string().min(1).max(255).optional(),
   imageName: z.string().min(1).max(255).optional(),
+  cloneOperation: z.object({
+    kind: z.literal('template-v1'),
+    sourceDb: z.string().regex(/^[a-z_][a-z0-9_]*$/).max(63),
+  }).strict().optional(),
 }).strict().superRefine((value, ctx) => {
   if ((value.runtimeKind === 'docker' && value.namespace !== null)
       || (value.runtimeKind === 'kubernetes' && value.namespace === null)) {
@@ -69,6 +73,19 @@ const routeObservation = z.object({
 }).strict();
 
 const actionSchema = z.discriminatedUnion('type', [
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('RequestCandidateClone'),
+    ...executionIdentityFields,
+    operationId: z.string().uuid(),
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('CandidateClonePrepared'),
+    ...executionIdentityFields,
+    operationId: z.string().uuid(),
+    databaseOid: z.string().regex(/^[1-9][0-9]*$/),
+  }).strict(),
   z.object({
     ...actionEnvelopeFields,
     type: z.literal('RetirePreviewPreparation'),

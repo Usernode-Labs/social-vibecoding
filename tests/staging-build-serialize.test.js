@@ -36,6 +36,7 @@ function loadStaging({
   existsImpl = async () => false,
   dropImpl = null,
   runtimeKind = 'docker',
+  inspectClone = async () => ({ status: 'complete' }),
 } = {}) {
   const ids = {
     guard: require.resolve('../src/services/build-retention-guard'),
@@ -44,6 +45,7 @@ function loadStaging({
     applicationRuntime: require.resolve('../src/services/application-runtime'),
     caddy: require.resolve('../src/services/caddy'),
     dbManager: require.resolve('../src/services/db-manager'),
+    cloneOperation: require.resolve('../src/services/preview-flow/clone-operation'),
     github: require.resolve('../src/services/github'),
     appManifest: require.resolve('../src/services/app-manifest'),
     appSecrets: require.resolve('../src/services/app-secrets'),
@@ -69,6 +71,7 @@ function loadStaging({
   };
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
+  stub(ids.cloneOperation, { createCloneOperations: () => ({ inspect: inspectClone }) });
   stub(ids.guard, { withResourceUse: async (_config, _classifier, _resource, fn) => fn() });
   stub(ids.github, { getCloneUrl: async () => 'https://x/clone.git', isEnabled: () => true });
   stub(ids.appManifest, { read: () => ({}) });
@@ -209,6 +212,62 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
 }
 
 for (const runtimeKind of ['docker', 'kubernetes']) {
+  test(`${runtimeKind}: prepared clone is inspected and reused without a second copy`, async () => {
+    const config = { jwtSecret: 's', appRuntime: runtimeKind, kubernetes: { appNamespace: 'test-apps' } };
+    const intent = require('../src/services/preview-flow/candidate-resources').candidateResources(config, 7, randomUUID());
+    let inspections = 0;
+    const { subject, deployments, events, queries, restore } = loadStaging({
+      runtimeKind,
+      existsImpl: async () => true,
+      cloneImpl: async () => assert.fail('Prepared clone must not be copied again'),
+      inspectClone: async value => {
+        assert.deepEqual(value, intent);
+        inspections++;
+        return { status: 'complete' };
+      },
+    });
+    try {
+      const headSha = 'a'.repeat(40);
+      await subject.prepareCandidateUnderBuildLock(config, mkSession(7), mkApp, headSha, {
+        intent,
+        password: '1'.repeat(48),
+        preparedClone: true,
+        preparationOwner: 'bounded',
+        onClonePrepared: async () => {},
+      }, { flowId: randomUUID(), generation: 1, headSha });
+      assert.equal(inspections, 1);
+      assert.equal(deployments.length, 1);
+      assert.equal(events.some(event => event[0] === 'drop'), false);
+      assert.equal(queries.length, 0);
+    } finally {
+      restore();
+    }
+  });
+
+  test(`${runtimeKind}: unconfirmed prepared clone blocks deployment and never falls back to copying`, async () => {
+    const config = { jwtSecret: 's', appRuntime: runtimeKind, kubernetes: { appNamespace: 'test-apps' } };
+    const intent = require('../src/services/preview-flow/candidate-resources').candidateResources(config, 7, randomUUID());
+    const { subject, deployments, restore } = loadStaging({
+      runtimeKind,
+      existsImpl: async () => true,
+      cloneImpl: async () => assert.fail('Uncertain clone must not be overwritten'),
+      inspectClone: async () => ({ status: 'uncertain', reason: 'busy' }),
+    });
+    try {
+      const headSha = 'a'.repeat(40);
+      await assert.rejects(subject.prepareCandidateUnderBuildLock(config, mkSession(7), mkApp, headSha, {
+        intent,
+        password: '1'.repeat(48),
+        preparedClone: true,
+        preparationOwner: 'bounded',
+        onClonePrepared: async () => {},
+      }, { flowId: randomUUID(), generation: 1, headSha }), /completion is unconfirmed/);
+      assert.equal(deployments.length, 0);
+    } finally {
+      restore();
+    }
+  });
+
   test(`${runtimeKind}: isolated preparation retains serving resources and reports readiness before activation`, async () => {
     const attemptId = randomUUID();
     const config = { jwtSecret: 's', appRuntime: runtimeKind, kubernetes: { appNamespace: 'test-apps' } };

@@ -11,6 +11,7 @@ const { encrypt, decrypt } = require('../secrets');
 const { STAGING_BUILD_LOCK, PREVIEW_LIFECYCLE_LOCK } = require('../advisory-locks');
 
 const PREPARE = 'native-preview-prepare';
+const PREPARE_CLONE = 'native-preview-template-prepare';
 const RETIRE = 'native-preview-retire';
 
 function createPreviewWork(pool, config, {
@@ -20,6 +21,7 @@ function createPreviewWork(pool, config, {
   inspect = require('./candidate-runtime').observePreparedCandidate,
   prepare = require('../staging').prepareCandidateUnderBuildLock,
   cleanup = require('./cleanup').underBuildLock,
+  clones = require('./clone-operation').createCloneOperations(),
 } = {}) {
   const runtime = createSessionDecisionRuntime(pool);
 
@@ -44,7 +46,16 @@ function createPreviewWork(pool, config, {
           throw new Error('This experiment accepts native CLI handoff preparation only');
         }
         const flow = admission.decision.flow;
-        const intent = candidateResources(config, session.id, flow.attemptId);
+        const recoverClone = config.nativePreviewRecoverableClone === true;
+        const intent = {
+          ...candidateResources(config, session.id, flow.attemptId),
+          ...(recoverClone ? {
+            cloneOperation: {
+              kind: 'template-v1',
+              sourceDb: require('../db-manager').appDbName(app.slug),
+            },
+          } : {}),
+        };
         const credentialEnc = encrypt(randomBytes(24).toString('hex'), config.dataEncryptionKey);
         await owner.reserveCandidateInTransaction(transaction, session.id, flow.id, intent, {
           credentialEnc,
@@ -54,7 +65,7 @@ function createPreviewWork(pool, config, {
           id: randomUUID(),
           effectKey: effect.effectKey,
           sessionId: session.id,
-          workflow: PREPARE,
+          workflow: recoverClone ? PREPARE_CLONE : PREPARE,
           version: 1,
           causedBy: action.actionId,
           input: {
@@ -64,6 +75,7 @@ function createPreviewWork(pool, config, {
             session: { id: session.id, branch_name: session.branch_name, pr_number: session.pr_number },
             preparedActionId: randomUUID(),
             failedActionId: randomUUID(),
+            ...(recoverClone ? { clonePreparedActionId: randomUUID() } : {}),
           },
         });
         return { ...admission, work };
@@ -143,17 +155,24 @@ function createPreviewWork(pool, config, {
         && !state.resource?.cleanupStarted;
       if (!current) return retired(attempt, 'preparation_obsolete');
 
+      const recoverClone = attempt.workflow === PREPARE_CLONE;
       const observed = await inspect(resourceConfig, intent, identity.flowId, identity.headSha);
       const adoptable = observed.receipt && state.resource.clonePrepared;
       if (adoptable) {
+        if (recoverClone) {
+          const clone = await clones.inspect(intent);
+          if (clone.status === 'uncertain' && clone.reason === 'busy') return cloneDeferred(attempt);
+          if (clone.status !== 'complete') return retired(attempt, 'clone_completion_unconfirmed');
+        }
         const receipt = state.resource.receipt || candidateReceipt.parse(observed.receipt);
         if (receipt.physicalId !== observed.receipt.physicalId || receipt.imageRef !== observed.receipt.imageRef) {
           throw Object.assign(new Error('Candidate observation conflicts with its receipt'), { permanent: true });
         }
         await owner.recordRuntime(attempt.session_id, identity.flowId, receipt);
-        return prepared(receipt);
+        return prepared(receipt, attempt);
       }
-      if (attempt.checkpoint.creationStarted || observed.present || state.resource.clonePrepared) {
+      const runtimeStarted = recoverClone ? attempt.checkpoint.runtimeCreationStarted : attempt.checkpoint.creationStarted;
+      if (runtimeStarted || observed.present || (!recoverClone && state.resource.clonePrepared)) {
         return retired(attempt, 'preparation_incomplete');
       }
 
@@ -161,7 +180,15 @@ function createPreviewWork(pool, config, {
         WHERE flow_id = $1 AND session_id = $2`, [identity.flowId, attempt.session_id])).rows[0];
       const password = decrypt(resource?.clone_credential_enc, config.dataEncryptionKey);
       if (!password) throw Object.assign(new Error('Reserved clone credential is unavailable'), { permanent: true });
-      const saved = await checkpoint({ creationStarted: true });
+      if (recoverClone) {
+        const cloneResult = await prepareClone(context, password);
+        if (cloneResult) return cloneResult;
+      }
+
+      const saved = await checkpoint({
+        creationStarted: true,
+        ...(recoverClone ? { runtimeCreationStarted: true } : {}),
+      });
       if (saved.lostClaim || signal.aborted) return { outcome: 'retry' };
 
       // The opaque adapter is invoked once per domain resource attempt. After
@@ -170,7 +197,10 @@ function createPreviewWork(pool, config, {
         intent,
         password,
         preparationOwner: 'bounded',
-        onClonePrepared: () => owner.markClonePrepared(attempt.session_id, identity.flowId),
+        ...(recoverClone ? { preparedClone: true } : {}),
+        async onClonePrepared() {
+          if (!recoverClone) await owner.markClonePrepared(attempt.session_id, identity.flowId);
+        },
       }, identity);
       const receipt = candidateReceipt.parse({
         commitSha: result.commitSha,
@@ -184,14 +214,50 @@ function createPreviewWork(pool, config, {
         attemptId: intent.attemptId,
       });
       await owner.recordRuntime(attempt.session_id, identity.flowId, receipt);
-      return prepared(receipt);
+      return prepared(receipt, attempt);
     });
   }
 
-  function prepared(receipt) {
+  function cloneDeferred(attempt) {
+    return { outcome: 'waiting', checkpoint: attempt.checkpoint, code: 'clone_uncertain', delayMs: 1000 };
+  }
+
+  async function prepareClone({ attempt, signal }, password) {
+    const { identity, intent, clonePreparedActionId } = attempt.input;
+    const authorized = await owner.apply({
+      type: 'RequestCandidateClone',
+      actionId: randomUUID(),
+      sessionId: attempt.session_id,
+      ...identity,
+      operationId: intent.attemptId,
+    });
+    if (!authorized.decision.accepted) return retired(attempt, 'clone_not_authorized');
+    const effect = authorized.decision.effects.find(value => value.type === 'PrepareCandidateClone');
+    const clone = await clones.prepare(effect.intent, password);
+    if (clone.status === 'retired' || ['ownership_conflict', 'resource_missing'].includes(clone.reason)) {
+      return retired(attempt, 'clone_ownership_changed');
+    }
+    if (clone.status !== 'complete' || signal.aborted) return cloneDeferred(attempt);
+
+    const completion = await owner.apply({
+      type: 'CandidateClonePrepared',
+      actionId: clonePreparedActionId,
+      sessionId: attempt.session_id,
+      ...identity,
+      operationId: intent.attemptId,
+      databaseOid: clone.databaseOid,
+    });
+    if (!completion.decision.accepted) return retired(attempt, 'clone_completion_obsolete');
+    return null;
+  }
+
+  function prepared(receipt, attempt) {
     return {
       outcome: 'succeeded',
-      checkpoint: { creationStarted: true },
+      checkpoint: {
+        creationStarted: true,
+        ...(attempt.workflow === PREPARE_CLONE ? { runtimeCreationStarted: true } : {}),
+      },
       result: { prepared: true, receipt },
     };
   }
@@ -236,9 +302,10 @@ function createPreviewWork(pool, config, {
     store,
     handlers: {
       [PREPARE]: { version: 1, run: runPreparation, commit: commitPreparation },
+      [PREPARE_CLONE]: { version: 1, run: runPreparation, commit: commitPreparation },
       [RETIRE]: { version: 1, run: runCleanup },
     },
   };
 }
 
-module.exports = { createPreviewWork, PREPARE, RETIRE };
+module.exports = { createPreviewWork, PREPARE, PREPARE_CLONE, RETIRE };

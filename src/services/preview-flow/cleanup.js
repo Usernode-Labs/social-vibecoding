@@ -14,6 +14,7 @@ function createCleanup({
   db = require('../db-manager'),
   lock = withResourceUse,
   lifecycle = require('../preview-lifecycle'),
+  clones = null,
 } = {}) {
   // Called only while staging holds STAGING_BUILD_LOCK. Never clear a session
   // projection here: historical resource ownership is separate from publication.
@@ -61,7 +62,13 @@ function createCleanup({
         throw new Error('Deleted aggregate retains an unresolved serving binding');
       }
       await require('./candidate-runtime').removeCandidate(runtimeConfig, intent, flowId, authorized.resource?.receipt);
-      await db.dropDatabase(intent.dbName, { strict: true });
+      if (intent.cloneOperation) {
+        const cloneService = clones || require('./clone-operation').createCloneOperations();
+        const removed = await cloneService.remove(intent);
+        if (removed.status !== 'removed') throw new Error('Candidate clone retirement remains unconfirmed');
+      } else {
+        await db.dropDatabase(intent.dbName, { strict: true });
+      }
       await require('./candidate-runtime').removeCandidateImage(intent);
       if (intent.checkoutDir) await require('../docker').execFileAsync('rm', ['-rf', intent.checkoutDir]);
       const completion = await owner.apply({

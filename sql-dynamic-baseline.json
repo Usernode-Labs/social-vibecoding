@@ -1263,6 +1263,76 @@
       "preview": "`UPDATE chat_sessions SET pr_body = $1, ${summaryFreshness.INVALIDATE_SQL} WHERE id = $2`"
     },
     {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 2,
+      "preview": "sql"
+    },
+    {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "982d9e3eb996f559e633",
+      "count": 1,
+      "preview": "text"
+    },
+    {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "structural-template",
+      "fingerprint": "16a108f7fcded7725912",
+      "count": 1,
+      "preview": "`CREATE ROLE ${roleName} NOLOGIN`"
+    },
+    {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "structural-template",
+      "fingerprint": "196a653bc995c8198811",
+      "count": 1,
+      "preview": "`ALTER ROLE ${roleName} NOLOGIN`"
+    },
+    {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "structural-template",
+      "fingerprint": "23bec9e7d56130c6f3bf",
+      "count": 1,
+      "preview": "`COMMENT ON ROLE ${roleName} IS ${literal(marker(operation, 'retired', { ...(databaseOid ? { databaseOid } : {}), }))}`"
+    },
+    {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "structural-template",
+      "fingerprint": "35eda607f0a5d24c7926",
+      "count": 1,
+      "preview": "`CREATE DATABASE ${operation.dbName} TEMPLATE ${template.template} OWNER ${targetRole}`"
+    },
+    {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "structural-template",
+      "fingerprint": "42b065c65a566b2ada7c",
+      "count": 1,
+      "preview": "`DROP DATABASE ${operation.dbName} WITH (FORCE)`"
+    },
+    {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "structural-template",
+      "fingerprint": "6d81dbe8df652b68c4e1",
+      "count": 1,
+      "preview": "`COMMENT ON ROLE ${targetRole} IS ${literal(marker(operation, 'copying', { databaseOid: observed.database.oid, }))}`"
+    },
+    {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "structural-template",
+      "fingerprint": "726da5d6156b254fb279",
+      "count": 1,
+      "preview": "`CREATE ROLE ${targetRole} NOLOGIN PASSWORD '${password}'`"
+    },
+    {
+      "source": "src/services/preview-flow/clone-operation.js",
+      "kind": "structural-template",
+      "fingerprint": "c84d83ae96cc940da9e4",
+      "count": 1,
+      "preview": "`COMMENT ON ROLE ${targetRole} IS ${literal(marker(operation, 'copying'))}`"
+    },
+    {
       "source": "src/services/preview-lifecycle.js",
       "kind": "runtime-built-identifier",
       "fingerprint": "4ec7c53222c8a758c722",

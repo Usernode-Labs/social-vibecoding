@@ -1704,6 +1704,7 @@ module.exports = {
   roleExists,
   truncatePrivateTables,
   scrubPrivateColumns,
+  reassignUserObjectsTo,
   privateDataExclusions,
   pgRestoreArgs,
   // Staging templates.
