@@ -14,12 +14,12 @@ if (!output || !stateDir || !proxy || !hostedFile) {
 }
 const baseOrigin = new URL(process.env.SHOTS_BASE_ORIGIN).origin;
 const headOrigin = new URL(process.env.SHOTS_HEAD_ORIGIN).origin;
-// A child-app pair may also load the legacy Tailwind CDN script, the one
-// third-party host the shots proxy admits (and only for such a pair).
-const origins = [
-  ...browserAllowedOrigins(baseOrigin, headOrigin, hostedFile),
-  ...(process.env.SHOTS_PLATFORM_ASSETS === '1' ? ['https://cdn.tailwindcss.com'] : []),
-];
+// The browsers carry no origin allowlist of their own: they may load the
+// public internet (a CDN script, map tiles), and the shots proxy is the
+// boundary that keeps them off every non-public address (shots-boundary.js).
+// The pair and the hosted-app catalog are still checked here, so a run whose
+// catalog does not match its pair fails before any browser starts.
+browserAllowedOrigins(baseOrigin, headOrigin, hostedFile);
 // Each persona's browser saves the shots agent's named screenshots, and
 // its clips when a browser session closes, into its own directory, where the
 // shots bridge (and nothing else) reads them back. Video is recorded only
@@ -53,9 +53,12 @@ const browserArgs = (persona) => {
     observed,
     '--browser', 'chromium', '--headless', '--isolated', '--no-sandbox', '--caps', 'vision',
     '--storage-state', path.join(stateDir, `${persona}.json`),
-    '--allowed-origins', origins.join(';'),
     '--block-service-workers', '--image-responses', 'allow',
     '--proxy-server', proxyFor(persona),
+    // Chromium sends loopback addresses past a proxy unless told not to.
+    // Playwright adds this rule by default; naming it here keeps the worker's
+    // own loopback services behind the proxy's refusal if that default goes.
+    '--proxy-bypass', '<-loopback>',
     '--timeout-action', '10000', '--timeout-navigation', '30000',
     '--output-dir', path.join(shotsDir, observed),
     ...(recordClips ? [`--save-video=${clipSize}`] : []),
