@@ -144,6 +144,15 @@ const TopochainChallenges = {
   _detailHash: null,
   // The hashchange listener open() installs, kept so close() can remove it.
   _hashListener: null,
+  // Live refresh of the grid while the pane shows (#3569): the interval
+  // handle and an in-flight guard for _refreshChallenges(). Null / false
+  // whenever the pane is closed.
+  _liveTimer: null,
+  _refreshing: false,
+  // The live-refresh cadence: slow enough that a poll is invisible next to
+  // the work a viewer is doing, fast enough that finishing a challenge
+  // moves the board before they wonder whether it counted.
+  LIVE_REFRESH_MS: 15000,
 
   // Challenge detail overlay state. `_detailChallenge` is the clicked
   // challenge-grid item (already carries card_preview/detail_modal); the
@@ -284,6 +293,22 @@ const TopochainChallenges = {
       window.addEventListener('hashchange', TopochainChallenges._hashListener);
     }
     TopochainChallenges.loadChallenges();
+    // While the pane shows, re-read the challenges endpoint every so often
+    // (#3569): the viewer's own progress on the First challenges cards, the
+    // group counts and the locked placeholder otherwise only move on the
+    // next visit, and "did what I just did count?" is answered by leaving
+    // the tab and coming back. _refreshChallenges() guards every tick, so a
+    // tick that lands on a closed or hidden pane, or over an open overlay,
+    // simply does nothing. Timers are a Web API, not a JavaScript builtin:
+    // the vm sandboxes that run this file as a classic script (see
+    // tests/challenge-deep-link.test.js) define setTimeout/clearTimeout but
+    // not necessarily these two, hence the typeof guards.
+    if (!TopochainChallenges._liveTimer && typeof setInterval === 'function') {
+      TopochainChallenges._liveTimer = setInterval(
+        () => TopochainChallenges._refreshChallenges(),
+        TopochainChallenges.LIVE_REFRESH_MS
+      );
+    }
   },
 
   close() {
@@ -302,6 +327,10 @@ const TopochainChallenges = {
     if (TopochainChallenges._unsub) {
       TopochainChallenges._unsub();
       TopochainChallenges._unsub = null;
+    }
+    if (TopochainChallenges._liveTimer && typeof clearInterval === 'function') {
+      clearInterval(TopochainChallenges._liveTimer);
+      TopochainChallenges._liveTimer = null;
     }
   },
 
@@ -393,6 +422,57 @@ const TopochainChallenges = {
     }
     TopochainChallenges._mine = mine;
     TopochainChallenges._renderGrid();
+  },
+
+  // ── Live refresh (#3569) ─────────────────────────────────────────────
+  //
+  // One tick of the interval open() schedules. Re-reads the SAME public
+  // challenges endpoint loadChallenges() uses and republishes the grid
+  // through the descriptor-only path _toggleGroup uses — NOT _renderGrid(),
+  // which would re-run the ?shot and deep-link hooks and the loading/error
+  // transitions, and not loadChallenges(), which clears _challenges and
+  // _mine before fetching and would flash the grid. A tick that finds the
+  // pane closed, hidden, loading, refreshing or covered by an overlay does
+  // nothing at all; a failed read changes nothing (the error state belongs
+  // to a failed FIRST load only).
+  async _refreshChallenges() {
+    if (!TopochainChallenges._open
+        || TopochainChallenges._refreshing
+        || TopochainChallenges._challengesLoading
+        || TopochainChallenges._eventId() == null
+        || TopochainChallenges._detailChallenge != null
+        || TopochainChallenges._profileUserId != null
+        || (typeof document !== 'undefined' && document.hidden === true)) return;
+    const eventId = TopochainChallenges._eventId();
+    TopochainChallenges._refreshing = true;
+    try {
+      const res = await TopochainChallenges.fetchJson(
+        `/api/v4/season-events/${encodeURIComponent(eventId)}/challenges`
+      );
+      // A switch or a close mid-flight discards the answer, exactly as
+      // loadChallenges() and _loadMine() already do for theirs.
+      if (!TopochainChallenges._open
+          || TopochainChallenges._eventId() !== eventId) return;
+      if (!(res.ok && res.data?.success && Array.isArray(res.data.data))) return;
+      TopochainChallenges._challenges = res.data.data;
+      TopochainChallenges._onboarding = res.data.onboarding || null;
+      // The session-authed decoration pass (points, featured) re-runs too;
+      // it already ends by re-rendering and is additive on failure.
+      await TopochainChallenges._loadMine(eventId);
+      // Publish the refreshed grid descriptor ONLY. _grouped() still true
+      // is the same shape of guard the onChange subscriber in open() and
+      // _toggleGroup() use; an ungrouped grid re-derives from the same
+      // fields and rides the same publish. _collapsed is untouched, so the
+      // viewer's group toggles survive; the finished-group default and the
+      // locked placeholder re-derive from the fresh rows.
+      const store = TopochainChallenges._store;
+      const grid = typeof store?.get === 'function' ? store.get()?.grid : null;
+      if (grid && grid.kind === 'cards' && TopochainChallenges._grouped()) {
+        store.set({ grid: TopochainChallenges.gridView(TopochainChallenges._ordered()) });
+      }
+    } finally {
+      TopochainChallenges._refreshing = false;
+    }
   },
 
   // ── Challenge grid ───────────────────────────────────────────────────
