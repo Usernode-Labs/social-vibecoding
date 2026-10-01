@@ -46,6 +46,7 @@ interface AppMeta {
   last_deploy_at?: string | null;
   directory_review_status?: string;
   directory?: { tier: string; label: string };
+  has_illustration?: boolean;
 }
 
 const FEATURED_MAX = 12;
@@ -62,6 +63,21 @@ function AppIcon({ meta }: { meta: AppMeta }) {
   if (meta.icon_url) return <img src={meta.icon_url} alt="" className="w-7 h-7 rounded-md object-cover shrink-0" />;
   if (meta.icon_emoji) return <span className={`${ICON} text-base`} aria-hidden="true">{meta.icon_emoji}</span>;
   return <span className={`${ICON} text-xs font-bold`}>{((meta.name || '?').charAt(0)).toUpperCase()}</span>;
+}
+
+/**
+ * Flags a featured app whose Discover card has no illustration of its own and
+ * so falls back to its icon (#2615). Drawn only on an explicit `false` from the
+ * read, so a row whose data has not arrived yet claims nothing.
+ */
+function NoIllustrationBadge({ meta }: { meta: AppMeta }) {
+  if (meta.has_illustration !== false) return null;
+  return (
+    <span className={`${AdminUI.badge.warn} shrink-0`} data-featured-no-illustration={meta.slug}
+      title="Discover shows this app’s icon until a featured illustration is added from the app’s page.">
+      No illustration
+    </span>
+  );
 }
 
 // The four review outcomes, in the order an admin reaches for them, each with
@@ -355,6 +371,7 @@ function FeaturedAppsSection() {
                         {m.directory?.tier === 'ready' ? m.directory.label : `${m.directory?.label || 'Not yet reviewed'}. Not shown in Featured.`}
                       </span>
                     </span>
+                    <NoIllustrationBadge meta={m} />
                     {canWrite ? (
                       <>
                         <button type="button" data-featured-up={slug} className={MOVE_BTN} title="Move up"
@@ -429,4 +446,4 @@ const AdminFeaturedApps = {
 // evaluates this module in Node, where there is no window.
 if (typeof window !== 'undefined') (window as any).AdminFeaturedApps = AdminFeaturedApps;
 
-export { AdminFeaturedApps, DirectoryReview, OUTCOMES, requirementsFor };
+export { AdminFeaturedApps, DirectoryReview, NoIllustrationBadge, OUTCOMES, requirementsFor };
