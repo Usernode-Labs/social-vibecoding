@@ -349,9 +349,14 @@ function usersAdminRoutes(config) {
 
       await client.query('BEGIN');
       try {
+        // needs_username_choice (#3575): `topochain_<hex>` is a stand-in,
+        // not a name. The person this row is for picks their own handle
+        // the first time they sign in to Homeroom — the email-code
+        // set-password step will not finish without one — instead of
+        // entering the platform wearing a generated string.
         const { rows: insertRows } = await client.query(
-          `INSERT INTO users (username, password, password_set, email, telegram, discord, display_name, accept_logs, is_admin, created_at, updated_at)
-           VALUES ($1, $2, FALSE, $3, $4, $5, $6, $7, FALSE, NOW(), NOW())
+          `INSERT INTO users (username, password, password_set, email, telegram, discord, display_name, accept_logs, is_admin, created_at, updated_at, needs_username_choice)
+           VALUES ($1, $2, FALSE, $3, $4, $5, $6, $7, FALSE, NOW(), NOW(), TRUE)
            RETURNING ${USER_SELECT}`,
           [username, unusablePasswordHash, email, telegram, discord, displayName, acceptLogs]
         );
@@ -529,9 +534,12 @@ function usersAdminRoutes(config) {
           } else {
             const loginName = `topochain_${crypto.randomBytes(12).toString('hex')}`;
             const passwordHash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), UNUSABLE_PASSWORD_BCRYPT_COST);
+            // Flagged like the single create above (#3575): the imported
+            // `username` column is the person's Discord handle, kept in
+            // `discord`; their Homeroom handle is theirs to choose.
             const { rows: createdRows } = await client.query(
-              `INSERT INTO users (username, password, password_set, email, discord, is_admin, created_at, updated_at)
-               VALUES ($1, $2, FALSE, $3, $4, FALSE, NOW(), NOW()) RETURNING id`,
+              `INSERT INTO users (username, password, password_set, email, discord, is_admin, created_at, updated_at, needs_username_choice)
+               VALUES ($1, $2, FALSE, $3, $4, FALSE, NOW(), NOW(), TRUE) RETURNING id`,
               [loginName, passwordHash, email, username]
             );
             userId = createdRows[0].id;
