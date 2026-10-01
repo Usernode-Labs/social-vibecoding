@@ -108,7 +108,10 @@ test('the platform service namespace is reserved, separators and all', () => {
 });
 
 test('the seeded service identities are recognised case-insensitively', () => {
-  for (const name of ['usernode-capture', 'usernode-capture-admin', 'staging-demo-user']) {
+  for (const name of [
+    'usernode-capture', 'usernode-capture-admin',
+    'usernode-shots-full-admin', 'staging-demo-user',
+  ]) {
     assert.equal(usernames.isServiceIdentity(name), true, name);
     assert.equal(usernames.isServiceIdentity(name.toUpperCase()), true, name);
   }

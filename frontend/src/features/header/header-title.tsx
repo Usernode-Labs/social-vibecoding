@@ -128,11 +128,14 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
   const inApp = screen === 'app-view';
   const record = { icon_url: iconUrl, icon_emoji: iconEmoji, name: name || text };
   // The app's Workshop: the Dev half's board route in its Workshop layout.
-  // Its Kanban layout and the sub-views reached from it (a topic, a session,
-  // the general chat) have no scope panel, so the strip is left alone there.
+  // Its Kanban layout, a session and the general chat have no scope panel,
+  // so the strip is left alone there.
   const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';
+  // A card opened from it (#3602): an item's page is still the community's,
+  // so its name switches community there too.
+  const onCard = inApp && tab === 'dev' && subTab === 'topic';
   // At every width (#3295): the Workshop draws no chip of its own any more.
-  const appSwitch = onWorkshop;
+  const appSwitch = onWorkshop || onCard;
   // The Communities screen, at every width: the title is its switcher.
   const allAppsSwitcher = screen === 'workshop-screen';
   const showTile = inApp;

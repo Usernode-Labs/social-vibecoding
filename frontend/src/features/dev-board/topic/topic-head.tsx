@@ -44,6 +44,7 @@ import { swatchFor } from '../../group-chat/swatch';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
+import { DescriptionEditor } from './description-editor';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -1463,6 +1464,12 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               a body that carries one gets it whatever page it is on. */}
           {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
           {body.proposalBody && id ? <DetailsSheet id={Number(id)} html={body.proposalBody.html} /> : null}
+          {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {
+            const patch = { pr_summary_md: data.description, pr_summary_input_version: data.version,
+              pr_summary_source: 'author', pr_summary_stale: data.stale, pr_body: data.prBody ?? session?.pr_body };
+            setLoaded((current: any) => ({ ...(current || session || {}), ...patch, id }));
+            av._cacheDescription(Number(id), data);
+          }} /> : null}
         </>
       ) : (
         <>

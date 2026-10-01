@@ -223,6 +223,17 @@ function stagingMockNotifications() {
     // row of this age is one click away from every screenshot and declared
     // check. An old unread notification is exactly the row that used to read
     // as a four-hundred-day duration.
+    // #3233: an app allowance change, account-level like the real row (no
+    // app). Its copy is built from the "<old>:<new>" detail, so a preview
+    // shows the plain-words line instead of "0:2".
+    {
+      ...base,
+      id: 990212, kind: 'app_quota_changed',
+      createdAt: new Date(now - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      appId: null, appSlug: null, appName: null,
+      detail: '0:2',
+      sessionId: null, prTitle: null, prNumber: null, headlessIssueNumber: null,
+    },
     {
       ...base,
       id: 990209, kind: 'session_done',

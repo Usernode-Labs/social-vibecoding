@@ -2699,6 +2699,14 @@
     {
       "source": "src/routes/apps.js",
       "method": "POST",
+      "path": "/api/apps/:slug/openings",
+      "expression": null,
+      "status": "exempt",
+      "reason": "browser navigation telemetry, emitted by the Classic shell rather than an interactive control"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "method": "POST",
       "path": "/api/apps/:slug/activity",
       "expression": null,
       "status": "mapped",
@@ -6659,12 +6667,12 @@
     {
       "source": "src/routes/onboarding.js",
       "method": "POST",
-      "path": "/api/me/getting-started/seen",
+      "path": "/api/me/getting-started/close",
       "expression": null,
       "status": "mapped",
-      "capabilityId": "apps.post.me.getting.started.seen.eda38e89",
+      "capabilityId": "apps.post.me.getting.started.close.3ca690a2",
       "domain": "apps",
-      "risk": "external_write",
+      "risk": "destructive",
       "confirmation": "required",
       "renderer": "app",
       "transport": "server_loopback",
@@ -6674,12 +6682,12 @@
     {
       "source": "src/routes/onboarding.js",
       "method": "POST",
-      "path": "/api/me/getting-started/close",
+      "path": "/api/me/getting-started/workshop-visit",
       "expression": null,
       "status": "mapped",
-      "capabilityId": "apps.post.me.getting.started.close.3ca690a2",
+      "capabilityId": "apps.post.me.getting.started.workshop.visit.7e66ce62",
       "domain": "apps",
-      "risk": "destructive",
+      "risk": "external_write",
       "confirmation": "required",
       "renderer": "app",
       "transport": "server_loopback",
@@ -7323,6 +7331,36 @@
       "expression": null,
       "status": "exempt",
       "reason": "public immutable share document"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "method": "GET",
+      "path": "/api/sessions/:id/description",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.get.sessions.item.description.42b58fa6",
+      "domain": "development",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop"
+    },
+    {
+      "source": "src/routes/sessions.js",
+      "method": "PATCH",
+      "path": "/api/sessions/:id/description",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "development.patch.sessions.item.description.48025b28",
+      "domain": "development",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "session",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#workshop"
     },
     {
       "source": "src/routes/sessions.js",
@@ -10486,6 +10524,29 @@
       "expression": null,
       "status": "exempt",
       "reason": "public/native compatibility API represented by leaderboard and About capabilities"
+    },
+    {
+      "source": "src/routes/ui-telemetry.js",
+      "method": "POST",
+      "path": "/api/ui-telemetry/batch",
+      "expression": null,
+      "status": "exempt",
+      "reason": "browser_telemetry: same-origin diagnostics transport, never a model-visible capability"
+    },
+    {
+      "source": "src/routes/ui-telemetry.js",
+      "method": "GET",
+      "path": "/api/admin/analytics/ui-failures",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.analytics.ui.failures.5c42eb3b",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
     },
     {
       "source": "src/routes/user-agent-files.js",

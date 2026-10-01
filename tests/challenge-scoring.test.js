@@ -139,6 +139,13 @@ test('every skip names the thing the operator has to change', () => {
     rules.skipReason(r, challengeRow({ metric_target: null, t_metric_target: null }), { now: NOW }),
     /^no target/
   );
+  // A count of one is a target, not a missing one (#3570): "Try an app" is
+  // TRY_APPS at 1, and this used to report it as "no target" and pay nobody.
+  assert.equal(rules.skipReason(r, challengeRow({ metric_target: 1, t_metric_target: 1 }), { now: NOW }), null);
+  assert.match(
+    rules.skipReason(r, challengeRow({ metric_target: 0, t_metric_target: 0 }), { now: NOW }),
+    /^no target/
+  );
 });
 
 test('a measure that never reads a target does not ask for one', () => {
@@ -281,6 +288,10 @@ test('the pre-filter rejects junk without spending a model call', () => {
     'sending the same sentence four times earns one credit');
   // Accepted proposals passed a group vote, so there is nothing to pre-filter.
   assert.equal(grader.preFilter('PROPOSAL_ACCEPTED', { text: 'x' }, seen), null);
+  // The ungraded First-challenge measure reads the same reports through the
+  // same filter (#3568): "test" does not tick "Suggest an improvement".
+  assert.equal(grader.preFilter('FEEDBACK_SENT', { text: 'test' }, new Set()), 'too short to act on');
+  assert.equal(grader.preFilter('FEEDBACK_SENT', real, new Set()), null);
 });
 
 test('a score is clamped into the band and never reaches zero', () => {
@@ -972,6 +983,8 @@ test('the source key printed for a measure is the key its credits really carry',
     user_id: 7, app_id: 3, app_name: 'Notes', last_date: '2026-09-15', seconds: 900, session_id: 11,
     promoted_at: new Date(NOW), event_id: 12, created_at: new Date(NOW), id: 13, provider: 'x',
     linked_at: new Date(NOW), at: new Date(NOW),
+    // VOTE_CAST names the proposal or request voted on (#3569).
+    kind: 'pr', ref_id: 14,
   };
   for (const measure of rules.MEASURE_KEYS) {
     const pool = { async query() { return { rows: [row] }; } };
@@ -1010,13 +1023,18 @@ test('the rubric, the model and the input limits printed are the ones the grader
 });
 
 test('a measure that calls no model says so, and only feedback has a junk filter', () => {
+  // Both feedback measures since #3568: FEEDBACK_SENT reads the same reports
+  // ungraded, through the same filter. The panel keys on the `screened` flag
+  // the scorer runs the filter by, so the two cannot disagree.
+  assert.deepEqual(rules.MEASURE_KEYS.filter((m) => rules.MEASURES[m].screened === true),
+    ['USEFUL_FEEDBACK', 'FEEDBACK_SENT']);
   for (const measure of rules.MEASURE_KEYS) {
     const shown = anatomy(measure, { points: 1000, target: 4 });
     const kinds = shown.steps.map((s) => s.kind);
     const graded = rules.MEASURES[measure].graded === true;
     assert.equal(shown.lane, graded ? 'sql_model' : 'sql', measure);
     assert.equal(kinds.includes('grade'), graded, measure);
-    assert.equal(kinds.includes('filter'), measure === 'USEFUL_FEEDBACK', measure);
+    assert.equal(kinds.includes('filter'), rules.MEASURES[measure].screened === true, measure);
     assert.deepEqual([kinds[0], kinds[kinds.length - 1]], ['read', 'write'], measure);
   }
   const filter = anatomy('USEFUL_FEEDBACK', {}).steps.find((s) => s.kind === 'filter');
@@ -1282,7 +1300,9 @@ test('a join runs only the community STATE measures, which are race-free without
     assert.equal(spec.windowed, false, `${measure}: state, so a join before the season counts too`);
   }
   assert.ok(!scorer.JOIN_MEASURES.includes('INVITES_JOINED'), 'the counted invite measure waits for the locked schedule');
-  const sql = scorer.JOIN_RULES_SQL.replace(/\s+/g, ' ');
+  // #3568/#3569/#3570 made the join's pass one door of scoreOn; the rule
+  // lookup it starts with is the shared one, renamed for that.
+  const sql = scorer.ON_THE_SPOT_RULES_SQL.replace(/\s+/g, ' ');
   assert.match(sql, /WHERE enabled = TRUE AND measure = ANY\(\$1::text\[\]\)/, 'a switched-off rule is not run on a join');
   // Said where the operator picks the interval: for these two it is the
   // backstop, and for every other measure nothing changed.
@@ -1298,7 +1318,7 @@ test('scoreOnJoin is a no-op when scoring is off, and never throws into the join
   assert.equal(await scorer.scoreOnJoin(quiet, { challengeScorer: { intervalMinutes: 0 } }), null);
   assert.equal(seen.length, 0, 'interval 0 asks Postgres nothing');
   assert.equal(await scorer.scoreOnJoin(quiet, { challengeScorer: { intervalMinutes: 10 } }), null);
-  assert.deepEqual(seen, [scorer.JOIN_RULES_SQL], 'no rule on either measure: one read, then nothing');
+  assert.deepEqual(seen, [scorer.ON_THE_SPOT_RULES_SQL], 'no rule on either measure: one read, then nothing');
   const failing = { async query() { throw new Error('boom'); } };
   assert.equal(await scorer.scoreOnJoin(failing, { challengeScorer: { intervalMinutes: 10 } }), null);
 });

@@ -2206,30 +2206,30 @@
     {
       "name": "A passed close proposal whose window elapsed shows the closing spinner (#1010)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc",
+      "expectSelector": "[data-gov-row='9100074'] .gc-merging-badge .dc-status-spinner-arc",
       "expectText": "Closing issue #900011"
     },
     {
       "name": "A long-stalled close proposal degrades to the retry copy, no spinner (#1010)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100006'] .gc-checks-running-badge",
+      "expectSelector": "[data-gov-row='9100075'] .gc-checks-running-badge",
       "expectText": "Close pending, will retry automatically"
     },
     {
       "name": "The closing state also renders on the proposal's own discussion page (#1010)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100005",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100005'] .gc-merging-badge .dc-status-spinner-arc"
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100074",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100074'] .gc-merging-badge .dc-status-spinner-arc"
     },
     {
       "name": "An illustration proposal card previews the proposed image beside the current one (#2086)",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='proposed'] img[alt]",
+      "expectSelector": "[data-gov-row='9100077'] [data-illustration-preview] [data-illustration-side='proposed'] img[alt]",
       "expectText": "Proposed"
     },
     {
       "name": "An illustration proposal's discussion page carries the same preview (#2086)",
-      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100008",
-      "expectSelector": "#gc-thread-head [data-gov-row='9100008'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100077",
+      "expectSelector": "#gc-thread-head [data-gov-row='9100077'] [data-illustration-preview] [data-illustration-side='current'] img[alt]",
       "expectText": "Change the featured illustration"
     },
     {
@@ -2246,12 +2246,12 @@
     {
       "name": "#2603: a governance card's vote is the same picker a change's is, so the reason box opens with it",
       "path": "/?demo=1&cards=open#app/usernode-2d5619/board",
-      "expectSelector": "[data-gov-row='9100003'] .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
+      "expectSelector": "[data-gov-row='9100072'] .dev-vote-btn[data-vote-btn=\"open\"][aria-haspopup=\"dialog\"]",
       "expectText": "Vote"
     },
     {
       "name": "#2603: a close proposal's page lists the votes cast on it, each in the voter's own words",
-      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100003",
+      "path": "/?demo=1#app/usernode-2d5619/dev/governance/9100072",
       "expectSelector": "#gc-thread-head .dev-topic-about .dev-topic-roster .dev-ledger-reason[data-vote=\"yes\"]",
       "expectText": "Checked it myself, nothing left to fix."
     },
@@ -2913,6 +2913,12 @@
       "path": "/?demo=1#notifications",
       "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"]) [data-notif-id]",
       "expectText": "40 of 50 apps in use."
+    },
+    {
+      "name": "An app allowance change reads in words, not as its old:new code",
+      "path": "/?demo=1#notifications",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990212\"]",
+      "expectText": "Your app allowance went up from 0 to 2 app slots."
     },
     {
       "name": "A notification row says what kind it is, then which one, then where it came from",
@@ -3583,14 +3589,15 @@
     },
     {
       "id": "home.getting-started-card",
-      "name": "Home opens on a Getting started card that offers the tour first, then three steps that tick off from what the person did (communities, stage 5; #3240)",
+      "name": "Home opens on a Getting started card: the tour first, then the season’s First challenges with their points, each step not done with a button (the next one filled), and what finishing unlocks (communities, stage 5; #3240; one list, 2026-10-01)",
       "path": "/?shot=getting-started",
-      "expectSelector": "#home-getting-started:not(.hidden) [data-getting-started=\"1/4\"] [data-getting-started-step=\"tour\"][data-done=\"false\"] ~ [data-getting-started-step=\"say-hi\"][data-done=\"true\"] ~ [data-getting-started-step=\"vote\"]",
-      "expectText": "Take the 1-minute tour",
+      "expectSelector": "#home-getting-started:not(.hidden) [data-getting-started=\"1/5\"] [data-next]:has([data-getting-started-button=\"solid\"]) ~ [data-done=\"true\"] ~ [data-done=\"false\"] [data-getting-started-action=\"try\"][data-getting-started-button=\"outline\"]",
+      "expectText": "Spend 10 seconds in City garden.",
       "visual": true,
       "impact": [
         "frontend/src/features/home/getting-started.tsx",
         "frontend/src/features/home/index.tsx",
+        "frontend/@/components/ui/button.tsx",
         "src/services/onboarding.js"
       ]
     },

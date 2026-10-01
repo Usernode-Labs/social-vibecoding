@@ -497,6 +497,22 @@ function ChangesCard({ r, embedded = false, historical = false }: { r: Extract<T
 }
 
 /**
+ * #3605: once the change is up for a vote, its lifecycle badge ("In vote",
+ * "Merging…", "Merged") is the way to its proposal's vote page. Before that
+ * there is no vote to open, so the badge stays a plain label.
+ */
+function StatusLink({ id, children }: { id: number | null; children: ReactNode }): ReactNode {
+  if (!id) return children;
+  return (
+    <button
+      type="button" className="dc-pr-status-link" data-open-vote={id}
+      title="Open this proposal's vote page"
+      onClick={() => controller()?.openProposalVote?.(id)}
+    >{children}</button>
+  );
+}
+
+/**
  * The card under a `changes` row's status line, on its own. `ChangesCard`
  * draws both; `DevChatTranscript` draws this after the LAST row once later
  * iterations follow the change (#1889), with the status line left in the
@@ -512,7 +528,14 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
             ? <a href={r.prUrl} target="_blank" rel="noreferrer" className="dc-pr-link">{`PR #${r.prNumber}`}</a>
             : <span style={{ color: 'var(--text-muted)' }}>Changes ready</span>}
           {r.title ? <span className="dc-pr-title">{r.title}</span> : null}
-          {r.closesHtml ? <Html as="span" className="contents" html={r.closesHtml} /> : null}
+          {(r.closes || []).map((c) => (
+            <button
+              key={c.n} type="button" data-issue-chip={c.n}
+              className="dev-badge font-mono bg-violet-500/10 text-violet-700 hover:bg-violet-500/20 dark:text-violet-400"
+              title={`Open request #${c.n}`}
+              onClick={() => controller()?.openIssueRef?.(c.n)}
+            >{`${c.verb} #${c.n}`}</button>
+          ))}
           <span style={{ fontSize: '9px', opacity: 0.4, marginLeft: '8px' }}>{r.stamp}</span>
         </div>
         {r.visualsHtml ? (
@@ -556,10 +579,10 @@ function PrCard({ r, embedded = false, historical = false }: { r: Extract<Transc
             </button>
           ) : null}
           {r.status2.kind === 'merged'
-            ? <span className="ms-badge ms-badge-violet" title={MERGED_TITLE}>✓ Merged, now live in the app</span>
+            ? <StatusLink id={r.proposalId}><span className="ms-badge ms-badge-violet" title={r.proposalId ? undefined : MERGED_TITLE}>✓ Merged, now live in the app</span></StatusLink>
             : null}
           {r.status2.kind === 'badge'
-            ? <Html as="span" className="contents" html={r.status2.html} />
+            ? <StatusLink id={r.proposalId}><Html as="span" className="contents" html={r.status2.html} /></StatusLink>
             : null}
         </div> : <p className="dev-topic-note">{r.status2.kind === 'merged' ? 'Merged, now live in the app' : historical ? 'Earlier build result' : 'Build result. Current actions are above.'}</p>}
       </div>

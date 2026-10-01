@@ -585,6 +585,7 @@ const App = {
     }
     App.user = user;
     App._syncViewer();
+    window.UsernodeReact?.appOpenings?.setUser?.(user.id, true);
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
     // than reading /api/auth/me for themselves. Published HERE on an
@@ -592,7 +593,7 @@ const App = {
     // not a confirmed one.
     App._publishBootSession({ user });
     document.dispatchEvent(new CustomEvent('sv:session', {
-      detail: { user: App.user },
+      detail: { user: App.user, verifiedSession: true },
     }));
     App.connectEvents();
     if (window.Kudos?.Budget?.init) Kudos.Budget.init();
@@ -647,12 +648,13 @@ const App = {
   async enterAnonymous() {
     let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
-      // enterAnonymous closes the private native realm synchronously before
-      // returning its Promise. Publish null only after that hard boundary.
+      // Close native authority before publishing the signed-out web identity.
       nativeBoundary = NativeChrome.enterAnonymous();
     }
     App.user = null;
     App._syncViewer();
+    window.UsernodeReact?.appOpenings?.setUser?.(null, true);
+    window.UITelemetry?.clearUser?.();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
@@ -852,6 +854,7 @@ const App = {
     // A snapshot is display-only and unverified. _reconcileSession publishes
     // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
+    window.UsernodeReact?.appOpenings?.setUser?.(user.id, !App._sessionFromSnapshot);
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
     // for client-side UI gating (admin buttons, retry, delete, lock,
     // app-secrets edit, etc. — see grep for App.user?.isAdmin) so
@@ -896,7 +899,7 @@ const App = {
     // for waiting-room users too (apps are usable without platform
     // access; only the SV social/build surfaces are gated).
     document.dispatchEvent(new CustomEvent('sv:session', {
-      detail: { user: App.user },
+      detail: { user: App.user, verifiedSession: !App._sessionFromSnapshot },
     }));
 
     // Platform-access gate (onboarding flow alignment): a released
@@ -6726,6 +6729,12 @@ const App = {
       requestedTab = launchRecord?.self_hosted ? 'dev' : 'app';
     }
     const initialRoute = App._normalizeTab(requestedTab, ref, subTab);
+    // Capture the user's intent before app metadata/token waits. It is only
+    // committed after the accessible App tab renders below, so a failed,
+    // blocked, self-hosted or superseded navigation leaves no event.
+    const opening = initialRoute.tab === 'app'
+      ? window.UsernodeReact?.appOpenings?.begin?.(App.user?.id) || null
+      : null;
     App.currentTab = initialRoute.tab;
     App.currentSubTab = initialRoute.tab === 'dev'
       ? (initialRoute.subTab || 'forum') : null;
@@ -6924,6 +6933,7 @@ const App = {
       // navigation. Replace it so Back returns to the launch origin in one go.
       replaceRoute: App._normalizeTab(actualFinalTab, ref, subTab).tab
         !== initialRoute.tab,
+      opening,
     });
   },
 
@@ -7341,6 +7351,15 @@ const App = {
       App._forwardAppTab(App.currentApp, 'app');
       return false;
     }
+    const wasLiveApp = tab === 'app'
+      && App.currentTab === 'app'
+      && AppView.appData?.slug === App.currentApp
+      && App._isScreenVisible?.('app-view');
+    const opening = tab === 'app'
+      ? (options?.opening || (!wasLiveApp
+        ? window.UsernodeReact?.appOpenings?.begin?.(App.user?.id) || null
+        : null))
+      : null;
     // #771: a docked staging preview is pinned to the dev-chat session
     // layout, which every tab switch re-renders or unmounts — close it.
     // (A fullscreen preview keeps floating above the tabs, as before.)
@@ -7411,6 +7430,10 @@ const App = {
       // App.closeApp goes: the page the app was opened from.
       App.setBackIcon('close', App._closeAppHref());
       AppView.renderAppTab();
+      if (opening && AppView.appData?.slug === App.currentApp
+          && App._isScreenVisible?.('app-view')) {
+        window.UsernodeReact?.appOpenings?.commit?.(App.currentApp, opening);
+      }
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);
     }

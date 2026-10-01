@@ -54,7 +54,7 @@ test('Preview lists and actions share persisted identities, with private viewer 
     pool.on('connect', client => closed.push(new Promise(resolve => client.once('end', resolve))));
     await pool.query(fs.readFileSync(require.resolve('../src/db/schema.sql'), 'utf8'));
     const viewers = (await pool.query(
-      "INSERT INTO users (username, password) VALUES ('viewer-one', 'unused'), ('viewer-two', 'unused') RETURNING id, username")).rows;
+      "INSERT INTO users (username, password) VALUES ('usernode-capture-admin', 'unused'), ('viewer-two', 'unused') RETURNING id, username")).rows;
     await pool.query("INSERT INTO users (id, username, password) VALUES (900001, 'staging-demo-user', 'staging-demo-not-a-login')");
     const launcherSlugs = ['staging-demo-pixel-racer', 'staging-demo-puzzle-chain', 'staging-demo-word-garden'];
     for (const slug of launcherSlugs) await pool.query(
@@ -87,6 +87,73 @@ test('Preview lists and actions share persisted identities, with private viewer 
     assert.equal(list.status, 200);
     for (const conversation of list.body.conversations) {
       assert.equal((await pool.query('SELECT id FROM conversations WHERE id = $1', [conversation.id])).rowCount, 1);
+    }
+    const unreadCheck = (await pool.query(
+      `SELECT m.conversation_id, m.id AS message_id
+         FROM conversation_messages m
+         JOIN conversation_members cm ON cm.conversation_id = m.conversation_id
+        WHERE m.idempotency_key = 'staging-capture-unread-check'
+          AND cm.user_id = $1`,
+      [viewers[0].id]
+    )).rows[0];
+    assert.ok(unreadCheck, 'the capture admin receives one persisted unread-only check fixture');
+    assert.equal(list.body.conversations.find((row) => row.id === unreadCheck.conversation_id).unreadCount, 1,
+      'the normal serializer derives its unread count from the untouched cursor');
+    assert.equal((await pool.query(
+      `SELECT COUNT(*)::int AS count
+         FROM staging_conversation_fixtures
+        WHERE conversation_id = $1`,
+      [unreadCheck.conversation_id]
+    )).rows[0].count, 0, 'no legacy check route can open and consume the unread-only fixture');
+
+    const direct = first.get(910001);
+    const directLast = (await pool.query(
+      'SELECT id FROM conversation_messages WHERE conversation_id = $1 ORDER BY id DESC LIMIT 1',
+      [direct]
+    )).rows[0].id;
+    assert.equal((await api(`/api/conversations/${direct}/read`, 'POST', { message_id: directLast })).status, 200);
+    const directCursor = (await pool.query(
+      'SELECT last_read_message_id FROM conversation_members WHERE conversation_id = $1 AND user_id = $2',
+      [direct, viewers[0].id]
+    )).rows[0].last_read_message_id;
+    await stagingMessages.ensureFixtures(pool, viewers[0]);
+    assert.equal((await pool.query(
+      'SELECT last_read_message_id FROM conversation_members WHERE conversation_id = $1 AND user_id = $2',
+      [direct, viewers[0].id]
+    )).rows[0].last_read_message_id, directCursor,
+    'reconciling fixtures never rewinds a consumed demo cursor');
+    const afterRead = await api('/api/conversations?demo=1');
+    assert.equal(afterRead.body.conversations.find((row) => row.id === direct).unreadCount, 0);
+    assert.equal(afterRead.body.conversations.find((row) => row.id === unreadCheck.conversation_id).unreadCount, 1,
+      'the exclusive fixture remains genuinely unread after a routed demo thread is consumed');
+    assert.equal((await pool.query(
+      `SELECT COUNT(*)::int AS count FROM conversation_messages
+        WHERE idempotency_key = 'staging-capture-unread-check'`
+    )).rows[0].count, 1, 'reconciliation remains bounded and idempotent');
+    assert.equal((await pool.query(
+      `SELECT COUNT(*)::int AS count
+         FROM conversation_messages m
+         JOIN conversation_members cm ON cm.conversation_id = m.conversation_id
+        WHERE m.idempotency_key = 'staging-capture-unread-check'
+          AND cm.user_id = $1`,
+      [viewers[1].id]
+    )).rows[0].count, 0, 'ordinary demo viewers do not receive the check-only conversation');
+    for (const status of ['left', 'removed']) {
+      await pool.query(
+        'UPDATE conversation_members SET status = $3 WHERE conversation_id = $1 AND user_id = $2',
+        [unreadCheck.conversation_id, viewers[0].id, status]
+      );
+      await stagingMessages.ensureFixtures(pool, viewers[0]);
+      assert.deepEqual((await pool.query(
+        `SELECT COUNT(DISTINCT m.conversation_id)::int AS rooms,
+                COUNT(*)::int AS messages
+           FROM conversation_messages m
+           JOIN conversation_members cm ON cm.conversation_id = m.conversation_id
+          WHERE m.idempotency_key = 'staging-capture-unread-check'
+            AND cm.user_id = $1`,
+        [viewers[0].id]
+      )).rows[0], { rooms: 1, messages: 1 },
+      `${status} membership does not create another check room or message`);
     }
     const group = first.get(910002);
     const legacy = await api('/api/conversations/910002?demo=1');

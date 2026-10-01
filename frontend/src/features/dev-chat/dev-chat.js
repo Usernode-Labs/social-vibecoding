@@ -7426,6 +7426,39 @@ const DevChat = {
   },
 
   // Both surfaces submit through the card's controller and per-session lock.
+  // #3605: the requests a change closes, as in-app refs. The session's own
+  // linked_issues are the source of truth (what the PR body's "Closes #N"
+  // lines are written from); a "Closes #N" in its title is read too, so a
+  // ref typed there still opens. Sorted, deduped, positive integers only.
+  _closesRefs(session) {
+    if (!session) return [];
+    const nums = new Set();
+    for (const v of Array.isArray(session.linked_issues) ? session.linked_issues : []) {
+      const n = Number(v);
+      if (Number.isInteger(n) && n > 0) nums.add(n);
+    }
+    const text = [session.session_title, session.pr_title].filter(Boolean).join('\n');
+    const re = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s+#(\d+)/gi;
+    let m;
+    while ((m = re.exec(text))) {
+      const n = Number(m[1]);
+      if (Number.isInteger(n) && n > 0) nums.add(n);
+    }
+    const verb = session.status === 'merged' ? 'Closed' : 'Closes';
+    return [...nums].sort((a, b) => a - b).map((n) => ({ n, verb }));
+  },
+
+  // #3605: the card's refs navigate inside Homeroom: a request opens its
+  // discussion on the app's board, the vote status opens the proposal.
+  openIssueRef(n) {
+    const id = parseInt(n, 10);
+    if (id > 0 && window.AppView && AppView.openTopic) AppView.openTopic('issue', id);
+  },
+  openProposalVote(id) {
+    const sid = parseInt(id, 10);
+    if (sid > 0 && window.AppView && AppView.openTopic) AppView.openTopic('proposal', sid);
+  },
+
   async promotePR() {
     const session = DevChat.currentSession;
     if (!session || AppView.changeSubmissionState(session).kind !== 'ready') return;
@@ -8014,7 +8047,12 @@ const DevChat = {
             prUrl: session?.pr_url || msg.prUrl || null,
             prNumber: session?.pr_number || msg.prNumber || null,
             title: session?.session_title || session?.pr_title || '',
-            closesHtml: window.AppView ? AppView.closesPillHtml(session) : '',
+            closes: DevChat._closesRefs(session),
+            // #3605: once the change is up for a vote its status opens the
+            // proposal's vote page. Null before then: an underway session has
+            // no vote to open.
+            proposalId: session && ['promoted', 'merging', 'merged'].includes(session.status)
+              ? Number(session.id) || null : null,
             stamp,
             visualsHtml,
             preview: { enabled: canPreview, url: liveUrl, title: '' },

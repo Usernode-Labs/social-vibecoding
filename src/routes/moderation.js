@@ -6,6 +6,7 @@ const { conversationReportLimiter } = require('../middleware/rate-limits');
 const svc = require('../services/moderation');
 const { attachmentDisposition } = require('../services/attachments');
 const log = require('../services/logger');
+const uiTelemetry = require('../services/ui-telemetry');
 
 function moderationRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
@@ -13,7 +14,17 @@ function moderationRoutes(config, { pool = getPool(config) } = {}) {
     res.set('Cache-Control', 'private, no-store');
     try { await fn(req, res); }
     catch (err) {
-      if (!(err instanceof svc.ModerationError)) log.error('moderation', 'Request failed', { message: err.message });
+      if (err instanceof svc.ModerationError) {
+        // Expected refusals used to be invisible outside the response. Keep a
+        // content-free product signal for user report submissions; admin
+        // moderation actions are intentionally outside UI-experience data.
+        if (req.method === 'POST' && req.path === '/api/reports') {
+          uiTelemetry.recordServerFailure(pool, req, {
+            screen: 'report_dialog', action: 'content_report_submit',
+            status: err.status || 500, message: err.message,
+          });
+        }
+      } else log.error('moderation', 'Request failed', { message: err.message });
       if (res.headersSent) return;
       res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not complete this request' });
     }

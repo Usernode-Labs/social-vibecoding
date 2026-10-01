@@ -55,7 +55,9 @@ const openModal = feedbackJs.slice(
 test('a failed submit is saved, not discarded', () => {
   assert.ok(submitFeedback.length > 500, 'located the submit path');
   // The fix itself: the transport failure now routes into the outbox.
-  assert.match(submitFeedback, /if \(await saveForLater\(body\)\) return;/);
+  assert.match(submitFeedback,
+    /if \(await saveForLater\(body\)\) \{[\s\S]{0,240}?return;\s*\}/,
+    'a transport failure returns after the outbox accepts the draft');
   // ...and the POST is wrapped narrowly, so a parseable-but-broken RESPONSE
   // can't be mistaken for "never sent" and filed twice.
   assert.ok(
@@ -65,7 +67,9 @@ test('a failed submit is saved, not discarded', () => {
 });
 
 test('a known-offline submit never spends a doomed round trip', () => {
-  assert.match(submitFeedback, /if \(isOfflineNow\(\)\) \{\n\s+if \(await saveForLater\(body\)\) return;/);
+  assert.match(submitFeedback,
+    /if \(isOfflineNow\(\)\) \{\s*if \(await saveForLater\(body\)\) \{[\s\S]{0,240}?return;\s*\}/,
+    'known-offline submission returns after the outbox accepts the draft');
   // Connectivity comes from the /health probe (window.Offline), never
   // navigator.onLine — the same rule the rest of the shell follows.
   assert.match(feedbackJs, /const isOfflineNow = \(\) => \{\s*\n\s*try \{ return !!\(window\.Offline && window\.Offline\.isOffline/);

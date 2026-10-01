@@ -562,6 +562,7 @@ const TOOL_ACTIVITY: Record<string, string> = {
   get_app: 'Reading the app',
   list_requests: 'Reading requests',
   get_request: 'Reading a request',
+  get_discussion: 'Reading a discussion',
   get_proposal: 'Reading a proposal',
   list_my_proposals: 'Checking your proposals',
   get_change: 'Checking the change',

@@ -274,6 +274,9 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     deployment.spec.template.metadata.annotations['social.usernode.io/env-checksum'],
     kubernetes._envChecksumForTest({ DATABASE_URL: 'postgres://redacted', PORT: '3000' })
   );
+  // The setup-attempt stamp is a worker-retry mechanism; an app Deployment
+  // never carries it.
+  assert.equal(deployment.spec.template.metadata.annotations['social.usernode.io/setup-attempt'], undefined);
   const ingress = written.find((item) => item.kind === 'Ingress').body;
   assert.equal(ingress.spec.ingressClassName, 'cilium');
   assert.equal(ingress.metadata.annotations['cert-manager.io/cluster-issuer'], undefined);
@@ -322,12 +325,13 @@ test('internal-only evidence deploy creates no Ingress or shared public asset ro
 
 for (const [name, environment, database, preferred] of [
   ['configured staging', 'staging', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, true],
-  ['production with database configuration', 'production', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, false],
+  ['configured production app', 'production', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, true],
   ['unconfigured staging', 'staging', {}, false],
+  ['unconfigured production app', 'production', {}, false],
   ['staging without database namespace', 'staging', { previewDatabaseCluster: 'writer-cluster' }, false],
   ['staging without database cluster', 'staging', { previewDatabaseNamespace: 'database-ns' }, false],
 ]) {
-  test(`preview primary placement: ${name}`, async () => {
+  test(`database primary placement: ${name}`, async () => {
     let deployment;
     const missing = async () => { throw notFound(); };
     const record = async ({ body }) => body;
@@ -359,23 +363,81 @@ for (const [name, environment, database, preferred] of [
     assert.equal(spec.nodeName, undefined, 'never pin to a specific node');
     assert.equal(spec.nodeSelector, undefined, 'other eligible nodes remain available');
     if (preferred) {
+      const primary = {
+        namespaces: ['database-ns'],
+        labelSelector: { matchLabels: {
+          'cnpg.io/cluster': 'writer-cluster', 'cnpg.io/instanceRole': 'primary',
+        } },
+      };
+      // The zone outweighs the host: a node in the primary's data centre is
+      // near enough, a node in another one is not (the evidence is in the
+      // comment on databaseAffinity). Both stay soft so a full zone still
+      // schedules.
       assert.deepEqual(spec.affinity, {
-        podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
-          weight: 100,
-          podAffinityTerm: {
-            namespaces: ['database-ns'],
-            labelSelector: { matchLabels: {
-              'cnpg.io/cluster': 'writer-cluster', 'cnpg.io/instanceRole': 'primary',
-            } },
-            topologyKey: 'kubernetes.io/hostname',
-          },
-        }] },
-      }, 'use only a soft preference for this cluster’s current primary');
+        podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [
+          { weight: 100, podAffinityTerm: { ...primary, topologyKey: 'topology.kubernetes.io/zone' } },
+          { weight: 50, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } },
+        ] },
+      }, 'prefer the current primary’s zone, then its host, and require neither');
+      assert.equal(spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution, undefined);
     } else {
       assert.equal(spec.affinity, undefined);
     }
   });
 }
+
+for (const [name, listPods, expected] of [
+  ['the ready Pod of this image', async () => ({ items: [
+    { metadata: { deletionTimestamp: '2026-10-01T00:00:00Z' }, spec: { nodeName: 'old-node',
+      containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:deadbeef' }] },
+    status: { conditions: [{ type: 'Ready', status: 'True' }] } },
+    { metadata: {}, spec: { nodeName: 'previous-image-node',
+      containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:0ld' }] },
+    status: { conditions: [{ type: 'Ready', status: 'True' }] } },
+    { metadata: {}, spec: { nodeName: 'talos-hel1-node',
+      containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:deadbeef' }] },
+    status: { conditions: [{ type: 'Ready', status: 'True' }] } },
+  ] }), 'talos-hel1-node'],
+  ['no ready Pod', async () => ({ items: [{ metadata: {}, spec: { nodeName: 'pending-node',
+    containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:deadbeef' }] },
+    status: { conditions: [{ type: 'Ready', status: 'False' }] } }] }), undefined],
+  ['a failing Pod lookup', async () => { throw new Error('forbidden'); }, undefined],
+]) {
+  test(`deploy reports the node it was scheduled on: ${name}`, async () => {
+    let deployment;
+    const missing = async () => { throw notFound(); };
+    const record = async ({ body }) => body;
+    kubernetes._setClientsForTest({
+      core: {
+        readNamespacedSecret: missing, createNamespacedSecret: record,
+        readNamespacedService: missing, createNamespacedService: record,
+        listNamespacedPod: listPods,
+      },
+      apps: {
+        readNamespacedDeployment: async () => {
+          if (!deployment) throw notFound();
+          return { ...deployment, metadata: { ...deployment.metadata, generation: 1 },
+            status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+        },
+        createNamespacedDeployment: async ({ body }) => { deployment = body; return body; },
+      },
+      networking: { readNamespacedIngress: missing, createNamespacedIngress: record },
+    });
+    const result = await kubernetes.deployApplication(config(), {
+      app: { id: 7, slug: 'demo' }, environment: 'staging', sessionId: 42,
+      imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
+    });
+    // The lookup is diagnostic: it never fails a deploy that succeeded.
+    assert.equal(result.url, 'https://demo--s42.apps.example.test');
+    assert.equal(result.node, expected);
+  });
+}
+
+test('the staging deploy log names the node the preview was scheduled on', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/staging.js'), 'utf8');
+  const call = src.slice(src.indexOf("log.info('staging', 'Staging deployed'"));
+  assert.match(call.slice(0, 300), /deployed\.node \? \{ node: deployed\.node \}/);
+});
 
 test('mutable image tags are refused before any Kubernetes write', async () => {
   await assert.rejects(
@@ -515,6 +577,47 @@ test('temporary shots worker uses pod storage without allocating a PVC', async (
   const deployment = written.find((item) => item.kind === 'Deployment').body;
   assert.deepEqual(deployment.spec.template.spec.volumes, [{ name: 'state', emptyDir: {} }]);
   assert.equal(deployment.metadata.labels['social.usernode.io/storage-mode'], 'temporary');
+});
+
+test('a worker setup retry stamps its attempt on the Pod template, so the stuck Pod is replaced', async () => {
+  const deployments = [];
+  let current = null;
+  kubernetes._setClientsForTest({
+    core: {
+      createNamespacedPersistentVolumeClaim: async ({ body }) => body,
+      readNamespacedSecret: async () => { throw notFound(); },
+      createNamespacedSecret: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [{
+        metadata: { name: 'worker-pod', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({}) } },
+        spec: { containers: [{ name: 'worker', image: config().kubernetes.workerImage }] },
+        status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }],
+          containerStatuses: [{ name: 'worker', ready: true, state: { running: {} } }] },
+      }] }),
+      readNamespacedPodLog: async () => '__USERNODE_PHASE__ warm-ready',
+    },
+    apps: {
+      readNamespacedDeployment: async ({ name }) => {
+        if (!current) throw notFound();
+        return { ...current, metadata: { ...current.metadata, name, resourceVersion: '1', generation: deployments.length },
+          status: { observedGeneration: deployments.length, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+      },
+      createNamespacedDeployment: async ({ body }) => { deployments.push(body); current = body; return { ...body, metadata: { ...body.metadata, generation: 1 } }; },
+      replaceNamespacedDeployment: async ({ body }) => { deployments.push(body); current = body; return { ...body, metadata: { ...body.metadata, generation: deployments.length } }; },
+    },
+  });
+  await kubernetes.ensureWorker(config(), { sessionId: 44, env: {} });
+  await kubernetes.ensureWorker(config(), { sessionId: 44, env: {}, retryAttempt: 2 });
+  assert.equal(deployments.length, 2);
+  const [first, retry] = deployments.map((d) => d.spec.template.metadata.annotations);
+  assert.equal(first['social.usernode.io/setup-attempt'], undefined, 'a first dispatch applies the plain template');
+  assert.equal(retry['social.usernode.io/setup-attempt'], '2');
+  assert.equal(retry['social.usernode.io/env-checksum'], first['social.usernode.io/env-checksum']);
+  assert.notDeepEqual(retry, first, 'the retry changes the template, which is what replaces the Pod');
+  // Only the template moves: the Deployment, its strategy and its volume are the same objects.
+  assert.equal(deployments[1].metadata.name, deployments[0].metadata.name);
+  assert.equal(deployments[1].spec.strategy.type, 'Recreate');
+  assert.deepEqual(deployments[1].spec.template.spec.volumes, deployments[0].spec.template.spec.volumes);
+  assert.equal(deployments[1].metadata.annotations?.['social.usernode.io/setup-attempt'], undefined);
 });
 
 test('worker contract and immutable image are read from the live Kubernetes Deployment', async () => {

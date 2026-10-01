@@ -119,6 +119,26 @@ ignored, and `submit_visual_evidence_plan` no longer exists.
 2. **Building before and after** (`provisioning`). Homeroom builds isolated
    copies of the exact base and head revisions. It resets both to the same
    fixture data and signs in each persona's browser.
+
+   For Homeroom's own proposals it then writes demo states the copies cannot
+   reach by themselves (`src/services/shots-demo-states.js`). The copies have
+   no model key and run nothing in the background, and most staging fixtures
+   belong to the read-only admin. The demo states include:
+   - for the member: an agent run in progress and one asked to stop, a change
+     with a deployed preview, and enough agent sessions for "Show more";
+   - a proposal with a vote of the member's on an earlier version, and a
+     threshold that moved since voting opened;
+   - for the admins: a live Homeroom bot verdict with its build;
+   - for every persona: the season's finished First challenges and an Always
+     open challenge with its next count;
+   - for the member: their standing in the season, and a friend request.
+
+   Each state goes into both copies or neither. A state the base or head
+   revision cannot hold is left out of the run, as is one that fails to
+   write on either side; neither fails the run. Every row is an obviously
+   fake `[shots fixture]` row in a reserved id block (990840 to 990859). The
+   brief's `availableFixtures` tells the agent each state's persona, what it
+   shows and its path.
 3. **Taking the shots** (`exploring`). The shots agent gets one turn in a
    shots worker. It has three browsers, one per persona, and the "shots"
    tools:
@@ -299,6 +319,7 @@ browser). Each persona's browser saves files under
 | Run flow and the brief (`executeRun`, `shotsBrief`) | `src/services/shots-orchestrator.js` |
 | Shots agent prompt and dispatch | `src/services/shots-agent.js` |
 | Shots bridge (MCP server `shots`) | `worker/shots-mcp.js` |
+| Fixture identities and session copies; demo states for the personas | `src/services/shots-fixtures.js`, `src/services/shots-demo-states.js` |
 | Browser servers (`--output-dir`, `--save-video`) | `worker/write-shots-mcp-config.js` |
 | Egress proxy (origins, public-only egress, platform assets, controlled failures) | `worker/shots-origin-proxy.js` |
 | Where the browser may go, and which shots may be published | `worker/shots-boundary.js` |

@@ -16,14 +16,17 @@
  * Rendered after the conversation loads, never in the prerender.
  */
 
-import { useEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
-import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
+import { clampPopoverHeight, placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { anchorRectOf, useAnchoredDismiss } from '../../lib/popover-dismiss';
 import { proposeChange } from './store';
 
 const POP_WIDTH = 312;
+// The first paint's estimate only; the mounted panel is measured and
+// re-placed with its real height (#3595), so a wrapped title line can't
+// leave the panel short of where the arithmetic put it.
 const POP_HEIGHT = 170;
 
 /** The title route's own cap (MANUAL_SESSION_TITLE_MAX in src/routes/sessions.js). */
@@ -111,6 +114,13 @@ export function ProposeButton({ changeId, title, prNumber, className, busy, prop
   const [rect, setRect] = useState<AnchorRect | null>(null);
   const [sheetEl, setSheetEl] = useState<HTMLElement | null>(null);
   const [draft, setDraft] = useState('');
+  // The panel's real height, measured the frame it mounts (#3595): the
+  // placement arithmetic needs a size before the panel exists, and the
+  // guess below can render short of the real thing — the popover then ran
+  // past the bottom of the screen below a button near the fold, and landed
+  // ON the Propose button when it flipped above one. The guess is only the
+  // first paint; the layout effect re-places it from the measurement.
+  const [measuredH, setMeasuredH] = useState<number | null>(null);
   const sheetRef = useRef<Sheet | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
@@ -169,10 +179,24 @@ export function ProposeButton({ changeId, title, prNumber, className, busy, prop
   useEffect(() => {
     if (open || sheetEl) goRef.current?.focus();
   }, [open, sheetEl]);
+  // Measure the mounted panel and place it again with its real height
+  // before the first paint (#3595) — the same pass the vote picker runs.
+  // The title line's wrap moves the height, so a long typed title
+  // re-measures too, not just the mount. scrollHeight, not offsetHeight,
+  // for the reason the vote picker gives: the measurement must not read
+  // the clamp's own capped height, or it loops against the clamp.
+  useLayoutEffect(() => {
+    if (!open) return;
+    const h = popRef.current?.scrollHeight;
+    if (h && h !== measuredH) setMeasuredH(h);
+  }, [open, draft, measuredH]);
 
   const pos = open && rect && typeof window !== 'undefined'
-    ? placeUnderAnchor(rect, { width: POP_WIDTH, height: POP_HEIGHT }, { width: window.innerWidth, height: window.innerHeight })
+    ? placeUnderAnchor(rect, { width: POP_WIDTH, height: measuredH ?? POP_HEIGHT }, { width: window.innerWidth, height: window.innerHeight })
     : null;
+  const popMaxH = open && typeof window !== 'undefined'
+    ? clampPopoverHeight({ height: measuredH ?? POP_HEIGHT }, { width: window.innerWidth, height: window.innerHeight })
+    : undefined;
   const panel = (
     <ProposeConfirmPanel
       draft={draft}
@@ -205,7 +229,7 @@ export function ProposeButton({ changeId, title, prNumber, className, busy, prop
           role="dialog"
           aria-labelledby={headId}
           data-agent-session-propose-pop
-          style={{ top: `${pos.top}px`, left: `${pos.left}px` }}
+          style={{ top: `${pos.top}px`, left: `${pos.left}px`, maxHeight: popMaxH ? `${popMaxH}px` : undefined, overflowY: popMaxH ? 'auto' : undefined }}
           onClick={(event) => event.stopPropagation()}
         >
           {panel}

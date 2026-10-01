@@ -624,7 +624,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // three, so it adds to whatever the manifest holds, which is 655.
   // 655 → 658: independently on main, off the SAME shared 655, #2086 makes a
   // featured-illustration change a governance proposal and adds two checks
-  // on its card via the ?demo=1 mock row 9100008 — the proposed-beside-
+  // on its card via the ?demo=1 mock row 9100077 — the proposed-beside-
   // current preview on the open board card, and the same preview on the
   // proposal's own discussion page — plus a second #2236 via-agent-chip
   // check, on the topic's own discussion rather than the demo issue's, for
@@ -1373,14 +1373,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // pin the band and the hero's actions row; the grouping-ear checks pin the
   // strip in the pane head; the All chip's pins the header's switcher.
   //
-  // 829 → 830: +1 (#3489): the hub's Your work with nothing in progress, a
+  // 829 → 830: +1 (#3233): the notification sheet's app allowance row reads
+  // in words ("went up from 0 to 2 app slots") instead of "0:2". A kind with
+  // no declared check to fold into; its mock row (990212) is new.
+  //
+  // 830 → 831: +1 (#3489): the hub's Your work with nothing in progress, a
   // state of the hub no check could reach before (it left the hub). The rest
   // was REWRITTEN in place: the approval rules' check pins the foot of the
   // Workshop tab (#3487), the Communities Needs you check pins the project's
   // own feed there (#3488), and the comment-stamp check reads its stamps off
   // the request whose thread carries Homeroom bot's spec card (#3490).
   //
-  // 830 → 830: #3525 folded rather than added. "Position your photo", the
+  // 831 → 831: #3525 folded rather than added. "Position your photo", the
   // step a chosen profile photo now opens over the editor, is reached only
   // by picking a file, so ?shot=profile-photo opens it with a drawn sample.
   // The #1285 editor check was REWRITTEN in place onto that link: the
@@ -1388,9 +1392,15 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // there under the step (inert while it is up), so it pins both, and reads
   // the step's title. The plain ?shot=profile-edit link keeps the #982 check.
   //
+  // 831 → 831: MAX_DECLARED_TESTS 850 → 860: #3233 and #3489 each assumed
+  // they were the only one moving the count off 829, and merged together
+  // they crossed the 20-slot floor at 831 against 850 — see the arithmetic
+  // in services/app-manifest.js. 831 leaves 29 slots against the new
+  // MAX_DECLARED_TESTS (860), clear of the 20-slot floor.
+  //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 830);
+  checkCap.assertPinned(DAPP.tests.length, 831);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -328,7 +328,7 @@ test('?demo=1 on staging also resolves the first-page and open governance mocks'
     assert.equal(code, 200, `applied-close mock ${id} resolves`);
     assert.equal(payload.proposal.id, id);
   }
-  const { code, payload } = await callGov(routes, { id: 9100003, query: { demo: '1' } });
+  const { code, payload } = await callGov(routes, { id: 9100072, query: { demo: '1' } });
   assert.equal(code, 200, 'open governance mock resolves');
   assert.equal(payload.proposal.kind, 'close_issue');
   assert.equal(payload.proposal.status, 'open');

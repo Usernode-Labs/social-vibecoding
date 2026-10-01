@@ -28,6 +28,7 @@ const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
+const uiTelemetry = require('../services/ui-telemetry');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
@@ -554,9 +555,11 @@ function authRoutes(config) {
         ({ userId, codeId } = await withTransaction(pool, async (client) => {
           // needs_communities_choice: an account made with a code is asked
           // which communities to join, like an email sign-up (communities,
-          // stage 5; src/services/onboarding.js).
+          // stage 5; src/services/onboarding.js). getting_started_gate: and,
+          // being new, starts on the Getting started list that gates the
+          // season, like an email sign-up (src/db/schema.sql).
           const { rows: userRows } = await client.query(
-            'INSERT INTO users (username, password, needs_communities_choice) VALUES ($1, $2, TRUE) RETURNING id',
+            'INSERT INTO users (username, password, needs_communities_choice, getting_started_gate) VALUES ($1, $2, TRUE, TRUE) RETURNING id',
             [username.trim(), hash]
           );
           const uid = userRows[0].id;
@@ -700,8 +703,10 @@ function authRoutes(config) {
     let needsUsernameChoice = false;
     // Communities, stage 5 (src/services/onboarding.js): the join screen a
     // new account answers after its username and the terms, and the
-    // Getting started card that follows it. Same failure direction as the
-    // flag above: unreadable means no blocking step and no card.
+    // Getting started card that follows it, for an account made since that
+    // card became the First challenges (`getting_started_gate`). Same
+    // failure direction as the flag above: unreadable means no blocking step
+    // and no card.
     let needsCommunitiesChoice = false;
     let showGettingStarted = false;
     // Has this account finished (or skipped) the welcome tour, on any
@@ -716,7 +721,8 @@ function authRoutes(config) {
                 u.needs_username_choice,
                 u.needs_communities_choice,
                 (u.communities_onboarded_at IS NOT NULL
-                  AND u.getting_started_closed_at IS NULL) AS show_getting_started,
+                  AND u.getting_started_closed_at IS NULL
+                  AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
@@ -769,6 +775,10 @@ function authRoutes(config) {
       user: {
         id: req.user.id,
         username: req.user.username,
+        // Browser-check accounts authenticate normally to exercise protected
+        // screens, but their scripted journeys must not enter product UI
+        // analytics. The client waits for this server-owned decision.
+        uiTelemetryEligible: uiTelemetry.isEligibleUser(req.user),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating
@@ -1723,11 +1733,12 @@ function authRoutes(config) {
       const linkExpiresAt = new Date(Date.now() + LINK_TOKEN_TTL_MS);
 
       // needs_communities_choice: asked which communities to join, like
-      // every other new account (communities, stage 5).
+      // every other new account (communities, stage 5); getting_started_gate:
+      // and starts on the Getting started list, like every other new one.
       const { rows } = await pool.query(
         `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at,
-                            needs_communities_choice)
-         VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id`,
+                            needs_communities_choice, getting_started_gate)
+         VALUES ($1, $2, $3, $4, $5, TRUE, TRUE) RETURNING id`,
         [username.trim(), hash, pubkey.trim(), linkToken, linkExpiresAt]
       );
       const userId = rows[0].id;
