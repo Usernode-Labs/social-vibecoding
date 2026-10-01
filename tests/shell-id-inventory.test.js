@@ -322,6 +322,9 @@ const ADDED_IDS = {
   // #3230: the spend card's reset line, rewritten by Settings._refreshSpend()
   // in the viewer's own clock (it prerenders the server's UTC boundary).
   'settings-spend-reset': '#3230 spend card reset line, localized at reveal',
+  // #3319: Settings → Theme's "Keep sidebar open in apps" switch, React-wired
+  // (features/settings/sections/theme.tsx) and desktop only.
+  'settings-rail-pinned': '#3319 keep-sidebar-open-in-apps switch',
   // ── #2718: the platform's destinations leave the app's menu ──────
   //
   // Eleven ids leave THIS map rather than entering RETIRED_IDS, because the

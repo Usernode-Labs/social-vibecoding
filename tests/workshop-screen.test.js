@@ -756,7 +756,8 @@ test('the app\'s own Workshop keeps the rail, and lights the tab it came through
   const body = sync.slice(0, sync.indexOf('\n  },\n'));
   assert.match(body, /const inApp = screen === 'app-view' && App\.currentTab === 'app';/,
     'the app itself covers the rail; its Workshop does not');
-  assert.match(body, /!!screen && !App\.chromeless && !inApp,/);
+  // …unless the viewer pinned it (#3319, tests/nav-rail-pinned.test.js).
+  assert.match(body, /!!screen && !App\.chromeless && \(!inApp \|\| railPinned\),/);
   // The Workshop tab is lit, so the rail knows where you are — except on the
   // app's DISCUSSION, which is a row in the Messages inbox and lights that
   // instead (#2718 review).

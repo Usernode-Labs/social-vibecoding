@@ -19551,6 +19551,19 @@ html.un-kb #platform-parked {
     padding-right: var(--platform-gutter);
   }
 
+  /* …AND A RUNNING APP, WHEN THE VIEWER PINNED THE RAIL (#3319). Settings →
+     Theme → "Keep sidebar open in apps" keeps the rail docked beside an app
+     (App._syncPlatformTabs publishes it and puts `rail-pinned` on the body).
+     The frame steps out of the rail's column and nothing more: the gutters
+     are a platform page's rhythm, and somebody's program still runs edge to
+     edge in what is left. One class more than the rule above, so it wins.
+     Inside this block only — a phone never gets the class, and a window
+     narrowed past 768px with it set keeps the full-screen app. */
+  html:not(.un-kb) body.rail-pinned:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #app-view {
+    padding-left: var(--platform-rail-w, 0px);
+    padding-right: 0;
+  }
+
   .platform-tabs {
     /* FROM UNDER THE HEADER TO THE FLOOR. The header is `position: relative`
        in normal flow, so its height is a token rather than something to
