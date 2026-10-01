@@ -593,7 +593,7 @@ const App = {
     // not a confirmed one.
     App._publishBootSession({ user });
     document.dispatchEvent(new CustomEvent('sv:session', {
-      detail: { user: App.user },
+      detail: { user: App.user, verifiedSession: true },
     }));
     App.connectEvents();
     if (window.Kudos?.Budget?.init) Kudos.Budget.init();
@@ -654,6 +654,7 @@ const App = {
     App.user = null;
     App._syncViewer();
     window.UsernodeReact?.appOpenings?.setUser?.(null, true);
+    window.UITelemetry?.clearUser?.();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
@@ -898,7 +899,7 @@ const App = {
     // for waiting-room users too (apps are usable without platform
     // access; only the SV social/build surfaces are gated).
     document.dispatchEvent(new CustomEvent('sv:session', {
-      detail: { user: App.user },
+      detail: { user: App.user, verifiedSession: !App._sessionFromSnapshot },
     }));
 
     // Platform-access gate (onboarding flow alignment): a released

@@ -30,6 +30,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
 const invites = require('../services/community-invites');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const { drainGuard } = require('../services/lifecycle');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const { applyShellDocumentHeaders, shellAssetCacheControl } = require('../services/static-cache');
@@ -197,6 +198,9 @@ function communityInviteRoutes(config) {
       // Following a link clears any copy the sign-in carried: it is spent.
       invites.clearInviteCookie(res);
       if (!result.ok) return res.status(result.status).json({ error: 'This invite link is not active.', reason: result.reason });
+      // In the community now, so its challenge counts now (#3564). A queued
+      // person is not in it yet; the schedule counts them once let in.
+      if (result.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
       return res.json(result);
     } catch (err) {
       log.error('invites', 'Following an invite link failed', { err: err.message });

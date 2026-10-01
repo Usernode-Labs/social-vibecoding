@@ -6801,21 +6801,6 @@
     },
     {
       "source": "src/routes/profile.js",
-      "method": "GET",
-      "path": "/api/me/username/suggestion",
-      "expression": null,
-      "status": "mapped",
-      "capabilityId": "apps.get.me.username.suggestion.fde733e9",
-      "domain": "apps",
-      "risk": "read",
-      "confirmation": "never",
-      "renderer": "app",
-      "transport": "server_loopback",
-      "mobileSupported": true,
-      "classicPath": "#apps"
-    },
-    {
-      "source": "src/routes/profile.js",
       "method": "POST",
       "path": "/api/me/username/choose",
       "expression": null,
@@ -10509,6 +10494,29 @@
       "expression": null,
       "status": "exempt",
       "reason": "public/native compatibility API represented by leaderboard and About capabilities"
+    },
+    {
+      "source": "src/routes/ui-telemetry.js",
+      "method": "POST",
+      "path": "/api/ui-telemetry/batch",
+      "expression": null,
+      "status": "exempt",
+      "reason": "browser_telemetry: same-origin diagnostics transport, never a model-visible capability"
+    },
+    {
+      "source": "src/routes/ui-telemetry.js",
+      "method": "GET",
+      "path": "/api/admin/analytics/ui-failures",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.get.admin.analytics.ui.failures.5c42eb3b",
+      "domain": "admin",
+      "risk": "read",
+      "confirmation": "never",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
     },
     {
       "source": "src/routes/user-agent-files.js",

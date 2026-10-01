@@ -23,22 +23,48 @@ export function ReportDialog() {
   const [blocked, setBlocked] = useState(false);
   const [blockAction, setBlockAction] = useState<{ appSlug?: string; userId?: number; username?: string } | null>(null);
   const dialog = useDialog<ReportTarget>('report', {
-    onOpen(value) { if (detailRef.current) detailRef.current.value = ''; setTarget(value || null); setReason(''); setDetail(''); setError(''); setReceipt(null); setBlocked(false); setBlockAction(null); },
+    onOpen(value) {
+      (window as any).UITelemetry?.screen?.('report_dialog');
+      if (detailRef.current) detailRef.current.value = '';
+      setTarget(value || null); setReason(''); setDetail(''); setError('');
+      setReceipt(null); setBlocked(false); setBlockAction(null);
+    },
     canClose: () => !busy,
   });
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!target || busy || !reason || (reason === 'other' && !detail.trim())) return;
     setBusy(true); setError('');
+    const telemetry = (window as any).UITelemetry;
+    const attemptId = telemetry?.attempt?.('content_report_submit', {
+      screen: 'report_dialog', timeoutMs: 10_000, abandonOnHide: true,
+    });
+    let responseReceived = false;
     try {
-      const response = await fetch('/api/reports', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ targetType: target.targetType, target: target.target, reason, detail }) });
+      const response = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...telemetry?.contextHeaders?.(attemptId) },
+        body: JSON.stringify({ targetType: target.targetType, target: target.target, reason, detail }),
+      });
+      responseReceived = true;
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Could not send your report. Try again.');
+      if (!response.ok) {
+        telemetry?.outcome?.(attemptId, 'failure', {
+          errorCode: telemetry?.errorCodeFor?.(response.status),
+        });
+        throw new Error(data.error || 'Could not send your report. Try again.');
+      }
+      telemetry?.outcome?.(attemptId, 'success');
       setReceipt(data.id);
       setBlockAction(target.targetType === 'app'
         ? (data.blockAppSlug ? { appSlug: data.blockAppSlug } : null)
         : (data.blockUserId && data.blockUsername ? { userId: data.blockUserId, username: data.blockUsername } : null));
-    } catch (err) { setError((err as Error).message); }
+    } catch (err) {
+      telemetry?.outcome?.(attemptId, 'failure', {
+        errorCode: responseReceived ? 'invalid_response' : 'network',
+      });
+      setError((err as Error).message);
+    }
     finally { setBusy(false); }
   }
   async function block() {

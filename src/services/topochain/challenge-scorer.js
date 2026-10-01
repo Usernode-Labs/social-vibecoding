@@ -928,6 +928,66 @@ async function tick(pool, config, { now = Date.now() } = {}) {
   }
 }
 
+// ── On the moment somebody joins (#3564) ───────────────────────────────
+//
+// "Find people to build with" is COMMUNITY_JOINED, a STATE measure, and the
+// schedule finds a state on that rule's next pass: up to ten minutes after
+// the join by default, an hour for a rule set to hourly. For this challenge
+// that gap is the whole experience. Somebody taps Join, opens Challenges to
+// see it tick, reads "Not started · next count 12:58" — and, reasonably,
+// reports it broken, which is what #3564 was. The card cannot tell "not yet
+// counted" from "does not count", so the honest fix is to count at once.
+//
+// So every door a person joins a community through — the Join button, the
+// join screen, an invite link, an accepted invite — calls this after the
+// join, and the rules on the two community STATE measures run there and
+// then, through score(): the same reads, the same plan, the same ledger
+// writes and the same stamp as a scheduled pass of those rules, so a join
+// cannot pay differently from the schedule. Both measures, because a join
+// can start either state: the joiner is now in a community, and the project
+// they came into may have stopped being "Just you" at that moment (an
+// invite link into a private one does exactly that), which is its
+// creator's "Build for your community", and their "Find people to build
+// with", on the same tap.
+//
+// The schedule stays the source of truth and the backstop. A membership
+// that arrives by trigger (a queued invite applied when its person is let
+// in, a Home pin, the dapp.json reconcile) has no door to call this from,
+// and is counted on the rule's next pass as before; so is any future door
+// that forgets to. Nothing here is required for correctness, only for
+// speed.
+//
+// Outside the tick's advisory lock, on purpose and safely: both measures
+// are single completions under a fixed source key, so a pass racing a tick
+// (or another join) collides on `user_activities_completion_unique` and the
+// loser's insert does nothing. That is also why INVITES_JOINED is NOT run
+// here: it is counted, its "three and no more" cap is enforced by the plan,
+// and two plans at once could each pay a different third person. It waits
+// for the schedule, which plans under the lock.
+//
+// A no-op when the deployment has switched automatic scoring off (interval
+// 0) — "off" means the admin's Run now is the only thing that scores — and
+// when no enabled rule uses either measure. Never throws: a join that worked
+// must not answer 500 because a challenge could not be counted, and the
+// schedule will count it anyway.
+const JOIN_MEASURES = Object.freeze(['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED']);
+const JOIN_RULES_SQL = `
+  SELECT id FROM challenge_scoring_rules
+   WHERE enabled = TRUE AND measure = ANY($1::text[])
+`;
+
+async function scoreOnJoin(pool, config, { now = Date.now() } = {}) {
+  if (!(intervalMinutes(config) > 0)) return null;
+  try {
+    const { rows } = await pool.query(JOIN_RULES_SQL, [JOIN_MEASURES]);
+    if (!rows.length) return null;
+    return await score(pool, { now, only: new Set(rows.map((r) => Number(r.id))) });
+  } catch (err) {
+    log.warn('challenge-scorer', 'Scoring a join failed; the schedule will count it', { err: err.message });
+    return null;
+  }
+}
+
 function start(config) {
   if (timer) return;
   const minutes = intervalMinutes(config);
@@ -969,6 +1029,7 @@ module.exports = {
   score,
   runOnce,
   tick,
+  scoreOnJoin,
   start,
   stop,
   maybeAggregate,
@@ -985,5 +1046,7 @@ module.exports = {
   CADENCE_RULES_SQL,
   CREDITED_SQL,
   MEASURE_SQL,
+  JOIN_MEASURES,
+  JOIN_RULES_SQL,
   dateToIso,
 };

@@ -2791,6 +2791,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dapp_opening_key
   ON events (user_id, app_id, (metadata->>'openingId'))
   WHERE event_type = 'dapp_opened' AND metadata ? 'openingId';
 
+-- UI telemetry is uploaded in retryable batches. Both ids are opaque random
+-- client values validated by services/ui-telemetry.js; these indexes make a
+-- lost response safe to replay without double-counting either observations
+-- or delivery receipts.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_experience_event_id
+  ON events (user_id, (metadata->>'eventId'))
+  WHERE event_type = 'ui_experience' AND metadata ? 'eventId';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_delivery_batch_id
+  ON events (user_id, (metadata->>'batchId'))
+  WHERE event_type = 'ui_telemetry_delivery' AND metadata ? 'batchId';
+
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
 -- clones rather than leaking social history into previews.

@@ -677,16 +677,16 @@
     {
       "source": "src/routes/topochain/admin/users.js",
       "kind": "structural-template",
-      "fingerprint": "57fd149df51e5ddab236",
+      "fingerprint": "82cee40867caa7ceba3c",
       "count": 1,
-      "preview": "`INSERT INTO users (username, password, password_set, email, telegram, discord, display_name, accept_logs, is_admin, created_at, updated_at) VALUES ($1, $2, FAL"
+      "preview": "`UPDATE users SET exclude_podium = NOT exclude_podium, updated_at = NOW() WHERE id = $1 RETURNING ${USER_SELECT}`"
     },
     {
       "source": "src/routes/topochain/admin/users.js",
       "kind": "structural-template",
-      "fingerprint": "82cee40867caa7ceba3c",
+      "fingerprint": "b055c1befa7d4a0abef3",
       "count": 1,
-      "preview": "`UPDATE users SET exclude_podium = NOT exclude_podium, updated_at = NOW() WHERE id = $1 RETURNING ${USER_SELECT}`"
+      "preview": "`INSERT INTO users (username, password, password_set, email, telegram, discord, display_name, accept_logs, is_admin, created_at, updated_at, needs_username_choi"
     },
     {
       "source": "src/routes/topochain/admin/users.js",
@@ -1312,6 +1312,20 @@
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
     },
     {
+      "source": "src/services/shots-demo-states.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 1,
+      "preview": "sql"
+    },
+    {
+      "source": "src/services/shots-demo-states.js",
+      "kind": "runtime-expression",
+      "fingerprint": "8face6269db1d474eb87",
+      "count": 1,
+      "preview": "TAKEN_SQL[table]"
+    },
+    {
       "source": "src/services/shots-state.js",
       "kind": "structural-template",
       "fingerprint": "5b50577c563dc7e02307",
@@ -1450,6 +1464,48 @@
       "fingerprint": "ffdbcfbaa56765b4a618",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "2b5c5a4747c0e3700097",
+      "count": 1,
+      "preview": "`WITH ui AS ( SELECT e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${base} ), attempts AS ( SELE"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "4acb3539b5bd10b13659",
+      "count": 1,
+      "preview": "`WITH ui AS ( SELECT e.id AS row_id, e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${base} ), at"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "b24b8d9d293e9c2acb9d",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS receipts, COUNT(DISTINCT e.user_id)::int AS reporting_users, COALESCE(SUM((e.metadata->>'submitted')::int), 0)::int AS submitted, COALE"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "b35c0cd5a84f6769816b",
+      "count": 1,
+      "preview": "`WITH coded AS ( SELECT e.id, e.user_id, e.metadata, e.created_at, CASE WHEN e.metadata->>'kind' IN ('action_outcome','server_failure') AND e.metadata ? 'attemp"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "e64aea5725fe67bcbf0d",
+      "count": 1,
+      "preview": "`WITH ui AS ( SELECT e.id AS row_id, e.user_id, e.app_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${b"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "f016cfeaacc400db8ba3",
+      "count": 1,
+      "preview": "`SELECT e.metadata->>'screen' AS screen, COUNT(*)::int AS visits, COUNT(DISTINCT e.user_id)::int AS users FROM events e JOIN users u ON u.id = e.user_id WHERE e"
     },
     {
       "source": "src/services/user-merge.js",

@@ -323,6 +323,7 @@ const SHELL_ASSETS = [
   // module in index.html, so a cache miss here breaks the whole shell.
   '/js/nav-link.js',
   '/js/platform-ui.js',
+  '/js/ui-telemetry.js',
   '/js/app-view.js',
   '/js/app.js',
   '/js/build-log.js',

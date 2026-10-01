@@ -139,6 +139,7 @@ import { ProposeButton } from './propose-confirm';
 import { readUnsent, writeUnsent } from './unsent';
 import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
+import { UserMessage } from './user-message';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -526,9 +527,8 @@ const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptIt
       return (
         <div className="flex flex-col items-end gap-1.5" data-agent-session-user>
           <SentAttachments sessionId={sessionId} attachments={item.attachments} />
-          {item.text ? (
-            <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{item.text}</p>
-          ) : null}
+          {/* A long one folds behind "Show more" (#3558, ./user-message.tsx). */}
+          {item.text ? <UserMessage text={item.text} /> : null}
         </div>
       );
     case 'mayor':
@@ -1149,7 +1149,9 @@ function OutboxRows() {
     <>
       {outbox.map((item) => (
         <div key={item.clientId} className="flex flex-col items-end gap-1" data-agent-session-outbox={item.status}>
-          <p className={`max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 ${item.status === 'sending' ? 'opacity-80' : ''}`}>{item.shown}</p>
+          {/* Folded as the message it will be (#3558), so the server's row
+              replaces it without the bubble changing height. */}
+          <UserMessage text={item.shown} className={item.status === 'sending' ? 'opacity-80' : ''} />
           {item.status === 'failed' ? (
             <div className="flex max-w-[85%] flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[13px]" role="alert">
               <span className="text-red-700 dark:text-red-300" data-agent-session-outbox-error>{item.error || 'This was not sent.'}</span>
@@ -1817,7 +1819,10 @@ function Composer({ id }: { id: string }) {
           }
         }}
       />
-      <div className="flex items-center gap-2">
+      {/* #3574: the row is a size container so the model pill can tighten
+          its padding on the narrowest phones (composer-parts.tsx ModelPill).
+          Its width is the composer's, never its contents'. */}
+      <div className="flex items-center gap-2 [container-type:inline-size]">
         {/* One picker, no menu of our own: a phone's own file picker already
             offers the photo library, the camera and files. */}
         <button
@@ -1855,8 +1860,16 @@ function Composer({ id }: { id: string }) {
           />
         ) : null}
         {/* The credits pill doubles as the row's spacer: it takes the free
-            space and decides from it how much to say. */}
-        {credit ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
+            space and decides from it how much to say.
+
+            #3574: not while a draft is being saved. Stop and "Save draft"
+            take Send's place then, about 130px more, and on a phone the
+            row has no room left for the model's name AND the credits: the
+            credits pill used to be drawn over the name, and now that it keeps
+            its own width the name would be squeezed to an empty pill. It is
+            back the moment the draft is saved or the field is cleared, and
+            the model sheet says the same figures meanwhile. */}
+        {credit && kind !== 'save' ? <CreditPill credit={credit} onOpen={() => openSheet('homeroom')} /> : <div className="min-w-0 flex-1" />}
         {kind === 'save' ? (
           <>
           <Button type="button" variant="pillDanger" ink="dangerTint" size="icon" className="inline-flex h-10 w-10 shrink-0 items-center justify-center" aria-label="Stop" title="Stop"
@@ -2117,6 +2130,28 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
   const about: About = snapshot.session || snapshot.draft;
   const request = snapshot.draft ? draftRequest(snapshot.draft.hint) : null;
 
+  // ── Nothing in the transcript is wider than the transcript (#3559) ──
+  //
+  // The transcript scrolls down, and a box that scrolls on one axis scrolls
+  // on the other as well: `overflow-y: auto` makes `overflow-x` auto too. So
+  // one unbroken run of text (a link pasted into a message, a path in a
+  // note, a card whose title is an identifier) made the whole conversation
+  // wider than a phone, and it slid sideways under a finger. Measured at
+  // 390px: a pasted staging link in the reader's own bubble took this
+  // scroller to 690px, 300px of sideways travel; a failed turn's note and a
+  // card title carrying one did the same.
+  //
+  // `overflow-wrap: anywhere`, set on the scroller and inherited by every
+  // row, breaks such a run inside its own box when nothing else lets it
+  // fit. `anywhere` and not `break-words`, because it also lowers the run's
+  // min-content width: the note beside Retry is a flex item, and a request's
+  // title on the empty state is a centred block, and either would otherwise
+  // be held at the width of its longest word. The Mayor's markdown already
+  // broke this way (`.dc-msg-content`'s `word-break: break-word`), which is
+  // why a reply never overflowed and the rows around it did. A code block
+  // and a run's log are `white-space: pre`, which never wraps, so they keep
+  // scrolling sideways inside their own boxes, as a table does inside its.
+  //
   // Whether the reader is at the bottom, which FollowOutput keeps them at.
   const stick = useRef(true);
   const onScroll = () => {
@@ -2139,7 +2174,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
-        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite" onScroll={onScroll}>
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4 [overflow-wrap:anywhere]" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
           ) : null}

@@ -144,6 +144,10 @@ function heldText({ cap, verdict, limit }) {
     return `Homeroom bot would build this, but it already has ${limit} proposals open on this app. `
       + 'It will come back to this issue when one of them is merged or closed.';
   }
+  if (cap === 'proposals_total') {
+    return `Homeroom bot would build this, but it already has ${limit} proposals open across Homeroom. `
+      + 'It will come back to this issue when one of them is merged or closed.';
+  }
   const what = verdict === 'question' ? 'a question about' : 'a note on';
   return `Homeroom bot has ${what} this request, but it has already posted ${limit} questions and notes `
     + 'on this app in the last day. It will come back to this issue once some of those are a day old.';
@@ -963,7 +967,7 @@ let votesRouter = null;
  * Run POST /api/sessions/:id/promote as the bot, in-process. Resolves the
  * status and JSON the route answered with; never throws.
  */
-function promoteAsBot({ config, bot, sessionId, router = null }) {
+function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null }) {
   const target = router || (votesRouter ||= require('../routes/votes').voteRoutes(config));
   const url = `/api/sessions/${Number(sessionId)}/promote`;
   return new Promise((resolve) => {
@@ -979,6 +983,10 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
       user: {
         id: bot.id, username: bot.username, is_admin: false, is_synthetic: true,
         [require('./app-access').HOMEROOM_BOT_PROPOSAL]: true,
+        // Its own ceiling on proposals up for a vote, in place of the
+        // per-user cap (#3576). Symbol-keyed for the same reason.
+        ...(Number.isInteger(ceiling) && ceiling > 0
+          ? { [require('./session-caps').BOT_PROMOTED_CEILING]: ceiling } : {}),
       },
       get() { return undefined; },
       header() { return undefined; },
@@ -1160,7 +1168,7 @@ async function draftSpec({
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
-  onSession = null, presetSpec = null,
+  onSession = null, presetSpec = null, proposalCeiling = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1389,7 +1397,9 @@ async function buildAndPropose({
     pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
     buildText: result.lastResultText, model,
   });
-  const promoted = await promoteAsBot({ config, bot, sessionId: session.id, router: deps.votesRouter || null });
+  const promoted = await promoteAsBot({
+    config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
+  });
   if (promoted.status !== 200 || !promoted.body?.ok) {
     const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
     // Built but not proposed: the branch holds the work. Left paused, not

@@ -146,8 +146,12 @@ async function main() {
     if ((await proxyRequest(proxyPort, `${hostedOrigin}/frame`)).status !== 200
         || (await proxyRequest(proxyPort, 'http://not-approved.invalid/frame')).status !== 403
         || !(await proxyConnect(proxyPort, new URL(hostedOrigin).host)).includes('200')
-        || !(await proxyConnect(proxyPort, 'not-approved.invalid:443')).includes('403')) {
-      throw new Error('Shots proxy did not enforce the paired hosted-app catalog.');
+        || !(await proxyConnect(proxyPort, 'not-approved.invalid:443')).includes('403')
+        // Outside the pair and the catalog only the public internet is
+        // reachable: never the network the worker runs in.
+        || (await proxyRequest(proxyPort, 'http://169.254.169.254/computeMetadata/v1/')).status !== 403
+        || !(await proxyConnect(proxyPort, '10.0.0.1:443')).includes('403')) {
+      throw new Error('Shots proxy did not enforce the paired hosted-app catalog and its public-only egress.');
     }
     const configPath = path.join(dir, 'mcp.json');
     execFileSync(process.execPath, [path.join(__dirname, 'write-shots-mcp-config.js'), configPath], { env });

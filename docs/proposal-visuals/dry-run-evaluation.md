@@ -75,7 +75,11 @@ The data is your local dev database rather than a redacted production
 clone, so a change that needs richer data (a member in several apps, say)
 may only be shown in part; the agent says so in its note. The hosted-app
 fixture (a child app beside the platform) is not installed, and the
-browser has no egress proxy (`--allowed-origins` only).
+browser has no egress proxy: it keeps to the two addresses
+(`--allowed-origins`), where a hosted run's browser reaches the public
+internet too, so a page that needs a CDN may render unstyled here alone.
+The browsers run inside the same observer, so the bridge's address check on
+each shot applies as it does in a hosted run.
 
 ## 4. Take the shots
 

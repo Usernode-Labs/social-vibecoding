@@ -457,7 +457,10 @@ test('the wiring the module still owns is untouched', () => {
   // sanctions on React-rendered nodes, so none of this had to move.
   for (const call of [
     'AppView._wirePlusMenu(content);',
-    'PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed());',
+    // With options since the tabs hold still during a pull (pull-to-refresh
+    // under the tabs, evan, 2026-10-01; tests/community-hub.test.js): still a
+    // listener the module attaches, and still to the same scroller.
+    'PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed(), {',
     'AppView._attrInit();',
     'AppView._cardMenuInit();',
     // _loadChatCardPreview left this list with the General-chat card

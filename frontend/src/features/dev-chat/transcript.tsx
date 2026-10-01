@@ -172,6 +172,16 @@ function VenueCaption({ text }: { text: string | undefined }): ReactNode {
   return <span className="dc-status-venue">{text}</span>;
 }
 
+/**
+ * #3559: the sentence is a span of its own, `.dc-status-text`, so it is the
+ * one part of the row that may wrap inside a word. A status row is a flex
+ * row, and its sentence (bare text before this, an anonymous flex item that
+ * nothing could be set on) was held at the width of its longest word. A
+ * step that names a link or a branch made the row wider than a phone, and
+ * the transcript, which scrolls, slid sideways with it. The rule is on the
+ * sentence alone, not the row: the stamp and the elapsed clock beside it
+ * keep their own words whole, rather than being broken to make room.
+ */
 function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): ReactNode {
   return (
     <div
@@ -180,8 +190,8 @@ function StatusLine({ r }: { r: Extract<TranscriptRow, { t: 'status' }> }): Reac
     >
       <StatusIcon kind={r.icon} />
       {r.html !== undefined
-        ? <Html as="span" html={` ${r.html} `} />
-        : ` ${r.text} `}
+        ? <Html as="span" className="dc-status-text" html={` ${r.html} `} />
+        : <span className="dc-status-text">{` ${r.text} `}</span>}
       <Elapsed e={r.elapsed} />
       {r.forceStop ? (
         <button
