@@ -2699,6 +2699,14 @@
     {
       "source": "src/routes/apps.js",
       "method": "POST",
+      "path": "/api/apps/:slug/openings",
+      "expression": null,
+      "status": "exempt",
+      "reason": "browser navigation telemetry, emitted by the Classic shell rather than an interactive control"
+    },
+    {
+      "source": "src/routes/apps.js",
+      "method": "POST",
       "path": "/api/apps/:slug/activity",
       "expression": null,
       "status": "mapped",

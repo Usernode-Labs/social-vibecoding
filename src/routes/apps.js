@@ -21,6 +21,7 @@ const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
+const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
@@ -3360,6 +3361,40 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       res.status(500).json({ error: 'Internal server error' });
     } finally {
       client.release();
+    }
+  });
+
+  // A successful App-tab entry, distinct from the later activity heartbeat.
+  // This write is awaited because the browser keeps an idempotent retry queue:
+  // only a 2xx means the durable row exists. `getAppForUser` supplies the same
+  // visibility, suspension and viewer-block guard as the app detail request.
+  router.post('/api/apps/:slug/openings', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+    let opening;
+    try {
+      opening = appOpenings.parseOpening(req.body);
+    } catch (err) {
+      if (err instanceof appOpenings.OpeningValidationError) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+
+    try {
+      const appRow = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!appRow) return res.status(404).json({ error: 'App not found' });
+
+      const result = await appOpenings.record(pool, {
+        userId: req.user.id,
+        appId: appRow.id,
+        opening,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({ ok: true, ...result });
+    } catch (err) {
+      log.error('apps', 'Failed to record app opening', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
     }
   });
 

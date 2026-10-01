@@ -87,6 +87,11 @@ const PATH_EXEMPTIONS = [
 // response would be both misleading and unsafe.
 const REVIEWED_ROUTE_EXEMPTIONS = [
   {
+    matches: (route) => route.source === 'src/routes/apps.js'
+      && route.method === 'POST' && route.path === '/api/apps/:slug/openings',
+    reason: 'browser navigation telemetry, emitted by the Classic shell rather than an interactive control',
+  },
+  {
     matches: (route) => route.source === 'src/routes/sessions.js' && route.method === 'POST'
       && ['/api/sessions/:id/fork', '/api/sessions/:id/clone-headless'].includes(route.path),
     reason: 'retired with classic dev sessions (#2779): a fork answers 410, and cloning a run is left to the hosted connector',
