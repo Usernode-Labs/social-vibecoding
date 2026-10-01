@@ -2462,9 +2462,21 @@ test('the work order presents every submit shape, in order of preference', async
   assert.match(order, /insufficient_scope/);
   assert.match(order, /github_not_linked/);
   assert.match(order, /IF THE USERNODE TOOLS ARE NOT AVAILABLE/);
-  // The push comes before the submit, and the patch after both.
-  assert.ok(order.indexOf('git push -u origin HEAD') < order.indexOf('SUBMIT IT YOURSELF'));
-  assert.ok(order.indexOf('SUBMIT IT YOURSELF') < order.indexOf('git format-patch'));
+  // #2460: the patch comes first — it needs no fork and no push — and the
+  // branch push is the fallback, both before the submit that names them.
+  const patchAt = order.indexOf('git format-patch');
+  const pushAt = order.indexOf('git push -u origin HEAD');
+  assert.ok(patchAt > 0 && pushAt > 0);
+  assert.ok(patchAt < pushAt, 'the patch step precedes the push step');
+  assert.ok(pushAt < order.indexOf('SUBMIT IT YOURSELF'));
+  assert.match(order, /1\. COMMIT, THEN MAKE A PATCH/);
+  assert.match(order, /the patch text from step 1 as `patch`/);
+  assert.match(order, /Patches over about 250 KB are refused/);
+  assert.match(order, /4\. IF THE PATCH IS REFUSED as too large, push a branch/);
+  // The exact identifiers the fallback needs are all still printed.
+  assert.match(order, /Homeroom task id:\s+31/);
+  assert.match(order, /with taskId 31 and the patch text/);
+  assert.match(order, /Suggested branch name: +usernode\/recipe-box-issue-4-abc123/);
   // The connector reaches Homeroom even though the sandbox cannot.
   assert.match(order, /connector traffic goes out through Claude's own infrastructure/);
 });
@@ -2484,11 +2496,11 @@ test('the work order tells an agent with no Homeroom tools what that means and h
   // And under WHEN YOU ARE DONE.
   assert.match(assistant, /6\. IF THE USERNODE TOOLS ARE NOT AVAILABLE to you at all, the Homeroom\n {3}connector was never added to the Claude or ChatGPT account this session\n {3}runs in/);
   assert.match(assistant, /a second account does not inherit the\n {3}first one's/);
-  assert.match(assistant, /Push the branch anyway; the work is not lost/);
+  assert.match(assistant, /The work is not lost/);
   assert.match(assistant, /retry `submit_work` as in step 2/);
   // Started by a chat assistant: hand it back, patch included.
-  assert.match(assistant, /Otherwise hand it back: print the branch name you pushed/);
-  assert.match(assistant, /save the patch from step 4 to a `\.patch` file/);
+  assert.match(assistant, /Otherwise hand it back: save the patch from step 1 to a `\.patch` file/);
+  assert.match(assistant, /or print the branch name, if you pushed one/);
   assert.match(assistant, /If they started from the Homeroom tab instead/);
   assert.doesNotMatch(assistant, /Otherwise finish from Homeroom/);
   // The URL appears in both places.
@@ -2496,7 +2508,7 @@ test('the work order tells an agent with no Homeroom tools what that means and h
 
   // Started from the browser walkthrough: that tab's Submit button finishes.
   const walkthrough = fullOrder({ startedFromWalkthrough: true });
-  assert.match(walkthrough, /Otherwise finish from Homeroom: the walkthrough that produced this\n {3}work order checks for the pushed branch/);
+  assert.match(walkthrough, /Otherwise finish from Homeroom: push the branch as in step 1\. The\n {3}walkthrough that produced this work order checks for the pushed branch/);
   assert.match(walkthrough, /its Submit button opens the proposal/);
   assert.doesNotMatch(walkthrough, /Otherwise hand it back/);
 
