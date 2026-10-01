@@ -452,6 +452,73 @@ test('mutual friends against the full PostgreSQL schema', { timeout: 180000 }, a
     }
   });
 
+  await t.test('a friend request either way opens an unpublished profile as a limited card (#3554)', async () => {
+    const session = async (u) => {
+      const token = crypto.randomBytes(24).toString('hex');
+      await pool.query(
+        `INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 day')`,
+        [token, u.id]
+      );
+      return token;
+    };
+    // `sender` never published, and has a name and bio the card must not leak.
+    const sender = await user('sender');
+    await pool.query(
+      `UPDATE users SET profile_published = FALSE, display_name = 'Private Name', bio = 'Private bio'
+        WHERE id = $1`,
+      [sender.id]
+    );
+    const recipient = await user('recipient');
+    const stranger = await user('stranger');
+    const [senderToken, recipientToken, strangerToken] = await Promise.all(
+      [sender, recipient, stranger].map(session)
+    );
+    await friends.sendRequest(pool, sender, recipient.id);
+    const app = express();
+    app.use(cookieParser());
+    app.use(require('../src/routes/profiles').publicProfileRoutes(config));
+    const { server, base } = await listen(app);
+    const read = async (who, cookie) => {
+      const res = await fetch(`${base}/api/public/profiles/${who.username}`, {
+        headers: cookie ? { Cookie: `session=${cookie}` } : {},
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    try {
+      // The person asked sees who is asking, with Accept/Decline.
+      const incoming = await read(sender, recipientToken);
+      assert.equal(incoming.status, 200);
+      assert.equal(incoming.body.profile.username, sender.username);
+      assert.equal(incoming.body.profile.limited, true);
+      assert.equal(incoming.body.profile.displayName, null, 'the unpublished name stays private');
+      assert.equal(incoming.body.profile.bio, null, 'the unpublished bio stays private');
+      assert.deepEqual(incoming.body.profile.links, { github: null, x: null });
+      assert.deepEqual(incoming.body.friendship, { userId: sender.id, state: 'incoming' });
+
+      // The sender reaches the (also unpublished) recipient from Sent requests.
+      const outgoing = await read(recipient, senderToken);
+      assert.equal(outgoing.status, 200);
+      assert.deepEqual(outgoing.body.friendship, { userId: recipient.id, state: 'outgoing' });
+
+      // Nobody else learns the account exists.
+      const hidden = { status: 404, body: { error: 'Profile not found' } };
+      assert.deepEqual(await read(sender, null), hidden, 'anonymous');
+      assert.deepEqual(await read(sender, strangerToken), hidden, 'no relationship');
+
+      // A friend keeps the same limited view.
+      await friends.accept(pool, recipient, sender.id);
+      const friend = await read(sender, recipientToken);
+      assert.equal(friend.status, 200);
+      assert.equal(friend.body.friendship.state, 'friends');
+
+      // Moderation still wins over any relationship.
+      await pool.query('UPDATE users SET profile_disabled_at = NOW() WHERE id = $1', [sender.id]);
+      assert.deepEqual(await read(sender, recipientToken), hidden, 'a disabled profile stays down');
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   await t.test('concurrent requests across the pair become one friendship', async () => {
     const a = await user(); const b = await user();
     const [one, two] = await Promise.all([
