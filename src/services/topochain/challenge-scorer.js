@@ -128,7 +128,8 @@ const CREDITED_SQL = `
 // counts that whole day. Weekly windows open at midnight, so this is exact
 // for the case it is used in, and generous by at most a day otherwise.
 
-// Apps the person did not make, with at least half a minute in them.
+// Apps the person did not make, with at least TRY_APPS_MIN_SECONDS (10, since
+// #3570) in them.
 const TRY_APPS_SQL = `
   SELECT aa.user_id, aa.app_id, a.name AS app_name,
          MAX(aa.date) AS last_date, SUM(aa.seconds_spent) AS seconds
@@ -291,6 +292,42 @@ const INVITES_JOINED_SQL = `
    LIMIT $3
 `;
 
+// Somebody's earliest vote inside the window, on a proposal (pr_votes) or a
+// request (issue_votes) that is not their own (#3569; why not, in
+// ./challenge-rules.js VOTE_CAST). One row a person: it is a single
+// completion, and DISTINCT ON keeps the rest of their votes out of the
+// candidate limit.
+//
+// `created_at` on both tables is when the vote was LAST cast — a re-cast or
+// a flip rewrites it — so "inside the window" reads "cast, or cast again,
+// inside the window". That is the right reading for an action: a vote from
+// last season re-cast this week is a vote this week.
+const VOTE_CAST_SQL = `
+  SELECT DISTINCT ON (v.user_id) v.user_id, v.kind, v.ref_id, v.created_at, a.name AS app_name
+    FROM (
+      SELECT pv.user_id, 'pr' AS kind, pv.session_id AS ref_id, pv.created_at, cs.app_id
+        FROM pr_votes pv
+        JOIN chat_sessions cs ON cs.id = pv.session_id
+       WHERE pv.created_at >= $1 AND pv.created_at <= $2
+         AND cs.user_id IS DISTINCT FROM pv.user_id
+      UNION ALL
+      SELECT iv.user_id, 'issue' AS kind, iv.issue_id AS ref_id, iv.created_at, i.app_id
+        FROM issue_votes iv
+        JOIN issues i ON i.id = iv.issue_id
+       WHERE iv.created_at >= $1 AND iv.created_at <= $2
+         AND i.created_by IS DISTINCT FROM iv.user_id
+    ) v
+    LEFT JOIN apps a ON a.id = v.app_id
+   WHERE v.user_id IS NOT NULL
+   ORDER BY v.user_id ASC, v.created_at ASC, v.kind ASC, v.ref_id ASC
+   LIMIT $3
+`;
+
+// FEEDBACK_SENT reads exactly the reports USEFUL_FEEDBACK reads — sent inside
+// the window, and reached GitHub — so it runs that same statement rather than
+// a copy of it. What differs is what the plan does with them: one credit,
+// ungraded (#3568).
+
 // The query each measure runs, by measure. loadCandidates below names the
 // constants directly — that is what keeps them statically checkable
 // (scripts/check-sql.js) — and this map is for the one reader that needs them
@@ -308,6 +345,8 @@ const MEASURE_SQL = Object.freeze({
   COMMUNITY_JOINED: COMMUNITY_JOINED_SQL,
   COMMUNITY_APP_CREATED: COMMUNITY_APP_CREATED_SQL,
   INVITES_JOINED: INVITES_JOINED_SQL,
+  VOTE_CAST: VOTE_CAST_SQL,
+  FEEDBACK_SENT: USEFUL_FEEDBACK_SQL,
 });
 
 const isoOf = (v) => (v instanceof Date ? v.toISOString() : (v == null ? null : String(v)));
@@ -431,6 +470,27 @@ async function loadCandidates(pool, measure, window, { target }) {
         sourceKey: `invitee:${r.invitee_id}`,
         activityAt: isoOf(r.at),
         description: r.invitee_username ? `@${r.invitee_username} joined by your invite` : 'Somebody joined by your invite',
+      }));
+    }
+    case 'VOTE_CAST': {
+      const { rows } = await pool.query(VOTE_CAST_SQL, [startIso, endIso, CANDIDATE_LIMIT]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        // Names the proposal or request the paid vote was on.
+        sourceKey: `vote:${r.kind}:${r.ref_id}`,
+        activityAt: isoOf(r.created_at),
+        description: r.app_name ? `Voted on a change to ${r.app_name}` : 'Voted on a change',
+      }));
+    }
+    case 'FEEDBACK_SENT': {
+      const { rows } = await pool.query(USEFUL_FEEDBACK_SQL, [startIso, endIso, CANDIDATE_LIMIT]);
+      return rows.map((r) => ({
+        userId: r.user_id,
+        sourceKey: `feedback:${r.id}`,
+        activityAt: isoOf(r.created_at),
+        description: r.app_name ? `Sent feedback on ${r.app_name}` : 'Sent feedback on Homeroom',
+        // Not graded: the text is here for the junk filter alone.
+        gradeInput: { appName: r.app_name, title: r.title, text: r.description },
       }));
     }
     default:
@@ -564,7 +624,13 @@ async function scoreChallenge(pool, row, rule, run) {
   //     the same sentence sent again after the next tick earned a second
   //     credit. Walking the credited units as well puts their text in the
   //     bag first; the plan drops them afterwards by source key, as before.
-  if (MEASURES[rule.measure].graded) {
+  //
+  // Keyed on `screened`, not `graded` (#3568): FEEDBACK_SENT is never graded
+  // but is filtered all the same, so "Suggest an improvement" is not done by
+  // a report that says "test". PROPOSAL_ACCEPTED is graded and not screened
+  // — an accepted proposal passed a group vote — which the filter already
+  // answered by passing everything.
+  if (MEASURES[rule.measure].screened) {
     const seen = new Map();
     candidates = candidates.filter((candidate) => {
       const bag = seen.get(candidate.userId) || new Set();
@@ -928,7 +994,7 @@ async function tick(pool, config, { now = Date.now() } = {}) {
   }
 }
 
-// ── On the moment somebody joins (#3564) ───────────────────────────────
+// ── On the moment it happens (#3564, #3568, #3569, #3570) ──────────────
 //
 // "Find people to build with" is COMMUNITY_JOINED, a STATE measure, and the
 // schedule finds a state on that rule's next pass: up to ten minutes after
@@ -957,35 +1023,144 @@ async function tick(pool, config, { now = Date.now() } = {}) {
 // that forgets to. Nothing here is required for correctness, only for
 // speed.
 //
-// Outside the tick's advisory lock, on purpose and safely: both measures
-// are single completions under a fixed source key, so a pass racing a tick
-// (or another join) collides on `user_activities_completion_unique` and the
-// loser's insert does nothing. That is also why INVITES_JOINED is NOT run
-// here: it is counted, its "three and no more" cap is enforced by the plan,
-// and two plans at once could each pay a different third person. It waits
-// for the schedule, which plans under the lock.
+// The same gap, at the other First challenges. "Suggested an improvement,
+// but the challenge still says not started" (#3568) was the report, about
+// steps whose whole point is to get a newcomer to the rest of the season
+// quickly (#3569). So the join's pass became one instance of
+// scoreOn(pool, config, measures), and each action calls it at its own door
+// with the measures that action can complete:
 //
-// A no-op when the deployment has switched automatic scoring off (interval
-// 0) — "off" means the admin's Run now is the only thing that scores — and
-// when no enabled rule uses either measure. Never throws: a join that worked
-// must not answer 500 because a challenge could not be counted, and the
-// schedule will count it anyway.
+//   a join              COMMUNITY_JOINED, COMMUNITY_APP_CREATED  scoreOnJoin
+//   a vote              VOTE_CAST       routes/votes.js, routes/issues.js
+//   a report            FEEDBACK_SENT   routes/feedback.js
+//   an app's heartbeat  TRY_APPS, on the crossing only (scoreOnAppTime)
+//
+// The same guarantees at every door. A no-op when the deployment has
+// switched automatic scoring off (interval 0) — "off" means the admin's Run
+// now is the only thing that scores — and when no enabled rule uses any of
+// the measures, which costs one small read. Never throws: an action that
+// worked must not answer 500 because a challenge could not be counted, and
+// the schedule will count it anyway. Never a model call: a graded measure is
+// dropped from the list, because nobody's tap should wait on one.
+//
+// Paying twice is impossible in one of two ways, by the kind of measure:
+//
+//   A SINGLE COMPLETION (every one of them but TRY_APPS) runs outside the
+//   tick's advisory lock, on purpose and safely: a pass racing a tick, or
+//   another action, collides on `user_activities_completion_unique` (one
+//   completion a person a challenge) and the loser's insert does nothing.
+//
+//   A COUNTED measure's cap is enforced by the plan, not by an index, and
+//   two plans at once could each pay a different "last unit" — the whole
+//   reward, twice. That is why INVITES_JOINED is not run on the spot at all,
+//   and why TRY_APPS (counted: "Try an app" is a count of one) is run only
+//   under the lock the tick plans under. Taken with pg_try_advisory_lock,
+//   not the waiting kind: when the tick, or another heartbeat's pass,
+//   already holds it, this pass is skipped and answers { busy: true }, and
+//   the crossing is counted on the rule's next pass — a few minutes late,
+//   never twice.
 const JOIN_MEASURES = Object.freeze(['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED']);
-const JOIN_RULES_SQL = `
-  SELECT id FROM challenge_scoring_rules
+const VOTE_MEASURES = Object.freeze(['VOTE_CAST']);
+const FEEDBACK_MEASURES = Object.freeze(['FEEDBACK_SENT']);
+const APP_TIME_MEASURES = Object.freeze(['TRY_APPS']);
+// Every door and what it runs, as data for the one reader that needs the
+// whole map: the admin's "How it scores" panel (./challenge-anatomy.js),
+// which tells an operator choosing a rule's interval that it is the backstop.
+const ON_THE_SPOT = Object.freeze({
+  join: JOIN_MEASURES,
+  vote: VOTE_MEASURES,
+  feedback: FEEDBACK_MEASURES,
+  appTime: APP_TIME_MEASURES,
+});
+const ON_THE_SPOT_RULES_SQL = `
+  SELECT id, measure FROM challenge_scoring_rules
    WHERE enabled = TRUE AND measure = ANY($1::text[])
 `;
 
-async function scoreOnJoin(pool, config, { now = Date.now() } = {}) {
+async function scoreOn(pool, config, measures, { now = Date.now() } = {}) {
   if (!(intervalMinutes(config) > 0)) return null;
+  const wanted = [...new Set(measures || [])].filter((m) => MEASURES[m] && !MEASURES[m].graded);
+  if (!wanted.length) return null;
+  let client = null;
+  let locked = false;
   try {
-    const { rows } = await pool.query(JOIN_RULES_SQL, [JOIN_MEASURES]);
+    const { rows } = await pool.query(ON_THE_SPOT_RULES_SQL, [wanted]);
     if (!rows.length) return null;
+    if (rows.some((r) => MEASURES[r.measure] && MEASURES[r.measure].counted)) {
+      client = await pool.connect();
+      const lock = await client.query(
+        'SELECT pg_try_advisory_lock($1, $2) AS acquired', [CHALLENGE_SCORER_LOCK, 0]
+      );
+      if (lock.rows[0]?.acquired !== true) return { busy: true };
+      locked = true;
+    }
     return await score(pool, { now, only: new Set(rows.map((r) => Number(r.id))) });
   } catch (err) {
-    log.warn('challenge-scorer', 'Scoring a join failed; the schedule will count it', { err: err.message });
+    log.warn('challenge-scorer', 'Scoring on the spot failed; the schedule will count it', {
+      measures: wanted, err: err.message,
+    });
+    return null;
+  } finally {
+    if (client) {
+      if (locked) {
+        await client.query('SELECT pg_advisory_unlock($1, $2)', [CHALLENGE_SCORER_LOCK, 0]).catch(() => {});
+      }
+      client.release();
+    }
+  }
+}
+
+// The doors that need nothing but the call. Named, rather than each route
+// spelling out its measure list, so the lists live beside ON_THE_SPOT and a
+// test can hold every door to them.
+const scoreOnJoin = (pool, config, opts) => scoreOn(pool, config, JOIN_MEASURES, opts);
+const scoreOnVote = (pool, config, opts) => scoreOn(pool, config, VOTE_MEASURES, opts);
+const scoreOnFeedback = (pool, config, opts) => scoreOn(pool, config, FEEDBACK_MEASURES, opts);
+
+// ── The heartbeat's crossing (#3570) ───────────────────────────────────
+//
+// The app heartbeat (routes/apps.js, POST /api/apps/:slug/activity) reports
+// somebody's seconds in an app as they use it and when they leave it. A pass
+// on each would be a TRY_APPS read for every heartbeat on the platform, and
+// the only heartbeat that can change TRY_APPS is the one that takes that
+// person's time in that app across TRY_APPS_MIN_SECONDS. So:
+//
+//   1. an app they made never counts, so nothing is read for it;
+//   2. if today's row was already at the floor before this heartbeat, so was
+//      the total — no read, which is every heartbeat after a day's first;
+//   3. otherwise one indexed SUM of their time in that app, every day, and a
+//      pass only when this heartbeat took it from below the floor to at or
+//      past it: once in a person's life per app.
+//
+// Every day rather than the challenge's window, because the route knows no
+// window and there may be several. The two differ in one case only: time in
+// an app from before the window, topped up inside it. That crossing happened
+// before the window, so the pass it ran then found nothing, and the in-window
+// top-up is counted by the schedule, as everything was before this. Never
+// throws, like scoreOn.
+const APP_TIME_SQL = `
+  SELECT COALESCE(SUM(seconds_spent), 0)::bigint AS total
+    FROM app_activity
+   WHERE app_id = $1 AND user_id = $2
+`;
+
+async function scoreOnAppTime(pool, config, {
+  appId, ownerId = null, userId, seconds, daySeconds, now = Date.now(),
+} = {}) {
+  if (!(intervalMinutes(config) > 0)) return null;
+  if (appId == null || userId == null) return null;
+  if (ownerId != null && Number(ownerId) === Number(userId)) return null;
+  const added = Number(seconds);
+  if (!(Number(daySeconds) - added < TRY_APPS_MIN_SECONDS)) return null;
+  try {
+    const { rows } = await pool.query(APP_TIME_SQL, [appId, userId]);
+    const after = Number(rows[0] && rows[0].total) || 0;
+    if (!rules.crossedTryAppsFloor({ before: after - added, after })) return null;
+  } catch (err) {
+    log.warn('challenge-scorer', 'Reading app time failed; the schedule will count it', { err: err.message });
     return null;
   }
+  return scoreOn(pool, config, APP_TIME_MEASURES, { now });
 }
 
 function start(config) {
@@ -1029,7 +1204,11 @@ module.exports = {
   score,
   runOnce,
   tick,
+  scoreOn,
   scoreOnJoin,
+  scoreOnVote,
+  scoreOnFeedback,
+  scoreOnAppTime,
   start,
   stop,
   maybeAggregate,
@@ -1047,6 +1226,8 @@ module.exports = {
   CREDITED_SQL,
   MEASURE_SQL,
   JOIN_MEASURES,
-  JOIN_RULES_SQL,
+  ON_THE_SPOT,
+  ON_THE_SPOT_RULES_SQL,
+  APP_TIME_SQL,
   dateToIso,
 };

@@ -259,6 +259,9 @@ function challengeScoringAdminRoutes(config) {
             // rather than being retyped in the screen, so the sentence cannot
             // drift from the behaviour it describes.
             phrase: rules.MEASURES[key].phrase,
+            // The phrase for a target of one, where the plural would not
+            // read ("Try an app", #3570). Null where `phrase` already does.
+            phrase_one: rules.MEASURES[key].phraseOne || null,
             payout: rules.MEASURES[key].payout,
             target_unit: rules.MEASURES[key].targetUnit,
             needs_target: rules.MEASURES[key].needsTarget === true,

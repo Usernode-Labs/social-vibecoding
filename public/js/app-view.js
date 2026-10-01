@@ -20748,17 +20748,29 @@ const AppView = {
     return run;
   },
 
+  // #3570: the floor "Try an app" counts from — TRY_APPS_MIN_SECONDS in
+  // src/services/topochain/challenge-rules.js, held equal to this by
+  // tests/challenge-on-the-spot.test.js.
+  _TRY_APP_FLUSH_SECONDS: 10,
+
   // Activity tracking: counts seconds while the user is on the App tab
   startActivityTracking(slug) {
     AppView.activeSeconds = 0;
+    AppView.openedSeconds = 0;
     AppView.iframeFocused = false;
 
     AppView.activityInterval = setInterval(() => {
       if (App.currentTab === 'app' && document.visibilityState === 'visible') {
         AppView.activeSeconds++;
+        AppView.openedSeconds++;
 
-        // Flush every 30 seconds
-        if (AppView.activeSeconds >= 30) {
+        // Flush every 30 seconds, and once at the "Try an app" floor
+        // (#3570). The server scores the heartbeat that takes somebody's
+        // time in an app across that floor, so sending it there ticks the
+        // challenge while they are still in the app. Otherwise the crossing
+        // waited for the 30-second flush, or for the one sent as they leave,
+        // which races Home's own load and can draw the step as not done.
+        if (AppView.activeSeconds >= 30 || AppView.openedSeconds === AppView._TRY_APP_FLUSH_SECONDS) {
           AppView.flushActivity(slug);
         }
       }
