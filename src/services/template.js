@@ -422,6 +422,16 @@ floats"; "the \`posts\` table is append-only"; "avoid adding new
 dependencies"; etc.)_
 `,
     },
+    // "Replacing the template" and the starter page's hero (public/index.html
+    // below) say the same thing: where a new app's creator starts building.
+    // That was "tap Improve in the header" until #2718 retired the Improve
+    // pill; since #3573 it names what is there now, the Homeroom mark's menu
+    // and its "Start a new change" row (frontend/src/features/app-context/
+    // app-context-sheet.tsx). "Homeroom icon" is what the mark looks like (the
+    // platform's own copy calls its menu "the Homeroom menu", its
+    // aria-label), and one starter serves every new app, so it says "your
+    // app". Only new repositories get this: an existing app keeps the copy it
+    // was scaffolded with until its own agent rewrites the screen.
     {
       path: 'README.md',
       content: `# ${appName}
@@ -444,11 +454,11 @@ The scaffold is a small working demo that proves the plumbing works:
 
 ## Replacing the template
 
-Open the app on Homeroom, tap **Improve** in the header, and describe
-the app you want in plain English — the template will be replaced with
-your real app. You can also run Claude Code against this repo directly;
-start with \`CLAUDE.md\`, which carries the app-specific notes and
-points at the platform rules.
+Open the app on Homeroom, tap the Homeroom icon in the header, choose
+**Start a new change**, and describe the app you want in plain English.
+The template will be replaced with your real app. You can also run
+Claude Code against this repo directly; start with \`CLAUDE.md\`, which
+carries the app-specific notes and points at the platform rules.
 
 Once the real app exists, rewrite this README to describe it.
 `,
@@ -886,7 +896,7 @@ start().catch(err => { console.error(err); process.exit(1); });
       <span class="inline-block rounded-full bg-violet-600/20 text-violet-300 text-xs font-semibold uppercase tracking-wide px-3 py-1">Starter template</span>
       <h1 class="text-2xl font-bold">${escapeHtml(appName)}</h1>
       <p class="text-sm text-zinc-300 leading-relaxed">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-sm text-zinc-300 leading-relaxed">Tap <strong class="text-violet-300 font-semibold">Improve</strong> in the header, describe what you'd like in plain English, and it will be turned into your real app.</p>
+      <p class="text-sm text-zinc-300 leading-relaxed">Tap the <strong class="text-violet-300 font-semibold">Homeroom icon</strong> in the header and choose <strong class="text-violet-300 font-semibold">Start a new change</strong> to start building your app. Describe what you'd like in plain English, and it will be turned into your real app.</p>
     </section>
 
     <section>

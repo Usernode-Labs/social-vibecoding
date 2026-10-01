@@ -46,7 +46,11 @@ test('index.html carries the starter-notice sentinel block before the example ca
   // The template messaging lives inside the block…
   const block = html.slice(open, close);
   assert.match(block, /Starter template/, 'hero badge names the starter template');
-  assert.match(block, /Improve/, 'hero copy names the Improve button');
+  // #3573: it named the Improve pill, which #2718 retired. It names the
+  // Homeroom mark's menu and its row now, by the row's own label.
+  assert.match(block, /Tap the <strong[^>]*>Homeroom icon<\/strong> in the header and choose <strong[^>]*>Start a new change<\/strong> to start building your app\./,
+    'hero copy names the Homeroom icon and its Start a new change row');
+  assert.doesNotMatch(block, /Improve/, 'no Improve button to point at any more');
   assert.match(block, /What's already working/, 'explainer card inside the sentinel block');
   // #1418: the welcome copy is product-focused — it describes the outcome,
   // never the AI that produces it.
@@ -77,7 +81,11 @@ test('the scaffold ships a README that names the app and the template state', ()
   const readme = file(files(), 'README.md');
   assert.match(readme, /^# My App/m, 'README titled with the app name');
   assert.match(readme, /Starter template/, 'README states this is the starter template');
-  assert.match(readme, /Improve/, 'README says Improve is how to replace it');
+  // #3573: Start a new change in the Homeroom mark's menu, not the retired
+  // Improve pill (#2718).
+  assert.match(readme, /tap the Homeroom icon in the header, choose\n\*\*Start a new change\*\*, and describe the app you want/,
+    'README says Start a new change is how to replace it');
+  assert.doesNotMatch(readme, /Improve/);
   assert.match(readme, /rewrite this README/i,
     'README instructs its own rewrite once the real app exists');
   // #1418: the product promise never names Claude as the actor. "Claude Code"
@@ -85,6 +93,21 @@ test('the scaffold ships a README that names the app and the template state', ()
   // mentions, so a bare "Claude" not followed by " Code" is a regression.
   assert.ok(!/Claude(?! Code)/.test(readme),
     'README mentions Claude only as the "Claude Code" tool name');
+});
+
+// #3573: the starter page and README send a new app's creator to a control
+// by name, so the names are the platform's own. If the row or the mark is
+// renamed, the template's copy has to follow it (new repos only; existing
+// apps keep the copy they were scaffolded with).
+test('the starter copy names the row the Homeroom mark\'s menu really has', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
+  assert.match(sheet, /id="improve-row-new-session"[\s\S]{0,400}label="Start a new change"/,
+    'the menu row is still called Start a new change');
+  assert.match(read('frontend/src/features/header/platform-mark.tsx'), /aria-label="Homeroom menu"/,
+    'the header control is still the Homeroom mark');
 });
 
 test('CLAUDE.md instructs the agent to remove the template wholesale', () => {
