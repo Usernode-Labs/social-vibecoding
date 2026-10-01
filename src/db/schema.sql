@@ -10517,13 +10517,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS communities_onboarded_at TIMESTAMPTZ;
 -- The card's close button. Server state, like the join screen's answer, so
 -- a card closed on the phone is closed on the laptop too.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_closed_at TIMESTAMPTZ;
--- The two places the card sent people that leave no row behind of their
--- own (a visit to the Workshop, a visit to Discover), as
--- { "workshop": "<iso>", "discover": "<iso>" }. Nothing writes or reads it
--- since the card's steps became the season's First challenges (2026-10-01),
--- each of which ticks from a credit; only Reset first run still clears it.
--- Kept rather than dropped: this file is replayed on every boot, and a DROP
--- is the one statement here that cannot be taken back.
+-- Visits the card asks for that leave no row behind of their own. The old
+-- card wrote { "workshop": "<iso>", "discover": "<iso>" } on any visit; since
+-- its steps became the season's First challenges (2026-10-01) nothing reads
+-- those two keys. One key is read: "vote_workshop", the last time the Vote
+-- step's Workshop opened while NOTHING was up for a vote in any community
+-- the account is in (services/onboarding.js markWorkshopVisit), which the
+-- scorer's VOTE_CAST counts like a vote. A new key rather than "workshop",
+-- because those old visits were recorded whether or not a vote was waiting.
+-- Reset first run clears the whole column. Kept rather than dropped: this
+-- file is replayed on every boot, and a DROP is the one statement here that
+-- cannot be taken back.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- When this account finished (or skipped) the welcome tour
 -- (frontend/src/features/home/tour). Server state for the same reason as the

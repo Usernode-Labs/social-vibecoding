@@ -12831,9 +12831,12 @@ async function seedStagingTopochain(pool, config) {
 // fabricate a signal your logic reads"): no credits, for anybody, and no
 // scoring rules, so nothing scores a cloned account on them behind its back.
 // A reviewer who signs up in the preview ticks them by doing them, or an
-// admin credits them from the console. Without a rule a row goes where its
-// call-to-action says (onboarding.js stepAction), so the first three carry
-// one; the fourth has none and opens its own page on the Challenges tab.
+// admin credits them from the console. Without a rule a row's button is its
+// own call-to-action (onboarding.js stepAction, `other`), so the first three
+// carry one; the fourth has none and opens its own page on the Challenges
+// tab. The buttons that know their step (Join, Try with the app's icon, Vote
+// or Look, Suggest) need the rule an admin binds, in staging as in
+// production; the card's ?shot= fixtures draw them without one.
 //
 // Its own function rather than a block in seedStagingTopochain, whose seeded
 // template and challenge counts its test pins; its own failure domain too, so
@@ -12855,7 +12858,7 @@ async function seedStagingFirstChallenges(pool) {
          (900509, 'ONBOARDING', 'Try an app (staging demo)',
           'Open an app somebody else made and try it.', '500 pts',
           'First challenge fixture (Getting started).', 'Find an app', '#apps', NOW(), NOW()),
-         (900510, 'ONBOARDING', 'Vote on a change (staging demo)',
+         (900510, 'ONBOARDING', 'Vote on an app (staging demo)',
           'Vote on a change somebody proposed.', '250 pts',
           'First challenge fixture (Getting started).', 'See what needs you', '#communities', NOW(), NOW()),
          (900511, 'ONBOARDING', 'Suggest an improvement (staging demo)',

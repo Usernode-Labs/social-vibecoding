@@ -154,9 +154,10 @@ async function recordUnlocked(pool, userId) {
 // is a one-time introduction, not something to repeat at a season boundary.
 //
 // The same read carries what the Getting started card draws for each step
-// (the challenge's own text over its template's, the points the viewer has
-// been paid on it, and the measure of the scoring rule bound to it, which is
-// how the card knows where a step's action is) and the viewer's gate facts,
+// (the challenge's own text over its template's, its call-to-action, the
+// points the viewer has been paid on it, and the measure of the scoring rule
+// bound to it, which is how the card knows what a step's button does) and
+// the viewer's gate facts,
 // so the card, the gate and every list are one query and one answer.
 async function loadOnboarding(pool, userId, { seasonId, eventId } = {}) {
   const scope = seasonId != null ? 'se.season_id = $2'
@@ -172,6 +173,7 @@ async function loadOnboarding(pool, userId, { seasonId, eventId } = {}) {
             COALESCE(c.task, ct.task) AS task,
             COALESCE(c.reward, ct.reward) AS reward,
             COALESCE(c.cta_link, ct.cta_link) AS cta_link,
+            COALESCE(c.cta_label, ct.cta_label) AS cta_label,
             credit.activity_count, credit.earned_points,
             EXISTS (SELECT 1 FROM user_activities ua
                JOIN challenges credited ON credited.id = ua.challenge_id

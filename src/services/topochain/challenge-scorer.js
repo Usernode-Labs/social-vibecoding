@@ -302,6 +302,17 @@ const INVITES_JOINED_SQL = `
 // a flip rewrites it — so "inside the window" reads "cast, or cast again,
 // inside the window". That is the right reading for an action: a vote from
 // last season re-cast this week is a vote this week.
+//
+// OR A LOOK AT THE WORKSHOP WHEN NOTHING WAS UP FOR A VOTE (evan,
+// 2026-10-01). A newcomer whose communities have nothing waiting cannot do
+// "Vote on an app" by voting, so the Getting started card sends them to the
+// Workshop instead, and the server records that visit only when nothing was
+// waiting for their vote (services/onboarding.js markWorkshopVisit, as
+// `users.getting_started_seen.vote_workshop`, the last such visit). It is the
+// third kind of row here, keyed `vote:workshop:<user id>`, with the same
+// window and the same one credit a person: whichever came first inside the
+// window, the vote or the look, is the credit. The CASE guards the cast, so
+// a value that is not a timestamp is no row rather than a failed pass.
 const VOTE_CAST_SQL = `
   SELECT DISTINCT ON (v.user_id) v.user_id, v.kind, v.ref_id, v.created_at, a.name AS app_name
     FROM (
@@ -316,6 +327,16 @@ const VOTE_CAST_SQL = `
         JOIN issues i ON i.id = iv.issue_id
        WHERE iv.created_at >= $1 AND iv.created_at <= $2
          AND i.created_by IS DISTINCT FROM iv.user_id
+      UNION ALL
+      SELECT w.user_id, 'workshop' AS kind, w.user_id AS ref_id, w.created_at, NULL AS app_id
+        FROM (
+          SELECT u.id AS user_id,
+                 CASE WHEN (u.getting_started_seen->>'vote_workshop') ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ]'
+                      THEN (u.getting_started_seen->>'vote_workshop')::timestamptz END AS created_at
+            FROM users u
+           WHERE (u.getting_started_seen->>'vote_workshop') IS NOT NULL
+        ) w
+       WHERE w.created_at >= $1 AND w.created_at <= $2
     ) v
     LEFT JOIN apps a ON a.id = v.app_id
    WHERE v.user_id IS NOT NULL
@@ -476,10 +497,13 @@ async function loadCandidates(pool, measure, window, { target }) {
       const { rows } = await pool.query(VOTE_CAST_SQL, [startIso, endIso, CANDIDATE_LIMIT]);
       return rows.map((r) => ({
         userId: r.user_id,
-        // Names the proposal or request the paid vote was on.
+        // Names the proposal or request the paid vote was on, or the
+        // person whose Workshop visit stood in for one.
         sourceKey: `vote:${r.kind}:${r.ref_id}`,
         activityAt: isoOf(r.created_at),
-        description: r.app_name ? `Voted on a change to ${r.app_name}` : 'Voted on a change',
+        description: r.kind === 'workshop'
+          ? 'Looked at the Workshop when nothing was up for a vote'
+          : (r.app_name ? `Voted on a change to ${r.app_name}` : 'Voted on a change'),
       }));
     }
     case 'FEEDBACK_SENT': {
@@ -1031,7 +1055,9 @@ async function tick(pool, config, { now = Date.now() } = {}) {
 // with the measures that action can complete:
 //
 //   a join              COMMUNITY_JOINED, COMMUNITY_APP_CREATED  scoreOnJoin
-//   a vote              VOTE_CAST       routes/votes.js, routes/issues.js
+//   a vote              VOTE_CAST       routes/votes.js, routes/issues.js,
+//                                       and the Vote step's Workshop visit
+//                                       (routes/onboarding.js)
 //   a report            FEEDBACK_SENT   routes/feedback.js
 //   an app's heartbeat  TRY_APPS, on the crossing only (scoreOnAppTime)
 //

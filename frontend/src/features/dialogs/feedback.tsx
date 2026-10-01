@@ -46,6 +46,11 @@ interface OpenOptions {
    * an issue" row passes 'issue'; everything else is feedback.
    */
   intent?: 'issue' | 'feedback';
+  /**
+   * 'app': open with "This app" chosen, when it can be. For a caller whose
+   * own button named the open app (Getting started's Suggest).
+   */
+  target?: 'app';
   firstFeedback?: { userId: number; appSlug: string | null; issueNumber: number; canFix: boolean };
 }
 

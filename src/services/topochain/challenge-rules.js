@@ -258,10 +258,18 @@ const MEASURES = {
   // change: an author voting Yes on what they just put up has not done that.
   // It also keeps the demo partner (which votes on its own demo proposal)
   // out of the measure without a special case.
+  //
+  // OR A LOOK AT THE WORKSHOP WHEN NOTHING WAS UP FOR A VOTE (evan,
+  // 2026-10-01): a newcomer whose communities have nothing waiting cannot
+  // vote, so the Getting started card's Vote step sends them to the Workshop
+  // instead, and the server records that visit only when nothing was waiting
+  // (services/onboarding.js markWorkshopVisit). It counts like a vote, the
+  // same window and the same one credit, so the First challenge needs no
+  // second rule; a visit while a vote was waiting is never recorded.
   VOTE_CAST: {
-    label: 'Voted on a change',
-    phrase: 'votes on somebody else\'s change',
-    summary: 'Voted on a proposal or a request inside the window. Votes on their own proposals and requests do not count. One is enough, so this needs no target.',
+    label: 'Voted on a change, or looked at the Workshop when nothing was up for a vote',
+    phrase: 'votes on somebody else\'s change, or looks at the Workshop when nothing is up for a vote',
+    summary: 'Voted on a proposal or a request inside the window, or, when nothing was up for a vote in any community they are in, opened a Workshop from the Getting started card. Votes on their own proposals and requests do not count, and neither does a look while a vote was waiting. One is enough, so this needs no target.',
     unit: 'vote',
     targetUnit: null,
     counted: false,

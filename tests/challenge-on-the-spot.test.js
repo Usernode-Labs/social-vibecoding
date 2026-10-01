@@ -119,6 +119,7 @@ test('a vote credit names what was voted on, and is dated when it was cast', asy
       return { rows: [
         { user_id: 7, kind: 'pr', ref_id: 31, created_at: new Date(NOW - HOUR), app_name: 'Recipes' },
         { user_id: 8, kind: 'issue', ref_id: 4, created_at: new Date(NOW - 2 * HOUR), app_name: null },
+        { user_id: 9, kind: 'workshop', ref_id: 9, created_at: new Date(NOW - 3 * HOUR), app_name: null },
       ] };
     },
   };
@@ -127,8 +128,29 @@ test('a vote credit names what was voted on, and is dated when it was cast', asy
   assert.deepEqual(out.map((c) => [c.userId, c.sourceKey, c.description]), [
     [7, 'vote:pr:31', 'Voted on a change to Recipes'],
     [8, 'vote:issue:4', 'Voted on a change'],
+    [9, 'vote:workshop:9', 'Looked at the Workshop when nothing was up for a vote'],
   ]);
   assert.equal(out[0].activityAt, iso(NOW - HOUR));
+});
+
+// evan, 2026-10-01: with nothing up for a vote in any community a newcomer is
+// in, the Getting started card's Vote step is a look at the Workshop, which
+// the server records only then. VOTE_CAST counts that look as it counts a
+// vote: the same window, one credit a person, whichever came first.
+test('a look at the Workshop when nothing was up for a vote counts for VOTE_CAST, and the admin is told so', () => {
+  const sql = flat(scorer.MEASURE_SQL.VOTE_CAST);
+  assert.match(sql, /SELECT w\.user_id, 'workshop' AS kind, w\.user_id AS ref_id, w\.created_at, NULL AS app_id/);
+  assert.match(sql, /CASE WHEN \(u\.getting_started_seen->>'vote_workshop'\) ~ '\^\[0-9\]\{4\}-\[0-9\]\{2\}-\[0-9\]\{2\}\[T \]' THEN \(u\.getting_started_seen->>'vote_workshop'\)::timestamptz END AS created_at/,
+    'a value that is not a timestamp is no row, not a failed pass');
+  assert.match(sql, /WHERE w\.created_at >= \$1 AND w\.created_at <= \$2/, 'the same window as a vote');
+  assert.doesNotMatch(sql, /'workshop'\)|->>'workshop'/, 'never the retired card\'s "workshop" key');
+  const spec = rules.MEASURES.VOTE_CAST;
+  assert.equal(spec.label, 'Voted on a change, or looked at the Workshop when nothing was up for a vote');
+  assert.match(spec.phrase, /or looks at the Workshop when nothing is up for a vote$/);
+  assert.match(spec.summary, /neither does a look while a vote was waiting/);
+  const shown = anatomy('VOTE_CAST', { points: 250, target: null });
+  assert.match(shown.steps[0].text, /their look at the Workshop when nothing was up for a vote/);
+  assert.ok(shown.steps[0].tables.includes('users'));
 });
 
 test('"Suggest an improvement": junk first, then a real report, is one credit of the whole reward and no model call', async () => {

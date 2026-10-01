@@ -6672,6 +6672,21 @@
       "classicPath": "#apps"
     },
     {
+      "source": "src/routes/onboarding.js",
+      "method": "POST",
+      "path": "/api/me/getting-started/workshop-visit",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "apps.post.me.getting.started.workshop.visit.7e66ce62",
+      "domain": "apps",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "app",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#apps"
+    },
+    {
       "source": "src/routes/platform-about.js",
       "method": "GET",
       "path": "/api/platform/about",

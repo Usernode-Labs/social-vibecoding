@@ -12,14 +12,46 @@
  *   1. Take the 1-minute tour   the welcome tour (./tour), finished or
  *                               skipped on any device (#3240); pays nothing
  *   2.. the season's First challenges, in the admin's order, with their own
- *       titles, tasks and rewards (Join a community, Try an app, Vote on a
- *       change, Suggest an improvement, as evan sets them up). NOTHING HERE
+ *       titles, tasks and rewards (Join a community, Try an app, Vote on an
+ *       app, Suggest an improvement, as evan sets them up). NOTHING HERE
  *       NAMES THEM: the server sends whatever the season holds
  *       (GET /api/me/getting-started, src/services/onboarding.js).
  *
  * Each step ticks from what the person DID, the moment its credit is
- * written; pressing a row only takes them to where the action is (the
- * server chooses where, from the scoring rule's measure), and never ticks it.
+ * written. Its button only takes them to where the action is, and never
+ * ticks it; the one exception is the Vote step's "Look", below.
+ *
+ * ── Every step not done has a button (evan, 2026-10-01) ────────────────
+ *
+ * A row is not pressable; its button is, at the row's trailing edge, and a
+ * done row has none. What the button does is the step's `action`, which the
+ * server reads off the scoring rule's measure (onboarding.js stepAction):
+ *
+ *   tour      ▶ Start        the tour, asked for the way Settings' Replay
+ *                            asks (./tour/tour-request.ts)
+ *   join      Join ›         Discover, where communities are joined
+ *   try       Try ›          the default app, opened
+ *   vote      Vote ›         a Needs you tab: the default app's when something
+ *                            waits there, else the first project joined that
+ *                            has something
+ *             Look ›         nothing waiting anywhere: the default app's
+ *                            Workshop, and opening it from here ticks the
+ *                            step (POST …/workshop-visit; the server checks
+ *                            that nothing waits)
+ *   suggest   Suggest ›      the "Ask for a change" dialog, for the default
+ *                            app (opened first, since the dialog's "This app"
+ *                            is the app that is open)
+ *   other     <its CTA> ›    the challenge's own call-to-action
+ *
+ * The DEFAULT APP is the app of the first community the person joined, not
+ * Homeroom and not one they made (onboarding.js defaultApp). The row's line
+ * names it ("Spend 10 seconds in City garden."); the button is a verb and an
+ * arrow, nothing else, and its accessible name is the whole sentence ("Try
+ * City garden"). Until they have joined one, Try, Vote and Suggest say "Join
+ * a community first." and carry no button. `stepView` keeps that long label
+ * beside the short one, so a full-width button under the step text (the
+ * prototype's other layout, which evan has not ruled out) is a change to the
+ * row alone.
  *
  * ── What it says ───────────────────────────────────────────────────────
  *
@@ -28,10 +60,12 @@
  *     step, then the rows.
  *   * A row: a round mark (empty; ringed in the accent for the NEXT step;
  *     a filled check once done, its title struck through), the title over
- *     its task (15 over 13), and on the right what it pays ("500 pts", in
- *     the reward amber the challenge cards use) or, once done, what it paid
- *     ("+500 pts", in their earned green). The first step not done is the
- *     next one, and sits on the lit tint (`--lit-tint`, where you are).
+ *     its line (15 over 13), and under them what it pays ("Earns 500 pts",
+ *     in the reward amber the challenge cards use) or, once done, what it
+ *     paid ("+500 pts earned", in their earned green); the tour's line says
+ *     it pays nothing and how it ticks. The first step not done is the next
+ *     one: it sits on the lit tint (`--lit-tint`, where you are) and its
+ *     button is the filled one; every other button is outlined.
  *   * The foot: what finishing unlocks, "Finish all 5 to unlock 6 more
  *     challenges", or "Two more steps unlock…" near the end. Nothing when the
  *     season hides nothing.
@@ -47,19 +81,6 @@
  * card turns done it asks that block to read again, so the season appears
  * under it at once rather than at the block's next refresh.
  *
- * ── The tour is a row, with its own button ─────────────────────────────
- *
- * The tour used to start by itself right after the join screen, which said
- * the same things a moment before (#3240). It is the card's first row now,
- * and the only way a newcomer meets it, so until it is done the row carries
- * a filled Start button rather than a reward: the one filled control on
- * Home, because nothing else will offer the tour again. The row itself is
- * not a button (a button cannot hold one). Once the tour is done the row is
- * an ordinary ticked row, and pressing it replays the tour. Either press asks
- * for the tour the way Settings' Replay does (./tour/tour-request.ts), and
- * the tour's own "done" landing on the account (`sv:tour-done`) reloads the
- * card, which ticks the row.
- *
  * ── The island rules ───────────────────────────────────────────────────
  *
  *   * THE FIRST RENDER IS THE PRERENDERED MARKUP: an empty section, hidden.
@@ -73,10 +94,12 @@
  *
  * `?shot=getting-started` draws a fixture card with no fetch, the way
  * ../auth/username-first-run.js's `?shot=choose-username` does, so the
- * declared check can see it: a newcomer who has just joined a community
- * (1 of 5). `?shot=getting-started-halfway` is three steps in, and
- * `?shot=getting-started-done` the all-set state. Every other `?shot=`,
- * `?demo=` and `?token=` route draws nothing.
+ * declared check can see it: a newcomer who has just joined City garden
+ * (1 of 5), the tour next. `?shot=getting-started-halfway` is three steps in,
+ * Vote next with a change waiting; `?shot=getting-started-look` the same with
+ * nothing up for a vote anywhere; `?shot=getting-started-done` the all-set
+ * state. A fixture's buttons post nothing. Every other `?shot=`, `?demo=` and
+ * `?token=` route draws nothing.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -84,26 +107,45 @@ import type { ReactNode } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { GroupedList, ListRow } from '@/components/ui/grouped-list';
-import { CheckIcon, LockIcon, PlayIcon, XIcon } from '@/components/ui/icons';
+import { CheckIcon, ChevronRightIcon, LockIcon, PlayIcon, XIcon } from '@/components/ui/icons';
 
 import { useHiddenClass } from '../../lib/legacy-dom';
 import { useVisibility } from '../../lib/visibility-store';
 import { TOUR_DONE_EVENT } from './tour/tour-done';
 import { requestTour } from './tour/tour-request';
 
+/** What a step's button does (onboarding.js stepAction). */
+export type StepAction = 'tour' | 'join' | 'try' | 'vote' | 'suggest' | 'other';
+
+/** An app a button opens and its row names. */
+export interface GettingStartedApp {
+  slug: string;
+  name: string;
+}
+
+/**
+ * Where the Vote step goes: a Needs you tab (`needs`, with `count` waiting in
+ * `app`), or, with nothing waiting anywhere, the default app's Workshop.
+ */
+export interface VoteTarget {
+  kind: 'needs' | 'workshop';
+  app: GettingStartedApp;
+  count: number;
+}
+
 export interface GettingStartedStep {
   /** 'tour', or `challenge-<id>`: unique in the list, and the row's key. */
   id: string;
   kind: 'tour' | 'challenge';
+  action: StepAction;
   title: string;
+  /** The challenge's own task: the row's line once done, and for steps not about an app. */
   detail: string;
   done: boolean;
-  /** A hash route to go to, or null when `slug` or `action` says where (or it is the tour). */
+  /** A hash route, for `join` and `other`. */
   href: string | null;
-  /** An app to open. */
-  slug?: string;
-  /** `feedback`: the "Ask for a change" dialog. */
-  action?: 'feedback';
+  /** `other`: the challenge's call-to-action label, when it has one. */
+  cta?: string | null;
   /** What the challenge pays, in the admin's words ("500 pts"); null for the tour. */
   reward: string | null;
   /** What it has paid this person. */
@@ -122,32 +164,39 @@ export interface GettingStartedModel {
   earned_points: number;
   /** The season's other open challenges, which finishing lets the person see. */
   unlocks: { count: number; names: string[] };
+  /** The default app: Try, Vote and Suggest are about it. Null until one is joined. */
+  app: GettingStartedApp | null;
+  /** Where Vote goes. Null without an app. */
+  vote: VoteTarget | null;
+  /** The seconds "Try an app" counts from (the scorer's floor). */
+  try_seconds: number;
 }
 
-const SHOT = 'getting-started';
-const SHOTS = ['getting-started', 'getting-started-halfway', 'getting-started-done'] as const;
+const SHOTS = ['getting-started', 'getting-started-halfway', 'getting-started-look', 'getting-started-done'] as const;
 type Shot = typeof SHOTS[number];
+
+const CITY_GARDEN: GettingStartedApp = { slug: 'city-garden', name: 'City garden' };
 
 // The fixtures' steps, in the order and words evan set the season up with.
 // Rewards are the admin's prose, as the server would send them.
 const FIXTURE_STEPS: Array<Omit<GettingStartedStep, 'done' | 'earned_points'>> = [
-  { id: 'tour', kind: 'tour', title: 'Take the 1-minute tour', detail: 'See how Homeroom works.', href: null, reward: null },
+  { id: 'tour', kind: 'tour', action: 'tour', title: 'Take the 1-minute tour', detail: 'See how Homeroom works.', href: null, reward: null },
   {
-    id: 'challenge-41', kind: 'challenge', challenge_id: 41, event_id: 7,
+    id: 'challenge-41', kind: 'challenge', action: 'join', challenge_id: 41, event_id: 7,
     title: 'Join a community', detail: 'Find people to build with.', href: '#apps', reward: '500 pts',
   },
   {
-    id: 'challenge-42', kind: 'challenge', challenge_id: 42, event_id: 7,
-    title: 'Try an app', detail: 'Open an app and try it.', href: null, slug: 'city-garden', reward: '500 pts',
+    id: 'challenge-42', kind: 'challenge', action: 'try', challenge_id: 42, event_id: 7,
+    title: 'Try an app', detail: 'Open an app and try it.', href: null, reward: '500 pts',
   },
   {
-    id: 'challenge-43', kind: 'challenge', challenge_id: 43, event_id: 7,
-    title: 'Vote on a change', detail: 'Help decide what ships next.', href: '#communities', reward: '250 pts',
+    id: 'challenge-43', kind: 'challenge', action: 'vote', challenge_id: 43, event_id: 7,
+    title: 'Vote on an app', detail: 'Help decide what ships next.', href: null, reward: '250 pts',
   },
   {
-    id: 'challenge-44', kind: 'challenge', challenge_id: 44, event_id: 7,
+    id: 'challenge-44', kind: 'challenge', action: 'suggest', challenge_id: 44, event_id: 7,
     title: 'Suggest an improvement', detail: 'Tell a community what would make it better.',
-    href: null, action: 'feedback', reward: '250 pts',
+    href: null, reward: '250 pts',
   },
 ];
 
@@ -159,7 +208,7 @@ const FIXTURE_UNLOCKS = {
   names: ['Make your first proposal', 'Get a change merged', 'Invite a friend', 'Start a community'],
 };
 
-function fixture(doneIds: string[]): GettingStartedModel {
+function fixture(doneIds: string[], vote: VoteTarget['kind'] = 'needs'): GettingStartedModel {
   const steps = FIXTURE_STEPS.map((s) => {
     const done = doneIds.includes(s.id);
     const pts = Number(String(s.reward || '').replace(/[^\d]/g, '')) || 0;
@@ -174,20 +223,24 @@ function fixture(doneIds: string[]): GettingStartedModel {
     total: steps.length,
     earned_points: steps.reduce((sum, s) => sum + s.earned_points, 0),
     unlocks: FIXTURE_UNLOCKS,
+    app: CITY_GARDEN,
+    vote: { kind: vote, app: CITY_GARDEN, count: vote === 'needs' ? 1 : 0 },
+    try_seconds: 10,
   };
 }
 
 /**
- * The three fixture states. `getting-started` is a newcomer who has just
- * come through the join screen: "Join a community" counted the moment they
- * joined, and the tour is next. The declared check reads it.
+ * The fixture states. `getting-started` is a newcomer who has just come
+ * through the join screen, into City garden: "Join a community" counted the
+ * moment they joined, and the tour is next. The declared check reads it.
  */
 export const SHOT_MODELS: Record<Shot, GettingStartedModel> = {
   'getting-started': fixture(['challenge-41']),
   'getting-started-halfway': fixture(['tour', 'challenge-41', 'challenge-42']),
+  'getting-started-look': fixture(['tour', 'challenge-41', 'challenge-42'], 'workshop'),
   'getting-started-done': fixture(FIXTURE_STEPS.map((s) => s.id)),
 };
-export const SHOT_MODEL = SHOT_MODELS[SHOT];
+export const SHOT_MODEL = SHOT_MODELS['getting-started'];
 
 function pts(n: number): string {
   return `${Math.round(n).toLocaleString('en-US')} pts`;
@@ -227,18 +280,118 @@ export function nextStepId(model: Pick<GettingStartedModel, 'steps'>): string | 
 }
 
 /**
- * The right side of a challenge row: what it paid once done ("+500 pts"),
- * else what it pays. A reward in the admin's prose is drawn as written; a bare
- * number gets " pts" (HomePanels.formatReward's rule, so a challenge's reward
- * reads the same here as on its card).
+ * The line under a step's words: what it pays ("Earns 500 pts", the reward
+ * amber), what it paid once done ("+500 pts earned", the earned green), or
+ * for the tour, that it pays nothing and how it ticks. A reward that is a
+ * number of points ("500", "500 pts") reads "Earns …"; prose the admin typed
+ * instead is drawn as written (HomePanels.formatReward's rule for the bare
+ * number, so a reward reads the same here as on its card).
  */
-export function rewardText(step: Pick<GettingStartedStep, 'kind' | 'done' | 'reward' | 'earned_points'>): { text: string; earned: boolean } | null {
-  if (step.kind !== 'challenge') return null;
+export function rewardText(step: Pick<GettingStartedStep, 'kind' | 'done' | 'reward' | 'earned_points'>):
+  { text: string; tone: 'reward' | 'earned' | 'quiet' } | null {
+  if (step.kind === 'tour') return { text: 'No points · ticks when you finish or skip it', tone: 'quiet' };
   const earned = Number(step.earned_points) || 0;
-  if (step.done) return earned > 0 ? { text: `+${pts(earned)}`, earned: true } : null;
+  if (step.done) return earned > 0 ? { text: `+${pts(earned)} earned`, tone: 'earned' } : null;
   const s = String(step.reward == null ? '' : step.reward).trim();
   if (!s) return null;
-  return { text: /^[\d][\d.,]*$/.test(s) ? `${s} pts` : s, earned: false };
+  if (/^[\d][\d.,]*$/.test(s)) return { text: `Earns ${s} pts`, tone: 'reward' };
+  if (/^[\d][\d.,]*\s*(pts?|points?)$/i.test(s)) return { text: `Earns ${s}`, tone: 'reward' };
+  return { text: s, tone: 'reward' };
+}
+
+/** Where a step's button goes. */
+export type StepGo =
+  | { to: 'tour' }
+  | { to: 'hash'; href: string }
+  | { to: 'app'; slug: string }
+  | { to: 'needs'; slug: string }
+  | { to: 'workshop'; slug: string }
+  | { to: 'feedback'; slug: string };
+
+export interface StepButtonView {
+  /** The compact label beside the step: a verb. */
+  short: string;
+  /** The whole sentence: the button's accessible name, and a full-width button's label. */
+  long: string;
+  /** The accessible name, when it is not `long` (the tour's). */
+  aria: string;
+  /** The app it opens, if it opens one. */
+  app: GettingStartedApp | null;
+  /** The trailing arrow: every button but the tour's play. */
+  arrow: boolean;
+  go: StepGo;
+}
+
+const plural = (n: number) => (n === 1 ? '1 change is' : `${n} changes are`);
+
+/**
+ * What a row says under its title and what its button is, given the
+ * person's default app and where Vote goes. A done row says its own task and
+ * has no button.
+ */
+export function stepView(step: GettingStartedStep, model: Pick<GettingStartedModel, 'app' | 'vote' | 'try_seconds'>):
+  { detail: string; button: StepButtonView | null } {
+  if (step.done) return { detail: step.detail, button: null };
+  const app = model.app;
+  switch (step.action) {
+    case 'tour':
+      return {
+        detail: step.detail,
+        button: { short: 'Start', long: 'Take the tour', aria: 'Start the tour', app: null, arrow: false, go: { to: 'tour' } },
+      };
+    case 'join':
+      return {
+        detail: step.detail,
+        button: {
+          short: 'Join', long: 'Find a community', aria: 'Find a community', app: null, arrow: true,
+          go: { to: 'hash', href: step.href || '#apps' },
+        },
+      };
+    case 'try':
+    case 'vote':
+    case 'suggest':
+      if (!app) return { detail: 'Join a community first.', button: null };
+      break;
+    default: {
+      const label = String(step.cta || '').trim() || 'Open';
+      return {
+        detail: step.detail,
+        button: step.href
+          ? { short: label, long: label, aria: label, app: null, arrow: true, go: { to: 'hash', href: step.href } }
+          : null,
+      };
+    }
+  }
+  if (step.action === 'try') {
+    const secs = Number(model.try_seconds) || 10;
+    const long = `Try ${app.name}`;
+    return {
+      detail: `Spend ${secs} seconds in ${app.name}.`,
+      button: { short: 'Try', long, aria: long, app, arrow: true, go: { to: 'app', slug: app.slug } },
+    };
+  }
+  if (step.action === 'suggest') {
+    const long = `Suggest a change to ${app.name}`;
+    return {
+      detail: `Tell ${app.name}’s builders what would make it better.`,
+      button: { short: 'Suggest', long, aria: long, app, arrow: true, go: { to: 'feedback', slug: app.slug } },
+    };
+  }
+  const vote = model.vote || { kind: 'workshop' as const, app, count: 0 };
+  if (vote.kind === 'needs') {
+    const long = `Vote in ${vote.app.name}`;
+    return {
+      detail: vote.app.slug === app.slug
+        ? `${plural(vote.count)} waiting in ${app.name}.`
+        : `Nothing in ${app.name} yet; ${plural(vote.count)} waiting in ${vote.app.name}.`,
+      button: { short: 'Vote', long, aria: long, app: vote.app, arrow: true, go: { to: 'needs', slug: vote.app.slug } },
+    };
+  }
+  const long = `See what ${vote.app.name} is building`;
+  return {
+    detail: 'Nothing is up for a vote yet. See what people are building.',
+    button: { short: 'Look', long, aria: long, app: vote.app, arrow: true, go: { to: 'workshop', slug: vote.app.slug } },
+  };
 }
 
 function shot(): Shot | 'skip' | null {
@@ -273,6 +426,53 @@ async function post(path: string, body?: unknown): Promise<void> {
   }
 }
 
+type ShellWindow = {
+  App?: {
+    currentApp?: string | null;
+    openAppTab?: (slug: string, tab?: string, opts?: unknown) => unknown;
+    openFeedbackModal?: (opts?: { target?: 'app' }) => void;
+  };
+  AppView?: { _landOnTab?: (slug: string, tab: string) => void };
+};
+
+/**
+ * Follow a step's button. Each door is one the shell already has: the
+ * router's "this app, this tab" entry point (App.openAppTab), and for a
+ * project page's tab the door the hub's own links use (AppView._landOnTab,
+ * then the page). Suggest opens the app first, because the dialog's "This
+ * app" is the app that is open, then asks the dialog to open on it. Look
+ * tells the server the Workshop opened, once it has; a fixture never posts.
+ */
+export async function followStep(go: StepGo, { fixture = false }: { fixture?: boolean } = {}): Promise<void> {
+  const win = window as unknown as ShellWindow;
+  switch (go.to) {
+    case 'tour':
+      requestTour();
+      return;
+    case 'hash':
+      location.hash = go.href;
+      return;
+    case 'app':
+      await win.App?.openAppTab?.(go.slug, 'app');
+      return;
+    case 'needs':
+      win.AppView?._landOnTab?.(go.slug, 'needs');
+      await win.App?.openAppTab?.(go.slug, 'dev');
+      return;
+    case 'workshop':
+      win.AppView?._landOnTab?.(go.slug, 'workshop');
+      await win.App?.openAppTab?.(go.slug, 'dev');
+      if (!fixture && win.App?.currentApp === go.slug) void post('/api/me/getting-started/workshop-visit');
+      return;
+    case 'feedback':
+      await win.App?.openAppTab?.(go.slug, 'app');
+      if (win.App?.currentApp === go.slug) win.App?.openFeedbackModal?.({ target: 'app' });
+      return;
+    default:
+      break;
+  }
+}
+
 // The mark: a filled accent check once done, an accent ring on the next
 // step, an empty ring otherwise.
 function Mark({ done, next }: { done: boolean; next: boolean }) {
@@ -290,18 +490,50 @@ function Mark({ done, next }: { done: boolean; next: boolean }) {
   );
 }
 
+// The step's button: filled for the next step, outlined for the rest
+// (button.tsx `step` / `stepOutline`), 36px, a verb and an arrow.
+function StepButton({ step, view, next, onGo }: {
+  step: GettingStartedStep;
+  view: StepButtonView;
+  next: boolean;
+  onGo: (go: StepGo) => void;
+}) {
+  return (
+    <Button
+      type="button"
+      layout="step"
+      variant={next ? 'step' : 'stepOutline'}
+      size="step"
+      ink={next ? 'solid' : 'accent'}
+      aria-label={view.aria}
+      title={view.long}
+      data-getting-started-action={step.action}
+      data-getting-started-button={next ? 'solid' : 'outline'}
+      {...(view.app ? { 'data-getting-started-app': view.app.slug } : {})}
+      {...(view.go.to === 'needs' || view.go.to === 'workshop' ? { 'data-getting-started-vote': view.go.to } : {})}
+      {...(step.action === 'tour' ? { 'data-getting-started-tour-start': '' } : {})}
+      onClick={() => onGo(view.go)}
+    >
+      {step.action === 'tour' ? <PlayIcon className="h-3.5 w-3.5 fill-current" aria-hidden="true" /> : null}
+      {view.short}
+      {view.arrow ? <ChevronRightIcon className="-mr-1 h-[15px] w-[15px]" strokeWidth="2.8" aria-hidden="true" /> : null}
+    </Button>
+  );
+}
+
 // The reward amber and the earned green of the challenge cards
-// (features/leaderboard/challenge-card.tsx META_REWARD / META_EARNED).
-function Reward({ step }: { step: GettingStartedStep }) {
+// (features/leaderboard/challenge-card.tsx META_REWARD / META_EARNED), and
+// the row's own muted ink for the tour's line.
+function RewardLine({ step }: { step: GettingStartedStep }) {
   const r = rewardText(step);
   if (!r) return null;
+  const tone = r.tone === 'earned'
+    ? 'mt-1 block text-[0.8125rem] font-semibold leading-[1.125rem] text-emerald-700 dark:text-emerald-400'
+    : r.tone === 'reward'
+      ? 'mt-1 block text-[0.8125rem] font-semibold leading-[1.125rem] text-amber-800 dark:text-amber-300'
+      : 'mt-1 block text-[0.8125rem] leading-[1.125rem] text-zinc-500 dark:text-zinc-400';
   return (
-    <span
-      className={r.earned
-        ? 'max-w-[7rem] shrink-0 truncate text-[0.8125rem] font-medium text-emerald-700 dark:text-emerald-400'
-        : 'max-w-[7rem] shrink-0 truncate text-[0.8125rem] font-medium text-amber-800 dark:text-amber-300'}
-      data-getting-started-points={r.earned ? 'earned' : 'reward'}
-    >
+    <span className={tone} data-getting-started-points={r.tone}>
       {r.text}
     </span>
   );
@@ -348,65 +580,54 @@ function Header({ title, model, onClose }: { title: string; model: GettingStarte
   );
 }
 
+// A row is the list's row, a little tighter than a conversation's (the
+// button sets its height), with its words free to wrap beside the button.
+const ROW = 'min-h-[3.75rem] gap-3 py-2.5';
 const NEXT_ROW = 'bg-[var(--lit-tint)]';
 
-function StepRow({ step, next, onOpen }: { step: GettingStartedStep; next: boolean; onOpen: (s: GettingStartedStep) => void }): ReactNode {
-  const common = {
-    inset: 'none' as const,
-    leading: <Mark done={step.done} next={next} />,
-    title: step.title,
-    subtitle: step.detail,
-    titleClassName: step.done ? 'text-zinc-500 line-through decoration-zinc-400 dark:text-zinc-400' : undefined,
-    className: next ? NEXT_ROW : undefined,
-    'data-getting-started-step': step.kind,
-    'data-done': String(step.done),
-    ...(next ? { 'data-next': '' } : {}),
-    ...(step.challenge_id != null ? { 'data-challenge-id': String(step.challenge_id) } : {}),
-  };
-  if (step.kind === 'tour' && !step.done) {
-    return (
-      <ListRow
-        {...common}
-        chevron={false}
-        trailing={(
-          <Button
-            type="button"
-            variant="pillAccent"
-            size="sm"
-            layout="iconRow"
-            className="shrink-0"
-            aria-label="Start the tour"
-            data-getting-started-tour-start=""
-            onClick={() => onOpen(step)}
-          >
-            <PlayIcon className="h-3.5 w-3.5 fill-current" aria-hidden="true" />
-            Start
-          </Button>
-        )}
-      />
-    );
-  }
+function StepRow({ step, next, model, onGo }: {
+  step: GettingStartedStep;
+  next: boolean;
+  model: GettingStartedModel;
+  onGo: (go: StepGo) => void;
+}): ReactNode {
+  const view = stepView(step, model);
   return (
     <ListRow
-      {...common}
-      as="button"
+      inset="none"
       chevron={false}
-      trailing={<Reward step={step} />}
-      onClick={() => onOpen(step)}
+      leading={<Mark done={step.done} next={next} />}
+      title={step.title}
+      titleClassName={step.done
+        ? 'whitespace-normal text-zinc-500 line-through decoration-zinc-400 dark:text-zinc-400'
+        : 'whitespace-normal'}
+      subtitle={(
+        <>
+          {view.detail}
+          <RewardLine step={step} />
+        </>
+      )}
+      subtitleClassName="whitespace-normal"
+      className={next ? `${ROW} ${NEXT_ROW}` : ROW}
+      trailing={view.button ? <StepButton step={step} view={view.button} next={next} onGo={onGo} /> : null}
+      data-getting-started-step={step.kind}
+      data-done={String(step.done)}
+      {...(next ? { 'data-next': '' } : {})}
+      {...(step.challenge_id != null ? { 'data-challenge-id': String(step.challenge_id) } : {})}
     />
   );
 }
 
-function Progress({ model, onOpen }: { model: GettingStartedModel; onOpen: (s: GettingStartedStep) => void }) {
+function Progress({ model, onGo }: { model: GettingStartedModel; onGo: (go: StepGo) => void }) {
   const next = nextStepId(model);
   const foot = unlockText(model);
   return (
     <>
       <Header title="Getting started" model={model} onClose={null} />
       <Segments model={model} />
-      <div className="pt-1">
+      <div className="divide-y divide-[color:var(--app-sheet-line)] pt-1">
         {model.steps.map((step) => (
-          <StepRow key={step.id} step={step} next={step.id === next} onOpen={onOpen} />
+          <StepRow key={step.id} step={step} next={step.id === next} model={model} onGo={onGo} />
         ))}
       </div>
       {foot ? (
@@ -527,18 +748,7 @@ export function GettingStarted() {
     if (!isShot(shot())) void post('/api/me/getting-started/close');
   };
 
-  const open = (step: GettingStartedStep) => {
-    if (step.kind === 'tour') {
-      requestTour();
-      return;
-    }
-    const App = (window as unknown as {
-      App?: { navigateToApp?: (slug: string) => void; openFeedbackModal?: () => void };
-    }).App;
-    if (step.action === 'feedback') App?.openFeedbackModal?.();
-    else if (step.slug) App?.navigateToApp?.(step.slug);
-    else if (step.href) location.hash = step.href;
-  };
+  const go = (target: StepGo) => { void followStep(target, { fixture: isShot(shot()) }); };
 
   return (
     <section ref={rootRef} id="home-getting-started" className="hidden px-3 pb-2 pt-3" aria-label="Getting started">
@@ -551,7 +761,7 @@ export function GettingStarted() {
         >
           {model.complete
             ? <Done model={model} onClose={close} />
-            : <Progress model={model} onOpen={open} />}
+            : <Progress model={model} onGo={go} />}
         </GroupedList>
       ) : null}
     </section>

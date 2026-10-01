@@ -13,10 +13,17 @@
 //                                          season's First challenges
 //   POST /api/me/getting-started/close     the card's close button, once
 //                                          its list is done
+//   POST /api/me/getting-started/workshop-visit
+//                                          the Vote step's "Look": its
+//                                          Workshop opened while nothing is
+//                                          up for a vote, which ticks it
 //
 // POST /api/me/getting-started/seen is gone (2026-10-01). It recorded the two
-// visits the old card's steps ticked from (the Workshop, Discover); the card's
-// steps are the First challenges now, and each ticks from its own credit.
+// visits the old card's steps ticked from (the Workshop, Discover), whether
+// or not anything was waiting; the card's steps are the First challenges
+// now, and each ticks from its own credit. The one visit that is a credit,
+// the Workshop when nothing is up for a vote, is workshop-visit above, and
+// the server decides whether it counts.
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
@@ -34,6 +41,10 @@ function onboardingRoutes(config) {
   // where it is not (the deployment keeps it to admins), it is not offered.
   // The same rule GET /api/apps and the membership route apply.
   const showSelfHosted = (user) => !!user?.isAdmin || !!config.selfAppPublicVoting;
+  // What the card reads for a viewer: the same two flags the Needs you feed
+  // resolves (routes/workshop-overview.js), so the Vote step and that feed
+  // agree about which projects, and so which votes, there are.
+  const cardOpts = (user) => ({ showSelfHosted: showSelfHosted(user), isAdmin: !!user?.isAdmin });
 
   router.get('/api/me/join-suggestions', async (req, res) => {
     try {
@@ -83,9 +94,7 @@ function onboardingRoutes(config) {
 
   router.get('/api/me/getting-started', async (req, res) => {
     try {
-      res.json(await onboarding.gettingStarted(pool, req.user.id, {
-        showSelfHosted: showSelfHosted(req.user),
-      }));
+      res.json(await onboarding.gettingStarted(pool, req.user.id, cardOpts(req.user)));
     } catch (err) {
       log.error('onboarding', 'getting started failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -94,13 +103,32 @@ function onboardingRoutes(config) {
 
   router.post('/api/me/getting-started/close', drainGuard, sameOriginBrowserOnly, async (req, res) => {
     try {
-      const result = await onboarding.closeCard(pool, req.user.id, {
-        showSelfHosted: showSelfHosted(req.user),
-      });
+      const result = await onboarding.closeCard(pool, req.user.id, cardOpts(req.user));
       if (!result.ok) return res.status(result.status).json({ error: result.error });
       res.json(result);
     } catch (err) {
       log.error('onboarding', 'getting started close failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // The Vote step's Workshop visit (onboarding.markWorkshopVisit): recorded
+  // only when nothing is waiting for this person's vote, then counted on the
+  // spot as a vote would be. scoreOnVote never throws, and is a no-op with
+  // scoring off or no VOTE_CAST rule.
+  router.post('/api/me/getting-started/workshop-visit', drainGuard, sameOriginBrowserOnly, async (req, res) => {
+    try {
+      const result = await onboarding.markWorkshopVisit(pool, req.user.id, cardOpts(req.user));
+      if (!result.ok) {
+        return res.status(result.status).json({
+          error: result.error,
+          ...(result.waiting ? { waiting: result.waiting } : null),
+        });
+      }
+      await challengeScorer.scoreOnVote(pool, config);
+      res.json(result);
+    } catch (err) {
+      log.error('onboarding', 'getting started workshop visit failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

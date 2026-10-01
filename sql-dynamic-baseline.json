@@ -845,6 +845,13 @@
     {
       "source": "src/routes/workshop-overview.js",
       "kind": "runtime-built-identifier",
+      "fingerprint": "1c94b614e78d495202fa",
+      "count": 1,
+      "preview": "OWED_BY_COMMUNITY_SQL"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "kind": "runtime-built-identifier",
       "fingerprint": "76b99148103cf1d2387f",
       "count": 1,
       "preview": "NEEDS_FEED_SQL"
@@ -1335,7 +1342,7 @@
     {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
-      "fingerprint": "5fcdcd025c2b6ef0f299",
+      "fingerprint": "f22572e0f628a0273eeb",
       "count": 1,
       "preview": "`/* challenge onboarding */ SELECT c.id, c.season_event_id, c.challenge_template_id, c.display_order, c.enabled, c.completed, COALESCE(c.schedule_start, ct.sche"
     },

@@ -195,19 +195,27 @@ test('the card counts steps and points, says what finishing unlocks, and closes 
   assert.equal(card.unlockedLabel(6), '6 challenges unlocked');
   assert.equal(card.unlockedLabel(1), '1 challenge unlocked');
   assert.equal(card.unlockedLabel(0), null);
-  // The right side: what a challenge pays, or once done what it paid. A bare
-  // number gets " pts", prose is drawn as written, the tour has none.
+  // The line under a step's words (evan, 2026-10-01: the button holds the
+  // right edge now): what a challenge pays, or once done what it paid. A
+  // number of points reads "Earns …", prose is drawn as written, and the
+  // tour says it pays nothing and how it ticks, done or not.
   assert.deepEqual({ ...card.rewardText({ kind: 'challenge', done: false, reward: '500 pts', earned_points: 0 }) },
-    { text: '500 pts', earned: false });
+    { text: 'Earns 500 pts', tone: 'reward' });
   assert.deepEqual({ ...card.rewardText({ kind: 'challenge', done: false, reward: '1500', earned_points: 0 }) },
-    { text: '1500 pts', earned: false });
+    { text: 'Earns 1500 pts', tone: 'reward' });
+  assert.deepEqual({ ...card.rewardText({ kind: 'challenge', done: false, reward: 'Up to 2,000 pts', earned_points: 0 }) },
+    { text: 'Up to 2,000 pts', tone: 'reward' });
   assert.deepEqual({ ...card.rewardText({ kind: 'challenge', done: true, reward: '500 pts', earned_points: 500 }) },
-    { text: '+500 pts', earned: true });
+    { text: '+500 pts earned', tone: 'earned' });
   assert.equal(card.rewardText({ kind: 'challenge', done: true, reward: 'Unlocks rewards', earned_points: 0 }), null);
-  assert.equal(card.rewardText({ kind: 'tour', done: false, reward: null, earned_points: 0 }), null);
+  for (const done of [false, true]) {
+    assert.deepEqual({ ...card.rewardText({ kind: 'tour', done, reward: null, earned_points: 0 }) },
+      { text: 'No points · ticks when you finish or skip it', tone: 'quiet' });
+  }
   // The next step is the first not done, whatever its position.
   assert.equal(card.nextStepId(card.SHOT_MODELS['getting-started']), 'tour');
   assert.equal(card.nextStepId(card.SHOT_MODELS['getting-started-halfway']), 'challenge-43');
+  assert.equal(card.nextStepId(card.SHOT_MODELS['getting-started-look']), 'challenge-43');
   assert.equal(card.nextStepId(card.SHOT_MODELS['getting-started-done']), null);
   // Close: only the done state draws it, and only off a fixture does it post.
   assert.match(CARD_SRC, /<Header title="Getting started" model=\{model\} onClose=\{null\} \/>/);
@@ -222,16 +230,108 @@ test('the card counts steps and points, says what finishing unlocks, and closes 
   assert.equal(card.SHOT_MODELS['getting-started-halfway'].done, 3);
   assert.equal(card.SHOT_MODELS['getting-started-done'].complete, true);
   assert.equal(card.SHOT_MODELS['getting-started-done'].unlocks.count, 5);
+  // The fixtures' default app is City garden; Vote waits there, except in
+  // the look fixture, where nothing is up for a vote anywhere.
+  assert.deepEqual({ ...card.SHOT_MODEL.app }, { slug: 'city-garden', name: 'City garden' });
+  assert.equal(card.SHOT_MODEL.vote.kind, 'needs');
+  assert.equal(card.SHOT_MODELS['getting-started-look'].vote.kind, 'workshop');
   assert.doesNotMatch(CARD_SRC.replace(/\/\*[\s\S]*?\*\//g, ''), /—/);
+});
+
+// evan, 2026-10-01: every step not done has a button, which goes where its
+// action is. The row is not pressable; only the button acts. Try, Vote and
+// Suggest are about the default app, which the row names and the button opens.
+test('every step not done has a button, a verb and an arrow, about the default app', () => {
+  const card = loadTsx('frontend/src/features/home/getting-started.tsx');
+  const garden = { slug: 'city-garden', name: 'City garden' };
+  const owls = { slug: 'night-owls', name: 'Night owls' };
+  const model = (vote, app = garden) => ({ app, vote, try_seconds: 10 });
+  const step = (action, extra = {}) => ({
+    id: `challenge-${action}`, kind: action === 'tour' ? 'tour' : 'challenge', action, title: 'T',
+    detail: 'Its own task.', done: false, href: null, reward: '500 pts', earned_points: 0, ...extra,
+  });
+  const view = (s, m) => {
+    const v = card.stepView(s, m);
+    return v.button
+      ? [v.detail, v.button.short, v.button.long, v.button.aria, v.button.arrow, { ...v.button.go }]
+      : [v.detail, null];
+  };
+  const here = model({ kind: 'needs', app: garden, count: 1 });
+  assert.deepEqual(view(step('tour'), here),
+    ['Its own task.', 'Start', 'Take the tour', 'Start the tour', false, { to: 'tour' }]);
+  assert.deepEqual(view(step('join', { href: '#apps' }), here),
+    ['Its own task.', 'Join', 'Find a community', 'Find a community', true, { to: 'hash', href: '#apps' }]);
+  assert.deepEqual(view(step('try'), here),
+    ['Spend 10 seconds in City garden.', 'Try', 'Try City garden', 'Try City garden', true, { to: 'app', slug: 'city-garden' }]);
+  assert.deepEqual(view(step('suggest'), here),
+    ['Tell City garden’s builders what would make it better.', 'Suggest', 'Suggest a change to City garden',
+      'Suggest a change to City garden', true, { to: 'feedback', slug: 'city-garden' }]);
+  // Vote: the default app's Needs you, else the first app joined with
+  // something waiting, else the default app's Workshop ("Look").
+  assert.deepEqual(view(step('vote'), here),
+    ['1 change is waiting in City garden.', 'Vote', 'Vote in City garden', 'Vote in City garden', true,
+      { to: 'needs', slug: 'city-garden' }]);
+  assert.deepEqual(view(step('vote'), model({ kind: 'needs', app: owls, count: 2 })),
+    ['Nothing in City garden yet; 2 changes are waiting in Night owls.', 'Vote', 'Vote in Night owls',
+      'Vote in Night owls', true, { to: 'needs', slug: 'night-owls' }]);
+  assert.deepEqual(view(step('vote'), model({ kind: 'workshop', app: garden, count: 0 })),
+    ['Nothing is up for a vote yet. See what people are building.', 'Look', 'See what City garden is building',
+      'See what City garden is building', true, { to: 'workshop', slug: 'city-garden' }]);
+  // Until a community is joined: no app, so the three say so and carry no button.
+  for (const action of ['try', 'vote', 'suggest']) {
+    assert.deepEqual(view(step(action), model(null, null)), ['Join a community first.', null], action);
+  }
+  // A step whose measure is none of these: its own call-to-action.
+  assert.deepEqual(view(step('other', { href: '#leaderboard/challenges/7/9', cta: 'Connect X' }), here),
+    ['Its own task.', 'Connect X', 'Connect X', 'Connect X', true, { to: 'hash', href: '#leaderboard/challenges/7/9' }]);
+  assert.equal(view(step('other', { href: '#apps' }), here)[1], 'Open');
+  // A done step says its own task and has no button.
+  assert.deepEqual(view(step('try', { done: true }), here), ['Its own task.', null]);
+  // The row is not a button (a button cannot hold one); the button is.
+  assert.doesNotMatch(CARD_SRC, /as="button"/);
+  assert.match(CARD_SRC, /trailing=\{view\.button \? <StepButton/);
+});
+
+test('the step buttons look like buttons: the next one filled, the rest outlined, 36px', () => {
+  const html = renderComponent('frontend/src/features/home/getting-started.tsx', 'GettingStarted');
+  assert.ok(html.includes('class="hidden'), 'the prerender stays an empty hidden section');
+  const BUTTON = read('frontend/@/components/ui/button.tsx');
+  // The two looks, as complete literals in the primitive's table.
+  assert.match(BUTTON, /step: 'rounded-\[10px\] bg-violet-600 hover:bg-violet-500 shadow-\[0_1px_2px_rgba\(0,0,0,0\.22\),inset_0_-2px_0_rgba\(0,0,0,0\.16\)\] active:translate-y-px',/);
+  assert.match(BUTTON, /stepOutline: 'rounded-\[10px\] bg-\[color:var\(--dc-sheet-solid\)\] hover:bg-violet-50 dark:hover:bg-violet-950 shadow-\[0_1px_2px_rgba\(0,0,0,0\.08\)\] ring-\[1\.5px\] ring-inset ring-violet-600 dark:ring-violet-400 active:translate-y-px',/);
+  assert.match(BUTTON, /step: 'h-9 px-3\.5 text-sm font-\[650\]',/);
+  assert.match(BUTTON, /accent: 'text-violet-600 dark:text-violet-400 transition-colors',/);
+  // The next step's button is the filled one; every other is outlined.
+  assert.match(CARD_SRC, /variant=\{next \? 'step' : 'stepOutline'\}/);
+  assert.match(CARD_SRC, /ink=\{next \? 'solid' : 'accent'\}/);
+  assert.match(CARD_SRC, /data-getting-started-button=\{next \? 'solid' : 'outline'\}/);
+  assert.match(CARD_SRC, /data-getting-started-action=\{step\.action\}/);
+  // A verb and an arrow: the tour's play glyph instead of an arrow, and no app icon.
+  assert.match(CARD_SRC, /\{view\.arrow \? <ChevronRightIcon /);
+  assert.doesNotMatch(CARD_SRC, /iconViewFor|AppIconContent|app-icon-tile/);
+});
+
+// Look ticks Vote only through the server, once the Workshop has opened from
+// the card's own button, and never from a fixture.
+test('Look opens the Workshop, then tells the server; Suggest opens the app, then the dialog for it', () => {
+  const follow = CARD_SRC.slice(CARD_SRC.indexOf('export async function followStep('), CARD_SRC.indexOf('// The mark:'));
+  assert.match(follow, /case 'needs':\s*win\.AppView\?\._landOnTab\?\.\(go\.slug, 'needs'\);\s*await win\.App\?\.openAppTab\?\.\(go\.slug, 'dev'\);/);
+  assert.match(follow, /case 'workshop':\s*win\.AppView\?\._landOnTab\?\.\(go\.slug, 'workshop'\);\s*await win\.App\?\.openAppTab\?\.\(go\.slug, 'dev'\);\s*if \(!fixture && win\.App\?\.currentApp === go\.slug\) void post\('\/api\/me\/getting-started\/workshop-visit'\);/);
+  assert.match(follow, /case 'feedback':\s*await win\.App\?\.openAppTab\?\.\(go\.slug, 'app'\);\s*if \(win\.App\?\.currentApp === go\.slug\) win\.App\?\.openFeedbackModal\?\.\(\{ target: 'app' \}\);/);
+  assert.match(CARD_SRC, /void followStep\(target, \{ fixture: isShot\(shot\(\)\) \}\);/);
+  // The dialog opens on the app only when "This app" is really there to choose.
+  const FB = read('frontend/src/features/dialogs/feedback-controller.js');
+  assert.match(FB, /applyTargetAvailability\(canTargetApp, appData\);[\s\S]{0,600}if \(opts\.target === 'app' && canTargetApp\) setFeedbackTarget\('app'\);/);
 });
 
 test('the card draws the type and colour rules: 15 over 13, the lit tint on the next step, reward amber and earned green', () => {
   // The next row sits on `--lit-tint`, where you are; the accent ring marks it.
   assert.match(CARD_SRC, /const NEXT_ROW = 'bg-\[var\(--lit-tint\)\]';/);
   assert.match(CARD_SRC, /rounded-full border-2 border-violet-600 dark:border-violet-400/);
-  // The challenge cards' reward amber and earned green, verbatim.
-  assert.match(CARD_SRC, /text-amber-800 dark:text-amber-300/);
-  assert.match(CARD_SRC, /text-emerald-700 dark:text-emerald-400/);
+  // The challenge cards' reward amber and earned green, verbatim, on a line
+  // of their own under the step's words.
+  assert.match(CARD_SRC, /'mt-1 block text-\[0\.8125rem\] font-semibold leading-\[1\.125rem\] text-amber-800 dark:text-amber-300'/);
+  assert.match(CARD_SRC, /'mt-1 block text-\[0\.8125rem\] font-semibold leading-\[1\.125rem\] text-emerald-700 dark:text-emerald-400'/);
   // The done state's label over its list is small caps.
   assert.match(CARD_SRC, /text-xs font-bold uppercase tracking-\[0\.06em\] text-zinc-500 dark:text-zinc-400" data-getting-started-unlocked=/);
   // Rows come from ListRow (15/650 over 13), and the card is the plane card.
@@ -262,10 +362,12 @@ test('both screens have a declared check on their own screenshot state', () => {
   // Rewritten in place for the one list (2026-10-01): just joined, so 1 of
   // 5, the tour next, a First challenge done after it and one still to do,
   // and the foot saying what finishing unlocks.
+  // And again for the buttons (evan, 2026-10-01): the tour next with the
+  // filled Start, Join done, and Try outlined, naming City garden.
   const card = DAPP.tests.find((t) => t.id === 'home.getting-started-card');
   assert.equal(card.path, '/?shot=getting-started');
-  assert.match(card.expectSelector, /\[data-getting-started="1\/5"\] \[data-getting-started-step="tour"\]\[data-next\] ~ \[data-getting-started-step="challenge"\]\[data-done="true"\] ~ /);
-  assert.equal(card.expectText, 'Finish all 5 to unlock 5 more challenges');
+  assert.match(card.expectSelector, /\[data-getting-started="1\/5"\] \[data-next\]:has\(\[data-getting-started-button="solid"\]\) ~ \[data-done="true"\] ~ \[data-done="false"\] \[data-getting-started-action="try"\]\[data-getting-started-button="outline"\]$/);
+  assert.equal(card.expectText, 'Spend 10 seconds in City garden.');
   for (const t of [join, card]) assert.ok(t.expectSelector.length <= 256);
 });
 
@@ -315,18 +417,21 @@ test('the card offers the tour as its first row, with a Start button until it is
   // Server: the first step, ticked from the account's tour_done_at.
   const svc = read('src/services/onboarding.js');
   const fn = svc.slice(svc.indexOf('async function gettingStarted('), svc.indexOf('/**\n * An admin\'s "Reset first run"'));
-  // Only for a new account (2026-10-01) that has answered the join screen.
-  assert.match(fn, /SELECT communities_onboarded_at, getting_started_closed_at, getting_started_gate,\s*\n\s*tour_done_at/);
-  assert.match(fn, /const show = !!\(u && u\.getting_started_gate && u\.communities_onboarded_at && !u\.getting_started_closed_at\);/);
-  assert.match(fn, /const steps = \[\{[\s\S]*?id: 'tour',\s*kind: 'tour',\s*title: TOUR_STEP\.title,\s*detail: TOUR_STEP\.detail,\s*done: tourDone,\s*href: null,/);
+  // Only for a new account (2026-10-01) that has answered the join screen;
+  // the rule is spelled once, for the card and for the Vote step's visit.
+  assert.match(svc, /SELECT communities_onboarded_at, getting_started_closed_at, getting_started_gate,\s*\n\s*tour_done_at/);
+  assert.match(svc, /return !!\(u && u\.getting_started_gate && u\.communities_onboarded_at && !u\.getting_started_closed_at\);/);
+  assert.match(fn, /const \{ rows: userRows \} = await pool\.query\(CARD_SQL, \[userId\]\);[\s\S]{0,80}const show = cardShows\(u\);/);
+  assert.match(fn, /const steps = \[\{[\s\S]*?id: 'tour',\s*kind: 'tour',\s*action: 'tour',\s*title: TOUR_STEP\.title,\s*detail: TOUR_STEP\.detail,\s*done: tourDone,\s*href: null,/);
   assert.match(svc, /title: 'Take the 1-minute tour',\s*\n\s*detail: 'See how Homeroom works\.',/);
-  // Client: a row that is not a button, holding one; pressed, it asks for the
-  // tour the way Settings' Replay does, and the tour's own write reloads it.
-  assert.match(CARD_SRC, /step\.kind === 'tour' && !step\.done\) \{/);
+  // Client: a row that is not a button, holding one until the tour is done;
+  // pressed, it asks for the tour the way Settings' Replay does, and the
+  // tour's own write reloads the card, which ticks the row.
+  assert.match(CARD_SRC, /case 'tour':\s*return \{\s*detail: step\.detail,\s*button: \{ short: 'Start', long: 'Take the tour', aria: 'Start the tour'/);
+  assert.match(CARD_SRC, /if \(step\.done\) return \{ detail: step\.detail, button: null \};/);
   assert.match(CARD_SRC, /chevron=\{false\}/);
-  assert.match(CARD_SRC, /variant="pillAccent"/);
-  assert.match(CARD_SRC, /data-getting-started-tour-start=""/);
-  assert.match(CARD_SRC, /if \(step\.kind === 'tour'\) \{\s*requestTour\(\);\s*return;\s*\}/);
+  assert.match(CARD_SRC, /\.\.\.\(step\.action === 'tour' \? \{ 'data-getting-started-tour-start': '' \} : \{\}\)/);
+  assert.match(CARD_SRC, /case 'tour':\s*requestTour\(\);\s*return;/);
   assert.match(CARD_SRC, /document\.addEventListener\(TOUR_DONE_EVENT, onChange\);/);
 });
 

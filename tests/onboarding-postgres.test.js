@@ -252,12 +252,18 @@ test('the first run: join screen and Getting started, against the full schema', 
       'the admin\'s words, as written');
     assert.equal(card.steps[1].challenge_id, challengeOf('Join a community'));
     assert.equal(card.steps[1].event_id, Number(event.id));
-    // Where each row goes, from its rule's measure; never a tick.
+    // What each row's button does, from its rule's measure; never a tick.
+    assert.deepEqual(card.steps.map((s) => s.action), ['tour', 'join', 'try', 'other', 'suggest'],
+      'COMMUNITY_JOINED, TRY_APPS, no rule, USEFUL_FEEDBACK');
     assert.equal(card.steps[1].href, '#apps', 'COMMUNITY_JOINED: Discover');
-    assert.deepEqual([card.steps[2].href, card.steps[2].slug], [null, 'book-club'],
-      'TRY_APPS: the community joined first on the screen');
-    assert.equal(card.steps[3].href, '#communities', 'no rule: its own call-to-action');
-    assert.deepEqual([card.steps[4].href, card.steps[4].action], [null, 'feedback'], 'feedback: the dialog');
+    assert.deepEqual(card.app, { slug: 'book-club', name: 'Book club' },
+      'Try and Suggest are about the community joined first on the screen');
+    assert.deepEqual([card.steps[3].href, card.steps[3].cta], ['#communities', null],
+      'no rule: its own call-to-action');
+    assert.equal(card.vote, null, 'no step is bound to VOTE_CAST, so nothing is read for one');
+    assert.equal(card.steps[4].href, null, 'feedback: the dialog, for the app');
+    // tests/getting-started-steps-postgres.test.js has the rest of the
+    // buttons: the default app's rules, where Vote goes, the Workshop visit.
     assert.deepEqual([card.done, card.total, card.earned_points, card.complete], [0, 5, 0, false]);
     assert.deepEqual(card.unlocks, { count: 2, names: ['Make your first proposal', 'Test three apps this week'] },
       'what finishing unlocks: the season\'s other open challenges');

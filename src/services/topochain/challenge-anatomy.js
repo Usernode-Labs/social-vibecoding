@@ -101,11 +101,15 @@ const READS = {
       + 'they ever took.',
   },
   VOTE_CAST: {
-    tables: ['pr_votes', 'chat_sessions', 'issue_votes', 'issues', 'apps'],
+    tables: ['pr_votes', 'chat_sessions', 'issue_votes', 'issues', 'users', 'apps'],
     key: 'vote:',
-    keyLabel: 'vote:<pr or issue>:<id>',
-    text: () => 'One row per person: their earliest vote inside the window, on a proposal or a request. '
-      + 'A vote on their own proposal or request is left out. A vote that is cast again is dated by '
+    keyLabel: 'vote:<pr, issue or workshop>:<id>',
+    text: () => 'One row per person: their earliest vote inside the window, on a proposal or a request, '
+      + 'or their look at the Workshop when nothing was up for a vote, whichever came first. A vote on '
+      + 'their own proposal or request is left out. The look is the Getting started card\'s Vote step: '
+      + 'when nothing is waiting for their vote in any community they are in, its button opens a '
+      + 'Workshop, and the server records the visit (users.getting_started_seen, keyed '
+      + 'vote:workshop:<user id>) only if nothing was waiting then. A vote that is cast again is dated by '
       + 'the last time, so a vote from before the window counts once it is cast again inside it.',
   },
   FEEDBACK_SENT: {
@@ -124,8 +128,8 @@ const READS = {
 const ON_THE_SPOT_TEXT = {
   join: ' A join also runs it on the spot, so the interval only paces memberships that arrive without '
     + 'one: a Home pin, or a queued invite whose person is let in.',
-  vote: ' Casting a vote also runs it on the spot, so the interval only paces what that pass '
-    + 'missed.',
+  vote: ' Casting a vote, or the Getting started card\'s look at the Workshop, also runs it on the '
+    + 'spot, so the interval only paces what that pass missed.',
   feedback: ' Sending a report also runs it on the spot, so the interval only paces what that pass '
     + 'missed.',
   appTime: ` Using an app also runs it on the spot, the moment somebody's time in an app they did not make `
