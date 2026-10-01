@@ -389,9 +389,27 @@ html.un-kb .platform-safe-sheet {
   transition: padding-bottom 150ms ease-out;
 }
 
+/* #3571: iOS pans the visual viewport down to reveal the focused field, and
+   that pan lands IN THE SAME FRAME as the kit's inset — the tracker reads
+   visualViewport.height in the resize event, so the inset already includes
+   the pan it was measured under (#1938: installed app, layout 812, visual
+   409, offsetTop 403). The padding above reserves the COMBINED total inside
+   a layout viewport that on iOS stays full height (window.innerHeight
+   collapses, documentElement.clientHeight does not), and Safari's pan moves
+   the page up by that same pan on top of it — the composer is lifted once by
+   the padding and pushed again by the pan, and it rode off the top of the
+   screen. Cancel the pan on the column itself, the same fix the kit modal
+   got (#2765): `--platform-vv-top` is the pan's own publish, written in the
+   viewport event, and `translate` is what carries it — it never eases, so
+   the cancellation lands in the frame iOS jumps, where `top` would have
+   waited on a transition. The pan is cancelled on the column rather than
+   subtracted from the inset: the two land in one frame only if the column
+   carries the pan's own publish, and a separate tracker write feeding a
+   calc risks a frame where they disagree — the exact disagreement fixed. */
 html.un-kb .platform-kb-column {
   padding-bottom: var(--un-kb-inset, 0px);
   transition: none;
+  translate: 0 var(--platform-vv-top, 0px);
 }
 
 /* …and the scroller inside it must NOT reserve it a second time.

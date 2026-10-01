@@ -46,7 +46,11 @@
 // button. Bumped past v36 so an unbuilt development checkout also retires the
 // pre-compact-sorting shell cache, matching the fresh-browser renderer
 // (tests/pwa-offline-cache.test.js).
-const SW_VERSION = 'v37';
+// v38 (#3571): the keyboard-pan fix is app.css only, precached in
+// SHELL_ASSETS — bump so an unbuilt development checkout retires the cache
+// that still rides the composer off screen, matching the fresh-browser
+// renderer. Hosted releases regenerate from the manifest without this.
+const SW_VERSION = 'v38';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 

@@ -172,6 +172,18 @@ test('every composer column reserves the keyboard inset, exactly once', () => {
     'the column must reserve the kit-published keyboard inset');
   assert.match(col[1], /transition:\s*none/,
     'no transition while the keyboard is up — the bar tracks it exactly');
+  // #3571: iOS pans the visual viewport down to reveal the focused field in
+  // the same frame the kit publishes the inset, and on iOS the layout
+  // viewport stays full height — so the reserved padding lifts the composer
+  // AND Safari's pan moves the page up past it, riding the composer off the
+  // top. The column must cancel the pan with the pan's own publish
+  // (--platform-vv-top, written in the viewport event), as the kit modal
+  // already does — a translate, so the cancellation lands in the frame iOS
+  // jumps rather than easing with the column's padding transition.
+  assert.match(col[1], /translate:\s*0 var\(--platform-vv-top, 0px\)/,
+    'the column must cancel iOS Safari\'s reveal-pan on itself, as the '
+    + 'kit modal does — otherwise the composer is lifted by the inset and '
+    + 'pushed off screen by the pan');
 
   const COLUMNS = [
     ['frontend/src/features/group-chat/thread-shell.tsx', /className="dev-thread dev-thread-fill platform-kb-column/],
