@@ -390,10 +390,12 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
       >
         {s.title}
       </span>
-      {/* #1941: `shrink-0 whitespace-nowrap` on this link, because it is
-          the one child that could WRAP: at 375px it broke over two lines and
-          made the strip two lines tall with nothing on the second line but
-          half a word. It sits on the title's line at every width.
+      {/* #1941 kept this link from WRAPPING: at 375px it broke over two
+          lines and made the strip two lines tall with nothing on the second
+          line but half a word. #3577 holds the strip to ONE line at every
+          width, so the link stays `whitespace-nowrap` and truncates inline
+          like the title does (`shrink-0` would force the wrap we just
+          removed). It sits on the title's line at every width.
 
           #2821: it names its destination, "Open proposal card" (the new-change
           banner's wording), instead of "PR #12", and it goes to the card page,
@@ -401,7 +403,7 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
       {s.pr ? (
         <button
           id="dc-pr-header-link"
-          className="shrink-0 whitespace-nowrap text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
+          className="min-w-0 truncate whitespace-nowrap text-xs text-violet-700 hover:text-violet-700 dark:text-violet-400 dark:hover:text-violet-300"
           title={s.prTitle}
           onClick={() => controller()?.openProposalCard?.()}
         >
@@ -428,14 +430,11 @@ export function SessionHeader({ embedded = false }: { embedded?: boolean }): Rea
           the session is built with — a tap and a sheet away. The control caps
           its own width (`max-width: min(45%, 14rem)`, app.css).
 
-          #1941: on a phone it is the first thing on the strip's SECOND line.
-          "The title is what gives way" gave way completely — at 375px the
-          venue, the switch and the ⋯ together are wider than the strip, so
-          the title's width went to zero and the ⋯ ran off the right edge.
-          The strip wraps below `sm` now (view.tsx): the name and the PR
-          number on one line, this control, the switch and the ⋯ on the next.
-          Two lines, every fact still on the strip, and it stays ONE line
-          from `sm` up. */}
+          #1941 put it on the strip's second phone line — the controls'
+          line — because the controls alone were wider than the strip.
+          #3577 holds the strip to one line again: the control caps its own
+          width, shrinks when the line is tight, and its name ellipsizes
+          (app.css), so the ⋯ stays on the right edge and nothing wraps. */}
       {s.venue ? <VenueSelect venue={s.venue} /> : null}
       {!embedded ? <ModeSwitch busy={!!s.busy} /> : null}
       {/* #1904: the session's own actions, last — the far right of the strip,

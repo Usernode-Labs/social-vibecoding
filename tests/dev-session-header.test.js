@@ -812,10 +812,9 @@ test('a failed Archive says so, like Pause and Unarchive, and never throws', asy
 // The strip is the session's descriptor — its name, its PR, where it is
 // built, the doing<->seeing switch and its own actions — and it was asked to
 // take less height. Two things had made it tall: `py-2` around 28px controls,
-// and, on a phone, a single line that could not hold every control, so the
-// PR number broke into two lines while the title shrank to nothing and the ⋯
-// ran off the right edge. It is `py-1` and ONE line from `sm` up, and at most
-// TWO lines below it, with every fact still on the strip.
+// and, on a phone, labels that broke into two lines. It is `py-1` and ONE
+// line at every width (#3577 undid the two-line phone layout #1941 built),
+// with the labels that run out of room ellipsizing inline.
 
 const VIEW_TSX_SRC = read('frontend', 'src', 'features', 'dev-chat', 'view.tsx');
 const APP_CSS_SRC = read('public', 'css', 'app.css');
@@ -826,29 +825,32 @@ function stripTag() {
   return VIEW_TSX_SRC.slice(at, VIEW_TSX_SRC.indexOf('>', at));
 }
 
-test('#1941: the strip is a compact row — py-1 around the 28px controls, one line from sm up', () => {
+test('#3577: the strip is a compact row — py-1 around the 28px controls, one line at every width', () => {
   const tag = stripTag();
   assert.match(tag, /\bpy-1\b/);
   assert.doesNotMatch(tag, /\bpy-2\b|\bpy-3\b/, 'no taller padding than the controls need');
   assert.match(tag, /\bitems-center\b/);
-  // The row may wrap ONLY below sm. From sm up nothing wraps, so the desktop
-  // strip is exactly one line whatever the session carries.
-  assert.match(tag, /\bflex-wrap\b/);
-  assert.match(tag, /\bsm:flex-nowrap\b/);
-  assert.match(tag, /\bgap-y-1\b/, 'the two phone lines sit close');
+  // One line at every width: the strip never wraps, and the labels that run
+  // out of room (the title, the PR link, the venue) ellipsize instead.
+  assert.match(tag, /\bflex-nowrap\b/);
+  assert.doesNotMatch(tag, /\bflex-wrap\b|\bsm:flex-nowrap\b|\bgap-y-1\b/,
+    'no two-line phone layout left on the strip');
   // Still the constant className the kit writes onto, still the lift strip.
   assert.match(tag, /className="[^"{]*"/);
   assert.match(tag, /\bdc-lift dc-lift-strip\b/);
 });
 
-test('#1941: the PR number never wraps into two lines of its own', () => {
-  // At 375px "PR #21" broke after "PR" and made the strip two lines tall
-  // with half a word on the second one. Both the link and its "New change"
-  // resting state are one unbreakable run that keeps its width.
+test('#3577: the PR link shortens on the line instead of wrapping', () => {
+  // "Open proposal card" was the one child that could break the line, so
+  // #1941 gave it `shrink-0`. On one line at every width, `shrink-0` is what
+  // would push the strip back to two — the link truncates inline instead,
+  // like the title does. The "New change" resting state stays as it was.
   const { view } = makeDevChat();
   const withPr = headerHtml(view({ ...SESSION, pr_number: 42 }));
   const link = withPr.match(/<button[^>]*id="dc-pr-header-link"[^>]*>/)[0];
-  assert.match(link, /\bshrink-0\b/);
+  assert.doesNotMatch(link, /\bshrink-0\b/, 'a shrinkable link cannot force the wrap back');
+  assert.match(link, /\bmin-w-0\b/, 'it can shrink below its text');
+  assert.match(link, /\btruncate\b/, 'and it shortens with an ellipsis on the line');
   assert.match(link, /\bwhitespace-nowrap\b/);
   const without = headerHtml(view(SESSION));
   const caption = without.match(/<span[^>]*>New change<\/span>/)[0];
@@ -857,26 +859,27 @@ test('#1941: the PR number never wraps into two lines of its own', () => {
   assert.match(caption, /\bmax-sm:hidden\b/, 'and it still yields the phone line to the name');
 });
 
-test('#1941: on a phone the title takes the first line and the controls the second', () => {
-  // Wrapping is decided on hypothetical sizes, so `flex-1`'s zero basis put
-  // every child on one line and left the title whatever was over — nothing,
-  // at 375px. The title's basis is the strip less room for the PR number,
-  // which is what breaks the line before the venue.
-  const at = APP_CSS_SRC.indexOf('@media (max-width: 639px) {\n  #dc-session-header > .dc-session-title {');
-  assert.ok(at > 0, 'the phone title rule is where the two-line clamp already lived');
-  const block = APP_CSS_SRC.slice(at, APP_CSS_SRC.indexOf('\n}', at));
-  assert.match(block, /flex-basis: calc\(100% - 4rem\);/);
-  assert.match(block, /-webkit-line-clamp: 2;/, 'a long name is still capped at two lines');
-  // The second line is the venue, the mode switch and the ⋯. Its widest
-  // member caps itself so the ⋯ never starts a THIRD line: 10.5rem, the
-  // floor that keeps the two "Your computer · …" venues apart, or what is
-  // left beside a 7.5rem switch, a 1.75rem ⋯ and their two gaps.
+test('#3577: the title ellipsizes on one line and the venue shrinks under a plain cap', () => {
+  // #1941's phone rule gave the title a basis that forced the strip to wrap;
+  // with the strip held to one line it is gone, and `flex-1 min-w-0
+  // truncate` (session-header.tsx) makes the title the first thing to give
+  // way — the leftovers, however few, with an ellipsis at the cut.
+  assert.doesNotMatch(APP_CSS_SRC, /#dc-session-header > \.dc-session-title \{/,
+    'the two-line phone title rule is gone');
+  // The venue caps itself at 10.5rem — the floor that keeps the two
+  // "Your computer · …" venues apart — and on one line it is a shrinkable
+  // item rather than a fixed one, so the narrowest phones clip its name a
+  // little further instead of wrapping it away.
   const cap = APP_CSS_SRC.indexOf('@media (max-width: 30rem) {\n  .dc-venue-select {');
   assert.ok(cap > 0);
   const capBlock = APP_CSS_SRC.slice(cap, APP_CSS_SRC.indexOf('\n}', cap));
-  assert.match(capBlock, /max-width: min\(10\.5rem, calc\(100% - 10\.5rem\)\);/);
-  assert.doesNotMatch(APP_CSS_SRC, /#dc-session-header > \.dc-venue-select \{[^}]*flex: 0 1 auto/,
-    'shrinking cannot do this job — a wrapped line never shrinks');
+  assert.match(capBlock, /max-width: 10\.5rem;/,
+    'a plain cap, not #1941\'s budget for a wrapped second line');
+  assert.doesNotMatch(capBlock, /calc\(/, 'flex shrinking does the narrow-width job now');
+  const venue = APP_CSS_SRC.slice(APP_CSS_SRC.indexOf('\n.dc-venue-select {'));
+  const rule = venue.slice(0, venue.indexOf('}', venue.indexOf('{') + 1));
+  assert.match(rule, /flex: 0 1 auto;/, 'the venue shrinks when the line is tight');
+  assert.match(rule, /min-width: 0;/, 'and its name may clip');
 });
 
 test('#1941: every fact stays on the strip — nothing is folded away to make it shorter', () => {

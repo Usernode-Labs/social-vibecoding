@@ -51,8 +51,13 @@ test('the title reflow is phone-only and scoped to Discover and the Dev session 
   assert.match(css, /@media \(max-width: 639px\) \{\s*\.browse-row\.browse-row \{\s*display: grid;/);
   assert.match(css, /\.browse-row \.browse-row-title \{ grid-column: 2 \/ 4; grid-row: 1;/);
   assert.match(css, /\.browse-row > \.browse-add-btn \{ grid-column: 3; grid-row: 2; min-height: 44px;/);
-  assert.match(css, /@media \(max-width: 639px\) \{\s*#dc-session-header > \.dc-session-title \{\s*white-space: normal;\s*overflow-wrap: anywhere;/);
-  assert.match(css, /-webkit-line-clamp: 2;/, 'very long session names do not consume the chat');
+  // #3577 holds the session strip to one line at every width: #1941's
+  // two-line title clamp is gone, and the title ellipsizes inline instead —
+  // the title element carries `truncate flex-1 min-w-0`.
+  assert.doesNotMatch(css, /#dc-session-header > \.dc-session-title \{/,
+    'the two-line phone title rule is gone');
+  assert.match(css, /\n\.dc-venue-select \{[^}]*flex: 0 1 auto;[^}]*max-width: min\(45%, 14rem\);/,
+    'the venue is a shrinkable item under its own cap');
 });
 
 test('#1940: the session header no longer carries a dialog of its own', () => {

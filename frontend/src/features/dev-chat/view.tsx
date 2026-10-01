@@ -120,16 +120,14 @@ function WorkspaceView({ s }: { s: Extract<DevViewState, { kind: 'session' }> })
 
           #1941: ONE COMPACT ROW. `py-1`, not `py-2` — the 28px controls
           set the row's height and the strip carries no more around them
-          than the platform header does around its own. Below `sm` the row
-          may WRAP, and only there: the title and the PR number take the
-          first line, the venue, the mode switch and the actions menu the
-          second (app.css gives the title the basis that forces that break).
-          It used to stay a single line at every width, which at 375px
-          shrank the title to nothing and pushed the actions menu off the
-          right edge — nothing was folded, it was just gone. */}
+          than the platform header does around its own. The row is ONE line
+          at every width (#3577 returns to that from #1941's two-line phone
+          layout): the title, the PR link, the venue and the switch share it
+          and the ones that run out of room ellipsize instead of wrapping.
+          */}
       <div
         id="dc-session-header"
-        className="flex flex-wrap sm:flex-nowrap items-center gap-x-2 gap-y-1 px-3 py-1 shrink-0 dc-lift dc-lift-strip"
+        className="flex flex-nowrap items-center gap-x-2 px-3 py-1 shrink-0 dc-lift dc-lift-strip"
       >
         <SessionHeader embedded={s.embedded} />
       </div>

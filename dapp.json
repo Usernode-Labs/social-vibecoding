@@ -4406,9 +4406,9 @@
       "expectText": "Homeroom · Claude"
     },
     {
-      "name": "The session descriptor is one compact row: py-1, wrapping only below sm, the venue still beside the name (#1941)",
+      "name": "The session descriptor is one compact row: py-1, one line at every width, the venue still beside the name (#3577)",
       "path": "/#app/usernode-2d5619/dev/sessions/990403",
-      "expectSelector": "#dc-view > #dc-session-header.py-1.flex-wrap.sm\\:flex-nowrap:not(.py-2) > .dc-session-title ~ button#dc-venue-select[data-venue-change]",
+      "expectSelector": "#dc-view > #dc-session-header.py-1.flex-nowrap:not(.py-2) > .dc-session-title ~ button#dc-venue-select[data-venue-change]",
       "expectText": "Homeroom · Claude"
     },
     {
