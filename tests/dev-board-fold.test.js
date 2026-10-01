@@ -624,7 +624,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // three, so it adds to whatever the manifest holds, which is 655.
   // 655 → 658: independently on main, off the SAME shared 655, #2086 makes a
   // featured-illustration change a governance proposal and adds two checks
-  // on its card via the ?demo=1 mock row 9100008 — the proposed-beside-
+  // on its card via the ?demo=1 mock row 9100077 — the proposed-beside-
   // current preview on the open board card, and the same preview on the
   // proposal's own discussion page — plus a second #2236 via-agent-chip
   // check, on the topic's own discussion rather than the demo issue's, for
