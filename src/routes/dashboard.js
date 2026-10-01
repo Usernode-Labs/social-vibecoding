@@ -3,6 +3,7 @@ const { getPool } = require('../db/pool');
 const { adminMiddleware } = require('../middleware/admin');
 const log = require('../services/logger');
 const analyticsDemo = require('../services/analytics-demo');
+const analyticsFunnels = require('../services/analytics-funnels');
 // #892: read-only access to the estimator's COMMITTED run-length priors so
 // the estimator card can show them beside the live numbers and say when a
 // refresh is due. This is a plain module-constant read — it does NOT call
@@ -29,8 +30,9 @@ const llm = require('../services/llm');
 //   2. The locked-in "active = any tracked action that day" definition
 //      maps directly onto app_activity / chat_messages /
 //      chat_session_messages — the canonical activity surfaces.
-// The events table is what a future, richer analytics layer reads; these
-// endpoints intentionally stay on the primary tables for fidelity.
+// Ordered funnels use provenance-bearing events for the milestones whose
+// historical domain-table state cannot establish chronology. Other endpoints
+// below still use the primary tables for complete historical coverage.
 
 // Admin-exclusion predicate (dashboard checkbox #1). When `includeAdmins`
 // is false (the default) every analytics query drops rows attributed to
@@ -100,19 +102,6 @@ function activityDaysSql(includeAdmins) {
     JOIN chat_sessions cs ON cs.id = csm.session_id
    WHERE cs.user_id IS NOT NULL AND csm.role = 'user' ${cs}
 `;
-}
-
-// Map the ?cohort= query param to a created_at lower bound (or null for
-// "all time"). Used to scope the funnels to recent signups so lifetime
-// power users don't dominate the conversion picture.
-function cohortSince(raw) {
-  if (raw === '1d') return "NOW() - INTERVAL '1 day'";
-  if (raw === '3d') return "NOW() - INTERVAL '3 days'";
-  if (raw === '7d') return "NOW() - INTERVAL '7 days'";
-  if (raw === '14d') return "NOW() - INTERVAL '14 days'";
-  if (raw === '30d') return "NOW() - INTERVAL '30 days'";
-  if (raw === '90d') return "NOW() - INTERVAL '90 days'";
-  return null;
 }
 
 function dashboardRoutes(config) {
@@ -203,112 +192,23 @@ function dashboardRoutes(config) {
 
   // ── Funnels ────────────────────────────────────────────────
   //
-  // Both funnels report, per stage, the count of distinct subjects (users
-  // or sessions) that reached that milestone — see the plan's funnel
-  // definitions. Stages are ordered along the product journey; the
-  // frontend renders each bar as a fraction of the first stage and labels
-  // the step-over-step conversion.
+  // Ordered, same-subject journeys with explicit observation windows.
+  // Incomplete, pre-instrumentation and ambiguous/bypassed rows are returned
+  // as coverage instead of being mislabeled as abandonment.
   router.get('/api/admin/analytics/funnels', async (req, res) => {
-    const since = cohortSince(req.query.cohort);
     const includeAdmins = wantsAdmins(req);
-    // Build a reusable "user is in cohort" predicate. When all-time,
-    // it's just TRUE so the SQL stays uniform.
-    const userCohort = since ? `u.created_at >= ${since}` : 'TRUE';
-    const sessUserCohort = since ? `usr.created_at >= ${since}` : 'TRUE';
-
     try {
-      // Dapp-usage funnel — distinct users reaching each milestone. `base`
-      // carries each user's is_admin flag so every stage can be split into a
-      // non-admin count and an `_admin` companion (#341). When admins are
-      // excluded, base holds no admin rows so the companions are all 0.
-      const dapp = await pool.query(
-        `WITH base AS (
-           SELECT u.id AS user_id, u.is_admin FROM users u
-            WHERE ${userCohort} ${adminFilter('u.id', includeAdmins)}
-         ),
-         flags AS (
-           SELECT b.user_id, b.is_admin,
-             EXISTS (SELECT 1 FROM app_activity aa WHERE aa.user_id = b.user_id) AS opened,
-             (SELECT COUNT(DISTINCT aa.date) FROM app_activity aa
-                WHERE aa.user_id = b.user_id) >= 2 AS returned,
-             (EXISTS (SELECT 1 FROM chat_messages cm WHERE cm.user_id = b.user_id)
-               OR EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.user_id = b.user_id)
-               OR EXISTS (SELECT 1 FROM pr_kudos pk WHERE pk.giver_user_id = b.user_id)
-               OR EXISTS (SELECT 1 FROM app_favorites af WHERE af.user_id = b.user_id)
-             ) AS engaged,
-             EXISTS (SELECT 1 FROM apps a WHERE a.created_by = b.user_id
-                       AND COALESCE(a.self_hosted, FALSE) = FALSE) AS creator
-           FROM base b
-         )
-         SELECT
-           COUNT(*) FILTER (WHERE NOT is_admin)::int AS signed_up,
-           COUNT(*) FILTER (WHERE is_admin)::int     AS signed_up_admin,
-           COUNT(*) FILTER (WHERE opened AND NOT is_admin)::int AS opened_dapp,
-           COUNT(*) FILTER (WHERE opened AND is_admin)::int     AS opened_dapp_admin,
-           COUNT(*) FILTER (WHERE returned AND NOT is_admin)::int AS returned,
-           COUNT(*) FILTER (WHERE returned AND is_admin)::int     AS returned_admin,
-           COUNT(*) FILTER (WHERE engaged AND NOT is_admin)::int AS engaged,
-           COUNT(*) FILTER (WHERE engaged AND is_admin)::int     AS engaged_admin,
-           COUNT(*) FILTER (WHERE creator AND NOT is_admin)::int AS creators,
-           COUNT(*) FILTER (WHERE creator AND is_admin)::int     AS creators_admin
-         FROM flags`
-      );
-
-      // PR-promotion funnel — session-level conversion (counts of dev
-      // sessions) plus distinct-user reach at each step. Reverts inserted
-      // directly as 'promoted' have no promoted_at, so the promoted test
-      // also accepts the terminal statuses.
-      const sessCohort = since ? `cs.created_at >= ${since}` : 'TRUE';
-      // Session-level conversion, each stage split non-admin vs admin via the
-      // session owner's is_admin flag (#341).
-      const sessions = await pool.query(
-        `SELECT
-           COUNT(*) FILTER (WHERE NOT COALESCE(usr.is_admin, FALSE))::int AS started,
-           COUNT(*) FILTER (WHERE COALESCE(usr.is_admin, FALSE))::int     AS started_admin,
-           COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL AND NOT COALESCE(usr.is_admin, FALSE))::int AS produced_pr,
-           COUNT(*) FILTER (WHERE cs.pr_number IS NOT NULL AND COALESCE(usr.is_admin, FALSE))::int     AS produced_pr_admin,
-           COUNT(*) FILTER (WHERE (cs.promoted_at IS NOT NULL OR cs.status IN ('promoted','merging','merged'))
-                              AND NOT COALESCE(usr.is_admin, FALSE))::int AS promoted,
-           COUNT(*) FILTER (WHERE (cs.promoted_at IS NOT NULL OR cs.status IN ('promoted','merging','merged'))
-                              AND COALESCE(usr.is_admin, FALSE))::int     AS promoted_admin,
-           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id)
-                              AND NOT COALESCE(usr.is_admin, FALSE))::int AS received_vote,
-           COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM pr_votes pv WHERE pv.session_id = cs.id)
-                              AND COALESCE(usr.is_admin, FALSE))::int     AS received_vote_admin,
-           COUNT(*) FILTER (WHERE cs.status = 'merged' AND NOT COALESCE(usr.is_admin, FALSE))::int AS merged,
-           COUNT(*) FILTER (WHERE cs.status = 'merged' AND COALESCE(usr.is_admin, FALSE))::int     AS merged_admin
-         FROM chat_sessions cs
-         LEFT JOIN users usr ON usr.id = cs.user_id
-         WHERE ${sessCohort} ${adminFilter('cs.user_id', includeAdmins)}`
-      );
-
-      const usersReach = await pool.query(
-        `SELECT
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE NOT usr.is_admin)::int AS started,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE usr.is_admin)::int     AS started_admin,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.pr_number IS NOT NULL AND NOT usr.is_admin)::int AS produced_pr,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.pr_number IS NOT NULL AND usr.is_admin)::int     AS produced_pr_admin,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE (cs.promoted_at IS NOT NULL
-                              OR cs.status IN ('promoted','merging','merged')) AND NOT usr.is_admin)::int AS promoted,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE (cs.promoted_at IS NOT NULL
-                              OR cs.status IN ('promoted','merging','merged')) AND usr.is_admin)::int     AS promoted_admin,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status = 'merged' AND NOT usr.is_admin)::int AS merged,
-           COUNT(DISTINCT cs.user_id) FILTER (WHERE cs.status = 'merged' AND usr.is_admin)::int     AS merged_admin
-         FROM chat_sessions cs
-         JOIN users usr ON usr.id = cs.user_id
-         WHERE ${sessUserCohort} ${adminFilter('usr.id', includeAdmins)}`
-      );
-
-      // Staging demo: substituted when the first funnel stage is empty.
-      if (wantsDemo(req) && !Number(dapp.rows[0]?.signed_up)) {
-        return res.json({ cohort: req.query.cohort || 'all', ...analyticsDemo.funnels() });
-      }
-      res.json({
-        cohort: req.query.cohort || 'all',
-        dappUsage: dapp.rows[0],
-        prSessions: sessions.rows[0],
-        prUsers: usersReach.rows[0],
+      const funnels = await analyticsFunnels.fetchFunnels(pool, {
+        cohort: req.query.cohort || 'all', includeAdmins,
       });
+      // A genuine zero remains visible. Demo data substitutes only before
+      // either opening stream has produced even one trustworthy receipt.
+      if (wantsDemo(req)
+        && funnels.dappUsage.coverage.status === 'awaiting_events'
+        && funnels.prSessions.coverage.status === 'awaiting_events') {
+        return res.json({ ...funnels, ...analyticsDemo.funnels() });
+      }
+      res.json(funnels);
     } catch (err) {
       log.error('dashboard', 'funnels failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
