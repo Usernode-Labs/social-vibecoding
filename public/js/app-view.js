@@ -802,6 +802,10 @@ const AppView = {
     AppView._retireEmbeddedSession();
     const openId = ++AppView._openId;
     const isCurrentOpen = () => openId === AppView._openId;
+    window.UITelemetry?.screen?.('app_detail', { appSlug: slug });
+    const telemetryAttempt = window.UITelemetry?.attempt?.('app_detail_load', {
+      screen: 'app_detail', appSlug: slug, timeoutMs: 12_000, abandonOnHide: true,
+    });
     // #931: the token mint runs ALONGSIDE the detail fetch, not after it.
     // These used to be strictly sequential, which cost a full extra round
     // trip before the app iframe could even be built — the thing that made
@@ -813,13 +817,25 @@ const AppView = {
     // `manifest=summary`: the one manifest field anything here reads is the
     // description (the About sheet's tagline); the declared tests and platform
     // env are the server's, and the platform's own run to ~280 KB.
-    const res = await fetch(`/api/apps/${slug}?manifest=summary`);
+    let res;
+    try {
+      res = await fetch(`/api/apps/${slug}?manifest=summary`);
+    } catch (err) {
+      window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode: 'network' });
+      throw err;
+    }
     // A newer app open (or close) owns every app-scoped field now. The
     // router also guards its own tail, but AppView.open writes shared state
     // before that tail resumes, so the ownership check belongs here too.
-    if (!isCurrentOpen()) return false;
+    if (!isCurrentOpen()) {
+      window.UITelemetry?.cancel?.(telemetryAttempt);
+      return false;
+    }
     if (!res.ok) {
       const failure = await res.json().catch(() => ({}));
+      window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', {
+        errorCode: window.UITelemetry?.errorCodeFor?.(res.status, failure.code),
+      });
       if (failure.code === 'app_blocked') {
         void window.PlatformUI?.confirm({ title: 'App blocked', message: 'You blocked this app. Unblock it in Settings → Blocked apps to open it again.', confirmLabel: 'Open Settings', cancelLabel: 'Close' }).then(open => {
           if (open) location.hash = '#settings/blocked-apps';
@@ -836,8 +852,22 @@ const AppView = {
       AppView._teardownLaunch();
       return false;
     }
-    const { app: fetchedAppData } = await res.json();
-    if (!isCurrentOpen()) return false;
+    let fetchedAppData;
+    try {
+      ({ app: fetchedAppData } = await res.json());
+    } catch (err) {
+      window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
+      throw err;
+    }
+    if (!isCurrentOpen()) {
+      window.UITelemetry?.cancel?.(telemetryAttempt);
+      return false;
+    }
+    if (!fetchedAppData || typeof fetchedAppData !== 'object') {
+      window.UITelemetry?.outcome?.(telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
+      return false;
+    }
+    window.UITelemetry?.outcome?.(telemetryAttempt, 'success');
     // A terminal WS event may have landed after this request began but before
     // its older snapshot came back. It is the later fact, so reconcile it
     // before any consumer can paint the stale spinning-up state.
@@ -20834,6 +20864,11 @@ const AppView = {
   //                for a caller that is not on that app's screen (an agent
   //                session in Messages). Defaults to the app on screen.
   //   opts.readOnly — overrides AppView.readOnly for that caller.
+  _finishStagingTelemetry(attemptId, outcome, detail) {
+    if (attemptId) window.UITelemetry?.outcome?.(attemptId, outcome, detail);
+    if (AppView._stagingTelemetryAttempt === attemptId) AppView._stagingTelemetryAttempt = null;
+  },
+
   async ensureStaging(sessionId, fallbackUrl, testing, opts) {
     const staging = AppView._staging();
     const app = AppView._stagingApp(opts);
@@ -20841,6 +20876,18 @@ const AppView = {
     const readOnly = AppView._stagingReadOnly(opts);
     const jump = !!(opts && opts.jump);
     const dock = !!(opts && opts.dock);
+    const inheritedTelemetryAttempt = opts && opts.telemetryAttempt;
+    const telemetryAttempt = inheritedTelemetryAttempt
+      || window.UITelemetry?.attempt?.('preview_open', {
+        screen: 'preview', appSlug: slug, timeoutMs: 30_000, abandonOnHide: true,
+      });
+    if (!inheritedTelemetryAttempt) {
+      window.UITelemetry?.screen?.('preview', { appSlug: slug });
+    }
+    if (AppView._stagingTelemetryAttempt && AppView._stagingTelemetryAttempt !== telemetryAttempt) {
+      window.UITelemetry?.cancel?.(AppView._stagingTelemetryAttempt);
+    }
+    AppView._stagingTelemetryAttempt = telemetryAttempt;
     // Streamlined Concept: every preview open funnels through here (#439),
     // so this is where "the viewer is SEEING" gets published — it flips the
     // header's eye/pencil pair and the session strip's Preview chip. The
@@ -20880,7 +20927,9 @@ const AppView = {
     // collab-gated), so they get none here either. A stale closure no-ops.
     const retry = readOnly ? null : () => {
       if (loadId === AppView._stagingLoadId && AppView._stagingSameApp(opts, slug)) {
-        return AppView.ensureStaging(sessionId, fallbackUrl, testing, opts);
+        const retryOpts = { ...(opts || {}) };
+        delete retryOpts.telemetryAttempt;
+        return AppView.ensureStaging(sessionId, fallbackUrl, testing, retryOpts);
       }
     };
 
@@ -20896,15 +20945,22 @@ const AppView = {
       const res = await fetch(endpoint, readOnly ? undefined : { method: 'POST' });
       data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        AppView._finishStagingTelemetry(telemetryAttempt, 'failure', {
+          errorCode: window.UITelemetry?.errorCodeFor?.(res.status),
+        });
         AppView._showStagingUnavailable(loadId, data.error || 'This preview could not be rebuilt.', retry);
         return;
       }
     } catch {
+      AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'network' });
       AppView._showStagingUnavailable(loadId, 'Network error while rebuilding the preview. Try again in a moment.', retry);
       return;
     }
     // Backed out while we waited on the POST.
-    if (loadId !== AppView._stagingLoadId || !AppView._stagingSameApp(opts, slug)) return;
+    if (loadId !== AppView._stagingLoadId || !AppView._stagingSameApp(opts, slug)) {
+      AppView._finishStagingTelemetry(telemetryAttempt, 'cancelled');
+      return;
+    }
 
     if (data.status === 'ready') {
       // #816: `verified` means the server just watched the container answer
@@ -20917,10 +20973,12 @@ const AppView = {
         jump,
         verified: !!data.verified,
         checksRunning: !!data.checksRunning,
+        telemetryAttempt,
         ...(opts && opts.app ? { app: opts.app } : {}),
       });
     }
     if (data.status === 'unavailable') {
+      AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       const unavailableCopy = {
         demo: 'Live previews can’t be rebuilt in this demo environment.',
         unhealthy: 'The submitted preview is running but is not answering its health check. Try again in a moment.',
@@ -20937,6 +20995,11 @@ const AppView = {
       );
       return;
     }
+    if (data.status !== 'rebuilding') {
+      AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
+      AppView._showStagingUnavailable(loadId, 'This preview returned an unexpected response.', retry);
+      return;
+    }
     // status === 'rebuilding' — the ONE case where a real rebuild is
     // running and the 20–60s estimate is true. Park a marker the
     // staging_ready / staging_failed WS handlers match against, then keep
@@ -20950,6 +21013,7 @@ const AppView = {
     });
     AppView._pendingStagingPreview = {
       sessionId, slug, jump, testing, dock, loadId, retry,
+      telemetryAttempt,
       app: opts && opts.app ? opts.app : null,
       readOnly: opts && typeof opts.readOnly === 'boolean' ? opts.readOnly : undefined,
     };
@@ -20997,12 +21061,14 @@ const AppView = {
     if (!pending || pending.sessionId !== sessionId) return;
     if (pending.loadId !== AppView._stagingLoadId
         || !AppView._stagingSameApp(pending.app ? { app: pending.app } : null, pending.slug)) {
+      AppView._finishStagingTelemetry(pending.telemetryAttempt, 'cancelled');
       AppView._pendingStagingPreview = null;
       return;
     }
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
     AppView._pendingStagingPreview = null;
     if (failed) {
+      AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       AppView._setStagingLoader(true, {
         title: 'Preview couldn’t be rebuilt',
         sub: error || 'The staging build failed. See the dev chat for details.',
@@ -21018,10 +21084,13 @@ const AppView = {
       return AppView.ensureStaging(sessionId, url, pending.testing, {
         jump: pending.jump,
         dock: pending.dock,
+        telemetryAttempt: pending.telemetryAttempt,
         ...(pending.app ? { app: pending.app } : {}),
         ...(typeof pending.readOnly === 'boolean' ? { readOnly: pending.readOnly } : {}),
       });
     }
+    AppView._finishStagingTelemetry(pending.telemetryAttempt, 'failure', { errorCode: 'invalid_response' });
+    AppView._showStagingUnavailable(pending.loadId, 'This preview did not provide a usable address.', pending.retry);
   },
 
   // Open staging in the overlay (fullscreen, or docked beside dev chat).
@@ -21090,6 +21159,7 @@ const AppView = {
     try { token = await AppView._mintToken(slug); } catch { /* retry below */ }
     if (!current()) return;
     if (!token) {
+      AppView._finishStagingTelemetry(opts && opts.telemetryAttempt, 'failure', { errorCode: 'network' });
       staging.setHandlers({ onRetry: () => {
         if (current()) return AppView.swapToStaging(stagingUrl, testing, opts);
       } });
@@ -21152,7 +21222,7 @@ const AppView = {
           ? 'Automated checks are running against this preview, so the first load may be a little slower.'
           : '',
       });
-      AppView._watchStagingIframeLoad(staging.frame(), loadId);
+      AppView._watchStagingIframeLoad(staging.frame(), loadId, opts && opts.telemetryAttempt);
       staging.setSrc(pending.src);
       return;
     }
@@ -21170,7 +21240,7 @@ const AppView = {
       if (!ready) return;
       // Keep the spinner up across the render, same as the fast path.
       AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
-      AppView._watchStagingIframeLoad(staging.frame(), loadId);
+      AppView._watchStagingIframeLoad(staging.frame(), loadId, opts && opts.telemetryAttempt);
       staging.setSrc(pending.src);
     });
   },
@@ -21186,7 +21256,7 @@ const AppView = {
   // different preview bumps it, and a late event from the superseded load
   // must not touch the loader.
   _stagingIframeTimer: null,
-  _watchStagingIframeLoad(iframe, loadId) {
+  _watchStagingIframeLoad(iframe, loadId, telemetryAttempt) {
     if (!iframe) return;
     if (AppView._stagingIframeTimer) {
       clearTimeout(AppView._stagingIframeTimer);
@@ -21203,11 +21273,13 @@ const AppView = {
     iframe.onload = () => {
       settle();
       if (loadId !== AppView._stagingLoadId) return;
+      AppView._finishStagingTelemetry(telemetryAttempt, 'success');
       AppView._setStagingLoader(false);
     };
     iframe.onerror = () => {
       settle();
       if (loadId !== AppView._stagingLoadId) return;
+      AppView._finishStagingTelemetry(telemetryAttempt, 'failure', { errorCode: 'unavailable' });
       AppView._setStagingLoader(true, {
         title: 'This is taking longer than expected',
         sub: 'The preview didn’t finish loading. Close this and click Preview '
@@ -21240,6 +21312,7 @@ const AppView = {
   // dock, loadId } | null), set by ensureStaging and consumed by the
   // staging_ready / staging_failed WS handlers via onStagingRebuildResult.
   _pendingStagingPreview: null,
+  _stagingTelemetryAttempt: null,
   _stagingRebuildTimer: null,
 
   // ── Docked staging preview (#771) ─────────────────────────────────
@@ -21862,6 +21935,13 @@ const AppView = {
     AppView._stagingLoadId += 1;
     // #439: drop any pending on-demand rebuild marker + its give-up timer so
     // a late staging_ready can't reopen the overlay after the user left.
+    if (AppView._pendingStagingPreview?.telemetryAttempt) {
+      window.UITelemetry?.cancel?.(AppView._pendingStagingPreview.telemetryAttempt);
+    }
+    if (AppView._stagingTelemetryAttempt) {
+      window.UITelemetry?.cancel?.(AppView._stagingTelemetryAttempt);
+      AppView._stagingTelemetryAttempt = null;
+    }
     AppView._pendingStagingPreview = null;
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
     // #816: drop the iframe-load watch + its safety timeout so a late load

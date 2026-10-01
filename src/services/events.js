@@ -144,6 +144,15 @@ const EVENT_TYPES = Object.freeze({
   // services/llm-telemetry.js; OpenRouter's existing agent_turns ledger is
   // normalized alongside these rows by the admin aggregate report.
   LLM_INVOCATION: 'llm_invocation',
+  // Privacy-bounded client experience records. `services/ui-telemetry.js`
+  // owns the entire metadata vocabulary and rejects arbitrary keys before a
+  // row reaches this table. There is deliberately no historical backfill:
+  // these are observations from instrumented builds, not inferred actions.
+  UI_EXPERIENCE: 'ui_experience',
+  // One server receipt per accepted client batch. This is separate from the
+  // observations so the admin report can say how much telemetry arrived,
+  // how much was retried/dropped locally, and when reporting last worked.
+  UI_TELEMETRY_DELIVERY: 'ui_telemetry_delivery',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise
