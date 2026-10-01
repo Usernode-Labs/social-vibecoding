@@ -521,25 +521,27 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     // overlap a clone when its target is confirmed absent; otherwise keep
     // the old image-before-clone ordering. A failed lookup is not absence.
     let parallelPreparation = false;
-    try {
-      const exists = await dbManager.databaseExists(stagingDbNameStr, { strict: true });
-      if (candidate?.preparedClone && !exists) throw new Error('Prepared candidate clone is missing');
-      if (candidate && exists && !candidate.preparedClone) {
-        throw new Error('Candidate clone already exists; abandon this attempt rather than overwrite it');
+    if (!candidate?.prepareClone) {
+      try {
+        const exists = await dbManager.databaseExists(stagingDbNameStr, { strict: true });
+        if (candidate?.preparedClone && !exists) throw new Error('Prepared candidate clone is missing');
+        if (candidate && exists && !candidate.preparedClone) {
+          throw new Error('Candidate clone already exists; abandon this attempt rather than overwrite it');
+        }
+        parallelPreparation = !exists;
+      } catch (err) {
+        if (candidate) throw err;
+        log.warn('staging', 'Database lookup failed; preparing preview sequentially', { sessionId: session.id, err: err.message });
       }
-      parallelPreparation = !exists;
-    } catch (err) {
-      if (candidate) throw err;
-      log.warn('staging', 'Database lookup failed; preparing preview sequentially', { sessionId: session.id, err: err.message });
     }
-    const imageBuildStartedAt = Date.now();
-    timings.sourceFetchMs = imageBuildStartedAt - buildStartedAt;
-    publishProgress(config, session, 'image_build', timings, imageBuildStartedAt);
-    const imageProgress = makeImageProgressReporter(config, session, timings, imageBuildStartedAt, () => Date.now(), publishProgress);
+    timings.sourceFetchMs = Date.now() - buildStartedAt;
     let imageFinished = false;
     let cloneFinished = false;
     let cloneStartedAt;
     const buildImage = async () => {
+      const imageBuildStartedAt = Date.now();
+      publishProgress(config, session, 'image_build', timings, imageBuildStartedAt);
+      const imageProgress = makeImageProgressReporter(config, session, timings, imageBuildStartedAt, () => Date.now(), publishProgress);
       let result;
       try {
         if (candidate?.prepareImage) {
@@ -574,11 +576,13 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     };
     const cloneDatabase = async () => {
       cloneStartedAt = Date.now();
-      if (imageFinished) publishProgress(config, session, 'clone', timings, cloneStartedAt);
+      if (imageFinished || candidate?.prepareClone) publishProgress(config, session, 'clone', timings, cloneStartedAt);
       try {
         // Each clone retains its own role/password and template redaction.
         let cloned;
-        if (candidate?.preparedClone) {
+        if (candidate?.prepareClone) {
+          cloned = await candidate.prepareClone();
+        } else if (candidate?.preparedClone) {
           const inspection = await require('./preview-flow/clone-operation').createCloneOperations().inspect(candidate.intent);
           if (inspection.status !== 'complete') throw new Error('Candidate clone completion is unconfirmed');
           cloned = { password: candidate.password, via: 'recovered-template' };
@@ -599,7 +603,12 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     };
     let build, cloned;
     try {
-      if (parallelPreparation) {
+      if (candidate?.prepareClone) {
+        // The bounded owner authorizes and verifies each operation. Do not
+        // route its database through legacy lookup or failure cleanup.
+        cloned = await cloneDatabase();
+        build = await buildImage();
+      } else if (parallelPreparation) {
         // Settle both before cleanup or releasing the per-session guard:
         // neither a late clone nor a build using cloneDir may outlive us.
         const [imageResult, cloneResult] = await Promise.allSettled([buildImage(), cloneDatabase()]);

@@ -79,6 +79,11 @@ function validateDestinations(fixture, databaseUrl, now = Date.now()) {
   requireIsolation(repo.protocol === 'https:' && !repo.username && !repo.password && !repo.search && !repo.hash
     && /^[a-f0-9]{40}$/.test(fixture.revision) && [null, 'build', 'ensure:shell'].includes(fixture.runScript),
   'explicit public fixture source, full revision and script required');
+  if (fixture.preparationSource) {
+    requireIsolation(fixture.preparationSource.repoUrl === 'https://github.com/nickovivar/simple-health-endpoint'
+      && fixture.preparationSource.revision === '59de32fd44f50ba06926a43d90b567e33aa39236'
+      && fixture.preparationSource.branch === 'main', 'pinned health-enabled preparation fixture required');
+  }
   return isolation;
 }
 

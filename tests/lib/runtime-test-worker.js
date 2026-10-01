@@ -77,6 +77,7 @@ function runtimeTestWorker(pool, fixture, clients, {
     clones,
     cleanup: createCleanup({ images, clones, runtimes }).underBuildLock,
     async prepare(_config, session, app, _head, candidate) {
+      await candidate.prepareClone();
       const built = await candidate.prepareImage(null);
       return candidate.prepareRuntime({
         app,

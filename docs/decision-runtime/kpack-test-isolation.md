@@ -12,6 +12,14 @@ inside that kind cluster. Other layouts fail closed. Provisioning is not perform
 by the test runner. The fixture provisioner is a separate, explicit local command.
 Live preflight and the bounded C4 actual-resource scenarios passed on 1 October 2026.
 
+C7 adds the fixed `test-preparation <fixture-directory>` command. Its runner and
+each restarted worker repeat the same preflight. `preparationSource` must match
+the public health app/revision/branch pinned by the provisioner; a missing value
+fails before schema creation, and mismatches fail destination validation. The
+[complete-path contract](complete-preparation-contract.md) lists all fixture
+substitutions and evidence limits. This command uses actual clone, Build and
+runtime services through staging and does not substitute successful observations.
+
 ## Required manifest
 
 Set `KPACK_RECOVERY_TEST_CONFIG` to the dedicated fixture's `fixture.json` and

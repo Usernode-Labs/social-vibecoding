@@ -281,6 +281,7 @@ for (const loss of ['partial creation', 'runtime receipt', 'completion reply']) 
       owner, runtimes, images,
       clones: { prepare: async () => ({ status: 'complete', databaseOid: '123' }), inspect: async () => ({ status: 'complete' }) },
       async prepare(_config, _session, _app, _head, candidate) {
+        await candidate.prepareClone();
         await candidate.prepareImage(null);
         return candidate.prepareRuntime({ imageRef: IMAGE, env: { TOKEN: 'confidential-value' } });
       },

@@ -131,6 +131,20 @@ test('worker environment strips ambient Kubernetes, Docker, PG, registry and pre
   assert.deepEqual(Object.keys(env).sort(), ['KPACK_RECOVERY_TEST_CONFIG', 'PATH', 'PREVIEW_FLOW_TEST_DATABASE_URL', 'RUN_ISOLATED_KPACK_TEST']);
 });
 
+for (const field of ['repoUrl', 'revision', 'branch']) {
+  test(`complete preparation rejects mismatched fixture ${field} before clients or mutations`, t => {
+    const f = fixture(t);
+    f.value.preparationSource = {
+      repoUrl: 'https://github.com/nickovivar/simple-health-endpoint',
+      revision: '59de32fd44f50ba06926a43d90b567e33aa39236',
+      branch: 'main',
+    };
+    validateDestinations(f.value, f.value.isolation.database.url);
+    f.value.preparationSource[field] = 'another';
+    assert.throws(() => validateDestinations(f.value, f.value.isolation.database.url), /pinned health-enabled preparation fixture/);
+  });
+}
+
 const destinationConflicts = {
   'old fixture': f => { f.isolation.createdAt = '2000-01-01'; },
   'remote API': f => { f.isolation.cluster.server = 'https://production.example:6443'; },

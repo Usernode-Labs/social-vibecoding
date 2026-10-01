@@ -5,14 +5,15 @@ const { spawnSync } = require('node:child_process');
 const { verifyIsolatedBuildFixture, sanitizedEnvironment } = require('../tests/lib/isolated-kpack-fixture');
 
 async function main() {
-  if (process.argv.length > 3 || (process.argv[2] && !['--runtime', '--release'].includes(process.argv[2]))) {
-    throw new Error('Only --runtime or --release is supported');
+  if (process.argv.length > 3 || (process.argv[2] && !['--runtime', '--release', '--preparation'].includes(process.argv[2]))) {
+    throw new Error('Only --runtime, --release or --preparation is supported');
   }
   const env = sanitizedEnvironment();
   await verifyIsolatedBuildFixture({ env });
   const result = spawnSync(process.execPath, [
     '--test', '--test-force-exit', '--test-timeout=1200000',
-    process.argv[2] === '--release' ? 'tests/retired-database-release-integration.test.js'
+    process.argv[2] === '--preparation' ? 'tests/complete-preview-preparation-integration.test.js'
+      : process.argv[2] === '--release' ? 'tests/retired-database-release-integration.test.js'
       : process.argv[2] === '--runtime' ? 'tests/recoverable-preview-runtime-integration.test.js'
         : 'tests/recoverable-preview-build-integration.test.js',
   ], { stdio: 'inherit', env });

@@ -15,10 +15,12 @@ or deletion is authorized by this inventory.
 | `preview-flow/cleanup.start` and `build-retention` recovery timers plus durable `work.census` / `scripts/preview-preparation-worker.js` and `execution/service.js` | One discoverable, fair recovery owner per admitted contract | Inventory admitted work/resource locators and consumers; demonstrate worker restart/recovery before removing the selected owner's old timer. Do not orphan retained work. |
 | C5 indefinite clone retention after Deployment submission (replaced in C6) | Existing clone ownership/retired-role/NOLOGIN/forced-drop fence | C6 proves connections, delayed Pods, lost replies/restarts and successor protection. Runtime creation obligations and retired roles remain discoverable; database release is not creator closure. |
 | Role/runtime/Build tombstones and retained artifacts | Explicitly proven retention/compaction policy | No current expiry/removal gate. Elapsed time or absence is insufficient; preserve required identities and recovery ownership. |
-| Injected Build/clone phases in C5 runtime proof | Complete actual preparation evidence | Next checkpoint after C6; remove reliance on injected evidence for the chosen real path, not the focused regression fixtures. |
+| Injected Build/clone phases in C5 runtime proof (replaced as complete-path evidence in C7) | Actual staging source → clone → kpack → candidate runtime → accepted candidate | C7 uses actual services/output and preserves identities across interruption/lost replies. Focused injected regressions remain useful and explicitly labeled. Fixture template selection and HTTP transport remain substitutions. |
+| A separately constructed clone inspector and legacy existence/removal branch in the Kubernetes preparation path (bypassed in C7) | Named `prepareClone` from the same worker-owned service that creates/retires the clone | C7 verifies source first, then the actual clone, Build and runtime. Keep older work kinds' dispatch while retained work depends on it; no legacy builder/cleanup path may take ownership of this path's database. |
+| Repeated staging source fetch and retry-local diagnostics while a Build is pending | A bounded source/recipe preparation boundary within the selected execution contract | Measure at caller cutover; retain exact revision verification. No new source cache/work kind added by C7. This is an execution inefficiency, not evidence of duplicate external creation. |
 
-Next sequence: finish C6 safe release → prove one complete real preparation path →
-cut over one bounded caller and remove its duplicate ownership. Do not expand to
+Next sequence: C6 safe release and C7 complete-path proof → cut over one bounded
+caller and remove its duplicate ownership. Do not expand to
 additional workflows before this replacement is demonstrated. Track the mechanisms
 actually removed, retained compatibility obligations, and remaining guarantees.
 
@@ -40,3 +42,39 @@ selected experiment's preparation/recovery owners. Complete-path proof should
 replace older preparation kinds for one caller; creator obligations must keep a
 recovery owner until a separate closure/compaction contract is proved. B2/C2 reuse
 is retained; further workflow expansion waits for the caller replacement above.
+
+## Bounded caller selected after C7
+
+Select native CLI handoff **on Kubernetes/kpack** entering
+`src/routes/proposal-handoff.js` → `handoff-pipeline.startHandoffPipeline` /
+`runStaging`. Exclude Docker, imported proposals and hosted/local Dev sessions
+sharing that module. No caller was changed by C7.
+
+The competing preparation owner to remove for this caller is
+`preview-flow/native.prepareNativePreview` →
+`candidate-native.prepareCandidatePreview` →
+`staging.buildAndDeployStaging`: synchronous admission/resource reservation,
+process-local build queue, receipt consumption, inline failure cleanup and
+activation. Replace its preparation with atomic `work.request` and the existing
+external worker. Activation stays separately authorized after accepted candidate
+completion. Its staging-ready notification/edge verification/checks continuation
+needs a recoverable, deduplicated completion boundary before this caller can be
+called migrated; a detached web promise is insufficient.
+
+The cutover must also close alternate entry points for **enrolled attempts**:
+`staging-recovery.rebuildSessionStaging` calls `staging.buildAndDeployStaging`
+directly; `routes/sessions.js`'s preview-click and
+`staging-recovery.recheckSessionChecks` enter that rebuilding path. Route this
+cohort's preparation/recovery through its durable owner rather than admitting a
+second synchronous builder. Replace preview-preparation uses of
+`handoffPipelines`/`active-workers` with durable ownership checks; preserve
+submission serialization and unrelated checks/Dev-worker coordination. Remove
+selected cleanup timer dispatch only after inventorying its retained locators and
+moving every obligation to durable discovery. Shared timers/locks required by
+other callers stay. Their deletion is not implied by one caller's cutover.
+
+Acceptance for that subsequent slice: a lost submit/completion reply and web or
+worker restart cannot create duplicate work or lose the continuation; supersession
+cannot activate an obsolete candidate; every selected rebuild/cleanup entry has
+one owner; record the old branches/flags/process ownership actually removed and
+the retained compatibility obligations. No production rollout is authorized here.

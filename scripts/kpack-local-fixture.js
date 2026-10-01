@@ -17,6 +17,11 @@ const KPACK_VERSION = '0.17.2';
 const CRANE_VERSION = '0.20.3';
 const BUILDER_SOURCE = 'paketobuildpacks/ubuntu-noble-builder@sha256:30bfd9a0535236af8c59e7e0ca7f7b32f56094f7c509f60ba72bc99c64aca903';
 const SOURCE_REVISION = '28cdfd8d72324baddeb292f4bdd8a96bb081a463';
+const PREPARATION_SOURCE = {
+  repoUrl: 'https://github.com/nickovivar/simple-health-endpoint',
+  revision: '59de32fd44f50ba06926a43d90b567e33aa39236',
+  branch: 'main',
+};
 const IMAGES = {
   node: 'kindest/node:v1.34.0',
   database: 'postgres:15.15',
@@ -451,6 +456,7 @@ async function manifest(state) {
     repoUrl: state.repoUrl,
     revision: state.revision,
     runScript: null,
+    preparationSource: PREPARATION_SOURCE,
     runtimeImage: state.runtimeImage,
     databaseRuntimeImage: state.databaseRuntimeImage,
     config: {
@@ -571,7 +577,7 @@ async function integration(state, mode = 'test') {
     KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: fixture.isolation.database.url,
   };
   await verifyIsolatedBuildFixture({ env });
-  const option = { 'test-runtime': '--runtime', 'test-release': '--release' }[mode];
+  const option = { 'test-runtime': '--runtime', 'test-release': '--release', 'test-preparation': '--preparation' }[mode];
   const child = spawn(process.execPath, ['scripts/test-recoverable-preview-build.js', ...(option ? [option] : [])], { env, stdio: 'inherit' });
   const [code] = await once(child, 'exit');
   state.lastIntegration = { completedAt: new Date().toISOString(), exitCode: code };
@@ -593,8 +599,8 @@ async function main() {
     console.log(directory);
     return;
   }
-  check(['setup', 'teardown', 'test', 'test-runtime', 'test-release'].includes(mode) && argument,
-    'use init <local-socket>, setup/test/test-runtime/test-release/teardown <directory>');
+  check(['setup', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation'].includes(mode) && argument,
+    'use init <local-socket>, setup/test/test-runtime/test-release/test-preparation/teardown <directory>');
   const directory = fs.realpathSync(argument);
   const state = JSON.parse(fs.readFileSync(path.join(directory, 'setup-state.json'), 'utf8'));
   check(state.version === 1 && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(state.fixtureId)
@@ -603,7 +609,7 @@ async function main() {
     && directory.startsWith(`${fs.realpathSync(os.tmpdir())}${path.sep}`), 'fixture directory identity mismatch');
   try {
     if (mode === 'setup') await setup(state);
-    else if (['test', 'test-runtime', 'test-release'].includes(mode)) await integration(state, mode);
+    else if (['test', 'test-runtime', 'test-release', 'test-preparation'].includes(mode)) await integration(state, mode);
     else await teardown(state);
   } catch (error) {
     state.lastError = error.message;

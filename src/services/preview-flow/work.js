@@ -244,7 +244,7 @@ function createPreviewWork(pool, config, {
         WHERE flow_id = $1 AND session_id = $2`, [identity.flowId, attempt.session_id])).rows[0];
       const password = decrypt(resource?.clone_credential_enc, config.dataEncryptionKey);
       if (!password) throw Object.assign(new Error('Reserved clone credential is unavailable'), { permanent: true });
-      if (recoverClone) {
+      if (recoverClone && !recoverRuntime) {
         const cloneResult = await prepareClone(context, password);
         if (cloneResult) return cloneResult;
       }
@@ -260,23 +260,34 @@ function createPreviewWork(pool, config, {
       // Image recovery may repeat source fetch and Build observation. Existing
       // work keeps its one-shot runtime checkpoint; C5 records each resource
       // submission separately and reconciles partial runtime preparation.
+      const candidate = {
+        intent,
+        password,
+        preparationOwner: 'bounded',
+        async onClonePrepared() {
+          if (!recoverClone) await owner.markClonePrepared(attempt.session_id, identity.flowId);
+        },
+      };
+      if (recoverRuntime) {
+        // Staging validates source before asking the owner to prepare its clone.
+        candidate.prepareClone = () => prepareCloneForStaging(context, password);
+      } else if (recoverClone) {
+        candidate.preparedClone = true;
+      }
+      if (recoverImage) {
+        candidate.prepareImage = runScript => prepareImage(context, runScript);
+        if (recoverRuntime) {
+          candidate.prepareRuntime = params => selectAndPrepareRuntime(context, resourceConfig, params);
+        } else {
+          candidate.onRuntimeStarting = () => startCandidateRuntime(context);
+        }
+      }
+
       let result;
       try {
-        result = await prepare(resourceConfig, session, app, identity.headSha, {
-          intent,
-          password,
-          preparationOwner: 'bounded',
-          ...(recoverClone ? { preparedClone: true } : {}),
-          ...(recoverImage ? {
-            prepareImage: runScript => prepareImage(context, runScript),
-            onRuntimeStarting: recoverRuntime ? undefined : () => startCandidateRuntime(context),
-            ...(recoverRuntime ? { prepareRuntime: params => selectAndPrepareRuntime(context, resourceConfig, params) } : {}),
-          } : {}),
-          async onClonePrepared() {
-            if (!recoverClone) await owner.markClonePrepared(attempt.session_id, identity.flowId);
-          },
-        }, identity);
+        result = await prepare(resourceConfig, session, app, identity.headSha, candidate, identity);
       } catch (error) {
+        if (error.previewPreparationOutcome) return error.previewPreparationOutcome;
         if (!error.previewImageOutcome) throw error;
         const latest = (await store.read(attempt.id)).checkpoint;
         if (error.previewImageOutcome === 'waiting') {
@@ -515,6 +526,16 @@ function createPreviewWork(pool, config, {
     });
     if (!completion.decision.accepted) return retired(attempt, 'clone_completion_obsolete');
     return null;
+  }
+
+  async function prepareCloneForStaging(context, password) {
+    const outcome = await prepareClone(context, password);
+    if (outcome) {
+      throw Object.assign(new Error('Candidate clone preparation did not complete'), {
+        previewPreparationOutcome: outcome,
+      });
+    }
+    return { password, via: 'recovered-template' };
   }
 
   function prepared(receipt, attempt) {

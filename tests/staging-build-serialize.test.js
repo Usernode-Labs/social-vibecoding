@@ -565,6 +565,69 @@ test('image and clone overlap, and deploy waits for both', { timeout: 5000 }, as
   } finally { imageDone.resolve(); cloneDone.resolve({ password: 'pw' }); restore(); }
 });
 
+for (const outcome of ['complete', 'clone waiting', 'image waiting', 'wrong revision']) {
+  test(`bounded staging operations: ${outcome} preserves ordering and the cleanup owner`, async () => {
+    const config = { appRuntime: 'kubernetes', kubernetes: { appNamespace: 'test-apps' } };
+    const headSha = 'a'.repeat(40);
+    const identity = { flowId: randomUUID(), generation: 1, headSha };
+    const intent = {
+      ...require('../src/services/preview-flow/candidate-resources').candidateResources(config, 7, randomUUID()),
+      buildOperation: { revision: outcome === 'wrong revision' ? 'b'.repeat(40) : headSha },
+    };
+    const legacyForbidden = async () => { throw new Error('Legacy database owner must not run'); };
+    const { subject, events, queries, restore } = loadStaging({
+      runtimeKind: 'kubernetes',
+      existsImpl: legacyForbidden,
+      cloneImpl: legacyForbidden,
+      dropImpl: legacyForbidden,
+      inspectClone: legacyForbidden,
+    });
+    const phases = [];
+    const candidate = {
+      intent,
+      preparationOwner: 'bounded',
+      async prepareClone() {
+        phases.push('clone');
+        if (outcome === 'clone waiting') throw new Error('Clone still uncertain');
+        return { password: 'owned-password', via: 'recovered-template' };
+      },
+      async prepareImage() {
+        phases.push('image');
+        if (outcome === 'image waiting') throw new Error('Build still running');
+        return { imageRef: 'verified-image', buildRef: 'verified-build' };
+      },
+      async prepareRuntime() {
+        phases.push('runtime');
+        return {
+          runtimeKind: 'kubernetes', runtimeName: intent.runtimeName,
+          physicalId: 'verified-uid', url: `http://${intent.runtimeName}:3000`,
+        };
+      },
+      async onClonePrepared() {},
+    };
+    try {
+      const result = subject.prepareCandidateUnderBuildLock(config, mkSession(7), mkApp, headSha, candidate, identity);
+      if (outcome === 'complete') {
+        assert.ok((await result).stagingUrl);
+        assert.deepEqual(phases, ['clone', 'image', 'runtime']);
+      } else {
+        const expected = {
+          'clone waiting': /Clone still uncertain/,
+          'image waiting': /Build still running/,
+          'wrong revision': /source does not match/,
+        };
+        await assert.rejects(result, expected[outcome]);
+        const visited = { 'clone waiting': ['clone'], 'image waiting': ['clone', 'image'], 'wrong revision': [] };
+        assert.deepEqual(phases, visited[outcome]);
+      }
+      assert.equal(events.some(event => event[0] === 'clone' || event[0] === 'drop'), false);
+      assert.equal(queries.length, 0, 'preparation must not publish serving state');
+    } finally {
+      restore();
+    }
+  });
+}
+
 for (const fails of ['image', 'clone', 'both']) {
   test(`preparation failure (${fails}) settles both tasks before cleanup`, { timeout: 5000 }, async () => {
     const imageStarted = deferred(), cloneStarted = deferred(), imageDone = deferred(), cloneDone = deferred();
