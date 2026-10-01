@@ -535,28 +535,57 @@ function containerSecurityContext() {
   return { allowPrivilegeEscalation: false, capabilities: { drop: ['ALL'] }, readOnlyRootFilesystem: false };
 }
 
-function previewDatabaseAffinity(cfg, environment) {
-  if (environment !== 'staging' || !cfg.previewDatabaseNamespace || !cfg.previewDatabaseCluster) return {};
+// Previews and apps prefer to run near their database: first in the CNPG
+// primary's zone, then on its host. A page makes many sequential queries, so
+// a pod in another data centre pays that round trip on every one. When the
+// only preference was the primary's HOST, a full host left every other node
+// equally good, and previews landed in Falkenstein while the database ran in
+// Helsinki: those previews took a third longer to check, and 8 of 10 runs
+// there failed 60 to 240 checks on data that arrived too late (2026-10-01,
+// sessions 5588, 5664 and 5674).
+//
+// Both are preferences, so other eligible nodes stay available when the zone
+// is full. A node without `topology.kubernetes.io/zone` matches no zone, so
+// a cluster whose nodes carry no zone labels keeps the host preference alone.
+// Select the primary role, not a Pod/node name, so new scheduling follows
+// CNPG failover without moving already-running pods.
+function databaseAffinity(cfg, environment) {
+  if (environment !== 'staging' && environment !== 'production') return {};
+  if (!cfg.previewDatabaseNamespace || !cfg.previewDatabaseCluster) return {};
+  const primary = {
+    namespaces: [cfg.previewDatabaseNamespace],
+    labelSelector: { matchLabels: {
+      'cnpg.io/cluster': cfg.previewDatabaseCluster,
+      'cnpg.io/instanceRole': 'primary',
+    } },
+  };
   return {
     affinity: {
       podAffinity: {
-        // A preference leaves other eligible nodes available immediately.
-        // Select the primary role, not a Pod/node name, so new scheduling
-        // follows CNPG failover without moving already-running previews.
-        preferredDuringSchedulingIgnoredDuringExecution: [{
-          weight: 100,
-          podAffinityTerm: {
-            namespaces: [cfg.previewDatabaseNamespace],
-            labelSelector: { matchLabels: {
-              'cnpg.io/cluster': cfg.previewDatabaseCluster,
-              'cnpg.io/instanceRole': 'primary',
-            } },
-            topologyKey: 'kubernetes.io/hostname',
-          },
-        }],
+        preferredDuringSchedulingIgnoredDuringExecution: [
+          { weight: 100, podAffinityTerm: { ...primary, topologyKey: 'topology.kubernetes.io/zone' } },
+          { weight: 50, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } },
+        ],
       },
     },
   };
+}
+
+// The node an app's ready Pod was scheduled on, for the deploy log. Best
+// effort: a lookup that fails or finds no ready Pod returns null and never
+// fails the deploy that just succeeded.
+async function scheduledNode(core, namespace, name, imageRef) {
+  try {
+    const pods = await core.listNamespacedPod({ namespace,
+      labelSelector: `social.usernode.io/runtime-name=${name}` });
+    const pod = (pods?.items || []).find((item) => !item.metadata?.deletionTimestamp
+      && item.spec?.nodeName
+      && item.spec?.containers?.some((c) => c.name === 'app' && c.image === imageRef)
+      && item.status?.conditions?.some((c) => c.type === 'Ready' && c.status === 'True'));
+    return pod ? pod.spec.nodeName : null;
+  } catch {
+    return null;
+  }
 }
 
 // ── Platform assets on every app's own origin ─────────────────────────
@@ -850,7 +879,7 @@ async function deployApplication(config, {
           securityContext: runAsUser == null
             ? podSecurityContext()
             : { ...podSecurityContext(), runAsUser, runAsGroup: runAsUser },
-          ...previewDatabaseAffinity(cfg, environment),
+          ...databaseAffinity(cfg, environment),
           containers: [{
             name: 'app', image: imageRef, imagePullPolicy: 'IfNotPresent',
             ...(command.length ? { command } : {}),
@@ -928,10 +957,12 @@ async function deployApplication(config, {
     }
     throw err;
   }
+  const node = await scheduledNode(core, namespace, name, imageRef);
   return {
     runtimeKind: 'kubernetes', runtimeName: name, imageRef,
     hostname: internalOnly ? `${name}.${namespace}.svc` : hostname,
     url: internalOnly ? `http://${name}.${namespace}.svc:3000` : `https://${hostname}`,
+    ...(node ? { node } : {}),
   };
 }
 

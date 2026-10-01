@@ -638,8 +638,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const deployedAt = Date.now();
     timings.deployedAt = deployedAt;
     reportBuildStep(config, session, 'prepare_checks', timings, deployedAt);
+    // The node says which data centre served the checks; a preview far from
+    // its database fails them on data that arrives late.
     log.info('staging', 'Staging deployed', {
-      sessionId: session.id, url: stagingUrl, ...timings,
+      sessionId: session.id, url: stagingUrl, ...(deployed.node ? { node: deployed.node } : {}), ...timings,
     });
 
     // `timings` is threaded out so the checks tracer can attribute the wait
