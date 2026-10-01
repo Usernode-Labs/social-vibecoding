@@ -23,6 +23,7 @@
 // hour or per month just as easily.
 
 import type { AgentChoice, ModelCatalog, OpenRouterModel } from './api';
+import { prettyModel } from './transcript';
 
 export const ANTHROPIC_PREFIX = 'anthropic:';
 export const OPENROUTER_PREFIX = 'openrouter:';
@@ -96,6 +97,41 @@ function withCost(option: PickerOption, cost: ModelCost): PickerOption {
     ...option,
     ...(cost.compact ? { detail: cost.compact } : {}),
   };
+}
+
+/**
+ * A model's short name, for the closed pill (#3574). On a phone the pill gets
+ * whatever the composer's row has left after the paperclip, the credits pill
+ * and Send, which on a 390px screen is about 150px; OpenRouter names every
+ * model "Provider: Model" ("DeepSeek: DeepSeek V4.1 Flash", "Z.ai: GLM 5.3
+ * Flash"), so the pill spent its room on the provider and the credits pill
+ * was drawn over the rest.
+ *
+ * So the short form is the catalog's own name with that "Provider: " prefix
+ * taken off, and then a leading "Claude": the platform's own Claude models are
+ * already named without it ("Opus 5.5", services/models.js), and an Opus
+ * reached through OpenRouter should read the same. An option the catalog has
+ * no name for carries its id as its label (pickerOptions, below: the
+ * conversation is on a model the catalog no longer lists), and an id is
+ * shortened the way the transcript names a model (transcript.ts prettyModel,
+ * applied to what follows the provider's slash): "claude-opus-5-5" is "Opus
+ * 5.5" and "openai/gpt-5.3-codex" is "gpt-5.3-codex".
+ *
+ * Derived from the name, never a table of models: one added to the catalog
+ * tomorrow gets a short name with nobody editing a list, and a name the rules
+ * cannot shorten is returned whole rather than emptied. The full name is not
+ * lost: the pill keeps it as its tooltip and as what a screen reader hears,
+ * and the sheet it opens lists every model by the name the catalog gave it.
+ */
+export function shortModelName(label: string | null | undefined): string {
+  const full = String(label || '').trim();
+  if (!full) return '';
+  // A label with no space in it is an id, not a name.
+  if (!/\s/.test(full)) return prettyModel(prettyModel(full)) || full;
+  const short = full
+    .replace(/^[^:/]{1,40}:\s+(?=\S)/, '')
+    .replace(/^Claude\s+(?=\S)/, '');
+  return short || full;
 }
 
 export function choiceValue(choice: AgentChoice | null | undefined): string {
