@@ -24,6 +24,7 @@ const {
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const communityInvites = require('../services/community-invites');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
@@ -366,6 +367,10 @@ function authRoutes(config) {
       const invite = verified.created
         ? await communityInvites.redeemCarried(pool, req, res, verified.userId)
         : (communityInvites.clearInviteCookie(res), null);
+      // A link whose maker's skip let this person straight in has joined
+      // them already: the challenge for it counts now, not on the rule's
+      // next pass (#3564). A queued one waits for release, and the schedule.
+      if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
       if (verified.next === 'signed-in') {
         // The account already has a password, so there is nothing to set up.
         // Clear any stale continuation and hand back the ordinary web session,

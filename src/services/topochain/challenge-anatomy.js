@@ -198,10 +198,17 @@ function anatomy(measureKey, { points = null, target = null } = {}) {
     measure: measureKey,
     lane: spec.graded ? 'sql_model' : 'sql',
     // What the interval actually buys, said where the interval is chosen.
-    cost: spec.graded
+    cost: (spec.graded
       ? `SQL, then one model call for each new ${spec.unit}. A ${spec.unit} is graded once in its life, so a `
         + 'shorter interval does not spend more. It only marks sooner.'
-      : 'SQL only: two small reads a run, so a short interval costs nothing you would notice.',
+      : 'SQL only: two small reads a run, so a short interval costs nothing you would notice.')
+      // The two community measures also run the moment somebody joins
+      // (scorer.scoreOnJoin, #3564), so for them the interval is the
+      // backstop, and an operator choosing it should know that.
+      + (scorer.JOIN_MEASURES.includes(measureKey)
+        ? ' A join also runs it on the spot, so the interval only paces memberships that arrive without '
+          + 'one: a Home pin, or a queued invite whose person is let in.'
+        : ''),
     steps,
   };
 }

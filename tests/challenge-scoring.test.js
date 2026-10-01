@@ -1260,3 +1260,67 @@ test('the two state measures credit once each, under a fixed key, whenever the s
   assert.deepEqual(made.map((c) => [c.userId, c.sourceKey, c.description]), [[7, 'community-app', 'Created an app for a community']]);
   assert.ok(made[0].activityAt, 'a missing date still stamps the credit');
 });
+
+// ─── Counting a join on the spot (#3564) ───────────────────────────────
+//
+// "Find people to build with" read "Not started" after a join because the
+// measure was only taken on the rule's next scheduled pass. The doors now
+// run the two community state measures themselves (scoreOnJoin); the
+// behaviour is proven against a real database in
+// tests/challenge-join-scoring-postgres.test.js, and these pin the parts a
+// later edit could quietly undo.
+
+test('a join runs only the community STATE measures, which are race-free without the lock', () => {
+  assert.deepEqual([...scorer.JOIN_MEASURES], ['COMMUNITY_JOINED', 'COMMUNITY_APP_CREATED']);
+  for (const measure of scorer.JOIN_MEASURES) {
+    const spec = rules.MEASURES[measure];
+    // Outside the tick's advisory lock, only a single completion under a
+    // fixed key is safe: the completion index refuses the racing copy. A
+    // counted measure's cap is enforced by the plan, which needs the lock.
+    assert.equal(spec.counted, false, `${measure}: one completion, never a count`);
+    assert.equal(spec.graded, false, `${measure}: no model call on somebody's Join tap`);
+    assert.equal(spec.windowed, false, `${measure}: state, so a join before the season counts too`);
+  }
+  assert.ok(!scorer.JOIN_MEASURES.includes('INVITES_JOINED'), 'the counted invite measure waits for the locked schedule');
+  const sql = scorer.JOIN_RULES_SQL.replace(/\s+/g, ' ');
+  assert.match(sql, /WHERE enabled = TRUE AND measure = ANY\(\$1::text\[\]\)/, 'a switched-off rule is not run on a join');
+  // Said where the operator picks the interval: for these two it is the
+  // backstop, and for every other measure nothing changed.
+  for (const measure of rules.MEASURE_KEYS) {
+    const { cost } = anatomy(measure, { points: 1000, target: 4 });
+    assert.equal(cost.includes('A join also runs it on the spot'), scorer.JOIN_MEASURES.includes(measure), measure);
+  }
+});
+
+test('scoreOnJoin is a no-op when scoring is off, and never throws into the join', async () => {
+  const seen = [];
+  const quiet = { async query(text) { seen.push(text); return { rows: [] }; } };
+  assert.equal(await scorer.scoreOnJoin(quiet, { challengeScorer: { intervalMinutes: 0 } }), null);
+  assert.equal(seen.length, 0, 'interval 0 asks Postgres nothing');
+  assert.equal(await scorer.scoreOnJoin(quiet, { challengeScorer: { intervalMinutes: 10 } }), null);
+  assert.deepEqual(seen, [scorer.JOIN_RULES_SQL], 'no rule on either measure: one read, then nothing');
+  const failing = { async query() { throw new Error('boom'); } };
+  assert.equal(await scorer.scoreOnJoin(failing, { challengeScorer: { intervalMinutes: 10 } }), null);
+});
+
+test('every door a person joins a community through counts the join before it answers', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  const doors = {
+    // The Join button (Discover, a project's page).
+    'src/routes/apps.js': /await communities\.join\(pool, app, req\.user\.id\);\s*(?:\/\/[^\n]*\n\s*)*await challengeScorer\.scoreOnJoin\(pool, config\);/,
+    // The join screen, once for the whole answer.
+    'src/routes/onboarding.js': /if \(result\.joined\.length\) await challengeScorer\.scoreOnJoin\(pool, config\);/,
+    // An invite link followed while signed in, and one carried through sign-up.
+    'src/routes/community-invites.js': /if \(result\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);/,
+    'src/routes/auth.js': /if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);/,
+    // A collaborator invite accepted.
+    'src/routes/collaborators.js': /if \(!result\.alreadyMember\) await challengeScorer\.scoreOnJoin\(pool, config\);/,
+  };
+  for (const [file, pattern] of Object.entries(doors)) {
+    const src = read(file);
+    assert.match(src, /require\('\.\.\/services\/topochain\/challenge-scorer'\)/, file);
+    assert.match(src, pattern, `${file} counts the join on the spot`);
+  }
+});
