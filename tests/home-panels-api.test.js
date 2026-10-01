@@ -479,7 +479,7 @@ test('GET /api/home-panels: the query\'s done verdict wins over recomputation', 
 });
 
 test('GET /api/home-panels: a row carries the organiser completed flag beside the viewer done', async () => {
-  // HomePanels.orderDone sorts cards outside Get started on `completed`, as
+  // HomePanels.orderDone sorts cards outside First challenges on `completed`, as
   // the tab does; the check mark stays the viewer's `progress.done`.
   const rows = [
     row({ id: 1, completed: true, my_done: false }),

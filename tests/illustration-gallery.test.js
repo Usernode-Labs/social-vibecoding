@@ -33,6 +33,8 @@ const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
 const ROOT = path.join(__dirname, '..');
 const GALLERY = loadTsx('frontend/src/features/admin/topochain/illustration-gallery.tsx');
 const { ILLUSTRATIONS } = loadTsx('frontend/src/lib/challenge-illustrations.ts');
+// The gallery draws one tile per built-in, so counts follow the registry.
+const BUILT_INS = Object.keys(ILLUSTRATIONS).length;
 
 const ID = 'admin-topo-tpl-f-illustration';
 const HEX = 'a'.repeat(32);
@@ -70,9 +72,9 @@ test('the gallery is a labelled radio group that keeps the field id', () => {
   assert.ok(!/<select/.test(html), 'the dropdown is gone');
 });
 
-test('the tiles are (none) then the nine built-ins, in registry order', () => {
+test('the tiles are (none) then every built-in, in registry order', () => {
   const radios = radiosOf(render(''));
-  assert.equal(radios.length, 10, '(none) plus nine built-ins before the list loads');
+  assert.equal(radios.length, BUILT_INS + 1, '(none) plus every built-in before the list loads');
   assert.equal(radios[0].value, '');
   assert.match(radios[0].html, />\(none\)</, 'the first tile reads (none)');
   assert.deepEqual(radios.slice(1).map((r) => r.value), Object.keys(ILLUSTRATIONS));
@@ -116,7 +118,7 @@ test('a stored slug this build cannot draw stays checked, marked Not available',
   assert.match(kept.html, />retired-art</, 'under its raw value');
   assert.match(kept.html, />Not available</, 'marked');
   assert.ok(!/<img/.test(kept.html), 'with no image guessed for it');
-  assert.equal(radios.length, 11);
+  assert.equal(radios.length, BUILT_INS + 2);
 });
 
 test('an archived upload that is stored stays checked, marked Archived, on its tone', () => {
@@ -125,7 +127,7 @@ test('an archived upload that is stored stays checked, marked Archived, on its t
     { slug: `u-${'b'.repeat(32)}`, label: 'New badge', tone: 'teal', archived: false },
   ];
   const tiles = GALLERY.galleryTiles(UPLOADED, items, UPLOADED);
-  assert.deepEqual(tiles.map((t) => t.value).slice(10), [`u-${'b'.repeat(32)}`, UPLOADED],
+  assert.deepEqual(tiles.map((t) => t.value).slice(BUILT_INS + 1), [`u-${'b'.repeat(32)}`, UPLOADED],
     'live uploads follow the built-ins, and the archived stored one is kept at the end');
   const archived = tiles.find((t) => t.value === UPLOADED);
   assert.equal(archived.marker, 'Archived');
@@ -176,7 +178,7 @@ test('the Add tile and its file chooser exist only for an admin who can write', 
   const readOnly = render('', { write: false });
   assert.ok(!readOnly.includes(`${ID}-add`), 'no Add tile for a view-only admin');
   assert.ok(!/type="file"/.test(readOnly), 'and no file input');
-  assert.equal(radiosOf(readOnly).length, 10, 'but the same tiles to pick from');
+  assert.equal(radiosOf(readOnly).length, BUILT_INS + 1, 'but the same tiles to pick from');
 });
 
 test('no raw SVG markup reaches the page', () => {

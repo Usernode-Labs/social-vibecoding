@@ -419,9 +419,9 @@ const TopochainChallenges = {
   // screen reader says the words. The keys are not the headings: ids
   // (`tc-se-group-<key>`) and tests name the keys, so a heading can change
   // without them. `order` is each group's rank while setup is unfinished;
-  // _groupRankOf moves a finished Get started to the end.
+  // _groupRankOf moves a finished First challenges group to the end.
   GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'Get started', order: 0 },
+    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
     WEEKLY: { key: 'week', heading: 'This week', order: 1 },
     PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
   },
@@ -444,7 +444,7 @@ const TopochainChallenges = {
       && list.some((c) => TopochainChallenges._groupOf(c) !== TopochainChallenges.OTHER_GROUP);
   },
 
-  // Whether setup is behind the viewer, which decides where Get started
+  // Whether setup is behind the viewer, which decides where First challenges
   // sits. With an onboarding summary the server's gate says so
   // (`unlocked === true`); without one, the list must hold at least one setup
   // card and every one of them must be done.
@@ -455,8 +455,8 @@ const TopochainChallenges = {
     return setup.length > 0 && setup.every((c) => TopochainChallenges._isDone(c));
   },
 
-  // A group's rank in the board's order: Get started while unfinished (0),
-  // This week (1), Always open (2), Season challenges (3), then Get started
+  // A group's rank in the board's order: First challenges while unfinished (0),
+  // This week (1), Always open (2), Season challenges (3), then First challenges
   // once finished (4, last), so the grid leads with what is left to do.
   // Pure: a group from GROUPS/OTHER_GROUP and the _setupFinished answer.
   // HomePanels keeps the same rule for Home's block, and
@@ -472,9 +472,9 @@ const TopochainChallenges = {
     return grouped ? TopochainChallenges._groupRankOf(TopochainChallenges._groupOf(c), setupFinished) : 0;
   },
 
-  // The group first (a grouped grid only, by _groupRankOf: Get started while
+  // The group first (a grouped grid only, by _groupRankOf: First challenges while
   // unfinished, This week, Always open, Season challenges, then a finished
-  // Get started), then unfinished challenges, then organiser-featured, then
+  // First challenges), then unfinished challenges, then organiser-featured, then
   // the public payload's order (display_order, then id) — the retired
   // #challenges screen's ordering with the completed split added in front of
   // it (#981). The group key keeps each group contiguous, so a grouped grid's
@@ -609,11 +609,11 @@ const TopochainChallenges = {
     }
     return {
       kind: 'cards',
-      // Get started is its own scope while it gates the rest; once unlocked
+      // First challenges is its own scope while it gates the rest; once unlocked
       // the grid is the whole event again, and so is the progress.
       progress: onboarding.unlocked
         ? TopochainChallenges._progressView(doneCount, ordered.length)
-        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'Get started'),
+        : TopochainChallenges._progressView(onboarding.completed, onboarding.total, 'First challenges'),
       onboardingEventId: !onboarding.unlocked && !groups.some((g) => g.key === 'setup')
         ? onboarding.event_id : null,
       // While the gate is closed: the note, and how many of this event's
@@ -633,9 +633,9 @@ const TopochainChallenges = {
 
   // One group's header, from its challenges: how many are done, whether all
   // are, the clock, and the meta string composed from them: "2/2 done" for a
-  // finished group, "1/3" for Get started (which has no clock), "1/4 · 3d left"
+  // finished group, "1/3" for First challenges (which has no clock), "1/4 · 3d left"
   // or "0/2 · no deadline" for the rest. `left` is the time-left words alone,
-  // or null (Get started, a finished group, no deadline); the detail page's eyebrow
+  // or null (First challenges, a finished group, no deadline); the detail page's eyebrow
   // reads it.
   _groupSummary(key, challenges) {
     const list = Array.isArray(challenges) ? challenges : [];
@@ -717,7 +717,7 @@ const TopochainChallenges = {
       ...TopochainChallenges._stateOf(c),
       // On a grouped grid the header over This week, Always open and Season
       // challenges says when the group ends, so those cards leave it out.
-      // Get started's header has no clock, and its cards keep theirs.
+      // The First challenges header has no clock, and its cards keep theirs.
       deadline: TopochainChallenges._isDone(c) || !TopochainChallenges._isOpen(c)
         || (TopochainChallenges._grouped() && TopochainChallenges._groupOf(c).key !== 'setup')
         ? null : TopochainChallenges._deadlineOf(c),
@@ -799,7 +799,7 @@ const TopochainChallenges = {
   // The progress over the grid, as the board's quiet season summary draws it
   // ("3/9 done in Season 2", one segment per challenge, in
   // ./season-progress.tsx, which Home's block shares). `scope` names a scope
-  // of its own ("Get started"); otherwise it is the selected event, whose name
+  // of its own ("First challenges"); otherwise it is the selected event, whose name
   // can land after the grid does. The onChange redraw in open() fills it in
   // then, and until it has, the caption is plain "done".
   //
@@ -808,7 +808,7 @@ const TopochainChallenges = {
   // season's; production names its season event after the season ("Season
   // 1"), so "done in Season 1" here and "done in Season 1" on Home were two
   // different counts under one label. The event's tally reads "done in this
-  // event · <name>" now. A named scope ("Get started") is unchanged.
+  // event · <name>" now. A named scope ("First challenges") is unchanged.
   _progressView(done, total, scope) {
     if (scope) return { done, total, caption: `done in ${scope}` };
     const ctx = window.TopochainEventContext;
@@ -956,7 +956,7 @@ const TopochainChallenges = {
   // check can't reach it by URL alone. Opens one card once, right after the
   // grid first paints: the first UNFINISHED card when the event has one
   // (#981), which is the better capture either way. That is looked up, not
-  // assumed to be `ordered[0]`: a grouped grid leads with Get started while
+  // assumed to be `ordered[0]`: a grouped grid leads with First challenges while
   // the gate reads locked, even over setup cards that are all done, and a
   // finished group starts collapsed. Scoped to
   // that one param value so a real user's
@@ -1563,7 +1563,7 @@ const TopochainChallenges = {
     // The eyebrow, uppercase on the page. Ungrouped it is the category label,
     // and the meta line carries the card's deadline. Grouped it is the
     // challenge's group with that group's clock ("This week · 3d left"), and
-    // the meta line leaves the deadline to it; Get started has no clock, so its
+    // the meta line leaves the deadline to it; First challenges has no clock, so its
     // page keeps the card's deadline.
     let eyebrow = cp.label ? str(cp.label) : null;
     let deadline = TopochainChallenges._isDone(challenge) || !TopochainChallenges._isOpen(challenge)

@@ -35,14 +35,14 @@
  *
  * A CARD'S DEADLINE sits on the line under its title beside the reward ("5d
  * left · 500 pts"): the challenge's own end, else its event's, else the
- * season's. Only Get started's open cards draw it; every other group's header
+ * season's. Only the First challenges open cards draw it; every other group's header
  * carries the clock instead (below).
  *
  * ── Group headers, without counts ─────────────────────────────────────
  *
  * The cards are the Challenges tab's list in the tab's order: grouped by the
- * board's categories (Get started, This week, Always open, the season's other
- * challenges, and a finished Get started last). Expanded, the block draws
+ * board's categories (First challenges, This week, Always open, the season's other
+ * challenges, and a finished First challenges group last). Expanded, the block draws
  * that whole list. Collapsed, its four slots go to the viewer's unfinished
  * challenges first (#2490), cutting a group mid-way when the cap falls inside
  * it; finished challenges only fill the slots that are left, and they sit
@@ -51,7 +51,7 @@
  * screen included, static here: no toggle, no collapse and no count, because a
  * collapsed block does not draw the whole group. The header owns the clock
  * ("This week · 3d left", "Always open · no deadline") and the cards under it
- * drop theirs; Get started's keep their own. The Done header carries no clock.
+ * drop theirs; the First challenges cards keep their own. The Done header carries no clock.
  * HomePanels.orderRows, HomePanels.visibleSlots and HomePanels.challengeGroups
  * decide all of it; the headers sit inside `.home-panel-rows` beside the
  * cards, which the declared checks select through, so nothing comes between
