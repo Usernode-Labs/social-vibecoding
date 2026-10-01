@@ -5,14 +5,33 @@ const { nativeBackEnabled, createBackNavigationPublisher } = loadTsx(
   'frontend/src/features/header/native-back-navigation.ts'
 );
 
-const arrow = { visible: true, mode: 'arrow', href: '#settings', slug: null, tab: null };
+const arrow = { visible: true, mode: 'arrow', href: '#settings', inApp: false };
 test('only a visible Back destination outside embedded app content enables swiping', () => {
   assert.equal(nativeBackEnabled(arrow), true);
+  // The route's screen decides, not the Improve target: a platform screen
+  // showing a stale slug/tab pair from an app just left is still eligible.
   assert.equal(nativeBackEnabled({ ...arrow, slug: 'example', tab: 'dev' }), true);
   for (const override of [
     { visible: false }, { mode: 'home' }, { mode: 'none' }, { href: null },
-    { slug: 'example', tab: 'app' },
+    { inApp: true },
   ]) assert.equal(nativeBackEnabled({ ...arrow, ...override }), false);
+});
+
+// #3623: improveStore.tab stays 'app' once a platform screen has replaced
+// the running app — App.setTarget(null) WRITES that value, and the initial
+// one agrees with it — so the gesture read as "inside a running app" on
+// every screen the app had been left for. The header now answers from
+// navStore's screen instead; the stale slug/tab pair must never matter.
+test('a stale Improve tab cannot hold the gesture down on a platform screen', () => {
+  // The pair the store really holds after an app is left: the platform
+  // target's own slug (published by Home.publishImproveTarget) with the tab
+  // App.setTarget(null) or the initial value leaves behind. This is the one
+  // that fails under the old derivation.
+  assert.equal(nativeBackEnabled({ ...arrow, slug: 'example', tab: 'app' }), true,
+    'the screen decides; the Improve target never does');
+  // …and even the impossible pair must not matter either way.
+  assert.equal(nativeBackEnabled({ ...arrow, slug: null, tab: 'app' }), true,
+    'slug null with tab app is exactly the stale pair the store holds; the screen decides');
 });
 
 // #2916: a Workshop topic's back is the "‹ Workshop" chip inside the pane, and
@@ -28,7 +47,7 @@ test('a Workshop topic keeps swiping through its in-pane back chip', () => {
     'without the chip and without an arrow there is no back to swipe to');
   assert.equal(nativeBackEnabled({ ...topic, visible: false }), false,
     'a hidden header (chromeless) still publishes false');
-  assert.equal(nativeBackEnabled({ ...topic, tab: 'app' }), false,
+  assert.equal(nativeBackEnabled({ ...topic, inApp: true }), false,
     'and embedded App-tab content never gets the gesture');
 });
 

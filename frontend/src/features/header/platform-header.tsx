@@ -45,6 +45,7 @@ import { ChromelessPill } from './chromeless-pill';
 import { useCommunityHeaderTint } from './community-tint';
 import { HeaderTitle } from './header-title';
 import { PlatformMark } from './platform-mark';
+import { navStore } from '../nav/nav-store.js';
 import { SidebarToggle } from '../nav/sidebar-toggle';
 import { improveStore, topicBackHref } from '../improve/improve-store.js';
 import { useHeaderLayout } from './use-header-layout';
@@ -276,11 +277,16 @@ export function PlatformHeader() {
   // its place; App.setChromeless publishes the flag, this reads it.
   const visible = useVisibility('platform-header', true);
   useHiddenClass(headerRef, !visible);
+  // The running-app answer for the gesture is the route's screen — navStore's
+  // `screen`, republished on every reveal — not the Improve target's tab,
+  // which stays 'app' once a platform screen has replaced the app (#3623).
+  // <HeaderTitle/> reads the same store the same way for the same question.
+  const { screen } = useStoreState(navStore);
   // The swipe follows whichever control is the page's back: this bar's
   // arrow, or on a Workshop topic the in-pane chip (#2916), which is a back
   // with a destination even though the bar shows nothing.
   useNativeBackNavigation(nativeBackEnabled({
-    visible, mode, href: resolvedBackHref, slug: backSlug, tab: backTab,
+    visible, mode, href: resolvedBackHref, inApp: screen === 'app-view',
     paneHref: paneBack,
   }));
 

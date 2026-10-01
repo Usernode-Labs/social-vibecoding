@@ -738,6 +738,12 @@ test('the Dev lander needs no back arrow, because the rail is beside it', () => 
   // true, and still what the session sub-view relies on.
   assert.match(read('frontend/src/features/header/native-back-navigation.ts'),
     /mode === 'arrow' && !!href/);
+  // #3623: the running-app half of that rule is the route's screen now, not
+  // the Improve target's tab — that tab stays 'app' after the app has been
+  // left, which held the gesture down on every platform screen.
+  assert.ok(!read('frontend/src/features/header/native-back-navigation.ts')
+    .includes("slug && tab === 'app'"),
+  'the rule reads the screen, never the Improve tab');
 });
 
 // ── One Workshop, two scopes (#2718 review) ────────────────────────────

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 
 /**
  * Whether the native back-swipe is on: only where the page HAS a back control
- * with a destination, and never over embedded App-tab content.
+ * with a destination, and never inside the running app.
  *
  * That control is the header's arrow (`mode === 'arrow'` with an `href`)
  * everywhere but one family of routes. On a Workshop topic (an issue, a
@@ -10,13 +10,19 @@ import { useEffect, useRef } from 'react';
  * "‹ Workshop" chip at the top of the pane, and the header draws none (#2916),
  * so the header passes the chip's destination as `paneHref`. Without it the
  * swipe would switch off on exactly the pages whose back control moved.
+ *
+ * The running-app answer is `inApp` — the route's screen, which `navStore`
+ * republishes on every reveal — NOT the Improve target's tab. That tab went
+ * stale ('app') the moment a platform screen was showing, which left the
+ * swipe dead on Home, Messages, Settings and every other page whose back
+ * arrow was right in front of the viewer.
  */
-export function nativeBackEnabled({ visible, mode, href, slug, tab, paneHref = null }: {
+export function nativeBackEnabled({ visible, mode, href, inApp, paneHref = null }: {
   visible: boolean; mode: string; href: string | null;
-  slug: string | null; tab: string | null;
+  inApp: boolean;
   paneHref?: string | null;
 }): boolean {
-  if (!visible || (slug && tab === 'app')) return false;
+  if (!visible || inApp) return false;
   return (mode === 'arrow' && !!href) || !!paneHref;
 }
 
