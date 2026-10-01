@@ -174,6 +174,7 @@ const ACTING_TOOLS = Object.freeze([
   'start_platform_build',
   'submit_platform_build',
   'update_proposal_issues',
+  'update_proposal_description',
   'demo_mode',
   'demo_propose',
   'demo_promote',
@@ -924,6 +925,9 @@ function shapeProposal(session, origin) {
     // path agents poll; null on a proposal whose body predates the mirror,
     // which is not the same as an empty description.
     description: untrusted(session.pr_body, MAX_BODY_CHARS) || null,
+    summary: untrusted(session.pr_summary_md, 16000) || null,
+    descriptionVersion: Number(session.pr_summary_input_version || 0),
+    descriptionStale: session.pr_summary_stale === true,
     status: session.status || null,
     // #2028. The relationship an agent may now edit after proposal creation
     // has to be readable first; otherwise every update is a blind delta.
@@ -2569,6 +2573,9 @@ function registerTools(server, ctx) {
         .describe('Homeroom\'s own id for the proposal: the argument submit_work, prepare_work and update_proposal_issues take, and the last number in webPath. Quote it beside the pull request number, never instead of it.'),
       appSlug: z.string().nullable(),
       title: z.string(),
+      summary: z.string().nullable().describe('The reader-facing Markdown at the top of the proposal. Edit it with update_proposal_description.'),
+      descriptionVersion: z.number().describe('Pass this as expectedVersion when editing the reader-facing description.'),
+      descriptionStale: z.boolean(),
       description: z.string().nullable()
         .describe('The description the group is voting on, as last written through submit_work or the panel. Null on a proposal whose body predates the mirror.'),
       status: z.string().nullable(),
@@ -2753,6 +2760,42 @@ function registerTools(server, ctx) {
       );
     }
     return readResult('get_proposal', shapeProposal(session, origin));
+  });
+
+  server.registerTool('update_proposal_description', {
+    title: 'Edit a proposal description',
+    description: 'Edit the reader-facing description shown at the top of your own open proposal, including private work underway. Read get_proposal.summary and descriptionVersion first, then send the new Markdown with expectedVersion. A conflict means the proposal changed: reread and reconcile before retrying. Uses the same save as the Edit description menu action; no fork, GitHub link, code push, build, vote reset or promotion. Native PR summaries are synchronized while technical details and issue-closing lines are preserved; external imported PR bodies stay unchanged.',
+    inputSchema: {
+      proposalId: z.number().int().positive().max(2147483647),
+      description: z.string().min(1).max(16000),
+      expectedVersion: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    },
+    outputSchema: {
+      proposalId: z.number(), appSlug: z.string(), description: z.string(),
+      version: z.number(), stale: z.boolean(), changed: z.boolean(),
+      prBodyStatus: z.string(), webPath: z.string(), nextStep: z.string(),
+    },
+    annotations: writeAnnotations,
+  }, async ({ proposalId, description, expectedVersion }) => {
+    const guard = scopeGuard(WRITE_SCOPE);
+    if (guard) return guard;
+    let input;
+    try { input = require('./proposal-description-edit').parseEdit({ description, expectedVersion }); }
+    catch (err) { return toolError('invalid_request', err.message); }
+    const result = await callPlatform(baseUrl, accessToken, 'PATCH', `/api/sessions/${proposalId}/description`, input);
+    if (!result.ok) return platformError(result);
+    const body = result.body || {};
+    const pending = String(body.prBodyStatus || '').startsWith('github_');
+    return toolResult({
+      proposalId: Number(body.proposalId || proposalId), appSlug: String(body.appSlug || ''),
+      description: untrusted(body.description, 16000), version: Number(body.version),
+      stale: body.stale === true, changed: body.changed === true,
+      prBodyStatus: String(body.prBodyStatus || 'unknown'),
+      webPath: changeWebPath(origin, body.appSlug || '', proposalId),
+      nextStep: pending
+        ? 'The Homeroom description was saved. GitHub synchronization is pending; repeat this description with the returned version to retry.'
+        : 'The description was saved. Code, votes, checks and visibility are unchanged.',
+    });
   });
 
   // ── update_proposal_issues (#2028) ──────────────────────────────────

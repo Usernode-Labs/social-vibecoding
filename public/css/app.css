@@ -15266,6 +15266,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border: 0; border-radius: 9999px; background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer;
 }
 .dev-details-card > .dev-topic-details-body { margin: 0; padding: 0; background: none; font-size: 13.5px; line-height: 1.5; }
+.dev-description-dialog { margin: auto; border: 0; border-radius: 20px; width: min(680px, calc(100% - 24px)); max-height: 85dvh; }
+.dev-description-dialog::backdrop { background: rgba(20, 20, 26, .5); }
 @media (max-width: 480px) {
   .dev-topic-hero { padding: 14px 14px 16px; }
   .dev-topic-hero-title { font-size: 22px; }

@@ -13,6 +13,7 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const proposalDescription = require('../services/proposal-description');
+const proposalDescriptionEdit = require('../services/proposal-description-edit');
 const platformIssueBlock = require('../services/platform-issue-block');
 const buildContract = require('../services/build-contract');
 const staging = require('../services/staging');
@@ -1856,6 +1857,46 @@ function sessionRoutes(config, { scheduleInteractiveRecovery = null } = {}) {
   // collab-level access. 404 on deny so private apps' sessions aren't
   // enumerable; missing sessions fall through to each route's own 404.
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
+
+  // Reader-facing description, shared by the menu editor and MCP. Reading
+  // just this resource avoids downloading the author's private build chat.
+  router.get('/api/sessions/:id/description', async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id || id > 2147483647) return res.status(404).json({ error: 'Change not found.' });
+    try {
+      const session = await proposalDescriptionEdit.readEditable(pool, id, req.user.id);
+      if (!session) return res.status(404).json({ error: 'Change not found or no longer editable.' });
+      return res.json(proposalDescriptionEdit.snapshot(session));
+    } catch (err) {
+      log.warn('sessions', 'Description read failed', { sessionId: id, message: err.message });
+      return res.status(500).json({ error: 'Could not load the description.' });
+    }
+  });
+
+  router.patch('/api/sessions/:id/description', drainGuard, async (req, res) => {
+    const id = /^[1-9]\d{0,9}$/.test(String(req.params.id)) ? Number(req.params.id) : 0;
+    if (!id || id > 2147483647) return res.status(404).json({ error: 'Change not found.' });
+    let input;
+    try { input = proposalDescriptionEdit.parseEdit(req.body); }
+    catch (err) { return res.status(400).json({ error: 'invalid_request', message: err.message }); }
+    try {
+      const result = await proposalDescriptionEdit.edit({ pool, sessionId: id, userId: req.user.id, input });
+      if (result.status === 200) {
+        try {
+          require('../services/ws').pushSessionUpdate({
+            action: 'description_updated', sessionId: id,
+            appId: result.session.app_id, appSlug: result.session.app_slug,
+          });
+        } catch (err) {
+          log.warn('sessions', 'Description broadcast failed', { sessionId: id, message: err.message });
+        }
+      }
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      log.warn('sessions', 'Description edit failed', { sessionId: id, message: err.message });
+      return res.status(500).json({ error: 'Could not save the description. Your draft has been kept.' });
+    }
+  });
 
   // PATCH /api/sessions/:id/linked-issues (#2028)
   //

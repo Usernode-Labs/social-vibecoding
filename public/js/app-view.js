@@ -4285,6 +4285,12 @@ const AppView = {
         act: () => AppView.openTechnicalDetails(item.id),
       });
     }
+    if (body.changeId && AppView._canEditDescription(item)) {
+      menu.unshift({
+        label: 'Edit description', icon: 'edit',
+        act: () => window.dispatchEvent(new CustomEvent('change-description-edit', { detail: Number(item.id) })),
+      });
+    }
     if (gh && !menu.some((a) => a.label === 'Open on GitHub')) {
       menu.push({ label: 'Open on GitHub', icon: 'github', act: () => window.open(gh, '_blank', 'noopener') });
     }
@@ -4886,6 +4892,27 @@ const AppView = {
     window.dispatchEvent(new CustomEvent('change-details-open', { detail: Number(id) }));
   },
 
+  _canEditDescription(item) {
+    return !!item && !AppView.readOnly && AppView.appData?.can_collaborate !== false
+      && Number(item.user_id) === Number(App.user?.id) && !!App.user?.id
+      && !item.is_headless && ['active', 'paused', 'promoted', 'merging'].includes(item.status);
+  },
+
+  _cacheDescription(id, data) {
+    const patch = {
+      pr_summary_md: data.description, pr_summary_input_version: data.version,
+      pr_summary_source: 'author', pr_summary_stale: data.stale === true,
+      ...(data.prBody == null ? {} : { pr_body: data.prBody }),
+    };
+    const rows = [AppView._changeItems.get(Number(id)), AppView._topicProposal,
+      AppView._sharedById?.[id], ...(AppView._mySessions || []),
+      ...(AppView._sharedSessions || []), ...(AppView._proposals || [])];
+    if (typeof DevChat !== 'undefined') rows.push(DevChat.currentSession, ...(DevChat.sessions || []));
+    for (const row of rows) if (Number(row?.id) === Number(id)) Object.assign(row, patch);
+    window.dispatchEvent(new CustomEvent('change-detail-refresh', { detail: { id: Number(id), patch } }));
+    AppView._repaintDevBody();
+  },
+
   /**
    * The Build door for one change: whether there is a build surface to open
    * at all, and what its pill says. 'owner' is the author's own dev session;
@@ -5339,6 +5366,7 @@ const AppView = {
     campaign: '📊',   // 📊
     open: '▢',             // ▢ the card on its own page
     details: '≡',          // ≡ the technical half, as a sheet
+    edit: '✎',             // edit the reader-facing description
     share: '↑',            // ↑ into Messages, distinct from ↗ leaving the platform
     // Nothing should reach this, but a descriptor added later without an
     // icon must still line up with its neighbours rather than losing the

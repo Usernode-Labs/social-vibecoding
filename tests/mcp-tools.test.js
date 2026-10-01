@@ -320,6 +320,46 @@ function connector(platform, { scopes = [READ_SCOPE], pool = null, calls = [] } 
   return { handlers, specs, calls, restore: () => { globalThis.fetch = realFetch; } };
 }
 
+test('update_proposal_description writes the reader-facing text with its expected version', async () => {
+  const description = '### Problems found\n\n- A broken app accumulated usage.\n\n### Fix\n\nCount engaged time.';
+  const c = connector(() => ({ proposalId: 412, appSlug: 'demo', description, version: 8,
+    stale: false, changed: true, prBodyStatus: 'synced' }), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    const result = (await c.handlers.get('update_proposal_description')({ proposalId: 412, description, expectedVersion: 7 })).structuredContent;
+    assert.equal(result.description, '<untrusted-content>' + description + '</untrusted-content>');
+    assert.equal(result.version, 8);
+    assert.deepEqual(c.calls, [{ method: 'PATCH', pathname: '/api/sessions/412/description', body: { description, expectedVersion: 7 } }]);
+    assert.match(result.nextStep, /Code, votes, checks and visibility are unchanged/);
+  } finally { c.restore(); }
+});
+
+test('description editing refuses read-only scopes and invalid text before any HTTP call', async () => {
+  for (const scopes of [[READ_SCOPE], [READ_SCOPE, WRITE_SCOPE]]) {
+    const c = connector(() => ({}), { scopes });
+    try {
+      const result = await c.handlers.get('update_proposal_description')({ proposalId: 412, description: 'x'.repeat(16001), expectedVersion: 0 });
+      assert.equal(result.isError, true);
+      assert.deepEqual(c.calls, []);
+    } finally { c.restore(); }
+  }
+});
+
+test('description conflicts and saved-but-unsynchronized text are reported honestly', async () => {
+  const conflict = connector(() => ({ __http: { ok: false, status: 409,
+    body: { error: 'description_changed', message: 'Read the current version before retrying.' } } }), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    const result = await conflict.handlers.get('update_proposal_description')({ proposalId: 412, description: 'Draft', expectedVersion: 0 });
+    assert.equal(result.isError, true);
+  } finally { conflict.restore(); }
+  const saved = connector(() => ({ proposalId: 412, appSlug: 'demo', description: 'Saved text',
+    version: 1, stale: false, changed: true, prBodyStatus: 'github_write_failed' }), { scopes: [READ_SCOPE, WRITE_SCOPE] });
+  try {
+    const result = (await saved.handlers.get('update_proposal_description')({ proposalId: 412, description: 'Saved text', expectedVersion: 0 })).structuredContent;
+    assert.equal(result.description, '<untrusted-content>Saved text</untrusted-content>');
+    assert.match(result.nextStep, /GitHub synchronization is pending/);
+  } finally { saved.restore(); }
+});
+
 test('update_proposal_issues sends bounded deltas through the platform route', async () => {
   const c = connector((method, pathname) => {
     assert.equal(method, 'PATCH');
@@ -1868,7 +1908,7 @@ test('the registered tool surface is exactly this, and nothing more', () => {
     'start_change',
     'start_platform_build', 'submit_platform_build', 'submit_work',
     'sync_change',
-    'update_proposal_issues', 'whoami',
+    'update_proposal_description', 'update_proposal_issues', 'whoami',
     'withdraw_change',
   ]);
   // Nothing that decides an app's future. The connector hands work to the
@@ -2037,7 +2077,7 @@ test('ACTING_TOOLS names every user-directed action, and every one is a write', 
     'prepare_work', 'promote_change', 'propose_close_request', 'recheck_change', 'start_change',
     'start_platform_build',
     'submit_platform_build', 'submit_work', 'sync_change',
-    'update_proposal_issues', 'withdraw_change',
+    'update_proposal_description', 'update_proposal_issues', 'withdraw_change',
   ]);
   for (const name of tools.ACTING_TOOLS) {
     const idx = SRC.indexOf(`server.registerTool('${name}'`);

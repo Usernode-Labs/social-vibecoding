@@ -133,6 +133,8 @@ const CONNECTOR_ALLOWED_ROUTES = Object.freeze([
   // or vote. The tool uses the browser's same doorway instead of gaining a
   // parallel metadata writer.
   { method: 'PATCH', pattern: '/api/sessions/:id/linked-issues' },
+  { method: 'GET', pattern: '/api/sessions/:id/description' },
+  { method: 'PATCH', pattern: '/api/sessions/:id/description' },
   { method: 'GET', pattern: '/api/me/active-sessions' },
   // The proposal pipeline: submit_work turns a pushed branch into an
   // ordinary imported proposal, and the platform-build fallback runs an
