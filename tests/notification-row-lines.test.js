@@ -74,8 +74,20 @@ const ROW = {
 test('allowance notifications explain the change, request or review outcome', async () => {
   const changed = await lines({ kind: 'app_quota_changed', detail: '2:4', appName: null });
   assert.equal(changed.label, 'App allowance changed');
-  assert.equal(changed.subject, '2 → 4 app slots');
+  assert.equal(changed.subject, 'Your app allowance went up from 2 to 4 app slots.');
   assert.match(changed.meta, /^Account/);
+  // #3233: which way it moved, in words, and a readable line when the
+  // "<old>:<new>" detail cannot be read.
+  assert.equal((await lines({ kind: 'app_quota_changed', detail: '0:1', appName: null })).subject,
+    'Your app allowance went up from 0 to 1 app slot.');
+  assert.equal((await lines({ kind: 'app_quota_changed', detail: '4:2', appName: null })).subject,
+    'Your app allowance went down from 4 to 2 app slots.');
+  assert.equal((await lines({ kind: 'app_quota_changed', detail: '2:2', appName: null })).subject,
+    'Your app allowance is 2 app slots.');
+  for (const detail of [null, '', 'x:2', '1:2:3']) {
+    assert.equal((await lines({ kind: 'app_quota_changed', detail, appName: null })).subject,
+      'Your app allowance changed.');
+  }
   const requested = await lines({ kind: 'app_quota_requested', appName: null });
   assert.equal(requested.subject, '@ada');
   assert.match(requested.meta, /^Admin/);

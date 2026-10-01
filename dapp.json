@@ -2915,6 +2915,12 @@
       "expectText": "40 of 50 apps in use."
     },
     {
+      "name": "An app allowance change reads in words, not as its old:new code",
+      "path": "/?demo=1#notifications",
+      "expectSelector": "#notifications-sheet[data-open] [data-notif-id=\"990212\"]",
+      "expectText": "Your app allowance went up from 0 to 2 app slots."
+    },
+    {
       "name": "A notification row says what kind it is, then which one, then where it came from",
       "path": "/?shot=notifications&demo=1",
       "expectSelector": "#notifications-sheet[data-open]:has([data-notif-id=\"990210\"] > span:nth-child(2) > span:nth-child(3)) [data-notif-id=\"990201\"] > span:nth-child(2) > span:nth-child(3)",
