@@ -322,12 +322,13 @@ test('internal-only evidence deploy creates no Ingress or shared public asset ro
 
 for (const [name, environment, database, preferred] of [
   ['configured staging', 'staging', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, true],
-  ['production with database configuration', 'production', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, false],
+  ['configured production app', 'production', { previewDatabaseNamespace: 'database-ns', previewDatabaseCluster: 'writer-cluster' }, true],
   ['unconfigured staging', 'staging', {}, false],
+  ['unconfigured production app', 'production', {}, false],
   ['staging without database namespace', 'staging', { previewDatabaseCluster: 'writer-cluster' }, false],
   ['staging without database cluster', 'staging', { previewDatabaseNamespace: 'database-ns' }, false],
 ]) {
-  test(`preview primary placement: ${name}`, async () => {
+  test(`database primary placement: ${name}`, async () => {
     let deployment;
     const missing = async () => { throw notFound(); };
     const record = async ({ body }) => body;
@@ -359,23 +360,81 @@ for (const [name, environment, database, preferred] of [
     assert.equal(spec.nodeName, undefined, 'never pin to a specific node');
     assert.equal(spec.nodeSelector, undefined, 'other eligible nodes remain available');
     if (preferred) {
+      const primary = {
+        namespaces: ['database-ns'],
+        labelSelector: { matchLabels: {
+          'cnpg.io/cluster': 'writer-cluster', 'cnpg.io/instanceRole': 'primary',
+        } },
+      };
+      // The zone outweighs the host: a node in the primary's data centre is
+      // near enough, a node in another one is not (the evidence is in the
+      // comment on databaseAffinity). Both stay soft so a full zone still
+      // schedules.
       assert.deepEqual(spec.affinity, {
-        podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
-          weight: 100,
-          podAffinityTerm: {
-            namespaces: ['database-ns'],
-            labelSelector: { matchLabels: {
-              'cnpg.io/cluster': 'writer-cluster', 'cnpg.io/instanceRole': 'primary',
-            } },
-            topologyKey: 'kubernetes.io/hostname',
-          },
-        }] },
-      }, 'use only a soft preference for this cluster’s current primary');
+        podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [
+          { weight: 100, podAffinityTerm: { ...primary, topologyKey: 'topology.kubernetes.io/zone' } },
+          { weight: 50, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } },
+        ] },
+      }, 'prefer the current primary’s zone, then its host, and require neither');
+      assert.equal(spec.affinity.podAffinity.requiredDuringSchedulingIgnoredDuringExecution, undefined);
     } else {
       assert.equal(spec.affinity, undefined);
     }
   });
 }
+
+for (const [name, listPods, expected] of [
+  ['the ready Pod of this image', async () => ({ items: [
+    { metadata: { deletionTimestamp: '2026-10-01T00:00:00Z' }, spec: { nodeName: 'old-node',
+      containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:deadbeef' }] },
+    status: { conditions: [{ type: 'Ready', status: 'True' }] } },
+    { metadata: {}, spec: { nodeName: 'previous-image-node',
+      containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:0ld' }] },
+    status: { conditions: [{ type: 'Ready', status: 'True' }] } },
+    { metadata: {}, spec: { nodeName: 'talos-hel1-node',
+      containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:deadbeef' }] },
+    status: { conditions: [{ type: 'Ready', status: 'True' }] } },
+  ] }), 'talos-hel1-node'],
+  ['no ready Pod', async () => ({ items: [{ metadata: {}, spec: { nodeName: 'pending-node',
+    containers: [{ name: 'app', image: 'ghcr.io/example/demo@sha256:deadbeef' }] },
+    status: { conditions: [{ type: 'Ready', status: 'False' }] } }] }), undefined],
+  ['a failing Pod lookup', async () => { throw new Error('forbidden'); }, undefined],
+]) {
+  test(`deploy reports the node it was scheduled on: ${name}`, async () => {
+    let deployment;
+    const missing = async () => { throw notFound(); };
+    const record = async ({ body }) => body;
+    kubernetes._setClientsForTest({
+      core: {
+        readNamespacedSecret: missing, createNamespacedSecret: record,
+        readNamespacedService: missing, createNamespacedService: record,
+        listNamespacedPod: listPods,
+      },
+      apps: {
+        readNamespacedDeployment: async () => {
+          if (!deployment) throw notFound();
+          return { ...deployment, metadata: { ...deployment.metadata, generation: 1 },
+            status: { observedGeneration: 1, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+        },
+        createNamespacedDeployment: async ({ body }) => { deployment = body; return body; },
+      },
+      networking: { readNamespacedIngress: missing, createNamespacedIngress: record },
+    });
+    const result = await kubernetes.deployApplication(config(), {
+      app: { id: 7, slug: 'demo' }, environment: 'staging', sessionId: 42,
+      imageRef: 'ghcr.io/example/demo@sha256:deadbeef', env: {},
+    });
+    // The lookup is diagnostic: it never fails a deploy that succeeded.
+    assert.equal(result.url, 'https://demo--s42.apps.example.test');
+    assert.equal(result.node, expected);
+  });
+}
+
+test('the staging deploy log names the node the preview was scheduled on', () => {
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/staging.js'), 'utf8');
+  const call = src.slice(src.indexOf("log.info('staging', 'Staging deployed'"));
+  assert.match(call.slice(0, 300), /deployed\.node \? \{ node: deployed\.node \}/);
+});
 
 test('mutable image tags are refused before any Kubernetes write', async () => {
   await assert.rejects(
