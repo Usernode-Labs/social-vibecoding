@@ -249,7 +249,9 @@ export function ProfileRoot(): ReactNode {
   }
   if (view.kind === 'publicNotFound') {
     return (
-      <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400">This profile is unavailable.</div>
+      <div className="text-sm text-zinc-500 py-12 text-center dark:text-zinc-400">
+        This profile is unavailable. The person hasn't published a public profile yet.
+      </div>
     );
   }
   if (view.kind === 'public') {

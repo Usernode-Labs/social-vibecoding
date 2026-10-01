@@ -163,6 +163,57 @@ function publicProfileRoutes(config) {
           [resolved.userId]
         );
         if (!rows.length) {
+          // A pending friend request counts as knowing each other in BOTH
+          // directions (#3554): the recipient must be able to see who is
+          // asking, and the sender should be able to see who they asked.
+          // The raw pair check (rather than `relationshipFor`) keeps the
+          // card available to a viewer whose platform access changed after
+          // the request was sent; `relationshipFor` below still gates the
+          // button. Everything else about the gate stays as it was:
+          // moderation-disabled profiles still 404, and a declined row is
+          // not a pending one.
+          if (req.user && req.user.id !== resolved.userId) {
+            const [low, high] = [
+              Math.min(req.user.id, resolved.userId),
+              Math.max(req.user.id, resolved.userId),
+            ];
+            const pending = await pool.query(
+              `SELECT 1
+                 FROM friendships
+                WHERE user_low_id = $1
+                  AND user_high_id = $2
+                  AND status = 'pending'`,
+              [low, high]
+            );
+            if (pending.rowCount > 0) {
+              const pendingRows = await pool.query(
+                `SELECT u.id, u.username, u.display_name, u.bio, av.id AS avatar_id
+                   FROM users u
+                   LEFT JOIN user_avatars av ON av.user_id = u.id
+                  WHERE u.id = $1
+                    AND u.profile_disabled_at IS NULL`,
+                [resolved.userId]
+              );
+              if (pendingRows.rows.length) {
+                const verifiedLinks = await socialIdentity.verifiedProfileLinks(
+                  pool,
+                  pendingRows.rows[0].id
+                );
+                const friendship = await friends.relationshipFor(
+                  pool,
+                  req.user.id,
+                  pendingRows.rows[0].id
+                );
+                return res.json({
+                  profile: publicShape(pendingRows.rows[0], verifiedLinks),
+                  ...(resolved.retired
+                    ? { moved: { from: username, to: resolved.username } }
+                    : {}),
+                  ...(friendship ? { friendship } : {}),
+                });
+              }
+            }
+          }
           return res.status(404).json({ error: 'Profile not found' });
         }
         const verifiedLinks = await socialIdentity.verifiedProfileLinks(pool, rows[0].id);

@@ -70,6 +70,7 @@ function makePool() {
       { user_id: 1, provider: 'x', handle: 'verified_alice', public_visible: true },
       { user_id: 2, provider: 'github', handle: 'verified-bob', public_visible: true },
     ],
+    friendships: [],
     reports: [],
     calls: [],
   };
@@ -99,6 +100,26 @@ function makePool() {
           .map(({ provider, handle }) => ({ provider, handle })),
       };
     }
+    // friends.relationshipFor, the viewer's own relationship with this one
+    // person. The fake users all have platform access and are real.
+    if (/FROM users viewer/.test(s) && /LEFT JOIN friendships/.test(s)) {
+      const [viewerId, otherId] = params;
+      const [low, high] = [Math.min(viewerId, otherId), Math.max(viewerId, otherId)];
+      const row = state.friendships.find((candidate) => (
+        candidate.user_low_id === low && candidate.user_high_id === high
+      ));
+      return { rows: [{ requester_id: row ? row.requester_id : null, status: row ? row.status : null }] };
+    }
+    // The pending-pair read the public route makes before the publication
+    // gate. Normalised (low, high) exactly as services/friends.js does.
+    if (/FROM friendships/.test(s) && /user_low_id = \$1/.test(s) && /status = 'pending'/.test(s)) {
+      const row = state.friendships.find((candidate) => (
+        candidate.user_low_id === params[0]
+        && candidate.user_high_id === params[1]
+        && candidate.status === 'pending'
+      ));
+      return { rows: row ? [row] : [], rowCount: row ? 1 : 0 };
+    }
     // The PUBLIC read. Keyed on id since  (the name was resolved a
     // query earlier), so it is told apart from the owner read below by its
     // publish/disable filters rather than by its WHERE column.
@@ -109,6 +130,16 @@ function makePool() {
         candidate.id === params[0]
         && candidate.profile_published
         && !candidate.profile_disabled_at
+      ));
+      return { rows: user ? [{ ...user }] : [] };
+    }
+    // The PENDING path's read: drops the publish gate only, keeping the
+    // moderation-disabled check. Matched before the generic read below.
+    if (/SELECT u\.id, u\.username, u\.display_name/.test(s)
+        && /WHERE u\.id = \$1/.test(s)
+        && /profile_disabled_at IS NULL/.test(s)) {
+      const user = state.users.find((candidate) => (
+        candidate.id === params[0] && !candidate.profile_disabled_at
       ));
       return { rows: user ? [{ ...user }] : [] };
     }
@@ -299,6 +330,87 @@ test('public exact lookup is opt-in, no-store, and returns only shared profile f
       })),
       Array(3).fill({ status: 404, body: { error: 'Profile not found' } })
     );
+  } finally {
+    await server.close();
+  }
+});
+
+test('a pending friend request in either direction opens an unpublished profile', async () => {
+  const pool = makePool();
+  const server = await start(pool);
+  try {
+    // Alice (1) has an UNPUBLISHED profile; the viewer (8) has a pending
+    // INCOMING request from her. The recipient can see who is asking.
+    pool.state.friendships = [{ user_low_id: 1, user_high_id: 8, requester_id: 1, status: 'pending' }];
+    const incoming = await request(server, '/api/public/profiles/alice', {
+      headers: { 'x-test-user': 'viewer' },
+    });
+    assert.equal(incoming.status, 200);
+    assert.deepEqual(
+      Object.keys(incoming.body.profile).sort(),
+      ['avatarUrl', 'bio', 'displayName', 'links', 'url', 'username']
+    );
+    assert.equal(incoming.body.profile.displayName, 'Alice');
+    assert.equal(incoming.body.friendship.state, 'incoming');
+
+    // The reverse: the viewer SENT the request, so they see the person they
+    // asked as `outgoing`. Same profile, same shape, different button.
+    pool.state.friendships = [{ user_low_id: 1, user_high_id: 8, requester_id: 8, status: 'pending' }];
+    const outgoing = await request(server, '/api/public/profiles/alice', {
+      headers: { 'x-test-user': 'viewer' },
+    });
+    assert.equal(outgoing.status, 200);
+    assert.equal(outgoing.body.friendship.state, 'outgoing');
+
+    // A DECLINED row is not a pending one: the recipient learns nothing by
+    // trying to peek back, and the sender is not told a decline happened.
+    pool.state.friendships = [{ user_low_id: 1, user_high_id: 8, requester_id: 1, status: 'declined' }];
+    const declined = await request(server, '/api/public/profiles/alice', {
+      headers: { 'x-test-user': 'viewer' },
+    });
+    assert.equal(declined.status, 404);
+
+    // No pending row between the pair: unchanged 404.
+    pool.state.friendships = [];
+    const stranger = await request(server, '/api/public/profiles/alice', {
+      headers: { 'x-test-user': 'viewer' },
+    });
+    assert.equal(stranger.status, 404);
+
+    // Anonymous reads never see the pending exception.
+    pool.state.friendships = [{ user_low_id: 1, user_high_id: 8, requester_id: 1, status: 'pending' }];
+    const anonymous = await request(server, '/api/public/profiles/alice');
+    assert.equal(anonymous.status, 404);
+
+    // Moderation-disabled stays hidden even from a pending viewer.
+    pool.state.friendships = [{ user_low_id: 3, user_high_id: 8, requester_id: 3, status: 'pending' }];
+    const disabled = await request(server, '/api/public/profiles/carol', {
+      headers: { 'x-test-user': 'viewer' },
+    });
+    assert.equal(disabled.status, 404);
+  } finally {
+    await server.close();
+  }
+});
+
+test('a pending viewer of a PUBLISHED profile is unchanged', async () => {
+  const pool = makePool();
+  const server = await start(pool);
+  try {
+    pool.state.friendships = [{ user_low_id: 2, user_high_id: 8, requester_id: 2, status: 'pending' }];
+    const found = await request(server, '/api/public/profiles/bob', {
+      headers: { 'x-test-user': 'viewer' },
+    });
+    assert.equal(found.status, 200);
+    assert.deepEqual(
+      Object.keys(found.body.profile).sort(),
+      ['avatarUrl', 'bio', 'displayName', 'links', 'url', 'username']
+    );
+    assert.equal(found.body.friendship.state, 'incoming');
+    // The single-select path: the publication gate answered, so no
+    // pending-pair read (and no publication-less second read) ran at all.
+    const pendingReads = pool.state.calls.filter((call) => /FROM friendships/.test(call.sql));
+    assert.equal(pendingReads.length, 0);
   } finally {
     await server.close();
   }

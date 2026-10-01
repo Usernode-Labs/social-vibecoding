@@ -452,6 +452,64 @@ test('mutual friends against the full PostgreSQL schema', { timeout: 180000 }, a
     }
   });
 
+  await t.test('a pending request opens an unpublished profile, either direction, moderation still hidden', async () => {
+    const recipient = await user('recipient');
+    const sender = await user('sender');
+    const hidden = await user('moderated');
+    // None of the three has published a profile.
+    await friends.sendRequest(pool, sender, recipient.id);
+    const token = crypto.randomBytes(24).toString('hex');
+    await pool.query(
+      `INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 day')`,
+      [token, recipient.id]
+    );
+    const senderToken = crypto.randomBytes(24).toString('hex');
+    await pool.query(
+      `INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 day')`,
+      [senderToken, sender.id]
+    );
+    const app = express();
+    app.use(cookieParser());
+    app.use(require('../src/routes/profiles').publicProfileRoutes(config));
+    const { server, base } = await listen(app);
+    const read = async (username, cookie) => {
+      const res = await fetch(`${base}/api/public/profiles/${username}`, {
+        headers: cookie ? { Cookie: `session=${cookie}` } : {},
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    try {
+      // The recipient sees who asked; the sender sees who they asked.
+      const incoming = await read(sender.username, token);
+      assert.equal(incoming.status, 200);
+      assert.equal(incoming.body.profile.username, sender.username);
+      assert.equal(incoming.body.friendship.state, 'incoming');
+      const outgoing = await read(recipient.username, senderToken);
+      assert.equal(outgoing.status, 200);
+      assert.equal(outgoing.body.profile.username, recipient.username);
+      assert.equal(outgoing.body.friendship.state, 'outgoing');
+      // A stranger, and an anonymous read, still see nothing.
+      const stranger = await user('stranger');
+      assert.equal((await read(sender.username, null)).status, 404);
+      const strangerToken = crypto.randomBytes(24).toString('hex');
+      await pool.query(
+        `INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, NOW() + INTERVAL '1 day')`,
+        [strangerToken, stranger.id]
+      );
+      assert.equal((await read(sender.username, strangerToken)).status, 404);
+      // Moderation-disabled stays hidden from a pending viewer too.
+      await pool.query(
+        `INSERT INTO friendships (user_low_id, user_high_id, requester_id, status)
+         VALUES (LEAST($1, $2::int), GREATEST($1, $2::int), $2, 'pending')`,
+        [hidden.id, recipient.id]
+      );
+      await pool.query('UPDATE users SET profile_disabled_at = NOW() WHERE id = $1', [hidden.id]);
+      assert.equal((await read(hidden.username, token)).status, 404);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
   await t.test('concurrent requests across the pair become one friendship', async () => {
     const a = await user(); const b = await user();
     const [one, two] = await Promise.all([

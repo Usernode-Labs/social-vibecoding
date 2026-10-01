@@ -208,6 +208,18 @@ test('the signed-out render offers a sign-in link, not the connection error', ()
   assert.match(profileViewTsx, /Could not load your profile/);
 });
 
+test('the unavailable page says why, not just that it is unavailable', () => {
+  const branch = profileViewTsx.slice(
+    profileViewTsx.indexOf("view.kind === 'publicNotFound'"),
+    profileViewTsx.indexOf("view.kind === 'public'")
+  );
+  assert.match(branch, /hasn't published a public profile/,
+    'the 404 view names the likely reason');
+  // The bare sentence alone would leave a pending sender's page looking
+  // broken; the branch must carry the explanation with it.
+  assert.doesNotMatch(branch, /This profile is unavailable\.\s*<\/div>/);
+});
+
 test('the signed-out branch is checked before the generic error branch', () => {
   // Twice over: in buildProfileView, which decides the kind, and in the
   // component, which renders it. Either order flipping puts the
