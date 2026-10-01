@@ -825,13 +825,19 @@ test('#3051: the items query reads the counts\' own five predicates, once each',
     'OWED_PROPOSALS_WHERE', 'OWED_GOVERNANCE_WHERE']) {
     assert.equal((src.match(new RegExp(`const ${name} = `, 'g')) || []).length, 1, `${name} is defined once`);
     // The owed populations are read a third time, by the Needs you feed
-    // (#3270), so the tab's cards and the counts beside it cannot disagree.
-    const reads = name.startsWith('OWED_') ? 3 : 2;
+    // (#3270), so the tab's cards and the counts beside it cannot disagree,
+    // and a fourth by the same feed counted per project
+    // (OWED_BY_COMMUNITY_SQL), so the Getting started card's Vote step
+    // agrees with that feed about what is waiting and where.
+    const reads = name.startsWith('OWED_') ? 4 : 2;
     assert.equal((src.match(new RegExp(`\\$\\{${name}\\}`, 'g')) || []).length, reads,
-      `${name} is read by COUNTS_SQL and ITEMS_SQL alike${reads === 3 ? ', and by NEEDS_FEED_SQL' : ''}`);
+      `${name} is read by COUNTS_SQL and ITEMS_SQL alike${reads === 4 ? ', and by NEEDS_FEED_SQL and OWED_BY_COMMUNITY_SQL' : ''}`);
   }
-  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 3,
-    'and all three apply GET /api/apps\'s visibility filter');
+  assert.equal((src.match(/\$\{VISIBLE_APP_WHERE\}/g) || []).length, 4,
+    'and all four apply GET /api/apps\'s visibility filter');
+  // The per-project count is the feed's own membership rule too.
+  assert.match(route.OWED_BY_COMMUNITY_SQL,
+    /JOIN community_members cm ON cm\.community_id = a\.community_id AND cm\.user_id = \$1/);
   const items = route.ITEMS_SQL;
   assert.ok(items.includes(require('../src/services/pr-vote-revision').currentVotePredicateSql('pv', 'cs')));
   assert.equal((items.match(new RegExp(require('../src/services/governance-kinds')

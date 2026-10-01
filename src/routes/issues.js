@@ -33,6 +33,7 @@ const illustrationProposals = require('../services/illustration-proposals');
 const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 
 // #2089: the board search's server half. Shorter queries are not asked
 // (the browser applies the same floor); the hit list is capped because the
@@ -1491,6 +1492,14 @@ function issueRoutes(config) {
       // derive the "being applied" state. The apply pushes its own events
       // when it settles, so this one is purely "a vote landed".
       pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
+
+      // "Vote on a change" counts a vote on a request too, now rather than
+      // on the rule's next pass (#3569; challengeScorer.scoreOnVote). After
+      // the broadcast, so other people's tallies are not held behind it, and
+      // before the apply, so a slow GitHub call cannot keep it waiting. The
+      // retraction above is not a vote cast and returned before this. Never
+      // throws.
+      await challengeScorer.scoreOnVote(pool, config);
 
       let renamed = null;
       let secretChanged = null;

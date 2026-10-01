@@ -4302,9 +4302,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_activities_source_key_unique
 -- (services/topochain/challenge-rules.js: TRY_APPS, USE_APPS_MINUTES,
 -- PROPOSAL_SENT, PROPOSAL_ACCEPTED, USEFUL_FEEDBACK, CONNECT_ACCOUNTS,
 -- BLOCK_PRODUCTION_ON, COMMUNITY_JOINED, COMMUNITY_APP_CREATED,
--- INVITES_JOINED). Deliberately NOT free-form logic: the thing that
--- decides who gets points has to be reviewable and testable, so what an
--- admin composes is the CONFIGURATION of a measure, never its body. It is
+-- INVITES_JOINED, VOTE_CAST, FEEDBACK_SENT). Deliberately NOT free-form
+-- logic: the thing that decides who gets points has to be reviewable and
+-- testable, so what an admin composes is the CONFIGURATION of a measure,
+-- never its body. It is
 -- also NOT `challenges.kind` — that column already means something to the
 -- phone app (which behaviour a card gets) and to the illustration picker,
 -- and overloading it would tie "how this is scored" to "how this is drawn".
@@ -10513,8 +10514,8 @@ END $$;
 -- ── Communities, stage 5: the first run ─────────────────────────────────
 --
 -- A new account picks the communities it wants to join (Homeroom first)
--- after its username and the terms, then gets the tour, then a "Getting
--- started" card on Home with three first steps (src/services/onboarding.js).
+-- after its username and the terms, then a "Getting started" card on Home:
+-- the tour, then the season's First challenges (src/services/onboarding.js).
 --
 -- users.needs_communities_choice — this account has not been asked yet.
 -- Set TRUE by every path a person signs up through (email, an activation
@@ -10534,10 +10535,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS communities_onboarded_at TIMESTAMPTZ;
 -- The card's close button. Server state, like the join screen's answer, so
 -- a card closed on the phone is closed on the laptop too.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_closed_at TIMESTAMPTZ;
--- The two places the card sends people that leave no row behind of their
--- own (a visit to the Workshop, a visit to Discover), as
--- { "workshop": "<iso>", "discover": "<iso>" }. Written only while the card
--- is showing, and read only by it.
+-- Visits the card asks for that leave no row behind of their own. The old
+-- card wrote { "workshop": "<iso>", "discover": "<iso>" } on any visit; since
+-- its steps became the season's First challenges (2026-10-01) nothing reads
+-- those two keys. One key is read: "vote_workshop", the last time the Vote
+-- step's Workshop opened while NOTHING was up for a vote in any community
+-- the account is in (services/onboarding.js markWorkshopVisit), which the
+-- scorer's VOTE_CAST counts like a vote. A new key rather than "workshop",
+-- because those old visits were recorded whether or not a vote was waiting.
+-- Reset first run clears the whole column. Kept rather than dropped: this
+-- file is replayed on every boot, and a DROP is the one statement here that
+-- cannot be taken back.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- When this account finished (or skipped) the welcome tour
 -- (frontend/src/features/home/tour). Server state for the same reason as the
@@ -10547,6 +10555,33 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- counts, and a browser that has it copies it here once. Reset first run
 -- clears it, so the tour follows the join screen again on every device.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
+-- The Getting started list that IS the First challenges (evan, 2026-10-01):
+-- the card on Home is the tour plus the season's ONBOARDING challenges, and
+-- until all of them are done the rest of the season is hidden
+-- (src/services/topochain/challenge-onboarding.js). Both only for accounts
+-- made after that shipped; everyone who was already here, and every
+-- signed-out visitor, sees the whole season and no card.
+--
+-- getting_started_gate — this account starts on that list. Set TRUE at
+-- sign-up by the same three INSERTs that set needs_communities_choice
+-- (email, an activation code, a wallet), and by an admin's Reset first run.
+-- A FLAG WRITTEN AT SIGN-UP, for the reasons needs_communities_choice is one
+-- (above): every existing row reads FALSE by default with no backfill, and
+-- so does every account the boot seeds (capture identities, staging
+-- fixtures), which a "created after <date>" rule would have caught on every
+-- fresh database, where every row is new. A cutoff kept as a platform
+-- setting would also need writing once at deploy, and a staging clone would
+-- carry production's value into a database whose seeded accounts are all
+-- younger than it.
+--
+-- getting_started_unlocked_at — when this account's gate first opened (the
+-- tour done and every First challenge done, read anywhere: Home, the
+-- Challenges tab, the phone app). Once set the gate never closes again, so
+-- an ONBOARDING challenge an admin adds to the season later is one more
+-- challenge to do, not a wall that comes back down over a season the person
+-- has already been let into. Reset first run clears it with the rest.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_gate BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_unlocked_at TIMESTAMPTZ;
 
 -- ── Communities, stage 6: invite links ──────────────────────────────────
 --

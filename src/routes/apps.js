@@ -3450,7 +3450,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
          ON CONFLICT (app_id, user_id, date)
          DO UPDATE SET seconds_spent = LEAST(
            app_activity.seconds_spent + EXCLUDED.seconds_spent, $4)
-         RETURNING (xmax = 0) AS inserted`,
+         RETURNING (xmax = 0) AS inserted, seconds_spent`,
         [appRows[0].id, req.user.id, seconds, ACTIVITY_MAX_PER_DAY]
       );
 
@@ -3461,6 +3461,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           appId: appRows[0].id,
         });
       }
+
+      // "Try an app" counts the heartbeat that takes this person's time in
+      // an app they did not make across TRY_APPS_MIN_SECONDS, not the rule's
+      // next pass (#3570; challengeScorer.scoreOnAppTime). Every other
+      // heartbeat is answered without a scoring pass, and nearly all without
+      // even a read: today's total, returned above, says whether this one can
+      // be the crossing at all. Never throws.
+      await challengeScorer.scoreOnAppTime(pool, config, {
+        appId: appRows[0].id,
+        ownerId: appRows[0].created_by,
+        userId: req.user.id,
+        seconds,
+        daySeconds: activityRows[0]?.seconds_spent,
+      });
 
       res.json({ ok: true });
     } catch (err) {

@@ -353,6 +353,49 @@ const NEEDS_FEED_SQL = `
    LIMIT $4
 `;
 
+// The same feed, counted per project and in the order the viewer joined
+// them: what the Getting started card's Vote step reads (services/
+// onboarding.js), so the step and the Needs you tab it sends people to agree
+// on what is waiting and where. The SAME owed predicates, the same
+// visibility filter and the same membership rule as NEEDS_FEED_SQL; only the
+// shape differs. `$1` is the viewer, `$2` "may see self-hosted rows", `$3`
+// "is an admin", as above.
+const OWED_BY_COMMUNITY_SQL = `
+  WITH owed AS (
+    SELECT cs.app_id
+      FROM chat_sessions cs
+     WHERE ${OWED_PROPOSALS_WHERE}
+    UNION ALL
+    SELECT i.app_id
+      FROM issues i
+     WHERE ${OWED_GOVERNANCE_WHERE}
+  )
+  SELECT a.id, a.slug, a.name, COUNT(*)::int AS waiting, MIN(cm.joined_at) AS joined_at
+    FROM owed o
+    JOIN apps a ON a.id = o.app_id
+    JOIN community_members cm ON cm.community_id = a.community_id AND cm.user_id = $1
+    LEFT JOIN app_collaborators me
+      ON me.app_id = a.id AND me.user_id = $1 AND me.status = 'member'
+   WHERE ${VISIBLE_APP_WHERE}
+   GROUP BY a.id, a.slug, a.name
+   ORDER BY MIN(cm.joined_at) ASC, a.id ASC
+`;
+
+/**
+ * The votes waiting for a viewer, per project they are a member of, in the
+ * order they joined them: `[{ slug, name, waiting }]`, projects with nothing
+ * waiting left out. The Needs you feed's population (NEEDS_FEED_SQL),
+ * counted rather than listed.
+ */
+async function owedByCommunity(pool, userId, { showSelfHosted = false, isAdmin = false } = {}) {
+  const { rows } = await pool.query(OWED_BY_COMMUNITY_SQL, [userId, !!showSelfHosted, !!isAdmin]);
+  return rows.map((row) => ({
+    slug: row.slug,
+    name: row.name || row.slug,
+    waiting: Number(row.waiting) || 0,
+  }));
+}
+
 /** Shape NEEDS_FEED_SQL's rows for the client. Exported for tests. */
 function shapeNeedsFeed(rows) {
   return rows.map((row) => ({
@@ -539,5 +582,6 @@ module.exports = {
   workshopOverviewRoutes, withDemoCounts, DEMO_COUNTS, COUNTS_SQL,
   withDemoItems, DEMO_ITEMS, ITEMS_SQL, ITEMS_PER_APP, ITEMS_TOTAL, groupItems,
   NEEDS_FEED_SQL, NEEDS_FEED_MAX, shapeNeedsFeed, DEMO_NEEDS_FEED, withDemoNeedsFeed,
+  OWED_BY_COMMUNITY_SQL, owedByCommunity,
   MY_SESSIONS_WHERE, MY_PROPOSALS_WHERE,
 };
