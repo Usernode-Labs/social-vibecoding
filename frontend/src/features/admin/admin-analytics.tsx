@@ -201,8 +201,8 @@ const INFO: Record<string, string> = {
   spend: 'LLM spend per day for the last 30 days. <b>Platform key</b> is spend billed to the platform (this is what the caps track: the platform\'s own daily cap, and each account\'s weekly one); <b>User key</b> is spend billed to users\' own Anthropic keys (display only); <b>Both</b> stacks them.',
   funnels: 'Each stage shows the count reaching that milestone and the step-over-step conversion. "Promoted" = a session opened for group vote; "Merged" = landed in production. Use the cohort buttons to scope to recent signups.',
   growth: 'New signups, apps, and promoted/merged PRs bucketed per ISO week. Hover any bar for that week\'s exact count.',
-  'general-users': 'A general user is anyone active during the period (any tracked action: used a dapp, sent a chat message, or sent a dev-session message). <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
-  retention: 'Each row is a signup-week cohort; each cell is the share of that cohort active (any tracked action) in a given week. Hover a cell for the exact counts. Use the <b>Align</b> toggle to line cohorts up on real calendar weeks (default) or by cohort age (Week 0, Week 1, …).',
+  'general-users': 'A general user has a positive project-use heartbeat or took a deliberate human action: sent a project, Messages, change, Mayor, or Global Chat message; cast a proposal or request vote; gave kudos; or favorited a project. System and assistant messages do not count. Days use UTC. Older project heartbeats can include an idle open tab, actions deleted before durable logging are unavailable, and favorite actions before explicit logging are unavailable. <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
+  retention: 'Each row is a signup-week cohort; each cell is the share of that cohort with recorded participation in a given UTC week. The General users definition describes what counts and its historical limits. Hover a cell for the exact counts. Use the <b>Align</b> toggle to line cohorts up on real calendar weeks (default) or by cohort age (Week 0, Week 1, …).',
   'power-users': 'A power user, evaluated over a 7-day window, both used dapps &ge; 3 times that week (counting each use of any dapp) AND did &ge; 3 visible developer actions (each a kudos given, vote cast, or proposal made). <b>Power-user WAU</b> is a 7-day rolling count; <b>Consistency (L4)</b> stacks, per day, how many of the trailing 4 weeks each user was a power user (1/4…4/4). Hover for exact counts.',
   'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
   'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
@@ -218,7 +218,7 @@ const CARD_INFO: Record<string, string> = {
   'total-users': 'Count of all registered accounts (admins excluded unless the box above is ticked).',
   'new-7d': 'Accounts that signed up in the last 7 days.',
   'new-30d': 'Accounts that signed up in the last 30 days.',
-  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users who took any tracked action (used a dapp, sent a chat message, or sent a dev-session message) in the last 7 days. <b>MAU</b> = the same, over the last 30 days. The General-users section below charts these same definitions as daily rolling windows.',
+  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users with a positive project-use heartbeat or a human message, vote, kudos, or favorite action in the last 7 UTC days. <b>MAU</b> = the same, over the last 30 days. System and assistant messages do not count; older heartbeats can include an idle open tab. The General-users section below charts these same definitions as daily rolling windows.',
   'apps': 'Published apps that aren\'t self-hosted and aren\'t deleted.',
   'promoted-open': 'Live count of dev sessions sitting in the "promoted" or "merging" state right now (not a lifetime total).',
   'promoted-all': 'Every dev session that was ever opened for a group vote.',
@@ -1596,7 +1596,7 @@ function AnalyticsSection() {
           <section className={`${AdminUI.card} p-4`}>
             <h3 className={`${H3} mb-1`}>General users<InfoIcon info="general-users" /></h3>
             <p className={SUB}>
-              Anyone active during the period. Daily over the last 90 days: DAU per day, WAU a 7-day rolling window, MAU a 30-day rolling window.
+              Anyone with a positive project-use heartbeat or a human message, vote, kudos, or favorite action. Daily over the last 90 UTC days: DAU per day, WAU a 7-day rolling window, MAU a 30-day rolling window.
             </p>
             <div className="grid lg:grid-cols-3 gap-6">
               <div>
@@ -1645,7 +1645,7 @@ function AnalyticsSection() {
               </div>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
-              Cohort = signup week. Each cell is the share of that cohort active (any action) in a given week.
+              Cohort = signup week. Each cell is the share of that cohort with recorded participation in a given UTC week.
             </p>
             <div id="retention-cohorts" className="overflow-x-auto">
               {d ? <Retention r={d.retention} mode={retAlign} /> : null}

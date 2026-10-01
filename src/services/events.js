@@ -7,9 +7,10 @@
 // every error (logging at debug) and callers do not await it on the hot
 // path — they invoke it and move on.
 //
-// Historical rows (everything that happened before these emitters
-// shipped) are synthesized once by backfillEvents() in src/db/migrate.js,
-// so the dashboard curves are continuous across the cutover.
+// Historical rows for the original event vocabulary are synthesized once
+// by backfillEvents() in src/db/migrate.js. Newer action types can have no
+// complete historical source; callers must treat this as a best-effort log,
+// and analytics may combine it with the corresponding domain table.
 
 const { getPool } = require('../db/pool');
 const log = require('./logger');
@@ -28,6 +29,7 @@ const EVENT_TYPES = Object.freeze({
   DAPP_ACTIVE_DAY: 'dapp_active_day',
   CHAT_MESSAGE_SENT: 'chat_message_sent',
   PR_VOTE_CAST: 'pr_vote_cast',
+  ISSUE_VOTE_CAST: 'issue_vote_cast',
   PR_VOTE_RECEIVED: 'pr_vote_received',
   KUDOS_GIVEN: 'kudos_given',
   // Retraction of a previously given PR kudos (issue #197). Append-only

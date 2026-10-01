@@ -1435,12 +1435,23 @@ function issueRoutes(config) {
       // A flip REPLACES the line rather than keeping it: the old sentence
       // argued for the side this vote just left. (votes.js keeps an earlier
       // line on a same-side re-cast; here that click is the toggle above.)
-      await pool.query(
+      const { rows: recordedVotes = [] } = await pool.query(
         `INSERT INTO issue_votes (issue_id, user_id, vote, reason) VALUES ($1, $2, $3, $4)
          ON CONFLICT (issue_id, user_id) DO UPDATE
-           SET vote = EXCLUDED.vote, reason = EXCLUDED.reason, created_at = NOW()`,
+           SET vote = EXCLUDED.vote, reason = EXCLUDED.reason, created_at = NOW()
+         RETURNING id`,
         [issue.id, req.user.id, vote, reason]
       );
+
+      // issue_votes is a current-state row: a flip moves its timestamp and a
+      // same-side click deletes it. Also send each real cast to the best-effort
+      // append-only action log, so a successfully captured day survives that.
+      events.record(pool, {
+        type: events.EVENT_TYPES.ISSUE_VOTE_CAST,
+        userId: req.user.id,
+        appId: issue.app_id,
+        metadata: { vote, issueId: issue.id, issueVoteId: recordedVotes[0]?.id || null },
+      });
 
       let voteSubject;
       if (issue.kind === 'rename') {
