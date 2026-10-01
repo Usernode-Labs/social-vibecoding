@@ -90,6 +90,19 @@ open. The runtime rejects a second aggregate and use of a closed transaction
 handle. `withSession` is the narrow locked SQL boundary for candidate locator
 reservation; it is not an action decision or trace.
 
+An exception from `apply`, `read` or `withSession` invalidates the enclosing
+transaction. This includes synchronous validation failures and JavaScript errors
+after a mapping has already written SQL state. Catching the operation's error in
+the composition cannot make that transaction committable again. Further operations
+in that composition reject with `DECISION_TRANSACTION_FAILED`, with the original
+operation failure as their cause, before invoking mappings. If the composition catches and returns
+normally, `transact` rethrows the original failure and rolls back all state,
+receipts and traces, including earlier successful decisions. Start a new
+transaction to retry; there are no savepoints or per-operation commits.
+
+A normal domain decision with `accepted: false` is a successful operation: it
+gets its receipt/trace and permits subsequent decisions in the same composition.
+
 A receipt is scoped by **machine journal, session ID and action UUID**. Identical
 normalized input returns the original decision, even if current state has changed
 or the session was deleted. Reusing that identity for different input is an error.
@@ -110,7 +123,7 @@ histories or proof of external completion.
 
 | Boundary | Guarantee / limit |
 | --- | --- |
-| Decision commit | Domain changes, original receipt, data-only effects and versioned trace commit or roll back together. Review and dependent preview retirement share the commit. Failure in either journal rolls back both. |
+| Decision commit | Domain changes, original receipt, data-only effects and versioned trace commit or roll back together. Review and dependent preview retirement share the commit. An operation exception, including a mapping that writes and then throws, makes the whole transaction uncommittable even if its caller catches the error. Earlier successful decisions roll back too. Normal rejected decisions remain composable. |
 | Contention | Independent PostgreSQL connections serialize the two machines on the aggregate. Existing merge/vote row-lock/CAS rules still compete with the return operation. Resource locks follow the aggregate for action decisions. |
 | Lost database acknowledgment | Retry with the same action returns the original receipt. Vote invalidation and preview retirement are not applied again. |
 | Execution delivery | No durable dispatch was added. The route still performs existing worker teardown, chat and WebSocket effects after commit, best effort. A crash/lost commit acknowledgment can leave those effects unexecuted; receipt replay does not redeliver them. The HTTP route currently generates its action UUID server-side, so the public client does not yet have a stable request-receipt API. |
@@ -121,8 +134,9 @@ histories or proof of external completion.
 
 [`tests/decision-runtime.test.js`](../../tests/decision-runtime.test.js) uses real
 PostgreSQL connections to demonstrate both lock orders, atomic cross-machine
-rollback, reservation/cancellation races, stale facts, scoped receipt conflicts,
-lost acknowledgments, deletion and deterministic replay. The existing
+rollback (including caught partial-write mapping failures), reservation/cancellation
+races, stale facts, scoped receipt conflicts, lost acknowledgments, deletion and
+deterministic replay. The existing
 [`unpromote` integration suite](../../tests/unpromote-proposal-postgres.test.js)
 also verifies the actual API route, guards, vote invalidation, effects and merge
 race. Existing preview failure-path tests cover both Docker and Kubernetes through

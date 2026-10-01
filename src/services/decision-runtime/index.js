@@ -37,9 +37,31 @@ function createSessionDecisionRuntime(pool) {
     const client = await pool.connect();
     let aggregateId = null;
     let open = false;
+    let failed = false;
+    let operationFailure;
+
+    async function operate(runOperation) {
+      if (!open) throw new Error('Decision transaction is no longer open');
+      if (failed) {
+        throw Object.assign(new Error('Decision transaction failed and must roll back', {
+          cause: operationFailure,
+        }), { code: 'DECISION_TRANSACTION_FAILED' });
+      }
+
+      try {
+        return await runOperation();
+      } catch (error) {
+        // A JavaScript failure does not abort PostgreSQL's transaction. Keep
+        // it invalid even when the composition catches the operation's error.
+        if (!failed) {
+          failed = true;
+          operationFailure = error;
+        }
+        throw error;
+      }
+    }
 
     function selectAggregate(sessionId) {
-      if (!open) throw new Error('Decision transaction is no longer open');
       if (!Number.isInteger(sessionId) || sessionId <= 0 || sessionId > 2147483647) {
         throw new Error('A session aggregate ID must be a positive PostgreSQL integer');
       }
@@ -95,20 +117,21 @@ function createSessionDecisionRuntime(pool) {
     }
 
     const transaction = {
-      apply: (machine, input) => applyValidated(machine, machine.parseAction(input)),
-      read: (machine, sessionId) => load(machine, sessionId, null, !readOnly),
-      async withSession(sessionId, map) {
+      apply: (machine, input) => operate(() => applyValidated(machine, machine.parseAction(input))),
+      read: (machine, sessionId) => operate(() => load(machine, sessionId, null, !readOnly)),
+      withSession: (sessionId, map) => operate(async () => {
         if (readOnly) throw new Error('A read-only snapshot cannot map writes');
         selectAggregate(sessionId);
         const session = await readSession(client, sessionId, { lock: true });
         return map(client, session);
-      },
+      }),
     };
     try {
       if (readOnly) await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       else await client.query('BEGIN');
       open = true;
       const result = await run(transaction);
+      if (failed) throw operationFailure;
       await client.query('COMMIT');
       return result;
     } catch (error) {

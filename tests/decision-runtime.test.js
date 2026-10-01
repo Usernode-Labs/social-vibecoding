@@ -299,6 +299,142 @@ test('preview and review share one decision runtime over real PostgreSQL', { ski
       });
     }
 
+    for (const operation of ['apply', 'withSession']) {
+      await t.test(`a caught ${operation} write failure rolls back the entire composition`, async () => {
+        await reset();
+        const before = (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [SESSION])).rows[0];
+        const runtime = createSessionDecisionRuntime(pool);
+        const failure = new Error(`Injected ${operation} mapping failure after writing`);
+        const { journal } = require('../src/services/proposal-review/journal');
+        let wroteBeforeThrowing = false;
+
+        async function writeThenThrow(client) {
+          await client.query(`UPDATE chat_sessions SET status = 'paused',
+            approval_epoch = approval_epoch + 1 WHERE id = $1`, [SESSION]);
+          wroteBeforeThrowing = true;
+          throw failure;
+        }
+
+        const machine = {
+          name: 'test-partial-write',
+          version: 1,
+          parseAction,
+          load: (_client, session) => ({ status: session.status }),
+          facts: () => ({}),
+          reduce: () => ({ accepted: true, reason: 'test_write', effects: [] }),
+          persist: writeThenThrow,
+          actionConflict: () => new Error('conflicting test action'),
+          journal,
+        };
+
+        await assert.rejects(runtime.transact(async transaction => {
+          const earlier = await preview.applyInTransaction(transaction, action('RequestCandidatePreview', {
+            headSha: HEAD,
+            startedStatus: 'active',
+          }));
+          assert.equal(earlier.decision.accepted, true);
+
+          try {
+            if (operation === 'apply') await transaction.apply(machine, returnAction());
+            else await transaction.withSession(SESSION, writeThenThrow);
+            assert.fail('the mapping must throw after its SQL write');
+          } catch (error) {
+            assert.equal(error, failure);
+          }
+          return 'the composition caught the error and returned normally';
+        }), error => error === failure);
+
+        assert.equal(wroteBeforeThrowing, true);
+        const after = (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [SESSION])).rows[0];
+        assert.deepEqual(after, before);
+        const current = await preview.read(SESSION);
+        assert.equal(current.flow, null, 'the earlier successful decision must roll back too');
+        assert.equal((await preview.trace(SESSION)).length, 0);
+        assert.equal((await review.trace(SESSION)).length, 0);
+        const { rows } = await pool.query(`SELECT
+          (SELECT COUNT(*) FROM preview_flows) AS preview_flows,
+          (SELECT COUNT(*) FROM preview_action_receipts) AS preview_receipts,
+          (SELECT COUNT(*) FROM proposal_review_receipts) AS review_receipts`);
+        assert.equal(Number(rows[0].preview_flows), 0);
+        assert.equal(Number(rows[0].preview_receipts), 0);
+        assert.equal(Number(rows[0].review_receipts), 0);
+      });
+    }
+
+    await t.test('a caught operation failure refuses every further transaction operation', async () => {
+      await reset();
+      const runtime = createSessionDecisionRuntime(pool);
+      const failure = new Error('Injected write callback failure');
+      let calledAgain = false;
+
+      await assert.rejects(runtime.transact(async transaction => {
+        await assert.rejects(transaction.withSession(SESSION, async () => { throw failure; }),
+          error => error === failure);
+
+        const checkFailure = error => {
+          assert.equal(error.code, 'DECISION_TRANSACTION_FAILED');
+          assert.equal(error.cause, failure);
+          return true;
+        };
+        await assert.rejects(preview.applyInTransaction(transaction, action('RequestCandidatePreview', {
+          headSha: HEAD,
+          startedStatus: 'active',
+        })), checkFailure);
+        await assert.rejects(preview.readInTransaction(transaction, SESSION), checkFailure);
+        await assert.rejects(transaction.withSession(SESSION, () => { calledAgain = true; }), checkFailure);
+      }), error => error === failure);
+
+      assert.equal(calledAgain, false);
+      assert.equal((await preview.trace(SESSION)).length, 0);
+    });
+
+    await t.test('caught action validation failure also invalidates an earlier successful decision', async () => {
+      await reset();
+      const runtime = createSessionDecisionRuntime(pool);
+      let caught;
+
+      await assert.rejects(runtime.transact(async transaction => {
+        await preview.applyInTransaction(transaction, action('RequestCandidatePreview', {
+          headSha: HEAD,
+          startedStatus: 'active',
+        }));
+        try {
+          await preview.applyInTransaction(transaction, { type: 'UnknownAction' });
+        } catch (error) {
+          caught = error;
+        }
+        assert.ok(caught, 'action validation must fail inside the operation boundary');
+      }), error => error === caught);
+
+      assert.equal((await preview.read(SESSION)).flow, null);
+      assert.equal((await preview.trace(SESSION)).length, 0);
+    });
+
+    await t.test('a rejected domain decision does not invalidate the composition', async () => {
+      await reset();
+      const runtime = createSessionDecisionRuntime(pool);
+      const rejectedInput = action('RequestCandidatePreview', { headSha: NEXT_HEAD, startedStatus: 'active' });
+      const acceptedInput = action('RequestCandidatePreview', { headSha: HEAD, startedStatus: 'active' });
+
+      const accepted = await runtime.transact(async transaction => {
+        const rejected = await preview.applyInTransaction(transaction, rejectedInput);
+        assert.equal(rejected.decision.accepted, false);
+        assert.equal(rejected.decision.reason, 'head_changed');
+        const next = await preview.applyInTransaction(transaction, acceptedInput);
+        await transaction.withSession(SESSION, client => client.query(
+          "UPDATE chat_sessions SET integration_block_reasons = '[]'::jsonb WHERE id = $1", [SESSION]));
+        return next;
+      });
+
+      assert.equal(accepted.decision.accepted, true);
+      assert.equal((await preview.read(SESSION)).flow.id, accepted.decision.flow.id);
+      assert.equal((await preview.trace(SESSION)).length, 2);
+      assert.equal((await preview.apply(rejectedInput)).replayed, true);
+      assert.equal((await preview.apply(acceptedInput)).replayed, true);
+      const { rows } = await pool.query('SELECT integration_block_reasons FROM chat_sessions WHERE id = $1', [SESSION]);
+      assert.deepEqual(rows[0].integration_block_reasons, []);
+    });
+
     await t.test('lost composition commit acknowledgment replays both committed decisions without repeating the move', async () => {
       await reset();
       await candidate();
