@@ -274,6 +274,9 @@ test('application deploy reconciles Secret, Deployment, Service and Ingress with
     deployment.spec.template.metadata.annotations['social.usernode.io/env-checksum'],
     kubernetes._envChecksumForTest({ DATABASE_URL: 'postgres://redacted', PORT: '3000' })
   );
+  // The setup-attempt stamp is a worker-retry mechanism; an app Deployment
+  // never carries it.
+  assert.equal(deployment.spec.template.metadata.annotations['social.usernode.io/setup-attempt'], undefined);
   const ingress = written.find((item) => item.kind === 'Ingress').body;
   assert.equal(ingress.spec.ingressClassName, 'cilium');
   assert.equal(ingress.metadata.annotations['cert-manager.io/cluster-issuer'], undefined);
@@ -515,6 +518,47 @@ test('temporary shots worker uses pod storage without allocating a PVC', async (
   const deployment = written.find((item) => item.kind === 'Deployment').body;
   assert.deepEqual(deployment.spec.template.spec.volumes, [{ name: 'state', emptyDir: {} }]);
   assert.equal(deployment.metadata.labels['social.usernode.io/storage-mode'], 'temporary');
+});
+
+test('a worker setup retry stamps its attempt on the Pod template, so the stuck Pod is replaced', async () => {
+  const deployments = [];
+  let current = null;
+  kubernetes._setClientsForTest({
+    core: {
+      createNamespacedPersistentVolumeClaim: async ({ body }) => body,
+      readNamespacedSecret: async () => { throw notFound(); },
+      createNamespacedSecret: async ({ body }) => body,
+      listNamespacedPod: async () => ({ items: [{
+        metadata: { name: 'worker-pod', annotations: { 'social.usernode.io/env-checksum': kubernetes._envChecksumForTest({}) } },
+        spec: { containers: [{ name: 'worker', image: config().kubernetes.workerImage }] },
+        status: { phase: 'Running', conditions: [{ type: 'Ready', status: 'True' }],
+          containerStatuses: [{ name: 'worker', ready: true, state: { running: {} } }] },
+      }] }),
+      readNamespacedPodLog: async () => '__USERNODE_PHASE__ warm-ready',
+    },
+    apps: {
+      readNamespacedDeployment: async ({ name }) => {
+        if (!current) throw notFound();
+        return { ...current, metadata: { ...current.metadata, name, resourceVersion: '1', generation: deployments.length },
+          status: { observedGeneration: deployments.length, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+      },
+      createNamespacedDeployment: async ({ body }) => { deployments.push(body); current = body; return { ...body, metadata: { ...body.metadata, generation: 1 } }; },
+      replaceNamespacedDeployment: async ({ body }) => { deployments.push(body); current = body; return { ...body, metadata: { ...body.metadata, generation: deployments.length } }; },
+    },
+  });
+  await kubernetes.ensureWorker(config(), { sessionId: 44, env: {} });
+  await kubernetes.ensureWorker(config(), { sessionId: 44, env: {}, retryAttempt: 2 });
+  assert.equal(deployments.length, 2);
+  const [first, retry] = deployments.map((d) => d.spec.template.metadata.annotations);
+  assert.equal(first['social.usernode.io/setup-attempt'], undefined, 'a first dispatch applies the plain template');
+  assert.equal(retry['social.usernode.io/setup-attempt'], '2');
+  assert.equal(retry['social.usernode.io/env-checksum'], first['social.usernode.io/env-checksum']);
+  assert.notDeepEqual(retry, first, 'the retry changes the template, which is what replaces the Pod');
+  // Only the template moves: the Deployment, its strategy and its volume are the same objects.
+  assert.equal(deployments[1].metadata.name, deployments[0].metadata.name);
+  assert.equal(deployments[1].spec.strategy.type, 'Recreate');
+  assert.deepEqual(deployments[1].spec.template.spec.volumes, deployments[0].spec.template.spec.volumes);
+  assert.equal(deployments[1].metadata.annotations?.['social.usernode.io/setup-attempt'], undefined);
 });
 
 test('worker contract and immutable image are read from the live Kubernetes Deployment', async () => {

@@ -842,13 +842,7 @@ async function deployApplication(config, {
       template: {
         metadata: {
           labels: { ...resourceLabels, ...selectorLabels },
-          // A setup retry re-applies an otherwise identical Deployment, which
-          // would leave the stuck Pod in place. Stamping the attempt changes
-          // the template, so the Recreate strategy stops that Pod and starts a
-          // fresh one on the same Deployment, Secret and volume: a retry owns
-          // exactly the objects a first dispatch does.
-          annotations: { 'social.usernode.io/env-checksum': envChecksum(env),
-            ...(retryAttempt ? { 'social.usernode.io/setup-attempt': String(retryAttempt) } : {}) },
+          annotations: { 'social.usernode.io/env-checksum': envChecksum(env) },
         },
         spec: {
           serviceAccountName: cfg.generatedAppServiceAccount,
