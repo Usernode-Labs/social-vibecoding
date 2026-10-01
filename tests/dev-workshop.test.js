@@ -4802,9 +4802,11 @@ test('a wide window reads the tabs at the top, as a segmented control', () => {
   // The offset is set AFTER `inset: auto`, or the shorthand resets it and the
   // strip pins to nothing. Measured when it was written above: the strip's top
   // went to -890 on a 900px scroll while the head it travels with stayed.
+  // #3583: the offset is `--ws-pin-top` now, the header's foot, rather than
+  // 0: the order is the same rule.
   const insetAt = rail[1].indexOf('inset: auto;');
-  const topAt = rail[1].indexOf('top: 0;');
-  assert.ok(insetAt > 0 && topAt > insetAt, '`top: 0` comes after `inset: auto`');
+  const topAt = rail[1].indexOf('top: var(--ws-pin-top, 0px);');
+  assert.ok(insetAt > 0 && topAt > insetAt, '`top` comes after `inset: auto`');
   // THE PHONE BAR'S BOX DOES NOT COME UP HERE, and all three of these are
   // regressions, not tidying. `left/right/bottom` place a FIXED pill against
   // the viewport; `position: relative` does not ignore them, it SHIFTS by
@@ -5173,13 +5175,15 @@ test('the tab strip and the head pin as one band (#2339 follow-up)', () => {
   const rail = /\.dev-ws-tabs \{([\s\S]*?)\n  \}/.exec(decls);
   assert.ok(rail, 'the rail is restyled for width');
   assert.match(rail[1], /position: sticky;/);
-  assert.ok(rail[1].indexOf('top: 0;') > rail[1].indexOf('inset: auto;'),
-    '`top: 0` is set after `inset: auto`');
+  //    #3583: it pins at the header's foot (`--ws-pin-top`), not at 0.
+  assert.ok(rail[1].indexOf('top: var(--ws-pin-top, 0px);') > rail[1].indexOf('inset: auto;'),
+    '`top` is set after `inset: auto`');
 
   // 2. THE HEAD keeps the base rule's `position: sticky` and only moves where
   //    it rests: under the strip, by the strip's MEASURED height plus the
-  //    column gap. `top: 0` would slide it under the strip.
-  assert.match(decls, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: var\(--dev-ws-head-top, 0px\)/);
+  //    column gap. `top: 0` would slide it under the strip. #3583: counted
+  //    from where the strip pins, which is no longer the scroller's top.
+  assert.match(decls, /#dev-workshop \.dev-ws-pane-head \{[^}]*top: calc\(var\(--ws-pin-top, 0px\) \+ var\(--dev-ws-head-top, 0px\)\)/);
   assert.match(WORKSHOP, /const WS_GAP_PX = 10;/);
   assert.match(WORKSHOP,
     /setProperty\('--dev-ws-head-top', `\$\{Math\.round\(n\.height\) \+ WS_GAP_PX\}px`\)/);

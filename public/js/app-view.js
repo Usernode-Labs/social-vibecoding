@@ -80,22 +80,41 @@ const AppView = {
   // after the feed repaints, so tapping into an item and coming Back
   // lands the user where they left off instead of at the top.
   _savedFeedScroll: {},
+  // #3583: AND WHICH OF THE PROJECT PAGE'S TABS IT WAS TAKEN ON, by the same
+  // slug. The list is a project page with four tabs now, and the tab it
+  // reopens on is the one last chosen ANYWHERE (_workshopTab): leave one
+  // project's All items for an item, follow a door to another project's hub,
+  // come Back twice, and the first project reopened on its Hub with All
+  // items' offset laid over it — scrolled under its own pinned strip.
+  _savedFeedTab: {},
 
   // Store the Dev list's scroll offset under an app slug. A missing
   // slug or a non-positive offset clears any saved value (top is the
   // default, so there's nothing to remember). Pure besides the map
-  // write — DOM-free for unit testing.
-  _saveFeedScroll(slug, scrollTop) {
+  // write — DOM-free for unit testing. `tab`, when given, is the
+  // project-page tab the offset belongs to (#3583).
+  _saveFeedScroll(slug, scrollTop, tab) {
     if (!slug) return;
     const n = Number(scrollTop);
-    if (!Number.isFinite(n) || n <= 0) { delete AppView._savedFeedScroll[slug]; return; }
+    if (!Number.isFinite(n) || n <= 0) {
+      delete AppView._savedFeedScroll[slug];
+      delete AppView._savedFeedTab[slug];
+      return;
+    }
     AppView._savedFeedScroll[slug] = n;
+    if (tab) AppView._savedFeedTab[slug] = tab;
+    else delete AppView._savedFeedTab[slug];
   },
 
   // Read back a saved offset for a slug, or 0 (top) when none is
-  // stored. Positions stay isolated per slug.
-  _getFeedScroll(slug) {
+  // stored. Positions stay isolated per slug. #3583: an offset taken on one
+  // tab is not put back onto another — asked for `tab`, an offset saved on a
+  // different one is no offset at all. Either side unknown keeps the old
+  // per-slug answer.
+  _getFeedScroll(slug, tab) {
     const v = AppView._savedFeedScroll[slug];
+    const takenOn = AppView._savedFeedTab[slug];
+    if (tab && takenOn && takenOn !== tab) return 0;
     return Number.isFinite(v) && v > 0 ? v : 0;
   },
 
@@ -3242,9 +3261,23 @@ const AppView = {
     // topic/session/chat sub-views. Every back-navigation re-enters
     // renderDevView, so this single point covers the Back buttons,
     // browser back/forward, and programmatic navigation alike.
+    //
+    // #3583: UNDER THE PAGE'S OWN PROJECT AND TAB, read off the page itself
+    // (`.dev-ws`'s data-ws-slug / data-ws-tab). App.currentApp is already the
+    // INCOMING app by now: going from one project's page to another's saved
+    // the first one's offset under the second, which then opened scrolled by
+    // it, its hub under its own pinned strip. A list with no page in it (the
+    // loading skeleton) keeps the old key.
     const outgoingFeed = document.getElementById('dev-forum-scroll');
     const outgoingScroll = window.PlatformUI?.scrollElement?.(outgoingFeed) || outgoingFeed;
-    if (outgoingScroll) AppView._saveFeedScroll(App.currentApp, outgoingScroll.scrollTop);
+    const outgoingPage = outgoingFeed?.querySelector?.('.dev-ws[data-ws-slug]') || null;
+    if (outgoingScroll) {
+      AppView._saveFeedScroll(
+        outgoingPage ? outgoingPage.getAttribute('data-ws-slug') : App.currentApp,
+        outgoingScroll.scrollTop,
+        outgoingPage ? outgoingPage.getAttribute('data-ws-tab') : null,
+      );
+    }
 
     // Leaving whatever thread surface was open: drop the live render
     // target so incoming thread messages turn into badge bumps.
@@ -3599,8 +3632,9 @@ const AppView = {
     // instant jump, not a visible animation. We clamp to the rebuilt
     // list's max offset — a shorter list (collapsed "Show more") lands
     // near the old spot rather than overshooting. No saved value (or 0)
-    // → top, as before.
-    const savedScroll = AppView._getFeedScroll(App.currentApp);
+    // → top, as before. #3583: and only onto the tab it was taken on — the
+    // page opens on the one last chosen (_workshopTab), which may not be it.
+    const savedScroll = AppView._getFeedScroll(App.currentApp, AppView._workshopTab());
     if (savedScroll > 0) {
       requestAnimationFrame(() => {
         const feed = document.getElementById('dev-forum-scroll');
@@ -8062,6 +8096,14 @@ const AppView = {
    * room on the Messages screen with a chevron back up to the hub. It writes
    * the remembered tab and tells a page already open for that project to
    * switch, exactly as the hub's door does; an unknown key is the hub.
+   *
+   * #3583: A DOOR OPENS THE PAGE AT ITS HEAD, so the offset the page last
+   * saved for that project is forgotten. The route the door goes on to runs
+   * renderDevView, which put it back: an item opened from halfway down the
+   * hub, then "Go to community hub", opened the hub where the item had been,
+   * under its own pinned strip. A page already on screen is scrolled up by
+   * the event above (workshop.tsx scrollToHead), so a door that routes from
+   * it saves it at its top.
    */
   _landOnTab(slug, tab) {
     const key = AppView.WORKSHOP_TABS.indexOf(tab) !== -1 ? tab : 'status';
@@ -8069,6 +8111,7 @@ const AppView = {
     try {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
     } catch {}
+    if (slug) AppView._saveFeedScroll(slug, 0);
   },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
