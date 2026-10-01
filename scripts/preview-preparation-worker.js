@@ -5,32 +5,68 @@
 const { createExecutionWorker } = require('../src/services/execution/worker');
 const { createPreviewWork } = require('../src/services/preview-flow/work');
 
-async function runWorker({ pool, config, pollMs = 250, censusMs = 60000, onError = () => {} }) {
-  const preview = createPreviewWork(pool, config);
+async function runWorker({
+  pool,
+  config,
+  pollMs = 250,
+  censusMs = 60000,
+  discoveryOptions = {},
+  previewOptions = {},
+  onError = () => {},
+}) {
+  const { createDiscoveryPool } = require('../src/services/execution/discovery-pool');
+  const discoveryPool = createDiscoveryPool(config.databaseUrl, discoveryOptions);
+  const preview = createPreviewWork(pool, config, previewOptions);
+  const discovery = createPreviewWork(discoveryPool, config);
   const worker = createExecutionWorker({ store: preview.store, handlers: preview.handlers, onError });
   let stopping = false;
-  let nextCensus = 0;
+  const sleeps = new Set();
 
-  const loop = (async () => {
+  function delay(ms) {
+    return new Promise(resolve => {
+      const wake = () => {
+        clearTimeout(timer);
+        sleeps.delete(wake);
+        resolve();
+      };
+      const timer = setTimeout(wake, ms);
+      sleeps.add(wake);
+    });
+  }
+
+  async function poll() {
     while (!stopping) {
       try {
         await worker.tick();
-        if (Date.now() >= nextCensus) {
-          nextCensus = Date.now() + censusMs;
-          await preview.census();
-        }
       } catch {
         onError('preview_worker_poll_deferred');
       }
-      await new Promise(resolve => setTimeout(resolve, pollMs));
+      await delay(pollMs);
     }
-  })();
+  }
 
+  async function discover() {
+    while (!stopping) {
+      try {
+        await discovery.census();
+      } catch {
+        onError('preview_worker_discovery_deferred');
+      }
+      await delay(censusMs);
+    }
+  }
+
+  // Each loop owns and awaits its operations. Discovery never gates claiming,
+  // never overlaps itself, and stop waits for rollback and both loops to end.
+  const polling = poll();
+  const discovering = discover();
   return {
     async stop() {
       stopping = true;
-      await loop;
+      for (const wake of sleeps) wake();
+      await Promise.all([polling, discovering]);
       await worker.drain();
+      await discoveryPool.end();
     },
   };
 }

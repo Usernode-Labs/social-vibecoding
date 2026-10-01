@@ -141,3 +141,24 @@ The required regression job is `scripts/test-preview-flow.js` with a disposable
 `PREVIEW_FLOW_TEST_DATABASE_URL`. New tests use real PostgreSQL and process death;
 Docker/Kubernetes operations are injected transports. Existing runtime safety
 suites remain required. A live deployment demonstration is still a rollout gate.
+
+## Discovery liveness correction
+
+Execution polling and discovery are independent, awaited loops. Discovery never
+occupies an execution-pool connection. Its separate one-connection pool bounds
+connection acquisition (1s), PostgreSQL lock waits (100ms) and each statement (1s),
+including the rotating selection and every B2 admission transaction. An unavailable
+aggregate defers that obligation and later rows in the batch are still considered.
+PostgreSQL cancels timed-out statements; B2 awaits the error and rollback before
+releasing the client. No JavaScript timeout race or detached transaction is used.
+Discovery cannot overlap itself, and shutdown joins both loops and closes its pool.
+Waiting between scans is interruptible; active database operations are awaited.
+
+The real PostgreSQL regression holds the oldest session row lock throughout
+unrelated preview completion and later cleanup completion, verifies the blocked
+obligation has no partial decision/work admission or idle aborted transaction,
+then releases the lock and observes its deferred cleanup complete. The selected
+resource remains retained/rotated for retry; atomicity and ownership checks stay.
+Server-side deadlines assume a reachable PostgreSQL server; process supervision
+still contains transport failure or unresponsive execution. This does not claim
+an absolute network-outage/shutdown bound or transaction-wide deadline.

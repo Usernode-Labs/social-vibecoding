@@ -288,3 +288,49 @@ for (const afterCommit of [false, true]) {
     assert.equal((await pool.query("SELECT * FROM preview_flow_decisions WHERE action->>'type' = 'PreviewCandidatePrepared'")).rowCount, 1);
   });
 }
+
+test('real PostgreSQL: busy discovery rolls back without blocking polling or later cleanup discovery', { skip: !databaseUrl }, async t => {
+  const { runWorker } = require('../scripts/preview-preparation-worker');
+  const { pool, config, adapters, work } = await fixture(t);
+  await pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (2, $1), (3, $1)', [HEAD]);
+  const oldest = await work.request(request());
+  const later = await work.request({ ...request(), sessionId: 3 });
+  // Retire domain permission before holding the oldest aggregate lock.
+  await pool.query("UPDATE chat_sessions SET status = 'archived' WHERE id IN (1, 3)");
+  const unrelated = await work.request({ ...request(), sessionId: 2 });
+  // Remove preparation from discovery assertions: these obligations already
+  // have stable resources and only their cleanup must now be discovered.
+  await pool.query("UPDATE execution_work_requests SET status = 'succeeded' WHERE session_id IN (1, 3)");
+  const holder = await pool.connect();
+  await holder.query('BEGIN');
+  await holder.query('SELECT id FROM chat_sessions WHERE id = 1 FOR UPDATE');
+  let released = false;
+  let running;
+  try {
+  running = await runWorker({ pool, config, pollMs: 10, censusMs: 20,
+    discoveryOptions: { lockTimeoutMs: 40, statementTimeoutMs: 200 }, previewOptions: adapters });
+  async function until(check) {
+    const deadline = Date.now() + 5000;
+    while (!await check()) {
+      assert.ok(Date.now() < deadline, 'progress must occur while the aggregate lock remains held');
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+  }
+  await until(async () => (await work.store.read(unrelated.work.id)).status === 'succeeded');
+  await until(async () => (await pool.query('SELECT cleanup_completed_at FROM preview_flow_resources WHERE flow_id = $1',
+    [later.decision.flow.id])).rows[0].cleanup_completed_at);
+  assert.equal(released, false);
+  assert.equal((await pool.query('SELECT * FROM execution_work_requests WHERE session_id = 1 AND workflow = $1', [RETIRE])).rowCount, 0);
+  assert.equal((await pool.query("SELECT * FROM preview_flow_decisions WHERE session_id = 1 AND action->>'type' = 'RequestPreviewCleanup'")).rowCount, 0,
+    'timed-out discovery did not commit partial admission');
+  assert.equal((await pool.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE application_name = 'bounded-work-discovery' AND state = 'idle in transaction (aborted)'")).rows[0].count, 0);
+  await holder.query('ROLLBACK');
+  released = true;
+  await until(async () => (await pool.query('SELECT cleanup_completed_at FROM preview_flow_resources WHERE flow_id = $1',
+    [oldest.decision.flow.id])).rows[0].cleanup_completed_at);
+  } finally {
+    if (!released) await holder.query('ROLLBACK');
+    holder.release();
+    if (running) await running.stop();
+  }
+});
