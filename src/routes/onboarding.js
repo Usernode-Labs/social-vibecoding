@@ -18,6 +18,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const onboarding = require('../services/onboarding');
 const { acceptInvite } = require('../services/collab-invites');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const { drainGuard } = require('../services/lifecycle');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 
@@ -53,6 +54,10 @@ function onboardingRoutes(config) {
           ...(result.alreadyDone ? { alreadyDone: true } : null),
         });
       }
+      // Once for the whole answer, not per community: the first thing this
+      // screen leads to is Home, whose First challenges block should already
+      // have "Find people to build with" ticked (#3564). Never throws.
+      if (result.joined.length) await challengeScorer.scoreOnJoin(pool, config);
       res.json(result);
     } catch (err) {
       log.error('onboarding', 'join answer failed', { message: err.message });
