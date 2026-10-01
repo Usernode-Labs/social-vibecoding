@@ -91,9 +91,11 @@ long-held resource/retention lock is removed. The combined staging operation sti
 holds resource guards through creation; finer isolated resource steps must prove
 replacement behavior before these locks narrow.
 
-Next checkpoint: execute a second distinct domain workflow using the same queue,
-claims, fair retry, settlement and trace machinery, without copying it. B2's
-second decision workflow remains intact; it does not yet prove shared execution.
+The second execution checkpoint is now demonstrated by imported proposal return
+and durable thread announcement; see the [contract](second-execution-contract.md).
+It shares this queue, claims, fair retry, settlement, tracing and polling service.
+It proves reuse for SQL publication; external resource-step recovery and live
+rollout remain subsequent checkpoints. B2 decision coordination stays intact.
 
 Reconsider Temporal if additional workflows need durable waits/signals/fan-out,
 complex compatible deployment/history replay, or if maintaining this bounded

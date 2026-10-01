@@ -2,7 +2,8 @@
 'use strict';
 
 // Dedicated supervised process; never imported or started by the web server.
-const { createExecutionWorker } = require('../src/services/execution/worker');
+const { createExecutionService } = require('../src/services/execution/service');
+const { createReviewWork } = require('../src/services/proposal-review/work');
 const { createPreviewWork } = require('../src/services/preview-flow/work');
 
 async function runWorker({
@@ -18,54 +19,18 @@ async function runWorker({
   const discoveryPool = createDiscoveryPool(config.databaseUrl, discoveryOptions);
   const preview = createPreviewWork(pool, config, previewOptions);
   const discovery = createPreviewWork(discoveryPool, config);
-  const worker = createExecutionWorker({ store: preview.store, handlers: preview.handlers, onError });
-  let stopping = false;
-  const sleeps = new Set();
-
-  function delay(ms) {
-    return new Promise(resolve => {
-      const wake = () => {
-        clearTimeout(timer);
-        sleeps.delete(wake);
-        resolve();
-      };
-      const timer = setTimeout(wake, ms);
-      sleeps.add(wake);
-    });
-  }
-
-  async function poll() {
-    while (!stopping) {
-      try {
-        await worker.tick();
-      } catch {
-        onError('preview_worker_poll_deferred');
-      }
-      await delay(pollMs);
-    }
-  }
-
-  async function discover() {
-    while (!stopping) {
-      try {
-        await discovery.census();
-      } catch {
-        onError('preview_worker_discovery_deferred');
-      }
-      await delay(censusMs);
-    }
-  }
-
-  // Each loop owns and awaits its operations. Discovery never gates claiming,
-  // never overlaps itself, and stop waits for rollback and both loops to end.
-  const polling = poll();
-  const discovering = discover();
+  const review = createReviewWork(pool, config, { store: preview.store });
+  const execution = createExecutionService({
+    store: preview.store,
+    handlers: { ...preview.handlers, ...review.handlers },
+    discover: () => discovery.census(),
+    pollMs,
+    discoveryMs: censusMs,
+    onError,
+  });
   return {
     async stop() {
-      stopping = true;
-      for (const wake of sleeps) wake();
-      await Promise.all([polling, discovering]);
-      await worker.drain();
+      await execution.stop();
       await discoveryPool.end();
     },
   };

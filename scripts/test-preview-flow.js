@@ -19,6 +19,7 @@ if (!databaseUrl) {
     'tests/decision-runtime.test.js',
     'tests/execution-worker.test.js',
     'tests/preview-work.test.js',
+    'tests/review-work.test.js',
     'tests/unpromote-proposal-postgres.test.js',
     'tests/preview-flow.test.js',
     'tests/preview-candidate.test.js',

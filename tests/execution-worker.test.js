@@ -163,3 +163,46 @@ test('real PostgreSQL: queue persists retry classes, blocks unknown versions, an
   await worker.drain();
   assert.equal((await store.read(hanging.id)).status, 'running', 'restart must reclaim and reconcile the abandoned claim');
 });
+
+test('shared service stops after active discovery returns, without detaching it or starting a new long sleep', { timeout: 2000 }, async () => {
+  const { createExecutionService } = require('../src/services/execution/service');
+  let finish;
+  const discovery = new Promise(resolve => { finish = resolve; });
+  let ended = false;
+  const service = createExecutionService({
+    store: { claim: async () => [], leaseMs: 1000 },
+    handlers: { fixture: { version: 1 } },
+    discover: () => discovery,
+    pollMs: 60000,
+    discoveryMs: 60000,
+  });
+  const stopping = service.stop().then(() => { ended = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(ended, false, 'stop must await the active database operation/rollback');
+  finish();
+  await stopping;
+});
+
+// The shared bounded pool relies on server cancellation rather than a detached
+// JS query timeout. Even caught statement timeouts must poison B2's composition.
+test('real PostgreSQL: discovery statement timeout rolls back preceding writes and returns a usable connection', { skip: !databaseUrl }, async t => {
+  const { createDiscoveryPool } = require('../src/services/execution/discovery-pool');
+  const { pool, url } = await fixture(t);
+  const discovery = createDiscoveryPool(url, { lockTimeoutMs: 20, statementTimeoutMs: 50 });
+  try {
+    const runtime = createSessionDecisionRuntime(discovery);
+    await assert.rejects(runtime.transact(async transaction => {
+      try {
+        await transaction.withSession(1, async client => {
+          await client.query("UPDATE chat_sessions SET staging_url = 'https://wrong.test' WHERE id = 1");
+          await client.query('SELECT pg_sleep(1)');
+        });
+      } catch {}
+    }), error => error.code === '57014');
+    assert.equal((await pool.query('SELECT staging_url FROM chat_sessions')).rows[0].staging_url, 'https://serving.test');
+    assert.equal((await discovery.query("SELECT current_setting('statement_timeout') AS timeout")).rows[0].timeout, '50ms');
+    assert.equal((await pool.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE application_name = 'bounded-work-discovery' AND state LIKE 'idle in transaction%'")).rows[0].count, 0);
+  } finally {
+    await discovery.end();
+  }
+});
