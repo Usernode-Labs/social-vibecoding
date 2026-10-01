@@ -10,7 +10,7 @@ FROM node:22-bookworm-slim
 # any repo with a native dep. The toolchain makes the fallback actually
 # work, for the unit-suite one-shot and for agent build turns alike.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl wget ca-certificates unzip python3 make g++ \
+    git curl wget ca-certificates unzip poppler-utils python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
 # ── Local Postgres for in-loop builds and repository SQL checks ────────

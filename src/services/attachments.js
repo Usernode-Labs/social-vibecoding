@@ -255,6 +255,15 @@ function validateUpload({ filename, data }) {
     if (!zv.ok) return zv;
     return { ok: true, kind: 'zip', contentType: 'application/zip', meta: zv.manifest };
   }
+  // PDF magic bytes — still classified as 'binary' (no schema change),
+  // but the stored content type becomes accurate, and the dispatch
+  // prompt branch below uses it to teach the agent how to read the file.
+  if (data.subarray(0, 5).toString('latin1') === '%PDF-') {
+    if (data.length > MAX_BINARY_BYTES) {
+      return { ok: false, error: `File too large (max ${Math.round(MAX_BINARY_BYTES / 1024 / 1024)} MB)` };
+    }
+    return { ok: true, kind: 'binary', contentType: 'application/pdf', meta: null };
+  }
   // Any readable UTF-8 file small enough to inline is text, regardless
   // of extension (including .svg and extensionless files). Stored
   // content_type is always text/plain so serving can never execute
@@ -470,7 +479,11 @@ function buildDispatchBlock(attachments) {
       parts.push(`zip archive: ${att.filename} (id ${att.id}${count}${top}) — extract it with \`usernode-attachments ${att.id} --unzip /home/node/attachments/${dirName}/\` (run via Bash), then browse that directory with your normal tools. Treat it as read-only reference material — do not copy it wholesale into the repo unless asked.`);
     } else if (att.kind === 'binary') {
       hasCliRefs = true;
-      parts.push(`binary file: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash).`);
+      if (att.contentType === 'application/pdf') {
+        parts.push(`PDF file: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash), then read its text with \`pdftotext /home/node/attachments/${safeName} -\`.`);
+      } else {
+        parts.push(`binary file: ${att.filename} (id ${att.id}) — download it with \`usernode-attachments ${att.id} /home/node/attachments/${safeName}\` (run via Bash).`);
+      }
     } else {
       const block = attachedFileBlock(att.filename, att.data.toString('utf8'));
       if (block.length <= inlineBudget) {

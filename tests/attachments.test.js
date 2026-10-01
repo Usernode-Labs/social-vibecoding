@@ -126,6 +126,11 @@ test('validateUpload: non-UTF-8 bytes classify as binary', () => {
   assert.deepEqual(v, { ok: true, kind: 'binary', contentType: 'application/octet-stream', meta: null });
 });
 
+test('validateUpload: PDF magic bytes classify as binary with application/pdf', () => {
+  const v = att.validateUpload({ filename: 'resume.pdf', data: Buffer.from('%PDF-1.7\n…') });
+  assert.deepEqual(v, { ok: true, kind: 'binary', contentType: 'application/pdf', meta: null });
+});
+
 test('validateUpload: text file accepted and stored as text/plain', () => {
   const v = att.validateUpload({ filename: 'notes.md', data: Buffer.from('# hi') });
   assert.deepEqual(v, { ok: true, kind: 'text', contentType: 'text/plain', meta: null });
@@ -484,6 +489,25 @@ test('buildDispatchBlock: binary gets a download instruction', () => {
   }]);
   assert.ok(block.includes(`usernode-attachments ${id} /home/node/attachments/font.woff2`));
   assert.ok(block.includes('read-only helper `usernode-attachments`'));
+});
+
+test('buildDispatchBlock: PDF binary gets download + pdftotext read instruction', () => {
+  const id = 'c3'.repeat(16);
+  const block = att.buildDispatchBlock([{
+    id, kind: 'binary', filename: 'annual report.pdf', contentType: 'application/pdf',
+    sizeBytes: 2048, data: Buffer.alloc(8),
+  }]);
+  assert.ok(block.includes(`usernode-attachments ${id} /home/node/attachments/annual_report.pdf`));
+  assert.ok(block.includes('pdftotext /home/node/attachments/annual_report.pdf -'));
+});
+
+test('buildDispatchBlock: non-PDF binary gets no pdftotext suggestion', () => {
+  const id = 'a1'.repeat(16);
+  const block = att.buildDispatchBlock([{
+    id, kind: 'binary', filename: 'font.woff2', contentType: 'application/octet-stream',
+    sizeBytes: 2048, data: Buffer.alloc(8),
+  }]);
+  assert.ok(!block.includes('pdftotext'));
 });
 
 test('buildDispatchBlock: aggregate inline budget degrades overflow text to download', () => {
