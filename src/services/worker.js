@@ -3081,6 +3081,9 @@ async function execInWorker(sessionId, {
       : '';
     // The thinking level, which the adapter sends as output_config.effort.
     safeEnv.AGENT_REASONING_EFFORT = agentReasoningEffort || '';
+    // #3426: '1' lets the adapter pass image blocks through to a model the
+    // OpenRouter catalog lists as taking images; anything else is text only.
+    safeEnv.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata?.supportsImages === true ? '1' : '';
     safeEnv.CLAUDE_RESUME_SESSION_ID = resumeSessionId || '';
     safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
     safeEnv.TURN_UUID = turnUuid || '';
@@ -3106,6 +3109,9 @@ async function execInWorker(sessionId, {
     safeEnv.AGENT_MODEL_SUPPORTS_TOOLS = agentModelMetadata?.supportsTools == null
       ? ''
       : (agentModelMetadata.supportsTools ? '1' : '0');
+    // #3426: declares image input in Codex's model catalog, which is what
+    // lets view_image run. Text only unless the catalog says otherwise.
+    safeEnv.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata?.supportsImages === true ? '1' : '';
     safeEnv.AGENT_THREAD_ID = resumeSessionId || '';
     safeEnv.TURN_UUID = turnUuid || '';
     // The operator-configured OpenRouter endpoint (plan 4): always forward

@@ -140,6 +140,7 @@ test('runtimeModelMetadataForModel preserves OpenRouter context and capabilities
     supportsReasoning: true,
     reasoningEfforts: ['low', 'high'],
     supportsTools: true,
+    supportsImages: false,
   });
   assert.deepEqual(runtimeModelMetadataForModel(null, 'vendor/model'), {
     name: 'vendor/model',
@@ -148,6 +149,7 @@ test('runtimeModelMetadataForModel preserves OpenRouter context and capabilities
     supportsReasoning: null,
     reasoningEfforts: null,
     supportsTools: null,
+    supportsImages: null,
   });
 });
 
@@ -204,6 +206,7 @@ test('resolveCodexRuntimeContext carries the selected OpenRouter model metadata 
     supportsReasoning: true,
     reasoningEfforts: null,
     supportsTools: true,
+    supportsImages: false,
   });
   assert.equal(ctx.pricingSnapshot.available, true);
 });
@@ -1477,4 +1480,22 @@ test('codexProviderFailureText: the remedy follows whose key is paying', async (
   );
   // An unclassified turn keeps whatever copy the caller already had.
   assert.equal(await codexProviderFailureText(personalPool, 1, { exitCode: 1 }), null);
+});
+
+test('#3426: image input comes from OpenRouter\'s own model listing, and reaches the runtime metadata', () => {
+  const agentModels = require('../src/services/agent-models');
+  const sees = agentModels.sanitizeModel({
+    id: 'z-ai/glm-5.3-flash', architecture: { input_modalities: ['text', 'image', 'video'], output_modalities: ['text'] },
+  }, { status: 'verified', note: null });
+  const blind = agentModels.sanitizeModel({
+    id: 'vendor/text', architecture: { input_modalities: ['text'] },
+  }, { status: 'verified', note: null });
+  const unlisted = agentModels.sanitizeModel({ id: 'vendor/old' }, { status: 'verified', note: null });
+  assert.equal(sees.supportsImages, true);
+  assert.equal(blind.supportsImages, false);
+  assert.equal(unlisted.supportsImages, false, 'no listing: text only, as before');
+  assert.equal(Object.keys(sees).includes('supportsImages'), false,
+    'the development catalog JSON the model picker reads is unchanged');
+  assert.equal(runtimeModelMetadataForModel(sees, sees.id).supportsImages, true);
+  assert.equal(runtimeModelMetadataForModel(blind, blind.id).supportsImages, false);
 });

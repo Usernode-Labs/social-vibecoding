@@ -815,3 +815,16 @@ test('the reply ceiling is taken from the environment the host already sets', ()
   });
   assert.equal(catalog.models[0].max_output_tokens, 12_000);
 });
+
+test('#3426: the Codex catalog declares image input only for a model that takes images', () => {
+  const modalities = (supportsImages) => buildCodexModelCatalog({ modelId: 'z-ai/glm-5.3-flash', supportsImages })
+    .models[0].input_modalities;
+  assert.deepEqual(modalities('1'), ['text', 'image'], 'view_image is allowed');
+  assert.deepEqual(modalities(true), ['text', 'image']);
+  for (const off of [undefined, '', '0', 'false', false, 'yes']) assert.deepEqual(modalities(off), ['text'], String(off));
+  const { buildCatalogFromEnvironment } = require('../worker/build-codex-model-catalog');
+  assert.deepEqual(buildCatalogFromEnvironment({ AGENT_MODEL: 'z-ai/glm-5.3-flash', AGENT_MODEL_SUPPORTS_IMAGES: '1' })
+    .models[0].input_modalities, ['text', 'image']);
+  assert.deepEqual(buildCatalogFromEnvironment({ AGENT_MODEL: 'z-ai/glm-5.3-flash' })
+    .models[0].input_modalities, ['text']);
+});

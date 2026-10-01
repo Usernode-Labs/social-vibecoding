@@ -55,6 +55,11 @@ const RULES = Object.freeze({
     '- If you change code the whole app relies on (its main loop, shared state, routing, server setup or',
     "  startup), exercise the app's existing main flow afterwards, not only the part you added.",
   ].join('\n'),
+  userGesture: [
+    '- Browser features that need a user gesture (sound through an AudioContext, notification permission,',
+    '  clipboard, fullscreen) must be started or unlocked inside a tap or click handler. Started later, from a',
+    '  timer or a render, phones refuse them or keep them silent.',
+  ].join('\n'),
   lockfiles: [
     '- Do not change a lockfile (package-lock.json, yarn.lock, pnpm-lock.yaml and the like) unless the change',
     '  adds or removes a dependency. If installing dependencies rewrote one, restore it before you finish',
@@ -97,7 +102,7 @@ const RULES = Object.freeze({
 // to prove the change, then the hand-off.
 const ORDER = Object.freeze([
   'readInstructions', 'readBeforeWrite', 'keepSmall', 'unrelatedProblems', 'ownBranchOnly',
-  'runTests', 'existingFlow', 'lockfiles', 'checksProve', 'realCodePath', 'existingChecks',
+  'runTests', 'existingFlow', 'userGesture', 'lockfiles', 'checksProve', 'realCodePath', 'existingChecks',
   'realDatabase', 'noReports', 'bugFirst', 'COMMIT', 'stopIfUnsafe',
 ]);
 

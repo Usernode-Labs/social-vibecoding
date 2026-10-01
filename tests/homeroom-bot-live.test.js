@@ -848,3 +848,18 @@ test('the dashboard says what a live build came to, and never calls it a shadow 
   assert.match(fn, /data-live-build="built"/);
   assert.doesNotMatch(fn, /Shadow|href=/, 'the proposal link below the note is the one link');
 });
+
+test('#3426: a request with a screenshot tells each bot turn to look at it, and what to do if it cannot', () => {
+  const seed = 'Issue #47: Can not comment\n\n**Screenshot:**\n![Screenshot](https://app.onhomeroom.com/issue-images/1ed1d30f045b9362b7d7f78e41d984f9)';
+  const note = live.screenshotNote(seed).join('\n');
+  assert.match(note, /Download each one/);
+  assert.match(note, /view_image, or the Read\ntool/);
+  assert.match(note, /do not try to decode the file another way/);
+  assert.deepEqual(live.screenshotNote('Issue #3: no pictures here'), [], 'nothing said without one');
+  assert.deepEqual(live.screenshotNote(null), []);
+  const args = { seed, buildNote: 'x' };
+  assert.ok(live.buildPrompt(args).includes(note), 'the build reads it');
+  assert.ok(live.specPrompt(args).includes(note), 'and the spec');
+  assert.match(BOT_SRC, /seed, live\.screenshotNote\(seed\)\.join\('\\n'\)\.trim\(\), triagePrompt\(\)/, 'and the triage');
+  assert.ok(!live.buildPrompt({ seed: 'Issue #3', buildNote: 'x' }).includes('Download each one'));
+});

@@ -1525,8 +1525,8 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
   const prompt = [
-    seed, triagePrompt(), triageReference(), triageClosing(issueNumber),
-  ].join('\n\n');
+    seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(), triageReference(), triageClosing(issueNumber),
+  ].filter(Boolean).join('\n\n');
 
   let session;
   try {
