@@ -34,6 +34,7 @@ const agentModels = require('./agent-models');
 const managedOpenRouter = require('./openrouter-managed-keys');
 const { platformHeaders } = require('./openrouter-client');
 const llmTelemetry = require('./llm-telemetry');
+const { withoutDocuments } = require('./attachments');
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 // Reasoning models spend part of this on thinking before the visible reply
@@ -230,6 +231,12 @@ function reasoningEffortFor(catalogModel) {
   return above[0] || advertised[advertised.length - 1];
 }
 
+function hasFileParts(request) {
+  return Array.isArray(request?.messages) && request.messages.some((m) => (
+    Array.isArray(m.content) && m.content.some((part) => part && part.type === 'file')
+  ));
+}
+
 function buildRequest({
   model, reasoningEffort, systemPrompt, messages, tools, toolChoice, maxTokens, sessionId, fileInput = false,
 }) {
@@ -414,14 +421,16 @@ function createClient({
     // `model` and `apiKey` from the caller are deliberately ignored: this
     // client is bound to the session's OpenRouter model and key, and a
     // Claude id or an Anthropic key must never reach OpenRouter.
-    const body = buildRequest({
-      model: boundModel, reasoningEffort, systemPrompt, messages, tools, toolChoice, maxTokens, sessionId, fileInput,
+    const request = (history) => buildRequest({
+      model: boundModel, reasoningEffort, systemPrompt, messages: history, tools, toolChoice, maxTokens, sessionId, fileInput,
     });
+    const body = request(messages);
     const startedAt = Date.now();
     const timeout = new AbortController();
     const timer = setTimeout(() => timeout.abort(), timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout.signal]) : timeout.signal;
-    try {
+    // One request, from send to parsed completion.
+    const send = async (payload) => {
       let response;
       try {
         response = await fetchImpl(`${base}/chat/completions`, {
@@ -431,7 +440,7 @@ function createClient({
             'Content-Type': 'application/json',
             ...platformHeaders(origin),
           },
-          body: JSON.stringify(body),
+          body: JSON.stringify(payload),
           signal: combined,
         });
       } catch (err) {
@@ -463,6 +472,20 @@ function createClient({
           'The Mayor model reported an error',
           { status: Number.isInteger(status) ? status : null },
         );
+      }
+      return completion;
+    };
+    try {
+      let completion;
+      try {
+        completion = await send(body);
+      } catch (err) {
+        // #3557: a PDF the provider cannot take fails the whole request, and
+        // the Mayor replays it on later turns. A request that carried one
+        // and was refused as invalid is retried ONCE with each PDF replaced
+        // by a line naming it.
+        if (!(err instanceof OpenRouterMayorError) || err.status !== 400 || !hasFileParts(body)) throw err;
+        completion = await send(request(withoutDocuments(messages)));
       }
       const result = fromChatCompletion(completion, { requestedModel: boundModel });
       recordTelemetry({

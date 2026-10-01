@@ -69,16 +69,14 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
   ));
   const includeImagesPlan = attachmentsSvc.planImageInclusion(imageCounts);
   const includeByRowId = new Map(userRows.map((r, i) => [r.id, includeImagesPlan[i]]));
-  // #3557: the same plan for PDFs, on their own tighter window. Only a PDF
-  // small enough to send counts toward it.
+  // #3557: PDFs are planned per document on their own tighter window, so a
+  // message with more PDFs than the budget still sends the first ones.
+  // Only a PDF that may be sent counts toward it.
   const documentCounts = userRows.map((r) => (
     (attachmentsByMessageId.get(r.id) || []).filter((a) => attachmentsSvc.readableDocument(a)).length
   ));
-  const includeDocumentsPlan = attachmentsSvc.planImageInclusion(documentCounts, {
-    turnWindow: attachmentsSvc.DOCUMENT_REPLAY_TURNS,
-    maxImages: attachmentsSvc.DOCUMENT_REPLAY_MAX,
-  });
-  const includeDocumentsByRowId = new Map(userRows.map((r, i) => [r.id, includeDocumentsPlan[i]]));
+  const documentPlan = attachmentsSvc.planDocumentInclusion(documentCounts);
+  const documentBudgetByRowId = new Map(userRows.map((r, i) => [r.id, documentPlan[i]]));
 
   for (const row of history) {
     if (row.role === 'system' && row.metadata?.ccOutput) {
@@ -118,7 +116,7 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
           text: row.content,
           attachments: atts,
           includeImages: includeByRowId.get(row.id) === true,
-          includeDocuments: includeDocumentsByRowId.get(row.id) === true,
+          documentBudget: documentBudgetByRowId.get(row.id) || 0,
         }),
       });
     }

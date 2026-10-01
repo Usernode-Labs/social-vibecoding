@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const log = require('./logger');
 const llmTelemetry = require('./llm-telemetry');
+const { hasDocumentBlocks, withoutDocuments } = require('./attachments');
 
 // Single source of truth for the default chat model. Callers that don't
 // pass an explicit `model` fall back to this, so bumping the platform's
@@ -720,9 +721,26 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
       }
     };
 
-    let finalMessage = await runStream(requestedModel, {
-      withFallbacks: requestedModel === FABLE_MODEL,
-    });
+    let finalMessage;
+    try {
+      finalMessage = await runStream(requestedModel, {
+        withFallbacks: requestedModel === FABLE_MODEL,
+      });
+    } catch (err) {
+      // #3557: a PDF the provider cannot take (malformed, encrypted, too
+      // many pages) fails the whole request, and the Mayor replays it on
+      // later turns. A request that carried one and was refused as invalid
+      // before anything streamed is retried ONCE with each PDF replaced by
+      // a line naming it.
+      if (err?.status !== 400 || fullText || !hasDocumentBlocks(messages)) throw err;
+      log.warn('llm', 'Request with a PDF refused as invalid — retrying once without documents', {
+        model: requestedModel,
+      });
+      messages = withoutDocuments(messages);
+      finalMessage = await runStream(requestedModel, {
+        withFallbacks: requestedModel === FABLE_MODEL,
+      });
+    }
 
     // Fallback couldn't run (e.g. Opus rate-limited at that instant):
     // the refusal names a model to retry directly. ONE retry, plain
