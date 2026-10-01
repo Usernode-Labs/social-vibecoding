@@ -28,6 +28,8 @@ type StandingView = {
   sub: string;
   rank: string;
   detail: string;
+  pending: string | null;
+  note: string;
   breakdown: { key: string; label: string; points: string }[];
   token: TokenView;
 };
@@ -91,6 +93,10 @@ export function YourStanding(): ReactNode {
           <div className="text-sm text-zinc-500 dark:text-zinc-400">{view.detail}</div>
         </div>
       </div>
+      {view.pending ? (
+        <p className="mt-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">{view.pending}</p>
+      ) : null}
+      <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">{view.note}</p>
       {view.breakdown.length ? (
         <details className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800">
           <summary className="cursor-pointer text-sm font-medium text-violet-700 dark:text-violet-400">
