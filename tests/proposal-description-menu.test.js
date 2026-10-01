@@ -39,7 +39,7 @@ test('only authors of open work get description editing; imported summaries are 
   const { av, row } = fixture();
   for (const status of ['active', 'paused', 'promoted', 'merging']) assert.equal(av._canEditDescription({ ...row, status }), true);
   assert.equal(av._canEditDescription({ ...row, source: 'imported' }), true);
-  for (const patch of [{ user_id: 8 }, { is_headless: true }, { status: 'merged' }, { status: 'archived' }]) {
+  for (const patch of [{ user_id: 8 }, { is_headless: true }, { preview_placeholder: true }, { status: 'merged' }, { status: 'archived' }]) {
     assert.equal(av._canEditDescription({ ...row, ...patch }), false);
   }
   av.appData.can_collaborate = false;

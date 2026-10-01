@@ -17,10 +17,10 @@ test('description API on PostgreSQL', { skip: !process.env.TEST_DATABASE_URL }, 
   ws.pushSessionUpdate = () => {};
   let server;
   try {
-    await pool.query(`CREATE TABLE apps (id INT PRIMARY KEY, slug TEXT, repo_url TEXT,
+    await pool.query(`CREATE TABLE apps (id INT PRIMARY KEY, slug TEXT, repo_url TEXT, created_by INT, self_hosted BOOLEAN DEFAULT TRUE,
       collab_visibility TEXT DEFAULT 'public', view_visibility TEXT DEFAULT 'public', moderation_suspended_at TIMESTAMPTZ);
       CREATE TABLE user_app_blocks (user_id INT, app_id INT);
-      CREATE TABLE chat_sessions (id INT PRIMARY KEY, app_id INT, user_id INT,
+      CREATE TABLE chat_sessions (id SERIAL PRIMARY KEY, app_id INT, user_id INT, session_title TEXT,
       status TEXT DEFAULT 'paused', source TEXT DEFAULT 'cli_handoff', is_headless BOOLEAN DEFAULT FALSE,
       pr_number INT, pr_body TEXT, pr_summary_md TEXT, pr_summary_previous_md TEXT,
       pr_summary_source TEXT, pr_summary_stale BOOLEAN DEFAULT TRUE,
@@ -29,6 +29,7 @@ test('description API on PostgreSQL', { skip: !process.env.TEST_DATABASE_URL }, 
       imported_pr_head_sha VARCHAR(40), handoff_uploaded_sha VARCHAR(40), reviewed_head_sha VARCHAR(40),
       handoff_head_sha VARCHAR(40), checks_commit_sha VARCHAR(40), check_state TEXT DEFAULT 'passing',
       linked_issues INT[] DEFAULT '{3587}', branch_name TEXT DEFAULT 'dev/existing', yes_count INT DEFAULT 3);
+      CREATE TABLE chat_session_messages (id SERIAL PRIMARY KEY, session_id INT, role TEXT, content TEXT);
       INSERT INTO apps (id,slug,repo_url) VALUES (1,'demo','https://github.com/Acme/Demo');
       INSERT INTO chat_sessions (id,app_id,user_id,pr_summary_md,handoff_head_sha)
       VALUES (42,1,7,'Old description','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');`);
@@ -83,6 +84,38 @@ test('description API on PostgreSQL', { skip: !process.env.TEST_DATABASE_URL }, 
       const description = '### Problems found\n\n' + 'Clear explanation. '.repeat(600);
       assert.equal((await request('PATCH', { description, expectedVersion: 2 })).status, 200);
       assert.equal((await request('GET')).body.description, description.trim());
+    });
+    await t.test('ordinary preview viewers receive persistent, distinct, editable database samples', async () => {
+      const fixtures = require('../src/services/staging-review-session');
+      const beforeEnv = process.env.USERNODE_ENV;
+      const config = { selfAppSlug: 'demo' };
+      try {
+        process.env.USERNODE_ENV = 'production';
+        assert.equal(await fixtures.ensure({ query: () => { throw new Error('Production must not seed'); } }, config, { id: 7 }), null);
+        process.env.USERNODE_ENV = 'staging';
+        const [one, same, other] = await Promise.all([
+          fixtures.ensure(pool, config, { id: 7 }), fixtures.ensure(pool, config, { id: 7 }),
+          fixtures.ensure(pool, config, { id: 8 }),
+        ]);
+        assert.equal(one, same); assert.notEqual(one, other);
+        const sampleUrl = url.replace('/42/', `/${one}/`);
+        const saved = await fetch(sampleUrl, { method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ description: 'Edited in the ordinary preview', expectedVersion: 1 }) });
+        assert.equal(saved.status, 200);
+        assert.equal((await saved.json()).prBodyStatus, 'no_pull_request');
+        assert.equal(await fixtures.ensure(pool, config, { id: 7 }), one);
+        assert.equal((await (await fetch(sampleUrl)).json()).description, 'Edited in the ordinary preview');
+        assert.equal((await fetch(sampleUrl, { headers: { 'x-test-user': '8' } })).status, 404);
+        const row = (await pool.query('SELECT * FROM chat_sessions WHERE id = $1', [one])).rows[0];
+        assert.equal(row.user_id, 7); assert.equal(row.status, 'paused'); assert.equal(row.pr_number, null);
+        assert.equal(row.session_title, fixtures.TITLE);
+        await pool.query("UPDATE chat_sessions SET status='archived' WHERE id=$1", [one]);
+        await fixtures.ensure(pool, config, { id: 7 });
+        assert.equal((await pool.query('SELECT status FROM chat_sessions WHERE id=$1', [one])).rows[0].status, 'archived');
+      } finally {
+        if (beforeEnv === undefined) delete process.env.USERNODE_ENV;
+        else process.env.USERNODE_ENV = beforeEnv;
+      }
     });
   } finally {
     if (server) await new Promise((resolve) => server.close(resolve));

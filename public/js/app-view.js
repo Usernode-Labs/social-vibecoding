@@ -4724,6 +4724,9 @@ const AppView = {
     const busy = AppView._changeActions.get(Number(item.id));
     const rows = body.details.ledger;
     body.changeId = item.id;
+    if (item.preview_placeholder) {
+      body.note = 'This is a display-only sample. To try editing a description, open "[Preview sample] Your editable change" in your sessions.';
+    }
     AppView._changeItems.set(Number(item.id), item);
     body.canEditIssues = !AppView.readOnly && (mine || !!App.user?.canAdminWrite);
     body.issueOptions = (AppView._ghIssues || []).map((issue) => ({
@@ -4893,7 +4896,7 @@ const AppView = {
   },
 
   _canEditDescription(item) {
-    return !!item && !AppView.readOnly && AppView.appData?.can_collaborate !== false
+    return !!item && !item.preview_placeholder && !AppView.readOnly && AppView.appData?.can_collaborate !== false
       && Number(item.user_id) === Number(App.user?.id) && !!App.user?.id
       && !item.is_headless && ['active', 'paused', 'promoted', 'merging'].includes(item.status);
   },
