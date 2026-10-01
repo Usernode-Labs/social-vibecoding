@@ -1243,6 +1243,17 @@
       ]
     },
     {
+      "id": "resume.active-row-pill",
+      "name": "An app you closed that is still running waits in the desktop rail's Active section with a Resume button, the button it collapses into (#3618)",
+      "path": "/?demo=1&shot=apps-kept",
+      "expectSelector": "#platform-tabs:not(.hidden) #platform-recents:not(.hidden) > .platform-active > a.platform-recent[data-live=\"true\"]:not([aria-current]) > span.platform-recent-resume[aria-hidden=\"true\"]",
+      "visual": true,
+      "impact": [
+        "public/css/app.css",
+        "frontend/src/features/nav/**"
+      ]
+    },
+    {
       "name": "A kept app's frame stays mounted but hidden: inert, out of the tab order and the accessibility tree, and not #app-iframe (#2902)",
       "path": "/?demo=1&shot=apps-kept",
       "expectSelector": "#app-frame-host.hidden > .app-launch-host > iframe[data-kept][inert][aria-hidden=\"true\"][tabindex=\"-1\"][sandbox=\"\"]:not([id]):not([src])"
