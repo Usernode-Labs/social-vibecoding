@@ -9953,6 +9953,24 @@ html.un-kb #settings-content-col > .settings-sheet {
   pointer-events: none;
 }
 .dark .notifications-row:not(:last-child)::after { background: rgba(255, 255, 255, 0.08); }
+/* #3538: a notification row in the sheet sits in a slot of its own (the
+   swipe's kit wrap and the desktop × both live in it; see ScreenRow in
+   features/notifications/notifications-sheet.tsx), so whether the ROW is a
+   last child says nothing any more: at a desk the × follows it, and on a
+   phone the kit makes it the last child of its wrap. The hairline goes by
+   the SLOT's place in the list instead, which is the place the row had. */
+.notifications-row-slot .notifications-row::after { content: none; }
+.notifications-row-slot:not(:last-child) .notifications-row::after {
+  content: '';
+  position: absolute;
+  left: 4.75rem;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--border-light);
+  pointer-events: none;
+}
+.dark .notifications-row-slot:not(:last-child) .notifications-row::after { background: rgba(255, 255, 255, 0.08); }
 
 /* ── The dev area on the ladder, and the shared composer card ───────────
    The board column is the STRIP and a topic or the Discussion is the SHEET

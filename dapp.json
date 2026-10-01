@@ -4643,7 +4643,7 @@
     {
       "name": "A connector work order shows on the bell's Messages tab, beside an agent's finished-session notification (#1417, Streamlined Concept, #2815)",
       "path": "/?shot=notifications-messages&demo=1#app/usernode-2d5619/dev",
-      "expectSelector": "#notifications-sheet[data-open]:has(#notifications-all-messages ~ [data-notif-id=\"990209\"]) [data-improve-row=\"task\"]"
+      "expectSelector": "#notifications-sheet[data-open]:has(#notifications-all-messages ~ .notifications-row-slot [data-notif-id=\"990209\"]) [data-improve-row=\"task\"]"
     },
     {
       "name": "The work-order row points at its request, not a session page (#1417)",
@@ -4791,7 +4791,7 @@
     {
       "name": "Unread notification rows read source, bold subject, muted preview",
       "path": "/?shot=notifications&demo=1",
-      "expectSelector": "#notifications-sheet[data-open] .notifications-row .text-xs + .text-sm.font-semibold"
+      "expectSelector": "#notifications-sheet[data-open]:has(.notifications-row-slot > [data-notif-id=\"990201\"] + button[data-notification-clear=\"990201\"][aria-label=\"Clear notification\"]) .notifications-row .text-xs + .text-sm.font-semibold"
     },
     {
       "name": "The sign-in screen stands on the wallpaper as a card form with a filled Log in pill",
