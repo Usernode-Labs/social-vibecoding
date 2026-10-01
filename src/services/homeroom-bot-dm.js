@@ -75,9 +75,14 @@ function settingsModule() {
   return require('./homeroom-bot');
 }
 
-/** Whether the bot talks to this username in a DM, by the settings alone. */
+/**
+ * Whether the bot talks to this username in a DM, by the settings alone.
+ * Being on the list is the whole gate: the bot's Mode decides whether it
+ * works at all (its loop idles while Off), not who it talks to, so a
+ * project described while it is off waits for it, and says so.
+ */
 function isDmUser(settings, username) {
-  if (!settings || settings.mode === 'off') return false;
+  if (!settings) return false;
   const list = Array.isArray(settings.dmUsers) ? settings.dmUsers : [];
   return !!username && list.includes(lower(username));
 }
@@ -596,7 +601,8 @@ function normalizeBrief(raw) {
 async function startFirstVersion(pool, config, { app, user, brief }) {
   const text = normalizeBrief(brief);
   if (!text || !app?.id || !user?.id) return null;
-  if (!(await isEnabledFor(pool, user))) return null;
+  const settings = await settingsModule().readSettings(pool);
+  if (!isDmUser(settings, user.username)) return null;
   const bot = await settingsModule().ensureBotUser(pool, config);
   if (!bot) return null;
   await pool.query(
@@ -611,7 +617,8 @@ async function startFirstVersion(pool, config, { app, user, brief }) {
     userId: user.id,
     idempotencyKey: `hrbot-create-${app.id}`,
     content: `**${name}**\n\nThanks! I'm setting up ${name} now. Once it's ready I'll build its first version from your `
-      + 'description and send it to you here to try. If anything is unclear, I\'ll ask you here first.',
+      + 'description and send it to you here to try. If anything is unclear, I\'ll ask you here first.'
+      + (settings.mode === 'off' ? '\n\nI\'m switched off right now, so this waits until I\'m back on.' : ''),
     metadata: { kind: 'first_version_started', appSlug: app.slug, appName: name },
   });
   log.info('homeroom-bot-dm', 'Project will be built from its description', { app: app.slug, userId: user.id });

@@ -104,9 +104,10 @@ test('a project the bot builds for somebody on the list is live, like the live l
   }
 });
 
-test('the bot talks in a DM only to people on the list, and only while it is on', () => {
+test('the bot talks in a DM only to people on the list', () => {
   assert.equal(dm.isDmUser({ mode: 'shadow', dmUsers: ['evan'] }, 'Evan'), true);
-  assert.equal(dm.isDmUser({ mode: 'off', dmUsers: ['evan'] }, 'evan'), false);
+  assert.equal(dm.isDmUser({ mode: 'off', dmUsers: ['evan'] }, 'evan'), true,
+    'the list is the gate; Mode decides whether the bot works, not who it talks to');
   assert.equal(dm.isDmUser({ mode: 'shadow', dmUsers: [] }, 'evan'), false);
 });
 
@@ -321,6 +322,29 @@ test('a question in the DM draws its answers, the default marked, and says an an
 
   const person = { ...message, sender: { id: 4, username: 'ada' } };
   assert.equal(renderToHtml(createElement(BotQuestion, { message: person, conversationId: 3 })), '', 'only the bot\'s own');
+});
+
+test('the Messages client keeps the bot\'s mark and its question, which it builds field by field', () => {
+  // The first staging run showed the question as plain text: this
+  // normalizer dropped both fields before the screen ever saw them.
+  const { normalizeMessage } = loadTsx('frontend/src/features/messages/api.ts');
+  const message = normalizeMessage({
+    id: 5, conversationId: 3, content: 'Q', createdAt: '2026-10-01T00:00:00Z',
+    sender: { id: 2, username: 'homeroom_bot', bot: true },
+    metadata: { homeroomBot: {
+      kind: 'question', appName: 'Seed swap', issueNumber: 7, mirrors: true, status: 'open',
+      question: 'Newest first?', answers: ['Newest first', 7, 'Oldest first'], unknown: 'x',
+    } },
+  });
+  assert.equal(message.sender.bot, true);
+  assert.equal(message.metadata.homeroomBot.status, 'open');
+  assert.equal(message.metadata.homeroomBot.mirrors, true);
+  assert.equal(message.metadata.homeroomBot.issueNumber, 7);
+  assert.deepEqual(message.metadata.homeroomBot.answers, ['Newest first', 'Oldest first']);
+  assert.equal(Object.hasOwn(message.metadata.homeroomBot, 'unknown'), false, 'only the named fields');
+  const person = normalizeMessage({ id: 6, content: 'hi', sender: { id: 4, username: 'ada' } });
+  assert.equal(Object.hasOwn(person, 'metadata'), false);
+  assert.equal(Object.hasOwn(person.sender, 'bot'), false);
 });
 
 test('the DM screen draws the bot\'s question and badge, and the reply bar names where a reply goes', () => {

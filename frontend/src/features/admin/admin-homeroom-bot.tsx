@@ -1028,7 +1028,7 @@ function HomeroomBotSection() {
               project they create with a description is built by the bot, and acted on for real while they stay on
               this list{settings?.firstVersionApps?.length ? ` (now: ${settings.firstVersionApps.map(appName).join(', ')})` : ''}.
               What their requests cost the platform is capped per person per week, apart from their own agent
-              allowance. The mode above has to be on.
+              allowance. Being on the list turns these on; the bot only does the work while the mode above is on.
             </p>
           </div>
         </div>
