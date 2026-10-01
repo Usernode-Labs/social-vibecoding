@@ -320,7 +320,7 @@ test('estimateCostCents: fable priced per models.js, above sonnet and opus', () 
   const usage = { input_tokens: 1000, output_tokens: 1000 };
   const fable = llm.estimateCostCents(usage, 'claude-fable-5-1');
   const opus = llm.estimateCostCents(usage, 'claude-opus-5');
-  const sonnet = llm.estimateCostCents(usage, 'claude-sonnet-5');
+  const sonnet = llm.estimateCostCents(usage, 'claude-sonnet-5-5');
   const haiku = llm.estimateCostCents(usage, 'claude-haiku-4-5');
   // $10/MTok in + $50/MTok out → 1¢ + 5¢ per 1k+1k tokens.
   assert.equal(fable, 6);

@@ -208,15 +208,16 @@ test('the Claude shots agent runs on its own model in a fresh thread, whatever t
 
 test('the worker runs a shots turn on its pinned model, and every other turn on the author allowlist', () => {
   const worker = require('../src/services/worker');
-  // Without this, resolve() turned the unlisted Sonnet 5.5 back into Opus 5.5.
+  // The shots pin survives the model's move onto the allowlist: resolve()
+  // would otherwise keep a build turn's pick, so shots forces it.
   assert.equal(worker.claudeTurnModel('shots', 'claude-sonnet-5-5'), 'claude-sonnet-5-5');
   assert.equal(worker.claudeTurnModel('shots', 'claude-opus-5-5'), 'claude-opus-5-5');
   for (const odd of ['', null, 'gpt-5', 'claude-sonnet-5-5 --bare', 'claude-Sonnet']) {
     assert.equal(worker.claudeTurnModel('shots', odd), 'claude-opus-5-5', String(odd));
   }
   for (const mode of ['build', 'scout', 'sync']) {
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-opus-5-5', mode);
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-sonnet-5-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5-5', mode);
   }
 });
 
@@ -268,4 +269,3 @@ test('the worker records clips only when the run needs them', async () => {
     assert.equal(sent.prompt, agent.TASK_PROMPT);
   }
 });
-

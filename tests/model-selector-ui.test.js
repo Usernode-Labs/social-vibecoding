@@ -221,8 +221,8 @@ function makeHarness() {
 // at the bottom of this file is what keeps that true.
 function guidanceMap() {
   return {
-    'claude-sonnet-5': {
-      label: 'Sonnet 5',
+    'claude-sonnet-5-5': {
+      label: 'Sonnet 5.5',
       changeSize: {
         short: 'simple, small changes',
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
@@ -353,7 +353,7 @@ test('the five starting models come first, in the documented order', () => {
   // the three Anthropic models. Whatever else the account uses follows.
   assert.deepEqual(view().models.options.slice(0, 5).map((o) => o.value), [
     'openrouter:z-ai/glm-5.3-flash',
-    'anthropic:claude-sonnet-5',
+    'anthropic:claude-sonnet-5-5',
     'anthropic:claude-opus-5-5',
     'anthropic:claude-fable-5-1',
     'openrouter:anthropic/claude-sonnet-4.5',
@@ -467,7 +467,7 @@ test('the guidance copy survives on the helper and proposal summaries stay conci
   // as a separate summary instead of concatenating it into an option label.
   const { DevChat } = makeHarness();
   const text = (id) => DevChat.modelOptionText(DevChat.MODELS[id]);
-  assert.equal(text('claude-sonnet-5'), 'Sonnet 5: simple, small changes');
+  assert.equal(text('claude-sonnet-5-5'), 'Sonnet 5.5: simple, small changes');
   assert.equal(text('claude-opus-5-5'), 'Opus 5.5: general coding work');
   assert.equal(text('claude-fable-5-1'), 'Fable 5.1: design, taste, and difficult coding');
   const APP_VIEW = fs.readFileSync(
@@ -497,7 +497,7 @@ test('OpenRouter sessions select their pinned model in the same flat control', (
   assert.doesNotMatch(html, /id="dc-openrouter-model"/,
     'the separate row above the composer is retired');
   assert.doesNotMatch(html, /id="dc-openrouter-model-change"/);
-  assert.doesNotMatch(html, /Sonnet 5: simple, small changes/);
+  assert.doesNotMatch(html, /Sonnet 5\.5: simple, small changes/);
   assert.doesNotMatch(html, /Opus 5.5: general coding work/);
   assert.doesNotMatch(html, /Fable 5.1: design, taste, and difficult coding/);
 });
@@ -633,8 +633,8 @@ test('the retired long-caption helper stays safe but Generate proposal no longer
       + 'a refactor, or debugging that needs real digging.'
   );
   assert.equal(
-    DevChat.modelNoteText(DevChat.MODELS['claude-sonnet-5']),
-    'Sonnet 5: best for one small thing at a time: a text tweak, a colour, a single file.'
+    DevChat.modelNoteText(DevChat.MODELS['claude-sonnet-5-5']),
+    'Sonnet 5.5: best for one small thing at a time: a text tweak, a colour, a single file.'
   );
   assert.equal(DevChat.modelNoteText({ label: 'Opus 5.5' }), '', 'no guidance, no sentence');
   assert.match(DevChat.MODEL_GUIDANCE_TOOLTIP, /general coding pick/);
@@ -868,7 +868,7 @@ test('a stored Opus 5 preference resolves to Opus 5.5 and is rewritten (#2818)',
   h.DevChat.MODELS = guidanceMap();
   h.sandbox.localStorage.setItem('usernode:dc:model', 'claude-opus-5');
   h.DevChat.selectedModel = 'claude-opus-5';
-  h.DevChat._defaultModel = 'claude-sonnet-5';
+  h.DevChat._defaultModel = 'claude-sonnet-5-5';
   h.DevChat._sanitizeStoredModel();
   assert.equal(h.DevChat.selectedModel, 'claude-opus-5-5',
     'by name, not by falling through to whatever the default is');

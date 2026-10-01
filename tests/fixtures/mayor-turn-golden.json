@@ -337,8 +337,8 @@
       "{\"type\":\"status\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\"}",
       "{\"type\":\"phase\",\"_seq\":\"#3\",\"phase\":\"mayor1\"}",
       "{\"type\":\"token\",\"_seq\":\"#4\",\"text\":\"Here is the plan.\"}",
-      "{\"type\":\"status\",\"_seq\":\"#5\",\"text\":\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.\",\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5\",\"category\":\"bio\"}}",
-      "{\"type\":\"usage\",\"_seq\":\"#6\",\"costCents\":1.5,\"model\":\"claude-sonnet-5\",\"byok\":false}",
+      "{\"type\":\"status\",\"_seq\":\"#5\",\"text\":\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.5.\",\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\"}}",
+      "{\"type\":\"usage\",\"_seq\":\"#6\",\"costCents\":1.5,\"model\":\"claude-sonnet-5-5\",\"byok\":false}",
       "{\"type\":\"mayor_reasoning\",\"_seq\":\"#7\",\"text\":\"Here is the plan.\"}",
       "{\"type\":\"quick_replies\",\"_seq\":\"#8\",\"replies\":[\"Build the spec\",\"Change the toggle icon\",\"What files change?\"]}",
       "{\"type\":\"done\",\"_seq\":\"#9\"}"
@@ -346,7 +346,7 @@
     "broadcasts": [
       "{\"type\":\"session_event\",\"_seq\":\"#2\",\"text\":\"Thinking about your request...\",\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#3\",\"phase\":\"mayor1\",\"sessionId\":4242,\"event\":\"phase\"}",
-      "{\"type\":\"session_event\",\"_seq\":\"#5\",\"text\":\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.\",\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5\",\"category\":\"bio\"},\"sessionId\":4242,\"event\":\"status\"}",
+      "{\"type\":\"session_event\",\"_seq\":\"#5\",\"text\":\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.5.\",\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\"},\"sessionId\":4242,\"event\":\"status\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#7\",\"text\":\"Here is the plan.\",\"sessionId\":4242,\"event\":\"mayor_reasoning\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#8\",\"replies\":[\"Build the spec\",\"Change the toggle icon\",\"What files change?\"],\"sessionId\":4242,\"event\":\"quick_replies\"}",
       "{\"type\":\"session_event\",\"_seq\":\"#9\",\"sessionId\":4242,\"event\":\"done\"}"
@@ -364,9 +364,9 @@
       "SELECT kind, name, description, size_bytes, updated_at FROM user_agent_files WHERE user_id = $1 ORDER BY kind, name :: [7]",
       "SELECT a.self_hosted, u.is_admin, cs.user_id FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id JOIN users u ON u.id = cs.user_id WHERE cs.id = $1 :: [4242]",
       "SELECT m.content, m.created_at, u.username FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id WHERE m.app_id = $… <sha:b8a1d28b89ac3d11 len:246> :: [31,\"session\",4242]",
-      "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"model_fallback\",{\"json\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5\",\"category\":\"bio\",\"source\":\"mayor\"}}]",
-      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.\",{\"json\":{\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5\",\"category\":\"bio\"}}}]",
-      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Here is the plan.\",\"claude-sonnet-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Change the toggle icon\",\"What files change?\"],\"quickRepliesSource\":\"model\"}}]",
+      "INSERT INTO events (user_id, app_id, session_id, event_type, metadata) VALUES ($1, $2, $3, $4, $5::jsonb) :: [7,31,4242,\"model_fallback\",{\"json\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\",\"source\":\"mayor\"}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'system', $2, $3) :: [4242,\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.5.\",{\"json\":{\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\"}}}]",
+      "INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata) VALUES ($1, 'assistant', $2, $3, $4, $5, $6) :: [4242,\"Here is the plan.\",\"claude-sonnet-5-5\",150,1.5,{\"json\":{\"quickReplies\":[\"Build the spec\",\"Change the toggle icon\",\"What files change?\"],\"quickRepliesSource\":\"model\"}}]",
       "UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1 RETURNING user_id, app_id :: [4242]"
     ],
     "llm": [
@@ -412,7 +412,7 @@
     "messages": [
       "{\"role\":\"user\",\"content\":\"Add a dark mode toggle\",\"metadata\":{}}",
       "{\"role\":\"system\",\"content\":\"Thinking about your request...\",\"metadata\":{}}",
-      "{\"role\":\"system\",\"content\":\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.\",\"metadata\":{\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5\",\"category\":\"bio\"}}}",
+      "{\"role\":\"system\",\"content\":\"Opus 5.5 declined part of this request (safety classifier: bio). It was completed by Sonnet 5.5.\",\"metadata\":{\"modelFallback\":{\"requested\":\"claude-opus-5-5\",\"served\":\"claude-sonnet-5-5\",\"category\":\"bio\"}}}",
       "{\"role\":\"assistant\",\"content\":\"Here is the plan.\",\"metadata\":{\"quickReplies\":[\"Build the spec\",\"Change the toggle icon\",\"What files change?\"],\"quickRepliesSource\":\"model\"}}"
     ]
   },

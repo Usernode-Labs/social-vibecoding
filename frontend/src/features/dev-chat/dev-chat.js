@@ -206,8 +206,8 @@ const DevChat = {
   // two must be edited together. tests/model-selector-ui.test.js has a
   // copy-drift guard that fails if they diverge.
   MODELS: {
-    'claude-sonnet-5': {
-      label: 'Sonnet 5',
+    'claude-sonnet-5-5': {
+      label: 'Sonnet 5.5',
       changeSize: {
         short: 'simple, small changes',
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
@@ -2169,7 +2169,7 @@ const DevChat = {
   // map as src/services/models.js RETIRED_MODELS), and the successor is
   // written back so the saved preference stops naming a model that no
   // longer exists.
-  RETIRED_MODELS: { 'claude-opus-5': 'claude-opus-5-5' },
+  RETIRED_MODELS: { 'claude-opus-5': 'claude-opus-5-5', 'claude-sonnet-5': 'claude-sonnet-5-5' },
 
   _sanitizeStoredModel() {
     if (DevChat.MODELS[DevChat.selectedModel]) return;

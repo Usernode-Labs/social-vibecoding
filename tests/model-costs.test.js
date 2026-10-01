@@ -50,7 +50,7 @@ test('an estimate is per-token pricing times the typical change, in cents', () =
     ((inputTokens / 1_000_000) * 4 + (outputTokens / 1_000_000) * 20) * 100 * 100,
   ) / 100);
   // The ladder the picker will show is the ladder the prices describe.
-  const sonnet = modelCosts.estimateCents(modelCosts.publishedPricing('claude-sonnet-5'));
+  const sonnet = modelCosts.estimateCents(modelCosts.publishedPricing('claude-sonnet-5-5'));
   const fable = modelCosts.estimateCents(modelCosts.publishedPricing('claude-fable-5-1'));
   const glm = modelCosts.estimateCents(modelCosts.publishedPricing('z-ai/glm-5.3-flash'));
   const deepseek = modelCosts.estimateCents(modelCosts.publishedPricing('deepseek/deepseek-v4.1-flash'));
@@ -81,6 +81,14 @@ test('the retired Opus 5 keeps its price for recorded history, but is not offere
   assert.ok(!modelCosts.curatedModelIds().includes('claude-opus-5'),
     'the picker and the admin table do not list it as a curated model');
   assert.ok(modelCosts.curatedModelIds().includes('claude-opus-5-5'));
+});
+
+test('the retired Sonnet 5 keeps its price for recorded history, but is not offered', () => {
+  assert.deepEqual(modelCosts.publishedPricing('claude-sonnet-5'),
+    { inputPricePerMillion: 2, outputPricePerMillion: 10 });
+  assert.ok(!modelCosts.curatedModelIds().includes('claude-sonnet-5'),
+    'the picker and the admin table do not list it as a curated model');
+  assert.ok(modelCosts.curatedModelIds().includes('claude-sonnet-5-5'));
 });
 
 test('a model with no published price gets no estimate rather than a zero', () => {
@@ -323,7 +331,7 @@ test('an override replaces the shown estimate and clears back to the derived one
   assert.equal(picker.models['claude-opus-5-5'].estimateCents, 250,
     'the override the admin typed, not the derived 1240');
   assert.equal(picker.models['claude-opus-5-5'].estimateSource, 'override');
-  assert.equal(picker.models['claude-sonnet-5'].estimateSource, 'pricing',
+  assert.equal(picker.models['claude-sonnet-5-5'].estimateSource, 'pricing',
     'the models nobody overrode keep their derived figure');
   assert.equal(picker.typicalChange.source, 'documented_constant');
 

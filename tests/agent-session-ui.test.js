@@ -166,7 +166,7 @@ test('a coding-agent run is one card named for the agent that ran, and a drafted
   ]);
   assert.deepEqual(failedRun.map((i) => [i.kind, i.status || i.tone]), [['run', 'failed'], ['note', 'error']]);
 
-  assert.equal(transcript.prettyModel('claude-sonnet-5'), 'Sonnet 5');
+  assert.equal(transcript.prettyModel('claude-sonnet-5-5'), 'Sonnet 5.5');
   assert.equal(transcript.agentLabel({ localAgentLabel: 'MacBook' }), 'MacBook · your machine');
   assert.equal(transcript.agentLabel({}), '');
 });
@@ -391,9 +391,9 @@ test('the first message creates the session with the hint and the model picked m
     await store.openAgentSession({ id: 7, host: 'screen' });
 
     // On a session, a pick is saved at once and applies from the next turn.
-    await store.chooseAgent({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
+    await store.chooseAgent({ backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null });
     const patch = requests.find(([url, method]) => url === '/api/agent-sessions/7/agent' && method === 'PATCH');
-    assert.deepEqual(patch[2], { backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
+    assert.deepEqual(patch[2], { backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null });
   } finally {
     delete globalThis.window;
     delete globalThis.fetch;
@@ -572,7 +572,7 @@ test('a message the server refuses stays in the conversation as Not sent, with t
 test('the picker offers the platform\'s models, keeps the conversation\'s own, and carries reasoning only where offered', () => {
   const choice = loadTsx('frontend/src/features/agent-session/model-choice.ts');
   const catalog = {
-    anthropic: [{ id: 'claude-sonnet-5', label: 'Sonnet 5' }, { id: 'claude-opus-5-5', label: 'Opus 5.5' }],
+    anthropic: [{ id: 'claude-sonnet-5-5', label: 'Sonnet 5.5' }, { id: 'claude-opus-5-5', label: 'Opus 5.5' }],
     anthropicDefault: 'claude-opus-5-5',
     defaultBackend: 'claude_code',
     savedOpenRouter: { model: 'moonshot/kimi-k3', reasoningEffort: 'low' },
@@ -587,13 +587,13 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
     recommendedOpenRouterId: 'z-ai/glm-5',
   };
   assert.deepEqual(choice.pickerOptions(catalog, null).map((o) => o.value), [
-    'openrouter:z-ai/glm-5', 'anthropic:claude-sonnet-5', 'anthropic:claude-opus-5-5',
+    'openrouter:z-ai/glm-5', 'anthropic:claude-sonnet-5-5', 'anthropic:claude-opus-5-5',
     'openrouter:moonshot/kimi-k3', 'openrouter:plain/model',
   ], 'recommended first, then Claude, then what this account uses; not the whole catalog');
   assert.ok(choice.pickerOptions(catalog, { backend: 'codex_openrouter', model: 'gone/model', reasoningEffort: null })
     .some((o) => o.value === 'openrouter:gone/model'), 'the conversation\'s own model is always an option');
   assert.deepEqual(choice.pickerOptions({ ...catalog, codexAvailable: false }, null).map((o) => o.value),
-    ['anthropic:claude-sonnet-5', 'anthropic:claude-opus-5-5'], 'no OpenRouter where it is not offered');
+    ['anthropic:claude-sonnet-5-5', 'anthropic:claude-opus-5-5'], 'no OpenRouter where it is not offered');
 
   // No choice of its own: the default, as the server resolves it.
   assert.deepEqual(choice.effectiveChoice(null, catalog), { backend: 'claude_code', model: 'claude-opus-5-5', reasoningEffort: null });
@@ -606,11 +606,11 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
     { backend: 'codex_openrouter', model: 'z-ai/glm-5', reasoningEffort: 'high' }, 'the effort carries to a model that offers one');
   assert.deepEqual(choice.choiceFromValue('openrouter:plain/model', catalog, onKimi),
     { backend: 'codex_openrouter', model: 'plain/model', reasoningEffort: null }, 'and is dropped where it is not');
-  assert.deepEqual(choice.choiceFromValue('anthropic:claude-sonnet-5', catalog, onKimi),
-    { backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null });
+  assert.deepEqual(choice.choiceFromValue('anthropic:claude-sonnet-5-5', catalog, onKimi),
+    { backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null });
   assert.equal(choice.choiceFromValue('bogus', catalog, null), null);
   assert.equal(choice.offersReasoning(onKimi, catalog), true);
-  assert.equal(choice.offersReasoning({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null }, catalog), false);
+  assert.equal(choice.offersReasoning({ backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null }, catalog), false);
   assert.deepEqual(choice.effortOptions(catalog).map((o) => [o.value, o.label, !!o.isDefault]), [
     ['minimal', 'Minimal', false], ['low', 'Low', false], ['', 'Medium', true], ['high', 'High', false], ['xhigh', 'Extra high', false],
   ], 'the server\'s own effort list; the default effort IS the follow-the-default option, not a second entry');
@@ -623,7 +623,7 @@ test('the picker offers the platform\'s models, keeps the conversation\'s own, a
   assert.equal(choice.effortLabel(onKimi, catalog), 'High');
   assert.equal(choice.effortLabel({ ...onKimi, reasoningEffort: null }, catalog), 'Medium', 'following the default names it');
   assert.equal(choice.effortLabel({ ...onKimi, reasoningEffort: null }, { ...catalog, defaultReasoningEffort: null }), '', 'no level known, no placeholder');
-  assert.equal(choice.effortLabel({ backend: 'claude_code', model: 'claude-sonnet-5', reasoningEffort: null }, catalog), '', 'a model without thinking levels');
+  assert.equal(choice.effortLabel({ backend: 'claude_code', model: 'claude-sonnet-5-5', reasoningEffort: null }, catalog), '', 'a model without thinking levels');
   assert.equal(choice.effortLabel({ backend: 'codex_openrouter', model: 'plain/model', reasoningEffort: 'high' }, catalog), '', 'nor one that does not reason');
   assert.deepEqual(choice.pickerOptions(catalog, null).filter((o) => o.isDefault).map((o) => o.value), ['anthropic:claude-opus-5-5'],
     'the model a conversation with no choice runs on is the one marked default');
@@ -638,18 +638,18 @@ test('the model pill names the model; the sheet lists the models, marks the defa
   assert.match(pill, /<span class="truncate">Opus 5\.5<\/span>/, 'closed: the model alone, no "(default)"');
 
   const options = [
-    { value: 'anthropic:claude-sonnet-5', label: 'Sonnet 5', detail: 'about $6.20 for a typical change' },
+    { value: 'anthropic:claude-sonnet-5-5', label: 'Sonnet 5.5', detail: 'about $6.20 for a typical change' },
     { value: 'anthropic:claude-opus-5-5', label: 'Opus 5.5', isDefault: true },
     { value: 'openrouter:z-ai/glm-5', label: 'GLM 5' },
   ];
   const list = parts.modelList(options);
-  assert.deepEqual(list.map((o) => o.label), ['Sonnet 5', 'Opus 5.5', 'GLM 5'], 'Claude, then OpenRouter, in one list');
+  assert.deepEqual(list.map((o) => o.label), ['Sonnet 5.5', 'Opus 5.5', 'GLM 5'], 'Claude, then OpenRouter, in one list');
   const body = renderToHtml(createElement(parts.ModelSheetBody, {
-    options: list, value: 'anthropic:claude-sonnet-5', onPick() {}, credit: null,
+    options: list, value: 'anthropic:claude-sonnet-5-5', onPick() {}, credit: null,
     effort: { value: 'high', options: [{ value: 'high', label: 'High', isDefault: true }, { value: 'xhigh', label: 'Extra high' }], onPick() {} },
   }));
-  assert.match(body, /data-agent-session-model-option="anthropic:claude-sonnet-5"[^>]*>[\s\S]*?Sonnet 5[\s\S]*?about \$6\.20 for a typical change/);
-  assert.match(body, /aria-pressed="true"[^>]*data-agent-session-model-option="anthropic:claude-sonnet-5"/, 'the model in use is ticked');
+  assert.match(body, /data-agent-session-model-option="anthropic:claude-sonnet-5-5"[^>]*>[\s\S]*?Sonnet 5\.5[\s\S]*?about \$6\.20 for a typical change/);
+  assert.match(body, /aria-pressed="true"[^>]*data-agent-session-model-option="anthropic:claude-sonnet-5-5/, 'the model in use is ticked');
   assert.equal((body.match(/aria-pressed="true"/g) || []).length, 1, 'and only it');
   assert.match(body, /Opus 5\.5<span[^>]*>default<\/span>/, 'open: "default" after the default');
   assert.match(body, /data-agent-session-effort[^>]*>[\s\S]*?Thinking level[\s\S]*?High</, 'the thinking level is one row, closed');

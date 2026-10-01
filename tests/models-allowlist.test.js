@@ -67,8 +67,16 @@ test('list() exposes exactly the three model ids', () => {
   assert.deepEqual(ids, [
     'claude-fable-5-1',
     'claude-opus-5-5',
-    'claude-sonnet-5',
+    'claude-sonnet-5-5',
   ]);
+});
+
+test('Sonnet 5 is retired and resolves to Sonnet 5.5', () => {
+  assert.equal(models.isAllowed('claude-sonnet-5'), false);
+  assert.equal(models.resolve('claude-sonnet-5'), 'claude-sonnet-5-5');
+  const sonnet = models.list().find((m) => m.id === 'claude-sonnet-5-5');
+  assert.ok(sonnet, 'the successor is offered');
+  assert.equal(sonnet.outputCostPerMTok, 10, 'Sonnet 5.5 keeps Sonnet 5\'s rate');
 });
 
 test('every model carries recommended change-size guidance (#800)', () => {
