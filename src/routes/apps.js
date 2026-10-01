@@ -32,6 +32,7 @@ const challengeScorer = require('../services/topochain/challenge-scorer');
 const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
+const appTemplates = require('../services/app-templates');
 const collabInvites = require('../services/collab-invites');
 const emailInvites = require('../services/email-invites');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
@@ -945,7 +946,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     if (options.error) {
       return res.status(400).json({ error: options.error });
     }
-    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description } = options;
+    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description, template } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -1091,6 +1092,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         appRow = described[0] || appRow;
       }
 
+      // WHAT IT STARTS FROM (#3521; services/app-templates.js), when it is a
+      // starter rather than the empty scaffold. On the row, like the rule
+      // above, because app-creator scaffolds from the row: a Retry after a
+      // failed create writes the same starter.
+      if (template !== appTemplates.DEFAULT_TEMPLATE) {
+        const { rows: templated } = await pool.query(
+          `UPDATE apps SET template = $1 WHERE id = $2 RETURNING *`,
+          [template, appRow.id]
+        );
+        appRow = templated[0] || appRow;
+      }
+
       // A Group's invites go out now, each the same invite (and the same
       // notification) Members & approvals sends. Best-effort per person: the
       // project exists either way, and anyone missed can be invited from
@@ -1133,6 +1146,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ...(invited ? { invited } : {}),
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
           ...(description ? { described: true } : {}),
+          ...(template !== appTemplates.DEFAULT_TEMPLATE ? { template } : {}),
         },
       });
 

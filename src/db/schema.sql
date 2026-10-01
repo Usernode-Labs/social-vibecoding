@@ -10839,3 +10839,11 @@ BEGIN
       EXECUTE FUNCTION enqueue_welcome_dm();
   END IF;
 END $$;
+
+-- The starter template a project was created from (#3521;
+-- services/app-templates.js TEMPLATE_IDS, validated by POST /api/apps).
+-- Written only for a non-default starter: NULL is `empty`, which is also
+-- what every project created before templates existed, every import and
+-- every fork reads as. app-creator scaffolds from it, so a Retry after a
+-- failed create writes the same starter the creator picked.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);
