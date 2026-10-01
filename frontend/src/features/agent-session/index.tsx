@@ -139,6 +139,7 @@ import { ProposeButton } from './propose-confirm';
 import { readUnsent, writeUnsent } from './unsent';
 import { draftRequest, draftSeed, type DraftRequest } from './request-seed';
 import { CreditsCard, HandoffPanel } from './handoff';
+import { UserMessage } from './user-message';
 
 // Agent sessions (#2779, docs/agent-sessions.md "UI surfaces"): one
 // conversation with the Mayor that works on any app. Drawn on two surfaces,
@@ -526,9 +527,8 @@ const Item = memo(function Item({ item, sessionId = null }: { item: TranscriptIt
       return (
         <div className="flex flex-col items-end gap-1.5" data-agent-session-user>
           <SentAttachments sessionId={sessionId} attachments={item.attachments} />
-          {item.text ? (
-            <p className="max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100">{item.text}</p>
-          ) : null}
+          {/* A long one folds behind "Show more" (#3558, ./user-message.tsx). */}
+          {item.text ? <UserMessage text={item.text} /> : null}
         </div>
       );
     case 'mayor':
@@ -1149,7 +1149,9 @@ function OutboxRows() {
     <>
       {outbox.map((item) => (
         <div key={item.clientId} className="flex flex-col items-end gap-1" data-agent-session-outbox={item.status}>
-          <p className={`max-w-[85%] whitespace-pre-wrap rounded-2xl bg-zinc-100 px-4 py-2.5 text-[15px] text-zinc-900 dark:bg-zinc-800 dark:text-zinc-100 ${item.status === 'sending' ? 'opacity-80' : ''}`}>{item.shown}</p>
+          {/* Folded as the message it will be (#3558), so the server's row
+              replaces it without the bubble changing height. */}
+          <UserMessage text={item.shown} className={item.status === 'sending' ? 'opacity-80' : ''} />
           {item.status === 'failed' ? (
             <div className="flex max-w-[85%] flex-wrap items-center justify-end gap-x-3 gap-y-1 text-[13px]" role="alert">
               <span className="text-red-700 dark:text-red-300" data-agent-session-outbox-error>{item.error || 'This was not sent.'}</span>
