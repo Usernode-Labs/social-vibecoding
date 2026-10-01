@@ -317,7 +317,8 @@
       // name and the terms, so it says what the place is before it asks.
       scroller.appendChild(el('div', 'text-xl font-bold pt-3', 'Welcome to Homeroom!'));
       scroller.appendChild(el('p', 'text-sm text-zinc-600 dark:text-zinc-300 mt-1',
-        'Homeroom is a place where communities build the apps they use together.'));
+        'Homeroom is a place where communities build the apps they use together. '
+        + 'Members ask for changes, vote on them and make changes.'));
       scroller.appendChild(el('div',
         'text-[0.9375rem] font-[650] leading-5 text-zinc-900 dark:text-zinc-100 mt-5 mb-2',
         'What communities do you want to join?'));
