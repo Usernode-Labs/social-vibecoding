@@ -607,3 +607,54 @@ for (const lookup of ['existing', 'failed']) {
     } finally { restore(); }
   });
 }
+
+for (const outcome of ['complete', 'waiting', 'runtime unauthorized', 'wrong revision']) {
+  test(`recoverable image: ${outcome} preserves the serving preview and deployment boundary`, async () => {
+    const config = { jwtSecret: 's', appRuntime: 'kubernetes', kubernetes: { appNamespace: 'test-apps' } };
+    const headSha = 'a'.repeat(40);
+    const intent = {
+      ...require('../src/services/preview-flow/candidate-resources').candidateResources(config, 7, randomUUID()),
+      buildOperation: { revision: outcome === 'wrong revision' ? 'b'.repeat(40) : headSha },
+    };
+    const { subject, deployments, queries, events, restore } = loadStaging({ runtimeKind: 'kubernetes', existsImpl: async () => true });
+    const phases = [];
+    const candidate = {
+      intent,
+      password: '1'.repeat(48),
+      preparedClone: true,
+      preparationOwner: 'bounded',
+      async prepareImage(script) {
+        assert.equal(script, null);
+        phases.push('image');
+        if (outcome === 'waiting') throw new Error('Image is still running');
+        return { runtimeKind: 'kubernetes', imageRef: 'registry/verified@sha256:digest', buildRef: 'builds/attempt' };
+      },
+      async onClonePrepared() { phases.push('clone'); },
+      async onRuntimeStarting() {
+        phases.push('runtime authorized');
+        assert.equal(deployments.length, 0);
+        if (outcome === 'runtime unauthorized') throw new Error('Runtime permission rejected');
+      },
+    };
+    try {
+      const prepare = subject.prepareCandidateUnderBuildLock(config, mkSession(7), mkApp, headSha, candidate,
+        { flowId: randomUUID(), generation: 1, headSha });
+      if (outcome === 'complete') {
+        const result = await prepare;
+        assert.deepEqual(phases, ['image', 'clone', 'runtime authorized']);
+        assert.equal(result.imageRef, 'registry/verified@sha256:digest');
+        assert.equal(deployments[0].imageRef, result.imageRef);
+        assert.equal(deployments[0].internalOnly, true);
+        assert.equal(deployments[0].createOnly, true);
+      } else {
+        await assert.rejects(prepare, outcome === 'waiting' ? /still running/
+          : outcome === 'wrong revision' ? /reserved revision/ : /permission rejected/);
+        assert.equal(deployments.length, 0);
+      }
+      assert.equal(events.some(event => event[0] === 'drop'), false);
+      assert.equal(queries.some(query => /SET staging_/.test(query.sql)), false);
+    } finally {
+      restore();
+    }
+  });
+}

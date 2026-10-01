@@ -15,6 +15,7 @@ function createCleanup({
   lock = withResourceUse,
   lifecycle = require('../preview-lifecycle'),
   clones = null,
+  images = null,
 } = {}) {
   // Called only while staging holds STAGING_BUILD_LOCK. Never clear a session
   // projection here: historical resource ownership is separate from publication.
@@ -60,6 +61,11 @@ function createCleanup({
         if (binding.target === intent.runtimeName) throw new Error('Candidate still has an external serving binding');
       } else if (authorized.binding?.desired || authorized.binding?.observed) {
         throw new Error('Deleted aggregate retains an unresolved serving binding');
+      }
+      if (intent.buildOperation) {
+        const imageService = images || require('./image-build-operation').createImageBuildOperations();
+        const retirement = await imageService.retire(intent);
+        if (retirement.status !== 'retained') throw new Error('Candidate image build may still be running');
       }
       await require('./candidate-runtime').removeCandidate(runtimeConfig, intent, flowId, authorized.resource?.receipt);
       if (intent.cloneOperation) {

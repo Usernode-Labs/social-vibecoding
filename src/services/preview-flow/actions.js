@@ -1,6 +1,7 @@
 'use strict';
 
 const { z } = require('zod');
+const { imageBuildOperation, runScript } = require('./image-build-intent');
 
 const sha = z.string().regex(/^[a-f0-9]{40}$/i).transform(value => value.toLowerCase());
 const executionIdentityFields = {
@@ -30,6 +31,7 @@ const resourceIntent = z.object({
     kind: z.literal('template-v1'),
     sourceDb: z.string().regex(/^[a-z_][a-z0-9_]*$/).max(63),
   }).strict().optional(),
+  buildOperation: imageBuildOperation.optional(),
 }).strict().superRefine((value, ctx) => {
   if ((value.runtimeKind === 'docker' && value.namespace !== null)
       || (value.runtimeKind === 'kubernetes' && value.namespace === null)) {
@@ -73,6 +75,27 @@ const routeObservation = z.object({
 }).strict();
 
 const actionSchema = z.discriminatedUnion('type', [
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('RequestCandidateImageBuild'),
+    ...executionIdentityFields,
+    operationId: z.string().uuid(),
+    runScript,
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('CandidateImageBuilt'),
+    ...executionIdentityFields,
+    operationId: z.string().uuid(),
+    uid: z.string().min(1).max(128),
+    imageRef: z.string().regex(/@sha256:[a-f0-9]{64}$/).max(1024),
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
+    type: z.literal('RequestCandidateRuntime'),
+    ...executionIdentityFields,
+    operationId: z.string().uuid(),
+  }).strict(),
   z.object({
     ...actionEnvelopeFields,
     type: z.literal('RequestCandidateClone'),

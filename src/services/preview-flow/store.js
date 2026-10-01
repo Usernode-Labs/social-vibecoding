@@ -195,6 +195,11 @@ function createPreviewFlow(pool, {
         [decision.cloneChange.flowId]);
     }
 
+    if (decision.imageChange) {
+      await client.query(`UPDATE preview_flow_resources SET intent = jsonb_set(intent, '{buildOperation}', $2::jsonb)
+        WHERE flow_id = $1`, [decision.imageChange.flowId, JSON.stringify(decision.imageChange.operation)]);
+    }
+
     if (decision.bindingChange) {
       await client.query(`INSERT INTO preview_bindings (session_id, desired, observed)
         VALUES ($1, $2, $3) ON CONFLICT (session_id) DO UPDATE

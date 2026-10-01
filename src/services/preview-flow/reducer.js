@@ -1,6 +1,6 @@
 'use strict';
 
-const REDUCER_VERSION = 7;
+const REDUCER_VERSION = 8;
 
 // Domain state and guards remain separate from persistence and external I/O.
 function reduce(state, action, facts) {
@@ -25,6 +25,9 @@ function replayDecision(entry) {
   }
   if (entry.reducer_version === 6) {
     return require('./versions/v6').reduce(entry.pre_state, entry.action, entry.facts);
+  }
+  if (entry.reducer_version === 7) {
+    return require('./versions/v7').reduce(entry.pre_state, entry.action, entry.facts);
   }
   if (entry.reducer_version === REDUCER_VERSION) {
     return reduce(entry.pre_state, entry.action, entry.facts);

@@ -1,8 +1,241 @@
 'use strict';
 
-const { reduceLegacy, requestCleanupDecision } = require('./legacy-reducer');
-const { nativeHeadCondition, enablingCondition } = require('./enabling-conditions');
-const { isResourceAction } = require('./actions');
+// Frozen recoverable-clone policy. No imports from live domain rules.
+function isPreparationRequest(action) {
+  return action.type === 'RequestPreview' || action.type === 'RetryPreview';
+}
+
+function isResourceAction(action) {
+  return action.type === 'RequestPreviewCleanup' || action.type === 'PreviewCleanupCompleted';
+}
+
+// Initial policy: native proposal handoff. Imported/manual/fleet policies must
+// be added deliberately when their adapters move here. No permissive default.
+function publishableStatus(session, startedStatus, headSha) {
+  return !!session && (session.status === startedStatus
+    || (session.status === 'promoted' && session.reviewedHeadSha === headSha));
+}
+
+function nativeHeadCondition(session, startedStatus, headSha) {
+  if (!session) return 'session_missing';
+  if (session.source === 'imported') return 'imported_session';
+  if (session.checksCommitSha !== headSha) return 'head_changed';
+  if (!publishableStatus(session, startedStatus, headSha)) return 'status_changed';
+  return null;
+}
+
+function enablingCondition(state, action) {
+  const { session, flow, resource, preview } = state;
+
+  // Historical resource retirement is independent of the current flow pointer.
+  if (isResourceAction(action)) {
+    if (!resource || resource.flowId !== action.flowId || resource.sessionId !== action.sessionId) {
+      return 'resource_missing';
+    }
+    if (!resource.intent) return 'resource_intent_missing';
+
+    const reportsCompletion = action.type === 'PreviewCleanupCompleted';
+    if (resource.cleanupCompleted) {
+      if (reportsCompletion && resource.disposition !== action.disposition) {
+        return 'cleanup_result_conflict';
+      }
+      return null;
+    }
+
+    const stillPublished = resource.published
+      && preview?.stagingUrl === resource.receipt?.stagingUrl
+      && preview?.runtimeKind === resource.receipt?.runtimeKind
+      && preview?.runtimeName === resource.receipt?.runtimeName
+      && preview?.commitSha === resource.receipt?.commitSha;
+    if (stillPublished) return 'resource_published';
+    if (reportsCompletion && !resource.cleanupStarted) return 'cleanup_not_requested';
+    return null;
+  }
+
+  if (isPreparationRequest(action)) {
+    return nativeHeadCondition(session, action.startedStatus, action.headSha);
+  }
+
+  // Reported flow outcomes must name the current execution before any policy
+  // about its status, head or resources can grant permission.
+  if (!flow || flow.id !== action.flowId || flow.generation !== action.generation
+      || flow.headSha !== action.headSha) {
+    return 'superseded_flow';
+  }
+
+  if (action.type === 'ClearPreview') {
+    // Removing an archived/merged preview is valid. Clearing is a factual
+    // retirement of this identity, not permission to publish into that status.
+    if (['preparing', 'ready', 'failed'].includes(flow.state)) return null;
+    return 'flow_settled';
+  }
+
+  const headCondition = nativeHeadCondition(session, flow.startedStatus, action.headSha);
+  if (headCondition) return headCondition;
+  if (flow.state !== 'preparing') return 'flow_settled';
+
+  if (action.type === 'PreviewReady') {
+    if (resource?.cleanupStarted) return 'resource_retiring';
+    if (action.receipt.commitSha !== action.headSha) {
+      return 'receipt_head_mismatch';
+    }
+  }
+  return null;
+}
+
+// A cleanup pass proves absence at its observation boundary, not termination
+// of an external creator. Isolated attempts can request a fresh pass later.
+function requestCleanupDecision(state, action) {
+  const resource = state.resource;
+  const reconciling = resource.cleanupCompleted;
+  let reason = 'cleanup_requested';
+  if (reconciling) reason = 'cleanup_reconciliation_requested';
+  else if (resource.cleanupStarted) reason = 'cleanup_resumed';
+
+  // A fresh isolated observation is new work. Replaying the same action keeps
+  // its key; a later scan must not reuse a completed effect's identity.
+  const effectKey = resource.intent.attemptId
+    ? `${action.flowId}:cleanup:${action.actionId}`
+    : `${action.flowId}:cleanup`;
+
+  const decision = {
+    accepted: true,
+    reason,
+    flow: state.flow,
+    projection: 'unchanged',
+    effects: [{
+      type: 'CleanupPreview',
+      effectKey,
+      causedBy: action.actionId,
+      sessionId: action.sessionId,
+      flowId: action.flowId,
+      intent: resource.intent,
+    }],
+  };
+
+  if (reconciling || !resource.cleanupStarted) {
+    decision.resourceChange = {
+      flowId: action.flowId,
+      cleanup: reconciling ? 'reconcile' : 'start',
+    };
+  }
+  return decision;
+}
+
+// No clock, ID allocation, SQL, service calls or dispatch in this module.
+// The captured state/action/facts reproduce a decision after its row changes.
+function reduceLegacy(state, action, facts) {
+  const reason = enablingCondition(state, action);
+  if (reason) {
+    return {
+      accepted: false,
+      reason,
+      flow: state.flow,
+      projection: 'unchanged',
+      effects: [],
+    };
+  }
+
+  if (isResourceAction(action)) {
+    const resource = state.resource;
+    if (resource.cleanupCompleted) {
+      return {
+        accepted: true,
+        reason: 'cleanup_already_completed',
+        flow: state.flow,
+        projection: 'unchanged',
+        disposition: resource.disposition,
+        effects: [],
+      };
+    }
+
+    if (action.type === 'PreviewCleanupCompleted') {
+      return {
+        accepted: true,
+        reason: 'cleanup_completed',
+        flow: state.flow,
+        projection: 'unchanged',
+        resourceChange: {
+          flowId: action.flowId,
+          cleanup: 'complete',
+          disposition: action.disposition,
+        },
+        effects: [],
+      };
+    }
+
+    return requestCleanupDecision(state, action);
+  }
+
+  if (isPreparationRequest(action)) {
+    const canJoinExisting = action.type === 'RequestPreview'
+      && state.flow?.headSha === action.headSha
+      && state.flow.startedStatus === action.startedStatus
+      && !state.resource?.cleanupStarted
+      && ['preparing', 'ready'].includes(state.flow.state);
+    if (canJoinExisting) {
+      return {
+        accepted: true,
+        reason: 'joined_existing_flow',
+        flow: state.flow,
+        projection: 'unchanged',
+        effects: [],
+      };
+    }
+
+    const flow = {
+      id: facts.newFlowId,
+      generation: (state.flow?.generation || 0) + 1,
+      headSha: action.headSha,
+      startedStatus: action.startedStatus,
+      state: 'preparing',
+    };
+    const decision = {
+      accepted: true,
+      reason: 'preparation_requested',
+      flow,
+      projection: 'unchanged',
+      effects: [{
+        type: 'BuildPreview',
+        effectKey: `${flow.id}:build`,
+        causedBy: action.actionId,
+        sessionId: action.sessionId,
+        flowId: flow.id,
+        generation: flow.generation,
+        headSha: flow.headSha,
+      }],
+    };
+    if (state.flow) {
+      decision.supersededFlow = { ...state.flow, state: 'superseded' };
+    }
+    return decision;
+  }
+
+  if (action.type === 'PreviewReady') {
+    return {
+      accepted: true,
+      reason: 'runtime_published',
+      flow: { ...state.flow, state: 'ready' },
+      projection: 'publish',
+      receipt: action.receipt,
+      effects: [],
+    };
+  }
+
+  const preparationFailed = action.type === 'PreparationFailed';
+  const decision = {
+    accepted: true,
+    reason: preparationFailed ? 'preparation_failed' : 'preview_cleared',
+    flow: { ...state.flow, state: preparationFailed ? 'failed' : 'cleared' },
+    projection: 'clear',
+    effects: [],
+  };
+  if (preparationFailed) {
+    decision.checkFailure = { headSha: action.headSha, detail: action.detail };
+  }
+  return decision;
+}
+
 
 function activationPending(binding) {
   return !!binding?.desired && binding.desired.activationId !== binding.observed?.activationId;
@@ -30,77 +263,6 @@ function candidateCondition(state, action) {
 
 function reduceCandidate(state, action, facts) {
   const { flow, resource, binding } = state;
-
-  const imageRequest = action.type === 'RequestCandidateImageBuild';
-  const imageReport = action.type === 'CandidateImageBuilt';
-  const runtimeRequest = action.type === 'RequestCandidateRuntime';
-  if (imageRequest || imageReport || runtimeRequest) {
-    const condition = candidateCondition(state, action);
-    if (condition) return rejection(state, condition);
-    if (flow.state !== 'preparing') return rejection(state, 'flow_settled');
-    const operation = resource?.intent?.buildOperation;
-    if (resource?.preparationOwner !== 'bounded' || !resource.clonePrepared
-        || resource.intent.runtimeKind !== 'kubernetes' || operation?.kind !== 'kpack-v1'
-        || operation.revision !== flow.headSha || resource.intent.attemptId !== action.operationId
-        || flow.attemptId !== action.operationId) return rejection(state, 'image_operation_mismatch');
-
-    const recipeSelected = Object.hasOwn(operation, 'runScript');
-    if (imageRequest) {
-      if (recipeSelected && operation.runScript !== action.runScript) return rejection(state, 'image_recipe_changed');
-      const selected = { ...operation, runScript: action.runScript };
-      return {
-        accepted: true,
-        reason: 'image_build_requested',
-        flow,
-        projection: 'unchanged',
-        effects: [{
-          type: 'PrepareCandidateImage',
-          effectKey: `${action.operationId}:kpack-image`,
-          causedBy: action.actionId,
-          sessionId: action.sessionId,
-          flowId: flow.id,
-          operationId: action.operationId,
-          intent: { ...resource.intent, buildOperation: selected },
-        }],
-        ...(!recipeSelected ? { imageChange: { flowId: flow.id, operation: selected } } : {}),
-      };
-    }
-    if (!recipeSelected) return rejection(state, 'image_not_requested');
-    if (runtimeRequest) {
-      if (!operation.receipt) return rejection(state, 'image_not_complete');
-      return {
-        accepted: true,
-        reason: 'candidate_runtime_requested',
-        flow,
-        projection: 'unchanged',
-        effects: [{
-          type: 'PrepareCandidateRuntime',
-          effectKey: `${action.operationId}:candidate-runtime`,
-          causedBy: action.actionId,
-          sessionId: action.sessionId,
-          flowId: flow.id,
-          intent: resource.intent,
-        }],
-      };
-    }
-
-    const receipt = { uid: action.uid, imageRef: action.imageRef };
-    const outputPrefix = `${operation.repository}@sha256:`;
-    if (!action.imageRef.startsWith(outputPrefix) || !/^[a-f0-9]{64}$/.test(action.imageRef.slice(outputPrefix.length))) {
-      return rejection(state, 'image_repository_mismatch');
-    }
-    if (operation.receipt && (operation.receipt.uid !== receipt.uid || operation.receipt.imageRef !== receipt.imageRef)) {
-      return rejection(state, 'image_receipt_conflict');
-    }
-    return {
-      accepted: true,
-      reason: 'candidate_image_built',
-      flow,
-      projection: 'unchanged',
-      effects: [],
-      imageChange: { flowId: flow.id, operation: { ...operation, receipt } },
-    };
-  }
 
   if (action.type === 'RequestCandidateClone' || action.type === 'CandidateClonePrepared') {
     const condition = candidateCondition(state, action);
@@ -232,11 +394,6 @@ function reduceCandidate(state, action, facts) {
         return rejection(state, 'candidate_identity_mismatch');
       }
       if (!resource?.clonePrepared) return rejection(state, 'clone_not_prepared');
-      const image = resource.intent?.buildOperation;
-      if (image && (!image.receipt || action.receipt.imageRef !== image.receipt.imageRef
-          || action.receipt.buildRef !== `${image.namespace}/sv-p-${flow.attemptId.replace(/-/g, '')}`)) {
-        return rejection(state, 'candidate_image_unconfirmed');
-      }
       return {
         accepted: true,
         reason: 'candidate_prepared',
@@ -324,4 +481,4 @@ function reduceCandidate(state, action, facts) {
   return reduceLegacy(state, action, facts);
 }
 
-module.exports = { reduceCandidate, activationPending };
+module.exports = { reduce: reduceCandidate };

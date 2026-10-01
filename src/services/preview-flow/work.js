@@ -12,6 +12,7 @@ const { STAGING_BUILD_LOCK, PREVIEW_LIFECYCLE_LOCK } = require('../advisory-lock
 
 const PREPARE = 'native-preview-prepare';
 const PREPARE_CLONE = 'native-preview-template-prepare';
+const PREPARE_IMAGE = 'native-preview-kpack-prepare';
 const RETIRE = 'native-preview-retire';
 
 function createPreviewWork(pool, config, {
@@ -22,6 +23,7 @@ function createPreviewWork(pool, config, {
   prepare = require('../staging').prepareCandidateUnderBuildLock,
   cleanup = require('./cleanup').underBuildLock,
   clones = require('./clone-operation').createCloneOperations(),
+  images = require('./image-build-operation').createImageBuildOperations(),
 } = {}) {
   const runtime = createSessionDecisionRuntime(pool);
 
@@ -47,6 +49,11 @@ function createPreviewWork(pool, config, {
         }
         const flow = admission.decision.flow;
         const recoverClone = config.nativePreviewRecoverableClone === true;
+        const recoverImage = config.nativePreviewRecoverableBuild === true;
+        if (recoverImage && !recoverClone) throw new Error('Recoverable image preparation requires the recoverable clone');
+        let workflow = PREPARE;
+        if (recoverClone) workflow = PREPARE_CLONE;
+        if (recoverImage) workflow = PREPARE_IMAGE;
         const intent = {
           ...candidateResources(config, session.id, flow.attemptId),
           ...(recoverClone ? {
@@ -54,6 +61,9 @@ function createPreviewWork(pool, config, {
               kind: 'template-v1',
               sourceDb: require('../db-manager').appDbName(app.slug),
             },
+          } : {}),
+          ...(recoverImage ? {
+            buildOperation: require('./image-build-intent').reserveImageBuild(config, app, flow.headSha),
           } : {}),
         };
         const credentialEnc = encrypt(randomBytes(24).toString('hex'), config.dataEncryptionKey);
@@ -65,7 +75,7 @@ function createPreviewWork(pool, config, {
           id: randomUUID(),
           effectKey: effect.effectKey,
           sessionId: session.id,
-          workflow: recoverClone ? PREPARE_CLONE : PREPARE,
+          workflow,
           version: 1,
           causedBy: action.actionId,
           input: {
@@ -76,6 +86,7 @@ function createPreviewWork(pool, config, {
             preparedActionId: randomUUID(),
             failedActionId: randomUUID(),
             ...(recoverClone ? { clonePreparedActionId: randomUUID() } : {}),
+            ...(recoverImage ? { imageBuiltActionId: randomUUID() } : {}),
           },
         });
         return { ...admission, work };
@@ -155,7 +166,8 @@ function createPreviewWork(pool, config, {
         && !state.resource?.cleanupStarted;
       if (!current) return retired(attempt, 'preparation_obsolete');
 
-      const recoverClone = attempt.workflow === PREPARE_CLONE;
+      const recoverImage = attempt.workflow === PREPARE_IMAGE;
+      const recoverClone = attempt.workflow === PREPARE_CLONE || recoverImage;
       const observed = await inspect(resourceConfig, intent, identity.flowId, identity.headSha);
       const adoptable = observed.receipt && state.resource.clonePrepared;
       if (adoptable) {
@@ -163,6 +175,14 @@ function createPreviewWork(pool, config, {
           const clone = await clones.inspect(intent);
           if (clone.status === 'uncertain' && clone.reason === 'busy') return cloneDeferred(attempt);
           if (clone.status !== 'complete') return retired(attempt, 'clone_completion_unconfirmed');
+        }
+        if (recoverImage) {
+          const image = await images.inspect(state.resource.intent);
+          if (image.status === 'uncertain' && image.reason === 'ownership_conflict') {
+            return retired(attempt, 'image_ownership_changed');
+          }
+          if (image.status !== 'succeeded') return imageDeferred(attempt);
+          if (observed.receipt.imageRef !== image.imageRef) return retired(attempt, 'runtime_image_mismatch');
         }
         const receipt = state.resource.receipt || candidateReceipt.parse(observed.receipt);
         if (receipt.physicalId !== observed.receipt.physicalId || receipt.imageRef !== observed.receipt.imageRef) {
@@ -185,23 +205,40 @@ function createPreviewWork(pool, config, {
         if (cloneResult) return cloneResult;
       }
 
-      const saved = await checkpoint({
-        creationStarted: true,
-        ...(recoverClone ? { runtimeCreationStarted: true } : {}),
-      });
-      if (saved.lostClaim || signal.aborted) return { outcome: 'retry' };
+      if (!recoverImage) {
+        const saved = await checkpoint({
+          creationStarted: true,
+          ...(recoverClone ? { runtimeCreationStarted: true } : {}),
+        });
+        if (saved.lostClaim || signal.aborted) return { outcome: 'retry' };
+      }
 
-      // The opaque adapter is invoked once per domain resource attempt. After
-      // an uncertain outcome, the next execution inspects or retires it.
-      const result = await prepare(resourceConfig, session, app, identity.headSha, {
-        intent,
-        password,
-        preparationOwner: 'bounded',
-        ...(recoverClone ? { preparedClone: true } : {}),
-        async onClonePrepared() {
-          if (!recoverClone) await owner.markClonePrepared(attempt.session_id, identity.flowId);
-        },
-      }, identity);
+      // The image-aware path may repeat source fetch and Build observation.
+      // Its runtime-start checkpoint still makes deployment a one-shot phase.
+      let result;
+      try {
+        result = await prepare(resourceConfig, session, app, identity.headSha, {
+          intent,
+          password,
+          preparationOwner: 'bounded',
+          ...(recoverClone ? { preparedClone: true } : {}),
+          ...(recoverImage ? {
+            prepareImage: runScript => prepareImage(context, runScript),
+            onRuntimeStarting: () => startCandidateRuntime(context),
+          } : {}),
+          async onClonePrepared() {
+            if (!recoverClone) await owner.markClonePrepared(attempt.session_id, identity.flowId);
+          },
+        }, identity);
+      } catch (error) {
+        if (!error.previewImageOutcome) throw error;
+        const latest = (await store.read(attempt.id)).checkpoint;
+        if (error.previewImageOutcome === 'waiting') return imageDeferred({ ...attempt, checkpoint: latest });
+        return {
+          ...retired({ ...attempt, checkpoint: latest }, error.code),
+          result: { prepared: false, ...(error.detail ? { detail: error.detail } : {}) },
+        };
+      }
       const receipt = candidateReceipt.parse({
         commitSha: result.commitSha,
         stagingUrl: result.stagingUrl,
@@ -220,6 +257,89 @@ function createPreviewWork(pool, config, {
 
   function cloneDeferred(attempt) {
     return { outcome: 'waiting', checkpoint: attempt.checkpoint, code: 'clone_uncertain', delayMs: 1000 };
+  }
+
+  function imageDeferred(attempt) {
+    return { outcome: 'waiting', checkpoint: attempt.checkpoint, code: 'image_pending', delayMs: 1000 };
+  }
+
+  function imageExit(code, outcome = 'retired', detail) {
+    return Object.assign(new Error('Candidate image preparation did not complete'), {
+      previewImageOutcome: outcome,
+      code,
+      detail,
+    });
+  }
+
+  async function startCandidateRuntime({ attempt, signal, checkpoint }) {
+    const { identity, intent } = attempt.input;
+    const permission = await owner.apply({
+      type: 'RequestCandidateRuntime',
+      actionId: randomUUID(),
+      sessionId: attempt.session_id,
+      ...identity,
+      operationId: intent.attemptId,
+    });
+    if (!permission.decision.accepted) throw imageExit('runtime_not_authorized');
+    const prior = (await store.read(attempt.id)).checkpoint;
+    const saved = await checkpoint({ ...prior, runtimeCreationStarted: true });
+    if (saved.lostClaim || signal.aborted) throw imageExit('claim_lost', 'waiting');
+  }
+
+  async function prepareImage({ attempt, signal, checkpoint }, runScript) {
+    const { identity, intent, imageBuiltActionId } = attempt.input;
+    if (signal.aborted) throw imageExit('claim_lost', 'waiting');
+    const authorized = await owner.apply({
+      type: 'RequestCandidateImageBuild',
+      actionId: randomUUID(),
+      sessionId: attempt.session_id,
+      ...identity,
+      operationId: intent.attemptId,
+      runScript,
+    });
+    if (!authorized.decision.accepted) throw imageExit('image_not_authorized');
+    const effect = authorized.decision.effects.find(value => value.type === 'PrepareCandidateImage');
+    const prior = (await store.read(attempt.id)).checkpoint;
+    const image = await images.prepare(effect.intent, {
+      submitted: !!prior.imageSubmitted,
+      uid: prior.imageUid,
+      checkpoint(value) {
+        if (signal.aborted) return { lostClaim: true };
+        return checkpoint({
+          ...prior,
+          imageSubmitted: value.submitted,
+          ...(value.uid ? { imageUid: value.uid } : {}),
+        });
+      },
+    });
+    if (image.status === 'failed') {
+      throw imageExit(`image_failed_${image.failureKind}`, 'retired', imageFailureDetail(image.failureKind));
+    }
+    if (['ownership_conflict', 'submitted_resource_missing'].includes(image.reason)) {
+      throw imageExit(`image_${image.reason}`);
+    }
+    if (image.status !== 'succeeded' || signal.aborted) throw imageExit('image_pending', 'waiting');
+    const completion = await owner.apply({
+      type: 'CandidateImageBuilt',
+      actionId: imageBuiltActionId,
+      sessionId: attempt.session_id,
+      ...identity,
+      operationId: intent.attemptId,
+      uid: image.uid,
+      imageRef: image.imageRef,
+    });
+    if (!completion.decision.accepted) throw imageExit('image_completion_obsolete');
+    return { runtimeKind: 'kubernetes', imageRef: image.imageRef, buildRef: image.buildRef };
+  }
+
+  function imageFailureDetail(kind) {
+    if (kind === 'build') {
+      return 'The image build step failed. Inspect its diagnostics, fix the build and request a fresh preview attempt.';
+    }
+    if (kind === 'infrastructure') {
+      return 'The image build ended with an infrastructure failure. A fresh preview attempt may retry it.';
+    }
+    return 'The image build failed, but its cause is unclassified. Inspect the retained Build before retrying.';
   }
 
   async function prepareClone({ attempt, signal }, password) {
@@ -256,7 +376,7 @@ function createPreviewWork(pool, config, {
       outcome: 'succeeded',
       checkpoint: {
         creationStarted: true,
-        ...(attempt.workflow === PREPARE_CLONE ? { runtimeCreationStarted: true } : {}),
+        ...([PREPARE_CLONE, PREPARE_IMAGE].includes(attempt.workflow) ? { runtimeCreationStarted: true } : {}),
       },
       result: { prepared: true, receipt },
     };
@@ -276,7 +396,7 @@ function createPreviewWork(pool, config, {
     } : {
       type: 'PreparationFailed',
       actionId: failedActionId,
-      detail: 'Durable preview preparation was interrupted or superseded; request a fresh attempt.',
+      detail: proposed.result.detail || 'Durable preview preparation was interrupted or superseded; request a fresh attempt.',
     };
     const completion = await owner.applyInTransaction(transaction, {
       ...action, sessionId: attempt.session_id, ...identity,
@@ -303,9 +423,10 @@ function createPreviewWork(pool, config, {
     handlers: {
       [PREPARE]: { version: 1, run: runPreparation, commit: commitPreparation },
       [PREPARE_CLONE]: { version: 1, run: runPreparation, commit: commitPreparation },
+      [PREPARE_IMAGE]: { version: 1, run: runPreparation, commit: commitPreparation },
       [RETIRE]: { version: 1, run: runCleanup },
     },
   };
 }
 
-module.exports = { createPreviewWork, PREPARE, PREPARE_CLONE, RETIRE };
+module.exports = { createPreviewWork, PREPARE, PREPARE_CLONE, PREPARE_IMAGE, RETIRE };

@@ -512,6 +512,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
       '-C', cloneDir, 'rev-parse', 'HEAD',
     ], { timeout: 5000 });
     const resolvedRevision = (revisionOut || '').trim();
+    if (candidate?.prepareImage && resolvedRevision !== candidate.intent.buildOperation.revision) {
+      throw new Error('Recoverable image source does not match the reserved revision');
+    }
     const prodDbName = dbManager.appDbName(app.slug);
     const stagingDbNameStr = candidate?.intent.dbName || dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
     // Retries may address the database of a still-serving preview. Only
@@ -539,11 +542,24 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     const buildImage = async () => {
       let result;
       try {
-        result = await applicationRuntime.build(config, {
-          app, revision: resolvedRevision, environment: 'staging', sessionId: session.id,
-          sourceDir: cloneDir, dockerImage: imageName, onProgress: imageProgress.report,
-          ...(candidate ? { attemptId: candidate.intent.attemptId } : {}),
-        });
+        if (candidate?.prepareImage) {
+          const fs = require('node:fs');
+          const path = require('node:path');
+          let scripts = {};
+          try {
+            scripts = JSON.parse(fs.readFileSync(path.join(cloneDir, 'package.json'), 'utf8')).scripts || {};
+          } catch { /* A non-Node app has no npm script. kpack detection decides its build. */ }
+          let runScript = null;
+          if (typeof scripts['ensure:shell'] === 'string') runScript = 'ensure:shell';
+          else if (typeof scripts.build === 'string') runScript = 'build';
+          result = await candidate.prepareImage(runScript);
+        } else {
+          result = await applicationRuntime.build(config, {
+            app, revision: resolvedRevision, environment: 'staging', sessionId: session.id,
+            sourceDir: cloneDir, dockerImage: imageName, onProgress: imageProgress.report,
+            ...(candidate ? { attemptId: candidate.intent.attemptId } : {}),
+          });
+        }
         return result;
       } finally {
         imageProgress.close();
@@ -669,6 +685,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
       runtimeLabels[require('./preview-flow/candidate-runtime').HEAD_LABEL] = resolvedRevision;
     }
 
+    if (candidate?.onRuntimeStarting) await candidate.onRuntimeStarting();
     const deployed = await applicationRuntime.deploy(config, {
       app,
       environment: 'staging',

@@ -20,6 +20,7 @@ if (!databaseUrl) {
     'tests/execution-worker.test.js',
     'tests/preview-work.test.js',
     'tests/recoverable-preview-clone.test.js',
+    'tests/recoverable-preview-build.test.js',
     'tests/review-work.test.js',
     'tests/unpromote-proposal-postgres.test.js',
     'tests/preview-flow.test.js',

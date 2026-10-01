@@ -169,3 +169,15 @@ resource remains retained/rotated for retry; atomicity and ownership checks stay
 Server-side deadlines assume a reachable PostgreSQL server; process supervision
 still contains transport failure or unresponsive execution. This does not claim
 an absolute network-outage/shutdown bound or transaction-wide deadline.
+
+## Recoverable operation variants
+
+The [template-clone contract](recoverable-clone-contract.md) records the accepted
+`99325410f` checkpoint and its real PostgreSQL evidence. A new explicitly opted-in
+[kpack image-build contract](recoverable-build-contract.md) extends preparation
+without reinterpreting those old work requests. It reuses this decision/execution
+foundation; no scheduler, new engine, deployment or caller migration is introduced.
+Its injected regressions and real PostgreSQL/process recovery pass, but the
+**actual kpack build-resource checkpoint remains blocked** pending an isolated
+cluster/registry fixture. Preparation still stops at candidate; activation remains
+separate. Tombstones and all previously accepted safety guards remain mandatory.
