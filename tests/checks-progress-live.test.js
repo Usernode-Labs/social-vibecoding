@@ -1000,7 +1000,9 @@ test('get_proposal exposes progress, asOf and pendingWrite', () => {
 
 test('a submit says WHEN its vote-clearing happens, not just a count', () => {
   const pu = read('src/services/proposal-update.js');
-  assert.match(pu, /votesClearing: applied \? 'now' : \(votesCleared > 0 \? 'on_sync' : 'none'\)/);
+  // The imported tail: 'on_sync' until something re-pinned the head, then
+  // 'now', or 'none' when the re-pin kept the votes (a mechanical move).
+  assert.match(pu, /let votesClearing = votesCleared > 0 \? 'on_sync' : 'none';\s*\n\s*if \(applied\) votesClearing = cleared \? 'now' : 'none';/);
   assert.match(pu, /votesClearing: settled \? 'now' : \(votesCleared > 0 \? 'on_sync' : 'none'\)/);
   const eat = read('src/services/external-agent-tasks.js');
   assert.match(eat, /votesClearing: result\.votesClearing \|\|/);
