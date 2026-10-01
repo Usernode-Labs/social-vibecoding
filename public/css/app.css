@@ -6157,6 +6157,11 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-pr-title { font-size: 13px; color: var(--text); font-weight: 500; }
 
 .dc-pr-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* #3605: the lifecycle badge, once proposed, opens the vote page. The badge
+   keeps its own look; the wrapper only adds the link cues. */
+.dc-pr-status-link { display: inline-flex; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 9999px; }
+.dc-pr-status-link:hover .ms-badge { text-decoration: underline; }
+.dc-pr-status-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* #699: expandable report body on the platform-issue draft card. The
    <summary> holds the 300-char preview plus a "Show full report" cue;
