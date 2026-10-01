@@ -80,3 +80,16 @@ test('#3075: the menu no longer says it in words; the mark\'s own spinner stays'
   store.improveStore.set({ ...store.improveStore.get(), versionState: 'ready' });
   assert.match(renderToHtml(createElement(wired.UpdateStatus)), /There is a new version available\./);
 });
+
+test('#3559: horizontal drags stop at the transcript and replies edges instead of bouncing the page', () => {
+  assert.match(
+    panel,
+    /<div ref=\{scroll\} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-x-contain px-4 py-4"/,
+    'the transcript contains a horizontal drag at its edge',
+  );
+  assert.match(
+    panel,
+    /<div className="flex gap-2 overflow-x-auto overscroll-x-contain px-4 pb-2" data-agent-session-replies>/,
+    'the replies strip contains a horizontal drag at its edge',
+  );
+});

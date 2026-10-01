@@ -1374,7 +1374,7 @@ function Replies({ replies }: { replies: string[] }) {
   const running = useAgentSessionSelector((s) => s.turn.running);
   if (!replies.length || running) return null;
   return (
-    <div className="flex gap-2 overflow-x-auto px-4 pb-2" data-agent-session-replies>
+    <div className="flex gap-2 overflow-x-auto overscroll-x-contain px-4 pb-2" data-agent-session-replies>
       {replies.map((reply) => (
         <button
           key={reply}
@@ -2139,7 +2139,7 @@ export function AgentSessionPanel({ embedded = false, headerAction = null }: { e
     <div ref={root} className={`relative flex min-h-0 min-w-0 flex-1 ${embedded ? '' : 'dc-lift dc-lift-strip'}`} data-agent-session-panel={embedded ? 'messages' : 'screen'}>
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat>
         <SessionBar session={snapshot.session} about={about} embedded={embedded} action={headerAction} />
-        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 py-4" aria-live="polite" onScroll={onScroll}>
+        <div ref={scroll} className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-x-contain px-4 py-4" aria-live="polite" onScroll={onScroll}>
           {snapshot.phase === 'loading' ? (
             <div className="flex items-center gap-2 text-sm text-zinc-500"><SpinnerArcIcon className="h-5 w-5 animate-spin" aria-hidden="true" /> Loading…</div>
           ) : null}
