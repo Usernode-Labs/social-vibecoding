@@ -1,10 +1,9 @@
 'use strict';
 
-// Run only through scripts/test-recoverable-preview-build.js with an explicitly
-// labeled disposable kpack namespace. No default context or fixture is chosen.
+// The explicit runner gates this test. Reverify in this process and its child
+// before any mutation; neither process loads default Kubernetes credentials.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
 const { fork } = require('node:child_process');
 const { once } = require('node:events');
 const { randomUUID } = require('node:crypto');
@@ -15,20 +14,19 @@ const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { createImageBuildOperations } = require('../src/services/preview-flow/image-build-operation');
 const { buildManifest } = require('../src/services/preview-flow/image-build-intent');
 const kubernetes = require('../src/services/kubernetes');
-
-const fixturePath = process.env.KPACK_RECOVERY_TEST_CONFIG;
-const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL;
+const { verifyIsolatedBuildFixture, sanitizedEnvironment } = require('./lib/isolated-kpack-fixture');
 
 test('actual kpack + PostgreSQL: interrupted worker adopts the same Build UID and digest after a lost decision reply', {
-  skip: !fixturePath || !databaseUrl,
+  skip: process.env.RUN_ISOLATED_KPACK_TEST !== '1',
   timeout: 1200000,
 }, async t => {
-  const fixture = JSON.parse(readFileSync(fixturePath, 'utf8'));
+  const { fixture, clients } = await verifyIsolatedBuildFixture();
+  kubernetes._setClientsForTest(clients);
+  t.after(() => kubernetes._setClientsForTest(new Proxy({}, {
+    get() { throw new Error('Isolated test ended; ambient Kubernetes clients are forbidden'); },
+  })));
   const config = fixture.config;
-  assert.match(config.kubernetes.buildNamespace, /^preview-recovery-test-[a-z0-9-]+$/);
-  const namespace = await kubernetes._getClients().core.readNamespace({ name: config.kubernetes.buildNamespace });
-  assert.equal(namespace.metadata.labels?.['social.usernode.io/recovery-test'], 'true');
-  const db = await createExecutionDatabase(databaseUrl);
+  const db = await createExecutionDatabase(fixture.isolation.database.url);
   t.after(() => db.close());
   const sessionId = 3000000 + process.pid;
   config.databaseUrl = db.url;
@@ -40,7 +38,7 @@ test('actual kpack + PostgreSQL: interrupted worker adopts the same Build UID an
   await db.pool.query('UPDATE apps SET repo_url = $1 WHERE id = 1', [fixture.repoUrl]);
   await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES ($1, $2)', [sessionId, fixture.revision]);
   const owner = createPreviewFlow(db.pool);
-  const images = createImageBuildOperations();
+  const images = createImageBuildOperations({ clients: () => clients });
   let lostReply = false;
   const apply = owner.apply;
   owner.apply = async action => {
@@ -72,6 +70,7 @@ test('actual kpack + PostgreSQL: interrupted worker adopts the same Build UID an
     headSha: fixture.revision, startedStatus: 'active' });
   const child = fork(require.resolve('./lib/recoverable-build-child'), [], {
     execArgv: [], stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+    env: sanitizedEnvironment(),
   });
   t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   const created = new Promise((resolve, reject) => {

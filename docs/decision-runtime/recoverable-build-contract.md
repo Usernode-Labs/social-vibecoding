@@ -201,8 +201,13 @@ serving preview. Conflicting Build UID/recipe/digest, runtime image/flow/head/UI
 stored Build reference, failed health and changed lifecycle cannot complete the
 candidate. This is database/adoption evidence, not actual deployment or kpack proof.
 
-The actual-resource job is
-`scripts/test-recoverable-preview-build.js`. It requires both a disposable
+The actual-resource job is `scripts/test-recoverable-preview-build.js`. It requires
+a **new disposable local kind/Docker PostgreSQL/in-cluster registry fixture**, with
+an explicit isolation manifest, dedicated kubeconfig and identity verification in
+the runner, test process and worker before any mutations. No ambient context,
+in-cluster credentials or database URL is a fallback. Production must remain
+untouched. [The isolation contract](kpack-test-isolation.md) specifies every field,
+destination, fresh-storage check and the currently missing fixture. It requires
 `PREVIEW_FLOW_TEST_DATABASE_URL` and `KPACK_RECOVERY_TEST_CONFIG`, a JSON file with:
 
 - `config`: explicit `appRuntime: "kubernetes"` and the existing `kubernetes`
@@ -210,10 +215,13 @@ The actual-resource job is
   registry/cache prefixes, service account, node version and deadline.
 - `repoUrl`, `revision`: a reachable fixture repository and its full source SHA.
 - `runScript`: `null`, `"build"` or `"ensure:shell"`, matching that fixture revision.
+- `isolation`: dedicated local identities/credentials/destinations specified in
+  the isolation contract. Registry output, cache and builder must all be local.
 
-Its build namespace must start with `preview-recovery-test-` and have label
-`social.usernode.io/recovery-test=true`; the kpack controller, registry access and
-build service account must already be configured there. This job creates actual
+Its fresh namespace is `preview-recovery-test-<fixture UUID>` and carries
+`social.usernode.io/recovery-fixture=<UUID>`; the local kpack controller, test
+registry and dedicated service account must already be configured there. After
+preflight, this job creates actual
 Builds, kills the actual execution worker after creation, recovers the same UID
 and digest, and injects a lost reply after the image fact's actual SQL commit.
 Clone and runtime deployment remain injected. On success it explicitly tears down
@@ -224,19 +232,20 @@ attempt-specific Build/Pod and registry artifacts in the disposable namespace.
 **C4 integration remains pending.** Rechecked after the adoption correction:
 `kubectl config get-contexts -o name` is empty and `current-context` is unset;
 `KPACK_RECOVERY_TEST_CONFIG`, `KUBECONFIG` and `KUBERNETES_SERVICE_HOST` are unset.
-There is no local kind/k3d/minikube fixture. Disposable PostgreSQL is available;
-the actual-resource job still exits 1 for the missing explicit kpack configuration.
+There is no new local fixture. The previously used native PostgreSQL instance
+does not meet the tightened harness contract. The job exits 1 for missing inputs
+before any integration mutations.
 An optional test skip or an injected resource is not actual-resource proof.
 
 The missing inputs are:
 
-- An explicit test-cluster context/access with compatible kpack controller and
-  Build CRD. Do not select a production cluster implicitly.
-- A disposable `preview-recovery-test-*` build namespace with the required label,
-  a build service account and registry push/pull access, plus reserved output and
-  cache repository prefixes. If testing actual deployment, also supply a labeled
-  disposable runtime namespace and its dependencies.
-- A compatible builder image pinned by digest, node version and bounded deadline.
+- A newly created local kind cluster with dedicated kubeconfig, verified local
+  identities and compatible kpack controller/Build CRD. No default kubeconfig edits.
+- Its new disposable namespace, dedicated account, local registry/emptyDir and
+  verified UIDs/routing; a fresh local Docker PostgreSQL/database with verified
+  container/volume/system identity. Both runtime/build namespaces stay in this fixture.
+- A compatible builder seeded into that test registry, pinned by digest, node
+  version and bounded deadline; output/cache prefixes in the same dedicated registry.
 - A reachable fixture repository, full successful revision, matching `runScript`,
   and a full revision that predictably fails a detect/build phase. Record these
   with the explicit configuration file path in `KPACK_RECOVERY_TEST_CONFIG`.

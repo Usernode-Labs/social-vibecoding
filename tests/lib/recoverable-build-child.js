@@ -5,12 +5,40 @@ const { createPreviewWork } = require('../../src/services/preview-flow/work');
 const { createExecutionStore } = require('../../src/services/execution/store');
 const { createExecutionWorker } = require('../../src/services/execution/worker');
 const { createImageBuildOperations } = require('../../src/services/preview-flow/image-build-operation');
+const { verifyIsolatedBuildFixture } = require('./isolated-kpack-fixture');
 
 process.once('message', async ({ databaseUrl, config, apiUrl, runScript = null }) => {
   try {
-    const pool = new Pool({ connectionString: databaseUrl });
     let clients;
-    if (apiUrl) {
+    if (process.env.RUN_ISOLATED_KPACK_TEST === '1') {
+      if (apiUrl) throw new Error('Actual integration cannot substitute an injected API');
+      const verified = await verifyIsolatedBuildFixture({ databaseUrl });
+      clients = verified.clients;
+      config = {
+        ...verified.fixture.config,
+        dataEncryptionKey: 'disposable-integration-only',
+        nativePreviewWorkerEnabled: true,
+        nativePreviewAttempts: true,
+        nativePreviewRecoverableClone: true,
+        nativePreviewRecoverableBuild: true,
+      };
+      runScript = verified.fixture.runScript;
+    } else {
+      // Injected HTTP fixtures are separate from actual-resource integration.
+      if (process.env.RUN_INJECTED_BUILD_TEST !== '1' || !apiUrl) {
+        throw new Error('Explicit isolated integration or injected test mode required');
+      }
+      const api = new URL(apiUrl);
+      const database = new URL(databaseUrl);
+      const localApi = api.protocol === 'http:' && api.hostname === '127.0.0.1' && api.port
+        && !api.username && !api.password && !api.search && !api.hash;
+      const localDatabase = database.protocol === 'postgresql:' && database.hostname === '127.0.0.1' && database.port;
+      const scopedDatabase = [...database.searchParams.keys()].every(key => key === 'options')
+        && database.searchParams.size <= 1
+        && (!database.searchParams.has('options') || /^-c search_path=execution_[0-9_]+$/.test(database.searchParams.get('options')));
+      if (!localApi || !localDatabase || !scopedDatabase) {
+        throw new Error('Injected child requires explicit loopback API and database destinations');
+      }
       const k8s = require('@kubernetes/client-node');
       const kc = new k8s.KubeConfig();
       kc.loadFromOptions({
@@ -21,9 +49,13 @@ process.once('message', async ({ databaseUrl, config, apiUrl, runScript = null }
       });
       clients = { custom: kc.makeApiClient(k8s.CustomObjectsApi), core: kc.makeApiClient(k8s.CoreV1Api) };
     }
+
+    config = { ...config, databaseUrl };
+    require('../../src/services/kubernetes')._setClientsForTest(clients);
+    const pool = new Pool({ connectionString: databaseUrl, ssl: false });
     const store = createExecutionStore(pool, { leaseMs: 2000 });
     const images = createImageBuildOperations({
-      ...(clients ? { clients: () => clients } : {}),
+      clients: () => clients,
       async onObservation(phase) {
         if (phase !== 'created') return;
         process.send({ phase });

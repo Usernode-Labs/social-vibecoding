@@ -447,7 +447,10 @@ test('real PostgreSQL + HTTP / injected Build: SIGKILL of the actual worker reco
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   t.after(() => { server.closeAllConnections(); server.close(); });
-  const child = fork(require.resolve('./lib/recoverable-build-child'), [], { execArgv: [], stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+  const child = fork(require.resolve('./lib/recoverable-build-child'), [], {
+    execArgv: [], stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
+    env: { PATH: process.env.PATH, TMPDIR: process.env.TMPDIR, RUN_INJECTED_BUILD_TEST: '1' },
+  });
   t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
   const message = new Promise((resolve, reject) => {
     child.once('message', value => resolve([value]));
