@@ -229,6 +229,8 @@ test('red checks on its own proposal: one build turn fixes them, the proposal is
   assert.equal(h.calls.posts.length, 0, 'nothing on the issue');
   assert.equal(h.calls.onProposal.length, 1, 'said on the proposal, where the checks are');
   assert.equal(h.calls.onProposal[0].kind, 'checks_revise');
+  assert.deepEqual(h.calls.onProposal[0].mentions, ['ada'],
+    'the checks-fix news tags the people taking part, opt-out filtered and capped, as any post does');
   assert.match(h.calls.onProposal[0].text, /fixed the failing checks on its proposal \(PR #82\)/);
   assert.ok(h.calls.queries.some((q) => /DELETE FROM homeroom_bot_queue WHERE id = \$1/.test(q.s) && q.params[0] === 31));
 });

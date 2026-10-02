@@ -3738,9 +3738,15 @@ async function runChecksFix(pool, config, {
     // not for its checks. The reconcile has already said the votes were
     // cleared there.
     const link = deps.domain ? live.proposalLink(deps.domain, app.slug, session.id) : null;
+    // Who the checks-fix news tags: the same people any post on this
+    // issue tags (opt-out filtered and capped), read for this one post.
+    const targets = await live.mentionTargets({
+      pool, github, app, repo, issueNumber, issue, botLogin, bot, proposalSessionId: session.id,
+    }).catch(() => []);
     await live.postOnProposal({
       pool, ws: deps.ws, app, issueNumber, runId, kind: 'checks_revise', bot, sessionId: session.id,
       text: followup.checksRevisedText({ summary, reply: parsed?.reply, prNumber, link }),
+      mentions: targets,
     }).catch((err) => log.warn('homeroom-bot', 'Checks revision post failed', { app: app.slug, issueNumber, err: err.message }));
     log.info('homeroom-bot', 'Revised its proposal to fix its failing checks', {
       app: app.slug, issueNumber, sessionId: session.id, head, failing: failing.length, costUsd, runId,

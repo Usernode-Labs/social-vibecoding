@@ -108,6 +108,32 @@ test('a post tags everyone in the thread and notifies each of them; GitHub gets 
   assert.match(sent[0].content, /^@evan 📋 Homeroom bot's spec/, 'the spec card tags them too, once');
 });
 
+test('a follow-up that is also posted on the proposal notifies the same people there', async () => {
+  const sent = [];
+  const notified = [];
+  const pool = { async query(sql) { return /INSERT INTO homeroom_bot_posts/.test(String(sql)) ? { rows: [{ id: 1 }] } : { rows: [] }; } };
+  const ws = { async sendBotMessage(_p, _a, args) { sent.push(args); return { id: 700 + sent.length }; } };
+  const github = { async createIssueComment() { return { id: 1 }; } };
+  const notifications = {
+    async createMentionNotifications(_p, args) { notified.push(args); return [{ id: 3 }, { id: 4 }]; },
+    async hydrateAndPush() {},
+  };
+  const app = { id: 9, slug: 'rss' };
+  const BOT = { id: 77, username: 'homeroom_bot' };
+  await live.post({
+    pool, github, ws, app, repo: { owner: 'o', repo: 'r' }, issueNumber: 24, kind: 'followup_answer',
+    text: 'Homeroom bot has a question.', mentions: ['evan', 'maya'], sender: BOT, notifications,
+    proposalSessionId: 5001,
+  });
+  assert.equal(sent.length, 2, 'one copy on the issue, one on the proposal');
+  assert.equal(sent[1].content, '@evan @maya Homeroom bot has a question.',
+    'the proposal-thread copy tags the same people the issue copy does');
+  assert.deepEqual(notified, [
+    { appId: 9, chatMessageId: 701, senderId: 77, content: '@evan @maya' },
+    { appId: 9, chatMessageId: 702, senderId: 77, content: '@evan @maya' },
+  ], 'each copy fires its own handles-only batch of mention notifications');
+});
+
 // ── Recorded before anything is posted ──────────────────────────────────
 
 test('triage records the ask before the verdict is posted, so that very post leaves them out', async (t) => {

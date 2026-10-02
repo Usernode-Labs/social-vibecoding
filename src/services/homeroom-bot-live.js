@@ -895,11 +895,27 @@ async function post({
   // the proposal's own discussion, the reply goes there too, as a message
   // from the bot (#3288).
   let proposalMessage = null;
+  let proposalNotified = 0;
   if (proposalSessionId) {
     try {
-      proposalMessage = await inThread(text, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
+      proposalMessage = await inThread(threadText, { type: 'session', ref: Number(proposalSessionId) }, null, 'system');
     } catch (err) {
       log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
+    // The same mention row the issue copy got, attached to this copy: both
+    // threads now tell the people taking part there (content is the handles
+    // alone, never the model-written text).
+    if (handles && proposalMessage?.id) {
+      try {
+        const notify = notifications || require('./notifications');
+        const rows = await notify.createMentionNotifications(pool, {
+          appId: app.id, chatMessageId: proposalMessage.id, senderId: senderId ?? sender?.id ?? null, content: handles,
+        });
+        await Promise.all(rows.map((row) => notify.hydrateAndPush(pool, row)));
+        proposalNotified = rows.length;
+      } catch (err) {
+        log.warn('homeroom-bot', 'Proposal thread mention failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+      }
     }
   }
   await pool.query(
@@ -910,7 +926,7 @@ async function post({
   log.info('homeroom-bot', 'Posted on issue', {
     app: app.slug, issueNumber, kind, github: !!comment, thread: !!message,
     ...(tagged.length ? { mentioned: tagged, notified } : {}),
-    ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
+    ...(proposalSessionId ? { proposalThread: !!proposalMessage, proposalNotified } : {}),
   });
   // #3624: the same news, in the requester's DM with the bot, when they
   // are somebody it talks to there. A post that carries `dm` is one worth
@@ -934,7 +950,11 @@ async function post({
  * such as a revision that fixed its failing checks. Never throws on the
  * send; resolves { postId, thread }.
  */
-async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId }) {
+async function postOnProposal({
+  pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId,
+  mentions = null, notifications = null,
+}) {
+  const handles = (mentions || []).map((n) => `@${n}`).join(' ');
   const { rows } = await pool.query(
     `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
      VALUES ($1, $2, $3, $4)
@@ -945,16 +965,34 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
   let message = null;
   try {
     message = await ws.sendBotMessage(pool, app.id, {
-      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+      user: bot, content: handles ? `${handles} ${text}` : text, thread: { type: 'session', ref: Number(sessionId) },
     });
   } catch (err) {
     log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  // As on the issue thread: the people the post tags are notified, from the
+  // handles alone, never the model-written text. Best-effort; the post stays.
+  let notified = 0;
+  if (handles && message?.id) {
+    try {
+      const notify = notifications || require('./notifications');
+      const notifyRows = await notify.createMentionNotifications(pool, {
+        appId: app.id, chatMessageId: message.id, senderId: bot?.id ?? null, content: handles,
+      });
+      await Promise.all(notifyRows.map((row) => notify.hydrateAndPush(pool, row)));
+      notified = notifyRows.length;
+    } catch (err) {
+      log.warn('homeroom-bot', 'Proposal thread mention failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
   }
   if (postId && message?.id) {
     await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id])
       .catch(() => {});
   }
-  log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, issueNumber, kind, sessionId, thread: !!message });
+  log.info('homeroom-bot', 'Posted on its proposal', {
+    app: app.slug, issueNumber, kind, sessionId, thread: !!message,
+    ...(handles ? { mentioned: handles.split(' '), notified } : {}),
+  });
   return { postId, thread: !!message };
 }
 

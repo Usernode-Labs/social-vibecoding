@@ -154,8 +154,10 @@ test('with the bot as sender, every thread post is its message: the issue, the p
   assert.deepEqual(issue.metadata, { vote: { sessionId: 5128, prNumber: 25 } }, 'so the chat hangs the card under it');
   assert.deepEqual(proposal.thread, { type: 'session', ref: 5128 });
   assert.equal(proposal.metadata, null, 'the card is on the issue post, not repeated');
-  assert.equal(h.sent.mentions.length, 1, 'the poster is notified once');
+  assert.equal(h.sent.mentions.length, 2, 'each thread copy notifies: one batch per message');
   assert.equal(h.sent.mentions[0].content, '@evan', 'by handle alone, never the model\'s text');
+  assert.equal(h.sent.mentions[0].chatMessageId, 101, 'pointing at the issue copy');
+  assert.equal(h.sent.mentions[1].chatMessageId, 102, 'and at the proposal copy');
   assert.equal(h.sent.mentions[0].senderId, BOT.id);
   assert.equal(h.sent.mentions[0].chatMessageId, 101, 'pointing at the bot\'s message');
 });
