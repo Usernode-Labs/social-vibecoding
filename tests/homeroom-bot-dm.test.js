@@ -298,6 +298,29 @@ test('the create dialog sends the longer description, never with an import', () 
   assert.equal(createBody(base).brief, undefined);
 });
 
+test('the short description is suggested for everyone making a project, and every description is filed', () => {
+  const routes = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'apps.js'), 'utf8');
+  const suggest = routes.slice(routes.indexOf("router.post('/api/apps/suggest-description'"), routes.indexOf("router.post('/api/apps', "));
+  assert.match(suggest, /router\.post\('\/api\/apps\/suggest-description', feedbackTitleLimiter, sameOriginBrowserOnly, async/,
+    'the limiter, then the same-origin guard, as before');
+  assert.match(suggest, /if \(!req\.user\) return res\.status\(401\)/, 'any signed-in person');
+  assert.doesNotMatch(suggest, /isEnabledFor/, 'no longer only for somebody the bot builds for');
+  // POST /api/apps hands every description (never an import's) to the
+  // first-request record, which decides whether the bot builds it.
+  const create = routes.slice(routes.indexOf("router.post('/api/apps', "));
+  assert.match(create, /if \(!repoUrlNormalized && typeof req\.body\.brief === 'string' && req\.body\.brief\.trim\(\)\) \{[\s\S]{0,200}startFirstVersion\(pool, config, \{/);
+  // The bot's live list and its wake are only for a first version it builds.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'homeroom-bot-dm.js'), 'utf8');
+  assert.match(src, /WHERE f\.bot_builds AND LOWER\(u\.username\) = ANY\(\$1::text\[\]\)/);
+  assert.match(src, /if \(botBuilds\) settingsModule\(\)\.noteIssueActivity\(/);
+  assert.match(src, /if \(final && botBuilds\) \{/, 'no DM about a request the bot never took on');
+  // A sweep the bot's mode does not gate, on the leader.
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.match(server, /\.sweepFirstVersions\(getPool\(config\), config\)[\s\S]{0,240}setInterval\(runFirstRequestSweep, 5 \* 60 \* 1000\)\.unref\(\);/);
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf8');
+  assert.match(schema, /ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;/);
+});
+
 test('a question in the DM draws its answers, the default marked, and says an answer is public', () => {
   const { BotQuestion } = loadTsx('frontend/src/features/messages/bot-question.tsx', {
     stubs: { './store': { answerBotQuestion() {}, scopeKey: () => 'k', setReply() {} } },

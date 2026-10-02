@@ -9559,12 +9559,15 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_issue
   ON homeroom_bot_dm_messages(user_id, app_id, issue_number);
 COMMENT ON TABLE homeroom_bot_dm_messages IS 'staging:private';
 
--- A project created with a description by somebody the bot talks to in a
--- DM: filed as the project's first-version request once the project is
--- running (waiting, then filing, then filed; failed after three tries).
--- The bot acts live on the project while its creator is on the DM list.
--- Private: the brief is what the person typed, before they chose to post
--- it anywhere.
+-- A project created with a description ("What should it do?" in the create
+-- dialog): filed as the project's first request, under its creator's name,
+-- once the project is running (waiting, then filing, then filed; failed
+-- after three tries). `bot_builds` says whether the Homeroom bot builds it:
+-- true when the creator is somebody the bot talks to in a DM, and then the
+-- bot acts live on the project while they are on the DM list; false for
+-- everybody else, whose request is filed and left to the group. Private:
+-- the brief is what the person typed, before they chose to post it
+-- anywhere.
 CREATE TABLE IF NOT EXISTS homeroom_bot_first_versions (
   app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
   user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -9581,6 +9584,8 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_first_versions (
 CREATE INDEX IF NOT EXISTS idx_homeroom_bot_first_versions_waiting
   ON homeroom_bot_first_versions(created_at) WHERE status = 'waiting';
 COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
+-- Every row before the column was one the bot builds, so the default is true.
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
 
 -- The bot fixing its own failing checks: the head commit a checks
 -- follow-up looked at, on the run that recorded it (a revision, a hand-off

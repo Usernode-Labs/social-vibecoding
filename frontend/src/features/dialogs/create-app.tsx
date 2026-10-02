@@ -1,12 +1,14 @@
 /**
  * Create-project dialog (#create-modal).
  *
- * ── Six questions, in the order a person answers them ─────────────────
+ * ── Seven questions, in the order a person answers them ───────────────
  *
  * Communities, stage 3 asked who a project is FOR before anything else,
  * because that answer decides the rest. The create-dialog rework (drawn and
  * agreed as a clickable mock first) turned each question into a step of its
- * own and moved "how do you want to start" to the end:
+ * own. How to start then moved up to straight after what you are making, so
+ * that what it should do is asked of everyone, and only of a project made
+ * here (an import's repo already says what it is):
  *
  *   who      Just me, A private community, or A public community: the
  *            audiences services/communities.js derives (`solo`, `invited`,
@@ -18,16 +20,23 @@
  *            invite when that person signs up).
  *   kind     what you are making: App, with Document and Video there, dimmed,
  *            saying Soon.
- *   details  the name, and the optional one line about what it is.
- *   approve  who approves changes: members vote, or people you pick (starting
- *            with you), with "at least N yes votes" as a follow-up under the
- *            second. A private or a public community only.
  *   start    how to begin: from scratch, from a template, or from a GitHub
  *            repo. A template's four starters open under its row (#3521;
  *            services/app-templates.js); the repo's check opens under its
- *            row. The check also reads the repo's dapp.json, and a notice
- *            names each earlier answer it will replace (name, what it is,
- *            who it is for, who approves); those answers are dimmed.
+ *            row. The check also reads the repo's dapp.json: the name step
+ *            opens on the repo's name, a notice names each earlier answer it
+ *            will replace (who it is for), and the approval step says when
+ *            the repo already decides it.
+ *   details  the name, and for a project made here "What should it do?",
+ *            required for everyone (BRIEF_MIN). It becomes the project's
+ *            first request once the project runs; for somebody the Homeroom
+ *            bot builds for (#3624), the bot builds that first version.
+ *   about    a project made here only: the one-line "What is it?", required,
+ *            suggested from what it should do on arrival
+ *            (POST /api/apps/suggest-description, or its first sentence).
+ *   approve  who approves changes: members vote, or people you pick (starting
+ *            with you), with "at least N yes votes" as a follow-up under the
+ *            second. A private or a public community only, and last.
  *
  * NOTHING IS CHOSEN FOR THE PERSON, AND NOTHING MOVES WITHOUT THEM. Every
  * answer starts empty. Pressing a row selects it; Next, beside Cancel on
@@ -36,7 +45,8 @@
  * step's "Change" reopens it with its answer still picked.
  *
  * `POST /api/apps` takes `audience`, `invitees`, `inviteEmails`,
- * `description`, `governance` and `template` (services/create-options.js); the rule and
+ * `description`, `governance`, `template` (services/create-options.js) and
+ * `brief` (services/homeroom-bot-dm.js); the rule and
  * the line are written to the new repository's dapp.json, or, for an import
  * whose dapp.json does not already set them, committed into it by the bot
  * (services/import-manifest.js), so both are votable later like any other
@@ -98,7 +108,9 @@
  * The text inputs stay UNCONTROLLED (refs, not `value`) for the matching
  * reason: a controlled input renders a `value` attribute in the prerender
  * pass. What the name, the line and the invite field hold is mirrored into
- * state from their input events, for the step's Next.
+ * state from their input events, for the step's Next. "What should it do?"
+ * is the one controlled field: a textarea's value is its text content, and
+ * an empty one prerenders as nothing.
  */
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
@@ -143,7 +155,7 @@ type Approvals = 'majority' | 'atLeast';
  * checks select on the same ids); app.css folds and unfolds them off
  * `#create-card[data-step]`. See the header for what each one asks.
  */
-type Step = 'who' | 'invite' | 'kind' | 'details' | 'approve' | 'start';
+type Step = 'who' | 'invite' | 'kind' | 'start' | 'details' | 'about' | 'approve';
 
 /**
  * The starters "Start from a template" offers (#3521), in the order and the
@@ -172,20 +184,24 @@ export const EMAIL_RE = /^[^\s@,]+@[^\s@,]+\.[^\s@,]+$/;
 
 /**
  * The steps a given set of answers walks. A private community names its
- * people; a private or a public community says who approves changes; how to begin comes last for
- * everyone. An unanswered audience counts as Just me, so the indicator reads
- * "Step 1 of 4" before anything is chosen. Exported and pure: the
- * indicator's "of N" and the footer's Next-or-Create both read it.
+ * people; how to begin comes straight after what you are making; a project
+ * made here (not an import) is described in one line on a step of its own;
+ * and a private or a public community says who approves changes, last. An
+ * unanswered audience counts as Just me and an unanswered start as made
+ * here, so the indicator reads "Step 1 of 5" before anything is chosen.
+ * Exported and pure: the indicator's "of N" and the footer's Next-or-Create
+ * both read it.
  */
-export function stepsFor(audience: Audience | null): readonly Step[] {
+export function stepsFor(audience: Audience | null, mode: Mode | null = null): readonly Step[] {
   const who = audience ?? 'solo';
   return [
     'who',
     ...(who === 'invited' ? (['invite'] as const) : []),
     'kind',
-    'details',
-    ...(who !== 'solo' ? (['approve'] as const) : []),
     'start',
+    'details',
+    ...(mode !== 'import' ? (['about'] as const) : []),
+    ...(who !== 'solo' ? (['approve'] as const) : []),
   ];
 }
 
@@ -220,11 +236,14 @@ function visibilityWords(v: NonNullable<RepoManifest['visibility']>): string {
 }
 
 /**
- * The earlier answers a repo's dapp.json will replace on the first deploy
- * (the name, visibility and governance reconciles in
- * services/app-manifest.js, and the description every surface reads). Only
- * real differences: a repo that keeps a project private does not clash with
- * "A private community". Exported and pure for tests/create-app-steps.test.js.
+ * The answers a repo's dapp.json will replace on the first deploy (the
+ * name, visibility and governance reconciles in services/app-manifest.js,
+ * and the description every surface reads). Only real differences, and only
+ * answers actually given: the check comes before the name step now, which
+ * opens on the repo's own name, and before the approval step, so a blank
+ * name, a blank line or an approval rule not chosen yet is nothing to
+ * replace. A repo that keeps a project private does not clash with "A
+ * private community". Exported and pure for tests/create-app-steps.test.js.
  */
 export function repoOverrides(manifest: RepoManifest | null, answers: {
   name: string;
@@ -237,12 +256,12 @@ export function repoOverrides(manifest: RepoManifest | null, answers: {
   if (!manifest) return [];
   const out: RepoOverride[] = [];
   const name = answers.name.trim();
-  if (manifest.name && manifest.name !== name) {
-    out.push({ key: 'name', label: 'Name', repo: manifest.name, yours: name || 'left blank' });
+  if (manifest.name && name && manifest.name !== name) {
+    out.push({ key: 'name', label: 'Name', repo: manifest.name, yours: name });
   }
   const description = answers.description.replace(/\s+/g, ' ').trim();
-  if (manifest.description && manifest.description !== description) {
-    out.push({ key: 'desc', label: 'What it is', repo: manifest.description, yours: description || 'left blank' });
+  if (manifest.description && description && manifest.description !== description) {
+    out.push({ key: 'desc', label: 'What it is', repo: manifest.description, yours: description });
   }
   // An audience is a pair of visibilities (communities.visibilityForAudience):
   // a public community is public to see and to build, Just me and a private
@@ -255,16 +274,42 @@ export function repoOverrides(manifest: RepoManifest | null, answers: {
     if (clash) out.push({ key: 'vis', label: 'Who it’s for', repo: visibilityWords(v), yours: WHO_WORDS[answers.audience] });
   }
   const g = manifest.governance;
-  if (g && answers.audience && answers.audience !== 'solo') {
+  if (g && answers.audience && answers.audience !== 'solo' && answers.approvers) {
     const n = Math.round(Number(answers.approvalsN));
     const mine = ruleWords(
-      answers.approvers ?? 'anyone',
+      answers.approvers,
       answers.approvers === 'invited' && answers.approvals === 'atLeast' && n >= 1 ? n : null,
     );
     const theirs = ruleWords(g.approvers, g.approvals);
     if (mine !== theirs) out.push({ key: 'gov', label: 'Who approves changes', repo: theirs, yours: mine });
   }
   return out;
+}
+
+/**
+ * The approval rule an import's repo already sets, in the approval step's
+ * words, or null when it sets none (or there is nobody else to approve
+ * anything). The step then says so instead of asking. Exported and pure.
+ */
+export function repoRule(manifest: RepoManifest | null, audience: Audience | null): string | null {
+  const g = manifest?.governance;
+  if (!g || !audience || audience === 'solo') return null;
+  return ruleWords(g.approvers, g.approvals);
+}
+
+/**
+ * A line's first sentence, cut at a word to fit `max`: what the short
+ * description falls back to when no suggestion comes back. The same rule as
+ * services/homeroom-bot-dm.js's firstSentence, which the server falls back
+ * to when its helper model is unavailable.
+ */
+export function firstSentence(text: string, max = DESCRIPTION_MAX): string {
+  const flat = String(text || '').replace(/\s+/g, ' ').trim();
+  const sentence = (flat.match(/^.+?[.!?](?=\s|$)/) || [flat])[0].replace(/[.!?]+$/, '');
+  if (sentence.length <= max) return sentence;
+  const cut = sentence.slice(0, max - 1);
+  const at = cut.lastIndexOf(' ');
+  return `${(at > 20 ? cut.slice(0, at) : cut).replace(/[,;:\s]+$/, '')}…`;
 }
 
 /**
@@ -275,7 +320,10 @@ export function repoOverrides(manifest: RepoManifest | null, answers: {
  */
 export function createBody(answers: {
   name: string;
-  /** "What is it?": one optional line. */
+  /**
+   * "What is it?": one line. The dialog asks it of a project made here and
+   * not of an import; the API keeps it optional.
+   */
   description?: string;
   mode: Mode;
   repoUrl?: string;
@@ -289,8 +337,9 @@ export function createBody(answers: {
   /** The starter picked under "Start from a template". */
   template?: TemplateId | null;
   /**
-   * #3624: the longer description the Homeroom bot builds the first
-   * version from, for somebody it builds for. Never sent with an import.
+   * "What should it do?": filed as the project's first request once it runs,
+   * and built by the Homeroom bot for somebody it builds for (#3624). Never
+   * sent with an import.
    */
   brief?: string;
 }): Record<string, unknown> {
@@ -369,6 +418,8 @@ interface ShotState {
   mode: Mode | null;
   approvers: Approvers | null;
   name: string;
+  brief: string;
+  description: string;
 }
 
 /**
@@ -377,25 +428,36 @@ interface ShotState {
  * never on the prerender pass (no `location` there).
  *
  *   create-group    A private community chosen, on the invite step
- *   create-details  Just me, an app, on the name step
- *   create-approve  A public community, on the approval step
- *   create-start    A public community, on the last step, nothing picked yet
- *   create-template the last step, starting from a template, none picked yet
- *   create-import   the last step, importing
+ *   create-start    A public community, on how to start, nothing picked yet
+ *   create-template how to start, from a template, none picked yet
+ *   create-import   how to start, importing
+ *   create-details  Just me, an app from scratch, on the name step
+ *   create-about    Just me, from scratch, described, on the one-line step
+ *   create-approve  A public community, described, on the approval step
  *
  * `create-access`, an older link, lands on `create-approve`.
  */
 function shotState(): ShotState {
-  const open: ShotState = { step: 'who', audience: null, kind: null, mode: null, approvers: null, name: '' };
+  const open: ShotState = {
+    step: 'who', audience: null, kind: null, mode: null, approvers: null, name: '', brief: '', description: '',
+  };
   try {
     const shot = new URLSearchParams(location.search).get('shot');
-    const named = { ...open, kind: 'app' as Kind, name: 'Seed swap' };
+    const app = { ...open, kind: 'app' as Kind };
+    const described = {
+      ...app,
+      mode: 'new' as Mode,
+      name: 'Seed swap',
+      brief: 'Neighbours list the seeds they have spare and ask for the ones they want. A swap is agreed in the chat.',
+      description: 'Swap spare seeds with your neighbours',
+    };
     if (shot === 'create-group') return { ...open, step: 'invite', audience: 'invited' };
-    if (shot === 'create-details') return { ...open, step: 'details', audience: 'solo', kind: 'app' };
-    if (shot === 'create-approve' || shot === 'create-access') return { ...named, step: 'approve', audience: 'open' };
-    if (shot === 'create-start') return { ...named, step: 'start', audience: 'open', approvers: 'anyone' };
-    if (shot === 'create-template') return { ...named, step: 'start', audience: 'solo', mode: 'template' };
-    if (shot === 'create-import') return { ...named, step: 'start', audience: 'solo', mode: 'import' };
+    if (shot === 'create-start') return { ...app, step: 'start', audience: 'open' };
+    if (shot === 'create-template') return { ...app, step: 'start', audience: 'solo', mode: 'template' };
+    if (shot === 'create-import') return { ...app, step: 'start', audience: 'solo', mode: 'import' };
+    if (shot === 'create-details') return { ...open, step: 'details', audience: 'solo', kind: 'app', mode: 'new' };
+    if (shot === 'create-about') return { ...described, step: 'about', audience: 'solo' };
+    if (shot === 'create-approve' || shot === 'create-access') return { ...described, step: 'approve', audience: 'open' };
     return open;
   } catch {
     return open;
@@ -478,12 +540,20 @@ const TEMPLATE_CHOICE = 'create-template-pill w-full text-left ' + CARD + ' px-4
  */
 export const DESCRIPTION_MAX = 90;
 /*
- * #3624: the longer description somebody the Homeroom bot builds for gives
- * it, from which it builds the first version (services/homeroom-bot-dm.js,
- * whose MIN_BRIEF_CHARS and MAX_BRIEF_CHARS these mirror).
+ * "What should it do?", asked of everyone making a project here: it becomes
+ * the project's first request, which the Homeroom bot builds for somebody it
+ * builds for (#3624; services/homeroom-bot-dm.js, whose MIN_BRIEF_CHARS and
+ * MAX_BRIEF_CHARS these mirror). The field grows with its text up to
+ * max-h-60 (15rem) and scrolls after that; a fixed four rows on a phone
+ * scrolled its first line half under the label.
  */
 export const BRIEF_MIN = 10;
 export const BRIEF_MAX = 4000;
+const BRIEF_FIELD = 'resize-none overflow-y-auto max-h-60 leading-[22px]';
+/** The one caption under "What should it do?": who builds from it. */
+export function briefCaption(botBuild: boolean): string {
+  return botBuild ? 'Homeroom bot builds the first version from this.' : 'This becomes the project’s first request.';
+}
 const DESCRIPTION_COUNT_FROM = 20;
 const DESCRIPTION_LEFT = 'absolute right-4 top-3 text-[13px] tabular-nums';
 
@@ -763,12 +833,12 @@ function RepoNotice({ overrides, unread }: { overrides: RepoOverride[]; unread: 
 export function CreateAppDialog() {
   const formRef = useRef<HTMLFormElement>(null);
   const nameRef = useRef<HTMLInputElement>(null);
+  const briefRef = useRef<HTMLTextAreaElement>(null);
   const describeRef = useRef<HTMLInputElement>(null);
   const urlRef = useRef<HTMLInputElement>(null);
   const inviteesRef = useRef<HTMLInputElement>(null);
   const approvalsNRef = useRef<HTMLInputElement>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const lastStepRef = useRef<HTMLDivElement>(null);
 
   // Every answer starts empty: nothing in this dialog is chosen for the
   // person (request #3160 and the rework after it).
@@ -778,14 +848,21 @@ export function CreateAppDialog() {
   const [name, setName] = useState('');
   const [describe, setDescribe] = useState('');
   const describeLeftText = descriptionLeft(describe.length);
-  // #3624: whether the Homeroom bot builds this person's projects from a
-  // description (an admin's list; GET /api/auth/me says). False on the
-  // prerender and until the dialog opens, so the first render is the
-  // shell's: the description field exists only after a real open.
+  // #3624: whether the Homeroom bot builds this person's projects from what
+  // they say it should do (an admin's list; GET /api/auth/me says). Only the
+  // caption under that field reads it; the progress card's button follows
+  // the server's answer (`botChat`). False on the prerender and until the
+  // dialog opens, so the first render is the shell's.
   const [botBuild, setBotBuild] = useState(false);
+  // "What should it do?", required of a project made here.
   const [brief, setBrief] = useState('');
   const [suggesting, setSuggesting] = useState(false);
   const [suggestNote, setSuggestNote] = useState('');
+  // The short description is suggested from `brief` on arriving at its
+  // step, and again only when `brief` changed since the last suggestion and
+  // the person has not written the line themselves. A late answer to an
+  // older suggestion (or one that lands after a close) is dropped by `seq`.
+  const suggestion = useRef({ from: '', edited: false, seq: 0 });
   // The bot's DM, once a project it builds has been created.
   const [botChat, setBotChat] = useState<number | null>(null);
   const [approvers, setApprovers] = useState<Approvers | null>(null);
@@ -814,10 +891,14 @@ export function CreateAppDialog() {
   const [created, setCreated] = useState<{ slug: string; name: string } | null>(null);
   const progress = useStoreState(creationProgressStore);
 
-  const steps = stepsFor(audience);
+  const steps = stepsFor(audience, mode);
   const last = steps[steps.length - 1];
   const isLast = step === last;
   const importing = mode === 'import';
+  const checked = importing && importState === 'ok';
+  // An import whose repo already sets who approves: the approval step says
+  // so instead of asking.
+  const repoGov = checked ? repoRule(repo, audience) : null;
 
   /** Whether a step has its answer, which is what turns its button on. */
   function answered(which: Step): boolean {
@@ -825,16 +906,31 @@ export function CreateAppDialog() {
       case 'who': return audience != null;
       case 'invite': return people.length > 0;
       case 'kind': return kind != null;
-      case 'details': return name.trim().length > 0;
-      case 'approve': return approvers != null && (approvers !== 'invited' || approvals != null);
       case 'start': return mode != null && (mode !== 'import' || importState === 'ok') && (mode !== 'template' || template != null);
+      case 'details': return name.trim().length > 0 && (importing || brief.trim().length >= BRIEF_MIN);
+      case 'about': return describe.trim().length > 0;
+      case 'approve': return repoGov != null || (approvers != null && (approvers !== 'invited' || approvals != null));
       default: return false;
     }
   }
   const stepAnswered = answered(step);
-  const overrides = importing && importState === 'ok'
-    ? repoOverrides(repo, { name, description: describe, audience, approvers, approvals, approvalsN })
+  const overrides = checked
+    ? repoOverrides(repo, { name, description: '', audience, approvers, approvals, approvalsN })
     : [];
+  // What the repo decides, for app.css to dim and tag: each answer it
+  // replaces, and the approval rule it sets whether or not one was chosen.
+  const repoSets = [...overrides.map((o) => o.key), ...(repoGov && !overrides.some((o) => o.key === 'gov') ? ['gov'] : [])];
+
+  // "What should it do?" grows with its text. Measured only while its step
+  // is showing: a folded field measures 0, and pinning that would collapse
+  // it. Written imperatively, after mount, so the prerendered markup carries
+  // no `style`.
+  useIsomorphicLayoutEffect(() => {
+    const el = briefRef.current;
+    if (!el || step !== 'details') return;
+    el.style.height = 'auto';
+    if (el.scrollHeight > 0) el.style.height = `${el.scrollHeight}px`;
+  }, [brief, step]);
 
   const dialog = useDialog('create', {
     onOpen: () => {
@@ -850,7 +946,11 @@ export function CreateAppDialog() {
       if (nameRef.current) nameRef.current.value = initial.name;
       setName(initial.name);
       setBotBuild(!!(window.App?.user as { homeroomBotDm?: boolean } | undefined)?.homeroomBotDm);
-      setBrief('');
+      setBrief(initial.brief);
+      if (describeRef.current) describeRef.current.value = initial.description;
+      setDescribe(initial.description);
+      suggestion.current = { from: initial.brief.trim(), edited: false, seq: suggestion.current.seq + 1 };
+      setSuggesting(false);
       setSuggestNote('');
       setBotChat(null);
       void invalidateAppAllowance();
@@ -869,6 +969,8 @@ export function CreateAppDialog() {
       setName('');
       setDescribe('');
       setBrief('');
+      suggestion.current = { from: '', edited: false, seq: suggestion.current.seq + 1 };
+      setSuggesting(false);
       setSuggestNote('');
       setBotChat(null);
       setStep('who');
@@ -915,9 +1017,20 @@ export function CreateAppDialog() {
     };
   }, [creatingSlug]);
 
-  /** Bring the step that just unfolded into view, with the footer under it. */
-  function reveal() {
-    setTimeout(() => lastStepRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' }), 0);
+  /**
+   * Bring a step that just unfolded into view with the footer under it, so
+   * the button that moves on is on screen too. A step taller than the screen
+   * shows its top instead.
+   */
+  function reveal(which: Step) {
+    setTimeout(() => {
+      const form = formRef.current;
+      const section = form?.querySelector(`[data-create-step="${which}"]`);
+      const footer = form?.querySelector('#create-cancel')?.parentElement;
+      if (!section) return;
+      const fits = footer && section.getBoundingClientRect().height + footer.getBoundingClientRect().height + 32 <= window.innerHeight;
+      (fits ? footer : section).scrollIntoView({ block: fits ? 'end' : 'start', behavior: 'smooth' });
+    }, 0);
   }
 
   /** Pressing a collapsed row reopens its step, answers kept; on its own step, a row selects. */
@@ -934,18 +1047,31 @@ export function CreateAppDialog() {
   }
 
   function chooseStart(next: Mode) {
-    if (step !== 'start' || next === mode) return;
+    setError('');
+    if (step !== 'start') { setStep('start'); return; }
+    if (next === mode) return;
     applyMode(next);
     if (next === 'import') setTimeout(() => urlRef.current?.focus(), 0);
-    if (next === 'template') reveal();
+    if (next === 'template') reveal('start');
+  }
+
+  function chooseTemplate(next: TemplateId) {
+    setError('');
+    if (step !== 'start') { setStep('start'); return; }
+    setTemplate(next);
   }
 
   /** Move one step along, once this one is answered. */
   function next() {
     if (!stepAnswered) {
       if (step === 'details') {
-        setError('Give your project a name.');
-        nameRef.current?.focus();
+        if (!name.trim()) {
+          setError('Give your project a name.');
+          nameRef.current?.focus();
+        } else if (!importing) {
+          setError('Say what it should do, in a sentence or two.');
+          briefRef.current?.focus();
+        }
       }
       return;
     }
@@ -955,7 +1081,8 @@ export function CreateAppDialog() {
     setStep(to);
     if (to === 'invite') setTimeout(() => inviteesRef.current?.focus(), 0);
     if (to === 'details') setTimeout(() => nameRef.current?.focus(), 0);
-    if (to === 'approve' || to === 'start') reveal();
+    if (to === 'about') void suggestDescription(false);
+    if (to === 'start' || to === 'about' || to === 'approve') reveal(to);
   }
 
   /** One entry point keeps every mirror of the mode in sync. */
@@ -972,7 +1099,7 @@ export function CreateAppDialog() {
   //
   //   idle ─┬─ Check click ─→ checking ─┬─ ok    (the repo's dapp.json is
   //         │                           │        read, the notice shows,
-  //         │                           │        Import enables)
+  //         │                           │        Next enables)
   //         │                           └─ error (inline message, retry)
   //         └─ user edits URL after a successful check → back to idle
   //
@@ -1022,7 +1149,14 @@ export function CreateAppDialog() {
     setRepoUnread(manifest === null);
     setImportState('ok');
     setStatus({ tone: 'ok', text: `✓ usernode-bot has Write access to ${fullName}.` });
-    reveal();
+    // The name step comes next and opens on the repo's own name, unless one
+    // was already typed (a later edit is named in the notice).
+    const repoName = manifest && typeof manifest === 'object' && typeof manifest.name === 'string' ? manifest.name : '';
+    if (repoName && !(nameRef.current?.value || '').trim()) {
+      if (nameRef.current) nameRef.current.value = repoName;
+      setName(repoName);
+    }
+    reveal('start');
   }
 
   async function submit(event: FormEvent) {
@@ -1046,6 +1180,11 @@ export function CreateAppDialog() {
       setError('Choose a template.');
       return;
     }
+    const description = importing ? '' : (describeRef.current?.value || '');
+    if (!importing) {
+      if (brief.trim().length < BRIEF_MIN) return setError('Say what it should do, in a sentence or two.');
+      if (!description.trim()) return setError('Say what it is in one line.');
+    }
     const repoUrl = mode === 'import' ? normalizeRepositoryUrlInput() : '';
     // Guard: an import is gated behind a successful check. The server runs
     // the pre-flight again on POST anyway.
@@ -1056,8 +1195,8 @@ export function CreateAppDialog() {
 
     const body = createBody({
       name: trimmed,
-      brief: botBuild ? brief : '',
-      description: describeRef.current?.value || '',
+      brief,
+      description,
       mode,
       repoUrl,
       audience: audience ?? 'solo',
@@ -1110,42 +1249,49 @@ export function CreateAppDialog() {
   }
 
   /**
-   * #3624: a one-line "What is it?" suggested from the longer description,
-   * written into that field for the person to keep or change. `auto` is
-   * the suggestion offered on leaving the description: it never replaces a
-   * line already there.
+   * The one-line "What is it?", suggested from "What should it do?" and
+   * written into its field for the person to keep or change: the helper
+   * model's line (POST /api/apps/suggest-description), or, when that does
+   * not answer, the description's own first sentence. On arriving at the
+   * step (`force` false) it is offered only when the description changed
+   * since the last suggestion and the line is not the person's own;
+   * "Suggest again" (`force` true) always asks. Either way a line typed
+   * while the suggestion was on its way wins.
    */
-  async function suggestDescription(auto = false) {
+  async function suggestDescription(force: boolean) {
     const text = brief.trim();
-    if (text.length < BRIEF_MIN || suggesting) return;
-    if (auto && (describeRef.current?.value || '').trim()) return;
+    const mine = suggestion.current;
+    if (text.length < BRIEF_MIN) return;
+    if (!force && (mine.edited || mine.from === text)) return;
+    const seq = mine.seq + 1;
+    suggestion.current = { from: text, edited: false, seq };
     setSuggesting(true);
     setSuggestNote('');
+    let line = '';
     try {
       const res = await fetch('/api/apps/suggest-description', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: (nameRef.current?.value || '').trim(), brief: text }),
       });
-      const data = (await res.json().catch(() => ({}))) as { description?: string; error?: string };
-      if (!res.ok || !data.description) {
-        if (!auto) setSuggestNote(data.error || 'Couldn’t suggest one just now. Write your own, or try again.');
-        return;
-      }
-      const line = data.description.slice(0, DESCRIPTION_MAX);
-      if (describeRef.current) describeRef.current.value = line;
-      setDescribe(line);
-      setSuggestNote('Suggested from your description. Change it if you like.');
+      const data = (await res.json().catch(() => ({}))) as { description?: unknown };
+      if (res.ok && typeof data.description === 'string') line = data.description.trim();
     } catch {
-      if (!auto) setSuggestNote('Couldn’t suggest one just now. Write your own, or try again.');
-    } finally {
-      setSuggesting(false);
+      /* the first sentence below */
     }
+    if (suggestion.current.seq !== seq) return;
+    setSuggesting(false);
+    if (suggestion.current.edited) return;
+    line = (line || firstSentence(text, DESCRIPTION_MAX)).slice(0, DESCRIPTION_MAX);
+    if (describeRef.current) describeRef.current.value = line;
+    setDescribe(line);
+    setSuggestNote('Suggested from what it should do. Change it if you like.');
   }
 
   const stepIndex = Math.max(0, steps.indexOf(step)) + 1;
-  // A step's number follows the answers so far: a private community has one more.
-  const numberOf = (which: Step) => stepsFor(audience ?? 'open').indexOf(which) + 1;
+  // A step's number follows the answers so far: a private community has one
+  // more, and an import one fewer (it is not described here).
+  const numberOf = (which: Step) => stepsFor(audience ?? 'open', mode).indexOf(which) + 1;
   // The card and the root carry every answer, like data-mode always has:
   // the kit lifts the card out of the root while presented, so CSS keyed on
   // the root alone would stop matching. Each is empty until answered, so no
@@ -1159,8 +1305,9 @@ export function CreateAppDialog() {
     'data-approvers': approvers ?? '',
     'data-approvals': approvals ?? '',
     'data-final': isLast ? 'true' : 'false',
-    // Which earlier answers an import's dapp.json replaces (app.css dims them).
-    'data-repo-sets': overrides.map((o) => o.key).join(' '),
+    // What an import's dapp.json decides: the answers it replaces, and the
+    // approval rule it sets (app.css dims and tags them).
+    'data-repo-sets': repoSets.join(' '),
   };
 
   return (
@@ -1228,14 +1375,14 @@ export function CreateAppDialog() {
         ) : (
         <>
         <h2 id="create-title" className="text-[17px] font-semibold text-zinc-900 dark:text-zinc-100 mb-1">
-          {importing && step === 'start' ? 'Import a project' : 'New project'}
+          {importing ? 'Import a project' : 'New project'}
         </h2>
         {/*
             How far the flow has unfolded, and how far it goes for the
-            answers so far: four steps for Just me, five for a public
-            community, six for a private one. The index is also on the
-            attribute for the
-            declared checks.
+            answers so far: five steps for Just me, six for a public
+            community, seven for a private one, and one fewer for an
+            import. The index is also on the attribute for the declared
+            checks.
         */}
         <p
           id="create-step-indicator"
@@ -1327,11 +1474,175 @@ export function CreateAppDialog() {
               <span className={SOON_TAG}>Soon</span>
             </div>
           </div>
-          {/* The name, and one optional line about what it is. */}
+          {/*
+              How to begin, straight after what you are making. From
+              scratch; from a template, whose four starters open under its
+              row; or from a GitHub repo, whose URL and Check open under its
+              row. The check also reads the repo's dapp.json, and the notice
+              under it names each earlier answer the repo replaces. Once the
+              card moves on, the step collapses to the chosen row (and the
+              chosen starter, or the repo), whose "Change" reopens it.
+          */}
+          <div data-create-step="start" className="space-y-2">
+            <p className={STEP_HEADING}>{`${numberOf('start')}. How do you want to start?`}</p>
+            <button
+              type="button"
+              data-mode-pill="new"
+              aria-pressed={mode === 'new'}
+              className={CHOICE}
+              onClick={() => chooseStart('new')}
+            >
+              <span className="min-w-0 flex-1">
+                <span className={CHOICE_TITLE}>Start from scratch</span>
+                <span className={CHOICE_CAPTION}>An empty app. Describe what you want and build it with the group.</span>
+              </span>
+              <span className={CHOICE_CHANGE}>Change</span>
+            </button>
+            <button
+              type="button"
+              data-mode-pill="template"
+              aria-pressed={mode === 'template'}
+              className={CHOICE}
+              onClick={() => chooseStart('template')}
+            >
+              <span className="min-w-0 flex-1">
+                <span className={CHOICE_TITLE}>Start from a template</span>
+                <span className={CHOICE_CAPTION}>A small working app to make your own.</span>
+              </span>
+              <span className={CHOICE_CHANGE}>Change</span>
+            </button>
+            {/*
+                The starters (#3521), only once "Start from a template" is
+                chosen: rendered behind that state, like the progress view,
+                so nothing here is in the prerendered document. Nothing is
+                picked on arrival; Next stays dimmed until one is.
+            */}
+            {mode === 'template' ? (
+              <div id="create-template-block" role="group" aria-label="Templates" className="space-y-2 pl-3">
+                {TEMPLATES.map((choice) => (
+                  <button
+                    key={choice.key}
+                    type="button"
+                    data-template-pill={choice.key}
+                    aria-pressed={template === choice.key}
+                    className={TEMPLATE_CHOICE}
+                    onClick={() => chooseTemplate(choice.key)}
+                  >
+                    <span className="min-w-0 flex-1">
+                      <span className={CHOICE_TITLE}>{choice.title}</span>
+                      <span className={CHOICE_CAPTION}>{choice.caption}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              data-mode-pill="import"
+              aria-pressed={mode === 'import'}
+              className={CHOICE}
+              onClick={() => chooseStart('import')}
+            >
+              <span className="min-w-0 flex-1">
+                <span className={CHOICE_TITLE}>Import a GitHub repo</span>
+                <span className={CHOICE_CAPTION}>Bring an app that already exists. You will invite the bot to it first.</span>
+              </span>
+              <span className={CHOICE_CHANGE}>Change</span>
+            </button>
+            <div id="create-import-block" className="create-import-block">
+              <div className={CARD}>
+                <div className={ROW}>
+                  <label htmlFor="import-url" className={LABEL}>
+                    GitHub repo URL
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <Input
+                      id="import-url"
+                      ref={urlRef}
+                      name="repoUrl"
+                      type="text"
+                      inputMode="url"
+                      autoComplete="off"
+                      spellCheck="false"
+                      width="flex"
+                      {...FIELD}
+                      className="font-mono text-[15px]"
+                      placeholder="github.com/owner/repo"
+                      onBlur={() => {
+                        normalizeRepositoryUrlInput();
+                      }}
+                      onInput={() => {
+                        // Any edit invalidates the previous check; the user must
+                        // click again. Without this they could verify repo A, edit
+                        // the URL to point at repo B, then submit — the route's own
+                        // pre-flight catches it, but the UI shouldn't claim
+                        // "verified" for a URL that hasn't been verified.
+                        setImportState('idle');
+                        setStatus(IDLE_STATUS);
+                        setRepo(null);
+                      }}
+                    />
+                    <Button
+                      type="button"
+                      id="import-check"
+                      variant="pillNeutral"
+                      size="sm"
+                      ink="neutral"
+                      layout="shrink"
+                      disabledStyle="block"
+                      // The pill sits INSIDE a white card, so its neutral fill
+                      // has to be one step off the card in both themes.
+                      className="whitespace-nowrap dark:bg-zinc-700 dark:hover:bg-zinc-600"
+                      disabled={importState === 'checking'}
+                      onClick={check}
+                    >
+                      {importState === 'ok' ? 'Re-check' : 'Check'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+              {/*
+                  ONE text node on each side of the <code>. `Invite{' '}` is two
+                  adjacent text children, and renderToStaticMarkup emits no
+                  separator comment between them, so the browser sees one node
+                  where hydration expects two and React reports #418 — a
+                  console error, which fails proposal checks.
+              */}
+              <p className={CAPTION + ' create-import-hint mt-1.5'}>
+                {'Invite '}
+                <code className="font-mono text-xs">
+                  usernode-bot
+                </code>
+                {' as a collaborator (Write access on an organization repo).'}
+              </p>
+              {/*
+                  Inline status row: spinner while checking, green check on
+                  ok, red error text on failure. Hidden in idle.
+              */}
+              <div id="import-status" className={statusClass(status)}>
+                {status.spinner ? <span className="import-spinner"></span> : null}
+                {status.text}
+              </div>
+              <div className="mt-2">
+                {importState === 'ok' ? (
+                  <RepoNotice overrides={overrides} unread={repoUnread} />
+                ) : (
+                  <p className={CAPTION}>Check the repo to see what its dapp.json already sets.</p>
+                )}
+              </div>
+            </div>
+          </div>
+          {/*
+              The name, and for a project made here what it should do:
+              required, and filed as the project's first request once it
+              runs (for somebody the Homeroom bot builds for, the bot builds
+              it). An import is named here and nothing more: its repo says
+              what it is, and app.css folds the second row away for it.
+          */}
           <div data-create-step="details" className="space-y-4">
             <p className={STEP_HEADING}>
-              {`${numberOf('details')}. What to call it`}
-              <span className="create-repo-sets-tag" data-repo-tag="details">{' · the repo sets some of this'}</span>
+              {`${numberOf('details')}. ${importing ? 'What to call it' : 'What to call it and what it should do'}`}
+              <span className="create-repo-sets-tag" data-repo-tag="details">{' · the repo sets this'}</span>
             </p>
             <div id="create-name-block" className={CARD}>
               <div className={ROW + ' create-name-row'}>
@@ -1349,38 +1660,45 @@ export function CreateAppDialog() {
                   onInput={(e) => { setName(e.currentTarget.value); setError(''); }}
                 />
               </div>
-              {/* #3624: what it should do, for the Homeroom bot to build the
-                  first version from. Only for somebody it builds for, and
-                  only after a real open (botBuild starts false), so the
-                  prerendered card is the one the shell shipped. */}
-              {botBuild ? (
-                <div className={ROW + ' create-brief-row shadow-[inset_0_1px_0_var(--app-sheet-line)]'} data-create-brief="">
-                  <label htmlFor="app-brief" className={LABEL}>
-                    What should it do? Homeroom bot builds it from this
-                  </label>
-                  <Textarea
-                    id="app-brief"
-                    name="brief"
-                    rows={4}
-                    maxLength={BRIEF_MAX}
-                    {...FIELD}
-                    className="resize-none"
-                    placeholder="A shared shopping list for our house. Anyone can add items, tick them off, and see who added what."
-                    value={brief}
-                    onChange={(e) => { setBrief(e.currentTarget.value); setSuggestNote(''); }}
-                    onBlur={() => { void suggestDescription(true); }}
-                  />
-                </div>
-              ) : null}
-              {/* What it is: optional. Written into the new repository's
-                  dapp.json, where people read it on the join screen, in
-                  Discover and on its page. #3572: at most DESCRIPTION_MAX
-                  characters, counted down on the label's line for the last
-                  few. The count is rendered only once it says something, so
-                  the prerendered row is the one the shell shipped. */}
-              <div className={ROW + ' create-describe-row relative shadow-[inset_0_1px_0_var(--app-sheet-line)]'}>
+              {/* What it should do. It grows with its text (the layout
+                  effect above), so its first line never sits under the
+                  label, and one caption under it says who builds from it. */}
+              <div className={ROW + ' create-brief-row shadow-[inset_0_1px_0_var(--app-sheet-line)]'} data-create-brief="">
+                <label htmlFor="app-brief" className={LABEL}>
+                  What should it do?
+                </label>
+                <Textarea
+                  id="app-brief"
+                  ref={briefRef}
+                  name="brief"
+                  rows={3}
+                  maxLength={BRIEF_MAX}
+                  {...FIELD}
+                  className={BRIEF_FIELD}
+                  placeholder="A shared shopping list for our house. Anyone can add items and tick them off."
+                  value={brief}
+                  onChange={(e) => { setBrief(e.currentTarget.value); setError(''); }}
+                />
+                <p className="create-brief-caption pb-1 text-xs text-zinc-500 dark:text-zinc-400">{briefCaption(botBuild)}</p>
+              </div>
+            </div>
+          </div>
+          {/*
+              What it is, in one line: required for a project made here, and
+              suggested from what it should do on arrival (suggestDescription).
+              Written into the new repository's dapp.json, where people read
+              it on the join screen, in Discover and on its page. #3572: at
+              most DESCRIPTION_MAX characters, counted down on the label's
+              line for the last few. The count is rendered only once it says
+              something, so the prerendered row is the one the shell shipped.
+              An import skips the step: its repo describes it.
+          */}
+          <div data-create-step="about" className="space-y-2">
+            <p className={STEP_HEADING}>{`${numberOf('about')}. Short description`}</p>
+            <div className={CARD}>
+              <div className={ROW + ' create-describe-row relative'}>
                 <label htmlFor="app-description" className={LABEL}>
-                  What is it? (optional)
+                  What is it?
                 </label>
                 {describeLeftText ? (
                   <span
@@ -1402,39 +1720,49 @@ export function CreateAppDialog() {
                   maxLength={DESCRIPTION_MAX}
                   aria-describedby={describeLeftText ? 'app-description-left' : undefined}
                   {...FIELD}
-                  placeholder="Shared shopping list"
-                  onInput={(e) => { setDescribe(e.currentTarget.value); setSuggestNote(''); }}
+                  placeholder={suggesting ? 'Suggesting…' : 'Shared shopping list'}
+                  onInput={(e) => {
+                    const value = e.currentTarget.value;
+                    suggestion.current.edited = value.trim() !== '';
+                    setDescribe(value);
+                    setSuggestNote('');
+                    setError('');
+                  }}
                 />
-                {botBuild ? (
-                  <div className="flex items-center justify-between gap-2 pb-1">
-                    <span className={CAPTION + ' px-0'} role="status">{suggesting ? 'Suggesting…' : suggestNote}</span>
-                    <button
-                      type="button"
-                      className={CHOICE_CHANGE + ' text-violet-700 dark:text-violet-300'}
-                      disabled={suggesting || brief.trim().length < BRIEF_MIN}
-                      onClick={() => { void suggestDescription(false); }}
-                    >
-                      Suggest from my description
-                    </button>
-                  </div>
-                ) : null}
               </div>
+            </div>
+            <div className="flex items-start justify-between gap-3 px-1">
+              <p className="create-describe-note text-xs text-zinc-500 dark:text-zinc-400" role="status">
+                {suggesting ? 'Suggesting…' : (suggestNote || 'One line people see on its page and in Discover.')}
+              </p>
+              <button
+                type="button"
+                className="create-suggest-again shrink-0 text-xs font-medium text-violet-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-violet-300"
+                disabled={suggesting}
+                onClick={() => { void suggestDescription(true); }}
+              >
+                Suggest again
+              </button>
             </div>
           </div>
           {/*
-              Who approves changes — a private or a public community. Members
-              vote is the platform's default rule; People I pick starts with
-              just the creator as approver, and under it "at least N yes
-              votes" is the follow-up. Written into the new repository's
-              dapp.json, so it
-              can be voted on later like any other rule there. Nothing is
-              picked on arrival, and neither is the follow-up once it shows.
+              LAST, for a private or a public community: who approves
+              changes. Members vote is the platform's default rule; People I
+              pick starts with just the creator as approver, and under it "at
+              least N yes votes" is the follow-up. Written into the new
+              repository's dapp.json, so it can be voted on later like any
+              other rule there. Nothing is picked on arrival, and neither is
+              the follow-up once it shows. An import whose repo already sets
+              the rule is told so here, and is not asked.
           */}
           <div data-create-step="approve" className="space-y-2">
             <p className={STEP_HEADING}>
               {`${numberOf('approve')}. Who approves changes?`}
               <span className="create-repo-sets-tag" data-repo-tag="gov">{' · the repo sets this'}</span>
             </p>
+            {repoGov ? (
+              <p className={CAPTION} data-repo-rule="">{`This repo’s dapp.json already sets it: ${repoGov}.`}</p>
+            ) : null}
             <div id="create-approve-block" className="space-y-2">
               <button
                 type="button"
@@ -1505,159 +1833,6 @@ export function CreateAppDialog() {
                     />
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-          {/*
-              LAST: how to begin. From scratch; from a template, whose four
-              starters open under its row; or from a GitHub repo, whose URL
-              and Check open under its row. The check also reads the repo's
-              dapp.json, and the notice under it names each earlier answer
-              the repo replaces.
-          */}
-          <div data-create-step="start" className="space-y-2" ref={lastStepRef}>
-            <p className={STEP_HEADING}>{`${numberOf('start')}. How do you want to start?`}</p>
-            <button
-              type="button"
-              data-mode-pill="new"
-              aria-pressed={mode === 'new'}
-              className={CHOICE}
-              onClick={() => chooseStart('new')}
-            >
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Start from scratch</span>
-                <span className={CHOICE_CAPTION}>An empty app. Describe what you want and build it with the group.</span>
-              </span>
-            </button>
-            <button
-              type="button"
-              data-mode-pill="template"
-              aria-pressed={mode === 'template'}
-              className={CHOICE}
-              onClick={() => chooseStart('template')}
-            >
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Start from a template</span>
-                <span className={CHOICE_CAPTION}>A small working app to make your own.</span>
-              </span>
-            </button>
-            {/*
-                The starters (#3521), only once "Start from a template" is
-                chosen: rendered behind that state, like the progress view,
-                so nothing here is in the prerendered document. Nothing is
-                picked on arrival; Create stays dimmed until one is.
-            */}
-            {mode === 'template' ? (
-              <div id="create-template-block" role="group" aria-label="Templates" className="space-y-2 pl-3">
-                {TEMPLATES.map((choice) => (
-                  <button
-                    key={choice.key}
-                    type="button"
-                    data-template-pill={choice.key}
-                    aria-pressed={template === choice.key}
-                    className={TEMPLATE_CHOICE}
-                    onClick={() => { setTemplate(choice.key); setError(''); }}
-                  >
-                    <span className="min-w-0 flex-1">
-                      <span className={CHOICE_TITLE}>{choice.title}</span>
-                      <span className={CHOICE_CAPTION}>{choice.caption}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            <button
-              type="button"
-              data-mode-pill="import"
-              aria-pressed={mode === 'import'}
-              className={CHOICE}
-              onClick={() => chooseStart('import')}
-            >
-              <span className="min-w-0 flex-1">
-                <span className={CHOICE_TITLE}>Import a GitHub repo</span>
-                <span className={CHOICE_CAPTION}>Bring an app that already exists. You will invite the bot to it first.</span>
-              </span>
-            </button>
-            <div id="create-import-block" className="create-import-block">
-              <div className={CARD}>
-                <div className={ROW}>
-                  <label htmlFor="import-url" className={LABEL}>
-                    GitHub repo URL
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      id="import-url"
-                      ref={urlRef}
-                      name="repoUrl"
-                      type="text"
-                      inputMode="url"
-                      autoComplete="off"
-                      spellCheck="false"
-                      width="flex"
-                      {...FIELD}
-                      className="font-mono text-[15px]"
-                      placeholder="github.com/owner/repo"
-                      onBlur={() => {
-                        normalizeRepositoryUrlInput();
-                      }}
-                      onInput={() => {
-                        // Any edit invalidates the previous check; the user must
-                        // click again. Without this they could verify repo A, edit
-                        // the URL to point at repo B, then submit — the route's own
-                        // pre-flight catches it, but the UI shouldn't claim
-                        // "verified" for a URL that hasn't been verified.
-                        setImportState('idle');
-                        setStatus(IDLE_STATUS);
-                        setRepo(null);
-                      }}
-                    />
-                    <Button
-                      type="button"
-                      id="import-check"
-                      variant="pillNeutral"
-                      size="sm"
-                      ink="neutral"
-                      layout="shrink"
-                      disabledStyle="block"
-                      // The pill sits INSIDE a white card, so its neutral fill
-                      // has to be one step off the card in both themes.
-                      className="whitespace-nowrap dark:bg-zinc-700 dark:hover:bg-zinc-600"
-                      disabled={importState === 'checking'}
-                      onClick={check}
-                    >
-                      {importState === 'ok' ? 'Re-check' : 'Check'}
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              {/*
-                  ONE text node on each side of the <code>. `Invite{' '}` is two
-                  adjacent text children, and renderToStaticMarkup emits no
-                  separator comment between them, so the browser sees one node
-                  where hydration expects two and React reports #418 — a
-                  console error, which fails proposal checks.
-              */}
-              <p className={CAPTION + ' mt-1.5'}>
-                {'Invite '}
-                <code className="font-mono text-xs">
-                  usernode-bot
-                </code>
-                {' as a collaborator (Write access on an organization repo).'}
-              </p>
-              {/*
-                  Inline status row: spinner while checking, green check on
-                  ok, red error text on failure. Hidden in idle.
-              */}
-              <div id="import-status" className={statusClass(status)}>
-                {status.spinner ? <span className="import-spinner"></span> : null}
-                {status.text}
-              </div>
-              <div className="mt-2">
-                {importState === 'ok' ? (
-                  <RepoNotice overrides={overrides} unread={repoUnread} />
-                ) : (
-                  <p className={CAPTION}>Check the repo to see what its dapp.json already sets.</p>
-                )}
               </div>
             </div>
           </div>

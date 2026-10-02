@@ -927,15 +927,16 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  // #3624: the create dialog's suggested one-line "What is it?", from the
-  // longer description somebody the Homeroom bot builds for has written.
-  // Only for them: nobody else is shown the longer field. A helper-model
-  // call billed like a session title, and the description's own first
-  // sentence when the model is unavailable.
+  // The create dialog's suggested one-line "What is it?", from what the
+  // person said the project should do (#3624, asked of everyone making a
+  // project since). Any signed-in person who can reach the create dialog;
+  // the platform-access gate in front of /api/ decides who that is. A
+  // helper-model call billed like a session title, and the description's own
+  // first sentence when the model is unavailable.
   router.post('/api/apps/suggest-description', feedbackTitleLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
     try {
       const homeroomBotDm = require('../services/homeroom-bot-dm');
-      if (!(await homeroomBotDm.isEnabledFor(pool, req.user))) return res.status(404).json({ error: 'Not found' });
       const brief = typeof req.body?.brief === 'string' ? req.body.brief : '';
       const name = typeof req.body?.name === 'string' ? req.body.name.slice(0, 120) : '';
       const out = await homeroomBotDm.suggestShortDescription({ name, brief, max: createOptions.DESCRIPTION_MAX });
@@ -1189,10 +1190,12 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // watchdog will unstick the row after CREATION_TIMEOUT_MS.
       scheduleCreationWatchdog(pool, appRow.id);
 
-      // #3624: a longer description from somebody the Homeroom bot builds
-      // for: it files it as the project's first version once the project
-      // runs, and says so in their DM, which the dialog then offers to open.
-      // Never a reason the create fails.
+      // What the project should do, from the create dialog: filed as its
+      // first request, under its creator's name, once the project runs. For
+      // somebody the Homeroom bot builds for (#3624), the bot builds it and
+      // says so in their DM, which the dialog then offers to open; for
+      // anybody else it is left to the group. Optional here (a connector
+      // or an older client sends none), and never a reason the create fails.
       let homeroomBot = null;
       if (!repoUrlNormalized && typeof req.body.brief === 'string' && req.body.brief.trim()) {
         try {

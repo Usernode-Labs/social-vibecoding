@@ -12512,26 +12512,29 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 /* The repo URL and its check belong to "Import a GitHub repo" alone. */
 #create-card:not([data-mode="import"]) .create-import-block { display: none; }
 
-/* THE STEPS UNFOLD IN ONE CARD (#1911; six of them since the rework).
+/* THE STEPS UNFOLD IN ONE CARD (#1911; seven of them since the rework).
    Every step's section ships on every step — the declared checks select on
    the same ids whichever steps are showing — and #create-card[data-step] is
    the FURTHEST step reached: everything up to it is on screen, the rest is
-   folded. Keyed on the CARD, like data-mode.
+   folded. Keyed on the CARD, like data-mode. The order is who, invite,
+   kind, start, details, about, approve.
 
-   The invite step belongs to a private community, and the approval step to
-   a private or a public community: Just me has nobody else to approve
-   anything. The footer
-   follows data-final, which the component sets from the same rule: Cancel
-   always; Next until the last step, then Create / Import (QA 2026-09-24 Q6:
-   never two accent buttons at once). Either stays dimmed until its step is
-   answered. */
-#create-card[data-step="who"]     :is([data-create-step="invite"], [data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"]),
-#create-card[data-step="invite"]  :is([data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"]),
-#create-card[data-step="kind"]    :is([data-create-step="details"], [data-create-step="approve"], [data-create-step="start"]),
-#create-card[data-step="details"] :is([data-create-step="approve"], [data-create-step="start"]),
-#create-card[data-step="approve"] [data-create-step="start"],
+   The invite step belongs to a private community, the one-line "about" step
+   to a project made here (an import's repo describes it), and the approval
+   step to a private or a public community: Just me has nobody else to
+   approve anything. The footer follows data-final, which the component sets
+   from the same rule: Cancel always; Next until the last step, then Create
+   / Import (QA 2026-09-24 Q6: never two accent buttons at once). Either
+   stays dimmed until its step is answered. */
+#create-card[data-step="who"]     :is([data-create-step="invite"], [data-create-step="kind"], [data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="invite"]  :is([data-create-step="kind"], [data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="kind"]    :is([data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="start"]   :is([data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="details"] :is([data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="about"]   [data-create-step="approve"],
 #create-card:not([data-audience="invited"]) [data-create-step="invite"],
-#create-card:is([data-audience="solo"], [data-audience=""]) [data-create-step="approve"] {
+#create-card:is([data-audience="solo"], [data-audience=""]) [data-create-step="approve"],
+#create-card[data-mode="import"] :is([data-create-step="about"], .create-brief-row) {
   display: none;
 }
 #create-card[data-final="false"] #create-submit,
@@ -12542,25 +12545,32 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 /* A question step COLLAPSES to its chosen row once the card moves past it:
    the other rows and the captions fold away, the chevron gives way to
    "Change", and pressing the row reopens the step, its answer still
-   picked. The invite rows, the name and the approval answers stay as they
-   are, still editable. */
+   picked. How to start collapses the same way, keeping the starter picked
+   under a template and the repo's check under an import. The invite rows,
+   the name, the description and the approval answers stay as they are,
+   still editable. */
 #create-card[data-step="who"] [data-create-step="who"] .create-choice-change,
-#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"]) [data-create-step="kind"] .create-choice-change {
+#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"]) [data-create-step="kind"] .create-choice-change,
+#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"], [data-step="start"]) [data-create-step="start"] .create-choice-change {
   display: none;
 }
 #create-card:not([data-step="who"]) [data-create-step="who"] :is(.create-choice-chevron, .create-choice-caption),
 #create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill:not([data-audience-pill="solo"]),
 #create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill:not([data-audience-pill="invited"]),
 #create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill:not([data-audience-pill="open"]),
-#create-card:is([data-step="details"], [data-step="approve"], [data-step="start"]) [data-create-step="kind"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon) {
+#create-card:is([data-step="start"], [data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="kind"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon),
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="start"] :is(.create-choice-caption, .create-template-pill:not([aria-pressed="true"]), .create-import-hint),
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="new"]      .create-mode-pill:not([data-mode-pill="new"]),
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="template"] .create-mode-pill:not([data-mode-pill="template"]),
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="import"]   .create-mode-pill:not([data-mode-pill="import"]) {
   display: none;
 }
 #create-card:not([data-step="who"]) .create-who-pill,
-#create-card:is([data-step="details"], [data-step="approve"], [data-step="start"]) .create-kind-row {
+#create-card:is([data-step="start"], [data-step="details"], [data-step="about"], [data-step="approve"]) .create-kind-row,
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"]) :is(.create-mode-pill, .create-template-pill) {
   padding-top: 0.5rem;
   padding-bottom: 0.5rem;
 }
-
 /* The invite rows: one card, a hairline between rows (the GroupedList
    recipe's inset sheet line). */
 #create-card .create-invite-list > * + * { box-shadow: inset 0 1px 0 var(--app-sheet-line); }
@@ -12568,17 +12578,19 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 
 /* AN IMPORT'S DAPP.JSON WINS. Once the check has read it, each earlier
    answer it replaces is dimmed and its heading says so; the notice under
-   the check names them (data-repo-sets lists them: name, desc, vis, gov). */
+   the check names them (data-repo-sets lists them: name, vis, gov). The
+   name step comes after the check and opens on the repo's own name, so it
+   is never dimmed: a name typed over it is only tagged. The approval step
+   comes after it too: a repo that sets the rule dims the choices and says
+   so, in place of asking. */
 #create-card .create-repo-sets-tag { display: none; font-weight: 500; color: var(--text-muted); }
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="vis"] [data-repo-tag="vis"],
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="gov"] [data-repo-tag="gov"],
-#create-card[data-step="start"][data-mode="import"]:is([data-repo-sets~="name"], [data-repo-sets~="desc"]) [data-repo-tag="details"] {
+#create-card[data-mode="import"][data-repo-sets~="vis"]  [data-repo-tag="vis"],
+#create-card[data-mode="import"][data-repo-sets~="gov"]  [data-repo-tag="gov"],
+#create-card[data-mode="import"][data-repo-sets~="name"] [data-repo-tag="details"] {
   display: inline;
 }
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="name"] .create-name-row,
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="desc"] .create-describe-row,
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="gov"]  #create-approve-block,
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="vis"]  [data-create-step="who"] .create-who-pill {
+#create-card[data-mode="import"][data-repo-sets~="gov"]  #create-approve-block,
+#create-card[data-mode="import"][data-repo-sets~="vis"]  [data-create-step="who"] .create-who-pill {
   opacity: 0.45;
   pointer-events: none;
 }

@@ -384,6 +384,65 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.deepEqual((await homeroomBot.readSettings(pool)).firstVersionApps, [], 'off the list, back to shadow');
   });
 
+  await t.test('anybody else\'s description is filed as the first request too, and the bot is left out of it', async () => {
+    // Sam is not on the DM list: the same record and filing, and nothing of
+    // the bot's (no DM, no requester row, not live, no wake, no failure DM).
+    await setting('homeroom_bot_dm_users', JSON.stringify([ada.username]));
+    const { rows: [project] } = await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by) VALUES ('Book club', 'book-club', 'creating', $1) RETURNING *`,
+      [sam.id],
+    );
+    const before = events.length;
+    const started = await dm.startFirstVersion(pool, {}, {
+      app: project, user: sam, brief: 'Pick a book each month, read it together, and talk about it here.',
+    });
+    assert.equal(started, null, 'no DM to open');
+    assert.equal(events.length, before, 'nothing pushed to anybody');
+    const { rows: [recorded] } = await pool.query(
+      'SELECT user_id, status, bot_builds FROM homeroom_bot_first_versions WHERE app_id = $1', [project.id],
+    );
+    assert.deepEqual(recorded, { user_id: sam.id, status: 'waiting', bot_builds: false });
+    assert.ok(!(await homeroomBot.readSettings(pool)).firstVersionApps.includes('book-club'), 'not on the bot\'s live list');
+
+    const woken = [];
+    const realNote = homeroomBot.noteIssueActivity;
+    homeroomBot.noteIssueActivity = (args) => { woken.push(args); };
+    const created = [];
+    const github = {
+      isEnabled: () => true,
+      safeMention: (x) => x,
+      async createIssue(owner, repo, body) { created.push({ owner, repo, ...body }); return { number: 1 }; },
+      noteIssueCreated() {},
+    };
+    try {
+      await pool.query(
+        `UPDATE apps SET status = 'running', repo_url = 'https://github.com/usernode-bot/book-club' WHERE id = $1`,
+        [project.id],
+      );
+      issueUpdates.length = 0;
+      const filed = await dm.sweepFirstVersions(pool, {}, { github });
+      assert.equal(filed, 1, 'the sweep files it, the bot\'s or not');
+    } finally {
+      homeroomBot.noteIssueActivity = realNote;
+    }
+    assert.equal(created.length, 1);
+    assert.equal(created[0].title, 'First version of Book club');
+    assert.match(created[0].body, /^\*\*Source:\*\* Homeroom user \(sam_\d+\)/);
+    assert.match(created[0].body, /read it together/);
+    assert.match(created[0].body, /sam_\d+ described this when they created the project\.$/);
+    assert.doesNotMatch(created[0].body, /Homeroom bot/);
+    const { rows: [issue] } = await pool.query('SELECT created_by FROM issues WHERE app_id = $1', [project.id]);
+    assert.equal(issue.created_by, sam.id, 'under its creator');
+    assert.equal(issueUpdates.length, 1, 'the board hears of it');
+    assert.equal(await dm.requesterOf(pool, project.id, 1), null, 'no requester row: the bot\'s news has nowhere to go');
+    assert.deepEqual(woken, [], 'the bot is not woken for it');
+    const { rows: [after] } = await pool.query(
+      'SELECT status, issue_number FROM homeroom_bot_first_versions WHERE app_id = $1', [project.id],
+    );
+    assert.deepEqual(after, { status: 'filed', issue_number: 1 });
+    await setting('homeroom_bot_dm_users', '[]');
+  });
+
   await t.test('a staging preview has a bot DM with a question open, at its own address, once', async () => {
     const staging = require('../src/services/staging-messages');
     const env = process.env.USERNODE_ENV;
