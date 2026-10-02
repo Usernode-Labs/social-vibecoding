@@ -3,13 +3,12 @@ import { SectionHeading, StatusLine } from '@/components/ui/field';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 
-import { AiBudgetRow } from '../../header/ai-budget';
-
 /**
  * Bring-your-own Anthropic key. Read and written by Settings._saveKey() /
- * _removeKey() / _refreshSpend() through #settings-api-key, #settings-save,
- * #settings-remove, #settings-key-display, #settings-spend and
- * #settings-status — every one of them bound by id, once, at init.
+ * _removeKey() through #settings-api-key, #settings-save, #settings-remove,
+ * #settings-key-display and #settings-status — every one of them bound by id,
+ * once, at init. The spend card _refreshSpend() fills (#settings-spend) and
+ * the allowance row moved to ./usage.tsx, the part that leads this page.
  */
 export function ApiKeySection() {
   return (
@@ -17,71 +16,16 @@ export function ApiKeySection() {
       <SectionHeading title="Anthropic API key">
         Bring your own Anthropic API key to keep working past the weekly limit. Your platform weekly allowance is used first; once it runs out, your key takes over automatically, even in the middle of a running turn, and usage bills directly to your Anthropic account.
       </SectionHeading>
-      {/*
-          The viewer's own weekly AI allowance (#555, #2571), used vs. remaining.
-
-          THE UI OVERHAUL took this out of the hamburger drawer, where it was a
-          status row nobody acts on from a menu. It landed HERE rather than
-          being deleted with the row, because this section is already the page
-          about "what happens when your allowance runs out" — the sentence
-          above it says so — and the figure is the thing that sentence is
-          about.
-
-          The row is `features/header/ai-budget.tsx` now: it renders from a
-          store `features/header/ai-credit.js` publishes into, instead of
-          being an empty `#ai-budget-slot` that module `innerHTML`ed. It still
-          ships EMPTY and VISIBLE — the me-scoped fetch that fills it is what
-          confirms there is an audience, and the row hides itself only once
-          that fetch has answered with nothing to show.
-      */}
-      {/* The allowance and the saved key, as the rows of one card. */}
+      {/* The saved key, as the one row of its own card. It shared a card with
+          the allowance until the settings restructure lifted the allowance
+          into the Usage part at the head of this page. */}
       <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden mb-3">
-        <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800">
-          <AiBudgetRow />
-        </div>
         <div
           id="settings-key-display"
           className="hidden px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex items-center gap-3 text-[17px]"
         >
           <span className="text-zinc-500 dark:text-zinc-400">Key</span>
           <span className="ml-auto font-mono text-[15px] text-zinc-700 dark:text-zinc-300">sk-ant-…<span id="settings-key-last4"></span></span>
-        </div>
-      </div>
-      {/*
-          #119 — spend breakdown for BYOK users. Filled by
-          Settings._refreshSpend() on modal open; hidden while loading,
-          on fetch failure, or when no key is saved. Rows are ordered
-          limit-first to match the billing order (#212). #2571 moved both
-          figures to the allowance's own window: one card cannot state a
-          week's platform spend beside a day's own-key spend.
-      */}
-      <div id="settings-spend" className="hidden mb-3">
-        <div className="px-1 pb-1 text-[15px] text-zinc-500 dark:text-zinc-500">
-          This week's spend
-        </div>
-        <div className="rounded-2xl bg-white dark:bg-zinc-900 overflow-hidden">
-          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex justify-between gap-3 text-[17px] text-zinc-900 dark:text-zinc-100">
-            <span>
-              Platform weekly limit
-            </span>
-            <span id="settings-spend-platform" className="tabular-nums text-zinc-500 dark:text-zinc-400">
-            </span>
-          </div>
-          <div className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 flex justify-between gap-3 text-[17px] text-zinc-900 dark:text-zinc-100">
-            <span>
-              Your key
-            </span>
-            <span id="settings-spend-byok" className="tabular-nums text-zinc-500 dark:text-zinc-400">
-            </span>
-          </div>
-          {/*
-              #3230: the prerendered words are the server's UTC boundary;
-              Settings._refreshSpend() rewrites them in the viewer's own
-              clock, with the UTC instant on `title`, as it reveals the card.
-          */}
-          <div id="settings-spend-reset" className="px-4 py-3 [&:not(:last-child)]:border-b [&:not(:last-child)]:border-zinc-200 dark:[&:not(:last-child)]:border-zinc-800 text-[15px] text-zinc-500 dark:text-zinc-500">
-            Resets Monday 00:00 UTC.
-          </div>
         </div>
       </div>
       <Label className="sr-only" htmlFor="settings-api-key">

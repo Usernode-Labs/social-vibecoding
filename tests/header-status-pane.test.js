@@ -58,7 +58,7 @@ const header = html.slice(0, html.indexOf('</header>'));
 //                                  kudos figure lives on the Leaderboard,
 //                                  which the home screen's Challenges area
 //                                  links to.
-//   #ai-budget-slot              → Settings → Anthropic API key
+//   #ai-budget-slot              → Settings → AI usage & models → Usage
 //
 // The load-bearing property is unchanged and is why they are pinned at all:
 // each kept its id while changing parent, because renderers across app.js /
@@ -90,11 +90,12 @@ test('each surviving slot exists exactly once, in its new region', () => {
   assert.ok(!/renderForkBadge\(\) \{/.test(appViewJs),
     'and nothing writes into it any more');
 
-  // The AI-credit slot is a settings pane's now.
-  const apiKey = html.indexOf('data-settings-section="api-key"');
-  assert.ok(apiKey > -1, 'the api-key settings pane is missing');
-  assert.ok(html.indexOf('id="ai-budget-slot"') > apiKey,
-    '#ai-budget-slot lives inside the Anthropic API key section');
+  // The AI-credit slot is a settings part's now: Usage, which leads the page
+  // the Anthropic API key part sits on.
+  const usage = html.indexOf('data-settings-section="usage"');
+  assert.ok(usage > -1, 'the usage settings part is missing');
+  assert.ok(html.indexOf('id="ai-budget-slot"') > usage,
+    '#ai-budget-slot lives inside the Usage part');
 
   // And the drawer's status pane is gone outright, meters included.
   for (const id of ['drawer-status-pane', 'drawer-row-kudos', 'kudos-budget-slot',
@@ -355,20 +356,22 @@ test('reference rows are plain divs — the pills carry their own anchors', () =
 //
 // THE UI OVERHAUL moved it out of the drawer's status pane and into Settings →
 // Anthropic API key: it is a figure you read while deciding whether to add a
-// key, not something you act on from a navigation menu. Same module, same slot
-// id — see tests/ai-credit-drawer.test.js for the rest of the wiring.
+// key, not something you act on from a navigation menu. The settings
+// restructure gave it a part of its own, Usage, at the head of the page that
+// key sits on. Same module, same slot id — see tests/ai-credit-drawer.test.js
+// for the rest of the wiring.
 //
 // A sibling admin-only "Anthropic credits" row shipped in the same pane
 // and was removed again (it could only ever read "Not set up"); the
 // balance lives solely in the console's Spend limits section now.
 
-test('the AI-credit row lives in the Anthropic API key section', () => {
-  const paneStart = html.indexOf('data-settings-section="api-key"');
+test('the AI-credit row lives in the Usage part', () => {
+  const paneStart = html.indexOf('data-settings-section="usage"');
   const id = 'drawer-row-ai-budget';
   const hits = html.match(new RegExp(`id="${id}"`, 'g')) || [];
   assert.equal(hits.length, 1, `exactly one #${id} in the shell`);
-  assert.ok(html.indexOf(`id="${id}"`) > paneStart,
-    `#${id} lives inside the Anthropic API key pane`);
+  assert.ok(paneStart > -1 && html.indexOf(`id="${id}"`) > paneStart,
+    `#${id} lives inside the Usage part`);
   // Its slot is resolved by getElementById, same contract as the older
   // pills — a rename would break the renderer silently.
   assert.equal((html.match(/id="ai-budget-slot"/g) || []).length, 1,

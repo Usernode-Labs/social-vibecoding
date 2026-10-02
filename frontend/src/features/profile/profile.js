@@ -193,10 +193,12 @@ const Profile = {
     if (targetUsername) {
       Profile._feedbackRequested = false;
       Profile._friendsRequested = false;
+      Profile._editRequested = false;
       Profile._dismissFeedback();
       Profile._dismissFriends();
     } else if (Profile._takeFeedbackRoute()) Profile._feedbackRequested = true;
     else if (Profile._takeFriendsRoute()) Profile._friendsRequested = true;
+    else if (Profile._takeSheetAsk('edit')) Profile._editRequested = true;
     // One entry into #profile reaches here TWICE: popstate and hashchange both
     // run restoreFromHash, and the second run finds the screen mounted and
     // goes through App._routeMountedProfile, which opens it again. That used
@@ -216,12 +218,14 @@ const Profile = {
     // rather than after four requests; otherwise it waits for the load.
     Profile._maybeOpenFeedback();
     Profile._maybeOpenFriends();
+    Profile._maybeOpenEdit();
     const token = ++Profile._loadToken;
     await Profile._load(token);
     if (Profile._open && token === Profile._loadToken && !Profile._targetUsername) {
       Profile._maybeOpenShot();
       Profile._maybeOpenFeedback();
       Profile._maybeOpenFriends();
+      Profile._maybeOpenEdit();
     }
   },
 
@@ -239,6 +243,7 @@ const Profile = {
     Profile._loadToken++;
     Profile._feedbackRequested = false;
     Profile._friendsRequested = false;
+    Profile._editRequested = false;
     Profile._dismissSheet();
     Profile._dismissFeedback();
     Profile._dismissFriends();
@@ -643,6 +648,22 @@ const Profile = {
     Profile._friendsRequested = false;
     if (d.signedOut || d.error || d.publicProfile || d.publicNotFound) return;
     Profile.showFriends();
+  },
+
+  // `#profile?edit` — the Edit profile sheet, asked for from outside Me.
+  // Settings' Account page links here (features/settings/sections/profile.tsx):
+  // name, photo, bio and the public page are edited in this sheet, and
+  // Settings is where people go looking for them. Taken and opened exactly as
+  // `?friends` is, so a reload or a later Back does not reopen it.
+  _editRequested: false,
+
+  _maybeOpenEdit() {
+    if (!Profile._editRequested || !Profile._open || Profile._targetUsername) return;
+    const d = Profile._data;
+    if (!d) return; // still loading: the post-load call opens it
+    Profile._editRequested = false;
+    if (d.signedOut || d.error || d.publicProfile || d.publicNotFound) return;
+    Profile.showEditSheet();
   },
 
   _maybeOpenFeedback() {

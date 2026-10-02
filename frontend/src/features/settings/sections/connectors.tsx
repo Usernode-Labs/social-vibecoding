@@ -19,9 +19,11 @@ import { SocialIdentity } from '../social-identity';
 /**
  * Hosted MCP connector: connect Claude.ai / ChatGPT so their built-in coding
  * agent (Claude Code on the web, Codex) can do the work on the user's own
- * subscription. Also holds GitHub/X ownership proofs for the Layer-1 daily
- * credit tier. These are IDENTITY ONLY: immutable provider id + display handle
- * and verification timestamps, with no provider token retained.
+ * subscription. This file also renders the two parts that shared that pane
+ * until the settings restructure: the GitHub/X ownership proofs for the
+ * Layer-1 daily credit tier (LinkedAccountsSection, IDENTITY ONLY: immutable
+ * provider id + display handle and verification timestamps, with no provider
+ * token retained) and the build-venue preference (BuildVenueSection).
  *
  * Rendered by Settings._renderConnectors() / _renderGithubLink() from
  * GET /api/me/connectors and GET /api/me/social-identities (deterministic
@@ -233,38 +235,7 @@ const BODY = CONNECTOR_BODY;
 export function ConnectorsSection() {
   return (
     <div data-settings-section="connectors" className="hidden">
-      <div id="github-link-section">
-        <SectionHeading title="Social accounts">
-          We pay for these credits, so a connected account helps us stop one person making many.
-        </SectionHeading>
-        <div id="github-link-body" className="space-y-2">
-          <SocialIdentity />
-        </div>
-        {/*
-            #2370: the lead used to carry all of this as a 76-word paragraph
-            ahead of the rows. It is one short line under them now — after the
-            thing you came for, before the decision to authorize.
-
-            NOT a disclosure. dapp.json asserts "no access to your
-            repositories" as rendered text, which is the product stating it
-            must be readable without a tap, and a scope statement you have to
-            go looking for is worth little. "not proof of unique humanity" is
-            the honest limit of the check: resolving a provider account id
-            establishes control of that account and nothing more.
-
-            "Either one is enough" is NOT here any more. It is only true on the
-            credit ladder, so it travels with the tier (settings.js,
-            _socialIdentityTierView's `note`) and is absent where credits do
-            not depend on a connected account at all.
-        */}
-        <p id="github-link-scope" className={GROUP_NOTE}>
-          Homeroom asks for
-          <strong className="font-semibold text-zinc-600 dark:text-zinc-400">{' no access to your repositories '}</strong>
-          and stores no provider token. Connecting confirms you control the account. It is not proof of unique humanity.
-        </p>
-        <StatusLine id="github-link-status" size="xs" />
-      </div>
-      <div id="connectors-section" className="mt-10">
+      <div id="connectors-section">
         <SectionHeading title="Connectors">
           Work on your apps from a Claude or ChatGPT chat, without using your daily credits.
         </SectionHeading>
@@ -693,6 +664,62 @@ export function ConnectorsSection() {
         </div>
         <StatusLine id="connectors-status" size="xs" />
       </div>
+    </div>
+  );
+}
+
+/**
+ * GitHub and X ownership proofs for the Layer-1 daily credit tier — the
+ * "Linked accounts" part of the Account group. It shared the connectors'
+ * pane (as "Social accounts") until the settings restructure: same
+ * machinery underneath, nothing in common for the person reading it.
+ * Rendered by Settings._renderGithubLink() from GET /api/me/social-identities.
+ */
+export function LinkedAccountsSection() {
+  return (
+    <div data-settings-section="linked-accounts" className="hidden">
+      <div id="github-link-section">
+        <SectionHeading title="Linked accounts">
+          We pay for these credits, so a connected account helps us stop one person making many.
+        </SectionHeading>
+        <div id="github-link-body" className="space-y-2">
+          <SocialIdentity />
+        </div>
+        {/*
+            #2370: the lead used to carry all of this as a 76-word paragraph
+            ahead of the rows. It is one short line under them now — after the
+            thing you came for, before the decision to authorize.
+
+            NOT a disclosure. dapp.json asserts "no access to your
+            repositories" as rendered text, which is the product stating it
+            must be readable without a tap, and a scope statement you have to
+            go looking for is worth little. "not proof of unique humanity" is
+            the honest limit of the check: resolving a provider account id
+            establishes control of that account and nothing more.
+
+            "Either one is enough" is NOT here any more. It is only true on the
+            credit ladder, so it travels with the tier (settings.js,
+            _socialIdentityTierView's `note`) and is absent where credits do
+            not depend on a connected account at all.
+        */}
+        <p id="github-link-scope" className={GROUP_NOTE}>
+          Homeroom asks for
+          <strong className="font-semibold text-zinc-600 dark:text-zinc-400">{' no access to your repositories '}</strong>
+          and stores no provider token. Connecting confirms you control the account. It is not proof of unique humanity.
+        </p>
+        <StatusLine id="github-link-status" size="xs" />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * "Where changes get built" (#1049), the part after the connectors on the
+ * Connectors & CLI page. See the note inside for its history.
+ */
+export function BuildVenueSection() {
+  return (
+    <div data-settings-section="build-venue" className="hidden">
       {/*
           "Preferred build flow" (#1049) — the escape hatch for the dev-chat
           picker's "remember my option" checkbox. Once a user ticks that box
@@ -711,11 +738,13 @@ export function ConnectorsSection() {
           for every other control here: the value, the save, and the two
           option gates.
 
-          #2370 moved the social-account block to the TOP of the pane, so this
-          no longer sits above it. It stays last on purpose: it is a preference
-          about work you have not started yet, not something you came here for.
+          The settings restructure made it a part of its own on the
+          Connectors & CLI page, straight after the connectors: the two
+          hand-offs it offers are what those connectors set up, and it is
+          still a preference about work you have not started yet rather than
+          the thing you came to the page for.
       */}
-      <div id="dev-flow-pref-section" className="mt-10">
+      <div id="dev-flow-pref-section">
         <SectionHeading title="Where changes get built">
           Choose where Homeroom builds your changes, or let it ask each time.
         </SectionHeading>

@@ -1014,11 +1014,11 @@ test('on a phone, the card clears the whole menu sheet when there is room above 
 test('Settings offers Replay the tour, and it is a registered section', () => {
   const html = renderComponent('frontend/src/features/settings/sections/tour.tsx', 'TourSection');
   assert.match(html, /data-settings-section="tour"/);
-  assert.match(html, /class="hidden"/, 'the pane ships hidden, like its fifteen siblings');
+  assert.match(html, /class="hidden"/, 'the pane ships hidden, like its siblings');
   assert.match(html, /id="settings-tour-replay"/);
   assert.match(html, /Replay the tour/);
-  // Registered in the menu, in Preferences.
-  assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'Welcome tour', group: 'Preferences' \}/);
+  // Registered in the menu, a page of its own under Help & about.
+  assert.match(SETTINGS_JS, /\{ key: 'tour', label: 'Welcome tour', group: 'Help & about' \}/);
 });
 
 test('Replay clears the flag, asks for the tour, then goes to Home', () => {

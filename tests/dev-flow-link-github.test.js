@@ -165,7 +165,9 @@ test('a bundle without the bridge method falls back to Settings, where the row s
   await DevChat._devFlowAction('link-github', c.anchor, c.event);
   assert.equal(c.prevented(), 1);
   assert.deepEqual(opened, []);
-  assert.equal(sandbox.location.hash, '#settings/connectors');
+  // Linked accounts: the GitHub/X rows' own page since the settings
+  // restructure split them out of the connectors pane.
+  assert.equal(sandbox.location.hash, '#settings/linked-accounts');
 });
 
 test('"Connect Homeroom" opens the steps in place, and sends nobody to Settings (#2706)', async () => {
