@@ -20985,7 +20985,6 @@ const AppView = {
   // readiness probe and have trusted user input within its 60-second lease.
   startActivityTracking(slug) {
     AppView.activeSeconds = 0;
-    AppView.openedSeconds = 0;
     AppView.iframeFocused = false;
     AppView._appActivity().start({
       slug,

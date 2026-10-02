@@ -3427,6 +3427,9 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           user: req.user,
           request: activityRequest,
         });
+        if (!stored.duplicate) {
+          await challengeScorer.scoreOnAppTime(pool, config, stored.scoring);
+        }
         return res.json({ ok: true, duplicate: stored.duplicate });
       } catch (err) {
         if (err?.code === 'not_found') return res.status(404).json({ error: 'App not found' });

@@ -111,6 +111,41 @@ test('visibility transitions reset the clock instead of crediting a hidden gap',
   assert.equal(ms + stagedMs, 2_000);
 });
 
+test('the early reward receipt follows engaged time once per open and preserves periodic delivery', async () => {
+  const h = await collectorHarness({ collectorOptions: { flushMs: 30_000 } });
+  h.advance(40_000);
+  await h.usage.flushPromise;
+  assert.equal(h.requests.length, 0, 'loading time does not reach the reward floor');
+  h.signal('ready');
+  h.signal('activity');
+  h.advance(4_500);
+  h.advance(4_500);
+  assert.equal(h.requests.length, 0, 'nine engaged seconds are below the floor');
+  h.advance(1_500);
+  await h.usage.flushPromise;
+  assert.equal(h.requests.length, 1, 'a bounded sample crossing ten seconds sends the early receipt');
+  assert.equal(h.requests[0].body.entries[0].seconds, 10);
+  for (let i = 0; i < 5; i += 1) h.advance(5_000);
+  assert.equal(h.requests.length, 1, 'subsequent samples do not repeat the early flush');
+  h.advance(5_000);
+  await h.usage.flushPromise;
+  assert.equal(h.requests.length, 2, 'the regular thirty-second delivery still runs');
+  assert.equal(h.requests[1].body.entries[0].seconds, 30);
+  assert.notEqual(h.requests[0].body.batchId, h.requests[1].body.batchId);
+
+  h.usage.stop();
+  await h.usage.flushPromise;
+  h.usage.start({ slug: 'notes', userId: 7, isVisible: () => true });
+  await h.usage.flushPromise;
+  h.signal('activity');
+  h.advance(5_000);
+  assert.equal(h.requests.length, 2, 'a new opening starts its own engaged clock');
+  h.advance(5_000);
+  await h.usage.flushPromise;
+  assert.equal(h.requests.length, 3, 'reopening can send its own early receipt');
+  h.usage.stop();
+});
+
 test('frame signals are scoped to the current window, origin and navigation generation', async () => {
   const h = await collectorHarness();
   assert.equal(h.signal('ready', { origin: 'https://evil.test' }), false);

@@ -204,7 +204,7 @@ test('"Try an app": a count of one pays the first app in full and nothing after 
 
 // ─── The 10-second floor and its crossing ──────────────────────────────
 
-test('the floor is 10 seconds, and a heartbeat crosses it once', () => {
+test('the floor is 10 seconds, and a heartbeat crosses it once', async () => {
   assert.equal(rules.TRY_APPS_MIN_SECONDS, 10, '#3570: 30 was long enough to look around and leave');
   assert.match(rules.MEASURES.TRY_APPS.summary, /at least 10 seconds in each/);
   const crossed = (before, after) => rules.crossedTryAppsFloor({ before, after });
@@ -213,17 +213,11 @@ test('the floor is 10 seconds, and a heartbeat crosses it once', () => {
   assert.equal(crossed(0, 9), false, 'not there yet');
   assert.equal(crossed(10, 40), false, 'already past it: the heartbeats after the crossing run nothing');
   assert.equal(crossed(undefined, 40), false);
-  // The client sends a heartbeat at exactly that floor, once an open, so the
-  // crossing reaches the server while the person is still in the app rather
-  // than with the 30-second flush or the one sent as they leave.
-  const view = read('public/js/app-view.js');
-  const at = view.match(/_TRY_APP_FLUSH_SECONDS: (\d+),/);
-  assert.ok(at, 'AppView names the early flush');
-  assert.equal(Number(at[1]), rules.TRY_APPS_MIN_SECONDS, 'and it is the server\'s floor');
-  const tracking = view.slice(view.indexOf('startActivityTracking(slug) {'), view.indexOf('stopActivityTracking() {'));
-  assert.match(tracking, /AppView\.openedSeconds = 0;/, 'counted from each open');
-  assert.match(tracking, /if \(AppView\.activeSeconds >= 30 \|\| AppView\.openedSeconds === AppView\._TRY_APP_FLUSH_SECONDS\) \{\s*AppView\.flushActivity\(slug\);/,
-    'the 30-second flush is kept, with the one early flush beside it');
+  // The engaged collector owns the early receipt now; its clock/HTTP tests
+  // verify one crossing per open alongside the regular 30-second flush.
+  const { TRY_APP_FLUSH_MS } = await import('../frontend/src/features/app-frame/app-activity.js');
+  assert.equal(TRY_APP_FLUSH_MS, rules.TRY_APPS_MIN_SECONDS * 1000,
+    'the client sends earned time at the server reward threshold');
 });
 
 // ─── scoreOn: the same guarantees at every door ────────────────────────

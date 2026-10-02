@@ -16,6 +16,7 @@
 export const ENGAGEMENT_IDLE_MS = 60_000;
 export const ENGAGEMENT_MAX_ELAPSED_MS = 5_000;
 export const ACTIVITY_FLUSH_MS = 30_000;
+export const TRY_APP_FLUSH_MS = 10_000;
 export const ACTIVITY_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const ACTIVITY_MAX_BATCH_SECONDS = 3_600;
 export const ACTIVITY_MAX_BATCHES = 64;
@@ -118,6 +119,8 @@ export class EngagedAppUsage {
       isVisible: typeof isVisible === 'function' ? isVisible : (() => false),
       lastSampleAt: at,
       lastActivityAt: 0,
+      engagedMs: 0,
+      earlyFlushDone: false,
       readyAt: this.target && this.target.slug === slug && this.target.ready
         && !this.target.failed ? at : 0,
     };
@@ -163,10 +166,17 @@ export class EngagedAppUsage {
     const creditEnd = Math.min(at, leaseEnd);
     const credited = visible && frameReady && creditEnd > creditStart
       ? creditEnd - creditStart : 0;
-    if (credited > 0) this._addRange(creditStart, creditEnd, current.slug);
+    if (credited > 0) {
+      this._addRange(creditStart, creditEnd, current.slug);
+      current.engagedMs += credited;
+    }
 
     if (at - this.lastPersistAt >= this.maxElapsedMs) this._persist();
-    if (at - this.lastFlushAt >= this.flushMs) {
+    // Keep main's early "Try an app" receipt, measured in earned time. A
+    // loading, hidden or idle screen must not reach it from wall time alone.
+    const earlyFlush = !current.earlyFlushDone && current.engagedMs >= TRY_APP_FLUSH_MS;
+    if (earlyFlush || at - this.lastFlushAt >= this.flushMs) {
+      if (earlyFlush) current.earlyFlushDone = true;
       this.lastFlushAt = at;
       void this.flush();
     }

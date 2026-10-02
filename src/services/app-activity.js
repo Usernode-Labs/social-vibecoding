@@ -140,6 +140,7 @@ async function recordActivityBatch(pool, { slug, user, request }) {
       return { duplicate: true };
     }
 
+    const scoring = { appId: app.id, ownerId: app.created_by, userId: user.id, seconds: 0, daySeconds: 0 };
     for (const entry of request.entries) {
       const activity = await client.query(
         `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
@@ -147,9 +148,13 @@ async function recordActivityBatch(pool, { slug, user, request }) {
          ON CONFLICT (app_id, user_id, date)
          DO UPDATE SET seconds_spent = LEAST(
            app_activity.seconds_spent + EXCLUDED.seconds_spent, $5)
-         RETURNING (xmax = 0) AS inserted`,
+         RETURNING (xmax = 0) AS inserted, seconds_spent`,
         [app.id, user.id, entry.seconds, entry.date, ACTIVITY_MAX_PER_DAY]
       );
+      // All occurrence days commit together. Pass their combined increment
+      // and totals to the crossing guard once, after the transaction commits.
+      scoring.seconds += entry.seconds;
+      scoring.daySeconds += Number(activity.rows[0]?.seconds_spent) || 0;
       if (activity.rows[0]?.inserted) {
         await client.query(
           `INSERT INTO events (user_id, app_id, event_type, metadata, created_at)
@@ -165,7 +170,7 @@ async function recordActivityBatch(pool, { slug, user, request }) {
     }
     await client.query('COMMIT');
     void maybePurgeActivityReceipts(pool);
-    return { duplicate: false };
+    return { duplicate: false, scoring };
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     throw error;
