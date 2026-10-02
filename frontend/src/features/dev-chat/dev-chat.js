@@ -10002,14 +10002,19 @@ const DevChat = {
     // `window.Improve` rather than an import: a dozen test files run this
     // source as a SCRIPT in a `vm` context, where a top-level import is a
     // syntax error — see the note at the top of this file.
+    //
+    // #3620: and when the entry below IS that origin, going there is a step
+    // Back (App._stepBackTo): pushing it put the inbox on top of the session,
+    // so the device's Back reopened the session the arrow had just left.
     const origin = window.Improve?.sessionOrigin?.();
+    const stepBack = (href) => typeof App !== 'undefined' && !!App._stepBackTo && App._stepBackTo(href);
     if (origin && typeof location !== 'undefined') {
-      location.hash = origin;
+      if (!stepBack(origin)) location.hash = origin;
     } else if (typeof location !== 'undefined') {
       // No origin: a cold deep link straight into the session. A change is an
       // agent conversation and Messages is its inbox (#2770), so that is the
       // level up — the same fallback the header's arrow shows.
-      location.hash = '#messages';
+      if (!stepBack('#messages')) location.hash = '#messages';
     } else {
       DevChat.renderChatView();
     }

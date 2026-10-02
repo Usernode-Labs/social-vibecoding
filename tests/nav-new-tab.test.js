@@ -217,9 +217,10 @@ test('the header back/home control is a real anchor', () => {
 });
 
 test('the header click handler guards before it preventDefaults', () => {
-  // 1700: the claim chain grew by the Challenges page's line, and the span only
-  // has to reach the home fallback at the end of it.
-  const body = handlerAfter(appJs, "document.getElementById('back-btn').addEventListener", 1700);
+  // 1800: the claim chain grew by the Challenges page's line, and the href
+  // fallback by its step Back (#3620); the span only has to reach the home
+  // fallback at the end of it.
+  const body = handlerAfter(appJs, "document.getElementById('back-btn').addEventListener", 1800);
   const guard = body.indexOf('NavLink.isNativeClick(e)');
   const prevent = body.indexOf('e.preventDefault()');
   assert.ok(guard !== -1, 'the modified-click guard went missing');

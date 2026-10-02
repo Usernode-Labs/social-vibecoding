@@ -134,6 +134,7 @@ export function BrowseScreen() {
       id="browse-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
       style={{ position: "relative" }}
+      data-page-bounce=""
     >
       {/*
           The search bar rides the level: searching the directory is a level-1

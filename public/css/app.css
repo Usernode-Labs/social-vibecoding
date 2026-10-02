@@ -375,8 +375,16 @@ html.un-kb .platform-safe-sheet {
    Messages and Android Messages both shrink the content area by the keyboard's
    height and pin the composer above it rather than covering or panning.
    The scroller loses that height instead of being covered, so the transcript
-   stays visible, the composer sits above the keys, and nothing needs to pan,
-   which leaves the settled pin inert rather than destructive.
+   stays visible, the composer sits above the keys, and the settled pin is
+   no longer destructive.
+
+   It is NOT inert, and a column needs it (#3571). iOS pans the page on the
+   tap, before this padding exists, by the most it can: the keyboard's
+   height. The padding then lifts the composer by that height again inside
+   the panned page, so it ends near the top edge, above the screen. The pin
+   (attachKeyboardAvoidance, via attachScreenFx on the legacy-mounted chats)
+   puts the pan back once the keyboard settles. A React column that no
+   controller mounts attaches it itself: lib/composer-keyboard.ts.
 
    Transition shape copied from the kit's own `.un-kb-avoid`: none while the
    keyboard is up so the bar tracks it exactly, eased on the way out so the
@@ -3553,6 +3561,82 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
 #auth-landing-scroll {
   overscroll-behavior-y: contain;
   overflow-x: hidden;
+}
+
+/* ── EVERY PAGE BOUNCES, HOWEVER LITTLE IT HOLDS (#3566) ───────────────
+   "Should be able to over scroll on home page down, doesn't feel as native
+   because can't", and after #3591 (#3565) gave Home's foot its bounce back
+   in a phone browser, All communities still did not.
+
+   A page's rubber band comes from one of two places, and a screen has one
+   only if its own place gives it:
+
+   - THE DOCUMENT, in a phone browser, for the screens browser-scroll.ts
+     PAGES (Home, Discover, Leaderboard, Profile, Settings, a project page).
+     #3591's `data-browser-past-top` gives its foot `contain`, which bounces.
+   - ITS OWN SCROLLER everywhere else: every screen in the installed app
+     and the native WebView, and in a phone browser the screens the document
+     does not page (All communities, Your changes / requests / votes, the
+     Messages list). Those roots are `overflow-y: auto` and the bounce is
+     iOS's, which rubber-bands a scroller only when it CAN scroll. One with
+     no range hands the drag to the document, which the bounded shell holds
+     still on purpose (`html, body`: `overflow: hidden`,
+     `overscroll-behavior-y: none`), so neither end moves.
+
+   Measured at 390x664 (iPhone agent, touch), in the phone browser and the
+   installed layout alike: #workshop-screen 572/572 and 620/620
+   (scrollHeight/clientHeight) with two cards on it, #profile-proposals-
+   screen the same, and .messages-list-scroll 457/457 with one conversation.
+   No range, so no bounce at either end. Home, Discover, Profile, Settings
+   and Leaderboard bounced in the installed app only because this account's
+   were longer than the screen; a new account's short page would not.
+
+   SO EVERY PAGE SCROLLER HAS AT LEAST ONE PIXEL TO SCROLL, by #3544's
+   mechanism for a project's short tabs (see "A SHORT TAB STILL HAS
+   SOMETHING TO SCROLL" further down): a 1px box hung 1px below the
+   scroller's bottom edge, which puts that pixel into its scrollable
+   overflow whatever the content does. Absolute and offset from the
+   scroller's own padding box, so neither a flex chain that fills the
+   screen (Home's `.home-body-fill`, an open Settings section) nor a
+   percentage floor can take it back. Past the fold of a long page it is a
+   transparent pixel in the middle of the content and changes nothing.
+
+   A PAGE SAYS IT IS ONE with `data-page-bounce` on its scroller: Home,
+   Discover, All communities, Leaderboard, Profile, Your changes / requests
+   / votes, Settings, Admin, and the Messages list. Every screen root among
+   them is already its own containing block (`position: relative`, inline);
+   the Messages list was not, and becomes one here: its rows are their own
+   containing blocks, and nothing in it was positioned against anything
+   further out (measured).
+
+   ONLY WHERE THE SCROLLER IS THE PAGE: `html:not([data-browser-scroller])`.
+   When the document pages a screen the root is `overflow: visible`, and the
+   pixel would only lengthen the page; that bounce is #3591's. ONLY ON A
+   TOUCH SCREEN: with a mouse, a pixel of range would put a scrollbar on a
+   window that has nothing to scroll.
+
+   NOT the Communities Needs you feed (`[data-workshop-pane="needs"]`): it
+   is fitted to the screen on purpose (#3516) and scrolls inside, like a
+   project's Needs you and Discussion, which #3544 leaves fitted too. NOT the
+   chats (a Messages thread, Global Chat, an agent session): a transcript
+   opens on its newest line and stays there; it is not a page. A project
+   page is #3544's rule. tests/page-overscroll.test.js holds App.SCREEN_IDS
+   against the attribute, so a new screen root carries it or is named there
+   with its reason. */
+@media (pointer: coarse) {
+  html:not([data-browser-scroller]) [data-page-bounce] {
+    position: relative;
+  }
+  html:not([data-browser-scroller]) [data-page-bounce]::after {
+    content: '';
+    position: absolute; left: 0; bottom: -1px;
+    width: 1px; height: 1px;
+    pointer-events: none;
+  }
+  /* A rule of its own, so an engine without `:has()` drops only this. */
+  html:not([data-browser-scroller]) [data-page-bounce]:has([data-workshop-pane="needs"])::after {
+    content: none;
+  }
 }
 
 /* ── `.touch-target-32`: the kit's hit-slop, sized for a dense row ──────
@@ -19430,6 +19514,9 @@ html.un-ios {
   font-size: 15px;
   font-weight: 600;
 }
+/* RESUME IS AN ACTION, so it is drawn in the accent, filled (#3618). It was
+   the header's periwinkle, which is the header's own ink and nothing else's,
+   at a tint light enough that the strip's one action read as a tag. */
 .platform-parked-pill {
   flex: none;
   display: inline-flex;
@@ -19437,9 +19524,9 @@ html.un-ios {
   height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid var(--brand-line);
-  background: var(--brand-tint);
-  color: var(--brand-ink);
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
 }
@@ -19511,6 +19598,49 @@ html.un-kb #platform-parked {
 @media (prefers-reduced-motion: reduce) {
   .platform-parked-enter, .platform-parked-leave,
   .platform-parked-enter > *, .platform-parked-leave > * { animation: none; }
+}
+
+/* ── THE APP YOU CLOSED, ON ITS WAY INTO RESUME (#3618) ──────────────
+   frontend/src/features/nav/resume-motion.ts carries the argument: a
+   stand-in for the app (its page colour, its icon) pinned where the app was,
+   shrinking into the Resume control in the rail or the strip. Above the page
+   and the bars, at the kit's zoom layer and under every kit overlay; never a
+   target; gone when the motion ends. The script never runs it with reduced
+   motion; the rule below is the belt to that. */
+.resume-ghost {
+  position: fixed;
+  z-index: 9960;
+  pointer-events: none;
+  transform-origin: 0 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The app's own page colour when its frame reported one (set inline);
+     the page ground otherwise — a card lifted off whatever is behind it,
+     never the wallpaper it would vanish into. */
+  background: var(--bg-primary);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 12px 40px rgba(0, 0, 0, .18);
+  will-change: transform, opacity;
+}
+.resume-ghost-tile {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: 700;
+}
+.resume-ghost-tile > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+@media (prefers-reduced-motion: reduce) {
+  .resume-ghost { display: none; }
 }
 
 
@@ -20091,6 +20221,27 @@ html.un-kb #platform-parked {
     background: var(--accent);
   }
 
+  /* RESUME ON A RUNNING APP YOU LEFT (#3618). The Active row's one action,
+     filled in the accent so the apps waiting for you are the thing the rail
+     points at (recents-list.tsx). It says what the green dot said, so the
+     dot steps aside for it; the row you are in keeps neither. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .platform-recent-resume ~ .platform-recent-live {
+    display: none;
+  }
+
   /* ── ACTIVE (#3074) ──────────────────────────────────────────────────
      frontend/src/features/nav/recents.ts (buildActive) carries the argument:
      the running apps, in a section of their own at the top of the list, above
@@ -20489,13 +20640,13 @@ html.un-kb #platform-parked {
 }
 
 
-/* ── The rail, peeked back over an open app (#2718) ──────────────────
-   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
-   the rail, which is what makes it feel like a program rather than a page,
-   and on a laptop the pointer is already at the left edge half the time. The
-   navigation comes back on hover and stops spending width while you work —
-   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
-   rail are all this move. */
+/* ── The rail, peeked back over a folded rail (#2718, #2764) ─────────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: a rail the
+   viewer folded comes back on hover and stops spending width while they
+   work — an auto-hiding dock and Slack's own collapsed rail are this move.
+   NOT over a running app (#3138): an app's own controls put the pointer at
+   the left edge all the time, so the hot zone is not rendered there and the
+   way out is the header's ✕. */
 
 /* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
    it never intercepts a pointer heading for the app's own left edge, wide

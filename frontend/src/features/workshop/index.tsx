@@ -471,6 +471,7 @@ export function WorkshopScreen() {
       ref={screenRef}
       id="workshop-screen"
       className="hidden flex-1 overflow-y-auto platform-safe-scroll"
+      data-page-bounce=""
       style={{ position: 'relative' }}
     >
       {/* SECTION LABEL over a card of hairline-separated rows — the widget
