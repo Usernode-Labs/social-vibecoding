@@ -36,6 +36,47 @@ test('the retired Opus 5 id resolves to Opus 5.5 (#2818)', () => {
   }
 });
 
+// #3579: Sonnet 5.5 replaced Sonnet 5 the same way. The picker offers 5.5
+// only; a session, browser or setting that saved Sonnet 5 runs on 5.5.
+test('the retired Sonnet 5 id resolves to Sonnet 5.5 (#3579)', () => {
+  assert.equal(models.isAllowed('claude-sonnet-5'), false);
+  assert.equal(models.isAllowed('claude-sonnet-5-5'), true);
+  assert.equal(models.resolve('claude-sonnet-5'), 'claude-sonnet-5-5');
+  assert.equal(models.resolve('claude-sonnet-5-5'), 'claude-sonnet-5-5');
+  assert.equal(models.RETIRED_MODELS['claude-sonnet-5'], 'claude-sonnet-5-5');
+  assert.equal(models.MODELS['claude-sonnet-5-5'].label, 'Sonnet 5.5');
+  assert.equal(models.MODELS['claude-sonnet-5-5'].tier, 'sonnet');
+  assert.equal(models.MODELS['claude-sonnet-5-5'].outputCostPerMTok, 10);
+  assert.equal(models.MODELS['claude-sonnet-5'], undefined, 'not offered beside its successor');
+});
+
+test('the platform runs no call of its own on Sonnet 5 (#3579)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const llm = require('../src/services/llm');
+  assert.equal(llm.WORKSHOP_THEME_MODEL, 'claude-sonnet-5-5');
+  assert.equal(llm.PR_METADATA_MODEL, 'claude-sonnet-5-5');
+  // The id may appear only where a retired id is mapped or priced for
+  // recorded history: the two RETIRED_MODELS maps and RETIRED_PRICING.
+  const root = path.join(__dirname, '..');
+  const allowed = {
+    'src/services/models.js': /^\s*'claude-sonnet-5': 'claude-sonnet-5-5',$/,
+    'frontend/src/features/dev-chat/dev-chat.js': /^\s*RETIRED_MODELS: \{.*'claude-sonnet-5': 'claude-sonnet-5-5' \},$/,
+    'src/services/model-costs.js': /^\s*'claude-sonnet-5': \{ inputPricePerMillion: 2, outputPricePerMillion: 10 \},$/,
+  };
+  const files = [
+    'src/services/models.js', 'src/services/llm.js', 'src/services/model-costs.js',
+    'src/services/sync-main.js', 'frontend/src/features/dev-chat/dev-chat.js', 'worker/run-cc.sh',
+  ];
+  for (const file of files) {
+    const lines = fs.readFileSync(path.join(root, file), 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      if (!/claude-sonnet-5(?!-5)\b/.test(line)) return;
+      assert.ok(allowed[file] && allowed[file].test(line), `${file}:${i + 1} still names Sonnet 5: ${line.trim()}`);
+    });
+  }
+});
+
 test('the platform LLM default moved to Opus 5.5 (#2818); the Fable fallback is Anthropic\'s default, not a pinned model', () => {
   const llm = require('../src/services/llm');
   assert.equal(llm.DEFAULT_MODEL, models.DEFAULT_MODEL);
@@ -67,7 +108,7 @@ test('list() exposes exactly the three model ids', () => {
   assert.deepEqual(ids, [
     'claude-fable-5-1',
     'claude-opus-5-5',
-    'claude-sonnet-5',
+    'claude-sonnet-5-5',
   ]);
 });
 
