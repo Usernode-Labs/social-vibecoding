@@ -1223,6 +1223,89 @@ async function person(pool, { userId, now = new Date() } = {}) {
   };
 }
 
+// ── Trust checks ───────────────────────────────────────────────────────
+//
+// Shown beside the North Star so it cannot be fooled quietly.
+//
+// Lockstep: accounts whose yes votes keep landing within seconds of another
+// account's yes on the same change. Calibrated on production on 2026-10-02
+// against the nine-account ring found in Season 2: in the ring's week (21
+// Sep) these cut-offs flag exactly its nine accounts and nobody else; in the
+// June hackathon weeks they also flagged one other account a week, which is
+// why it is a warning beside the numbers and never removes anyone from them.
+const LOCKSTEP_CUTOFFS = Object.freeze({
+  withinSeconds: 5,
+  minYesVotes: 5,
+  minShare: 0.3,
+});
+
+// $1 week start, $2 week end, $3/$4 real people, $5 lockstep seconds,
+// $6 lockstep minimum votes, $7 lockstep minimum share.
+const TRUST_SQL = `WITH live AS (
+    SELECT cs.id, cs.user_id, ap.slug, ap.name AS project, au.username AS author, au.is_admin AS author_is_admin,
+           EXISTS (SELECT 1 FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
+                    WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                      AND pvx.approval_epoch = cs.approval_epoch
+                      AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
+                      AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
+                      AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
+                      AND NOT (uy.id = ANY($4::int[]))) AS group_yes,
+           EXISTS (SELECT 1 FROM events e WHERE e.event_type = 'pr_merged' AND e.session_id = cs.id
+                     AND e.created_at >= $1::timestamptz - INTERVAL '1 day'
+                     AND COALESCE((e.metadata->>'forced')::boolean, FALSE)) AS forced
+      FROM chat_sessions cs
+      JOIN apps ap ON ap.id = cs.app_id
+      JOIN users au ON au.id = cs.user_id
+     WHERE cs.status = 'merged' AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
+       AND au.is_synthetic IS NOT TRUE AND NOT (LOWER(au.username) LIKE ANY($3::text[]))
+  ), yes AS (
+    SELECT pvx.user_id, pvx.session_id, pvx.created_at FROM pr_votes pvx JOIN users u ON u.id = pvx.user_id
+     WHERE pvx.vote = 'yes' AND pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz
+       AND ${REAL_PERSON_SQL}
+  ), close_yes AS (
+    SELECT DISTINCT y.user_id, y.session_id FROM yes y
+      JOIN yes o ON o.session_id = y.session_id AND o.user_id <> y.user_id
+     WHERE ABS(EXTRACT(EPOCH FROM (o.created_at - y.created_at))) <= $5::int
+  ), lockstep AS (
+    SELECT y.user_id, COUNT(DISTINCT y.session_id)::int AS votes, COUNT(DISTINCT c.session_id)::int AS close_votes
+      FROM yes y LEFT JOIN close_yes c ON c.user_id = y.user_id AND c.session_id = y.session_id
+     GROUP BY y.user_id
+  )
+  SELECT
+    COALESCE((SELECT json_agg(json_build_object('slug', l.slug, 'project', l.project, 'author', l.author,
+                'forced', l.forced) ORDER BY l.slug)
+       FROM live l WHERE NOT l.group_yes AND NOT l.author_is_admin), '[]'::json) AS without_group_vote,
+    (SELECT COUNT(*)::int FROM live l WHERE NOT l.author_is_admin) AS live_by_people,
+    (SELECT COUNT(*)::int FROM live) AS live_total,
+    (SELECT COUNT(*)::int FROM live l WHERE l.author_is_admin) AS live_by_team,
+    (SELECT COUNT(*)::int FROM live l WHERE l.forced) AS forced,
+    COALESCE((SELECT json_agg(json_build_object('userId', k.user_id, 'name', u.username, 'yesVotes', k.votes,
+                'withinSeconds', k.close_votes) ORDER BY k.close_votes DESC, u.username)
+       FROM lockstep k JOIN users u ON u.id = k.user_id
+      WHERE k.votes >= $6::int AND k.close_votes::numeric / k.votes >= $7::numeric), '[]'::json) AS lockstep`;
+
+async function trustChecks(pool, { week, leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(TRUST_SQL, [week.start, week.end, ...realPersonParams(leftOutIds),
+    LOCKSTEP_CUTOFFS.withinSeconds, LOCKSTEP_CUTOFFS.minYesVotes, LOCKSTEP_CUTOFFS.minShare]);
+  const r = rows[0] || {};
+  return {
+    week: week.label,
+    // A change by a real person that went live with no yes from another real
+    // person: the exact complement of Use. Forced merges are a sub-line, and
+    // only "at least": older merges carry no forced flag.
+    withoutGroupVote: {
+      count: (r.without_group_vote || []).length,
+      of: r.live_by_people || 0,
+      atLeastForced: r.forced || 0,
+      changes: r.without_group_vote || [],
+    },
+    // The team's share of the week's live changes. It will not equal
+    // Analytics, which counts a rolling seven days and leaves out admins only.
+    teamShare: { team: r.live_by_team || 0, of: r.live_total || 0 },
+    lockstep: { possible: r.lockstep || [], cutoffs: LOCKSTEP_CUTOFFS },
+  };
+}
+
 module.exports = {
   COHORTS_SQL,
   CHANGE_LOOP_SQL,
@@ -1236,6 +1319,7 @@ module.exports = {
   PERSON_CHALLENGES_SQL,
   PERSON_SQL,
   LIVE_CHANGES_SQL,
+  LOCKSTEP_CUTOFFS,
   WAITING_SQL,
   DAY_MS,
   FIRST_MILE_ADMITTED_SQL,
@@ -1243,6 +1327,7 @@ module.exports = {
   FIRST_MILE_STEPS,
   STAGES,
   STAGES_SQL,
+  TRUST_SQL,
   FEW_MOVES,
   GROUP_MAX,
   GROUP_MIN,
@@ -1275,6 +1360,7 @@ module.exports = {
   previousWeek,
   splitVisits,
   stages,
+  trustChecks,
   visitsFor,
   weekStart,
 };
