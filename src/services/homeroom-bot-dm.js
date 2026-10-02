@@ -30,6 +30,11 @@
 // them, pass an answer on, or offer to file a new request (filed only on a
 // tap). The bot's news carries cards for its request or proposal.
 //
+// #3707: what the bot says back to a person's message quotes it, the way
+// a person's reply does, and its later news about a request they started
+// in the DM quotes the message it started from. With several requests in
+// flight in one DM, each answer points at what it answers.
+//
 // Who it talks to is a list an admin keeps (`homeroom_bot_dm_users`), so it
 // can be tried one person at a time. What each person's requests may cost
 // the platform in a week is capped (`homeroom_bot_user_weekly_cents`, $50
@@ -217,6 +222,24 @@ async function pushLive(pool, result, conversationId, { opened = false } = {}) {
 }
 
 /**
+ * #3707: the person's message a bot message may quote, or null. Only their
+ * own, in this DM's main stream, and still there to read: a send refuses a
+ * quote from another conversation outright, and a message deleted or
+ * hidden by moderation is not one to put back in front of them.
+ */
+async function quotable(pool, conversationId, userId, messageId) {
+  const id = conversations.strictId(messageId);
+  if (!id) return null;
+  const { rows } = await pool.query(
+    `SELECT id FROM conversation_messages
+      WHERE id = $1 AND conversation_id = $2 AND sender_id = $3 AND thread_root_id IS NULL
+        AND deleted_at IS NULL AND moderation_hidden_at IS NULL`,
+    [id, conversationId, userId],
+  );
+  return rows.length ? id : null;
+}
+
+/**
  * One message from the bot to a person, in their DM with it (opened if it
  * is not yet). `metadata` is the message's structured part, shown to the
  * reader as `metadata.homeroomBot`. `objects` are cards under it (#3624
@@ -224,16 +247,21 @@ async function pushLive(pool, result, conversationId, { opened = false } = {}) {
  * objects ({ type: 'issue', appId, issueNumber } / { type: 'proposal',
  * appId, sessionId }). A card the bot cannot attach (a private project it
  * is not in) never costs the message: it is sent without its cards.
+ * `replyToId` (#3707) is the person's message this one answers, quoted
+ * above it as a person's reply quotes; one that cannot be quoted (see
+ * quotable) is left off, never the message.
  * Resolves { conversationId, messageId, duplicate } or null when the person
  * blocked the bot or left the chat.
  */
-async function sendDm(pool, { bot, userId, content, metadata = null, idempotencyKey = null, objects = null }) {
+async function sendDm(pool, { bot, userId, content, metadata = null, idempotencyKey = null, objects = null, replyToId = null }) {
   if (!bot?.id || !userId) return null;
   const opened = await conversations.ensureAdmittedDirect(pool, bot.id, userId);
   if (!opened) return null;
   const input = { content: clip(content, conversations.MAX_MESSAGE_LENGTH || 8000) };
   const key = conversations.normalizeIdempotencyKey(idempotencyKey);
   if (key) input.idempotency_key = key;
+  const quote = await quotable(pool, opened.conversationId, userId, replyToId);
+  if (quote) input.reply_to_id = quote;
   const cards = Array.isArray(objects) ? objects.filter(Boolean).slice(0, MAX_CARDS) : [];
   const send = (withCards) => conversations.sendMessage(pool, { id: bot.id }, opened.conversationId,
     withCards.length ? { ...input, objects: withCards } : input,
@@ -315,6 +343,24 @@ async function requesterOf(pool, appId, issueNumber) {
   return row ? { userId: row.user_id, username: row.username, firstVersion: !!row.first_version, issueTitle: row.issue_title } : null;
 }
 
+/**
+ * #3707: the person's DM message a request of theirs started from, for the
+ * bot's later news about it to quote. A request starts in the DM when File
+ * it files the bot's offer, and the offer quotes the message it answered
+ * (homeroom-bot-mayor.js offer). Null for a request filed anywhere else.
+ */
+async function requestStart(pool, { userId, appId, issueNumber }) {
+  const { rows } = await pool.query(
+    `SELECT o.reply_to_id FROM homeroom_bot_dm_actions a
+       JOIN conversation_messages o ON o.id = a.message_id
+      WHERE a.user_id = $1 AND a.app_id = $2 AND a.issue_number = $3 AND a.status = 'done'
+      ORDER BY a.id DESC
+      LIMIT 1`,
+    [userId, appId, issueNumber],
+  );
+  return rows[0]?.reply_to_id ?? null;
+}
+
 // ── The weekly allowance ─────────────────────────────────────────────────
 
 /**
@@ -363,6 +409,7 @@ async function noteOverAllowance(pool, { settings, requester, app, issueNumber, 
   return sendDm(pool, {
     bot,
     userId: requester.userId,
+    replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
     idempotencyKey: `hrbot-allowance-${requester.userId}-${weekKey()}`,
     content: `You've used this week's ${dollars(settings.userWeeklyCents)} Homeroom bot allowance, so I'm holding `
       + `${app.name || app.slug} request #${issueNumber} for now. I'll pick it up again when the week resets on Monday.`,
@@ -503,6 +550,8 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     metadata,
     idempotencyKey: postId ? `hrbot-post-${postId}` : null,
     objects: cardsFor(kind, dm, app, issueNumber),
+    // #3707: news about a request they started here points back at it.
+    replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
   if (!sent?.messageId) return null;
   // The same post relayed again (a retry) was already sent and recorded.
@@ -548,6 +597,7 @@ async function noteProposalMerged(pool, session) {
   return sendDm(pool, {
     bot,
     userId: requester.userId,
+    replyToId: await requestStart(pool, { userId: requester.userId, appId: run.app_id, issueNumber: run.issue_number }),
     idempotencyKey: `hrbot-merged-${session.id}`,
     content: `${requestLine(context)}\n\nIt was approved and is live now.`,
     metadata: { kind: 'merged', appSlug: run.slug, appName: context.appName, issueNumber: run.issue_number },
@@ -667,19 +717,19 @@ async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) 
   const line = `${apps[0].name || apps[0].slug} request #${target.issue_number}`;
   if (!text) {
     return sendDm(pool, {
-      bot, userId: user.id, idempotencyKey: `hrbot-ack-${message.id}`,
+      bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-ack-${message.id}`,
       content: `I can only pass words on to ${line} for now. Write your answer as a message.`,
     });
   }
   const posted = await postOnRequest(pool, { user, target, text, deps: { ...deps, answerMessageId: message.id } });
   if (!posted.ok) {
     return sendDm(pool, {
-      bot, userId: user.id, idempotencyKey: `hrbot-ack-${message.id}`,
+      bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-ack-${message.id}`,
       content: `I couldn't post that on ${line}: ${posted.why}. Nothing was sent.`,
     });
   }
   return sendDm(pool, {
-    bot, userId: user.id, idempotencyKey: `hrbot-ack-${message.id}`,
+    bot, userId: user.id, replyToId: message.id, idempotencyKey: `hrbot-ack-${message.id}`,
     content: posted.question
       ? `Thanks. I posted your answer on ${line}'s public discussion and I'm looking at it again now.`
       : `I posted that on ${line}'s public discussion. I'll look at it again now.`,
@@ -702,6 +752,7 @@ async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) 
  *     say what it is working on for them, pass an answer on, or offer to
  *     file a new request. With that switched off, it is the answer to the
  *     newest open question, or else the bot's short help.
+ * Whichever it is, what the bot says back quotes the message (#3707).
  */
 async function noteUserMessage(pool, config, { user, conversationId, message, deps = {} }) {
   if (!user?.id || !message?.id || user.isSynthetic) return null;
@@ -711,7 +762,9 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   const settings = await settingsModule().readSettings(pool);
   if (!isDmUser(settings, user.username)) {
     const hour = Math.floor(Date.now() / (NOT_ENABLED_KEY_HOURS * 3600 * 1000));
-    return sendDm(pool, { bot, userId: user.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}` });
+    return sendDm(pool, {
+      bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
+    });
   }
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   const quoted = message?.reply?.id || null;
@@ -728,7 +781,9 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
   if (!target) {
     // Once in a while, not after every message.
     const window = Math.floor(Date.now() / HELP_EVERY_MS);
-    return sendDm(pool, { bot, userId: user.id, content: HELP_TEXT, idempotencyKey: `hrbot-help-${user.id}-${window}` });
+    return sendDm(pool, {
+      bot, userId: user.id, replyToId: message.id, content: HELP_TEXT, idempotencyKey: `hrbot-help-${user.id}-${window}`,
+    });
   }
   return answerOnRequest(pool, { bot, user, target, message, deps });
 }
@@ -958,6 +1013,8 @@ module.exports = {
   relayIssuePost,
   cardsFor,
   quotedTarget,
+  quotable,
+  requestStart,
   newestOpenQuestion,
   postOnRequest,
   noteProposalMerged,

@@ -794,8 +794,10 @@ function runDmTurn(pool, config, { bot, user, settings, conversationId, message,
 
 async function turn(pool, config, { bot, user, settings, conversationId, message, deps }) {
   const dm = dmModule(deps);
+  // #3707: every answer quotes the message it answers, so with several in
+  // flight each one points at its own.
   const say = (content, extra = {}) => dm.sendDm(pool, {
-    bot, userId: user.id, content, idempotencyKey: `hrbot-mayor-${message.id}`, ...extra,
+    bot, userId: user.id, content, idempotencyKey: `hrbot-mayor-${message.id}`, replyToId: message.id, ...extra,
   });
   if (settings.mode === 'off') return say(OFF_TEXT);
   if (await turnsLastHour(pool, user.id) >= MAX_TURNS_PER_HOUR) return say(BUSY_TEXT);
@@ -942,6 +944,10 @@ async function offer(pool, { bot, user, conversationId, message, text, offer: o,
     userId: user.id,
     content: body,
     idempotencyKey: `hrbot-mayor-${message.id}`,
+    // It quotes the message it answers, and that quote is where the
+    // request's later news finds what it started from (#3707,
+    // homeroom-bot-dm.js requestStart).
+    replyToId: message.id,
     metadata: {
       kind: 'confirm', appSlug: o.app.slug, appName: name, actionId: action.id,
       question: `File this as a request on ${name}?`, answers: [FILE_IT, NOT_NOW], status: 'open', mirrors: false,
@@ -977,7 +983,7 @@ async function decideOffer(pool, config, { bot, user, settings, message, deps = 
   const no = said(message.content, NOT_NOW);
   if (!yes && !no) return null;
   const ack = (content, extra = {}) => dm.sendDm(pool, {
-    bot, userId: user.id, content, idempotencyKey: `hrbot-offer-${message.id}`, ...extra,
+    bot, userId: user.id, content, idempotencyKey: `hrbot-offer-${message.id}`, replyToId: message.id, ...extra,
   });
   // Decided once: the first tap wins, and a second says what happened.
   const { rows: claimed } = await pool.query(

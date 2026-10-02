@@ -94,3 +94,12 @@ test('it is wired after the send, never into it, and files a request the way the
   assert.match(src, /createIssueOpenedNotifications/);
   assert.match(src, /if \(!\(await canFile\(pool, app, user\)\)\)/, 'a tap re-checks membership before filing');
 });
+
+test('#3707: everything the DM model sends answers one of her messages, and quotes it', () => {
+  // The quotes themselves are checked against PostgreSQL; this keeps a new
+  // send from leaving its quote off.
+  const src = read('src/services/homeroom-bot-mayor.js');
+  const sends = src.match(/dm\.sendDm\(pool, \{[\s\S]*?\}\);/g) || [];
+  assert.equal(sends.length, 3, 'a turn\'s answer, its offer and the answer to a tap');
+  for (const send of sends) assert.match(send, /replyToId: message\.id/);
+});
