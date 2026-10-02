@@ -2814,10 +2814,12 @@ async function finishRecoveredTurn({ pool, session, activeTurn, result = {}, tim
     return 'requeued';
   }
 
-  const built = result.pushOk === true && Number(result.ahead) > 0 && !timedOut;
+  const turnFailed = timedOut ? null : live.failedClaudeTurn(result, { apiFailure: true });
+  const built = result.pushOk === true && Number(result.ahead) > 0 && !timedOut && !turnFailed;
   const error = built ? null
     : timedOut ? `the build ran past its time limit${note}`
-      : `the build produced no change to propose${note}`;
+      : turnFailed ? `the build turn failed (${turnFailed})${note}`
+        : `the build produced no change to propose${note}`;
   const costUsd = await sessionCostUsd(pool, session.id);
   await pool.query(
     `UPDATE homeroom_bot_runs r
@@ -2965,10 +2967,13 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       botLogin: await live.botUsernameOf(github), notifications: deps.notifications || null,
     });
     const note = ' (finished after a restart)';
+    // A failed turn is a failed build here as on the live path.
+    const turnFailed = plan.mode === 'scout' || plan.timedOut
+      ? null : live.failedClaudeTurn(plan.result, { apiFailure: true });
     let built;
     if (plan.mode === 'scout') {
       built = { ok: false, sessionId: Number(sessionId), blocked: specRead.blocked };
-    } else if (plan.result?.pushOk === true && Number(plan.result?.ahead) > 0 && !plan.timedOut) {
+    } else if (plan.result?.pushOk === true && Number(plan.result?.ahead) > 0 && !plan.timedOut && !turnFailed) {
       const pushed = {
         branchName: session.branch_name || null, sha: plan.result.sha || null, commits: Number(plan.result.ahead) || 0,
       };
@@ -3000,7 +3005,9 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
       await archive();
       built = {
         ok: false, sessionId: Number(sessionId),
-        error: (plan.timedOut ? 'the build ran past its time limit' : 'the build produced no change to propose') + note,
+        error: (plan.timedOut ? 'the build ran past its time limit'
+          : turnFailed ? `the build turn failed (${turnFailed})`
+            : 'the build produced no change to propose') + note,
       };
     }
     if (built.blocked) await archive();
@@ -3468,7 +3475,10 @@ async function runFollowUp(pool, config, {
   const moved = followup.headMoved({
     mode, result, reviewedHeadSha: session.reviewed_head_sha, action: parsed?.action,
   });
+  // A failed turn is never a revision (followup.headMoved); this says why.
+  const turnFailed = live.failedClaudeTurn(result);
   if (!parsed && !moved) {
+    if (turnFailed) return fail(`the follow-up turn failed (${turnFailed})`, spent);
     return fail(`unparseable: ${clip(String(result.lastResultText || '').slice(-300), 300) || '(empty reply)'}`, spent);
   }
 
@@ -3494,8 +3504,9 @@ async function runFollowUp(pool, config, {
 
   // Said it would revise, but the push moved nothing.
   if (parsed && parsed.action === 'revise' && !moved) {
-    const why = mode === 'build' && result.pushOk === false
-      ? 'its change could not be pushed' : 'the turn produced no change';
+    const why = turnFailed ? `the turn failed (${turnFailed}), so its change was not kept`
+      : mode === 'build' && result.pushOk === false
+        ? 'its change could not be pushed' : 'the turn produced no change';
     runId = await insertRun(pool, {
       appId: app.id, issueNumber, mode: runMode, verdict: 'failed', error: `revise: ${why}`,
       reason: parsed.reply, threadSeenAt: item.thread_seen_at || null, model,
@@ -3819,11 +3830,13 @@ async function runChecksFix(pool, config, {
   }
 
   // The turn could not fix them: one note, and a person takes it from here.
+  const turnFailed = !turn.stopped && !code ? live.failedClaudeTurn(result) : null;
   const why = turn.stopped ? 'its attempt to fix them ran out of time'
     : code ? `its attempt to fix them failed (${clip(code, 200)})`
-      : parsed?.action === 'person' ? parsed.reply
-        : parsed ? 'its attempt to fix them changed nothing'
-          : 'its attempt to fix them ended without an answer';
+      : turnFailed ? `its attempt to fix them failed (${turnFailed})`
+        : parsed?.action === 'person' ? parsed.reply
+          : parsed ? 'its attempt to fix them changed nothing'
+            : 'its attempt to fix them ended without an answer';
   return handOff({
     why,
     verdict: parsed?.action === 'person' ? 'person' : 'failed',

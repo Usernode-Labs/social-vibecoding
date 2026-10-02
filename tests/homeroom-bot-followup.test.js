@@ -98,6 +98,18 @@ test('the head moved when a build turn pushed a new commit, whatever the model s
   assert.equal(followup.headMoved({ mode: 'build', result: pushed, reviewedHeadSha: null, action: 'answer' }), false);
 });
 
+test('a turn Claude Code ran that failed never moved the head, whatever it pushed; a Codex turn is read as before', () => {
+  for (const failed of [{ ccExit: 1 }, { exitCode: 2 }, { ccIsError: true }]) {
+    const result = { agentHarness: 'claude', pushOk: true, sha: NEW_HEAD, ...failed };
+    assert.equal(followup.headMoved({ mode: 'build', result, reviewedHeadSha: OLD_HEAD, action: 'revise' }), false, JSON.stringify(failed));
+  }
+  const ok = { agentHarness: 'claude', pushOk: true, sha: NEW_HEAD, ccExit: 0, exitCode: 0 };
+  assert.equal(followup.headMoved({ mode: 'build', result: ok, reviewedHeadSha: OLD_HEAD, action: 'revise' }), true);
+  // The Codex runner never pushes a failed turn, so what it pushed is read as it always was.
+  const codex = { agentHarness: 'codex', pushOk: true, sha: NEW_HEAD, ccIsError: true };
+  assert.equal(followup.headMoved({ mode: 'build', result: codex, reviewedHeadSha: OLD_HEAD, action: 'revise' }), true);
+});
+
 test('what it says has no em dashes', () => {
   const texts = [
     followup.answerText({ reply: 'r', prNumber: 25 }),
@@ -308,6 +320,50 @@ test('"revise" that pushed nothing is a failure, said plainly, and nothing is re
   assert.match(insertOf(h).params[18], /^revise: the turn produced no change/);
   assert.equal(h.calls.posts[0].kind, 'followup_failed');
   assert.match(h.calls.posts[0].text, /The proposal is unchanged/);
+});
+
+test('a GLM follow-up whose agent failed is no revision: its push is never reconciled, and it asked for none', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    // What run-cc.sh printed for a failed turn before it learned to discard
+    // one: the partial work committed and pushed onto the proposal's branch.
+    result: {
+      agentHarness: 'claude', ccExit: 1, exitCode: 1, pushOk: true, sha: NEW_HEAD,
+      lastResultText: '```json\n{"action":"revise","reply":"Done.","summary":"Darker."}\n```',
+    },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.reconciled.length, 0, 'the proposal stays as it was voted on');
+  assert.equal(insertOf(h).params[18], 'revise: the turn failed (the agent exited with code 1), so its change was not kept');
+  assert.equal(h.calls.posts[0].kind, 'followup_failed');
+  assert.match(h.calls.posts[0].text, /The proposal is unchanged/);
+  assert.equal(h.calls.exec[0].opts.discardFailedTurn, true, 'run-cc.sh is asked to commit and push nothing from a failed turn');
+
+  // With no answer at all, the failure is the reason, not "unparseable".
+  const silent = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    result: { agentHarness: 'claude', ccExit: 1, exitCode: 1, pushOk: false, sha: null, lastResultText: '' },
+  });
+  const out2 = await run(t, silent);
+  assert.equal(out2.verdict, 'failed');
+  assert.equal(insertOf(silent).params[18], 'the follow-up turn failed (the agent exited with code 1)');
+  assert.equal(silent.calls.reconciled.length, 0);
+});
+
+test('a Codex follow-up whose agent failed fails exactly as it did', async (t) => {
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    // The Codex runner's own result for a failed turn: nothing pushed.
+    result: {
+      agentHarness: 'codex', ccExit: 1, agentExit: 1, exitCode: 1, pushOk: false, sha: null,
+      lastResultText: '```json\n{"action":"revise","reply":"Done."}\n```',
+    },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.reconciled.length, 0);
+  assert.equal(insertOf(h).params[18], 'revise: its change could not be pushed', 'the message it always had');
 });
 
 test('after MAX_REVISIONS the turn runs read-only, and can only hand over', async (t) => {

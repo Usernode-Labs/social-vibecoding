@@ -208,13 +208,16 @@ const JOURNAL = [
   '__USERNODE_EXIT__ 0',
 ];
 
-// A shadow build of the bot's (buildAndPropose, propose: false: the same
-// spec and build turns, nothing promoted), on `model`, through the real
-// runtime resolution, attempt loop and worker dispatch.
-async function runBotBuild(t, model) {
+// A build of the bot's (buildAndPropose), on `model`, through the real
+// runtime resolution, attempt loop and worker dispatch, each turn's journal
+// reading `journal`. A shadow build by default (propose: false: the same
+// spec and build turns, nothing promoted); `propose` puts it to a stub of
+// the promote route, which records what it was asked to put up for a vote.
+async function runBotBuild(t, model, { journal = JOURNAL, propose = false } = {}) {
   const resolved = stubRuntime(t);
-  const { worker, calls } = loadWorker(t, JOURNAL);
+  const { worker, calls } = loadWorker(t, journal);
   const execs = [];
+  const promotions = [];
   const pool = {
     async query(sql, params) {
       if (/INSERT INTO chat_sessions/.test(String(sql))) {
@@ -243,14 +246,15 @@ async function runBotBuild(t, model) {
     agentTurn,
     sessionLifecycle: { async ensureSessionBranch({ sessionId }) { return { branchName: `dev/homeroom_bot-${sessionId}` }; } },
     activeWorkers: new Set(),
+    votesRouter: { handle(req, res) { promotions.push(req.url); res.json({ ok: true, prNumber: 88 }); } },
   };
   const out = await live.buildAndPropose({
     pool, deps, config: CONFIG, bot: BOT, app: APP, repo: { owner: 'usernode-bot', repo: 'todo' }, issueNumber: 12,
     issue: { title: 'Pins drift' }, seed: 'Please work on GitHub issue #12: "Pins drift".', buildNote: 'Pin the markers.',
-    turnBudgetMs: 60_000, model, propose: false,
+    turnBudgetMs: 60_000, model, propose,
   });
   const dispatches = calls.filter((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d').map(readDispatch);
-  return { out, resolved, execs, dispatches };
+  return { out, resolved, execs, dispatches, promotions };
 }
 
 // ── run-cc.sh with the env the worker built, against a fake OpenRouter ──
@@ -300,12 +304,19 @@ const prompt = fs.readFileSync(0, 'utf8');
   await reply.text();
   fs.writeFileSync(${JSON.stringify(runtimeLog)}, JSON.stringify({ args: process.argv.slice(2), status: reply.status }));
   console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cc-or-1' }));
-  console.log(JSON.stringify({ type: 'result', result: 'done', session_id: 'cc-or-1', usage: { input_tokens: 5, output_tokens: 7 } }));
+  // STUB_IS_ERROR / STUB_EXIT: a turn that failed, the two ways Claude Code says so.
+  console.log(JSON.stringify({ type: 'result', is_error: process.env.STUB_IS_ERROR === '1', result: 'done', session_id: 'cc-or-1', usage: { input_tokens: 5, output_tokens: 7 } }));
+  process.exitCode = Number(process.env.STUB_EXIT || 0);
 })();
 `);
   // git answers every question as though the turn sat on its session branch
-  // with nothing to commit.
-  fs.writeFileSync(path.join(bin, 'git'), '#!/bin/sh\ncase "$1" in symbolic-ref) echo "$BRANCH";; esac\nexit 0\n');
+  // with a change in its working tree, and logs what it was asked.
+  const gitLog = path.join(dir, 'git.log');
+  fs.writeFileSync(path.join(bin, 'git'), `#!/bin/sh
+echo "$*" >> ${JSON.stringify(gitLog)}
+case "$1" in symbolic-ref) echo "$BRANCH";; status) echo " M app.js";; diff) exit 1;; esac
+exit 0
+`);
   fs.chmodSync(path.join(bin, 'claude'), 0o755);
   fs.chmodSync(path.join(bin, 'git'), 0o755);
   const ws = path.join(dir, 'ws');
@@ -315,14 +326,17 @@ const prompt = fs.readFileSync(0, 'utf8');
   // The in-loop browser's MCP config, as worker-run.sh seeds it.
   const browserConfig = path.join(dir, 'usernode-mcp.json');
   fs.writeFileSync(browserConfig, JSON.stringify({ mcpServers: { playwright: { command: 'true' } } }));
-  return { dir, bin, ws, prompt, runtimeLog, browserConfig };
+  return { dir, bin, ws, prompt, runtimeLog, browserConfig, gitLog };
 }
 
-// run-cc.sh with the dispatched env. Only what points at the container
-// (paths, the provider's address) is swapped for this machine's.
-function runRunCc(env, fx, upstream) {
+// run-cc.sh with the dispatched env, its output written to its journal as
+// the worker's wrapper does (worker.js execInWorker). Only what points at the
+// container (paths, the provider's address) is swapped for this machine's;
+// `extra` is the stub's own switches.
+function runRunCc(env, fx, upstream, extra = {}) {
+  const journal = path.join(fx.dir, 'turn.log');
   return new Promise((resolve) => {
-    const child = spawn('sh', [path.join(ROOT, 'worker', 'run-cc.sh')], {
+    const child = spawn('sh', ['-c', 'sh "$RUNNER" > "$TURN_JOURNAL" 2>&1'], {
       env: {
         ...env,
         PATH: `${fx.bin}:${process.env.PATH}`,
@@ -333,13 +347,13 @@ function runRunCc(env, fx, upstream) {
         BROWSER_MCP_CONFIG: fx.browserConfig,
         HOMEROOM_MCP_CONFIG: path.join(fx.dir, 'absent-homeroom-mcp.json'),
         INLOOP_PGDATA: path.join(fx.dir, 'absent-pgdata'),
+        RUNNER: path.join(ROOT, 'worker', 'run-cc.sh'),
+        TURN_JOURNAL: journal,
+        ...extra,
       },
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'ignore', 'ignore'],
     });
-    let out = '';
-    child.stdout.on('data', (chunk) => { out += chunk; });
-    child.stderr.on('data', (chunk) => { out += chunk; });
-    child.on('close', (code) => resolve({ code, out }));
+    child.on('close', (code) => resolve({ code, out: fs.readFileSync(journal, 'utf8') }));
   });
 }
 
@@ -596,4 +610,172 @@ test('the follow-up and every benchmark trial ask for the same harness; a model 
     assert.equal(trial.parsed.promptMatchesSnapshot, true);
     t.mock.restoreAll();
   }
+});
+
+// ── A turn that failed is never proposed ────────────────────────────────
+//
+// The Codex runner never commits or pushes a turn whose agent failed
+// (run-codex-agent.sh). run-cc.sh did, for every caller: in a person's dev
+// chat that keeps their partial work, but a bot build that died partway was
+// pushed, and then proposed, once GLM ran in Claude Code. The bot's turns now
+// ask run-cc.sh not to keep a failed turn, and the bot refuses one that was
+// kept anyway.
+
+// What run-cc.sh printed before it learned to discard a failed turn (and
+// prints still for a caller that does not ask): claude exited 1, and the
+// partial work was committed and pushed.
+const FAILED_PUSHED_JOURNAL = [
+  JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cc-or-1' }),
+  JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: SPEC, session_id: 'cc-or-1', usage: { input_tokens: 10, output_tokens: 5 } }),
+  `__USERNODE_RESULT__ cc_exit=1 ahead=1 behind=0 sha=${SHA} push_ok=1 mode=build`,
+  '__USERNODE_EXIT__ 1',
+];
+
+test('a GLM bot build whose agent failed opens no proposal, even when its partial work was pushed', async (t) => {
+  const run = await runBotBuild(t, GLM, { journal: FAILED_PUSHED_JOURNAL, propose: true });
+  assert.equal(run.execs[1].agentHarness, 'claude');
+  assert.equal(run.out.ok, false);
+  assert.equal(run.out.error, 'the build turn failed (the agent exited with code 1)');
+  assert.deepEqual(run.promotions, [], 'nothing was put up for a vote');
+  // And the build asked run-cc.sh not to keep a failed turn in the first place.
+  assert.equal(run.execs[1].discardFailedTurn, true);
+  assert.equal(run.dispatches[1].env.DISCARD_FAILED_TURN, '1');
+});
+
+test('a bot build is recorded as build_failed, with the reason, when its agent failed', async (t) => {
+  const run = await runBotBuild(t, GLM, { journal: FAILED_PUSHED_JOURNAL, propose: true });
+  const queries = [];
+  const said = [];
+  await bot.announceBuilt({
+    pool: { async query(sql, params) { queries.push({ sql: String(sql), params }); return { rows: [], rowCount: 1 }; } },
+    ws: null, app: APP, bot: BOT, issueNumber: 12, runId: 900, built: run.out, domain: 'app.example',
+    say: async (kind, text, extra) => { said.push({ kind, text, extra }); },
+  }).then((acted) => assert.equal(acted, 'build_failed'));
+  const recorded = queries.find((q) => /SET build_ok = \$2, build_error = \$3/.test(q.sql));
+  assert.equal(recorded.params[1], false);
+  assert.match(recorded.params[2], /^the build turn failed \(the agent exited with code 1\)/);
+  assert.deepEqual(said.map((s) => s.kind), ['build_failed']);
+  assert.ok(!queries.some((q) => /proposal_session_id = \$2/.test(q.sql)), 'no proposal on the run');
+});
+
+test('a build that ended on an error result, or on the runtime\'s API error notice, is not proposed either', async (t) => {
+  const ended = (resultEvent) => [
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cc-or-1' }),
+    JSON.stringify({ type: 'result', subtype: 'success', session_id: 'cc-or-1', usage: { input_tokens: 10, output_tokens: 5 }, ...resultEvent }),
+    `__USERNODE_RESULT__ cc_exit=0 ahead=1 behind=0 sha=${SHA} push_ok=1 mode=build`,
+    '__USERNODE_EXIT__ 0',
+  ];
+  const isError = await runBotBuild(t, GLM, { journal: ended({ is_error: true, result: 'Stopped.' }), propose: true });
+  assert.equal(isError.out.error, 'the build turn failed (the agent reported an error)');
+  assert.deepEqual(isError.promotions, []);
+  t.mock.restoreAll();
+  const wire = await runBotBuild(t, GLM, {
+    journal: ended({ is_error: false, result: 'Edited app.js.\n\nAPI Error: Connection lost mid-response. The response above may be incomplete.' }),
+    propose: true,
+  });
+  assert.equal(wire.out.error, 'the build turn failed (it ended on an API error)');
+  assert.deepEqual(wire.promotions, []);
+});
+
+test('a Codex build that failed fails exactly as it did', async (t) => {
+  // The Codex runner's own line for a failed turn: nothing committed or pushed.
+  const run = await runBotBuild(t, DEEPSEEK, {
+    journal: [
+      `__USERNODE_RESULT__ cc_exit=1 ahead=0 behind=0 sha= push_ok=0 mode=build agent_backend=codex_openrouter agent_model=${DEEPSEEK} agent_thread_id= agent_exit=1`,
+      '__USERNODE_EXIT__ 1',
+    ],
+    propose: true,
+  });
+  assert.equal(run.execs[1].agentHarness, 'codex');
+  assert.equal(run.out.ok, false);
+  assert.equal(run.out.error, 'the build produced no change to propose', 'the message it always had');
+  assert.deepEqual(run.promotions, []);
+  assert.match(run.dispatches[1].script, /run-codex-agent\.sh/);
+  assert.equal(run.dispatches[1].env.DISCARD_FAILED_TURN, undefined, 'the Codex runner needs no asking');
+  // A Codex turn is judged as before: only by what it pushed.
+  assert.equal(live.failedClaudeTurn({ agentHarness: 'codex', ccExit: 1, exitCode: 1, ccIsError: true }), null);
+  t.mock.restoreAll();
+  const pushed = await runBotBuild(t, DEEPSEEK, {
+    journal: [
+      `__USERNODE_RESULT__ cc_exit=0 ahead=1 behind=0 sha=${SHA} push_ok=1 mode=build agent_backend=codex_openrouter agent_model=${DEEPSEEK} agent_thread_id=t-1 agent_exit=0`,
+      '__USERNODE_EXIT__ 0',
+    ],
+    propose: true,
+  });
+  assert.equal(pushed.out.ok, true, pushed.out.error);
+  assert.deepEqual(pushed.promotions, ['/api/sessions/5001/promote']);
+});
+
+test('run-cc.sh commits and pushes nothing from a failed turn when asked, and keeps it otherwise', async (t) => {
+  const run = await runBotBuild(t, GLM);
+  const { env } = run.dispatches[1];
+  assert.equal(env.DISCARD_FAILED_TURN, '1');
+  const upstream = await fakeOpenRouter();
+  t.after(() => upstream.close());
+  const committed = (fx) => fs.readFileSync(fx.gitLog, 'utf8').split('\n').filter((l) => /^(add|commit)\b/.test(l));
+
+  // claude exited 1: nothing is committed, the push is skipped, and the
+  // result line is the Codex runner's for a failed turn.
+  const fx = runnerFixture();
+  const failed = await runRunCc(env, fx, upstream, { STUB_EXIT: '1' });
+  assert.equal(failed.code, 1, failed.out);
+  assert.match(failed.out, /__USERNODE_WARN__ claude exited non-zero \(1\); skipping commit\/push/);
+  assert.match(failed.out, /__USERNODE_RESULT__ cc_exit=1 ahead=0 behind=0 sha= push_ok=0 mode=build/);
+  assert.doesNotMatch(failed.out, /__USERNODE_PHASE__ (commit|push)\b/);
+  assert.deepEqual(committed(fx), []);
+
+  // claude exited 0 but its result was an error: the same.
+  const fx2 = runnerFixture();
+  const errored = await runRunCc(env, fx2, upstream, { STUB_IS_ERROR: '1' });
+  assert.equal(errored.code, 1, errored.out);
+  assert.match(errored.out, /__USERNODE_WARN__ claude's result was an error; skipping commit\/push/);
+  assert.match(errored.out, /push_ok=0 mode=build/);
+  assert.deepEqual(committed(fx2), []);
+
+  // A turn that succeeded is committed as before.
+  const fx3 = runnerFixture();
+  const ok = await runRunCc(env, fx3, upstream);
+  assert.equal(ok.code, 0, ok.out);
+  assert.match(ok.out, /__USERNODE_PHASE__ commit/);
+  assert.ok(committed(fx3).some((line) => line.startsWith('commit')), 'committed');
+
+  // Not asked (a person's dev chat): a failed turn's work is kept, as it was.
+  const fx4 = runnerFixture();
+  const kept = await runRunCc({ ...env, DISCARD_FAILED_TURN: '' }, fx4, upstream, { STUB_EXIT: '1' });
+  assert.equal(kept.code, 1, kept.out);
+  assert.match(kept.out, /__USERNODE_PHASE__ commit/);
+  assert.ok(committed(fx4).some((line) => line.startsWith('commit')), 'committed');
+});
+
+// ── A turn stopped before its result is still priced ───────────────────
+
+test('a Claude-harness turn stopped before its result is priced from the usage it streamed', async (t) => {
+  const stream = (event, uuid) => JSON.stringify({
+    type: 'stream_event', event, session_id: 'cc-or-1', parent_tool_use_id: null, uuid,
+  });
+  const { worker } = loadWorker(t, [
+    JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cc-or-1' }),
+    stream({ type: 'message_start', message: { id: 'gen-1', model: GLM, usage: { input_tokens: 1200, cache_read_input_tokens: 800, output_tokens: 1 } } }, 'u1'),
+    stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Reading the map code.' } }, 'u2'),
+    stream({ type: 'message_delta', delta: { stop_reason: 'tool_use' }, usage: { output_tokens: 300 } }, 'u3'),
+    stream({ type: 'message_start', message: { id: 'gen-2', model: GLM, usage: { input_tokens: 2500, output_tokens: 1 } } }, 'u4'),
+    stream({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'x'.repeat(400) } }, 'u5'),
+    // The wall clock: the kill's marker, no result event.
+    '__USERNODE_EXIT__ 143',
+  ]);
+  worker.adoptWarmWorker(701, 'usernode-worker-701');
+  const result = await worker.execInWorker(701, {
+    mode: 'scout', prompt: 'triage', branchName: 'main', agentBackend: 'codex_openrouter', agentHarness: 'claude',
+    agentModel: GLM, openrouterApiKey: KEY, openrouterApiBase: 'https://openrouter.ai/api/v1',
+    turnUuid: 'attempt-1', logicalTurnId: 'turn-1', attemptNumber: 1,
+  });
+  assert.equal(result.inputTokens, null, 'Claude Code reported no usage of its own');
+  assert.deepEqual(result.relayUsage, {
+    requests: 2, inputTokens: 1200 + 800 + 2500, cachedInputTokens: 800, outputTokens: 300 + 100,
+  });
+  const spend = bot.relaySpend(result.relayUsage, {
+    available: true, inputPricePerMillion: 0.1, outputPricePerMillion: 0.4,
+  }, agentTurn);
+  assert.equal(spend.requests, 2);
+  assert.ok(spend.costUsd > 0, 'priced, so the weekly pool is debited');
 });

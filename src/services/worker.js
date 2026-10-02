@@ -756,12 +756,19 @@ function isClaudeOnOpenRouter(state) {
 // already reads (#3296): the thread to resume lives in agentThreadId, as a
 // Codex thread does, and nothing is written into cc_session_id, which belongs
 // to Anthropic Claude Code sessions. Idempotent; a no-op for other turns.
+//
+// It also fills the per-turn usage sum a Codex turn gets from its relay
+// (`relayUsage`, #3038), from the usage each model call reported as it
+// streamed. Claude Code reports a run's usage only on its result event, so a
+// turn stopped before that (the Homeroom bot's wall clock) had none at all
+// and was priced at nothing; this is what it can be priced from instead.
 function finalizeHarnessResult(state) {
   if (!isClaudeOnOpenRouter(state)) return state;
   const claudeSessionId = state.sessionId || state.initSessionId || null;
   if (claudeSessionId) state.agentThreadId = claudeSessionId;
   state.sessionId = null;
   state.initSessionId = null;
+  if (!state.relayUsage) state.relayUsage = liveAgentSpend.usageTotals(state.liveSpend);
   return state;
 }
 
@@ -2800,6 +2807,13 @@ async function execInWorker(sessionId, {
   agentModelMetadata = null,
   openrouterApiKey = null,
   openrouterApiBase = null,
+  // A build whose agent failed (exited non-zero, or ended on an error result)
+  // commits and pushes nothing, as the Codex runner always does. Only the
+  // Claude Code runner reads it (DISCARD_FAILED_TURN, run-cc.sh), and only
+  // for an OpenRouter turn: the Homeroom bot asks for it, because what it
+  // pushes is what it proposes, or a revision of a proposal up for a vote. A
+  // person's dev chat keeps a failed turn's work, as it always has.
+  discardFailedTurn = false,
   shotsRunId = null,
   shotsOrigins = null,
   shotsAuthTokens = null,
@@ -3127,6 +3141,7 @@ async function execInWorker(sessionId, {
     safeEnv.RESUME_FALLBACK_PROMPT_FILE = '';
     safeEnv.TURN_UUID = turnUuid || '';
     safeEnv.OPENROUTER_API_BASE = openrouterApiBase || '';
+    safeEnv.DISCARD_FAILED_TURN = discardFailedTurn === true ? '1' : '';
   }
   if (isCodex) {
     safeEnv.AGENT_BACKEND = 'codex_openrouter';

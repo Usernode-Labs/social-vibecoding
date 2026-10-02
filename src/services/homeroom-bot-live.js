@@ -1194,6 +1194,31 @@ function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
 }
 
 /**
+ * Why a coding turn Claude Code ran failed, or null when it did not (or ran
+ * in Codex). An OpenRouter model the platform maps to Claude Code (#3296)
+ * runs in run-cc.sh, which commits and pushes whatever a turn leaves, even
+ * when the agent failed partway: what a person's dev chat wants, and never
+ * what the bot may propose. The Codex runner refuses to commit or push a
+ * failed turn at all (run-codex-agent.sh), which is why a Codex turn needs
+ * no check here and its outcome is exactly what it was. The bot's turns ask
+ * run-cc.sh to do the same (`discardFailedTurn`); this is the host's half,
+ * which also names the reason. Failed means the agent exited non-zero
+ * (cc_exit, or the wrapper's exit code), or its final result said is_error.
+ * `apiFailure` also counts a run whose final message is the runtime's own
+ * "API Error" notice (agent-result-text.js), which Claude Code can end on
+ * with exit 0: a build checks that, since nothing it left is proposed.
+ */
+function failedClaudeTurn(result, { apiFailure = false } = {}) {
+  if (!result || result.agentHarness !== 'claude') return null;
+  const exited = (code) => Number.isInteger(code) && code > 0;
+  if (exited(result.ccExit)) return `the agent exited with code ${result.ccExit}`;
+  if (result.ccIsError === true) return 'the agent reported an error';
+  if (exited(result.exitCode)) return `the agent exited with code ${result.exitCode}`;
+  if (apiFailure && agentApiFailure(result.lastResultText)) return 'it ended on an API error';
+  return null;
+}
+
+/**
  * #3654: make a session run `model`. A turn runs whatever model its session
  * carries (agent-turn resolveCodexRuntimeContext reads session.agent_model),
  * and the bot's sessions were stamped once, when they were created: the
@@ -1505,6 +1530,9 @@ async function buildAndPropose({
         commitMsg: `Homeroom bot: #${issueNumber} ${title}`.slice(0, 120),
         resumeSessionId: null,
         branchName,
+        // A failed turn's work is neither committed nor pushed, under either
+        // CLI (failedClaudeTurn).
+        discardFailedTurn: true,
         ...(ctx || {}),
         telemetryComponent: telemetry || 'homeroom_bot_build',
         onProgress: progress.note,
@@ -1538,6 +1566,9 @@ async function buildAndPropose({
     return { ...(await fail(`the build ran past its time limit${progress.suffix()}`)), costUsd };
   }
   if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
+  // A failed turn is a failed build, whatever it left behind (failedClaudeTurn).
+  const turnFailed = failedClaudeTurn(result, { apiFailure: true });
+  if (turnFailed) return { ...(await fail(`the build turn failed (${turnFailed})`)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
   }
@@ -1618,6 +1649,7 @@ module.exports = {
   PLATFORM_TEST_NOTE,
   screenshotNote,
   buildAndPropose,
+  failedClaudeTurn,
   stampSessionModel,
   draftSpec,
   specPrompt,

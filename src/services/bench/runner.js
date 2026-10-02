@@ -255,6 +255,8 @@ async function runTurn({ pool, config, user, session, repo, prompt, mode, model,
         sent = typeof prompt === 'function' ? prompt(ctx) : prompt;
         return worker.execInWorker(session.id, {
           mode, prompt: sent, model, commitMsg, resumeSessionId: null, branchName: session.branch_name,
+          // As the bot's follow-up asks: a failed turn's work is not kept.
+          discardFailedTurn: true,
           ...(ctx || {}), telemetryComponent: TELEMETRY, onProgress: () => {},
         });
       },
@@ -686,7 +688,8 @@ async function recoverStage({
   // The build turn. The spec turn before it stored its spec on the session.
   if (!baseSha) throw new Error('the build has no base on record');
   const r = result || {};
-  const landed = !timedOut && r.pushOk === true && Number(r.ahead) > 0;
+  const turnFailed = timedOut ? null : require('../homeroom-bot-live').failedClaudeTurn(r, { apiFailure: true });
+  const landed = !timedOut && !turnFailed && r.pushOk === true && Number(r.ahead) > 0;
   const specMd = String(session.spec_md || '').trim() ? session.spec_md : null;
   const built = {
     ok: landed,
@@ -698,7 +701,8 @@ async function recoverStage({
     specNote: specMd ? null : 'no spec on record; the build worked from the plan',
     error: landed ? null
       : timedOut ? `the build ran past its time limit${RECOVERED_NOTE}`
-        : `the build produced no change to propose${RECOVERED_NOTE}`,
+        : turnFailed ? `the build turn failed (${turnFailed})${RECOVERED_NOTE}`
+          : `the build produced no change to propose${RECOVERED_NOTE}`,
   };
   return buildResult({ built, base: baseSha, branch: br, sessionId: session.id, deps, repo, task, trial });
 }
