@@ -30,6 +30,10 @@
 //   * a task that cannot be resolved (the app is gone, the request deleted,
 //     the pull request missing, nobody answered the question) is recorded as
 //     SKIPPED with its reason in the row's summary, never thrown;
+//   * except a DM spec that opts in with "scripted_answer": "if_unanswered":
+//     when its requester is known but never answered the bot's question, it
+//     becomes a PENDING SCRIPTED task instead (see resolveDm), whose answer
+//     the labelling session writes (grading.labelTask's dmAnswer);
 //   * GitHub is read only, through the benchmark's guardedGithub, one task at
 //     a time with a pause between tasks (rateMs).
 //
@@ -55,6 +59,13 @@ const RULES = Object.freeze({
   bot_followups: { stage: 'followup', fallbacks: [] },
 });
 const VERDICTS = Object.freeze(['question', 'ready', 'person', 'empty']);
+// What a DM spec may say about an answer nobody gave: script it when the
+// requester never answered (the only value so far).
+const SCRIPTED_ANSWER = Object.freeze(['if_unanswered']);
+// How much of what happened on a request after the bot's question a pending
+// scripted DM task keeps, for whoever writes the answer.
+const LATER_ENTRIES = 8;
+const LATER_ENTRY_CHARS = 600;
 // What a definition must add up to, per stage (static tasks plus dynamic
 // limits): the first version's shape (suites.TARGETS) with some room.
 const STAGE_RANGES = Object.freeze({
@@ -116,6 +127,10 @@ function validateDefinition(def) {
     if (t.tags?.platform != null && typeof t.tags.platform !== 'boolean') errors.push(`${at}: tags.platform must be true or false`);
     if (t.base_sha != null && !SHA_RE.test(t.base_sha)) errors.push(`${at}: base_sha must be a full commit sha`);
     if (t.reference != null && t.reference_source !== 'authored') errors.push(`${at}: an inline reference is reference_source "authored"`);
+    if (t.scripted_answer !== undefined) {
+      if (t.stage !== 'dm') errors.push(`${at}: only a DM task can have a scripted_answer`);
+      else if (!SCRIPTED_ANSWER.includes(t.scripted_answer)) errors.push(`${at}: scripted_answer must be ${SCRIPTED_ANSWER.join(' or ')}`);
+    }
     let identity = null;
     if (t.stage === 'triage' || t.stage === 'dm') {
       if (!posInt(t.issue_number)) errors.push(`${at}: no issue_number`);
@@ -263,7 +278,8 @@ async function hasRef(pool, suiteId, ref) {
 async function sourceRun(pool, spec, app) {
   if (!spec.source_run_id) return null;
   const { rows } = await pool.query(
-    `SELECT id, app_id, issue_number, verdict, label_verdict, created_at
+    `SELECT id, app_id, issue_number, verdict, label_verdict, created_at,
+            question, question_default, missing_fact, question_answers
        FROM homeroom_bot_runs WHERE id = $1 AND app_id = $2 AND issue_number = $3`,
     [spec.source_run_id, app.id, spec.issue_number],
   );
@@ -380,7 +396,12 @@ async function requesterNames(pool, app, repo, issueNumber, body) {
   return [...new Set(names)];
 }
 
-/** The requester's real answer to a question run: their DM answer, else their next reply on the request. */
+/**
+ * The requester's real answer to a question run: their DM answer, else their
+ * next reply on the request. A requester who is known but never answered is
+ * a skip marked `unanswered`, carrying what was read of the request after the
+ * question (`later`), for a spec that scripts the answer instead.
+ */
 async function trueAnswer(ctx, spec, app, repo, run) {
   const { pool, github } = ctx;
   if (run) {
@@ -402,16 +423,71 @@ async function trueAnswer(ctx, spec, app, repo, run) {
   if (!names.some(Boolean)) return skipped('the requester is not known, so their answer cannot be told from anyone else\'s');
   const thread = await backfill.threadMessagesAfter(pool, app.id, spec.issue_number, spec.as_of);
   const reply = backfill.nextReplyAfter({ comments: read.comments, threadMessages: thread, after: spec.as_of, requester: names });
-  if (!reply) return skipped('the requester never answered the question (no DM answer, and no reply of theirs on the request after it)');
+  if (!reply) {
+    return {
+      ...skipped('the requester never answered the question (no DM answer, and no reply of theirs on the request after it)'),
+      unanswered: true,
+      later: { issue: read.issue, comments: read.comments, thread },
+    };
+  }
   return { ok: true, text: reply.text, source: reply.source };
+}
+
+/** The question a run asked, as far as the run recorded it; null when it recorded none. */
+function askedQuestion(run) {
+  if (!run) return null;
+  const q = {};
+  if (run.question) q.text = String(run.question).slice(0, 2000);
+  if (run.question_default) q.default = String(run.question_default).slice(0, 1000);
+  if (run.missing_fact) q.missing_fact = String(run.missing_fact).slice(0, 1000);
+  if (Array.isArray(run.question_answers) && run.question_answers.length) {
+    q.answers = run.question_answers.filter((a) => typeof a === 'string').map((a) => a.slice(0, 200)).slice(0, 6);
+  }
+  return q.text || q.missing_fact ? q : null;
+}
+
+/**
+ * What happened on a request after the bot's question, for whoever scripts
+ * the requester's answer: the request's state now, the first few comments and
+ * thread messages after as_of (anyone's but the requester's, who wrote none),
+ * and the proposals that merged for it. Never shown to a grader.
+ */
+async function laterOnRequest(pool, app, spec, { issue, comments = [], thread = [] }) {
+  const cutoff = Date.parse(spec.as_of);
+  const entries = [
+    ...comments.map((c) => ({ ...c, where: 'github' })),
+    ...thread.map((m) => ({ ...m, where: 'thread' })),
+  ]
+    .filter((e) => Date.parse(e.createdAt) > cutoff && String(e.body || '').trim())
+    .sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
+    .slice(0, LATER_ENTRIES)
+    .map((e) => ({ author: e.author || 'unknown', at: e.createdAt, where: e.where, body: String(e.body).trim().slice(0, LATER_ENTRY_CHARS) }));
+  const { rows } = await pool.query(
+    `SELECT pr_number, pr_title FROM chat_sessions
+      WHERE app_id = $1 AND $2 = ANY(linked_issues) AND status = 'merged' AND pr_number IS NOT NULL
+      ORDER BY id LIMIT 3`,
+    [app.id, spec.issue_number],
+  );
+  return {
+    request_state: issue?.state || null,
+    comments: entries,
+    merged: rows.map((r) => ({ pr: r.pr_number, title: r.pr_title || null })),
+  };
 }
 
 async function resolveDm(ctx, spec, app, repo) {
   const run = await sourceRun(ctx.pool, spec, app);
   // The answer first: a question nobody answered is skipped before any
-  // snapshot is written for it.
+  // snapshot is written for it, unless the spec scripts the answer and the
+  // run recorded the question to script it to.
   const answer = await trueAnswer(ctx, spec, app, repo, run);
-  if (!answer.ok) return { ...answer, github: true };
+  const question = answer.unanswered && spec.scripted_answer === 'if_unanswered' ? askedQuestion(run) : null;
+  if (!answer.ok && !question) {
+    const reason = answer.unanswered && spec.scripted_answer === 'if_unanswered'
+      ? `${answer.reason}; its run recorded no question to script an answer to`
+      : answer.reason;
+    return { ...answer, reason, github: true };
+  }
   const snap = await triageSnapshot(ctx, spec, app, repo, run);
   if (!snap.ok) return snap;
   const tags = baseTags(ctx, spec, app, {
@@ -419,11 +495,20 @@ async function resolveDm(ctx, spec, app, repo) {
     request_type: spec.tags?.request_type || suites.requestType(snap.issue?.title, snap.issue?.body),
     prompt_chars: snap.promptChars || await promptChars(ctx.pool, snap.snapshotId),
     snapshot_origin: snap.origin,
+    answer_source: answer.ok ? answer.source : 'scripted',
   });
+  // A pending scripted task has no answer yet: it is labelled with one
+  // (grading.labelTask's dmAnswer) and never runs until it has.
+  const dmScript = answer.ok
+    ? { true_answer: answer.text, accepted: [], max_turns: 3, source: answer.source }
+    : {
+      true_answer: null, accepted: [], max_turns: 3, source: 'scripted', pending: true,
+      question, later: await laterOnRequest(ctx.pool, app, spec, answer.later || {}),
+    };
   const task = await suites.insertTask(ctx.pool, {
     suiteId: ctx.suite.id, stage: 'dm', sourceRunId: run?.id || null, snapshotId: snap.snapshotId,
     appId: app.id, issueNumber: spec.issue_number, tags,
-    reference: { dm_script: { true_answer: answer.text, accepted: [], max_turns: 3, source: answer.source } },
+    reference: { dm_script: dmScript },
     referenceSource: null,
   });
   return { ok: true, task, github: true };
@@ -859,6 +944,7 @@ module.exports = {
   DEFINITION_FILE,
   RULES,
   STAGE_RANGES,
+  SCRIPTED_ANSWER,
   STALE_RUNNING_MINUTES,
   loadDefinition,
   validateDefinition,

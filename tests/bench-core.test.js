@@ -69,6 +69,10 @@ test('the checked-in Core v1 definition is valid and shaped like the first versi
   assert.ok(builds.filter((t) => t.pr_number !== 3647).every((t) => t.base_sha === 'ac67fac30de91d0dd969f72b2cd73633d4719dd9'));
   assert.deepEqual(def.tasks.filter((t) => t.stage === 'checks_fix').map((t) => t.proposal_session_id), [5754, 5755]);
   assert.deepEqual(def.tasks.filter((t) => t.stage === 'dm').map((t) => t.source_run_id), [649, 267, 172, 8, 590]);
+  // Every DM came from a shadow run whose question was never delivered: each
+  // opts in to a scripted answer when its requester never answered.
+  assert.ok(def.tasks.filter((t) => t.stage === 'dm').every((t) => t.scripted_answer === 'if_unanswered'));
+  assert.ok(def.tasks.filter((t) => t.stage !== 'dm').every((t) => t.scripted_answer === undefined));
   assert.deepEqual(def.dynamic.map((r) => [r.rule, r.limit]), [['merged_bot_proposals', 10], ['bot_followups', 3]]);
   assert.deepEqual(v.counts, { triage: 44, build: 20, followup: 3, checks_fix: 2, dm: 5, spec: 0 });
 });
@@ -88,6 +92,13 @@ test('the definition\'s schema refuses what would make a bad suite', () => {
   assert.match(errs((d) => { d.dynamic[0].rule = 'everything'; }), /unknown rule/);
   assert.match(errs((d) => { d.dynamic[0].limit = 50; }), /limit must be 1 to 20/);
   assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'dm').synthetic = { title: 'x', body: 'y' }; }), /only a triage task can be synthetic/);
+  // A scripted answer: a DM task's only, and only "if_unanswered".
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'triage').scripted_answer = 'if_unanswered'; }), /only a DM task can have a scripted_answer/);
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'build').scripted_answer = 'if_unanswered'; }), /only a DM task can have a scripted_answer/);
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'dm').scripted_answer = 'always'; }), /scripted_answer must be if_unanswered/);
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'dm').scripted_answer = true; }), /scripted_answer must be if_unanswered/);
+  assert.match(errs((d) => { d.tasks.find((x) => x.stage === 'dm').scripted_answer = null; }), /scripted_answer must be if_unanswered/);
+  assert.equal(errs((d) => { for (const x of d.tasks) if (x.stage === 'dm') delete x.scripted_answer; }), '', 'leaving it out is fine');
 });
 
 test('a dynamic rule picks distinct apps in the order given, leaving out apps already used', () => {
@@ -177,6 +188,18 @@ test('a DM task\'s hidden answer is the requester\'s own next reply after the qu
   assert.equal(backfill.nextReplyAfter({ comments, after, requester: ['amy'] }).text, 'dark blue please');
   assert.equal(backfill.nextReplyAfter({ comments, after, requester: [] }), null, 'nobody\'s answer stands in for an unknown requester');
   assert.equal(backfill.nextReplyAfter({ comments, after: '2026-10-01T00:00:00Z', requester: ['amy'] }), null);
+});
+
+test('a suite\'s task list reads a scripted DM task as one', () => {
+  globalThis.window = globalThis.window || globalThis;
+  const { loadTsx } = require('./lib/render-tsx');
+  const { scriptedAnswer } = loadTsx('frontend/src/features/admin/admin-homeroom-bench.tsx', {
+    stubs: { './admin-console.js': { AdminUI: new Proxy({}, { get: (_t, key) => String(key) }) } },
+  });
+  assert.equal(scriptedAnswer({ stage: 'dm', tags: { answer_source: 'scripted' }, reference: { dm_script: { true_answer: null, source: 'scripted', pending: true } } }), true);
+  assert.equal(scriptedAnswer({ stage: 'dm', tags: {}, reference: { dm_script: { true_answer: 'A door', source: 'scripted' } } }), true, 'still scripted once written');
+  assert.equal(scriptedAnswer({ stage: 'dm', tags: { answer_source: 'thread' }, reference: { dm_script: { true_answer: 'Yes', source: 'thread' } } }), false);
+  assert.equal(scriptedAnswer({ stage: 'triage', tags: {}, reference: {} }), false);
 });
 
 test('the launcher starts on Core v1 with the candidate models, triage repeated, $50', () => {

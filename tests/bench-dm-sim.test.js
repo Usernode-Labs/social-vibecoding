@@ -148,6 +148,29 @@ test('the DM grade: final verdict against the reference, a person verdict settle
   assert.equal(sim.dmGrade({ trial: p('person'), reference: { verdict: 'person' } }).pass, true);
   assert.equal(sim.dmGrade({ trial: p('person'), reference: { verdict: 'ready' } }).pass, false);
   assert.equal(sim.dmGrade({ trial: p('ready'), reference: {} }).pass, null);
-  const missing = runner.runStage({ ...ctx(harness([READY]), {}), task: { id: 1, stage: 'dm', reference: {} } });
-  return missing.then((out) => assert.equal(out.status, 'infra_fail', 'a task without a scripted answer is the task\'s fault'));
+});
+
+test('a DM task with no answer yet never runs: not applicable, never the model\'s failure', async (t) => {
+  const side = spySideEffects(t);
+  // A pending scripted task: the requester never answered, and the
+  // labelling session has not written their answer yet.
+  const h = harness([READY]);
+  const pending = await runner.runStage(ctx(h, { true_answer: null, accepted: [], max_turns: 3, source: 'scripted', pending: true }));
+  assert.equal(pending.status, 'not_applicable');
+  assert.match(pending.error, /never answered, and the answer written for them is not there yet/);
+  const missing = await runner.runStage({ ...ctx(h, {}), task: { id: 1, stage: 'dm', reference: {} } });
+  assert.equal(missing.status, 'not_applicable', 'no answer at all is not the model\'s fault either');
+  assert.equal(h.prompts.length, 0, 'no turn ran');
+  assert.deepEqual(side, []);
+  assert.equal(require('../src/services/bench/graders').finalVerdict({ status: 'not_applicable' }), 'excluded', 'kept out of accuracy');
+  // The same rule the launcher applies up front.
+  assert.match(sim.noAnswerReason({ stage: 'dm', reference: { dm_script: { true_answer: null, source: 'scripted' } } }), /label the task first/);
+  assert.equal(sim.noAnswerReason({ stage: 'dm', reference: { dm_script: { true_answer: 'Green', source: 'scripted' } } }), null, 'once written, it runs');
+  assert.equal(sim.noAnswerReason({ stage: 'triage', reference: {} }), null, 'only a DM task needs an answer');
+
+  // Once written, a scripted answer runs like a real one.
+  const h2 = harness([QUESTION, READY]);
+  const scripted = await runner.runStage(ctx(h2, { true_answer: 'Green, please', accepted: [], max_turns: 3, source: 'scripted', scripted_by: 'opus' }));
+  assert.equal(scripted.status, 'ok');
+  assert.equal(scripted.parsed.conversation[0].reply.text, 'Green');
 });

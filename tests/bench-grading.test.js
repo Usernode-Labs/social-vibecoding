@@ -134,3 +134,18 @@ test('a reference is one accepted answer, not a template: the judge, the build r
   const section = JSON.stringify(charter).includes('benchmark-grading') ? JSON.stringify(charter) : '';
   assert.match(section, /A reference is one accepted answer, not the only right one/);
 });
+
+test('a DM task nobody answered: the label item and the charter ask for the requester\'s reply, in their voice', () => {
+  for (const text of [grading.SCRIPTED_ANSWER_INSTRUCTIONS, require('../src/services/mcp-charter').CHARTER_FULL]) {
+    assert.match(text, /dmAnswer/);
+    assert.match(text, /first person, short, in (the requester's|their) voice/i);
+    assert.match(text, /not a hedge|rather than a hedge/);
+    assert.match(text, /written for them or simulated/);
+    assert.match(text, /later comments/);
+  }
+  // The charter's rules stay four; the scripted answer is part of labelling.
+  const section = require('../src/services/mcp-charter').CHARTER_SECTIONS.find((x) => x.id === 'benchmark-grading').text;
+  assert.match(section, /Four rules\./);
+  assert.ok(section.indexOf('dmAnswer') < section.indexOf('Four rules.'), 'with the labelling steps, before the rules');
+  assert.equal(grading.MAX_DM_ANSWER_CHARS, 2000);
+});

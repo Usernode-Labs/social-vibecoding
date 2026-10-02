@@ -4682,6 +4682,7 @@ function registerTools(server, ctx) {
     const BENCH_ITEM_RE = /^[A-Za-z0-9_-]{8,64}$/;
     const MAX_BENCH_SECTION_CHARS = 60000;
     const MAX_BENCH_CRITIQUE_CHARS = 8000;
+    const MAX_BENCH_DM_ANSWER_CHARS = 2000;
     const benchSection = (value) => (value == null ? null : untrusted(JSON.stringify(value, null, 1), MAX_BENCH_SECTION_CHARS));
     const benchNotFound = (result, what) => (result.status === 404
       ? toolError('no_access', `No such benchmark ${what}. Take its id from list_bench_grading_queue.`)
@@ -4803,7 +4804,7 @@ function registerTools(server, ctx) {
 
     server.registerTool('label_bench_task', {
       title: 'Benchmark: record a task\'s reference',
-      description: 'Admin only. Record the reference for one Homeroom bot benchmark "label" item: what a right answer at its stage is, from the request as it stood. Triage and DM tasks need `verdict` (question, ready, person or empty), with `answers` a good question would offer; follow-up tasks take `action`; build tasks take `expectedFiles` and `allowedTestEdits`; spec tasks `specPoints`; any task `notes`, `difficulty` and `requestType`. Trials already run on the task are graded again against it. A task in a frozen suite cannot be labelled. It changes nothing in any app.',
+      description: 'Admin only. Record the reference for one Homeroom bot benchmark "label" item: what a right answer at its stage is, from the request as it stood. Triage and DM tasks need `verdict` (question, ready, person or empty), with `answers` a good question would offer; follow-up tasks take `action`; build tasks take `expectedFiles` and `allowedTestEdits`; spec tasks `specPoints`; any task `notes`, `difficulty` and `requestType`. A DM task whose requester never answered (its item shows the bot\'s question) also needs `dmAnswer`: the requester\'s own reply, as they would have written it. Trials already run on the task are graded again against it. A task in a frozen suite cannot be labelled. It changes nothing in any app.',
       inputSchema: {
         itemId: z.string().describe('The opaque id of a "label" item.'),
         verdict: z.enum(['question', 'ready', 'person', 'empty']).optional(),
@@ -4813,6 +4814,7 @@ function registerTools(server, ctx) {
         expectedFiles: z.array(z.string()).optional(),
         allowedTestEdits: z.array(z.string()).optional(),
         specPoints: z.array(z.string()).optional(),
+        dmAnswer: z.string().optional().describe('DM tasks whose requester never answered only: their reply to the bot\'s question, first person, in their voice.'),
         difficulty: z.enum(['easy', 'medium', 'hard']).optional(),
         requestType: z.enum(['bug', 'feature', 'question', 'chore']).optional(),
       },
@@ -4823,7 +4825,7 @@ function registerTools(server, ctx) {
         nextStep: z.string(),
       },
       annotations: writeAnnotations,
-    }, async ({ itemId, verdict, action, answers, notes, expectedFiles, allowedTestEdits, specPoints, difficulty, requestType }) => {
+    }, async ({ itemId, verdict, action, answers, notes, expectedFiles, allowedTestEdits, specPoints, dmAnswer, difficulty, requestType }) => {
       const guard = scopeGuard(WRITE_SCOPE) || benchAdminOnly();
       if (guard) return guard;
       if (typeof itemId !== 'string' || !BENCH_ITEM_RE.test(itemId)) return toolError('invalid_request', 'itemId must be an id from list_bench_grading_queue.');
@@ -4831,8 +4833,14 @@ function registerTools(server, ctx) {
         const check = checkWriteLength(notes, { field: 'notes', max: 4000, hint: 'Keep the reference notes to what a grader needs.' });
         if (!check.ok) return writeLengthError(check);
       }
+      let answer;
+      if (dmAnswer != null) {
+        const check = checkWriteLength(dmAnswer, { field: 'dmAnswer', max: MAX_BENCH_DM_ANSWER_CHARS, hint: 'A reply in a chat: say it as the requester would, briefly.' });
+        if (!check.ok) return writeLengthError(check);
+        answer = check.value;
+      }
       const r = await callPlatform(baseUrl, accessToken, 'POST', `/api/bot-bench/tasks/${itemId}/label`, {
-        verdict, action, answers, notes, expectedFiles, allowedTestEdits, specPoints,
+        verdict, action, answers, notes, expectedFiles, allowedTestEdits, specPoints, dmAnswer: answer,
         tags: { difficulty, request_type: requestType },
       });
       if (!r.ok) return benchNotFound(r, 'task');

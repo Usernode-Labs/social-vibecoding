@@ -75,6 +75,28 @@ test('a row: platform faults out of accuracy, timeouts in it, every attempt\'s c
   assert.deepEqual(row.passK, { k: 3, tasks: 1, passAll: 1, value: 1 });
 });
 
+test('slicing by answer source keeps scripted DM answers apart from real ones', () => {
+  const t = (task, stage, final, extra = {}) => ({ task_id: task, stage, model: 'a/m', final, tags: {}, appSlug: 'x', ...extra });
+  const rows = [
+    t(1, 'dm', 'pass', { dm_answer_source: 'dm' }),
+    t(2, 'dm', 'fail', { dm_answer_source: 'thread', tags: { answer_source: 'thread' } }),
+    t(3, 'dm', 'pass', { dm_answer_source: 'scripted', tags: { answer_source: 'scripted' } }),
+    t(4, 'dm', 'excluded', { dm_answer_source: 'scripted' }),
+    t(5, 'dm', 'pass', { dm_answer_source: null }),
+    t(6, 'triage', 'pass'),
+  ].map((r) => ({ ...r, answerSource: report.answerSource(r) }));
+  assert.deepEqual(rows.map((r) => r.answerSource), ['real', 'real', 'scripted', 'scripted', 'real', null],
+    'a DM made from a run before the tag existed is the requester\'s own answer');
+  assert.ok(report.SLICE_KEYS.includes('answer_source'));
+  assert.deepEqual(report.sliceGroups(rows, 'answer_source').map((g) => [g.stage, g.value, g.n, g.accuracy]), [
+    ['dm', 'real', 3, 2 / 3],
+    ['dm', 'scripted', 1, 1],
+    ['triage', 'none', 1, 1],
+  ]);
+  assert.deepEqual(report.sliceGroups(rows, 'app_slug').map((g) => g.value), ['x', 'x'], 'the other keys as before');
+  assert.ok(report.CSV_COLUMNS.includes('answer_source'));
+});
+
 test('the chart: the frontier filled and joined, each point named in words, a title for each', () => {
   globalThis.window = globalThis.window || globalThis;
   const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');

@@ -414,6 +414,11 @@ const REFERENCE_KEYS = Object.freeze([
 ]);
 const TAG_KEYS = Object.freeze(['verdict', 'request_type', 'difficulty']);
 
+/** Whether a DM script's answer is the requester's own (not one written for them). */
+function isRealAnswer(script) {
+  return !!script?.true_answer && script.source !== 'scripted';
+}
+
 /**
  * Record (part of) a task's reference: a labelling session's verdict and
  * answers, or an admin's. Merged into what is there, refused on a frozen
@@ -426,6 +431,19 @@ async function setReference(pool, { taskId = null, labelToken = null, patch = {}
   if (task.frozen_at) return httpError(409, 'The suite is frozen: label the task on a new version');
   const ref = {};
   for (const key of REFERENCE_KEYS) if (patch[key] !== undefined) ref[key] = patch[key];
+  // A DM task's answer (services/bench/core.js resolveDm): one its requester
+  // never gave is written before the task counts as labelled, and one they
+  // did give is never replaced.
+  if (task.stage === 'dm') {
+    const had = task.reference?.dm_script;
+    const next = ref.dm_script !== undefined ? ref.dm_script : had;
+    if (had && !had.true_answer && !next?.true_answer) {
+      return httpError(400, 'The requester never answered this DM task\'s question: write their answer (dmAnswer) before labelling it');
+    }
+    if (isRealAnswer(had) && ref.dm_script !== undefined && ref.dm_script?.true_answer !== had.true_answer) {
+      return httpError(409, 'This DM task has the requester\'s real answer, which is never replaced');
+    }
+  }
   const tagPatch = {};
   for (const key of TAG_KEYS) if (tags[key] !== undefined) tagPatch[key] = tags[key];
   const { rows } = await pool.query(
@@ -723,6 +741,7 @@ module.exports = {
   insertTask,
   removeTask,
   setReference,
+  isRealAnswer,
   addedChecks,
   importTaskFromPr,
   prng,

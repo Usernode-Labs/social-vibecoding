@@ -124,4 +124,24 @@ test('a grade carries its verdict and critique to the platform; an over-long cri
   assert.equal(label.structuredContent.labelled, true);
   assert.equal(calls[1].url, 'http://platform.internal/api/bot-bench/tasks/abcdefgh12345678/label');
   assert.deepEqual(calls[1].body.tags, { difficulty: 'hard' });
+  assert.equal(calls[1].body.dmAnswer, undefined, 'no answer unless one is written');
+});
+
+test('label_bench_task carries a DM task\'s written answer as dmAnswer; an over-long one is refused, not cut', async (t) => {
+  const calls = stubFetch(t, (url) => (url.endsWith('/label') && calls.length > 1
+    ? { status: 400, body: { error: 'The requester never answered this DM task\'s question: write their reply as dmAnswer' } }
+    : { body: { ok: true, stage: 'dm' } }));
+  const { specs, handlers } = register({ user: { ...ADMIN } });
+  assert.ok(specs.get('label_bench_task').inputSchema.dmAnswer, 'dmAnswer is an input');
+  assert.match(specs.get('label_bench_task').description, /dmAnswer/);
+  const ok = await handlers.get('label_bench_task')({ itemId: 'abcdefgh12345678', verdict: 'ready', dmAnswer: 'A door, please.' });
+  assert.equal(ok.structuredContent.labelled, true);
+  assert.equal(calls[0].body.dmAnswer, 'A door, please.');
+  const long = await handlers.get('label_bench_task')({ itemId: 'abcdefgh12345678', verdict: 'ready', dmAnswer: 'x'.repeat(2001) });
+  assert.equal(long.structuredContent.code, 'dmAnswer_too_long');
+  assert.equal(calls.length, 1, 'refused before the call');
+  // The platform's refusal (no answer on a task that needs one) reaches the session.
+  await handlers.get('label_bench_task')({ itemId: 'abcdefgh12345678', verdict: 'ready' });
+  const refused = await handlers.get('label_bench_task')({ itemId: 'abcdefgh12345678', verdict: 'ready' });
+  assert.match(JSON.stringify(refused.structuredContent), /dmAnswer/);
 });
