@@ -42,6 +42,7 @@ import { Wordmark } from '@/components/ui/wordmark';
 
 import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
+import { FRAME_THEME_PARAM } from '../app-frame/app-frame-policy.js';
 import {
   AUTH_SCREEN_IDS,
   byId,
@@ -618,6 +619,23 @@ export function LandingScreen() {
         } catch {
           legacy().PlatformUI?.toast?.('This app could not be opened.', { error: true });
           return;
+        }
+      }
+
+      // #3257: the platform's resolved theme, for the app's pre-paint read,
+      // exactly as the signed-in app frame carries it
+      // (AppView.buildAppIframeSrc). Without it an app that follows the
+      // platform theme paints in the OS's look until the bridge's load-time
+      // ask is answered. Public or not: it says nothing about who is looking.
+      const theme = legacy().AppView?.resolvedTheme?.();
+      if (theme) {
+        try {
+          const url = new URL(launchUrl);
+          url.searchParams.set(FRAME_THEME_PARAM, theme);
+          launchUrl = url.toString();
+        } catch {
+          // A URL the URL API cannot parse goes as it always did; the
+          // bridge's ask still delivers the theme once the app loads.
         }
       }
 
