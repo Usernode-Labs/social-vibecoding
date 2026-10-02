@@ -1,5 +1,10 @@
 # C9: recover the enrolled CLI checks run
 
+This file records the original browser checkpoint and subsequent corrections.
+The [supported CLI contract review](supported-cli-contract-review.md) is the
+current combined contract; historical checkpoint names do not imply permanent
+handler or reducer support.
+
 Scope is the same default-off Kubernetes/kpack CLI enrollment as C8. Activation
 remains separately authorized. This checkpoint uses the existing preview lifecycle,
 check-run manifest and harvester; it does not introduce another check executor.
@@ -11,17 +16,23 @@ retained in `check_runs` for the current head prevents completion. Worker loss a
 must finish that release rather than recapture. Completion means the checks
 obligation settled, including an error/failing verdict; it does not mean merge-ready.
 
-**Recovery.** Before starting checks, inspect again under the existing lifecycle
-resource lock. A recorded run with a live heartbeat is joined by waiting. An orphan
+**Recovery for durable-marked runs.** Before starting checks, inspect again under
+the existing lifecycle resource lock. A recorded run with a live heartbeat is joined by waiting. An orphan
 is claimed and read by the existing harvester, retaining its run ID, Job UIDs and
 logs. No new Job is admitted while that run is recoverable. A submitted but
 absent capture Job retains its locator, including after supersession: absence
 cannot establish creator closure. Unexplained Job disappearance retains uncertainty;
 known interrupted retirement resumes from its persisted identities/progress (C11).
-Unreadable observed output produces the existing error verdict. An already-persisted current verdict closes as completed, allowing
-a later explicit recheck; actual supersession closes as cancelled. Missing manifests in older C8 work retain the existing
-lifecycle cancellation/re-drive behavior. New enrolled launches must persist both
-provisional and full manifests before creating Jobs; a failed write cannot silently
+Confirmed failures retain their verdict policy; missing/deadline/unreadable output
+uses the current explicit unknown-outcome reconciliation policy. An already-persisted
+current verdict resumes retirement and then closes as completed, allowing a later
+explicit recheck; actual supersession closes as cancelled. Missing manifests in
+enrolled work retain a conservative locator and block rather than cancel/re-drive.
+Unmarked historical manifests still select legacy harvest cleanup/settlement;
+enrolled redrive rejoins the durable owner but does not upgrade their guarantees.
+Their support needs the retention/reconciliation gate in the current review.
+Legacy unenrolled callers retain their own recovery behavior. New enrolled launches
+must persist both provisional and full manifests before creating Jobs; a failed write cannot silently
 launch unrecoverable checks. Heartbeat expiry authorizes reading existing work,
 not proof that an earlier external creation stopped. A failed enrolled launch or
 settlement keeps its full manifest for harvest/retirement. Input Secrets carry the
@@ -95,7 +106,9 @@ continuation now exposes a durable blocked reason and reconciliation owner, as
 defined in [unknown-check-outcomes-contract.md](unknown-check-outcomes-contract.md). This is containment of uncertainty, not a complete
 external execution protocol or a production-ready liveness guarantee. Retired
 missing capture locators likewise remain for later reconciliation. Older C8
-manifests lacking the durable marker retain their historical re-drive behavior.
+manifests lacking the durable marker retain their historical harvest redrive,
+cleanup and settlement branches; enrolled dispatch rejoins its durable owner.
+Those retained formats need reconciliation before claiming the current guarantees.
 CLI reducer v2 adds the closure guard; v1 replay is frozen only for retained traces,
 subject to the plan's retention audit. Work payload/kind remains v1 and no new
 workflow, rollout or caller migration is introduced.

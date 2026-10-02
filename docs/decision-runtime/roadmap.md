@@ -3,6 +3,11 @@
 2 October 2026. Canonical main `d600eb4308b0d283ba050addf4c19c915078086c`
 integrated into accepted admission checkpoint `2bf702dbd8651f9877d492f0d21645c24a444668`.
 See the [integration record](canonical-integration.md) for fixes and evidence.
+Current accepted implementation: `d24b0c0dd`; the
+[supported CLI/retention review](supported-cli-contract-review.md) compares it with
+fetched canonical `4c0ef27fb7381e9ecb89e2732e6c2c784b9395c6`.
+That newer canonical revision is **not integrated**; adapter agreement does not
+close the canonical freshness gate.
 PostgreSQL-only tests additionally require [verified disposable ownership](postgres-test-isolation.md);
 a URL or test flag does not authorize mutations.
 The Kubernetes/kpack native CLI cohort remains default-off. No production
@@ -32,7 +37,9 @@ evidence; progress means guarantees demonstrated **and replaced machinery remove
   verdict, history/graduation, trace and required gate requests commit together.
   Same-app history coordinates across sessions; lost replies adopt the verdict.
   Stale reporters cannot consume the valid owner's settlement slot. The shared
-  worker owns required delivery; optional artifacts are separate.
+  worker owns required delivery; optional artifacts are separate. Standalone SDK
+  initialization is explicit; unavailable GitHub retains retry ownership instead
+  of falsely completing delivery. GitHub policy calls remain substituted evidence.
 - **Recoverable retirement:** existing connections/delayed Pods cannot regain a
   retired clone; checks cleanup resumes after destructive steps. Unknown creation
   stays discoverable. Enrolled synchronous preparation, restart recapture, adapter
@@ -46,19 +53,18 @@ injected interruption points do not prove public-edge or installation compatibil
 
 | Deliverable | Kind | Scope / completion evidence |
 | --- | --- | --- |
-| Consolidate one CLI contract | Consolidation + verification | **New admission consolidated.** Inventory retained work/receipts/manifests/traces before pruning recovery/replay formats. Follow the [removal slice](migration-retirement-inventory.md); keep legacy safeguards. |
-| Integrate canonical main and CI | Consolidation + verification | **Integrated locally:** canonical behavior, persisted specs, writer inventory and focused CI reconciled. PostgreSQL and disposable-resource failure matrix rerun; CI execution on GitHub remains unverified because no push is authorized. See the integration record. |
-| Resolve unknown checks outcomes | **Implemented locally; bounded verification** | [Recover or explicitly block](unknown-check-outcomes-contract.md). Original-run reconciliation owns delayed Jobs/output; pending missing/provisional manifests cannot admit competing checks. Unknown creation and cleanup remain discoverable. Permanent evidence loss still needs trustworthy evidence; no unsafe reset or creator-closure inference. |
-| Idempotent check gating settlement | **Implemented locally; contained verification** | [Atomic settlement and durable deduplicated gate delivery](idempotent-check-settlement-contract.md), with unchanged graduation policy. Legacy callers and old terminal verdicts without receipts remain outside this guarantee; retained-store reconciliation cannot recount unknown history. |
-| Verify capture/worker boundaries | Verification; adapter changes where needed | Backend revision, public origin/assets/TLS/access, private-user behavior, permissions and compatible restart/admission pause, in isolated fixtures. Current substitutions leave these unproved. |
+| Current CLI contract | **Review and new-admission consolidation complete**; remaining inventory/archive/removal | [Contract and retention decisions](supported-cli-contract-review.md) distinguish handlers, receipt retry and replay. Local fixture audit is complete; named supported stores/exports remain unknown. Remove only unused early dispatch and archive-only replay copies after that gate; keep legacy safeguards. |
+| Canonical main and CI | Earlier integration complete; **newer reconciliation + verification remaining** | `d600eb43` matrix is demonstrated. Reconcile current canonical benchmark recovery and live approval behavior; refresh schema/writers/CI and rerun on the pinned revision. GitHub CI/Linux installation is not demonstrated by local coverage. |
+| Unknown outcomes and idempotent gating | **Implementation and contained verification complete** | [Unknown outcomes](unknown-check-outcomes-contract.md), [atomic settlement/dependency delivery](idempotent-check-settlement-contract.md). Permanent evidence loss remains explicitly blocked with the original reconciliation owner. Unmarked retained manifests and old terminal verdicts without receipts remain inventory/reconciliation limits; never recount unknown history. No new implementation gate for these accepted corrections. |
+| Capture/standalone boundaries | **Code review complete; isolated harness work + verification remaining** | Follow the review's concrete matrix: packaged `main`/schema/non-root/RBAC and HTTP admission restarts; exact backend/capture/unit image tuple; local TLS/assets and private identity exchange. Product adapter/preflight changes only where those proofs expose a gap. No new workflow or cohort. |
 | Migrate remaining writers | New implementation + consolidation + verification; **after CLI gate** | Hosted/imported/manual/promotion/fleet/head-invalidation/teardown/recovery paths, with explicit policies. Prove Docker separately; retire competing owners and allowlist entries after handling retained work. |
 | Correlated status and owner integration | New implementation + verification; full migration | Explain revision, owner, obligation and rejection. Preserve separate shots/governance/merge/release authority and required handoffs. |
 
 ## Completion gates
 
-**First supported CLI slice:** only native CLI Kubernetes/kpack is supported by
-the new contract. The first five deliverables must pass. Recovery with admission
-off must retain one owner, without competing builders or stranded required work.
+**First supported CLI slice:** only native CLI Kubernetes/kpack is covered by
+the intended supported contract. The first four deliverables must pass. Recovery
+with admission off must retain one owner, without competing builders or stranded required work.
 Document conservative retention, long-held locks and best-effort optional artifacts.
 This completes support for the bounded implementation, **not production rollout**.
 
@@ -77,7 +83,10 @@ This scope does not require rewriting every platform lifecycle.
   its own proof; current protections and locators remain until then.
 - Broader turn, merge and release lifecycle refactors after this migration.
 
-**Next action:** complete the supported contract/boundary review, canonical freshness
-and retained-store/trace policy, including old terminal verdicts without settlement receipts. The bounded unknown-outcome
-correction does not provide automatic repair of permanently missing evidence. New callers remain behind the first supported CLI gate. CI configuration
-is validated locally; running it on GitHub requires separate push authorization.
+**Next action:** reconcile the pinned current canonical revision, then prove the
+actual packaged standalone/HTTP boundary in the disposable fixture. Reconcile
+unmarked checks only if a named supported store retains them. Close the
+named store/export and replay-archive decision before the removal slice. The
+contract/retention review is complete; global retained inventory and installation
+proof are not. New callers remain behind the first supported CLI gate. Running
+GitHub CI requires separate push authorization; this roadmap does not authorize it.

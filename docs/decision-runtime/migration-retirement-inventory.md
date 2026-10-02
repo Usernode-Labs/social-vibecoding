@@ -7,6 +7,10 @@ checkpoint-by-checkpoint inventory with current removal decisions. The
 Git history and the local ledger. Admission consolidation below is implemented
 locally; old recovery/replay formats remain. The [integration record](canonical-integration.md)
 documents canonical reconciliation and current validation. No rollout or production change.
+Current accepted implementation is `d24b0c0dd`. The
+[supported CLI review](supported-cli-contract-review.md) pins current behavior,
+retention decisions and bounded boundary verification. Canonical
+`4c0ef27fb7381e9ecb89e2732e6c2c784b9395c6` was reviewed but is not integrated.
 
 ## What is replaced for this cohort
 
@@ -21,17 +25,18 @@ is not permission to delete their global protection.
 
 | Item | Decision / replacement | Removal gate |
 | --- | --- | --- |
-| Three early durable preparation kinds: `native-preview-prepare`, `native-preview-template-prepare`, `native-preview-kpack-prepare` | No longer emitted by new admission; it always uses `native-preview-kubernetes-prepare`; keep `native-preview-retire` and `native-cli-preview-continuation`. | Stop emitting early kinds first. Delete handlers/checkpoint branches only after retained queued/running/blocked work and their resource obligations are inventoried and finished/adopted under the original contract. Never rename a persisted payload to the new kind. |
+| Three early durable preparation kinds: `native-preview-prepare`, `native-preview-template-prepare`, `native-preview-kpack-prepare` (v1) | **Emission removed.** No retained live instance established in this review; recovery dispatch stays temporarily for unknown stores. Current complete preparation, retirement, CLI continuation, gate and review delivery handlers remain supported. | Delete early handlers/exclusive branches only after named stores have no unfinished work or dependent obligations, or those are safely drained. Include succeeded/blocked work and detached resources. Never rename old payloads to the complete kind. |
 | `nativePreviewWorkerEnabled` and three `nativePreviewRecoverable*` booleans | Removed from admission and the CLI config shim. New work always includes clone, image and runtime operations under the existing default-off CLI policy. | Keep admission separate from recovery. Direct experiment tests must use the supported contract; old persisted kind recovery cannot depend on current flags. |
 | `nativePreviewAttempts` / `PREVIEW_NATIVE_ATTEMPTS_ENABLED` | Still selects synchronous `native` → `candidate-native` for unenrolled callers. Durable CLI admission no longer supplies or depends on it. | Its redundant durable-admission/shim use is removed, **not** the synchronous feature or activation/cleanup protections. Delete globally only after its callers/retained candidates are handled. |
-| Preview frozen v1–v9; CLI v1–v2; review v1 | Historical replay only; live versions are preview v10, CLI v3, review v2. Old copies are not alternative live state machines. | Define which persisted/exported traces retain replay support. Development checkpoints alone do not require permanent runtime copies. Preserve a reproducible archive for retained traces before removing versions from runtime; v9 requires v8. |
-| Old one-shot runtime observer/creation checkpoints and staging `preparedClone` / `onRuntimeStarting` callbacks | Needed by the three early durable kinds; complete path uses named clone/image/runtime operations and persisted resource submissions. | Remove with old handlers. `startCandidateRuntime` and its old action/receipt compatibility need their own usage/retention check; do not delete shared candidate verification or current clone/build provenance guards. |
-| `recoverExisting`, persisted `durableCli`, `operation.durableChecks`, `retainInputForRetirement` | Required ownership selection, not redundant rollout switches. Existing legacy manifests/adapters have different cleanup/re-drive behavior. | Retain while contracts coexist. An in-memory marker selects a persisted owner; it cannot grant admission or stand in for the manifest. |
+| Preview frozen v1–v9; CLI v1–v2; review v1 | Replay-only; live versions are preview v10, CLI v3, review v2, settlement v1. Old work recovery and receipt retry do not execute frozen reducers. | Remove from runtime after named trace/export policy and reproducible offline archive/goldens. Preview v9 requires v8. No explicit golden was found for preview v2/v5/v6/v7; external trace inventory is unknown, not zero. Old request parser support has a separate retry gate. |
+| One-shot runtime observation/start branches and staging `preparedClone` / `onRuntimeStarting` | Early durable kinds use these; complete preparation uses named operations. `onClonePrepared` remains used by synchronous `candidate-native`; current complete completion still writes creation checkpoints. | Prune exclusive dispatch only with old handlers. Check `RequestCandidateRuntime` receipts/callers before removing its parser/guard. Do not blanket-remove callbacks/checkpoint fields, shared candidate verification or clone/build provenance guards. Optional `runScript`/desired-spec fields also represent current reservation phases. |
+| `recoverExisting`, persisted `durableCli`, `operation.durableChecks`, `retainInputForRetirement` | Required ownership selection, not redundant rollout switches. Unmarked manifests select legacy cleanup/redrive and best-effort settlement even in an enrolled session; enrolled dispatch rejoins the durable owner but does not upgrade those guarantees. | Retain while contracts coexist. An in-memory marker selects a persisted owner; it cannot grant admission or stand in for the manifest. |
 | Older durable manifests without `unitSuite`/retirement progress; missing-manifest recovery branch | Unknown companion creation stays conservative. An enrolled pending missing manifest now gets a conservative locator and explicit block, instead of fresh execution. Provisional launches cannot re-drive or forget unknown creation. Known retirement resumes from observed identities; manifest deletion can still precede final lifecycle closure. | Inventory manifests/lifecycle rows. Remove only old-format compatibility after they are handled; preserve current final-closure recovery. Do not turn absence into an exemption or discard a late-creation locator. |
 | Session staging/lifecycle locks, build-retention guard/fail-stop, staging process queue | Legacy/shared resource and check-consumer boundaries remain; complete candidate isolation does not fence all stable binding/legacy mutations or build retention. | Keep. Narrow/remove only through demonstrated replacement tests and writer/consumer audit, not as part of pruning checkpoint variants. |
 | Web cleanup/activation recovery, build retention and global check harvest/recovery timers | Preview cleanup excludes `preparation_owner = bounded`; activation recovery excludes the enrolled desired flow. Worker census/continuation owns this cohort; global owners still cover other work. | Keep these exclusions and legacy owners. No global timer can be removed by this cohort consolidation. Legacy oldest-50 harvest fairness remains a separate limit. |
 | Attempt/Build/runtime/role tombstones, manifests and recurring retirement | Preserve unknown late creation and dependency fences. Database release is distinct from creator closure. | No age/absence-based expiry. Retain locators until creator termination/reconciliation is proven. Do not delete resource records because preparation work says `succeeded`. |
 | Enrolled verdict/history and detached merge/bot kicks | Replaced by `cli-checks-settlement` actions/receipts and `native-cli-check-gate` delivery using the existing shared decision/execution runtime. Live and harvested runs share one mapping. Optional artifacts retain separate best-effort ownership. | No new scheduler, timer or external merge owner. Keep legacy wrappers and existing merge/bot policies for other callers. Old terminal verdicts without receipts require retained-store reconciliation; never backfill by recounting unknown history. |
+| Worker reliance on web SDK initialization / silent merge-delivery success when GitHub is absent | **Removed** by `d24b0c0dd`: initialize SDKs before claiming; missing prerequisites retain the same durable request with bounded retry. Domain no-op and successful policy invocation are distinct. | Complete locally; fresh-process and disposable PostgreSQL evidence exists. External GitHub effects and packaged worker installation remain unproved. |
 
 Sources: [admission/handlers](../../src/services/preview-flow/work.js),
 [CLI owner](../../src/services/cli-preview-handoff/work.js),
@@ -45,20 +50,22 @@ Sources: [admission/handlers](../../src/services/preview-flow/work.js),
 
 ## Retained-data findings and gate
 
-Production admission now emits only the complete kind. Historical regression
+Admission code now emits only the complete kind, behind the default-off policy. Historical regression
 fixtures seed original payloads explicitly through test-only code; there is no
 production option to admit an early durable kind. The dedicated worker still
 registers all early handlers. Removing one handler without a data gate is unsafe:
 `execution/store.claim` selects only registered kinds,
 so that work would silently stop being claimed, rather than become explicitly blocked.
 
-The ten local fixtures inspected during the audit, and the new consolidation
-fixture, have setup records marked `torn-down`.
-Recorded owned-resource teardown evidence exists for the later accepted fixtures;
-there is no live database inventory obtained in this audit. No standalone
-trace/work export was found by the bounded filename search in the checkout or
-fixture roots. Logs, test fixtures and private evidence remain. This does **not**
-prove there are no other developer databases, failed-test schemas or exported traces.
+The updated bounded audit found **14** local Kubernetes fixture setup journals
+marked `torn-down`; recorded owned teardown evidence exists in the ledger. All
+**seven** discovered PostgreSQL fixture manifests passed metadata validation;
+local read-only Docker selection by exact fixture label found no container.
+No database was connected and no row inventory is claimed. No standalone decision
+trace export was found in the searched repository decision docs/test fixtures.
+Logs, test assertions and private evidence remain. Other developer databases,
+failed-test schemas outside those fixtures, backups and external exports are
+**unknown**. See the review for the exact search/authority boundary.
 Canonical main has none of the new decision/execution/preview/CLI directories;
 this session has not deployed them. No production destination was contacted.
 
@@ -66,18 +73,20 @@ Before handler/version deletion, record an explicit list of supported retained
 stores/exports. Inspect only verified disposable destinations: kind/version/status
 counts, work attempts/events, flow/resource intents and receipts, desired/observed
 bindings, CLI handoff references, preview/review/CLI decision versions and
-`check_runs` plus lifecycle obligations. Include succeeded work, deleted sessions
-and blocked work: these can still retain cleanup/retry/replay requirements.
+`check_runs` manifest markers/companion/retirement journals plus lifecycle and
+settlement journals. Include succeeded work, deleted sessions and blocked work: these can still retain cleanup/retry/replay requirements.
 Test schemas normally drop in `close()`; interrupted test processes can bypass it.
 Missing store/export inventories remain unknown, not zero.
 
 Action retries validate their input and return a stored receipt; they do not rerun
 a frozen reducer. Removing a reducer snapshot is therefore different from removing
-an action parser or effect handler. Explicit replay fixtures cover preview
-v1/v3/v4/v8/v9 and CLI v1; review v1 is also retained. Absence of a fixture for
-v2/v5/v6/v7 is not evidence that their traces may be discarded. Preview snapshots
-are 3,230 lines; v9 composes v8. `legacy-reducer.js` is **live** delegation and
-shared cleanup policy, so its name does not make it historical code.
+an action parser or effect handler. Explicit historical assertions cover preview
+v1/v3/v4/v8/v9 and CLI v1/v2; review v1 is retained in its dispatcher. Absence of
+a fixture for preview v2/v5/v6/v7 is not evidence that their traces may be discarded.
+Preview v9 composes v8. `legacy-reducer.js` is **live** delegation and shared cleanup policy, so its name does not make it historical code.
+CLI frozen v2 currently imports the live preview enabling conditions. An offline
+archive must snapshot that dependency and preserve its golden behavior; merely
+copying `versions/` or keeping a Git SHA is insufficient for independent replay.
 
 ## Admission consolidation completed; retained-format removals gated
 
@@ -92,8 +101,10 @@ shared cleanup policy, so its name does not make it historical code.
    constants/handlers, one-shot observation/checkpoint branches and exclusive
    staging callbacks. Preserve failure tests by porting their guarantees to the
    supported complete contract; old checkpoint tests remain historical evidence.
-3. Remove runtime replay copies only against a documented supported-version policy
-   and reproducible retained-trace archive. Keep required fixtures/replay available;
+3. Remove runtime replay copies against the review's current-contract support
+   policy, a named store/export decision and reproducible offline trace archive.
+   Old development checkpoints do not receive permanent runtime support merely
+   because they existed. Keep required fixtures/replay available in that archive;
    pin an archive that survives eventual PR squash/history changes. Do not change
    live reducer policy or invent a new permanent version merely for code movement.
 
@@ -135,9 +146,15 @@ destination for its interruption child tests. Its command runs locally;
 GitHub execution is unverified until a separately authorized push.
 
 Review the net diff and explicit supported/retained contracts before PR readiness.
-Unknown checks resolution, idempotent gating settlement and installation boundary
-verification remain mandatory; supported-store/trace policy still gates old-format
-removal. No execution owner, lock, timer, handler or replay version was removed in
+Unknown checks resolution, atomic gating and standalone dependency initialization
+are implemented with contained verification. The contract/retention and boundary
+code review is now complete. Named supported-store/export inventory, reproducible
+replay archive/removal and actual packaged HTTP/worker/TLS/private-user verification
+remain open. Retained unmarked checks need the explicit reconciliation proof
+in that matrix if their stores are supported; enrollment alone does not upgrade
+their cleanup or settlement. The [review matrix](supported-cli-contract-review.md) defines their
+bounded evidence. Current canonical reconciliation is also still required.
+No execution owner, lock, timer, handler or replay version was removed in
 integration. No production deployment, worker installation or push is authorized;
 default-off code integration is not full migration completion.
 
@@ -151,7 +168,7 @@ and manifest-owner exclusion use the shared decision transaction; live reducer
 v3 is used and v2 is retained only for existing traces. Required recover/replay
 support remains subject to the store/export audit, not a permanent checkpoint rule.
 
-For this cohort, removed authority is **provisional/missing-manifest re-drive**,
+For new durable-marked runs, removed authority is **provisional/missing-manifest re-drive**,
 implicit “pending forever” for named unknown outcomes, and lifecycle closure after
 an inspection exception. Capture deadlines/lost logs no longer fabricate terminal
 outcomes. Confirmed failures and graduation policy remain. Legacy re-drive,

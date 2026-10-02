@@ -1,5 +1,9 @@
 # C8: local CLI preview handoff
 
+This file preserves the cutover checkpoint and its evidence. See the
+[supported CLI contract review](supported-cli-contract-review.md) for the current
+combined checks/retirement/settlement contract and remaining installation gates.
+
 Admission requires `PREVIEW_CLI_HANDOFF_ENABLED=true`, Kubernetes/kpack and the
 existing enabled checks lifecycle. It is default-off and selects only native CLI
 handoffs, including their exactly pinned managed promoted revisions. This owner
@@ -32,8 +36,9 @@ rather than the admission flag, determines the recovery owner after admission.
 - **Checks continuation:** after observed activation, a validated handoff action
   authorizes the existing capture/check policy. The work request remains pending
   until the same head has a persisted verdict or policy deferral. A restart after
-  that write adopts it. A restart before it retries under the existing preview
-  lifecycle, which fences/cancels orphan checks. This is recoverable at-least-once
+  that write adopts it. A restart before it joins or harvests the original run
+  under the existing preview lifecycle. Durable-marked uncertainty retains its
+  reconciliation owner; it cannot authorize another Job. This is recoverable
   invocation, not exactly-once external checking or notification delivery.
 
 Stable identities belong to the accepted head, preparation effect, candidate fact
@@ -77,9 +82,11 @@ Ingress API evidence does not establish production edge/TLS or compatibility.
 Supersession/recheck/atomic rollback tests use actual PostgreSQL with injected
 resource facts; C7's rerun supplies actual predecessor/successor cleanup evidence.
 
-Checks retain their existing lifecycle and harvest owner. Interrupted invocations
-may repeat checks or notifications; this slice durably preserves the obligation,
-not exactly-once external delivery. Uncertain activation blocks new admission;
+Checks retain their existing lifecycle and harvest owner. Durable-marked recovery
+joins or reconciles the original run; uncertainty does not authorize repeating
+Job creation. Retained unmarked manifests still select legacy harvest branches;
+see the current review for their separate reconciliation gate. Notifications and
+policy delivery may repeat; durable ownership is not exactly-once external delivery. Uncertain activation blocks new admission;
 unresolved creator closure keeps recurring cleanup obligations. Long-held resource
 locks and retention protections remain. Preview v10 adds admission ownership;
 frozen v9 preserves retained replay. Historical pruning requires a retained-data
