@@ -24,7 +24,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 
-import { pushDismissible } from '../../lib/back-stack';
+import { pushDismissible, type Release, type ReleaseOptions } from '../../lib/back-stack';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { isDismissGuarded, useStaticModal } from '../../lib/static-modal';
 
@@ -35,6 +35,21 @@ export interface DialogController<T = void> {
   open: (payload?: T) => void;
   /** Hide the dialog and run the island's `onClose` cleanup. */
   close: () => void;
+  /**
+   * `close()`, for a caller that writes an address in the same task — a
+   * button in the dialog that takes the viewer somewhere (#3683).
+   *
+   * A plain close hands its back-press claim back by spending the history
+   * record it pushed, and `history.back()` is queued: the address written
+   * next lands first, and the queued traversal then undoes it. That is why
+   * "Open my chat with Homeroom bot" did nothing. This releases the claim
+   * as a navigating one instead, so the record is spent a task later and
+   * only if nothing moved (lib/back-stack.ts, QA 2026-09-24 Q16).
+   *
+   * A separate method rather than an option on `close`, because `close` is
+   * handed to `onClick` as it is, and a click event is not an option bag.
+   */
+  closeForNavigation: () => void;
   /**
    * Hide the dialog WITHOUT running `onClose`, and show it again with
    * `resume()` without running `onOpen`.
@@ -84,6 +99,7 @@ export interface UseDialogResult<T> {
   isOpen: boolean;
   open: (payload?: T) => void;
   close: () => void;
+  closeForNavigation: () => void;
   suspend: () => Promise<void>;
   resume: () => void;
   backdropProps: { onClick: (event: MouseEvent<HTMLElement>) => void };
@@ -133,7 +149,7 @@ export function useDialog<T = void>(
   // suspend/resume move that flag WITHOUT being a lifecycle event (a
   // screenshot round trip). Those must not spend or claim a back press: the
   // dialog the viewer is looking at has not gone anywhere.
-  const releaseBack = useRef<null | (() => void)>(null);
+  const releaseBack = useRef<Release | null>(null);
 
   const open = useCallback((payload?: T) => {
     payloadRef.current = payload;
@@ -154,15 +170,18 @@ export function useDialog<T = void>(
     setIsOpen(true);
   }, [settleExitWaiters]);
 
-  const close = useCallback(() => {
+  const dismiss = useCallback((options?: ReleaseOptions) => {
     if (opts.current.canClose && !opts.current.canClose()) return;
     // Dismissed by ✕, the backdrop or a caller rather than by back: hand the
     // claim back so the next press reaches whatever is underneath.
     const release = releaseBack.current;
     releaseBack.current = null;
-    release?.();
+    release?.(options);
     setIsOpen(false);
   }, []);
+  const close = useCallback(() => dismiss(), [dismiss]);
+  // The caller writes an address next — see DialogController.closeForNavigation.
+  const closeForNavigation = useCallback(() => dismiss({ navigating: true }), [dismiss]);
 
   // A visibility change that is bookkeeping rather than a lifecycle event —
   // see DialogController.suspend. The flag is consumed by the single effect
@@ -272,10 +291,11 @@ export function useDialog<T = void>(
       isOpen: () => !!rootRef.current && !rootRef.current.classList.contains('hidden'),
       open,
       close,
+      closeForNavigation,
       suspend,
       resume,
     }),
-    [open, close, suspend, resume],
+    [open, close, closeForNavigation, suspend, resume],
   );
   useEffect(() => {
     const host = window as unknown as { UsernodeReact?: Record<string, unknown> };
@@ -287,5 +307,5 @@ export function useDialog<T = void>(
     };
   }, [name, controller]);
 
-  return { rootRef, isOpen, open, close, suspend, resume, backdropProps };
+  return { rootRef, isOpen, open, close, closeForNavigation, suspend, resume, backdropProps };
 }
