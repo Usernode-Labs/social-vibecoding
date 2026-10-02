@@ -102,3 +102,26 @@ test('the hero leads the hub, above what needs you and its discussion; who is he
   assert.match(lander, /<CommunityCard\s+slug=\{slug\}\s+name=\{app\.name \|\| undefined\}\s+canOpenApp=\{!actions\.selfHosted\}/,
     'its tile and name are the coloured header\'s (#852)');
 });
+
+test('an invite on the address is a banner, above the fold, with the inviter and a prominent Join (#3700)', () => {
+  const { InviteBanner } = loadTsx(CARD);
+  const withInviter = renderToHtml(createElement(InviteBanner, {
+    name: 'Notes', inviter: 'maya', onJoin: () => {},
+  }));
+  assert.match(withInviter, /@maya invited you/, 'the person who sent the link is named');
+  assert.match(withInviter, /Join Notes/, 'the thing itself names the Join');
+  assert.match(withInviter, /data-ws-invite-join=""/, 'the banner\'s Join is its own control');
+  assert.match(withInviter, /dev-ws-hero-invite\b/, 'it is a strip of the hero, not a dialog');
+  const anon = renderToHtml(createElement(InviteBanner, { name: 'Notes', inviter: null, onJoin: () => {} }));
+  assert.match(anon, /You were invited/, 'no inviter, the invitation still says itself');
+  // It replaces the confirm-over-Home flow, so the confirm's labels are gone
+  // from the shell that used to ask it.
+  assert.doesNotMatch(read('public/js/app.js'), /ConfirmModal/, 'no confirm over Home any more');
+  const src = read(CARD);
+  assert.match(src, /data\.invite && !data\.is_member/,
+    'drawn only while the viewer is outside the project and the link is live');
+  assert.match(src, /invite=\$\{encodeURIComponent\(invite\)\}/,
+    'the token rides on the page\'s own fetch, so the payload can say who invited');
+  const css = read('public/css/app.css');
+  assert.match(css, /\.dev-ws-hero-invite \{/, 'and it has its strip\'s styles');
+});

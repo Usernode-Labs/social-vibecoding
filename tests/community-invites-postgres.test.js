@@ -57,6 +57,7 @@ async function connectPool() {
       created_by INTEGER, self_hosted BOOLEAN NOT NULL DEFAULT FALSE,
       collab_visibility TEXT NOT NULL DEFAULT 'public',
       view_visibility TEXT NOT NULL DEFAULT 'public',
+      manifest_snapshot JSONB,
       icon_emoji TEXT, icon_image_id TEXT,
       community_id INTEGER REFERENCES communities(id));
     CREATE TABLE community_members (
@@ -99,6 +100,7 @@ async function connectPool() {
     INSERT INTO apps (id, slug, name, created_by, collab_visibility, view_visibility, community_id) VALUES
       (1, 'arena', 'Arena', 1, 'public', 'public', 1),
       (2, 'book-club', 'Book Club', 1, 'private', 'private', 2);
+    UPDATE apps SET manifest_snapshot = '{"description":"Fast matches and a clean table."}'::jsonb WHERE id = 1;
     INSERT INTO community_members (community_id, user_id, source) VALUES (1, 1, 'creator'), (2, 1, 'creator');
     INSERT INTO app_collaborators (app_id, user_id, status) VALUES (2, 1, 'member');
   `);
@@ -139,10 +141,19 @@ test('invite links against a real PostgreSQL', async (t) => {
       token = made.link.token;
       const preview = await invites.preview(pool, token);
       assert.deepEqual(
-        { live: preview.live, name: preview.project.name, inviter: preview.inviter, memberCount: preview.memberCount },
-        { live: true, name: 'Arena', inviter: 'ada', memberCount: 1 },
+        { live: preview.live, name: preview.project.name, inviter: preview.inviter, memberCount: preview.memberCount, description: preview.project.description },
+        { live: true, name: 'Arena', inviter: 'ada', memberCount: 1, description: 'Fast matches and a clean table.' },
+        'the landing card shows dapp.json\'s one line about it (#3700)',
       );
       assert.equal(preview.project.slug, undefined, 'the address comes after joining');
+      // The signed-in standing carries the slug now even before the viewer
+      // follows the link: the shell routes the address to the project's own
+      // page (#3700). `mine` is still null — they have not followed it.
+      const outside = await invites.standing(pool, token, as(8, 'nia', true));
+      assert.deepEqual(
+        { live: outside.live, slug: outside.slug, mine: outside.mine },
+        { live: true, slug: 'arena', mine: null },
+      );
     });
 
     await t.test('somebody with access joins on the spot, pinned like Join; following again spends nothing', async () => {

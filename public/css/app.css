@@ -17271,6 +17271,11 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   line-clamp: 2;
   overflow: hidden;
 }
+/* THE INVITE, ON THE THING IT INVITES TO (#3700). Above the fold: who sent
+   you here, then a prominent Join in the community's accent — the pitch is
+   a thing, not a question asked elsewhere. */
+.dev-ws-hero-invite { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.dev-ws-hero-invite-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 /* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces, then
    "Public community · 23 members". The activity line under the actions: this

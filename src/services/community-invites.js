@@ -335,6 +335,7 @@ async function loadInvite(db, token, { lock = false } = {}) {
     `SELECT i.id, i.token, i.community_id, i.app_id, i.created_by, i.max_uses, i.uses,
             i.expires_at, i.revoked_at,
             a.slug, a.name, a.icon_emoji, a.icon_image_id, a.created_by AS app_created_by,
+            LEFT(a.manifest_snapshot->>'description', 280) AS description,
             a.self_hosted, a.collab_visibility, a.view_visibility, a.community_id AS app_community_id,
             u.username AS inviter,
             community_invite_maker_holds(i.id) AS maker_holds
@@ -360,8 +361,9 @@ async function memberCount(db, communityId) {
 /**
  * What a link shows before anyone signs in. A live link discloses the
  * project's name and icon, who invited you and how many are in it — what the
- * invite itself offers to share — and never the project's address: that
- * comes after joining. A dead or unknown link discloses nothing but why.
+ * invite itself offers to share, the one line dapp.json says about it, and
+ * never the project's address: that comes after joining. A dead or unknown
+ * link discloses nothing but why.
  */
 async function preview(pool, token) {
   const invite = await loadInvite(pool, token);
@@ -375,6 +377,8 @@ async function preview(pool, token) {
       name: invite.name || invite.slug,
       iconEmoji: invite.icon_emoji || null,
       iconUrl: invite.icon_image_id ? `/app-icons/${invite.icon_image_id}` : null,
+      description: typeof invite.description === 'string' && invite.description.trim()
+        ? invite.description.replace(/\s+/g, ' ').trim() : null,
     },
     inviter: invite.inviter || null,
     memberCount: count,
@@ -395,7 +399,9 @@ async function alreadyHasGrant(db, invite, userId) {
  * preview, plus `mine` — 'joined' when they are in the project (however they
  * got there), 'queued' or 'cancelled' for a redemption still waiting or
  * called off, null when they have not followed it — and the project's slug
- * once they are in it.
+ * for a live link, set once they are in it and, now that the invitee's
+ * landing is the project's own page rather than a confirm (#3700), the
+ * address that page needs too.
  */
 async function standing(pool, token, user) {
   const base = await preview(pool, token);
@@ -407,7 +413,7 @@ async function standing(pool, token, user) {
   );
   const inIt = await alreadyHasGrant(pool, invite, user.id);
   const mine = inIt ? 'joined' : (rows[0]?.status || null);
-  return { ...base, mine, slug: inIt ? invite.slug : null };
+  return { ...base, mine, slug: invite.slug || null };
 }
 
 /**

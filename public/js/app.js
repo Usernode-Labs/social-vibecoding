@@ -3867,15 +3867,13 @@ const App = {
   },
 
   // Follow an invite link as a signed-in account with platform access
-  // (services/community-invites.js). Home first, with the invite address
-  // replaced so Back or a reload does not ask again; then, if the link is
-  // live and the viewer is not in the project yet, one confirm naming it and
-  // who invited them. In it — just now, or already — opens its hub. A dead
-  // link says why, once.
+  // (services/community-invites.js). A live link the viewer is not in yet
+  // turns its address into the project page's own and opens it: the page
+  // carries the inviter and a Join above the fold (#3700), and Back still
+  // leaves wherever the person was before the link. In it — just now, or
+  // already — opens its hub. A dead link says why, once, from Home.
   async _followInvite(token) {
     App._markNavigationVia?.('handed');
-    try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
-    App.restoreFromHash();
     const toast = (msg, error) => {
       if (window.PlatformUI && PlatformUI.toast) PlatformUI.toast(msg, error ? { error: true } : undefined);
     };
@@ -3894,24 +3892,26 @@ const App = {
       const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}`, { credentials: 'same-origin' });
       const standing = await res.json().catch(() => ({}));
       if (standing.mine === 'joined' && standing.slug) { openHub(standing.slug); return; }
-      if (!standing.live) { toast(DEAD[standing.reason] || DEAD.unknown, true); return; }
-      const name = standing.project && standing.project.name ? standing.project.name : 'this project';
-      const count = standing.memberCount || 0;
-      const ok = window.ConfirmModal ? await ConfirmModal.show({
-        title: `Join ${name}?`,
-        message: `${standing.inviter ? `@${standing.inviter} invited you.` : 'You were invited.'}`
-          + (count ? ` ${count} ${count === 1 ? 'person is' : 'people are'} in it.` : ''),
-        confirmLabel: 'Join',
-        cancelLabel: 'Not now',
-      }) : true;
-      if (!ok) return;
+      if (!standing.live || !standing.slug) {
+        try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
+        App.restoreFromHash();
+        toast(DEAD[standing.reason] || DEAD.unknown, true);
+        return;
+      }
+      // The invite address becomes the project page's own, in place: Back
+      // leaves it wherever the person was before the link, and the page reads
+      // like any deep link. `?invite=` rides along for the hero to read
+      // (community-card.tsx); the server answers it only to the viewer it is
+      // for (routes/apps.js), and the reader drops it once it is spent.
+      try { history.replaceState(null, '', `${App._appUrl(standing.slug, 'dev', null, 'forum')}?invite=${encodeURIComponent(token)}`); } catch (_) {}
+      App.restoreFromHash();
       const joined = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
         method: 'POST', credentials: 'same-origin',
       });
       const result = await joined.json().catch(() => ({}));
       if (!joined.ok || !result.ok) { toast(DEAD[result.reason] || 'Could not join. Try again.', true); return; }
       if (result.slug) {
-        toast(`You joined ${result.name || name}.`);
+        toast(`You joined ${result.name || standing.project?.name || 'the project'}.`);
         openHub(result.slug);
       }
     } catch (_) {

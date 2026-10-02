@@ -35,6 +35,7 @@ const createOptions = require('../services/create-options');
 const appTemplates = require('../services/app-templates');
 const collabInvites = require('../services/collab-invites');
 const emailInvites = require('../services/email-invites');
+const invites = require('../services/community-invites');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const appActivity = require('../services/app-activity');
 
@@ -3268,6 +3269,23 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
       const membership = await communities.getMembership(pool, app, req.user?.id);
       const members = await communities.listMembers(pool, app.id);
+      // AN INVITE ON THE ADDRESS (#3700): a live link's address is now the
+      // project page's own with `?invite=<token>` riding along, and the
+      // hero's Join-with-invite banner reads who invited this viewer off
+      // the payload. The token is checked against the signed-in viewer — a
+      // link that is dead, belongs to another project, is already followed
+      // (joined here or queued in the waiting room) adds nothing, and the
+      // answer is never cacheable for someone else.
+      let invite = null;
+      if (req.query.invite && req.user?.id) {
+        const token = String(req.query.invite);
+        if (invites.isToken(token)) {
+          const standing = await invites.standing(pool, token, req.user);
+          if (standing.live && standing.slug === app.slug && !standing.mine) {
+            invite = { inviter: standing.inviter || null };
+          }
+        }
+      }
       // The channel is the app's group chat, which is COLLAB-gated
       // (app-access.js): a viewer who may see a view-public,
       // collab-private app but not talk in it gets no row for it rather
@@ -3324,6 +3342,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         description: typeof app.description === 'string' && app.description.trim()
           ? app.description.replace(/\s+/g, ' ').trim() : null,
         ...membership,
+        invite,
         members,
         channel,
         activity,

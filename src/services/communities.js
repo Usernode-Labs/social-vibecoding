@@ -119,6 +119,11 @@ async function join(pool, app, userId) {
      ON CONFLICT (app_id, user_id) DO UPDATE SET hidden = FALSE`,
     [app.id, userId]
   );
+  // A JOIN IS A FACT THE CACHES READ: a member added is a fresh fact about
+  // who may see the app, and this pool's cached answer still says otherwise
+  // (the WS audience and the API caches both read it). scoresOnJoin's caller
+  // already invalidates it; this is join's own entry point, so it does too.
+  appAccess.invalidateVisibility(app.id, app.slug);
 }
 
 // Leave. One transaction, three rows: the membership, the collaborator row

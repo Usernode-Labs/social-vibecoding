@@ -76,8 +76,24 @@ import { Button } from '@/components/ui/button';
 import { CheckIcon, ChevronRightIcon, LockIcon, PlayIcon, UserGroupIcon, UserIcon } from '@/components/ui/icons';
 import { swatchFor } from '../../messages/format';
 import { offerJoin, registerJoinAnchor } from '../../../lib/join-required';
+import { callAppView } from '../card/fold';
 
 type Audience = 'open' | 'invited' | 'solo';
+
+/** Why a live link went dead while its page was open — the toast's words. */
+const INVITE_DEAD: Record<string, string> = {
+  expired: 'This invite link has expired.',
+  revoked: 'This invite link was turned off.',
+  used_up: 'This invite link has been used as many times as it allows.',
+  unknown: 'This invite link does not work.',
+};
+
+/** The invite token on the address, or null: `window.location` can be
+    absent where the page is rendered without a browser (tests). */
+function currentInviteToken(): string | null {
+  const w = typeof window !== 'undefined' ? window : undefined;
+  return w?.location ? new URLSearchParams(w.location.search).get('invite') : null;
+}
 
 export type CommunityPayload = {
   slug: string;
@@ -114,6 +130,9 @@ export type CommunityPayload = {
   /** Whether this viewer may propose who the project is for (the creator,
       an app admin or a platform admin; never the platform's own app). */
   can_manage?: boolean;
+  /** Who a live invite link on this address invited (routes/apps.js), when
+      the viewer has not followed it yet (#3700). Null without one. */
+  invite?: { inviter: string | null } | null;
   /** An audience change already up for a vote, if one is. */
   audience_change?: { session_id: number; pr_number: number | null; title: string | null } | null;
   approval: {
@@ -161,6 +180,37 @@ export function audienceChangeLine(title: string | null | undefined): string {
   return 'A change to who it is for is up for a vote';
 }
 
+/**
+ * THE INVITE, ON THE THING IT INVITES TO (#3700): a live link's address is
+ * the project page's own now, so the pitch sits above the fold — who sent
+ * you here, and a prominent Join beside it — where an old confirm asked the
+ * question over Home before the page had shown anything. The rest of what
+ * an invitee needs to decide (the faces and count, the description, what
+ * the page is deciding) is the hero's own read; this strip is only the
+ * invitation. "Not now" is leaving the page, so it has no button.
+ */
+export function InviteBanner({ name, inviter, onJoin }: {
+  name: string;
+  inviter: string | null;
+  onJoin: () => void;
+}) {
+  return (
+    <div className="dev-ws-hero-invite" data-ws-invite-banner="">
+      <p className="dev-ws-hero-invite-line">{inviter ? `@${inviter} invited you` : 'You were invited'}</p>
+      <Button
+        type="button"
+        variant="pillAccent"
+        size="pill"
+        ink="solid"
+        data-ws-invite-join=""
+        onClick={onJoin}
+      >
+        Join {name}
+      </Button>
+    </div>
+  );
+}
+
 function AudienceGlyph({ audience }: { audience: Audience }) {
   const cls = 'w-3.5 h-3.5 shrink-0';
   if (audience === 'solo') return <UserIcon className={cls} aria-hidden="true" />;
@@ -170,7 +220,13 @@ function AudienceGlyph({ audience }: { audience: Audience }) {
 
 async function readCommunity(slug: string): Promise<CommunityPayload | null> {
   try {
-    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/community`);
+    // An invite link's token rides on the address (`?invite=`, put there by
+    // App._followInvite), so the payload can say who invited this viewer.
+    // The server answers it only to the viewer it is for; the address drops
+    // it on the next navigation.
+    const invite = currentInviteToken();
+    const withInvite = invite ? `?invite=${encodeURIComponent(invite)}` : '';
+    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/community${withInvite}`);
     if (!res.ok) return null;
     return (await res.json()) as CommunityPayload;
   } catch {
@@ -660,6 +716,45 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
     ) : null;
   }
 
+  const inviteToken = currentInviteToken();
+
+  // JOINING FROM THE INVITE (#3700): the address still carries the token,
+  // so the redeem is the POST the old confirm-over-Home flow made — the
+  // page has already been the pitch. "You're in.", then the community's
+  // Needs you when votes are already waiting on the new member and its hub
+  // when none are. A link that died between landing and Join says why.
+  const joinWithInvite = async (token: string) => {
+    setBusy(true);
+    try {
+      const res = await fetch(`/api/invite-links/by-token/${encodeURIComponent(token)}/redeem`, {
+        method: 'POST', credentials: 'same-origin',
+      });
+      const result = await res.json().catch(() => ({}));
+      const w = window as any;
+      if (!res.ok || !result.ok) {
+        w.PlatformUI?.toast?.(INVITE_DEAD[result?.reason] || 'Could not join. Try again.', { error: true });
+        return;
+      }
+      w.PlatformUI?.toast?.("You're in.");
+      if (result.status !== 'joined' || !result.slug) return;
+      try { w.Home?.load?.(); } catch { /* Home repainting is optional */ }
+      void load();
+      let owed = 0;
+      try {
+        const feed = await fetch('/api/workshop/needs-feed', { credentials: 'same-origin' });
+        const body = await feed.json().catch(() => ({}));
+        owed = (body?.items || []).filter((item: any) => item?.app?.slug === slug).length;
+      } catch { /* a failed read just means the hub */ }
+      if (owed > 0) callAppView('_landOnTab', slug, 'needs');
+      else callAppView('_landOnTab', slug, 'status');
+    } catch {
+      const w = window as any;
+      w.PlatformUI?.toast?.('Could not join. Try again.', { error: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // The button asks the same question every other refusal asks, through the
   // same function, which finds this card as its anchor.
   const join = async () => {
@@ -691,6 +786,9 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
   // the viewer cannot make one yet. Collaborators and approvals stay behind
   // the ⋯'s own gate.
   const displayName = name || data.name || slug;
+  const banner = data.invite && !data.is_member ? (
+    <InviteBanner name={displayName} inviter={data.invite.inviter || null} onJoin={() => { void joinWithInvite(inviteToken || ''); }} />
+  ) : null;
   const solo = data.audience === 'solo';
   // YOU AND THIS PROJECT, at the end of the action row: Join, or Joined.
   const membership = !data.is_member ? (
@@ -776,6 +874,7 @@ export function CommunityCard({ slug, name, menu, canOpenApp = false }: {
         audience={data.audience}
         audienceLabel={data.audience_label}
       />
+      {banner}
       {data.description ? (
         <p className="dev-ws-hero-desc" data-ws-community-description="">{data.description}</p>
       ) : null}

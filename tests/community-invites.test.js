@@ -256,12 +256,17 @@ test('signing UP from an invite page follows the link server-side; signing IN is
   assert.match(src, /log\.warn\('invites', 'Following a carried invite link failed'/);
 });
 
-test('the shell: signed out it is the landing, remembered for after sign-in; signed in it is a confirm', () => {
+test('the shell: signed out it is the landing, remembered for after sign-in; signed in the link opens the project page itself (#3700)', () => {
   const app = read('public/js/app.js');
   assert.match(app, /const inviteToken = rawHash \? null : App\._inviteTokenFromPath\(location\.pathname\);/);
   assert.match(app, /AuthScreens\.rememberDeepLink\(location\.pathname\);\s+AuthScreens\.show\('landing'\);/);
   assert.match(app, /if \(App\.user\.hasPlatformAccess !== false\) \{\s+App\._followInvite\(inviteToken\);/);
-  assert.match(app, /confirmLabel: 'Join',\s+cancelLabel: 'Not now',/);
+  // A live link turns its own address into the project page's, in place, so
+  // Back still leaves wherever the person was — and the token rides along
+  // for the hero's banner (community-card.tsx). No confirm over Home.
+  assert.match(app, /history\.replaceState\(null, '', `\$\{App\._appUrl\(standing\.slug, 'dev', null, 'forum'\)\}\?invite=\$\{encodeURIComponent\(token\)\}`\);/);
+  assert.match(app, /App\.restoreFromHash\(\);\s+const joined = await fetch\(`\/api\/invite-links\/by-token\/\$\{encodeURIComponent\(token\)\}\/redeem`/);
+  assert.doesNotMatch(app, /ConfirmModal\.show\(\{[^]*?confirmLabel: 'Join'/, 'the confirm is gone');
   const screens = read('public/js/auth-screens.js');
   assert.match(screens, /if \(\/\^\\\/invite\\\/\[A-Za-z0-9_-\]\{22\}\$\/\.test\(value\)\) return value;/, 'a deep link back to it');
   assert.match(screens, /if \(invite\) AuthScreens\._waitingInvite = invite\[1\];/, 'kept for the waiting room');
@@ -278,6 +283,16 @@ test('the words: the landing card, the invite pane', () => {
     '@ada invited you to join Tiers.');
   assert.equal(card.membersLine(1), '1 person is in it.');
   assert.equal(card.membersLine(0), '');
+  // The landing card shows dapp.json's one line about the project, too
+  // (#3700): the thing the invitation is about, before anyone signs up.
+  assert.equal(card.invitedLine({ live: true, reason: null, project: { name: 'Tiers', iconEmoji: null, iconUrl: null, description: 'Tier lists, ranked.' }, inviter: 'ada' }),
+    '@ada invited you to join Tiers.');
+  const cardHtml = renderToHtml(createElement(card.InviteCard, { primaryClass: 'p', secondaryClass: 's' }));
+  assert.doesNotMatch(cardHtml, /Tier lists/, 'nothing renders before the preview is back');
+  const invites = require('../src/services/community-invites');
+  const cardSrc = read('src/services/community-invites.js');
+  assert.match(cardSrc, /manifest_snapshot->>'description'/, 'the preview read carries the line');
+  assert.equal(typeof invites.preview, 'function', 'and preview() hands it to the card');
 
   const pane = loadTsx('frontend/src/features/app-context/invite-pane.tsx');
   const now = Date.parse('2026-09-27T12:00:00Z');

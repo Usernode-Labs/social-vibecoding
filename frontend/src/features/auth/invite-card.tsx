@@ -22,7 +22,7 @@ import { useEffect, useState } from 'react';
 type Preview = {
   live: boolean;
   reason: string | null;
-  project?: { name: string; iconEmoji: string | null; iconUrl: string | null };
+  project?: { name: string; iconEmoji: string | null; iconUrl: string | null; description?: string | null };
   inviter?: string | null;
   memberCount?: number;
 };
@@ -91,6 +91,11 @@ export function InviteCard({ primaryClass, secondaryClass }: { primaryClass: str
           ) : null}
         </div>
       </div>
+      {project.description ? (
+        <p className="mt-2 text-[13px] leading-snug text-zinc-600 dark:text-zinc-300" data-landing-invite-description="">
+          {project.description}
+        </p>
+      ) : null}
       <div className="mt-4 flex flex-col gap-2.5 md:grid md:grid-cols-2">
         <a href="#signup" data-landing-invite-signup="" className={primaryClass}>Sign up to join</a>
         <a href="#login" className={secondaryClass}>I have an account</a>
