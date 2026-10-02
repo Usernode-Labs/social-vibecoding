@@ -17,6 +17,7 @@ const lane = require('../services/bench/lane');
 const runner = require('../services/bench/runner');
 const grading = require('../services/bench/grading');
 const { benchGradingLimiter } = require('../middleware/rate-limits');
+const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const report = require('../services/bench/report');
 // The CSV writer the other admin exports share: quoting plus the
 // spreadsheet formula-injection guard (model-written text is exactly why).
@@ -256,7 +257,7 @@ function homeroomBenchRoutes(config) {
 
   router.get('/api/bot-bench/items/:token', requireAdminWrite, handler('Bench item', async (req) => grading.getItem(pool, req.params.token)));
 
-  router.post('/api/bot-bench/items/:token/grade', requireAdminWrite, benchGradingLimiter, handler('Bench grade', async (req) => {
+  router.post('/api/bot-bench/items/:token/grade', requireAdminWrite, benchGradingLimiter, sameOriginBrowserOnly, handler('Bench grade', async (req) => {
     const { verdict, critique, criteria } = req.body || {};
     return grading.submitGrade(pool, {
       itemId: req.params.token, verdict, critique, criteria: criteria && typeof criteria === 'object' ? criteria : {},
@@ -264,7 +265,7 @@ function homeroomBenchRoutes(config) {
     });
   }));
 
-  router.post('/api/bot-bench/tasks/:token/label', requireAdminWrite, benchGradingLimiter, handler('Bench label', async (req) => {
+  router.post('/api/bot-bench/tasks/:token/label', requireAdminWrite, benchGradingLimiter, sameOriginBrowserOnly, handler('Bench label', async (req) => {
     const b = req.body || {};
     const github = require('../services/github');
     return grading.labelTask(pool, {

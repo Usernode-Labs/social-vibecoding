@@ -744,6 +744,11 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'cli_access_tokens.scopes',
     'chat_sessions.handoff_request_fingerprint', // a non-reversible request digest
     'sessions.native_session_credential_reference', // public opaque reference, never bearer/cookie material
+    // #3654: opaque handles the benchmark's judge uses so it never sees a
+    // trial's model or id. They blind the judge, not anyone at the console,
+    // and every route that takes one also requires an admin who can write.
+    'bench_tasks.label_token',
+    'bench_trials.item_token',
 
     // Foreign keys TO a credential row. The id is a row number; the secret
     // itself lives in a column that IS denied (or, for user_ai_credentials,
@@ -765,6 +770,7 @@ test('#1130: no credential-SHAPED column name in schema.sql is readable without 
     'app_workshop_themes.input_hash',      // same: digest of the board the themes were grouped from
     'chat_sessions.pr_summary_source_body_hash', // digest of the public PR description, not a credential
     'shot_runs.plan_hash',                 // SHA-256 naming the published shots, not authentication material
+    'homeroom_bot_run_snapshots.prompt_hash', // #3654: SHA-256 of the bot's prompt text, to group runs by prompt
 
     // Counters and flags.
     'chat_session_messages.token_count',   // an LLM token COUNT
