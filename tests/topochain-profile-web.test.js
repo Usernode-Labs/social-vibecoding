@@ -457,9 +457,16 @@ test('the photo is downscaled client-side before upload', () => {
   assert.match(fn, /AVATAR_MAX_BYTES/);
   assert.match(fn, /while \(blob && blob\.size > Profile\.AVATAR_MAX_BYTES/,
     'one re-encode is not enough — shrink until it fits');
-  // Centre crop, so a portrait photo is not squashed into the circle.
+  // A square, so a portrait photo is not squashed into the circle. Since
+  // #3525 it is the square the viewer positioned, re-fitted to the bitmap
+  // decoded here (`sourceRect`) rather than trusted; without one it is still
+  // the centred square every photo used to get, which is also where the
+  // positioning step opens. tests/avatar-crop.test.js executes both.
+  assert.match(fn, /async _prepareAvatar\(file, crop = null\)/);
+  assert.match(fn, /sourceRect\(crop, bitmap\.width, bitmap\.height\)/);
   assert.match(fn, /bitmap\.width - side/);
   assert.match(fn, /bitmap\.height - side/);
+  assert.match(fn, /ctx\.drawImage\(bitmap, rect\.x, rect\.y, rect\.size, rect\.size, 0, 0, target, target\)/);
 });
 
 test('object URLs for a staged photo are revoked', () => {

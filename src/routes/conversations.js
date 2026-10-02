@@ -97,7 +97,13 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
 
   router.get('/api/conversations', async (req, res) => {
     try {
-      if (isDemo(req)) await stagingMessages.ensureFixtures(pool, req.user);
+      if (isDemo(req)) {
+        await stagingMessages.ensureFixtures(pool, req.user);
+        // #3624: and the Homeroom bot's DM, with a question open.
+        await stagingMessages.ensureBotDmFixture(pool, req.user).catch((err) => {
+          log.warn('conversations', 'Staging bot DM fixture failed', { err: err.message });
+        });
+      }
       return res.json({ conversations: await conversations.listConversations(pool, req.user) });
     } catch (err) {
       log.error('conversations', 'list failed', { err: err.message, userId: req.user.id });
@@ -317,6 +323,14 @@ function conversationRoutes(config, { pool = getPool(config) } = {}) {
             // #2387: which thread it joined (null: the main stream).
             threadRootId: result.message.threadRootId,
           });
+        });
+        // #3624: a message to the Homeroom bot is an answer to its question
+        // (or a reply about a request). Handled after the response, never
+        // into it: the message is sent whatever the bot does with it.
+        setImmediate(() => {
+          require('../services/homeroom-bot-dm').noteUserMessage(pool, config, {
+            user: req.user, conversationId: id, message: result.message,
+          }).catch((err) => log.warn('conversations', 'Homeroom bot DM handling failed', { id, err: err.message }));
         });
       }
       return res.status(result.duplicate ? 200 : 201).json({ message: result.message, duplicate: result.duplicate });

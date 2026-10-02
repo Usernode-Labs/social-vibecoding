@@ -21,7 +21,11 @@ const desiredRuntime = z.object({
   serviceAccountName: z.string().regex(/^[a-z0-9][a-z0-9-]*$/).max(63),
   cpuLimit: z.string().regex(/^[0-9]+m?$/).max(16),
   labels: z.record(z.string().max(63)),
-  databaseAffinity: z.object({ namespace: z.string().max(63), cluster: z.string().max(63) }).strict().nullable(),
+  databaseAffinity: z.object({
+    namespace: z.string().max(63),
+    cluster: z.string().max(63),
+    placement: z.literal('zone-and-host').optional(),
+  }).strict().nullable(),
 }).strict();
 const resourceProgress = z.object({
   submitted: z.literal(true),
@@ -72,7 +76,11 @@ function selectRuntime(config, identity, {
       ...(sessionId ? { 'social.usernode.io/session-id': String(sessionId) } : {}),
     },
     databaseAffinity: cfg.previewDatabaseNamespace && cfg.previewDatabaseCluster
-      ? { namespace: cfg.previewDatabaseNamespace, cluster: cfg.previewDatabaseCluster }
+      ? {
+        namespace: cfg.previewDatabaseNamespace,
+        cluster: cfg.previewDatabaseCluster,
+        placement: 'zone-and-host',
+      }
       : null,
   });
 }
@@ -100,19 +108,27 @@ function runtimeManifests(intent, dataKey) {
     httpGet: { path: '/health', port: 'http', scheme: 'HTTP' },
     periodSeconds, failureThreshold, successThreshold: 1, timeoutSeconds: 1,
   });
-  const affinity = desired.databaseAffinity ? {
-    podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: [{
-      weight: 100,
-      podAffinityTerm: {
-        namespaces: [desired.databaseAffinity.namespace],
-        labelSelector: { matchLabels: {
+  let affinity = null;
+  if (desired.databaseAffinity) {
+    const primary = {
+      namespaces: [desired.databaseAffinity.namespace],
+      labelSelector: {
+        matchLabels: {
           'cnpg.io/cluster': desired.databaseAffinity.cluster,
           'cnpg.io/instanceRole': 'primary',
-        } },
-        topologyKey: 'kubernetes.io/hostname',
+        },
       },
-    }] },
-  } : null;
+    };
+    // Older persisted specs retain their original host-only manifest and hash.
+    // New selection snapshots canonical placement; recovery never reselects it.
+    const preferences = desired.databaseAffinity.placement === 'zone-and-host'
+      ? [
+        { weight: 100, podAffinityTerm: { ...primary, topologyKey: 'topology.kubernetes.io/zone' } },
+        { weight: 50, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } },
+      ]
+      : [{ weight: 100, podAffinityTerm: { ...primary, topologyKey: 'kubernetes.io/hostname' } }];
+    affinity = { podAffinity: { preferredDuringSchedulingIgnoredDuringExecution: preferences } };
+  }
   return {
     secret: {
       apiVersion: 'v1', kind: 'Secret', metadata: metadata(`${name}-env`),

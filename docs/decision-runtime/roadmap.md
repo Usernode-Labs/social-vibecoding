@@ -1,8 +1,8 @@
 # Lifecycle migration: current roadmap
 
-2 October 2026. Admission consolidation implemented on accepted local checkpoint
-`241e0e6cd9ac45e6110382cbc8b4d5e86846f519`; canonical main fetched at
-`a15a460a46b42ad370e7326c561d9e00bc9c5157`. Integration remains pending.
+2 October 2026. Canonical main `d600eb4308b0d283ba050addf4c19c915078086c`
+integrated into accepted admission checkpoint `2bf702dbd8651f9877d492f0d21645c24a444668`.
+See the [integration record](canonical-integration.md) for fixes and evidence.
 The Kubernetes/kpack native CLI cohort remains default-off. No production
 compatibility or rollout is claimed. Checkpoint numbers identify historical
 evidence; progress means guarantees demonstrated **and replaced machinery removed**.
@@ -40,7 +40,7 @@ injected interruption points do not prove public-edge or installation compatibil
 | Deliverable | Kind | Scope / completion evidence |
 | --- | --- | --- |
 | Consolidate one CLI contract | Consolidation + verification | **New admission consolidated.** Inventory retained work/receipts/manifests/traces before pruning recovery/replay formats. Follow the [removal slice](migration-retirement-inventory.md); keep legacy safeguards. |
-| Integrate canonical main and CI | Consolidation + verification; fixes where needed | Reconcile owners/adapters/schema, refresh writer inventory and current focused CI coverage. Rerun real-PG and disposable-resource evidence on the integrated revision. |
+| Integrate canonical main and CI | Consolidation + verification | **Integrated locally:** canonical behavior, persisted specs, writer inventory and focused CI reconciled. PostgreSQL and disposable-resource failure matrix rerun; CI execution on GitHub remains unverified because no push is authorized. See the integration record. |
 | Resolve unknown checks outcomes | New implementation + verification | Explicit recover-or-block outcome and reconciliation owner for unconfirmed creation or lost/expired output. Absence/timeout/lease expiry cannot establish creator closure. |
 | Idempotent check gating settlement | New implementation + verification | Verdict, history/graduation and required gate follow-ups commit together or have durable deduplicated delivery. Best-effort `checkHistory.recordRun` does not provide this. Preserve graduation policy. |
 | Verify capture/worker boundaries | Verification; adapter changes where needed | Backend revision, public origin/assets/TLS/access, private-user behavior, permissions and compatible restart/admission pause, in isolated fixtures. Current substitutions leave these unproved. |
@@ -70,6 +70,7 @@ This scope does not require rewriting every platform lifecycle.
   its own proof; current protections and locators remain until then.
 - Broader turn, merge and release lifecycle refactors after this migration.
 
-**Next action:** canonical integration and verification. Retained recovery/replay
-stays until an explicit supported-store/trace decision. No new capability, workflow
-or caller expansion before that review.
+**Next action:** review the integrated supported contract and retained-store/trace
+policy, then address the mandatory unknown-check-outcome and gating-settlement
+gaps. New callers remain behind the first supported CLI gate. CI configuration
+is validated locally; running it on GitHub requires separate push authorization.

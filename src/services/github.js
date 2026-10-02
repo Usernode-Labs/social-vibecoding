@@ -778,6 +778,32 @@ async function getRepoHead(owner, repo) {
   };
 }
 
+// The commit a repository's default branch was at, at a moment in the past:
+// the newest commit on it dated at or before `until` (GitHub's `until` reads
+// the commit date). Read-only, for the benchmark's historical snapshots
+// (services/bench/backfill.js). Resolves { sha, committedAt, branch }, or
+// null when the branch has no commit that old.
+async function getCommitAt(owner, repo, until, { branch = null } = {}) {
+  const at = new Date(until);
+  if (Number.isNaN(at.getTime())) throw new Error('getCommitAt needs a valid time');
+  const octokit = await getOctokit(owner);
+  let ref = branch;
+  if (!ref) {
+    const { data: info } = await octokit.rest.repos.get({ owner, repo });
+    ref = info.default_branch || 'main';
+  }
+  const { data: commits } = await octokit.rest.repos.listCommits({
+    owner, repo, sha: ref, until: at.toISOString(), per_page: 1,
+  });
+  const top = Array.isArray(commits) && commits[0] ? commits[0] : null;
+  if (!top || typeof top.sha !== 'string') return null;
+  return {
+    sha: top.sha.toLowerCase(),
+    committedAt: (top.commit && top.commit.committer && top.commit.committer.date) || null,
+    branch: ref,
+  };
+}
+
 // Fast-forward a CLI handoff's platform branch to an exact pushed commit.
 // `force:false` is intentional even though callers preflight ancestry: it
 // closes the race if another writer moves the ref between compare + update.
@@ -1453,6 +1479,50 @@ async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF
     out += `\n…diff truncated at ~${charBudget} chars (${files.length} files changed in total)…\n`;
   }
   return { diff: out, fileCount: files.length, truncated };
+}
+
+// #3654: the files a compare touched, with their status and patch, for the
+// Homeroom bot benchmark's diff-scope grader and its judge. One call gives
+// both the list and the diff text (capped like getProposalDiff's), and
+// `complete` says whether GitHub's 300-file page held everything.
+async function compareFiles(owner, repo, basehead, charBudget = 60000) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead, per_page: 100,
+  });
+  const files = (data.files || []).map((f) => ({
+    filename: f.filename,
+    status: f.status,
+    additions: f.additions || 0,
+    deletions: f.deletions || 0,
+    previous: f.previous_filename || null,
+  }));
+  let diff = '';
+  let truncated = false;
+  for (const f of data.files || []) {
+    const block = `diff --git a/${f.filename} b/${f.filename}\n${f.patch ? `${f.patch}\n` : `(no textual diff: ${f.status}, +${f.additions || 0}/-${f.deletions || 0})\n`}`;
+    if (diff.length + block.length > charBudget) { truncated = true; break; }
+    diff += block;
+  }
+  return { files, diff, truncated, complete: files.length < COMPARE_FILES_CAP, aheadBy: data.ahead_by ?? null };
+}
+
+// #3654: delete a branch the Homeroom bot benchmark made. Refuses any name
+// outside the benchmark's own `bench/` prefix, so a bug in the caller can
+// never take a person's or a proposal's branch with it. A branch already
+// gone is not an error.
+async function deleteBenchBranch(owner, repo, branchName) {
+  if (typeof branchName !== 'string' || !/^bench\/[A-Za-z0-9._/-]+$/.test(branchName) || branchName.includes('..')) {
+    throw new Error(`refusing to delete ${branchName}: not a benchmark branch`);
+  }
+  const octokit = await getOctokit(owner);
+  try {
+    await octokit.rest.git.deleteRef({ owner, repo, ref: `heads/${branchName}` });
+    return true;
+  } catch (err) {
+    if (err.status === 404 || err.status === 422) return false;
+    throw err;
+  }
 }
 
 // Close an issue. Goes through getOctokit (PAT-preferred) so we get a
@@ -2373,6 +2443,7 @@ module.exports = {
   getCommitTree,
   getBranchSha,
   getRepoHead,
+  getCommitAt,
   advanceBranchToSha,
   forceBranchToSha,
   createProposalCommit,
@@ -2393,6 +2464,8 @@ module.exports = {
   listChangedFiles,
   compareRefs,
   getProposalDiff,
+  compareFiles,
+  deleteBenchBranch,
   getIssue,
   createIssue,
   createIssueComment,

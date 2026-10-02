@@ -32,7 +32,7 @@
 // never the task, which the tab's detail overlay carries. Under a group
 // header that carries the clock (This week, Always open, Season challenges;
 // ./group-header.tsx) the card leaves the deadline to that header and the
-// line keeps only the reward; Get started's cards and an ungrouped grid keep it. A
+// line keeps only the reward; the First challenges cards and an ungrouped grid keep it. A
 // finished card has nothing to count down to.
 //
 // The RAIL IS CLEAN: its own full-width row holding the state and nothing
@@ -102,6 +102,7 @@ const META_DEADLINE = 'shrink-0 text-zinc-500 dark:text-zinc-400';
 const META_DOT = 'shrink-0 text-zinc-400 dark:text-zinc-500';
 const META_REWARD = 'min-w-0 truncate font-medium text-amber-800 dark:text-amber-300';
 const META_EARNED = 'min-w-0 truncate font-medium text-emerald-700 dark:text-emerald-400';
+const META_CADENCE = 'min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400';
 // The artwork's face: whatever `--tint-art` the registry's tone class sets.
 // The `dark:` twin is not a second colour — the tone class already switches
 // the property in dark mode — it is what displaces IconTile's own
@@ -178,41 +179,30 @@ export function ProgressRail({ state, label, fill, name, counted = false, size =
   );
 }
 
-// The line under a scored challenge's rail (#3185): "Updates every 15 min ·
-// last 10:42", composed in ./topochain-challenges.js (`_cadenceOf`) from the
-// schedule the server sends. It is the rail's footnote, so it sits tight
-// under it — the negative top margin takes back half of the gap above — in
-// the deadline's quiet ink, and like every line on the card it truncates
-// rather than wraps. Nothing to say is no line at all, so a challenge nothing
-// counts in the background draws exactly the card it always did.
-const CADENCE: Record<PartSize, string> = {
-  md: '-mt-1 min-w-0 truncate text-xs leading-4 text-zinc-500 dark:text-zinc-400',
-  lg: '-mt-2 min-w-0 truncate text-[0.8125rem] leading-5 text-zinc-500 dark:text-zinc-400',
-};
-
-export function ProgressCadence({ text = null, size = 'md' }: {
-  text?: string | null;
-  size?: PartSize;
-}): ReactNode {
-  if (!text) return null;
-  return <div className={CADENCE[size]}>{text}</div>;
-}
-
-// The meta line: "5d left · 500 pts". `text` is the amount — the reward on
-// offer, or with `earned` what the viewer earned, in emerald. Nothing to say
-// is no line at all, never a stray dot.
-export function ChallengeMeta({ deadline = null, text = null, earned = false, size = 'md' }: {
+// The meta line: "5d left · 500 pts · next count 9:37". `text` is the
+// amount — the reward on offer, or with `earned` what the viewer earned, in
+// emerald. `cadence` is when the background scorer next counts this challenge
+// (#3185, composed by TopochainChallenges._cadenceOf), last and quiet: it
+// rides the line the card already has instead of adding a row under the
+// rail. It takes only the room the others leave (basis 0), so on a narrow
+// phone it is what truncates, never the reward. Nothing to say is no line at
+// all, never a stray dot.
+export function ChallengeMeta({ deadline = null, text = null, earned = false, cadence = null, size = 'md' }: {
   deadline?: string | null;
   text?: string | null;
   earned?: boolean;
+  cadence?: string | null;
   size?: PartSize;
 }): ReactNode {
-  if (!deadline && !text) return null;
+  const parts = [
+    deadline ? <span key="deadline" className={META_DEADLINE}>{deadline}</span> : null,
+    text ? <span key="amount" className={earned ? META_EARNED : META_REWARD}>{text}</span> : null,
+    cadence ? <span key="cadence" className={META_CADENCE}>{cadence}</span> : null,
+  ].filter(Boolean);
+  if (!parts.length) return null;
   return (
     <div className={META[size]}>
-      {deadline ? <span className={META_DEADLINE}>{deadline}</span> : null}
-      {deadline && text ? <span aria-hidden="true" className={META_DOT}>·</span> : null}
-      {text ? <span className={earned ? META_EARNED : META_REWARD}>{text}</span> : null}
+      {parts.flatMap((part, i) => (i ? [<span key={`dot-${i}`} aria-hidden="true" className={META_DOT}>·</span>, part] : [part]))}
     </div>
   );
 }
@@ -277,7 +267,7 @@ export type ChallengeCardView = {
   /** "5d left"; null on a finished card or with no end in the future. */
   deadline?: string | null;
   earned: string | null;
-  /** "Updates every 15 min · last 10:42" under the rail; absent or null draws no line. */
+  /** "next count 10:42" at the end of the meta line; absent or null says nothing. */
   cadence?: string | null;
 };
 
@@ -298,16 +288,16 @@ const CARD = CHALLENGE_CARD_FACE
   + ' cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors';
 
 // The card: tile, then title, the meta line ("5d left · 500 pts") and the
-// rail — nothing else, except, on a challenge the background scorer counts,
-// the one line under the rail that says how often (ProgressCadence). The task
+// rail — nothing else. On a challenge the background scorer counts, the meta
+// line also says when it next counts ("500 pts · next count 9:37"). The task
 // is not on the card (the tab's detail overlay carries it in full).
 //
 // TITLE AND RAIL ARE ONE GROUP. The title and its meta line sit 8px above the
 // rail and the whole group is centred against the tile as a unit, rather than
 // stretched to the tile's top and bottom edges: the title belongs to its
 // rail, not to the illustration beside it. With a meta line the group is 88px
-// against the 80px tile, without one 68px, and the cadence line adds 20px, at
-// every width — nothing in it wraps.
+// against the 80px tile, without one 68px, at every width — nothing in it
+// wraps, and the scorer's timing adds nothing (it rides the meta line).
 //
 // A card that opens something IS a button (#1918): role="button", in the tab
 // order, and Enter/Space open it like a click. The role is also what gives a
@@ -342,7 +332,7 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
       <div className="flex min-w-0 flex-1 flex-col gap-2">
         <div className="min-w-0">
           <div className={TITLE}>{view.goal}</div>
-          <ChallengeMeta deadline={view.deadline} text={reward} earned={!!view.earned} />
+          <ChallengeMeta deadline={view.deadline} text={reward} earned={!!view.earned} cadence={view.cadence} />
         </div>
         <ProgressRail
           state={view.state}
@@ -351,7 +341,6 @@ export function ChallengeCard({ view, className, onClick, onKeyDown, ...rest }: 
           name={view.goal}
           counted={!!view.counted}
         />
-        <ProgressCadence text={view.cadence} />
       </div>
     </div>
   );

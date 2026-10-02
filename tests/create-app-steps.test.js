@@ -1,17 +1,21 @@
 // The create dialog is steps that UNFOLD in one card (#1911), not one page of
 // every choice. Since the rework (drawn and agreed as a clickable mock first)
-// it asks six questions, each a step of its own:
+// it asks seven questions, each a step of its own:
 //
 //   who      Just me, A private community, A public community
 //   invite   a private community only: one row per person, a @username or an email
 //   kind     App; Document and Video there, dimmed, saying Soon
-//   details  the name and the optional "What is it?"
-//   approve  who approves changes — a private or a public community only
-//   start    LAST: from scratch, from a template (Soon), or from a GitHub
-//            repo, whose check also reads its dapp.json
+//   start    from scratch, from a template (its four starters open under its
+//            row, #3521), or from a GitHub repo, whose check also reads its
+//            dapp.json; collapses to the chosen row once the card moves on
+//   details  the name, and for a project made here "What should it do?",
+//            required of everyone and filed as the project's first request
+//   about    a project made here only: the one-line "What is it?", required,
+//            suggested from what it should do on arrival
+//   approve  LAST, a private or a public community only: who approves changes
 //
 // Nothing is chosen for the person: every answer starts empty, pressing a
-// row selects it, and Next — beside Cancel on every step — stays dimmed until
+// row selects it, and Next (beside Cancel on every step) stays dimmed until
 // the step is answered. `data-step` is the furthest step reached; every
 // section ships on every step and app.css folds and unfolds them off
 // #create-card[data-step] and [data-final]. This pins the component's
@@ -38,12 +42,19 @@ const { loadTsx } = require('./lib/render-tsx');
 
 const mod = () => loadTsx('frontend/src/features/dialogs/create-app.tsx');
 
-test('the steps a set of answers walks: four for Just me, five for a public community, six for a private one', () => {
+test('the steps a set of answers walks: five for Just me, six for a public community, seven for a private one, one fewer for an import', () => {
   const { stepsFor } = mod();
-  assert.deepEqual([...stepsFor(null)], ['who', 'kind', 'details', 'start'], 'unanswered counts as Just me');
-  assert.deepEqual([...stepsFor('solo')], ['who', 'kind', 'details', 'start']);
-  assert.deepEqual([...stepsFor('open')], ['who', 'kind', 'details', 'approve', 'start']);
-  assert.deepEqual([...stepsFor('invited')], ['who', 'invite', 'kind', 'details', 'approve', 'start']);
+  assert.deepEqual([...stepsFor(null)], ['who', 'kind', 'start', 'details', 'about'], 'unanswered counts as Just me, made here');
+  assert.deepEqual([...stepsFor('solo')], ['who', 'kind', 'start', 'details', 'about']);
+  assert.deepEqual([...stepsFor('solo', 'new')], ['who', 'kind', 'start', 'details', 'about']);
+  assert.deepEqual([...stepsFor('solo', 'template')], ['who', 'kind', 'start', 'details', 'about']);
+  assert.deepEqual([...stepsFor('open')], ['who', 'kind', 'start', 'details', 'about', 'approve']);
+  assert.deepEqual([...stepsFor('invited')], ['who', 'invite', 'kind', 'start', 'details', 'about', 'approve']);
+  // An import is named and nothing more: its repo describes it.
+  assert.deepEqual([...stepsFor('solo', 'import')], ['who', 'kind', 'start', 'details']);
+  assert.deepEqual([...stepsFor('open', 'import')], ['who', 'kind', 'start', 'details', 'approve']);
+  assert.deepEqual([...stepsFor('invited', 'import')], ['who', 'invite', 'kind', 'start', 'details', 'approve']);
+  assert.match(SRC, /const steps = stepsFor\(audience, mode\);/, 'the indicator and the footer read the mode too');
   // Every answer starts empty, and the step is the first.
   for (const [what, re] of [
     ['audience', /useState<Audience \| null>\(null\)/],
@@ -73,17 +84,27 @@ test('a row selects, and Next beside Cancel moves on once the step is answered',
   assert.match(answered, /case 'who': return audience != null;/);
   assert.match(answered, /case 'invite': return people\.length > 0;/);
   assert.match(answered, /case 'kind': return kind != null;/);
-  assert.match(answered, /case 'details': return name\.trim\(\)\.length > 0;/);
-  assert.match(answered, /case 'approve': return approvers != null && \(approvers !== 'invited' \|\| approvals != null\);/);
-  assert.match(answered, /case 'start': return mode != null && \(mode !== 'import' \|\| importState === 'ok'\);/);
+  // #3521: from a template is answered once a starter is picked.
+  assert.match(answered, /case 'start': return mode != null && \(mode !== 'import' \|\| importState === 'ok'\) && \(mode !== 'template' \|\| template != null\);/);
+  // The name, and what it should do (BRIEF_MIN or more) unless importing.
+  assert.match(answered, /case 'details': return name\.trim\(\)\.length > 0 && \(importing \|\| brief\.trim\(\)\.length >= BRIEF_MIN\);/);
+  assert.match(answered, /case 'about': return describe\.trim\(\)\.length > 0;/);
+  // An import whose repo sets the rule is told so, not asked.
+  assert.match(answered, /case 'approve': return repoGov != null \|\| \(approvers != null && \(approvers !== 'invited' \|\| approvals != null\)\);/);
   // On its own step a row only selects; a collapsed row reopens its step.
   assert.match(SRC, /function chooseAudience\(next: Audience\) \{\s*setError\(''\);\s*if \(step !== 'who'\) \{ setStep\('who'\); return; \}\s*setAudience\(next\);\s*\}/);
   assert.match(SRC, /function chooseKind\(next: Kind\) \{\s*setError\(''\);\s*if \(step !== 'kind'\) \{ setStep\('kind'\); return; \}\s*setKind\(next\);\s*\}/);
+  // How to start collapses too, so its rows (and a picked starter) reopen it.
+  assert.match(SRC, /function chooseStart\(next: Mode\) \{\s*setError\(''\);\s*if \(step !== 'start'\) \{ setStep\('start'\); return; \}/);
+  assert.match(SRC, /function chooseTemplate\(next: TemplateId\) \{\s*setError\(''\);\s*if \(step !== 'start'\) \{ setStep\('start'\); return; \}\s*setTemplate\(next\);\s*\}/);
   // Next walks the list, and only when answered.
   const next = SRC.slice(SRC.indexOf('function next() {'), SRC.indexOf('/** One entry point'));
   assert.match(next, /if \(!stepAnswered\) \{/);
   assert.match(next, /const to = steps\[steps\.indexOf\(step\) \+ 1\];/);
   assert.match(next, /Give your project a name\./);
+  assert.match(next, /Say what it should do, in a sentence or two\./);
+  // Arriving at the one-line step suggests it.
+  assert.match(next, /if \(to === 'about'\) void suggestDescription\(false\);/);
   // Both footer buttons wait for the answer.
   const footer = SRC.slice(SRC.indexOf('id="create-cancel"'));
   assert.ok(footer.indexOf('id="create-next"') > 0 && footer.indexOf('id="create-next"') < footer.indexOf('id="create-submit"'),
@@ -117,17 +138,32 @@ test('the wire body: who it is for, the people and addresses, and what an import
     { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r', description: 'Ours', governance: { approvers: 'invited', approvals: 'default' } });
   assert.deepEqual(createBody({ ...imp, repo: { description: 'Theirs', governance: { approvers: 'anyone', approvals: null } } }),
     { name: 'Book club', audience: 'open', repoUrl: 'https://github.com/o/r' });
+  // #3521: a template is sent only from "Start from a template"; from
+  // scratch sends none (the server's default is the empty starter), and a
+  // starter left picked when the person switched to another way is dropped.
+  assert.deepEqual(createBody({ ...base, mode: 'template', audience: 'solo', template: 'game-2d' }),
+    { name: 'Book club', audience: 'solo', template: 'game-2d' });
+  assert.equal(createBody({ ...base, audience: 'solo', template: 'game-2d' }).template, undefined);
+  assert.equal(createBody({ ...imp, repo: {}, template: 'game-2d' }).template, undefined);
+  assert.equal(createBody({ ...base, mode: 'template', audience: 'solo', template: null }).template, undefined);
   const submit = SRC.slice(SRC.indexOf('async function submit(event: FormEvent) {'), SRC.indexOf('  const stepIndex'));
   assert.match(submit, /const body = createBody\(\{/);
+  // What it should do goes from everyone now, and an import, which never
+  // showed the one-line step, sends no line from the dialog.
+  assert.match(submit, /name: trimmed,\s*brief,\s*description,/);
+  assert.doesNotMatch(SRC, /brief: botBuild \?/);
+  assert.match(submit, /const description = importing \? '' : \(describeRef\.current\?\.value \|\| ''\);/);
+  assert.match(submit, /if \(brief\.trim\(\)\.length < BRIEF_MIN\) return setError\('Say what it should do, in a sentence or two\.'\);/);
+  assert.match(submit, /if \(!description\.trim\(\)\) return setError\('Say what it is in one line\.'\);/);
   assert.match(submit, /invitees: people,/);
-  assert.match(submit, /repo,\s*\}\);/);
+  assert.match(submit, /repo,\s*template,\s*\}\);/);
   assert.match(submit, /await postCreateApp\(body\)/);
   assert.match(SRC, /body: JSON\.stringify\(body\)/);
 });
 
-test('an import names each earlier answer its repo’s dapp.json replaces', () => {
-  const { repoOverrides } = mod();
-  const answers = { name: 'Book club', description: '', audience: 'invited', approvers: 'anyone', approvals: null };
+test('an import names each answer its repo’s dapp.json replaces, and only answers given', () => {
+  const { repoOverrides, repoRule } = mod();
+  const answers = { name: 'Book club', description: 'Read together', audience: 'invited', approvers: 'anyone', approvals: null };
   const repo = {
     name: 'Book Club',
     description: 'Pick a book, read it together, talk about it.',
@@ -138,8 +174,11 @@ test('an import names each earlier answer its repo’s dapp.json replaces', () =
   assert.deepEqual(all.map((o) => o.key), ['name', 'desc', 'vis', 'gov']);
   assert.deepEqual(all.find((o) => o.key === 'gov'),
     { key: 'gov', label: 'Who approves changes', repo: 'People I pick, at least 2 yes', yours: 'Members vote' });
-  assert.equal(all.find((o) => o.key === 'desc').yours, 'left blank');
+  assert.equal(all.find((o) => o.key === 'name').yours, 'Book club');
   assert.equal(all.find((o) => o.key === 'vis').repo, 'Anyone can see it; only people invited can build');
+  // The check comes before the name and the approval steps now: a blank
+  // name, a blank line or a rule not chosen yet is nothing to replace.
+  assert.deepEqual(repoOverrides(repo, { ...answers, name: '', description: '', approvers: null }).map((o) => o.key), ['vis']);
   // Only real differences.
   assert.deepEqual(repoOverrides({}, answers), [], 'a repo that sets nothing replaces nothing');
   assert.deepEqual(repoOverrides(null, answers), []);
@@ -149,13 +188,66 @@ test('an import names each earlier answer its repo’s dapp.json replaces', () =
   assert.deepEqual(repoOverrides({ name: 'Book club' }, answers), [], 'the same name is not a change');
   assert.deepEqual(repoOverrides({ governance: { approvers: 'invited', approvals: 2 } }, { ...answers, audience: 'solo' }), [],
     'Just me was never asked who approves');
+  // The approval step says what the repo's rule is, in place of asking.
+  assert.equal(repoRule(repo, 'open'), 'People I pick, at least 2 yes');
+  assert.equal(repoRule(repo, 'solo'), null, 'Just me has no approval step');
+  assert.equal(repoRule({}, 'open'), null);
+  assert.equal(repoRule(null, 'open'), null);
+  assert.match(SRC, /const repoGov = checked \? repoRule\(repo, audience\) : null;/);
+  assert.match(SRC, /\{repoGov \? \(\s*<p className=\{CAPTION\} data-repo-rule="">\{`This repo’s dapp\.json already sets it: \$\{repoGov\}\.`\}<\/p>/);
+  // The check fills the name step with the repo's own name, unless one was typed.
+  const check = SRC.slice(SRC.indexOf('async function check() {'), SRC.indexOf('async function submit('));
+  assert.match(check, /if \(repoName && !\(nameRef\.current\?\.value \|\| ''\)\.trim\(\)\) \{\s*if \(nameRef\.current\) nameRef\.current\.value = repoName;\s*setName\(repoName\);/);
   // The notice, and what the card says for app.css.
   assert.match(SRC, /This repo already sets some of this/);
   assert.match(SRC, /You chose: \$\{o\.yours\}/);
   assert.match(SRC, /Nothing in this repo’s dapp\.json changes your answers\. They’re written into it when it’s imported\./);
   assert.match(SRC, /Couldn’t read this repo’s dapp\.json\./);
-  assert.match(SRC, /'data-repo-sets': overrides\.map\(\(o\) => o\.key\)\.join\(' '\)/);
+  assert.match(SRC, /'data-repo-sets': repoSets\.join\(' '\)/);
+  assert.match(SRC, /const repoSets = \[\.\.\.overrides\.map\(\(o\) => o\.key\), \.\.\.\(repoGov && !overrides\.some\(\(o\) => o\.key === 'gov'\) \? \['gov'\] : \[\]\)\];/);
   assert.match(SRC, /setRepo\(manifest && typeof manifest === 'object' \? manifest : \{\}\);\s*setRepoUnread\(manifest === null\);/);
+});
+
+test('what it should do is asked of everyone, grows with its text, and says who builds from it', () => {
+  const { briefCaption } = mod();
+  assert.equal(briefCaption(true), 'Homeroom bot builds the first version from this.');
+  assert.equal(briefCaption(false), 'This becomes the project’s first request.');
+  const details = SRC.slice(SRC.indexOf('data-create-step="details"'), SRC.indexOf('data-create-step="about"'));
+  assert.doesNotMatch(details, /\{botBuild \? \(/, 'not only for somebody the bot builds for');
+  assert.match(details, /<label htmlFor="app-brief" className=\{LABEL\}>\s*What should it do\?\s*<\/label>/, 'a label that fits one line on a phone');
+  assert.match(details, /id="app-brief"\s+ref=\{briefRef\}\s+name="brief"\s+rows=\{3\}\s+maxLength=\{BRIEF_MAX\}/);
+  assert.match(details, /className=\{BRIEF_FIELD\}/);
+  assert.match(SRC, /const BRIEF_FIELD = 'resize-none overflow-y-auto max-h-60 leading-\[22px\]';/, 'grows to a ceiling, then scrolls');
+  assert.match(details, /\{briefCaption\(botBuild\)\}/, 'one caption under the field');
+  // Measured only while its step shows: a folded field measures 0.
+  assert.match(SRC, /const el = briefRef\.current;\s*if \(!el \|\| step !== 'details'\) return;\s*el\.style\.height = 'auto';\s*if \(el\.scrollHeight > 0\) el\.style\.height = `\$\{el\.scrollHeight\}px`;\s*\}, \[brief, step\]\);/);
+});
+
+test('the one-line description is a step of its own, suggested on arrival, and only re-suggested when it is still ours to change', () => {
+  const { firstSentence, DESCRIPTION_MAX } = mod();
+  const server = require('../src/services/homeroom-bot-dm');
+  for (const text of [
+    'A chore wheel for the house. It is fair.',
+    'Who does the dishes this week! Fairly.',
+    `A ${'very '.repeat(30)}long sentence with no stop`,
+    '  spaced   out\n\nlines  ',
+  ]) {
+    assert.equal(firstSentence(text, DESCRIPTION_MAX), server.firstSentence(text, DESCRIPTION_MAX), 'the client falls back the way the server does');
+  }
+  const about = SRC.slice(SRC.indexOf('data-create-step="about"'), SRC.indexOf('data-create-step="approve"'));
+  assert.match(about, /\$\{numberOf\('about'\)\}\. Short description/);
+  assert.match(about, /id="app-description"/);
+  assert.match(about, /What is it\?/);
+  assert.doesNotMatch(about, /\(optional\)/, 'required now');
+  assert.match(about, /\{suggesting \? 'Suggesting…' : \(suggestNote \|\| 'One line people see on its page and in Discover\.'\)\}/);
+  assert.match(about, /onClick=\{\(\) => \{ void suggestDescription\(true\); \}\}[\s\S]{0,40}Suggest again/);
+  assert.match(about, /suggestion\.current\.edited = value\.trim\(\) !== '';/, 'a line the person writes is theirs');
+  const fn = SRC.slice(SRC.indexOf('async function suggestDescription(force: boolean) {'), SRC.indexOf('  const stepIndex'));
+  assert.match(fn, /if \(!force && \(mine\.edited \|\| mine\.from === text\)\) return;/, 'only when it changed and is not theirs');
+  assert.match(fn, /fetch\('\/api\/apps\/suggest-description', \{/);
+  assert.match(fn, /line = \(line \|\| firstSentence\(text, DESCRIPTION_MAX\)\)\.slice\(0, DESCRIPTION_MAX\);/, 'the first sentence when no suggestion comes back');
+  assert.match(fn, /if \(suggestion\.current\.seq !== seq\) return;/, 'a late answer is dropped');
+  assert.match(fn, /if \(suggestion\.current\.edited\) return;/, 'a line typed while it was on its way wins');
 });
 
 test('the invite step: one row per person, suggestions from the user search, an email marked Will invite', () => {
@@ -181,15 +273,19 @@ test('the invite step: one row per person, suggestions from the user search, an 
   assert.ok(!EMAIL_RE.test('@sam'));
 });
 
-test('the kind step and the last step: rows, with what is not ready yet dimmed and saying Soon', () => {
-  const kind = SRC.slice(SRC.indexOf('data-create-step="kind"'), SRC.indexOf('data-create-step="details"'));
+test('the kind step and how to start: rows, with what is not ready yet dimmed and saying Soon', () => {
+  const kind = SRC.slice(SRC.indexOf('data-create-step="kind"'), SRC.indexOf('data-create-step="start"'));
   assert.match(kind, /data-kind-pill="app"/);
   assert.match(kind, /Something you build and use together\./);
   assert.match(kind, /data-kind-pill="doc" aria-disabled="true"/);
   assert.match(kind, /Pages you write and edit together\./);
   assert.match(kind, /data-kind-pill="video" aria-disabled="true"/);
   assert.match(kind, /A video you make together, from script to cut\./);
-  const start = SRC.slice(SRC.indexOf('data-create-step="start"'), SRC.indexOf('id="create-error"'));
+  // How to start comes straight after what you are making, before the name.
+  const order = ['who', 'invite', 'kind', 'start', 'details', 'about', 'approve']
+    .map((step) => SRC.indexOf(`data-create-step="${step}"`));
+  assert.deepEqual([...order].sort((x, y) => x - y), order, 'the sections in the order the steps unfold');
+  const start = SRC.slice(SRC.indexOf('data-create-step="start"'), SRC.indexOf('data-create-step="details"'));
   assert.ok(start.indexOf('data-mode-pill="new"') < start.indexOf('data-mode-pill="template"')
     && start.indexOf('data-mode-pill="template"') < start.indexOf('data-mode-pill="import"')
     && start.indexOf('data-mode-pill="import"') < start.indexOf('id="create-import-block"'),
@@ -197,6 +293,19 @@ test('the kind step and the last step: rows, with what is not ready yet dimmed a
   assert.match(start, /Start from scratch/);
   assert.match(start, /Start from a template/);
   assert.match(start, /Import a GitHub repo/);
+  // #3521: the template row is a choice now, not a dimmed Soon, and its
+  // starters render under it only once it is chosen, so nothing about them
+  // is in the prerendered document.
+  assert.match(start, /data-mode-pill="template"\s+aria-pressed=\{mode === 'template'\}\s+className=\{CHOICE\}\s+onClick=\{\(\) => chooseStart\('template'\)\}/);
+  assert.doesNotMatch(start, /data-mode-pill="template" aria-disabled/);
+  assert.ok(start.indexOf('data-mode-pill="template"') < start.indexOf('id="create-template-block"')
+    && start.indexOf('id="create-template-block"') < start.indexOf('data-mode-pill="import"'),
+    'the starters open directly under their row');
+  assert.match(start, /\{mode === 'template' \? \(\s*<div id="create-template-block"/);
+  assert.match(start, /data-template-pill=\{choice\.key\}\s+aria-pressed=\{template === choice\.key\}/);
+  // Each way to start says "Change" once the step has collapsed to it.
+  assert.equal((start.match(/<span className=\{CHOICE_CHANGE\}>Change<\/span>/g) || []).length, 3);
+  assert.match(SRC, /const \[template, setTemplate\] = useState<TemplateId \| null>\(null\);/, 'nothing picked on arrival');
   assert.match(SRC, /\{`\$\{numberOf\('start'\)\}\. How do you want to start\?`\}/);
   assert.match(SRC, />\s*A majority\s*</, '"Most of them" reads "A majority"');
   assert.doesNotMatch(SRC, /Most of them/);
@@ -205,13 +314,16 @@ test('the kind step and the last step: rows, with what is not ready yet dimmed a
 test('app.css unfolds the steps in place, keeps each step to the answers it belongs to, and shapes the footer', () => {
   const rule = (sel) => new RegExp(sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   for (const sel of [
-    '#create-card[data-step="who"]     :is([data-create-step="invite"], [data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"])',
-    '#create-card[data-step="invite"]  :is([data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"])',
-    '#create-card[data-step="kind"]    :is([data-create-step="details"], [data-create-step="approve"], [data-create-step="start"])',
-    '#create-card[data-step="details"] :is([data-create-step="approve"], [data-create-step="start"])',
-    '#create-card[data-step="approve"] [data-create-step="start"]',
+    '#create-card[data-step="who"]     :is([data-create-step="invite"], [data-create-step="kind"], [data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"])',
+    '#create-card[data-step="invite"]  :is([data-create-step="kind"], [data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"])',
+    '#create-card[data-step="kind"]    :is([data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"])',
+    '#create-card[data-step="start"]   :is([data-create-step="details"], [data-create-step="about"], [data-create-step="approve"])',
+    '#create-card[data-step="details"] :is([data-create-step="about"], [data-create-step="approve"])',
+    '#create-card[data-step="about"]   [data-create-step="approve"]',
     '#create-card:not([data-audience="invited"]) [data-create-step="invite"]',
     '#create-card:is([data-audience="solo"], [data-audience=""]) [data-create-step="approve"]',
+    // An import is named and nothing more.
+    '#create-card[data-mode="import"] :is([data-create-step="about"], .create-brief-row)',
     '#create-card[data-final="false"] #create-submit',
     '#create-card[data-final="true"]  #create-next',
     '#create-card:not([data-mode="import"]) .create-import-block { display: none; }',
@@ -219,10 +331,17 @@ test('app.css unfolds the steps in place, keeps each step to the answers it belo
   assert.doesNotMatch(CSS, /\[data-step="start"\]\) #create-next \{\s*display: none/, 'Next is never hidden on a question step now');
   // A question step collapses to its chosen row once the card moves past it.
   assert.match(CSS, rule('#create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill:not([data-audience-pill="invited"])'));
-  assert.match(CSS, rule('#create-card:is([data-step="details"], [data-step="approve"], [data-step="start"]) [data-create-step="kind"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon)'));
-  // What an import's dapp.json replaces is dimmed and tagged.
-  assert.match(CSS, rule('#create-card[data-step="start"][data-mode="import"][data-repo-sets~="gov"]  #create-approve-block'));
-  assert.match(CSS, rule('#create-card[data-step="start"][data-mode="import"][data-repo-sets~="vis"] [data-repo-tag="vis"]'));
+  assert.match(CSS, rule('#create-card:is([data-step="start"], [data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="kind"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon)'));
+  // How to start does too, keeping a picked starter and the repo's check.
+  assert.match(CSS, rule('#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="import"]   .create-mode-pill:not([data-mode-pill="import"])'));
+  assert.match(CSS, rule('#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="start"] :is(.create-choice-caption, .create-template-pill:not([aria-pressed="true"]), .create-import-hint)'));
+  assert.match(CSS, rule('#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"], [data-step="start"]) [data-create-step="start"] .create-choice-change'));
+  // What an import's dapp.json decides is dimmed and tagged. The name comes
+  // after the check and opens on the repo's own, so it is only ever tagged.
+  assert.match(CSS, rule('#create-card[data-mode="import"][data-repo-sets~="gov"]  #create-approve-block'));
+  assert.match(CSS, rule('#create-card[data-mode="import"][data-repo-sets~="vis"]  [data-repo-tag="vis"]'));
+  assert.match(CSS, rule('#create-card[data-mode="import"][data-repo-sets~="name"] [data-repo-tag="details"]'));
+  assert.doesNotMatch(CSS, /\[data-repo-sets~="name"\] \.create-name-row/, 'a name typed over the repo\'s is never made unclickable');
 });
 
 test('every selected choice wears the Create button\'s accent, the moment it is pressed', () => {
@@ -239,18 +358,22 @@ test('every selected choice wears the Create button\'s accent, the moment it is 
 
 test('the shot links land on the state they name, and each has a check', () => {
   assert.match(SRC, /if \(shot === 'create-group'\) return \{ \.\.\.open, step: 'invite', audience: 'invited' \};/);
-  assert.match(SRC, /if \(shot === 'create-details'\) return \{ \.\.\.open, step: 'details', audience: 'solo', kind: 'app' \};/);
-  assert.match(SRC, /if \(shot === 'create-approve' \|\| shot === 'create-access'\) return \{ \.\.\.named, step: 'approve', audience: 'open' \};/);
-  assert.match(SRC, /if \(shot === 'create-import'\) return \{ \.\.\.named, step: 'start', audience: 'solo', mode: 'import' \};/);
+  assert.match(SRC, /if \(shot === 'create-start'\) return \{ \.\.\.app, step: 'start', audience: 'open' \};/);
+  assert.match(SRC, /if \(shot === 'create-template'\) return \{ \.\.\.app, step: 'start', audience: 'solo', mode: 'template' \};/);
+  assert.match(SRC, /if \(shot === 'create-import'\) return \{ \.\.\.app, step: 'start', audience: 'solo', mode: 'import' \};/);
+  assert.match(SRC, /if \(shot === 'create-details'\) return \{ \.\.\.open, step: 'details', audience: 'solo', kind: 'app', mode: 'new' \};/);
+  assert.match(SRC, /if \(shot === 'create-about'\) return \{ \.\.\.described, step: 'about', audience: 'solo' \};/);
+  assert.match(SRC, /if \(shot === 'create-approve' \|\| shot === 'create-access'\) return \{ \.\.\.described, step: 'approve', audience: 'open' \};/);
   const byPath = new Map(DAPP.tests.map((t) => [t.path, t]));
-  const first = DAPP.tests.find((t) => t.path === '/#create' && /Step 1 of 4/.test(t.expectText || ''));
+  const first = DAPP.tests.find((t) => t.path === '/#create' && /Step 1 of 5/.test(t.expectText || ''));
   assert.ok(first, 'a check reads the step count on a cold open');
   assert.match(first.expectSelector, /\[data-step="who"\]\[data-audience=""\]:has\(#create-cancel \+ #create-next:disabled\)/);
   const details = byPath.get('/?shot=create-details#create');
-  assert.match(details.expectSelector, /\[data-step="details"\]\[data-kind="app"\]/);
-  assert.equal(details.expectText, 'Project name');
+  assert.match(details.expectSelector, /\[data-step="details"\]\[data-mode="new"\]:has\(#create-next:disabled\) #create-name-block/);
+  assert.match(details.expectSelector, /\.create-brief-row #app-brief$/);
+  assert.equal(details.expectText, 'What should it do?');
   const approve = byPath.get('/?shot=create-approve#create');
-  assert.match(approve.expectSelector, /\[data-step="approve"\]\[data-audience="open"\]\[data-final="false"\] #create-approve-block/);
+  assert.match(approve.expectSelector, /\[data-step="approve"\]\[data-audience="open"\]\[data-final="true"\] #create-approve-block/, 'the last step for a public community');
   assert.equal(approve.expectText, 'Who approves changes?');
   const group = byPath.get('/?shot=create-group#create');
   assert.match(group.expectSelector, /\[data-step="invite"\] \[data-create-step="invite"\] #create-invite-block #create-invitees/);
@@ -258,6 +381,13 @@ test('the shot links land on the state they name, and each has a check', () => {
   const imp = byPath.get('/?shot=create-import#create');
   assert.match(imp.expectSelector, /\[data-mode-pill="new"\] \+ \[data-mode-pill="template"\] \+ \[data-mode-pill="import"\] \+ #create-import-block/);
   assert.equal(byPath.get('/?shot=create-access#create'), undefined, 'the retired step has no check left');
+  const tpl = byPath.get('/?shot=create-template#create');
+  assert.match(tpl.expectSelector, /\[data-mode="template"\]:has\(#create-next:disabled\) \[data-mode-pill="template"\]\[aria-pressed="true"\] \+ #create-template-block/,
+    'how to start is not the last step any more: Next waits for a starter');
+  assert.equal(tpl.expectText, 'Multimedia social');
+  for (const t of [first, details, approve, group, imp, tpl]) {
+    assert.ok(t.expectSelector.length <= 256, `the platform reads at most 256 characters of a selector: ${t.name}`);
+  }
 });
 
 test('the prerendered document starts on the first step, nothing chosen, with every id in place', () => {
@@ -267,17 +397,25 @@ test('the prerendered document starts on the first step, nothing chosen, with ev
   assert.match(card, /data-audience=""/);
   assert.match(card, /data-mode=""/);
   assert.match(card, /data-final="false"/);
-  for (const step of ['who', 'invite', 'kind', 'details', 'approve', 'start']) {
+  const order = ['who', 'invite', 'kind', 'start', 'details', 'about', 'approve'];
+  for (const step of order) {
     assert.match(card, new RegExp(`data-create-step="${step}"`), step);
   }
-  assert.match(card, /Step 1 of 4/);
+  const at = order.map((step) => card.indexOf(`data-create-step="${step}"`));
+  assert.deepEqual([...at].sort((x, y) => x - y), at, 'in the order they unfold');
+  assert.match(card, /Step 1 of 5/);
   for (const id of ['create-step-indicator', 'create-invite-block', 'create-invitees', 'create-import-block',
     'create-name-block', 'create-approve-block', 'create-approvals-n', 'create-cancel', 'create-next',
-    'create-submit', 'import-url', 'app-name', 'app-description']) {
+    'create-submit', 'import-url', 'app-name', 'app-brief', 'app-description']) {
     assert.match(card, new RegExp(`id="${id}"`), id);
   }
   assert.match(card, /<button[^>]*id="create-next"[^>]*disabled=""/, 'Next is dimmed until the first answer');
   assert.match(card, />New project</);
+  // "What should it do?" ships for everyone, empty, with the caption for
+  // somebody the bot does not build for (the open decides the other).
+  assert.match(card, /<textarea id="app-brief" name="brief" rows="3"[^>]*><\/textarea>/);
+  assert.match(card, />This becomes the project’s first request\.</);
+  assert.doesNotMatch(card, /<textarea[^>]*style=/, 'its height is measured after mount, never prerendered');
 });
 
 // QA 2026-09-24 Q5: a double-click on Create sent two POSTs and made two apps,

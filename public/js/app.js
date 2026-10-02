@@ -585,6 +585,7 @@ const App = {
     }
     App.user = user;
     App._syncViewer();
+    window.UsernodeReact?.appOpenings?.setUser?.(user.id, true);
     App.saveSessionSnapshot(user);
     // The verified answer, for everyone who joined bootSession() rather
     // than reading /api/auth/me for themselves. Published HERE on an
@@ -592,7 +593,7 @@ const App = {
     // not a confirmed one.
     App._publishBootSession({ user });
     document.dispatchEvent(new CustomEvent('sv:session', {
-      detail: { user: App.user },
+      detail: { user: App.user, verifiedSession: true },
     }));
     App.connectEvents();
     if (window.Kudos?.Budget?.init) Kudos.Budget.init();
@@ -647,12 +648,13 @@ const App = {
   async enterAnonymous() {
     let nativeBoundary = null;
     if (window.NativeChrome && NativeChrome.enterAnonymous) {
-      // enterAnonymous closes the private native realm synchronously before
-      // returning its Promise. Publish null only after that hard boundary.
+      // Close native authority before publishing the signed-out web identity.
       nativeBoundary = NativeChrome.enterAnonymous();
     }
     App.user = null;
     App._syncViewer();
+    window.UsernodeReact?.appOpenings?.setUser?.(null, true);
+    window.UITelemetry?.clearUser?.();
     if (nativeBoundary) await nativeBoundary;
     // The boot reader sees signed-out only after native authority is closed.
     App._publishBootSession({ signedOut: true });
@@ -852,6 +854,7 @@ const App = {
     // A snapshot is display-only and unverified. _reconcileSession publishes
     // the server's answer; a normal login publishes immediately.
     if (!App._sessionFromSnapshot) App._publishBootSession({ user });
+    window.UsernodeReact?.appOpenings?.setUser?.(user.id, !App._sessionFromSnapshot);
     // "View as non-admin" admin tool. We mask `App.user.isAdmin`
     // for client-side UI gating (admin buttons, retry, delete, lock,
     // app-secrets edit, etc. — see grep for App.user?.isAdmin) so
@@ -896,7 +899,7 @@ const App = {
     // for waiting-room users too (apps are usable without platform
     // access; only the SV social/build surfaces are gated).
     document.dispatchEvent(new CustomEvent('sv:session', {
-      detail: { user: App.user },
+      detail: { user: App.user, verifiedSession: !App._sessionFromSnapshot },
     }));
 
     // Platform-access gate (onboarding flow alignment): a released
@@ -3688,6 +3691,7 @@ const App = {
       // home is the fallback for a screen that named no parent.
       const href = e.currentTarget?.getAttribute?.('href');
       if (href && href.startsWith('#') && href.length > 1) {
+        if (App._stepBackTo(href)) return; // #3620: step Back to it
         window.location.hash = href;
         return;
       }
@@ -3755,7 +3759,17 @@ const App = {
       App._previousRoute = App._currentRoute;
       App._currentRoute = arriving;
     }
+    // #3620: an entry a project page's tab press pushed names that tab (see
+    // AppView._pushWorkshopTab). Remembered BEFORE the router runs, so a page
+    // it mounts opens on it, and shown to a page already up after it. Shown,
+    // never pushed: Back and Forward are not doors. An entry that names no
+    // tab (one a door's navigation just made) is given the one it opens on.
+    const pageTab = typeof AppView !== 'undefined' && AppView._historyWorkshopTab
+      ? AppView._historyWorkshopTab() : null;
+    if (pageTab) AppView._setWorkshopTab(pageTab.tab);
     App.restoreFromHash();
+    if (pageTab) AppView._showHistoryWorkshopTab(pageTab.slug, pageTab.tab);
+    else if (typeof AppView !== 'undefined' && AppView._stampArrivedWorkshopTab) AppView._stampArrivedWorkshopTab();
     App._applyRouteShots();
   },
 
@@ -3840,6 +3854,7 @@ const App = {
   // who invited them. In it — just now, or already — opens its hub. A dead
   // link says why, once.
   async _followInvite(token) {
+    App._markNavigationVia?.('handed');
     try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
     App.restoreFromHash();
     const toast = (msg, error) => {
@@ -3898,6 +3913,12 @@ const App = {
     try {
       const rawHash = location.hash.replace('#', '');
       const pathRoute = App._appRouteFromPath(location.pathname);
+      // The first route of a page load that names a place came from an
+      // address: a link from outside, a bookmark or a typed URL (#3369).
+      if (!App._navAddressChecked) {
+        App._navAddressChecked = true;
+        if (rawHash || pathRoute) App._markNavigationVia?.('address');
+      }
       // A fragment names a non-app platform screen, so it outranks the clean
       // app pathname it was assigned from. Heal the mixed address in place;
       // all the existing hash-writing modules can stay small and correct.
@@ -4778,6 +4799,12 @@ const App = {
   _showOnlyScreen(revealId, keepAlso) {
     window.UsernodeBrowserScroll?.capture();
     const keep = keepAlso || [];
+    // #3618: where the running app is drawn, read while it still is, for the
+    // stand-in that shrinks into its Resume control once it is parked (see
+    // _syncParkedApp). Only on the way OUT of the running app.
+    App._leavingAppRect = (App._runningApp && revealId !== 'app-view' && !keep.includes('app-view'))
+      ? App._appViewRect()
+      : null;
     for (const id of App.SCREEN_IDS) {
       if (id === revealId || keep.includes(id)) continue;
       App._setScreenVisible(id, false);
@@ -4921,6 +4948,39 @@ const App = {
           && AppView.appData.self_hosted) return;
     } catch (_) { /* no record to ask */ }
     bridge.park(left);
+    // #3618: …and the app goes INTO the Resume control it just became, so
+    // the eye follows it there. Only when the app view is already gone: Home
+    // shrinks the live view itself (navigateHome's zoom-out, into the same
+    // control), and the app's own Workshop is the same view, still showing.
+    const from = App._leavingAppRect;
+    App._leavingAppRect = null;
+    if (typeof bridge.collapse === 'function' && !App._isScreenVisible('app-view')) {
+      try { bridge.collapse(left, from); } catch (_) { /* motion is a nicety */ }
+    }
+  },
+
+  // #3618: the rect #app-view occupies now, or null when it is not drawn.
+  _leavingAppRect: null,
+  _appViewRect() {
+    try {
+      const r = document.getElementById('app-view')?.getBoundingClientRect?.();
+      return r && r.width > 0 && r.height > 0
+        ? { left: r.left, top: r.top, width: r.width, height: r.height }
+        : null;
+    } catch (_) {
+      return null;
+    }
+  },
+
+  // #3618: the Resume control for `slug` that is on screen — the rail's
+  // Active row, or the phone's strip — or null. features/nav/resume-motion.ts.
+  _resumeHandleFor(slug) {
+    try { return window.UsernodeReact?.nav?.resumeHandle?.(slug) || null; } catch (_) { return null; }
+  },
+
+  // #3618: how long a zoom into or out of a Resume control takes.
+  _resumeMotionMs() {
+    return Number(window.UsernodeReact?.nav?.resumeMotionMs) || 250;
   },
 
   // The handle's display data for `slug`, or null for no app (or the platform
@@ -5144,11 +5204,24 @@ const App = {
     // navigateToApp commits the destination while the click is still
     // synchronous (see its note), and switchTab re-syncs after assigning it.
     const inApp = screen === 'app-view' && App.currentTab === 'app';
+    // Navigation for the admin Journey page (#3369): this is the one place
+    // that settles which screen is showing, so it is where a step is
+    // reported. Optional call: several suites run this method alone.
+    App._reportNavigation?.(screen, inApp);
+    // …UNLESS THE VIEWER PINNED IT (#3319). Settings → Theme's "Keep sidebar
+    // open in apps" keeps the desktop rail docked beside a running app. Off
+    // by default, and desktop only: below 768px the bar is the phone's
+    // bottom bar, and an app keeps the whole screen there whatever is stored.
+    // `rail-pinned` on the body is what app.css keys the frame's own padding
+    // off (no gutter around somebody's program).
+    const railPinned = inApp && !App.embeddedPanel && App._railPinned() && !App._isPhoneLayout();
+    document.body?.classList?.toggle('rail-pinned', railPinned);
+    App._watchRailBreakpoint();
     App.Visibility.publish(
       'platform-tabs',
       // …and never in the side panel's document, which draws no chrome at
       // all: the top window's bar and rail are the navigation.
-      App.embeddedPanel ? false : !!screen && !App.chromeless && !inApp,
+      App.embeddedPanel ? false : !!screen && !App.chromeless && (!inApp || railPinned),
     );
     // Published even when the bar is down: the store keeps the last screen
     // otherwise, and the bar coming back for a tab that has since changed
@@ -5192,6 +5265,122 @@ const App = {
     // whether it is on screen. Last, so the handle lands in the same callback
     // as the bar it rides on.
     App._syncParkedApp(inApp);
+  },
+
+  // ── Navigation telemetry (#3369) ───────────────────────────────────
+  //
+  // One code per screen root, the same list as NAV_SCREENS in
+  // src/services/ui-telemetry.js. The admin screen is never reported (the
+  // telemetry client stays silent on #admin), and neither is the signed-out
+  // shell, where `screen` is null.
+  //
+  // NOT UNDER A FIRST-RUN SHEET. A new account's Home is revealed beneath
+  // the username, terms and join sheets, and a Home "visited" there was never
+  // seen. CommunitiesFirstRun.settled() resolves once all three are done
+  // with (it waits on the other two), so the latest screen waits for it and
+  // is reported then.
+  _NAV_CODE_FOR_SCREEN: Object.freeze({
+    'home-screen': 'home',
+    'browse-screen': 'discover',
+    'workshop-screen': 'communities',
+    'leaderboard-screen': 'challenges',
+    'profile-screen': 'profile',
+    'profile-proposals-screen': 'my_proposals',
+    'settings-screen': 'settings',
+    'messages-screen': 'messages',
+    'global-chat-screen': 'assistant',
+    'agent-session-screen': 'agent_session',
+  }),
+
+  _navPending: null,
+  _navGateOpen: false,
+  _navGateWaiting: false,
+
+  _reportNavigation(screen, inApp) {
+    if (!screen || App.embeddedPanel) return;
+    const code = screen === 'app-view'
+      ? (inApp ? 'app' : 'project')
+      : App._NAV_CODE_FOR_SCREEN[screen];
+    if (!code) return;
+    App._navPending = {
+      code,
+      appSlug: screen === 'app-view' ? (App.currentApp || null) : null,
+    };
+    if (App._navGateOpen) {
+      App._flushNavigation();
+      return;
+    }
+    if (App._navGateWaiting) return;
+    App._navGateWaiting = true;
+    const gate = window.CommunitiesFirstRun?.settled?.();
+    Promise.resolve(gate).catch(() => {}).then(() => {
+      App._navGateOpen = true;
+      App._flushNavigation();
+    });
+  },
+
+  _flushNavigation() {
+    const step = App._navPending;
+    App._navPending = null;
+    if (!step) return;
+    try {
+      window.UITelemetry?.navigate?.(step.code, step.appSlug ? { appSlug: step.appSlug } : undefined);
+    } catch (_) { /* telemetry never breaks navigation */ }
+  },
+
+  // A first-run sheet or the tour closed: the person is back on the screen
+  // under it, which is the next step of their path. Same gate as any step.
+  _renotifyNavigation() {
+    const screen = App._revealedScreen || 'home-screen';
+    const inApp = screen === 'app-view' && App.currentTab === 'app';
+    App._reportNavigation(screen, inApp);
+  },
+
+  // How a person arrived, marked just before the navigation it explains.
+  _markNavigationVia(via) {
+    try { window.UITelemetry?.markNextVia?.(via); } catch (_) { /* best effort */ }
+  },
+
+  // ── "Keep sidebar open in apps" (#3319) ─────────────────────────────
+  //
+  // A per-browser display preference, like the theme: localStorage, read at
+  // every _syncPlatformTabs. Every access is guarded — storage throws in a
+  // private window or with site data blocked, and that must read as "off",
+  // the old behaviour, never as a broken router.
+  RAIL_PINNED_KEY: 'usernode:rail-pinned',
+
+  _railPinned() {
+    try {
+      return window.localStorage?.getItem(App.RAIL_PINNED_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  },
+
+  // Written by the Settings switch (features/settings/sections/theme.tsx),
+  // which re-decides at once so an app already open behind Settings is right
+  // the moment the viewer goes back to it.
+  setRailPinned(on) {
+    try {
+      if (on) window.localStorage?.setItem(App.RAIL_PINNED_KEY, '1');
+      else window.localStorage?.removeItem(App.RAIL_PINNED_KEY);
+    } catch (_) { /* unwritable storage: the switch simply does not stick */ }
+    App._syncPlatformTabs();
+  },
+
+  // A window resized across 768px inside an app changes the answer above
+  // (a pinned rail on the desktop, the full-screen app on a phone), so the
+  // breakpoint re-decides too. Installed once, lazily, where it is needed.
+  _railBreakpointWatched: false,
+  _watchRailBreakpoint() {
+    if (App._railBreakpointWatched) return;
+    App._railBreakpointWatched = true;
+    try {
+      const mql = window.matchMedia?.('(min-width: 768px)');
+      mql?.addEventListener?.('change', () => {
+        if (App._railPinned()) App._syncPlatformTabs();
+      });
+    } catch (_) { /* no matchMedia: nothing to watch */ }
   },
 
   // The two `#app-view` routes that are THREADS OF MESSAGES rather than the
@@ -5919,6 +6108,44 @@ const App = {
       return nav && typeof nav.entries === 'function' && nav.currentEntry
         && typeof nav.traverseTo === 'function' ? nav : null;
     } catch (_) { return null; }
+  },
+
+  // #3620: AN UP ARROW IS A STEP BACK WHEN THE ENTRY UNDER THIS ONE IS WHERE
+  // IT POINTS. The header's arrow names its parent (a conversation's is
+  // #messages, Settings' is #profile), and following that href pushed it: the
+  // list opened on top of the thread you had just left, so the next Back
+  // reopened the thread instead of leaving Messages. When the entry directly
+  // below is that same address, in this document, going back to it is the
+  // same screen and leaves no loop. Anything else (a cold deep link, a parent
+  // further down the stack, a browser without the Navigation API) keeps the
+  // push it always made. True when it went back.
+  _stepBackTo(href) {
+    const nav = App._navigationApi();
+    if (!nav || typeof href !== 'string') return false;
+    let below = null;
+    try { below = nav.entries()[nav.currentEntry.index - 1] || null; } catch (_) { return false; }
+    if (!below || below.sameDocument === false || !below.url) return false;
+    const wanted = [];
+    try {
+      if (href.startsWith('#') || href === '') {
+        wanted.push(new URL(App._rootUrl(href), location.origin).href);
+        // An app route's hash is canonicalised to its clean path on arrival,
+        // and the project page answers to all of its aliases (restoreFromHash).
+        const m = /^#(app\/[^/?]+)(\/[^?]*)?$/.exec(href);
+        if (m) {
+          const rest = m[2] || '';
+          const forms = /^\/(dev|board|workshop|activity)$/.test(rest)
+            ? ['/workshop', '/board'] : [rest];
+          for (const form of forms) {
+            wanted.push(new URL(`/${m[1]}${form}${App._routeSearch(null)}`, location.origin).href);
+          }
+        }
+      } else if (href.startsWith('/')) {
+        wanted.push(new URL(href, location.origin).href);
+      }
+    } catch (_) { return false; }
+    if (wanted.indexOf(below.url) === -1) return false;
+    try { history.back(); return true; } catch (_) { return false; }
   },
 
   // Where the ✕ goes, and how: { how, url, key }.
@@ -6675,6 +6902,12 @@ const App = {
       requestedTab = launchRecord?.self_hosted ? 'dev' : 'app';
     }
     const initialRoute = App._normalizeTab(requestedTab, ref, subTab);
+    // Capture the user's intent before app metadata/token waits. It is only
+    // committed after the accessible App tab renders below, so a failed,
+    // blocked, self-hosted or superseded navigation leaves no event.
+    const opening = initialRoute.tab === 'app'
+      ? window.UsernodeReact?.appOpenings?.begin?.(App.user?.id) || null
+      : null;
     App.currentTab = initialRoute.tab;
     App.currentSubTab = initialRoute.tab === 'dev'
       ? (initialRoute.subTab || 'forum') : null;
@@ -6723,6 +6956,12 @@ const App = {
     // is a tab switch, not an app opening: no tile to grow out of (#2881),
     // and no full-page fallback over the rail and header (#2880).
     const viaTab = App._tabPress === true;
+    // #3618: RESUMED, it grows back out of the Resume control that was
+    // pressed — the rail's pill or the phone's strip — rather than out of a
+    // Home tile that is not what you touched. Taken once, here, so any later
+    // open of the app grows out of its own place.
+    let resumeFrom = null;
+    try { resumeFrom = window.UsernodeReact?.nav?.takeResumeOrigin?.(slug) || null; } catch (_) { resumeFrom = null; }
     // THE LAST VISIT'S BOARD IS NOT THIS ONE'S FIRST FRAME (#2880). Leaving
     // an app's Workshop for another tab hides #app-view with its Dev surfaces
     // still mounted, and AppView.close() marks their data stale. Revealed
@@ -6757,7 +6996,8 @@ const App = {
     }, {
       type: App._entryTransition('zoom-in', appViewEl, viaTab),
       el: document.getElementById('app-view'),
-      fromEl: () => App._tileFor(slug),
+      fromEl: () => resumeFrom || App._tileFor(slug),
+      duration: resumeFrom ? App._resumeMotionMs() : null,
       // The outgoing screen: the kit hides it while measuring the
       // destination so the flex-sibling split doesn't skew the target
       // rect (see the comment block above).
@@ -6873,6 +7113,7 @@ const App = {
       // navigation. Replace it so Back returns to the launch origin in one go.
       replaceRoute: App._normalizeTab(actualFinalTab, ref, subTab).tab
         !== initialRoute.tab,
+      opening,
     });
   },
 
@@ -6917,6 +7158,11 @@ const App = {
     // ignores `outEl`, so the kit can't correct for that). #app-view is
     // the one root kept alive into `after` — that IS the shrinking card.
     const av = document.getElementById('app-view');
+    // #3618: the app shrinks into its Resume control when one is on screen
+    // once Home is (the rail's Active row, the phone's strip), and into its
+    // Home tile otherwise. Resolved by the kit AFTER `fn`, when the parked
+    // control has been drawn; the duration is asked after that.
+    let intoResume = false;
     PlatformUI.transition(() => {
       AppView.close();
       App._showOnlyScreen('home-screen', ['app-view']);
@@ -6936,7 +7182,13 @@ const App = {
     }, {
       type: App._entryTransition('zoom-out', av, viaTab),
       el: av,
-      fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
+      fromEl: () => {
+        if (!leavingSlug) return null;
+        const handle = App._resumeHandleFor(leavingSlug);
+        intoResume = !!handle;
+        return handle || App._tileFor(leavingSlug);
+      },
+      duration: () => (intoResume ? App._resumeMotionMs() : null),
       fallback: fallbackType,
       after: () => {
         av.classList.add('hidden');
@@ -7290,6 +7542,15 @@ const App = {
       App._forwardAppTab(App.currentApp, 'app');
       return false;
     }
+    const wasLiveApp = tab === 'app'
+      && App.currentTab === 'app'
+      && AppView.appData?.slug === App.currentApp
+      && App._isScreenVisible?.('app-view');
+    const opening = tab === 'app'
+      ? (options?.opening || (!wasLiveApp
+        ? window.UsernodeReact?.appOpenings?.begin?.(App.user?.id) || null
+        : null))
+      : null;
     // #771: a docked staging preview is pinned to the dev-chat session
     // layout, which every tab switch re-renders or unmounts — close it.
     // (A fullscreen preview keeps floating above the tabs, as before.)
@@ -7360,6 +7621,10 @@ const App = {
       // App.closeApp goes: the page the app was opened from.
       App.setBackIcon('close', App._closeAppHref());
       AppView.renderAppTab();
+      if (opening && AppView.appData?.slug === App.currentApp
+          && App._isScreenVisible?.('app-view')) {
+        window.UsernodeReact?.appOpenings?.commit?.(App.currentApp, opening);
+      }
     } else {
       await AppView.renderDevView(App.currentSubTab, ref);
     }

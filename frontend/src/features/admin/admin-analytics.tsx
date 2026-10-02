@@ -199,15 +199,16 @@ const INFO: Record<string, string> = {
   'include-admins': 'Admin accounts (including view-only admins) are excluded from every number on this page by default, so operator/test activity does not skew the stats. Tick this to include them.',
   counters: 'At-a-glance totals. WAU | MAU are two independent counts: distinct users active in the last 7 vs 30 days, not a ratio. "Promoted (open)" is sessions live in promoted/merging right now; the all-time counts never leave their bucket.',
   spend: 'LLM spend per day for the last 30 days. <b>Platform key</b> is spend billed to the platform (this is what the caps track: the platform\'s own daily cap, and each account\'s weekly one); <b>User key</b> is spend billed to users\' own Anthropic keys (display only); <b>Both</b> stacks them.',
-  funnels: 'Each stage shows the count reaching that milestone and the step-over-step conversion. "Promoted" = a session opened for group vote; "Merged" = landed in production. Use the cohort buttons to scope to recent signups.',
+  funnels: 'Ordered paths use the same user or dev session at every step and a 30-day observation window. Mature cohorts show step conversion; maturing cohorts show provisional counts only. App-opening receipts depend on client reporting, so a missing receipt is coverage unknown rather than measured abandonment. Historical coarse/backfilled proposal times and bypassed stages are reported outside the denominator.',
   growth: 'New signups, apps, and promoted/merged PRs bucketed per ISO week. Hover any bar for that week\'s exact count.',
-  'general-users': 'A general user is anyone active during the period (any tracked action: used a dapp, sent a chat message, or sent a dev-session message). <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
-  retention: 'Each row is a signup-week cohort; each cell is the share of that cohort active (any tracked action) in a given week. Hover a cell for the exact counts. Use the <b>Align</b> toggle to line cohorts up on real calendar weeks (default) or by cohort age (Week 0, Week 1, …).',
+  'general-users': 'A general user has a positive project-use heartbeat or took a deliberate human action: sent a project, Messages, change, Mayor, or Global Chat message; cast a proposal or request vote; gave kudos; or favorited a project. System and assistant messages do not count. Days use UTC. Older project heartbeats can include an idle open tab, actions deleted before durable logging are unavailable, and favorite actions before explicit logging are unavailable. <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
+  retention: 'Each row is a signup-week cohort; each cell is the share of that cohort with recorded participation in a given UTC week. The General users definition describes what counts and its historical limits. Hover a cell for the exact counts. Use the <b>Align</b> toggle to line cohorts up on real calendar weeks (default) or by cohort age (Week 0, Week 1, …).',
   'power-users': 'A power user, evaluated over a 7-day window, both used dapps &ge; 3 times that week (counting each use of any dapp) AND did &ge; 3 visible developer actions (each a kudos given, vote cast, or proposal made). <b>Power-user WAU</b> is a 7-day rolling count; <b>Consistency (L4)</b> stacks, per day, how many of the trailing 4 weeks each user was a power user (1/4…4/4). Hover for exact counts.',
   'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
   'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
   kudos: 'Per ISO week, how many users gave 0, 1, 2, 3, 4–5, 6–10 or 11+ kudos (everyone gets a budget of 20/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count. Counts direct PR kudos only. Issue-bounty pledges draw on the same weekly allowance but are not in this series.',
   'spend-distribution': 'Per day, how many users\' platform-funded AI spend (what the caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend, and it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ platform only</b> (heavy spenders with no usable own key) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). These are DAY buckets, not cap boundaries. The account cap is weekly, so a day above $20 is a heavy day rather than a refusal. The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
+  'ui-failures': 'Representative instrumented journeys over the last 14 days. Failure rate divides failed outcomes by successful plus failed outcomes; cancellations, timeouts, and navigation departures are shown separately. Repeats and departures are descriptive signals, not proof that someone was frustrated. Delivery receipts describe observed coverage, but cannot count telemetry that never reached the server.',
 };
 
 // Per-card Overview definitions (#341). Keyed by a stable card id, mirroring
@@ -217,7 +218,7 @@ const CARD_INFO: Record<string, string> = {
   'total-users': 'Count of all registered accounts (admins excluded unless the box above is ticked).',
   'new-7d': 'Accounts that signed up in the last 7 days.',
   'new-30d': 'Accounts that signed up in the last 30 days.',
-  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users who took any tracked action (used a dapp, sent a chat message, or sent a dev-session message) in the last 7 days. <b>MAU</b> = the same, over the last 30 days. The General-users section below charts these same definitions as daily rolling windows.',
+  'wau-mau': 'Two independent counts, not a ratio. <b>WAU</b> = distinct users with a positive project-use heartbeat or a human message, vote, kudos, or favorite action in the last 7 UTC days. <b>MAU</b> = the same, over the last 30 days. System and assistant messages do not count; older heartbeats can include an idle open tab. The General-users section below charts these same definitions as daily rolling windows.',
   'apps': 'Published apps that aren\'t self-hosted and aren\'t deleted.',
   'promoted-open': 'Live count of dev sessions sitting in the "promoted" or "merging" state right now (not a lifetime total).',
   'promoted-all': 'Every dev session that was ever opened for a group vote.',
@@ -390,14 +391,18 @@ function Counters({ o }: { o: any }) {
 }
 
 // ── Funnel bars ───────────────────────────────────────────────
-// stages: [{ label, value, admin }]. Bar width is relative to the first
-// stage's total; the caption shows the absolute count and the step-over-step
-// conversion. When admins are included (#341) each stage bar splits into a
-// non-admin (indigo) segment plus an amber admin segment.
-function Funnel({ stages, includeAdmins }: { stages: any[]; includeAdmins: boolean }) {
+// stages: [{ label, value, admin, conversion? }]. Bar width is relative to
+// the first stage. A stage may suppress its adjacent percentage when the
+// preceding count is coverage rather than a trustworthy denominator.
+function Funnel({
+  stages, includeAdmins, emptyText,
+}: { stages: any[]; includeAdmins: boolean; emptyText?: string }) {
   const stageTotal = (s: any) => (Number(s.value) || 0) + (Number(s.admin) || 0);
   const top = stages[0] ? stageTotal(stages[0]) : 0;
   const anyAdmin = includeAdmins && stages.some((s) => (Number(s.admin) || 0) > 0);
+  if (!top) {
+    return <p className={SUB}>{emptyText || 'No mature measured cohort in this entry window.'}</p>;
+  }
   return (
     <>
       <AdminLegend includeAdmins={includeAdmins} nonAdminColor="#4f46e5" />
@@ -410,7 +415,9 @@ function Funnel({ stages, includeAdmins }: { stages: any[]; includeAdmins: boole
         const naW = top > 0 ? (value / top) * 100 : 0;
         const adW = top > 0 ? (admin / top) * 100 : 0;
         const floor = total > 0 && naW + adW < 2 ? 2 - (naW + adW) : 0;
-        const conv = i === 0 ? '100%' : `${pct(total, stageTotal(stages[i - 1]))}% of prev`;
+        const conv = i === 0 ? 'mature cohort'
+          : s.conversion === false ? 'observed receipts'
+            : `${pct(total, stageTotal(stages[i - 1]))}% of prev`;
         const count = anyAdmin && admin > 0 ? `${fmtInt(total)} · ${fmtInt(admin)} admin` : fmtInt(total);
         return (
           <div key={s.label}>
@@ -426,6 +433,82 @@ function Funnel({ stages, includeAdmins }: { stages: any[]; includeAdmins: boole
         );
       })}
     </>
+  );
+}
+
+function totalWithAdmins(row: any, key: string, includeAdmins: boolean): number {
+  return (Number(row?.[key]) || 0) + (includeAdmins ? (Number(row?.[`${key}_admin`]) || 0) : 0);
+}
+
+function CoverageNote({
+  coverage, includeAdmins, kind,
+}: { coverage: any; includeAdmins: boolean; kind: 'dapp' | 'proposal' }) {
+  if (!coverage) return null;
+  const mature = totalWithAdmins(coverage, 'eligible', includeAdmins);
+  const maturing = totalWithAdmins(coverage, 'maturing', includeAdmins);
+  const unknown = totalWithAdmins(coverage, 'unknown_coverage', includeAdmins);
+  const excluded = totalWithAdmins(coverage, 'excluded', includeAdmins);
+  if (coverage.status === 'awaiting_events') {
+    return (
+      <p className={`${SUB} mb-3`}>
+        No trustworthy opening receipts have been recorded yet. Conversion is unknown; missing history is not abandonment.
+      </p>
+    );
+  }
+  const boundary = String(coverage.startsAt || '').slice(0, 10);
+  const subject = kind === 'dapp' ? 'users' : 'sessions';
+  return (
+    <p className={`${SUB} mb-3`}>
+      {kind === 'dapp'
+        ? `Client-reported opening receipts observed since ${boundary}; receipt and occurrence coverage varies by client. `
+        : `Precise proposal-opening records observed since ${boundary}. `}
+      {`${fmtInt(mature)} mature ${subject} · ${fmtInt(maturing)} still maturing`}
+      {unknown ? ` · ${fmtInt(unknown)} before observed coverage` : ''}
+      {excluded ? ` · ${fmtInt(excluded)} ambiguous or bypassed` : ''}
+      {kind === 'dapp' ? '. A missing opening receipt is coverage unknown, not measured abandonment.' : '.'}
+    </p>
+  );
+}
+
+function ProvisionalProgress({
+  stages, includeAdmins,
+}: { stages: any[]; includeAdmins: boolean }) {
+  const first = stages[0]
+    ? (Number(stages[0].value) || 0) + (includeAdmins ? (Number(stages[0].admin) || 0) : 0)
+    : 0;
+  if (!first) return null;
+  return (
+    <div className="mt-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+      <div className="text-xs font-medium text-zinc-600 dark:text-zinc-300">Maturing progress</div>
+      <div className="text-[11px] text-zinc-500 dark:text-zinc-400 mb-2">Partial 30-day windows. Counts are provisional; no abandonment rate is inferred.</div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-600 dark:text-zinc-300">
+        {stages.map((s) => {
+          const n = (Number(s.value) || 0) + (includeAdmins ? (Number(s.admin) || 0) : 0);
+          return <span key={s.label}>{`${s.label}: ${fmtInt(n)}`}</span>;
+        })}
+      </div>
+    </div>
+  );
+}
+
+function MilestoneReach({ stages, includeAdmins }: { stages: any[]; includeAdmins: boolean }) {
+  const totals = stages.map((s) => (Number(s.value) || 0)
+    + (includeAdmins ? (Number(s.admin) || 0) : 0));
+  const max = Math.max(1, ...totals);
+  return (
+    <div className="space-y-2">
+      {stages.map((s, i) => (
+        <div key={s.label}>
+          <div className="flex items-center justify-between text-xs mb-1">
+            <span className="text-zinc-600 dark:text-zinc-300">{s.label}</span>
+            <span className="text-zinc-500 dark:text-zinc-400">{fmtInt(totals[i])}</span>
+          </div>
+          <div className="h-2 rounded bg-zinc-200 dark:bg-zinc-800 overflow-hidden">
+            <div className="h-full bg-violet-600" style={{ width: `${((totals[i] / max) * 100).toFixed(2)}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1210,6 +1293,164 @@ const SPEND_MODES: Array<['platform' | 'user' | 'both', string]> = [
   ['platform', 'Platform key'], ['user', 'User key'], ['both', 'Both'],
 ];
 
+const UI_ACTION_LABELS: Record<string, string> = {
+  shell_boot: 'Shell boot',
+  app_detail_load: 'Open app details',
+  app_discussion_load: 'Open app discussion',
+  feedback_submit: 'Submit feedback',
+  content_report_submit: 'Submit content report',
+  change_create: 'Start a change',
+  preview_open: 'Open preview',
+};
+
+const UI_SCREEN_LABELS: Record<string, string> = {
+  shell_boot: 'Shell boot', app_detail: 'App detail', app_discussion: 'App discussion',
+  feedback_dialog: 'Feedback', report_dialog: 'Content report',
+  change_workspace: 'Change workspace', preview: 'Preview',
+};
+
+const UI_ERROR_LABELS: Record<string, string> = {
+  access_denied: 'Access denied', app_blocked: 'App blocked', boot_incomplete: 'Boot incomplete',
+  boot_rejection: 'Boot rejection', boot_resource_failed: 'Boot resource failed',
+  boot_script_error: 'Boot script error', boot_step_failed: 'Boot step failed',
+  conflict: 'Conflict', invalid_response: 'Invalid response', network: 'Network',
+  not_found: 'Not found', offline: 'Offline', rate_limited: 'Rate limited',
+  server_error: 'Server error', target_unavailable: 'Report target unavailable',
+  unavailable: 'Unavailable', unknown: 'Unknown',
+};
+
+function uiDuration(ms: any): string {
+  const n = Number(ms);
+  if (!Number.isFinite(n)) return '—';
+  return n < 1000 ? `${Math.round(n)} ms` : `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)} s`;
+}
+
+function uiReceiptTime(value: any): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString() : '—';
+}
+
+function UIExperience({ report }: { report: any }) {
+  if (!report || report.unavailable) {
+    return (
+      <section id="ui-failures" className={`${AdminUI.card} p-4`}>
+        <h3 className={H3}>UI failures<InfoIcon info="ui-failures" /></h3>
+        <p className={`${AdminUI.cardDescription} mt-2`}>UI experience analytics could not be loaded.</p>
+      </section>
+    );
+  }
+  const coverage = report.coverage || {};
+  const overview = report.overview || {};
+  const journeys = Array.isArray(report.journeys) ? report.journeys : [];
+  const screens = Array.isArray(report.screens) ? report.screens : [];
+  const contexts = Array.isArray(report.contexts) ? report.contexts : [];
+  const errors = Array.isArray(report.errors) ? report.errors : [];
+  const coverageBadge = coverage.state === 'reporting'
+    ? AdminUI.badge.success : coverage.state === 'loss_observed'
+      ? AdminUI.badge.warn : AdminUI.badge.destructive;
+  const coverageLabel = coverage.state === 'reporting'
+    ? 'Reporting' : coverage.state === 'loss_observed' ? 'Delivery loss observed' : 'No delivery coverage';
+  const stats: Array<[string, any]> = [
+    ['Screen visits', overview.visits], ['Attempts', overview.attempts],
+    ['Resolved attempts', overview.terminal_attempts], ['Unresolved attempts', overview.unresolved_attempts],
+    ['Orphan outcomes', overview.orphan_terminal_attempts],
+    ['Failed outcomes', overview.failures], ['Affected users', overview.affected_users],
+    ['Loading timeouts', overview.timeouts], ['Navigation departures', overview.abandonments],
+    ['Cancelled', overview.cancellations], ['Repeated attempts', overview.repeats],
+    ['Recoveries', overview.recoveries], ['Server failures', overview.server_failures],
+  ];
+  return (
+    <section id="ui-failures" className={`${AdminUI.card} p-4`}>
+      <div className={`${AdminUI.cardHeader} flex-wrap`}>
+        <div>
+          <h3 className={H3}>UI failures<InfoIcon info="ui-failures" /></h3>
+          <p className={AdminUI.cardDescription}>Representative journeys, observed over the last {fmtInt(report.windowDays)} days.</p>
+        </div>
+        <span className={coverageBadge}>{coverageLabel}</span>
+      </div>
+
+      <div className={`rounded-xl p-3 mb-4 ${coverage.state === 'reporting'
+        ? 'bg-emerald-50 text-emerald-900 dark:bg-emerald-500/10 dark:text-emerald-200'
+        : 'bg-amber-50 text-amber-900 dark:bg-amber-500/10 dark:text-amber-200'}`}>
+        <p className="text-sm font-medium">{coverage.limitation}</p>
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2 mt-2 text-xs">
+          <span>{fmtInt(coverage.reportingUsers)} reporting users · {fmtInt(coverage.receipts)} receipts</span>
+          <span>{fmtInt(coverage.acceptedRecords)} accepted of {fmtInt(coverage.submittedRecords)} submitted</span>
+          <span>{fmtInt(coverage.failedBatchesRecovered)} retried batches · {fmtInt(coverage.droppedRecordsReported)} dropped records</span>
+          <span>First {uiReceiptTime(coverage.firstReceiptAt)} · latest {uiReceiptTime(coverage.latestReceiptAt)}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-2 mb-5">
+        {stats.map(([label, value]) => (
+          <div key={label} className="rounded-xl bg-zinc-50 dark:bg-zinc-800/60 p-3">
+            <div className="text-xl font-semibold tabular-nums">{fmtInt(value)}</div>
+            <div className="text-xs text-zinc-500 dark:text-zinc-400">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      <h4 className={`${H4} mb-2`}>Instrumented screen visits</h4>
+      {screens.length ? <div className="flex flex-wrap gap-2 mb-5">{screens.map((row: any) => (
+        <span className={AdminUI.badge.default} key={row.screen}>
+          {UI_SCREEN_LABELS[row.screen] || row.screen}: {fmtInt(row.visits)} visits · {fmtInt(row.users)} users
+        </span>
+      ))}</div> : <div className="mb-5">{EMPTY}</div>}
+
+      <h4 className={`${H4} mb-2`}>Journey outcomes</h4>
+      {journeys.length ? (
+        <div className={`${AdminUI.tableWrap} mb-5`}>
+          <table className={AdminUI.table}>
+            <thead className={AdminUI.thead}><tr>
+              <th className={AdminUI.th}>Journey</th><th className={AdminUI.th}>Attempts</th>
+              <th className={AdminUI.th}>Success / failed</th><th className={AdminUI.th}>Failure rate</th>
+              <th className={`${AdminUI.th} hidden lg:table-cell`}>Timeout / left / repeat</th>
+              <th className={`${AdminUI.th} hidden xl:table-cell`}>Recovered / cancelled</th>
+              <th className={`${AdminUI.th} hidden xl:table-cell`}>Affected users</th>
+              <th className={`${AdminUI.th} hidden lg:table-cell`}>Resolved p50 / p95</th>
+            </tr></thead>
+            <tbody>{journeys.map((row: any) => (
+              <tr className={AdminUI.trHover} key={row.action}>
+                <td className={AdminUI.td}>{UI_ACTION_LABELS[row.action] || row.action}</td>
+                <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(row.attempts)}</td>
+                <td className={`${AdminUI.td} tabular-nums`}>{fmtInt(row.successes)} / {fmtInt(row.failures)} <span className="text-xs text-zinc-500">of {fmtInt(row.failure_denominator)}</span></td>
+                <td className={`${AdminUI.td} tabular-nums`}>{row.failure_rate == null ? '—' : `${row.failure_rate}%`}</td>
+                <td className={`${AdminUI.td} hidden lg:table-cell tabular-nums`}>{fmtInt(row.timeouts)} / {fmtInt(row.abandonments)} / {fmtInt(row.repeats)}</td>
+                <td className={`${AdminUI.td} hidden xl:table-cell tabular-nums`}>{fmtInt(row.recoveries)} / {fmtInt(row.cancellations)}</td>
+                <td className={`${AdminUI.td} hidden xl:table-cell tabular-nums`}>{fmtInt(row.affected_users)}</td>
+                <td className={`${AdminUI.td} hidden lg:table-cell tabular-nums`}>{uiDuration(row.p50_ms)} / {uiDuration(row.p95_ms)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ) : <div className="mb-5">{EMPTY}</div>}
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        <div>
+          <h4 className={`${H4} mb-2`}>Affected app and build contexts</h4>
+          {contexts.length ? <div className="space-y-2">{contexts.map((row: any, index: number) => (
+            <div key={`${row.app_slug || 'Platform'}:${row.build || 'unknown'}:${index}`} className="flex items-start justify-between gap-3 text-sm">
+              <span className="min-w-0"><span className="font-medium break-all">{row.app_slug || 'Platform shell'}</span>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400"> · build {row.build || 'unknown'}</span></span>
+              <span className="shrink-0 tabular-nums text-xs text-zinc-500 dark:text-zinc-400">{fmtInt(row.failures)} failed · {fmtInt(row.timeouts)} timed out · {fmtInt(row.affected_users)} users</span>
+            </div>
+          ))}</div> : EMPTY}
+        </div>
+        <div>
+          <h4 className={`${H4} mb-2`}>Safe error classifications</h4>
+          {errors.length ? <div className="flex flex-wrap gap-2">{errors.map((row: any) => (
+            <span className={AdminUI.badge.default} key={row.error_code}>
+              {UI_ERROR_LABELS[row.error_code] || row.error_code}: {fmtInt(row.count)} · {fmtInt(row.affected_users)} users
+            </span>
+          ))}</div> : EMPTY}
+        </div>
+      </div>
+      <p className="mt-4 text-xs text-zinc-500 dark:text-zinc-400">Timeout means an instrumented wait crossed its stated threshold. “Left” means the browser began leaving the page while an eligible attempt was unresolved for at least one second. Neither signal alone establishes frustration.</p>
+    </section>
+  );
+}
+
 function AnalyticsSection() {
   const [gate, setGate] = useState<string | null>(null);
   const [data, setData] = useState<any>(null);
@@ -1273,7 +1514,7 @@ function AnalyticsSection() {
     (async () => {
       try {
         const [overview, spend, growth, retention, generalUsers, powerUsers,
-          topUsers, kudos, spendByBuilder, spendDistribution, limits] = await Promise.all([
+          topUsers, kudos, spendByBuilder, spendDistribution, uiFailures, limits] = await Promise.all([
           getJSON(withAdmins('/api/admin/analytics/overview')),
           getJSON(withAdmins('/api/admin/analytics/spend')),
           getJSON(withAdmins('/api/admin/analytics/growth')),
@@ -1284,6 +1525,7 @@ function AnalyticsSection() {
           getJSON(withAdmins('/api/admin/analytics/kudos')),
           getJSON(withAdmins('/api/admin/analytics/spend-by-builder')),
           getJSON(withAdmins('/api/admin/analytics/spend-distribution')),
+          getJSON(withAdmins('/api/admin/analytics/ui-failures?days=14')).catch(() => ({ unavailable: true })),
           // #361: system-token cap for the "today / cap" readout. Tolerate a
           // failure (non-admin-write tokens still GET it) — default stays 2500.
           getJSON('/api/admin/limits').catch(() => null),
@@ -1291,7 +1533,7 @@ function AnalyticsSection() {
         if (!alive.current) return;
         setData({
           overview, spend, growth, retention, generalUsers, powerUsers,
-          topUsers, kudos, spendByBuilder, spendDistribution,
+          topUsers, kudos, spendByBuilder, spendDistribution, uiFailures,
           systemCapCents: limits && Number.isFinite(Number(limits.system_tokens_daily_limit_cents))
             ? Number(limits.system_tokens_daily_limit_cents) : 2500,
         });
@@ -1356,6 +1598,8 @@ function AnalyticsSection() {
             </div>
           </section>
 
+          <UIExperience report={d?.uiFailures} />
+
           {/* Daily spend */}
           <section className={`${AdminUI.card} p-4`}>
             <div className="flex items-center justify-between flex-wrap gap-2 mb-1">
@@ -1377,7 +1621,7 @@ function AnalyticsSection() {
             <div className="flex items-center justify-between flex-wrap gap-2 mb-4">
               <h3 className={H3}>Funnels<InfoIcon info="funnels" /></h3>
               <div className="flex flex-wrap items-center gap-1 text-xs">
-                <span className="text-zinc-500 dark:text-zinc-400 mr-1">Cohort:</span>
+                <span className="text-zinc-500 dark:text-zinc-400 mr-1">Entry window:</span>
                 <ToggleGroup cls="cohort-btn" attr="data-cohort" value={cohort} onChange={setCohort} options={[
                   ['all', 'All time'], ['90d', 'Last 90d'], ['30d', 'Last 30d'], ['14d', 'Last 14d'],
                   ['7d', 'Last 7d'], ['3d', 'Last 3d'], ['1d', 'Last 1d'],
@@ -1386,34 +1630,71 @@ function AnalyticsSection() {
             </div>
             <div className="grid md:grid-cols-2 gap-6">
               <div>
-                <h4 className={`${H4} mb-3`}>Users using dapps</h4>
+                <h4 className={`${H4} mb-1`}>Ordered user path</h4>
+                <p className={`${SUB} mb-2`}>Signup → reported app open → later-UTC-day return → later social action → later project creation, all for the same user within 30 days.</p>
+                {funnels ? <CoverageNote coverage={funnels.dappUsage.coverage} includeAdmins={includeAdmins} kind="dapp" /> : null}
                 <div id="funnel-dapp" className="space-y-2">
                   {funnels ? <Funnel includeAdmins={includeAdmins} stages={[
                     { label: 'Signed up', value: funnels.dappUsage.signed_up, admin: funnels.dappUsage.signed_up_admin },
-                    { label: 'Opened a dapp', value: funnels.dappUsage.opened_dapp, admin: funnels.dappUsage.opened_dapp_admin },
-                    { label: 'Returned (2+ days)', value: funnels.dappUsage.returned, admin: funnels.dappUsage.returned_admin },
-                    { label: 'Engaged socially', value: funnels.dappUsage.engaged, admin: funnels.dappUsage.engaged_admin },
-                    { label: 'Became a creator', value: funnels.dappUsage.creators, admin: funnels.dappUsage.creators_admin },
+                    { label: 'Reported an app open', value: funnels.dappUsage.opened_dapp, admin: funnels.dappUsage.opened_dapp_admin, conversion: false },
+                    { label: 'Returned on a later UTC day', value: funnels.dappUsage.returned, admin: funnels.dappUsage.returned_admin },
+                    { label: 'Took a later social action', value: funnels.dappUsage.engaged, admin: funnels.dappUsage.engaged_admin },
+                    { label: 'Later created a project', value: funnels.dappUsage.creators, admin: funnels.dappUsage.creators_admin },
+                  ]} emptyText="No mature signup entries have observed opening coverage in this cohort." /> : null}
+                </div>
+                {funnels ? <ProvisionalProgress includeAdmins={includeAdmins} stages={[
+                  { label: 'Signed up', value: funnels.dappUsage.provisional?.signed_up_provisional, admin: funnels.dappUsage.provisional?.signed_up_provisional_admin },
+                  { label: 'Reported open', value: funnels.dappUsage.provisional?.opened_dapp_provisional, admin: funnels.dappUsage.provisional?.opened_dapp_provisional_admin },
+                  { label: 'Returned', value: funnels.dappUsage.provisional?.returned_provisional, admin: funnels.dappUsage.provisional?.returned_provisional_admin },
+                  { label: 'Later social action', value: funnels.dappUsage.provisional?.engaged_provisional, admin: funnels.dappUsage.provisional?.engaged_provisional_admin },
+                  { label: 'Later project', value: funnels.dappUsage.provisional?.creators_provisional, admin: funnels.dappUsage.provisional?.creators_provisional_admin },
+                ]} /> : null}
+
+                <h4 className={`${H4} mt-5 mb-1`}>Independent user milestone reach</h4>
+                <p className={`${SUB} mb-3`}>Each count stands alone within the mature signup cohort. These bars are reach, not step conversion.</p>
+                <div id="funnel-dapp-reach">
+                  {funnels ? <MilestoneReach includeAdmins={includeAdmins} stages={[
+                    { label: 'Signed up', value: funnels.dappReach?.signed_up, admin: funnels.dappReach?.signed_up_admin },
+                    { label: 'Reported an app open', value: funnels.dappReach?.opened_dapp, admin: funnels.dappReach?.opened_dapp_admin },
+                    { label: 'Returned on a later UTC day', value: funnels.dappReach?.returned, admin: funnels.dappReach?.returned_admin },
+                    { label: 'Any recorded social action', value: funnels.dappReach?.engaged, admin: funnels.dappReach?.engaged_admin },
+                    { label: 'Any project creation', value: funnels.dappReach?.creators, admin: funnels.dappReach?.creators_admin },
                   ]} /> : null}
                 </div>
               </div>
               <div>
-                <h4 className={`${H4} mb-3`}>Promoting PRs (dev sessions)</h4>
+                <h4 className={`${H4} mb-1`}>Ordered proposal path</h4>
+                <p className={`${SUB} mb-2`}>Session start → precise PR opening → later promotion → later merge, all on the same dev session within 30 days.</p>
+                {funnels ? <CoverageNote coverage={funnels.prSessions.coverage} includeAdmins={includeAdmins} kind="proposal" /> : null}
                 <div id="funnel-pr" className="space-y-2">
                   {funnels ? <Funnel includeAdmins={includeAdmins} stages={[
                     { label: 'Dev session started', value: funnels.prSessions.started, admin: funnels.prSessions.started_admin },
-                    { label: 'Produced a PR', value: funnels.prSessions.produced_pr, admin: funnels.prSessions.produced_pr_admin },
+                    { label: 'Opened a PR', value: funnels.prSessions.produced_pr, admin: funnels.prSessions.produced_pr_admin },
                     { label: 'Promoted to group', value: funnels.prSessions.promoted, admin: funnels.prSessions.promoted_admin },
-                    { label: 'Received a vote', value: funnels.prSessions.received_vote, admin: funnels.prSessions.received_vote_admin },
                     { label: 'Merged', value: funnels.prSessions.merged, admin: funnels.prSessions.merged_admin },
-                  ]} /> : null}
+                  ]} emptyText="No mature, timestamp-complete dev sessions in this cohort." /> : null}
                 </div>
-                <h4 className={`${H4} mt-5 mb-3`}>Promoting PRs (distinct users)</h4>
+                {funnels ? (
+                  <p className={`${SUB} mt-2`}>
+                    {`${fmtInt(totalWithAdmins(funnels.prSessions, 'received_vote', includeAdmins))} had recorded vote evidence after promotion. `}
+                    {`${fmtInt(totalWithAdmins(funnels.prSessions, 'merged_without_vote', includeAdmins))} merged without recorded vote evidence; votes are not required for every merge.`}
+                  </p>
+                ) : null}
+                {funnels ? <ProvisionalProgress includeAdmins={includeAdmins} stages={[
+                  { label: 'Started', value: funnels.prSessions.provisional?.started_provisional, admin: funnels.prSessions.provisional?.started_provisional_admin },
+                  { label: 'Opened PR', value: funnels.prSessions.provisional?.produced_pr_provisional, admin: funnels.prSessions.provisional?.produced_pr_provisional_admin },
+                  { label: 'Promoted', value: funnels.prSessions.provisional?.promoted_provisional, admin: funnels.prSessions.provisional?.promoted_provisional_admin },
+                  { label: 'Merged', value: funnels.prSessions.provisional?.merged_provisional, admin: funnels.prSessions.provisional?.merged_provisional_admin },
+                ]} /> : null}
+
+                <h4 className={`${H4} mt-5 mb-1`}>Independent builder milestone reach</h4>
+                <p className={`${SUB} mb-3`}>Distinct builders at each milestone across their dev sessions. Counts can come from different sessions and are not conversion.</p>
                 <div id="funnel-pr-users" className="space-y-2">
-                  {funnels ? <Funnel includeAdmins={includeAdmins} stages={[
+                  {funnels ? <MilestoneReach includeAdmins={includeAdmins} stages={[
                     { label: 'Started building', value: funnels.prUsers.started, admin: funnels.prUsers.started_admin },
                     { label: 'Opened a PR', value: funnels.prUsers.produced_pr, admin: funnels.prUsers.produced_pr_admin },
                     { label: 'Promoted a PR', value: funnels.prUsers.promoted, admin: funnels.prUsers.promoted_admin },
+                    { label: 'Had a PR receive a vote', value: funnels.prUsers.received_vote, admin: funnels.prUsers.received_vote_admin },
                     { label: 'Got a PR merged', value: funnels.prUsers.merged, admin: funnels.prUsers.merged_admin },
                   ]} /> : null}
                 </div>
@@ -1434,7 +1715,7 @@ function AnalyticsSection() {
           <section className={`${AdminUI.card} p-4`}>
             <h3 className={`${H3} mb-1`}>General users<InfoIcon info="general-users" /></h3>
             <p className={SUB}>
-              Anyone active during the period. Daily over the last 90 days: DAU per day, WAU a 7-day rolling window, MAU a 30-day rolling window.
+              Anyone with a positive project-use heartbeat or a human message, vote, kudos, or favorite action. Daily over the last 90 UTC days: DAU per day, WAU a 7-day rolling window, MAU a 30-day rolling window.
             </p>
             <div className="grid lg:grid-cols-3 gap-6">
               <div>
@@ -1483,7 +1764,7 @@ function AnalyticsSection() {
               </div>
             </div>
             <p className="text-xs text-zinc-500 dark:text-zinc-400 mb-3">
-              Cohort = signup week. Each cell is the share of that cohort active (any action) in a given week.
+              Cohort = signup week. Each cell is the share of that cohort with recorded participation in a given UTC week.
             </p>
             <div id="retention-cohorts" className="overflow-x-auto">
               {d ? <Retention r={d.retention} mode={retAlign} /> : null}

@@ -4,7 +4,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { verifyIsolatedBuildFixture } = require('./lib/isolated-kpack-fixture');
+const { enabled: postgresEnabled, readPreviewPostgresFixture } = require('./lib/preview-postgres-fixture');
 const { createExecutionDatabase } = require('./lib/execution-database');
 const { addHandoffColumns } = require('./lib/cli-handoff-fixture');
 const { createCliHandoffWork, CONTINUE, enrolled } = require('../src/services/cli-preview-handoff/work');
@@ -15,11 +15,10 @@ const { createPreviewFlow } = require('../src/services/preview-flow/store');
 
 const HEAD = 'a'.repeat(40);
 const NEXT = 'b'.repeat(40);
-const isolated = process.env.RUN_ISOLATED_KPACK_TEST === '1';
 
 async function fixture(t) {
-  const verified = await verifyIsolatedBuildFixture();
-  const db = await createExecutionDatabase(verified.fixture.isolation.database.url);
+  const selected = await readPreviewPostgresFixture();
+  const db = await createExecutionDatabase(selected.databaseUrl);
   await addHandoffColumns(db.pool);
   await db.pool.query(`INSERT INTO chat_sessions (id, handoff_uploaded_sha, checks_commit_sha)
     VALUES (1,$1,$1)`, [HEAD]);
@@ -31,12 +30,8 @@ async function fixture(t) {
     await db.close();
   });
   const config = {
-    ...verified.fixture.config,
+    ...selected.config,
     databaseUrl: db.url,
-    kubernetes: {
-      ...verified.fixture.config.kubernetes,
-      workerNamespace: verified.fixture.isolation.namespace.name,
-    },
     nativeCliPreviewHandoffEnabled: true,
     nativePreviewAttempts: true,
     dataEncryptionKey: 'c8-isolated',
@@ -104,7 +99,7 @@ async function tick(work) {
   await worker.drain();
 }
 
-test('C8 atomic head/work rollback, duplicate admission and web restart', { skip: !isolated }, async t => {
+test('C8 atomic head/work rollback, duplicate admission and web restart', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const work = f.make();
   const session = await f.session();
@@ -126,7 +121,7 @@ test('C8 atomic head/work rollback, duplicate admission and web restart', { skip
   assert.equal(await enrolled(f.pool, 1), true);
 });
 
-test('C8 candidate/continuation atomicity, lost candidate reply and no stranded continuation', { skip: !isolated }, async t => {
+test('C8 candidate/continuation atomicity, lost candidate reply and no stranded continuation', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const work = f.make();
   const admitted = await work.admit({ session: await f.session(), headSha: HEAD });
@@ -150,7 +145,7 @@ test('C8 candidate/continuation atomicity, lost candidate reply and no stranded 
   assert.equal((await recovered.owner.read(1)).handoff.phase, 'complete');
 });
 
-test('C8 lost activation/check replies adopt stored facts; concurrent forced rechecks join', { skip: !isolated }, async t => {
+test('C8 lost activation/check replies adopt stored facts; concurrent forced rechecks join', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const admittedWork = f.make();
   const admitted = await admittedWork.admit({ session: await f.session(), headSha: HEAD });
@@ -176,7 +171,7 @@ test('C8 lost activation/check replies adopt stored facts; concurrent forced rec
   assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests WHERE workflow = $1', [PREPARE_RUNTIME])).rows[0].count), 1);
 });
 
-test('C8 supersession at handoff never activates obsolete candidate or publishes old checks', { skip: !isolated }, async t => {
+test('C8 supersession at handoff never activates obsolete candidate or publishes old checks', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const work = f.make();
   const old = await work.admit({ session: await f.session(), headSha: HEAD });
@@ -194,7 +189,7 @@ test('C8 supersession at handoff never activates obsolete candidate or publishes
   assert.equal(recovered[0].id, successor.work.id);
 });
 
-test('C8 completed preparation failure and missing-preview repair admit one fresh isolated attempt', { skip: !isolated }, async t => {
+test('C8 completed preparation failure and missing-preview repair admit one fresh isolated attempt', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const work = f.make();
   const first = await work.admit({ session: await f.session(), headSha: HEAD });
@@ -214,7 +209,7 @@ test('C8 completed preparation failure and missing-preview repair admit one fres
     'Repair preserves the currently serving runtime until separate activation');
 });
 
-test('C8 promoted managed head requires the exact reviewed pin and shares preview guards', { skip: !isolated }, async t => {
+test('C8 promoted managed head requires the exact reviewed pin and shares preview guards', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const work = f.make();
   await f.pool.query("UPDATE chat_sessions SET status = 'promoted', reviewed_head_sha = $1 WHERE id = 1", [NEXT]);
@@ -234,7 +229,7 @@ test('C8 promoted managed head requires the exact reviewed pin and shares previe
   }
 });
 
-test('C8 legacy activation recovery excludes the enrolled owner', { skip: !isolated }, async t => {
+test('C8 legacy activation recovery excludes the enrolled owner', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const work = f.make();
   const admitted = await work.admit({ session: await f.session(), headSha: HEAD });
@@ -250,7 +245,7 @@ test('C8 legacy activation recovery excludes the enrolled owner', { skip: !isola
   assert.equal((await work.recover(1)).workflow, CONTINUE);
 });
 
-test('C8 unresolved activation rejects head acceptance and required work atomically', { skip: !isolated }, async t => {
+test('C8 unresolved activation rejects head acceptance and required work atomically', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const work = f.make();
   const admitted = await work.admit({ session: await f.session(), headSha: HEAD });
@@ -268,7 +263,7 @@ test('C8 unresolved activation rejects head acceptance and required work atomica
   assert.equal(Number((await f.pool.query('SELECT COUNT(*) FROM execution_work_requests WHERE workflow = $1', [PREPARE_RUNTIME])).rows[0].count), 1);
 });
 
-test('C8 enrolled aggregate rejects competing synchronous and durable preparation actions', { skip: !isolated }, async t => {
+test('C8 enrolled aggregate rejects competing synchronous and durable preparation actions', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const work = f.make();
   const admitted = await work.admit({ session: await f.session(), headSha: HEAD });
@@ -286,7 +281,7 @@ test('C8 enrolled aggregate rejects competing synchronous and durable preparatio
   assert.deepEqual(replayDecision(historical), original.decision, 'Retained v9 traces keep their original decision contract');
 });
 
-test('CLI admission uses the complete contract without enabling legacy Dev attempts', { skip: !isolated }, async t => {
+test('CLI admission uses the complete contract without enabling legacy Dev attempts', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   f.config.nativePreviewAttempts = false;
   const work = f.make();
@@ -297,7 +292,7 @@ test('CLI admission uses the complete contract without enabling legacy Dev attem
   assert.equal(f.config.nativePreviewAttempts, false, 'Legacy caller configuration stays unchanged');
 });
 
-test('C9 completion requires the verdict and release of manifest/lifecycle ownership', { skip: !isolated }, async t => {
+test('C9 completion requires the verdict and release of manifest/lifecycle ownership', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const runId = randomUUID();
   let captures = 0;
@@ -332,7 +327,7 @@ test('C9 completion requires the verdict and release of manifest/lifecycle owner
   assert.equal(replayDecision(historical).accepted, true, 'C8 traces preserve their original completion policy');
 });
 
-test('C10 unit resource receipt remains scoped to its admitted run after supersession', { skip: !isolated }, async t => {
+test('C10 unit resource receipt remains scoped to its admitted run after supersession', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const checkRuns = require('../src/services/check-runs');
   const old = randomUUID();
@@ -351,7 +346,7 @@ test('C10 unit resource receipt remains scoped to its admitted run after superse
   await assert.rejects(checkRuns.observeUnitJob(f.pool, next, 2, { name: 'next-unit', uid: 'next-uid' }), /lost its recovery manifest/);
 });
 
-test('C11 retirement journal requires the claimed owner and prior progress', { skip: !isolated }, async t => {
+test('C11 retirement journal requires the claimed owner and prior progress', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const runs = require('../src/services/check-runs');
   const runId = randomUUID();
@@ -374,7 +369,7 @@ test('C11 retirement journal requires the claimed owner and prior progress', { s
   assert.deepEqual(stored.unitSuite, manifest.unitSuite, 'Journal updates retain admission/provenance');
 });
 
-test('C11 retirement failure preserves a settled live verdict and recovery locator', { skip: !isolated }, async t => {
+test('C11 retirement failure preserves a settled live verdict and recovery locator', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   await f.pool.query('ALTER TABLE chat_sessions ADD COLUMN imported_pr_head_sha TEXT');
   const runs = require('../src/services/check-runs');

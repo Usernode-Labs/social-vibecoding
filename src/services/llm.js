@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const log = require('./logger');
 const llmTelemetry = require('./llm-telemetry');
+const { hasDocumentBlocks, withoutDocuments } = require('./attachments');
 
 // Single source of truth for the default chat model. Callers that don't
 // pass an explicit `model` fall back to this, so bumping the platform's
@@ -720,9 +721,26 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
       }
     };
 
-    let finalMessage = await runStream(requestedModel, {
-      withFallbacks: requestedModel === FABLE_MODEL,
-    });
+    let finalMessage;
+    try {
+      finalMessage = await runStream(requestedModel, {
+        withFallbacks: requestedModel === FABLE_MODEL,
+      });
+    } catch (err) {
+      // #3557: a PDF the provider cannot take (malformed, encrypted, too
+      // many pages) fails the whole request, and the Mayor replays it on
+      // later turns. A request that carried one and was refused as invalid
+      // before anything streamed is retried ONCE with each PDF replaced by
+      // a line naming it.
+      if (err?.status !== 400 || fullText || !hasDocumentBlocks(messages)) throw err;
+      log.warn('llm', 'Request with a PDF refused as invalid — retrying once without documents', {
+        model: requestedModel,
+      });
+      messages = withoutDocuments(messages);
+      finalMessage = await runStream(requestedModel, {
+        withFallbacks: requestedModel === FABLE_MODEL,
+      });
+    }
 
     // Fallback couldn't run (e.g. Opus rate-limited at that instant):
     // the refusal names a model to retry directly. ONE retry, plain
@@ -793,8 +811,9 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 // Dollars per 1k tokens, aligned with services/models.js (the allowlist's
 // $/MTok figures: haiku 1/5, sonnet 2/10, opus 5.5 4/20, fable 10/50; any
 // other opus, Opus 5 included, 5/25). The
-// sonnet row is Sonnet 5's rate; the 4.6 generation cost 3/15, and billing
-// it at that over-debited every Sonnet 5 turn by a third.
+// sonnet row is Sonnet 5.5's rate, and Sonnet 5's before it (#3579: the same
+// 2/10); the 4.6 generation cost 3/15, and billing it at that over-debited
+// every Sonnet 5 turn by a third.
 // Fable previously matched no branch and silently fell through to sonnet
 // pricing — a ~3x underestimate that let fable turns slip past the daily
 // budget enforcement. Callers should pass the SERVED model (streamChat's
@@ -1452,6 +1471,46 @@ Respond with ONLY a JSON object: {“title”: “...”}. No prose before or af
   return { title, usage: resp.usage, model };
 }
 
+// #3624: the one-line "What is it?" for a new project, suggested from the
+// longer description its creator gave the Homeroom bot to build from. The
+// same helper model and defensive parse as a session title; the caller
+// falls back to the description's first sentence when this throws.
+async function generateShortDescription({ name, brief, max = 90, apiKey, telemetryContext }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  const text = String(brief || '').trim();
+  if (!text) throw new Error('Nothing to describe');
+  const system = `You write the one-line description shown under a new app's name on its page and in a directory of apps. From the app's name and its creator's longer description, write one plain sentence fragment saying what the app is or does, for people deciding whether to open it: at most ${max} characters, no trailing period, no quotes, no markdown, no emoji. Never repeat the app's name.
+
+Respond with ONLY a JSON object: {"description": "..."}. No prose before or after.`;
+  const model = 'claude-haiku-4-5';
+  const resp = await createMessageWithTelemetry({
+    activeClient,
+    params: {
+      model,
+      max_tokens: 80,
+      system,
+      messages: [{ role: 'user', content: `APP NAME:\n${String(name || '').slice(0, 120)}\n\nDESCRIPTION:\n${text.slice(0, 4000)}` }],
+    },
+    telemetryContext,
+    defaults: { backend: 'helper', component: 'short_description' },
+    apiKey,
+  });
+  const out = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  let description = '';
+  try {
+    const first = out.indexOf('{');
+    const last = out.lastIndexOf('}');
+    const obj = JSON.parse(first !== -1 && last > first ? out.slice(first, last + 1) : out);
+    description = typeof obj.description === 'string' ? obj.description : '';
+  } catch {
+    description = '';
+  }
+  description = description.replace(/\s+/g, ' ').replace(/^["']|["']$/g, '').replace(/[.]+$/, '').trim();
+  if (!description) throw new Error('No description in the reply');
+  return { description: description.slice(0, max), usage: resp.usage, model };
+}
+
 // One graded unit for the challenge scorer (services/topochain/
 // challenge-grader.js): a season challenge whose points depend on how useful
 // the thing somebody did was, rather than on whether they did it.
@@ -1969,7 +2028,7 @@ ${inputJson}`;
 
 // ── Workshop themes (services/workshop-themes.js) ─────────────────────
 //
-// Two calls, on Sonnet 5, for the two stages of the Workshop's grouping.
+// Two calls, on Sonnet 5.5, for the two stages of the Workshop's grouping.
 // DISCOVERY reads the whole board and answers with theme DEFINITIONS only
 // — a name, a description, the "what people are asking for" line and a
 // few anchor cards — never the placement of every card. A single answer
@@ -1981,12 +2040,15 @@ ${inputJson}`;
 // of cards that arrive between discoveries, so a card the model skipped is
 // a batch retried, not a bucket on the page.
 //
-// Sonnet 5 rather than Haiku 4.5: the call no longer fires on page views
+// Sonnet rather than Haiku 4.5: the call no longer fires on page views
 // (services/workshop-themes.js runs discovery once a day per app, or when
 // a tenth of the board has changed), so the per-call price is no longer
 // the constraint — and a full-board discovery is a judgment call Haiku
 // made badly. Placement runs at low effort: it is a classification.
-const WORKSHOP_THEME_MODEL = 'claude-sonnet-5';
+// #3579: Sonnet 5.5 replaced Sonnet 5. Both calls already use what 5.5
+// accepts (structured output, effort, no forced tool choice, no disabled
+// thinking), the shape PR_METADATA_MODEL runs on it.
+const WORKSHOP_THEME_MODEL = 'claude-sonnet-5-5';
 const WORKSHOP_THEME_MAX = 12;
 const WORKSHOP_ANCHOR_MAX = 6;
 
@@ -2708,7 +2770,7 @@ async function reviewContentRules({ system, diff, telemetryContext, apiKey }) {
 
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
-  generatePrMetadata, parsePrMetadataText, generateSessionTitle,
+  generatePrMetadata, parsePrMetadataText, generateSessionTitle, generateShortDescription,
   reviewContentRules,
   // The challenge scorer's one model call (services/topochain/
   // challenge-grader.js owns the rubrics; this owns the transport).

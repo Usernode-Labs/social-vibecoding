@@ -19,20 +19,45 @@
  * composer is wired on the line after the portal is published, which cannot
  * happen inside React's commit).
  *
- * ── Homeroom's own hub is the exception ───────────────────────────────
+ * ── Homeroom's own room is #general, in place too (#3494) ─────────────
  *
- * Its channel is #general, which is a conversation of the Messages store
- * rather than an app chat, and has no pane that can be mounted elsewhere
- * (the general chat's ids are global, and Messages owns that one). So its
- * Discussion tab is the channel card in full, composer and all, with the way
- * to the room itself. So is any project whose channel the viewer may not
- * read.
+ * Its channel is #general, a conversation of the Messages store rather than
+ * an app chat. It used to be a door: the tab opened #general on the Messages
+ * screen, which swapped the page's header, its tabs and its colour for
+ * Messages' own (#3491). Now the tab turns like every other project's and
+ * the room is drawn here, under the same header — Messages' own thread,
+ * composer and reply threads (features/messages/index.tsx
+ * EmbeddedConversation), holding the store's one route while this page is
+ * the screen on show. `generalRoom` reads which conversation it is.
  */
 
 import { useEffect, useRef, type ReactNode } from 'react';
 
 import type { CommunityPayload } from './community-card';
-import { ChannelCard } from './hub-cards';
+import { EmbeddedConversation } from '../../messages';
+import { navStore } from '../../nav/nav-store.js';
+import { useStoreState } from '../../../lib/use-store-state';
+
+type Channel = NonNullable<CommunityPayload['channel']>;
+
+/** A channel this page can mount: an app's own, addressed in Messages' app threads. */
+function embeddable(channel: Channel | null): boolean {
+  return !!channel && channel.handle !== 'general'
+    && (!channel.href || channel.href.startsWith('#messages/app/'));
+}
+
+/**
+ * The conversation a channel is when it is one of Messages' own rooms —
+ * #general, on Homeroom's page (`#messages/<id>`) — or null for an app's own
+ * channel, and for none.
+ */
+export function generalRoom(data: CommunityPayload | null | undefined): number | null {
+  const channel = data?.channel || null;
+  if (!channel || embeddable(channel)) return null;
+  const m = /^#messages\/([1-9]\d{0,9})$/.exec(channel.href || '');
+  const id = m ? Number(m[1]) : null;
+  return id && id <= 2147483647 ? id : null;
+}
 
 export function ProjectDiscussion({ slug, name, data }: {
   slug: string;
@@ -41,14 +66,19 @@ export function ProjectDiscussion({ slug, name, data }: {
 }): ReactNode {
   const host = useRef<HTMLDivElement | null>(null);
   const channel = data?.channel || null;
-  // #general, or no channel to mount: the card, whole.
-  const embeddable = !!channel && channel.handle !== 'general'
-    && (!channel.href || channel.href.startsWith('#messages/app/'));
+  const mountable = embeddable(channel);
+  const room = generalRoom(data);
   const readOnly = !channel?.post_url;
+  // The room holds Messages' one route only while this page is the screen
+  // on show: #app-view stays mounted, hidden, behind every other screen, and
+  // behind the running app on its App tab (the one #app-view route that
+  // lights no tab).
+  const { screen, tab } = useStoreState(navStore) as { screen: string | null; tab: string | null };
+  const onShow = screen === 'app-view' && !!tab;
 
   useEffect(() => {
     const el = host.current;
-    if (!el || !embeddable) return undefined;
+    if (!el || !mountable) return undefined;
     const view = (window as any).AppView;
     const chat = (window as any).UsernodeReact?.groupChat;
     let live = true;
@@ -65,13 +95,23 @@ export function ProjectDiscussion({ slug, name, data }: {
       chat?.unmountGeneralChat?.(el);
       (window as any).GroupChat?.releaseUnreadHold?.(slug);
     };
-  }, [slug, name, readOnly, embeddable]);
+  }, [slug, name, readOnly, mountable]);
 
   if (!data) return null;
-  if (!embeddable) {
-    return channel
-      ? <ChannelCard slug={slug} name={name} data={data} />
-      : <p className="dev-ws-week-note" data-ws-discussion-none="">This project has no discussion you can read.</p>;
+  if (room) {
+    return (
+      <section
+        className="dev-ws-discussion"
+        data-ws-discussion=""
+        data-ws-discussion-room={channel?.handle || ''}
+        aria-label={`${name} discussion`}
+      >
+        <EmbeddedConversation conversationId={room} active={onShow} />
+      </section>
+    );
+  }
+  if (!mountable) {
+    return <p className="dev-ws-week-note" data-ws-discussion-none="">This project has no discussion you can read.</p>;
   }
   return (
     <section className="dev-ws-discussion" data-ws-discussion="" aria-label={`${name} discussion`}>

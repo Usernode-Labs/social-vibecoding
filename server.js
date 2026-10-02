@@ -43,6 +43,7 @@ const { adminRoutes } = require('./src/routes/admin');
 const { adminSupportRoutes } = require('./src/routes/admin-support');
 const { adminUserMergeRoutes } = require('./src/routes/admin-user-merge');
 const { dashboardRoutes } = require('./src/routes/dashboard');
+const { uiTelemetryRoutes } = require('./src/routes/ui-telemetry');
 const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
 const { collaboratorRoutes } = require('./src/routes/collaborators');
@@ -262,6 +263,10 @@ app.use((req, res, next) => {
           || /^\/api\/sessions\/[^/]+\/proposal-handoff\/(?:context|build|commits)$/.test(req.path))) {
     return next();
   }
+  // The browser diagnostics collector owns a stricter 32 KiB parser in
+  // routes/ui-telemetry.js. Leave its stream untouched here so that lower
+  // bound is enforced before JSON decoding.
+  if (req.method === 'POST' && req.path === '/api/ui-telemetry/batch') return next();
   // Private conversation uploads carry raw bytes and own a bounded 21 MB
   // parser in routes/conversations.js. In particular, a .json file may have
   // application/json content-type; letting this global parser consume it
@@ -616,9 +621,12 @@ app.use(waitlistConnectRoutes(config));
 app.use(issueRoutes(config));
 app.use(campaignRoutes(config));
 app.use(adminRoutes(config));
+// #3654: the Homeroom bot's benchmark (services/bench/), beside its console.
+app.use(require('./src/routes/homeroom-bench').homeroomBenchRoutes(config));
 app.use(adminSupportRoutes(config));
 app.use(adminUserMergeRoutes(config));
 app.use(dashboardRoutes(config));
+app.use(uiTelemetryRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
@@ -1241,6 +1249,13 @@ async function becomeLeader() {
   // same reason the digests are — a pass runs container turns that cost
   // money — and inert until an admin switches homeroom_bot_mode on.
   require('./src/services/homeroom-bot').start(config);
+  // #3654: its benchmark lane. Leader-only like the bot (a trial runs a
+  // container turn that costs money) and inert until an admin launches a run.
+  require('./src/services/bench/lane').start(config);
+  // #3654 Core v1: the default suite, made from its checked-in definition in
+  // the background a little after boot (reads GitHub only; a no-op once it
+  // is done). Production and staging, when GitHub is configured.
+  require('./src/services/bench/core').startOnBoot(config);
   // #1688: the Friday "this week on <app>" card. Same shape as the digest
   // above — hourly sweep, advisory-locked — posting one card per app into
   // its chat on Fridays, and nothing at all on a quiet week.
@@ -1298,6 +1313,16 @@ async function becomeLeader() {
     .sweep(getPool(config), config).catch(err => log.warn('account-deletion', 'Cleanup sweep failed', { code: err.code }));
   void runAccountDeletionCleanup();
   setInterval(runAccountDeletionCleanup, 60_000).unref();
+
+  // A project created with a description files it as its first request once
+  // it runs (services/homeroom-bot-dm.js). The creation hook in
+  // app-creator.js does it; this files one the hook missed or could not
+  // file yet, whether or not the Homeroom bot is on. A no-op on staging.
+  const runFirstRequestSweep = () => require('./src/services/homeroom-bot-dm')
+    .sweepFirstVersions(getPool(config), config)
+    .then((n) => { if (n) log.info('apps', 'First requests filed', { filed: n }); })
+    .catch((err) => log.warn('apps', 'First-request sweep failed', { err: err.message }));
+  setInterval(runFirstRequestSweep, 5 * 60 * 1000).unref();
 
   // #2779: delegated connector grants — the agent-session Mayor's, one or two
   // a turn — are dead the moment their turn ends. Keep a week for the audit
@@ -2170,7 +2195,9 @@ async function recoverSessions(config) {
      FROM chat_sessions cs
      JOIN apps a ON cs.app_id = a.id
      WHERE cs.status IN ('active', 'promoted', 'merging')
-       AND cs.branch_name IS NOT NULL`
+       AND cs.branch_name IS NOT NULL
+       -- #3654: a benchmark trial's session never gets a staging preview.
+       AND cs.user_id NOT IN (SELECT id FROM users WHERE username = 'homeroom_bench' AND is_synthetic = TRUE)`
   );
 
   for (const session of rows) {
@@ -2618,6 +2645,42 @@ async function abandonOrphanShotsTurn({
   if (!containerRunning) await worker.destroyWorker(containerName);
 }
 
+// #3654: a benchmark trial's worker that outlived a restart. The same
+// abandonment as a shots turn's (above), then the session is archived: no
+// trial is ever resumed, the lane runs it again from the start.
+async function abandonOrphanBenchTurn({
+  pool, session, sessionId, containerName, containerRunning, retryRuntimeRecovery,
+}) {
+  const activeTurn = session.active_turn || null;
+  if (activeTurn) {
+    const args = turnCleanupArgs(activeTurn);
+    if (containerRunning) {
+      worker.adoptWarmWorker(sessionId, containerName);
+      await worker.stopTurn(sessionId);
+      worker.clearPendingStop(sessionId);
+      if (await worker.isWorkerExecuting(containerName) !== false) {
+        throw retryRuntimeRecovery('Orphaned benchmark turn is not confirmed stopped');
+      }
+    }
+    await abandonCodexAttempt(pool, sessionId, activeTurn, {
+      label: 'Orphaned benchmark',
+      errorDetail: 'A benchmark trial was abandoned after the platform process that dispatched it exited.',
+    });
+    recoveryRetry.requireDurableTurnCleanup(
+      containerRunning
+        ? await worker.finishTurn(sessionId, args)
+        : await worker.clearActiveTurn(sessionId, args),
+      args,
+    );
+  }
+  await pool.query(
+    "UPDATE chat_sessions SET status = 'archived', archived_at = NOW() WHERE id = $1 AND status IN ('active', 'paused')",
+    [sessionId],
+  ).catch(() => {});
+  await worker.destroyWorker(containerName).catch(() => {});
+  log.warn('server', 'Abandoned a benchmark trial\'s worker after restart', { containerName, sessionId });
+}
+
 function homeroomBotRecovery() {
   return require('./src/services/homeroom-bot');
 }
@@ -2715,6 +2778,19 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   if (!['active', 'promoted'].includes(session.status)) {
     // Session became non-runnable while we were down — drop the container.
     await worker.destroyWorker(containerName);
+    return;
+  }
+
+  // #3654: a Homeroom bot benchmark trial is never recovered into anything:
+  // the dev-chat tail below would open a PR, build staging and notify, none
+  // of which a trial may do. Its turn is stopped and abandoned; the lane
+  // puts the trial back in its queue once it is stale (services/bench/lane.js).
+  if (require('./src/services/bench/runner').isBenchSession(session)) {
+    await abandonOrphanBenchTurn({
+      pool, session, sessionId, containerName,
+      containerRunning: containerState === 'running',
+      retryRuntimeRecovery,
+    });
     return;
   }
 
@@ -5224,11 +5300,14 @@ function startSessionAutoPauseSweeper(config) {
     // Pass 3 REBUILDS a stale preview that backs a live vote, this tears down
     // the stale rest (merged / abandoned / paused / session-gone), so the next
     // Preview click rebuilds with current env behind the existing loader.
-    // Together they replace #850's one-off admin sweep.
+    // Together they replace #850's one-off admin sweep. It also takes any
+    // preview whose session merged, was archived or is gone, current env or
+    // not: a failed merge-time teardown has no other retry.
     //
     // Throttled to its own long interval rather than given a timer of its
-    // own — this sweeper already ticks, and a `docker ps` + teardown of a few
-    // containers every 15 minutes has no business running every 60 seconds.
+    // own — this sweeper already ticks, and listing the previews (Docker
+    // containers or Kubernetes Deployments) + tearing down a few every 15
+    // minutes has no business running every 60 seconds.
     // STAGING_STALE_SWEEP_INTERVAL_MS=0 disables it (the admin sweep stays).
     try {
       // The interval + "is it due" bookkeeping lives in the service, so this
@@ -5973,11 +6052,15 @@ async function cleanup() {
   // crashes, and a database that cannot accept this bounded write.
   const interruptedShots = require('./src/services/shots-orchestrator').inFlightRunSnapshot();
   if (interruptedShots.length && shutdownPool) {
+    const shotsState = require('./src/services/shots-state');
     let markTimer = null;
     const marking = Promise.allSettled(interruptedShots.map((runId) =>
-      require('./src/services/shots-state').transitionRun(shutdownPool, runId, 'failed', {
+      shotsState.transitionRun(shutdownPool, runId, 'failed', {
         failureCode: 'shots_run_interrupted',
-        failureReason: 'Homeroom restarted while these before & after shots were being taken. You can take them again.',
+        failureReason: shotsState.SHUTDOWN_INTERRUPTED_REASON,
+        // A rollout, not the run: the automatic retry does not count it
+        // against the tighter budget for unexplained interruptions.
+        traceMerge: { interruptedBy: shotsState.SHUTDOWN_INTERRUPTION },
       })
     ));
     const result = await Promise.race([

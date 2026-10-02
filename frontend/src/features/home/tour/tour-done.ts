@@ -94,14 +94,21 @@ export function sessionVerified(userId: number | null): boolean {
  * Tell the account the tour is done: Finish, Skip, and the one-time backfill.
  * Resolves to whether the account has it. Never throws.
  */
-export async function markDoneOnServer(userId: number | null): Promise<boolean> {
+export interface TourEnd {
+  /** Next on the last step, Skip, or a browser copying an older local "done". */
+  ended: 'finish' | 'skip' | 'backfill';
+  /** The step the tour was on when it ended, 0-based. */
+  step?: number;
+}
+
+export async function markDoneOnServer(userId: number | null, end?: TourEnd): Promise<boolean> {
   if (userId == null) return false;
   try {
     const res = await fetch(TOUR_DONE_PATH, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: '{}',
+      body: JSON.stringify(end ? { ended: end.ended, ...(Number.isInteger(end.step) ? { step: end.step } : {}) } : {}),
     });
     if (!res.ok) {
       console.warn('[tour] "done" not recorded on the account:', res.status);

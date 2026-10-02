@@ -43,3 +43,37 @@ diagnostic trace. The shots themselves remain the place for human review.
 These counters diagnose the *next* run. They do not retroactively explain an
 older timeout, and longer budgets do not by themselves repair a stuck model,
 browser, or preview app.
+
+## When the shots agent's process dies
+
+A turn that ends without the runner's exit marker was killed, or vanished
+with its container. The worker then records why, from fixed values, and the
+run keeps it: the failed dispatch in `agentDispatches` carries `exitCode`
+(`-1` for no marker) and `exitCause`, and the failure's `detail` repeats
+them. The admin shots-runs export has them as `agent_exit_code` and
+`agent_exit_cause`.
+
+| `exitCause` | What the worker saw |
+| --- | --- |
+| `oom_killed` | The worker container was killed for running out of memory during this turn |
+| `container_gone` | The worker container stopped or disappeared |
+| `turn_process_gone` | The container kept running, but the turn's processes were gone with no exit marker |
+| `probe_unobservable` | The worker could not be asked whether the turn was still running |
+
+`workerMemory` summarises the worker's memory, which the shots proxy samples
+every 5 seconds (`worker/shots-memory.js`):
+- `limitMb` and `peakUsedMb`: the memory limit and the most the worker used.
+- `lastUsedMb`: the last sample, the nearest to a sudden death.
+- `oomKillsDuringTurn`: how many processes the kernel killed for memory since the first sample.
+- `peakRssMb`: the most the browsers, the agent, the browser tool servers (`mcp`), the proxy and everything else each held.
+
+A last sample near the limit, or kills during the turn, says that memory ran
+out. The export has these as the `worker_memory_*` and `worker_oom_kills`
+columns.
+
+`agentActivity.egressBlocked` counts the destinations the shots proxy refused,
+by reason and kind of host: for example `private_address:pair_host` (the pair's own
+host on another port or scheme, such as a browser trying `https://` first),
+`dns:other` or `private_address:loopback`. The export's
+`egress_blocked_json` has the same counts. The trace never names a
+destination.

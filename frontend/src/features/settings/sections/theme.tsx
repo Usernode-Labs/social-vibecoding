@@ -34,6 +34,7 @@
 import { useCallback, useRef, useState } from 'react';
 
 import { SectionHeading } from '@/components/ui/field';
+import { Switch } from '@/components/ui/switch';
 
 import { useIsomorphicLayoutEffect, useWindowEvent } from '../../../lib/legacy-dom';
 
@@ -150,6 +151,71 @@ function ThemeControl() {
   );
 }
 
+// The key App._railPinned reads (public/js/app.js). Read here too so the
+// switch can show the stored value before App exists, and written through
+// App.setRailPinned so the router re-decides at once.
+export const RAIL_PINNED_KEY = 'usernode:rail-pinned';
+
+function readRailPinned(): boolean {
+  try {
+    return window.localStorage.getItem(RAIL_PINNED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function writeRailPinned(on: boolean): void {
+  if (window.App?.setRailPinned) {
+    window.App.setRailPinned(on);
+    return;
+  }
+  try {
+    if (on) window.localStorage.setItem(RAIL_PINNED_KEY, '1');
+    else window.localStorage.removeItem(RAIL_PINNED_KEY);
+  } catch { /* unwritable storage: the switch does not stick */ }
+}
+
+/**
+ * "Keep sidebar open in apps" (#3319) — the desktop rail stays docked beside
+ * a running app instead of giving the app the whole window. Off by default.
+ *
+ * DESKTOP ONLY, and the class string says so (`hidden md:block`): below
+ * 768px the bar is the phone's bottom bar, which an app always covers.
+ *
+ * `pinned` starts false, which is the prerender (an unchecked switch), and
+ * the stored value arrives in an effect — localStorage is client-only, and
+ * reading it during render would be a hydration mismatch for anyone who had
+ * turned it on. Re-read on every entry into this section, like the theme.
+ */
+function RailPinnedRow() {
+  const [pinned, setPinned] = useState(false);
+  const sync = useCallback(() => setPinned(readRailPinned()), []);
+  useIsomorphicLayoutEffect(() => { sync(); }, [sync]);
+  useWindowEvent('usernode:settings-section', sync);
+
+  return (
+    <div className="hidden md:block mt-6 pt-6 border-t border-zinc-200 dark:border-zinc-800">
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <Switch
+          id="settings-rail-pinned"
+          checked={pinned}
+          onChange={(e) => {
+            const next = e.currentTarget.checked;
+            writeRailPinned(next);
+            setPinned(next);
+          }}
+        />
+        <span className="text-sm text-zinc-800 dark:text-zinc-200">
+          Keep sidebar open in apps
+        </span>
+      </label>
+      <p className="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+        Off, an app you open takes the whole window and the sidebar comes back when you point at the left edge. On, the sidebar stays beside it.
+      </p>
+    </div>
+  );
+}
+
 export function ThemeSection() {
   return (
     <div data-settings-section="theme" className="hidden">
@@ -160,6 +226,7 @@ export function ThemeSection() {
         <div className="max-w-xs">
           <ThemeControl />
         </div>
+        <RailPinnedRow />
       </div>
     </div>
   );

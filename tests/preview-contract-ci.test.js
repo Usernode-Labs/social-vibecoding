@@ -1,0 +1,58 @@
+'use strict';
+
+// Contract coverage must follow shared owners and the contained CLI path.
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const yaml = require('js-yaml');
+const { SUITES } = require('../scripts/test-preview-flow');
+const { spawnSync } = require('node:child_process');
+
+test('focused CI refuses a general SQL fallback without its explicit contract database', () => {
+  const result = spawnSync(process.execPath, ['scripts/test-preview-flow.js'], {
+    encoding: 'utf8',
+    env: { PATH: process.env.PATH, SQL_CHECK_CONNECTION_URL: 'postgresql://unused@database.invalid/test' },
+  });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /require PREVIEW_FLOW_TEST_DATABASE_URL/);
+});
+
+test('focused CI runs the shared runtime, admission, runtime and checks retirement regressions', () => {
+  for (const file of SUITES) assert.ok(fs.existsSync(file), file);
+  assert.equal(new Set(SUITES).size, SUITES.length);
+  for (const file of [
+    'tests/decision-runtime.test.js',
+    'tests/execution-worker.test.js',
+    'tests/review-work.test.js',
+    'tests/preview-admission.test.js',
+    'tests/recoverable-preview-runtime.test.js',
+    'tests/cli-preview-handoff-postgres.test.js',
+    'tests/cli-preview-checks.test.js',
+    'tests/check-retirement.test.js',
+    'tests/check-harvest.test.js',
+  ]) assert.ok(SUITES.includes(file), file);
+});
+
+test('focused CI triggers for its suites, shared owners and operation contracts', () => {
+  const workflow = yaml.load(fs.readFileSync('.github/workflows/preview-flow-contract.yml', 'utf8'));
+  const patterns = workflow.on.pull_request.paths;
+  for (const file of [
+    ...SUITES,
+    'src/services/decision-runtime/index.js',
+    'src/services/execution/store.js',
+    'src/services/preview-flow/runtime-intent.js',
+    'src/services/cli-preview-handoff/checks.js',
+    'src/services/proposal-review/store.js',
+    'src/services/check-retirement.js',
+    'src/services/visuals.js',
+    'src/services/kubernetes.js',
+    'src/db/schema.sql',
+    'sql-dynamic-baseline.json',
+    'scripts/preview-preparation-worker.js',
+    'tests/lib/preview-postgres-fixture.js',
+  ]) {
+    assert.ok(fs.existsSync(file), file);
+    assert.ok(patterns.some(pattern => path.matchesGlob(file, pattern)), file);
+  }
+});

@@ -12,6 +12,7 @@ const appStorageEnv = require('./app-storage-env');
 const { appIdentityEnv } = require('./app-identity-env');
 const deployFailure = require('./deploy-failure');
 const { getTemplateFiles, getConnectorScaffoldFiles, getCanonicalRepoFile } = require('./template');
+const appTemplates = require('./app-templates');
 const { getPool } = require('../db/pool');
 const appCreationPhase = require('./app-creation-phase');
 const { pushAppStatusUpdate, pushAppCreationPhase } = require('./ws');
@@ -57,6 +58,14 @@ function governanceOf(row) {
 function descriptionOf(row) {
   const d = row?.manifest_snapshot?.description;
   return typeof d === 'string' && d.trim() ? d.trim() : null;
+}
+
+// The create screen's starter (services/app-templates.js), from the row
+// POST /api/apps wrote it to. NULL, every project from before templates and
+// any id no longer on the list, is the empty scaffold.
+function templateOf(row) {
+  const t = row?.template;
+  return typeof t === 'string' && appTemplates.isTemplate(t) ? t : appTemplates.DEFAULT_TEMPLATE;
 }
 
 async function createApp(config, appRow) {
@@ -130,7 +139,7 @@ async function createApp(config, appRow) {
 
         // repoUrl makes the template name this repo as the app's canonical
         // one (.claude/homeroom-canonical-repo, read by the freshness check).
-        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
+        const files = getTemplateFiles(name, slug, dbUrl, repoUrl, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Homeroom template`,
         });
@@ -252,7 +261,7 @@ async function createApp(config, appRow) {
       fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
 
-      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow) });
+      const files = getTemplateFiles(name, slug, dbUrl, null, { governance: governanceOf(appRow), description: descriptionOf(appRow), template: templateOf(appRow) });
       for (const f of files) {
         const filePath = path.join(tempDir, f.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -444,6 +453,13 @@ async function finalizeDeployInner(config, { appId, name, slug, tempDir, dbUrl, 
     endPhases(slug);
     pushAppStatusUpdate({ id: appId, slug, status: 'running', url: appUrl });
     log.info('app-creator', 'App created successfully', { appId, slug, hostname, appUrl, repoUrl });
+    // A project created with a description ("What should it do?") files it
+    // as its first request now that it runs; the Homeroom bot builds it for
+    // somebody it builds for (#3624). The leader's sweep (and the bot's)
+    // files it later if this misses; never a reason creation fails.
+    require('./homeroom-bot-dm').fileFirstVersion(pool, config, appId).catch((err) => {
+      log.warn('app-creator', 'Homeroom bot first version not filed yet', { appId, err: err.message });
+    });
   } catch (err) {
     log.error('app-creator', 'App creation failed', { appId, slug, err: err.message });
     const failure = deployFailure.record(err, { sha: mainSha || null });

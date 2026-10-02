@@ -42,7 +42,7 @@
  * link on the open card.
  */
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -74,11 +74,13 @@ import { DevActionsRow, DevPlusMenu } from '../actions-row';
 import { useDevActions } from '../actions-store';
 import { CardRowView, callAppView, openHref } from '../card/fold';
 import { FeedThread } from '../card/feed-thread';
-import type { DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
+import type { ActionRef, DevCardModel, DevWorkshopView, ListRow, WorkshopTheme } from '../card/model';
 import { CardSkeleton } from '../card/skeleton';
+import { VotePicker } from '../card/dev-card';
 import { ProgressRing } from '@/components/ui/progress-ring';
 import { useWorkshopGroup } from './group-mode-store';
 import { describe as describeCommunity } from '../../workshop/community-scope';
+import { markNeedsSeen, needsRowKey, unseenNeeds, useNeedsSeen } from '../../workshop/needs-seen';
 import { ApprovalRules, CommunityCard, ShareItCard, canMakePrivate, confirmMakePrivate, useCommunity } from './community-card';
 import { WorkshopNotices } from './notices';
 import { ChannelCard, NeedsCard, NothingToVote, owesVote, YourWorkCard } from './hub-cards';
@@ -107,21 +109,37 @@ type TabKey = ProjectTabKey;
  * you were last here, and the Workshop tab's walk of weekly summaries. They
  * answer one question, so they are one list now: each WEEK is a heading
  * with its summary line, and what moved in it is nested under it, new
- * first and what you have already seen folded into one row.
+ * first and then what you have already seen, in the same column.
  *
- * Three new rows a week are on screen and the rest of that week's are one
- * press away ("N more new"), because the question a returning member asks
- * is "did anything happen", which three rows answer. The weeks that hold
- * something new are open on arrival; `Show older` steps back one week at a
- * time from there, past what is loaded down to the project's first week
- * (#3293), whose heading and line are the history even where no row is.
+ * Three new rows a week are on screen, because the question a returning
+ * member asks is "did anything happen", which three rows answer. The
+ * newest week holding something new is open on arrival (with any quieter
+ * week above it, so the page reads down to it); `Show an earlier week`
+ * steps back one week at a time from there, past what is loaded down to
+ * the project's first week (#3293), whose heading and line are the history
+ * even where no row is.
+ *
+ * ONE CONTROL PER WEEK, AND IT SHOWS A FEW (#3524). A week used to end in
+ * two stacked folds: "N more new", which put EVERY remaining new row on
+ * screen at once (a busy week is thirty cards), and "N more you have seen",
+ * which opened a second list under a "Seen before" label — directly above
+ * `Show older`, a third control that also said "more". Three nested levels
+ * (week, fold, row) and three adjacent reveals, and the requester could not
+ * tell which one did what. Now the week's rows are ONE stream — new, then
+ * seen, the crossing marked by the same "Seen before" line — and one
+ * `Show N more` under it puts the next SINCE_STEP of that stream on screen.
+ * The list-level control says "week" in its name and sits under a rule of
+ * its own, where the week it reveals will appear, so the two never read as
+ * one gesture spelled twice.
  *
  * #2183 carries over: the baseline is only a line across one list, so a
  * quiet visit, or a visit just after Clear, still has somewhere to look
- * (the seen rows, folded under their week), and `Show older` disables
- * rather than leaves when there is nothing further back.
+ * (the seen rows, a press into their week), and `Show an earlier week`
+ * disables rather than leaves when there is nothing further back.
  */
 const SINCE_FIRST = 3;
+/** How many more of a week's rows each press of its `Show N more` puts on screen (#3524). */
+export const SINCE_STEP = 5;
 
 /** Your work on the Workshop tab: its first rows, the rest behind a reveal. */
 export const WORKSHOP_WORK_FIRST = 3;
@@ -175,6 +193,29 @@ export function pageTitle(tab: TabKey): string {
   if (tab === 'all') return 'All items';
   if (tab === 'discussion') return 'Discussion';
   return 'Workshop';
+}
+
+/**
+ * #3583: BACK TO THE HEAD OF THE PAGE, IN WHICHEVER ELEMENT SCROLLS IT.
+ *
+ * A tab press and a door both promise that the page they open starts at its
+ * own head, and both kept it with `window.scrollTo`. That moves the page only
+ * where the DOCUMENT scrolls: a phone or tablet browser, or a window under
+ * 768px (../../../lib/browser-scroll.ts). On a computer, and in the installed
+ * app and the native WebView, the page scrolls inside #dev-forum-scroll, so
+ * the call moved nothing and the new tab opened at the old one's offset.
+ * Press Hub from halfway down the Workshop and the hub came up scrolled past
+ * its own hero, the tab strip already pinned over it on its band, and nothing
+ * on screen to say why: "sometimes the hub looks like this".
+ *
+ * Both are reset; the one that is not scrolling has nothing to move. The
+ * scroller is found from the page itself rather than by id from the
+ * document, so a page that is not in one is left alone.
+ */
+export function scrollToHead(host: HTMLElement | null): void {
+  try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+  const feed = host?.closest<HTMLElement>('#dev-forum-scroll');
+  if (feed && feed.scrollTop) feed.scrollTop = 0;
 }
 
 // The shared ago ladder (#1808) — this file used to carry its own, with a
@@ -916,33 +957,80 @@ export function sinceWeekStateKey(week: Pick<SinceWeek, 'startMs'>): string {
   return String(week.startMs);
 }
 
-/** How many weeks the list opens with: every week holding something new, and at least one. */
+/**
+ * How many weeks the list opens with: down to the NEWEST week holding
+ * something new, and at least one (#3524).
+ *
+ * It was every week holding something new, which after a fortnight away
+ * opened two or three weeks at once, each with its rows and its folds: the
+ * page arrived fully expanded. The newest news is what the reader came
+ * for; anything new further back is counted on `Show an earlier week`
+ * (`sinceNewFurther`), so it is one press away and never unmentioned. A
+ * quieter week above the first one with news stays open with it, so the
+ * list reads down to the news rather than starting past a gap.
+ */
 export function sinceWeeksOpen(weeks: SinceWeek[]): number {
-  let last = -1;
-  weeks.forEach((w, i) => { if (w.fresh.length) last = i; });
-  return Math.min(weeks.length, Math.max(1, last + 1));
+  const first = weeks.findIndex((w) => w.fresh.length > 0);
+  return Math.min(weeks.length, Math.max(1, first + 1));
+}
+
+/** New rows in the weeks not yet on screen: what `Show an earlier week` says it leads to. */
+export function sinceNewFurther(weeks: SinceWeek[], open: number): number {
+  return weeks.slice(open).reduce((n, w) => n + w.fresh.length, 0);
+}
+
+/**
+ * How many of a week's rows are on screen, new and seen counted as one
+ * stream (new first): its first SINCE_FIRST new rows on arrival, and
+ * SINCE_STEP more for each press of its `Show N more` (#3524). Seen rows
+ * are never out on arrival, even under a week with fewer than three new:
+ * the list is about what is new, and what was seen is a press into it.
+ */
+export function sinceWeekShown(week: Pick<SinceWeek, 'fresh' | 'seen'>, more: number): number {
+  const base = Math.min(SINCE_FIRST, week.fresh.length);
+  return Math.min(week.fresh.length + week.seen.length, base + Math.max(0, more) * SINCE_STEP);
+}
+
+/**
+ * The one control under a week's rows, in words: how many the next press
+ * shows and, where one word can say it, which side of the line they are
+ * on. "new" while the whole batch is new; "you have seen" when nothing of
+ * the week is out yet and the batch is all seen (a quiet week, or a visit
+ * just after Clear); plain "more" once the batch crosses the line, where
+ * the "Seen before" mark in the stream says the rest.
+ */
+export function sinceRevealLabel(week: Pick<SinceWeek, 'fresh' | 'seen'>, shown: number): string {
+  const next = Math.min(SINCE_STEP, week.fresh.length + week.seen.length - shown);
+  const nextNew = Math.max(0, Math.min(next, week.fresh.length - shown));
+  if (nextNew === next) return `Show ${next} more new`;
+  if (!nextNew && !shown) return `Show ${next} you have seen`;
+  return `Show ${next} more`;
 }
 
 /**
  * One week of the since list: its heading (ONE NAMED WINDOW, THE REST
  * DATED, as the walk had it: "This week" wears its range as a gloss, every
  * other week is its dates), its summary line, and under them what moved in
- * it, nested so the rows read as the line's evidence. The seen rows are one
- * row, "Seen before", until it is pressed.
+ * it, nested so the rows read as the line's evidence: new, then seen under
+ * a "Seen before" mark, as far as `more` reaches, and ONE `Show N more`
+ * for the rest (#3524).
  */
-export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, allNew, onAllNew, seenOpen, onSeen }: {
+export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, more, onMore }: {
   week: SinceWeek;
   slug: string;
   canPost: boolean;
   openKey: string | null;
   onToggleRow: (key: string) => void;
-  allNew: boolean;
-  onAllNew: () => void;
-  seenOpen: boolean;
-  onSeen: () => void;
+  /** Presses of this week's `Show N more` so far. */
+  more: number;
+  onMore: () => void;
 }): ReactNode {
-  const fresh = allNew ? week.fresh : week.fresh.slice(0, SINCE_FIRST);
-  const moreNew = week.fresh.length - fresh.length;
+  const total = week.fresh.length + week.seen.length;
+  const shown = sinceWeekShown(week, more);
+  const freshShown = Math.min(shown, week.fresh.length);
+  const seenShown = shown - freshShown;
+  const hidden = total - shown;
+  const next = Math.min(SINCE_STEP, hidden);
   const row = (r: CardRow) => (
     <CardRowView
       key={r.key}
@@ -971,32 +1059,36 @@ export function SinceWeekBlock({ week, slug, canPost, openKey, onToggleRow, allN
         ) : null}
       </h4>
       {week.line ? <p className="dev-ws-since-week-line" data-ws-since-week-line="">{week.line}</p> : null}
-      {week.fresh.length || week.seen.length ? (
+      {total ? (
         <div className="dev-ws-since-nest">
-          {fresh.map(row)}
-          {moreNew > 0 ? (
-            <button type="button" className="dev-ws-since-fold dev-ws-since-fold-new" data-ws-since-more-new="" onClick={onAllNew}>
-              <span className="dev-ws-since-fold-label">{moreNew} more new</span>
-              <ChevronRightIcon className="dev-ws-since-fold-chev" aria-hidden="true" />
-            </button>
+          {week.fresh.slice(0, freshShown).map(row)}
+          {/* THE LINE ACROSS THE STREAM (#2183), where the new rows give way
+              to the ones the reader has seen: a mark in the column, not a
+              second fold to open (#3524). Counted for the whole week. */}
+          {seenShown ? (
+            <div className="dev-ws-since-seen" data-ws-since-seen="">
+              <span className="dev-ws-since-seen-label">Seen before</span>
+              <span className="dev-ws-since-seen-n">{week.seen.length}</span>
+            </div>
           ) : null}
-          {week.seen.length && !seenOpen ? (
-            <button type="button" className="dev-ws-since-fold" data-ws-since-seen-fold="" onClick={onSeen}>
-              <CheckIcon className="dev-ws-since-fold-check" aria-hidden="true" />
-              <span className="dev-ws-since-fold-label">
-                {week.fresh.length ? `${week.seen.length} more you have seen` : `${week.seen.length} you have seen`}
-              </span>
-              <ChevronDownIcon className="dev-ws-since-fold-chev" aria-hidden="true" />
+          {week.seen.slice(0, seenShown).map(row)}
+          {/* THE WEEK'S ONE REVEAL (#3524): the next few of this week's
+              stream, never the whole of it. Left-aligned INSIDE the week's
+              rule, so it reads as the week's and not as the list's `Show an
+              earlier week` under it. `touch-target-32`, not the kit's 44px:
+              it sits 4px under the last row, and a 44px box would take that
+              row's bottom edge (Your work's reveal carries the same note). */}
+          {hidden ? (
+            <button
+              type="button"
+              className="dev-ws-reveal dev-ws-since-week-more touch-target-32"
+              data-ws-since-week-more=""
+              onClick={onMore}
+            >
+              <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
+              {sinceRevealLabel(week, shown)}
+              {hidden > next ? <span className="dev-ws-since-week-left">{` · ${hidden} left`}</span> : null}
             </button>
-          ) : null}
-          {week.seen.length && seenOpen ? (
-            <>
-              <div className="dev-ws-since-seen" data-ws-since-seen="">
-                <span className="dev-ws-since-seen-label">Seen before</span>
-                <span className="dev-ws-since-seen-n">{week.seen.length}</span>
-              </div>
-              {week.seen.map(row)}
-            </>
           ) : null}
         </div>
       ) : null}
@@ -1222,6 +1314,12 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
     if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
     out.push({ key: 'tally', tone: undefined, text: `${st.yes} of ${st.majority} yes` });
     if (st.label && !/^Vote\b/.test(st.label)) out.push({ key: 'state', tone: st.tone, text: st.label });
+  } else if (row.kind === 'vote' && row.tally) {
+    // The Communities feed's rows (#3488): the counts, without a threshold
+    // it has not worked out for each project. A zero says nothing.
+    if (voted) out.push({ key: 'voted', tone: 'ok', text: `You voted ${voted}` });
+    const said = [row.tally.yes ? `${row.tally.yes} yes` : '', row.tally.no ? `${row.tally.no} no` : ''].filter(Boolean).join(' · ');
+    if (said) out.push({ key: 'tally', tone: undefined, text: said });
   }
   for (const b of row.card.badges) {
     if (b.t === 'attr' && (b.field === 'category' || b.field === 'priority') && b.label.text) {
@@ -1232,9 +1330,62 @@ function factsFor(row: QueueRow, voted: string | null): Fact[] {
 }
 
 /** The line under the vote question: where the vote stands, and what follows. */
+/**
+ * The vote sheet's form (#3613): the card's own `VotePicker`
+ * (card/dev-card.tsx), drawn inline on the sheet — the Yes/No switch with
+ * the tally, the line for the group under it (optional on a Yes, required
+ * on a No), Cancel and one "Vote yes" / "Vote no". The line used to be
+ * asked for AFTER the press, by castVote's prompt card on top of the sheet;
+ * now it is written here and sent with the vote. The state is NeedsFeed's,
+ * so a key can turn the switch; exported for the render test.
+ */
+export function NeedsVoteForm({ row, side, line, boxRef, onSide, onLine, onBoxKey, onCancel, onSend }: {
+  row: QueueRow;
+  side: 'yes' | 'no';
+  line: string;
+  boxRef?: RefObject<HTMLTextAreaElement | null>;
+  onSide: (side: 'yes' | 'no') => void;
+  onLine: (line: string) => void;
+  onBoxKey: (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => void;
+  onCancel: () => void;
+  onSend: () => void;
+}): ReactNode {
+  return (
+    <div className="dev-ws-vote-form" data-ws-vote-form="" data-side={side}>
+      <VotePicker
+        yes={{ key: 'yes', label: row.yes ? row.yes.label : 'Yes', act: row.yes && row.yes.act ? row.yes.act as ActionRef : undefined }}
+        no={{ key: 'no', label: row.no ? row.no.label : 'No', act: row.no && row.no.act ? row.no.act as ActionRef : undefined }}
+        prior={null}
+        side={side}
+        line={line}
+        reasonId={`dev-ws-vote-reason-${row.key.replace(/[^\w-]/g, '-')}`}
+        boxRef={boxRef}
+        tally={labelTally}
+        withLine
+        onSide={onSide}
+        onLine={onLine}
+        onBoxKey={onBoxKey}
+        onCancel={onCancel}
+        onSend={onSend}
+      />
+    </div>
+  );
+}
+
+/** "Yes (2/3)" → "2/3": the tally a vote spec's label carries, as the card's picker reads it. */
+function labelTally(a: { label?: string }): string {
+  const m = /\(([^)]*)\)\s*$/.exec(a.label || '');
+  return m ? m[1] : '';
+}
+
 function tallyLine(row: QueueRow): string {
   const st = row.card.pill ? row.card.pill.state : null;
-  if (!st) return '';
+  if (!st) {
+    if (!row.tally) return '';
+    const { yes, no } = row.tally;
+    if (!yes && !no) return 'Nobody has voted yet.';
+    return `${yes} yes and ${no} no so far.`;
+  }
   const said = `${st.yes} of ${st.majority} have said yes so far.`;
   return st.label && !/^Vote\b/.test(st.label) ? `${said} ${st.label}.` : said;
 }
@@ -1615,13 +1766,21 @@ function ItemBy({ row }: { row: QueueRow }): ReactNode {
 }
 
 /**
+ * The project a feed row is about: its own, on the Communities screen's feed
+ * of every project's (#3488), else the page's.
+ */
+function rowSlug(row: QueueRow, slug: string): string {
+  return row.app && row.app.slug ? row.app.slug : slug;
+}
+
+/**
  * memo(): the feed holds the Ask sheet's draft and its streamed answer, so it
  * renders on every keystroke and every token of an answer, and none of that
  * is any item's business. Every prop is a primitive, a row off the publish,
  * or a callback the feed keeps stable (`openFull`, `onDescribe`), so an item
  * renders again only when something it draws changed.
  */
-const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull, onDescribe, railClear }: {
+const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, wide, swipe, slug, onFull, onDescribe, onPrev, railClear, renderApp }: {
   row: QueueRow;
   index: number;
   count: number;
@@ -1637,14 +1796,22 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
   /** Opens the Description sheet, which the facts line is a door to. */
   onDescribe: () => void;
   /**
+   * Back to the item before, from the chevron beside the counter (#3517).
+   * Handed down on a phone only, where the Previous and Next under the
+   * rail are hidden; unset on a wide window, which has those.
+   */
+  onPrev?: () => void;
+  /**
    * On a phone, how far down the item the rail's first button starts (0
    * until measured, and on a wide window, where the rail stands beside the
    * card). Above it the by-line and title take the item's full width.
    */
   railClear: number;
+  /** Draws the row's project over its by-line, where rows mix projects. */
+  renderApp?: (row: QueueRow) => ReactNode;
 }): ReactNode {
   const isVote = row.kind === 'vote';
-  const href = openHref(slug, row.card);
+  const href = openHref(rowSlug(row, slug), row.card);
   const title = row.card.title.text || row.card.title.title;
   const facts = factsFor(row, voted);
   const summary = isVote ? row.summary : (row.body || null);
@@ -1681,6 +1848,7 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
       data-ws-tint={tint}
       data-ws-swipeable={swipe ? '' : undefined}
       data-ws-head={railClear && head !== 'none' ? head : undefined}
+      data-ws-app={row.app ? row.app.slug : undefined}
     >
       <div className="dev-ws-item-progress" aria-hidden="true"><i style={{ width: `${pct}%` }} /></div>
       <div className="dev-ws-item-top">
@@ -1690,10 +1858,28 @@ const FeedItem = memo(function FeedItem({ row, index, count, tint, near, voted, 
             {`Voted ${voted} · ${wide ? 'press ↓ or scroll' : 'swipe up'} for the next`}
           </span>
         ) : (
-          <span className="dev-ws-eyebrow">{isVote ? 'Proposal · needs your vote' : 'Open issue · nobody on it'}</span>
+          <span className="dev-ws-eyebrow">
+            {!isVote ? 'Open issue · nobody on it'
+              : row.card.attrs && row.card.attrs['data-gov-row'] ? 'Group decision · needs your vote'
+                : 'Proposal · needs your vote'}
+          </span>
         )}
+        {/* #3517: THE WAY BACK, WHERE A PHONE CAN SEE IT. Swiping down was
+            always the way back, but nothing on the card said so, and the
+            Previous under the rail is a wide window's. This is that
+            button, on the line that already says where you are, from the
+            second item on: it points the way it goes, and at the top of
+            the card it is in nobody's swipe. The rail is not the place:
+            on a phone it already stands six buttons tall, and every one
+            more is a line less for the title and summary above it. */}
+        {onPrev && index > 0 ? (
+          <button type="button" className="dev-ws-item-prev" data-ws-item-prev="" aria-label="Previous item" onClick={onPrev}>
+            <ChevronUpIcon className="dev-ws-item-prev-icon" aria-hidden="true" />
+          </button>
+        ) : null}
         <span className="dev-ws-item-of">{`${index + 1} / ${count}`}</span>
       </div>
+      {row.app && renderApp ? renderApp(row) : null}
       <ItemBy row={row} />
       {/* The title is the headline and the door to the full card: its own
           page, with the checks, the thread and every affordance the card
@@ -1754,22 +1940,30 @@ function plural(n: number, one: string, many: string): string {
  * the feed, above), and `leftVotes` the proposals among those, so the ring
  * can say where the viewer stands against `total` — everything they could
  * vote on, answered or not. The headline is one of three: the pass had
- * things in it and answered them all, it left some waiting, or there was
- * nothing to begin with.
+ * things in it and answered them all, it skipped some, or there was nothing
+ * to begin with.
+ *
+ * #3526: WHAT THE PASS WENT PAST IS SKIPPED, NOT WAITING. A vote swiped past
+ * unanswered stops counting on every badge (../../workshop/needs-seen.ts),
+ * and "5 are still waiting on you above" under a Needs you count that had
+ * just dropped by five said two things at once. The line says what the
+ * reader did and where those items are: above, still open, for a change of
+ * mind; the way back up says the same.
  */
-function DoneItem({ total, acted, left, leftVotes, onDone, onBack }: {
+function DoneItem({ total, acted, left, leftVotes, onDone, onBack, doneLabel }: {
   total: number;
   acted: number;
   left: number;
   leftVotes: number;
   onDone: () => void;
   onBack: () => void;
+  doneLabel?: string;
 }): ReactNode {
   const done = Math.max(0, Math.min(total, total - leftVotes));
   const line = left > 0 ? 'That’s it for now.' : (acted > 0 ? 'That’s it!' : 'You’re all caught up.');
   const parts: string[] = [];
   if (acted > 0) parts.push(`You voted on ${plural(acted, 'proposal', 'proposals')} this time.`);
-  if (left > 0) parts.push(`${left} ${left === 1 ? 'is' : 'are'} still waiting on you above.`);
+  if (left > 0) parts.push(`You skipped ${left}. ${left === 1 ? 'It stays' : 'They stay'} above if you change your mind.`);
   else if (acted > 0) parts.push('Nothing else needs you right now.');
   else parts.push('Every proposal you can vote on has your answer, and every open issue has somebody on it.');
   return (
@@ -1791,10 +1985,10 @@ function DoneItem({ total, acted, left, leftVotes, onDone, onBack }: {
       ) : null}
       <p className="dev-ws-needs-done-line">{line}</p>
       <p className="dev-ws-needs-done-sub">{parts.join(' ')}</p>
-      <button type="button" className="dev-ws-done-cta" onClick={onDone}>See what changed this week</button>
+      <button type="button" className="dev-ws-done-cta" onClick={onDone}>{doneLabel || 'See what changed this week'}</button>
       {left > 0 ? (
         <button type="button" className="dev-ws-done-back" data-ws-done-back="" onClick={onBack}>
-          Back to the first one waiting
+          Back to the first one you skipped
         </button>
       ) : null}
     </section>
@@ -2018,13 +2212,23 @@ function useSwipeVote(
 
 /* ── The feed ────────────────────────────────────────────────────────── */
 
-function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
+/**
+ * A project's Needs you, and the Communities screen's (#3488): ONE feed, so
+ * the two cannot drift apart again. There the rows mix every project's, each
+ * carrying its own (`row.app`), and every address the feed builds (the card's
+ * page, the ask box, the thread) is that row's project rather than `slug`.
+ * `renderApp` draws the project over a row's by-line; `doneLabel` is what the
+ * end card offers once the feed is through.
+ */
+export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabel, renderApp }: {
   rows: DevWorkshopView['queue'];
   total: number;
   models: DevWorkshopView['models'];
   slug: string;
   canPost: boolean;
   onDone: () => void;
+  doneLabel?: string;
+  renderApp?: (row: QueueRow) => ReactNode;
 }): ReactNode {
   const scrollRef = useRef<HTMLDivElement>(null);
   // Whether the route asked to open on the end card. Read once, at mount:
@@ -2052,6 +2256,13 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   // state is what the rail button draws from.
   const [sending, setSending] = useState<Record<string, string>>({});
   const sendingRef = useRef<Set<string>>(new Set());
+  // #3613: the vote sheet's own form — the card's VotePicker, inline: the
+  // Yes/No switch, the line for the group and the send button, so the line
+  // is written on the sheet rather than in a prompt card castVote raises
+  // after the press.
+  const [voteSide, setVoteSide] = useState<'yes' | 'no'>('yes');
+  const [voteLine, setVoteLine] = useState('');
+  const voteBoxRef = useRef<HTMLTextAreaElement>(null);
   // The pins, keyed by row, with the index each held when it was answered.
   // A ref with a version counter rather than state, because a pin is set in
   // the same breath as the vote and read back in the very next publish.
@@ -2190,6 +2401,15 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
 
   const landOn = (idx: number) => {
     const c = Math.min(Math.max(idx, 0), items.length);
+    // #3526: A VOTE YOU MOVE ON FROM UNANSWERED IS SEEN. Only the one you
+    // were on, and only going forward: a swipe back up, the end card's way
+    // back and a route that opens on the end card pass nothing over. It
+    // stays where it is and can still be voted on; what changes is that the
+    // badges stop counting it (../../workshop/needs-seen.ts), as an unread
+    // count stops counting what you have read.
+    if (c > i && row && !answered[row.key] && !sendingRef.current.has(row.key)) {
+      markNeedsSeen(rowSlug(row, slug), needsRowKey(row));
+    }
     curKeyRef.current = items[c] ? items[c].key : (items.length ? END_KEY : null);
     setAt(c);
     // A sheet stays with its item: arriving on the end card closes it, so
@@ -2213,6 +2433,12 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     if (el && el.clientHeight) el.scrollTo({ top: idx * el.clientHeight, behavior: 'smooth' });
     landOn(idx);
   };
+  // The chevron beside each item's counter (#3517). Stable, like `describe`
+  // below, so handing it to the memo()'d items costs no render; it reads
+  // this render's `go` through a ref, refreshed the way `swipeHandle` is.
+  const goRef = useRef(go);
+  useLayoutEffect(() => { goRef.current = go; });
+  const prevItem = useCallback(() => goRef.current(-1), []);
 
   const closeSheet = () => {
     if (!sheet) return;
@@ -2223,6 +2449,8 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     if (sheet === kind) { closeSheet(); return; }
     setLeaving(null);
     setSheet(kind);
+    // The vote form opens fresh: on Yes, with an empty line.
+    if (kind === 'vote') { setVoteSide('yes'); setVoteLine(''); }
   };
   // The leave animation's length, then the sheet is gone. Nothing to wait
   // for where motion is unwelcome — app.css runs no animation there.
@@ -2290,8 +2518,12 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
    * back as soon as the prompt closes. The swipe only reaches a vote row
    * with both acts and none in flight (`swipeHandle` checks), which is the
    * one path below that calls it.
+   *
+   * `reason` is the vote sheet's line (#3613): a string is sent with the
+   * vote, null sends none, and leaving it out (the swipe) lets castVote ask
+   * for it the way it always has.
    */
-  const answer = (which: 'yes' | 'no', settled?: () => void) => {
+  const answer = (which: 'yes' | 'no', settled?: () => void, reason?: string | null) => {
     if (!row) return;
     const spec = which === 'yes' ? row.yes : row.no;
     if (!spec) return;
@@ -2326,7 +2558,8 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       setSending((cur) => ({ ...cur, [key]: which }));
       if (settled) settled();
     };
-    Promise.resolve(callAppView(spec.act.fn, ...args, { onSend }))
+    const opts = reason === undefined ? { onSend } : { onSend, reason };
+    Promise.resolve(callAppView(spec.act.fn, ...args, opts))
       .catch(() => false)
       .then((ok) => {
         sendingRef.current.delete(key);
@@ -2345,6 +2578,29 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
         if (settled) settled();
       });
   };
+  /**
+   * The vote sheet's send (#3613): the switch's side with the line written
+   * under it. A No needs its line, as on a card; a Yes may go without one,
+   * and then sends none rather than asking.
+   */
+  const voteTrimmed = voteLine.replace(/\s+/g, ' ').trim();
+  const submitVote = () => {
+    if (voteSide === 'no' && !voteTrimmed) { voteBoxRef.current?.focus(); return; }
+    answer(voteSide, undefined, voteTrimmed || null);
+  };
+  const onVoteBoxKey = (ev: globalThis.KeyboardEvent | { key: string; shiftKey: boolean; preventDefault: () => void }) => {
+    if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); submitVote(); return; }
+    // The window's keys stand down inside a field, so the box closes itself.
+    if (ev.key === 'Escape') { ev.preventDefault(); closeSheet(); }
+  };
+  // The box takes focus the moment the switch lands on No, the side that
+  // needs a line — as the card's picker does. Not on opening: a keyboard
+  // rising over a one-tap "Vote yes" would be in the way, and the Y and N
+  // keys only work while the box is not focused.
+  useLayoutEffect(() => {
+    if (sheet === 'vote' && voteSide === 'no') voteBoxRef.current?.focus();
+  }, [sheet, voteSide]);
+
   /**
    * The swipe's way in (#3052): the card in view, when it is one the viewer
    * can vote on and has not answered here, with no vote of its own already
@@ -2409,7 +2665,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
   // The card's own page, offered under More as "Open card": here the item IS
   // the screen, so there is no card face to tap for it (app-view.js's
   // _toggleCardMenu reads it off the trigger).
-  const cardHref = row ? openHref(slug, row.card) : null;
+  const cardHref = row ? openHref(rowSlug(row, slug), row.card) : null;
   // What is rendered: the open sheet, or the one still leaving. Never on
   // the end card, which has no item for a sheet to be about.
   const shown = row ? (sheet || leaving) : null;
@@ -2432,14 +2688,26 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Only while the feed is on screen. It stays mounted under a screen
+      // that is hidden (the Communities tab's, #3488, while another tab is
+      // up), and a V then a Y there would cast a vote nobody could see.
+      const feed = scrollRef.current;
+      if (!feed || !feed.offsetParent) return;
       const k = e.key;
       if (k === 'Escape') { if (sheet) { closeSheet(); e.preventDefault(); } return; }
       if (k === 'ArrowDown' || k === 'j' || k === 'J') { go(1); e.preventDefault(); return; }
       if (k === 'ArrowUp' || k === 'k' || k === 'K') { go(-1); e.preventDefault(); return; }
       if (!row) return;
       if ((k === 'v' || k === 'V') && row.kind === 'vote') { toggleSheet('vote'); return; }
-      if ((k === 'y' || k === 'Y') && sheet === 'vote') { answer('yes'); return; }
-      if ((k === 'n' || k === 'N') && sheet === 'vote') { answer('no'); return; }
+      // On the vote sheet Y and N turn its switch, and Enter sends it: the
+      // line is written on the sheet, so a key no longer votes on its own.
+      if ((k === 'y' || k === 'Y') && sheet === 'vote') { setVoteSide('yes'); return; }
+      if ((k === 'n' || k === 'N') && sheet === 'vote') { setVoteSide('no'); return; }
+      if (k === 'Enter' && sheet === 'vote' && !(t && (t.tagName === 'BUTTON' || t.tagName === 'A'))) {
+        e.preventDefault();
+        submitVote();
+        return;
+      }
       if (k === 'd' || k === 'D') { toggleSheet('description'); return; }
       if (k === 'a' || k === 'A') { toggleSheet('ask'); return; }
       if (k === 'c' || k === 'C') { toggleSheet('comments'); return; }
@@ -2475,7 +2743,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     let live = true;
     loadedRef.current.add(key);
     const qs = `kind=${encodeURIComponent(kind)}&ref=${encodeURIComponent(String(ref))}`;
-    fetch(`/api/apps/${encodeURIComponent(slug)}/workshop/ask/thread?${qs}`, {
+    fetch(`/api/apps/${encodeURIComponent(rowSlug(row, slug))}/workshop/ask/thread?${qs}`, {
       credentials: 'same-origin',
       headers: { accept: 'application/json' },
     })
@@ -2535,7 +2803,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
     let text: string;
     let failed = false;
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/workshop/ask`, {
+      const res = await fetch(`/api/apps/${encodeURIComponent(rowSlug(sending, slug))}/workshop/ask`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
         credentials: 'same-origin',
@@ -2642,7 +2910,9 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
             slug={slug}
             onFull={openFull}
             onDescribe={describe}
+            onPrev={wide ? undefined : prevItem}
             railClear={wide ? 0 : railClear}
+            renderApp={renderApp}
           />
         ))}
         {/* ALWAYS, after the last item: the swipe past the end lands here.
@@ -2653,6 +2923,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
           left={left}
           leftVotes={leftVotes}
           onDone={onDone}
+          doneLabel={doneLabel}
           onBack={() => go(items.findIndex((r) => !answered[r.key]) - i)}
         />
       </div>
@@ -2758,7 +3029,8 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
           {moveRow}
           {/* The vote: the question, where it stands, and the two answers. A
               sheet from the floor on a phone, a popover on this button on a
-              wide window (app.css). Decide later closes it. */}
+              wide window (app.css). Cancel (Decide later, on a group decision)
+              closes it. */}
           {row.kind === 'vote' && shown === 'vote' ? (
             <div className="dev-ws-sheet-modal dev-ws-sheet-vote" data-ws-sheet="vote" role="dialog" aria-label={row.ask} {...leavingAttr}>
               <button type="button" className="dev-ws-scrim" aria-label="Close" onClick={closeSheet} />
@@ -2766,12 +3038,35 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
                 <span className="dev-ws-sheet-handle" aria-hidden="true" />
                 <p className="dev-ws-ask-q">{row.ask}</p>
                 <p className="dev-ws-vote-sub">{tallyLine(row)}</p>
-                <div className="dev-ws-answer-row">
-                  <button type="button" className="dev-ws-answer-btn dev-ws-answer-yes" data-ws-answer-btn="yes" disabled={!row.yes} onClick={() => answer('yes')}>Vote yes</button>
-                  <button type="button" className="dev-ws-answer-btn dev-ws-answer-no" data-ws-answer-btn="no" disabled={!row.no} onClick={() => answer('no')}>Vote no</button>
-                </div>
-                <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
-                <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Esc close</p>
+                {/* A group decision (a rename, a secret, closing a request)
+                    carries no pair here: its votes can apply it on the spot,
+                    so it is decided on its own page, which shows the options
+                    and what follows. Two dead buttons said nothing of that. */}
+                {row.yes || row.no || !cardHref ? (
+                  /* #3613: the card's own vote picker, inline — the switch,
+                     the line for the group under it, Cancel and the send —
+                     rather than two buttons followed by castVote's prompt
+                     card. Cancel is what Decide later was. */
+                  <NeedsVoteForm
+                    row={row}
+                    side={voteSide}
+                    line={voteLine}
+                    boxRef={voteBoxRef}
+                    onSide={setVoteSide}
+                    onLine={setVoteLine}
+                    onBoxKey={onVoteBoxKey}
+                    onCancel={closeSheet}
+                    onSend={submitVote}
+                  />
+                ) : (
+                  <>
+                    <div className="dev-ws-answer-row">
+                      <a className="dev-ws-answer-btn dev-ws-answer-open" data-ws-answer-open="" href={cardHref}>Open to decide</a>
+                    </div>
+                    <button type="button" className="dev-ws-vote-later" onClick={closeSheet}>Decide later</button>
+                  </>
+                )}
+                <p className="dev-ws-keys-hint" aria-hidden="true">Y yes · N no · Enter vote · Esc close</p>
               </div>
             </div>
           ) : null}
@@ -2901,7 +3196,7 @@ function NeedsFeed({ rows, total, models, slug, canPost, onDone }: {
         <div className="dev-ws-sheet-body" ref={commentsRef}>
           {row.commentsFor != null ? <div className="dev-feed-comments" data-comments-for={row.commentsFor} /> : null}
           {row.thread ? (
-            <FeedThread slug={slug} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
+            <FeedThread slug={rowSlug(row, slug)} type={row.thread.type} refId={row.thread.ref} canPost={canPost} />
           ) : null}
           {!row.thread && row.commentsFor == null ? <p className="dev-ws-ask-hint">No comments yet.</p> : null}
         </div>
@@ -3121,6 +3416,15 @@ function useStripInsets(
  * The attribute is written straight onto the host, like useStripInsets's
  * properties: it changes on scroll, and a React state for it would re-render
  * the whole Workshop, board included, on the frame the strip sticks.
+ *
+ * #3583: NOT PINNED WHILE THE PAGE IS NOT DRAWN. A door pressed from another
+ * screen (the Communities tab, Messages) switches this page's tab while
+ * #app-view is still hidden, and the effect re-measured then: a hidden page
+ * has no box, every edge reads 0, and `0 < 0 + 10` said pinned. The page
+ * then came into view at its top with no scroll to correct it, and its band
+ * stood behind the tabs at rest. A strip with no height is not pinned; and
+ * the host is watched for size, which is how the page coming back into view
+ * — a box again — is heard when no scroll comes with it.
  */
 function usePinnedStrip(
   bar: HTMLElement | null,
@@ -3140,7 +3444,8 @@ function usePinnedStrip(
       frame = 0;
       const body = host.querySelector<HTMLElement>(':scope > .dev-ws-tabbody');
       if (!body) return;
-      const pinned = body.getBoundingClientRect().top < bar.getBoundingClientRect().bottom + WS_GAP_PX - 0.5;
+      const strip = bar.getBoundingClientRect();
+      const pinned = strip.height > 0 && body.getBoundingClientRect().top < strip.bottom + WS_GAP_PX - 0.5;
       if (pinned !== host.hasAttribute('data-ws-pinned')) host.toggleAttribute('data-ws-pinned', pinned);
     };
     const schedule = () => {
@@ -3148,10 +3453,13 @@ function usePinnedStrip(
     };
     document.addEventListener('scroll', schedule, { capture: true, passive: true });
     window.addEventListener('resize', schedule);
+    const seen = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(schedule);
+    seen?.observe(host);
     check();
     return () => {
       document.removeEventListener('scroll', schedule, { capture: true });
       window.removeEventListener('resize', schedule);
+      seen?.disconnect();
       if (frame) cancelAnimationFrame(frame);
       host.removeAttribute('data-ws-pinned');
     };
@@ -3184,12 +3492,13 @@ export function DevWorkshop(): ReactNode {
     () => (v.autoExpand && v.autoExpand.key ? { [v.autoExpand.theme]: v.autoExpand.key } : {}),
   );
   // HOW FAR THE SINCE LIST IS OPEN, on the Workshop page (see SINCE_FIRST):
-  // the weeks past the ones it opens with, and which weeks have their extra
-  // new rows or their seen rows unfolded. Held here because Clear folds all
-  // of it back at once, and the legacy fillers re-run when any of it moves.
+  // the weeks past the ones it opens with, and how many times each week's
+  // one `Show N more` has been pressed (#3524 — it was two booleans a week,
+  // "every new row" and "every seen row"). Held here because Clear folds
+  // all of it back at once, and the legacy fillers re-run when any of it
+  // moves.
   const [sinceExtra, setSinceExtra] = useState(0);
-  const [sinceAllNew, setSinceAllNew] = useState<Record<string, boolean>>({});
-  const [sinceSeen, setSinceSeen] = useState<Record<string, boolean>>({});
+  const [sinceMore, setSinceMore] = useState<Record<string, number>>({});
   // Whether the hub's Your work shows every row or its first two.
   const [workAll, setWorkAll] = useState(false);
   // And the Workshop tab's, every row or its first WORKSHOP_WORK_FIRST.
@@ -3217,11 +3526,34 @@ export function DevWorkshop(): ReactNode {
   const [tab, setTab] = useState<TabKey>(() => freshTab() || v.tab || 'status');
   // Moving between the hub and its pages, remembered the way a tab press
   // always was (AppView._setWorkshopTab), and back to the top: a page opened
-  // from a door lower down should start at its own head.
+  // from a door lower down should start at its own head — in the element
+  // that actually scrolls it (#3583, scrollToHead).
+  //
+  // And the page's memory of where it was goes with it (#3583). AppView keeps
+  // the feed's offset to put a reader back after an item and Back; that
+  // offset was the OLD tab's, and coming back to the page later (Back from
+  // another screen) laid it over the new one: the hub again, scrolled under
+  // its own strip. A zero is how that memory is told the page is at its top.
+  //
+  // #3620: AND A PRESS IS A STEP BACK CAN UNDO. The tabs share the page's
+  // address, so AppView._pushWorkshopTab pushes an entry at it naming the tab,
+  // after writing the one being left onto the entry it leaves: Back from the
+  // Workshop is the hub again, not the screen the project was opened from.
+  // Up from All items to the Workshop (its back bar, or the Workshop tab lit
+  // over it) is a step Back instead when the Workshop is the entry below
+  // (AppView._upWorkshopTab), so it leaves no loop. `tabRef` is the tab up
+  // now: it is read before the render this press causes, and by the listener
+  // below, which outlives the render it was made in.
+  const tabRef = useRef<TabKey>(tab);
+  tabRef.current = tab;
   const openTab = (next: TabKey) => {
     setTab(next);
     callAppView('_setWorkshopTab', next);
-    try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+    const was = tabRef.current;
+    const up = was === 'all' && next === pageParent(was) && !!callAppView('_upWorkshopTab', v.slug, next);
+    if (!up) callAppView('_pushWorkshopTab', v.slug, was, next);
+    callAppView('_saveFeedScroll', v.slug, 0);
+    scrollToHead(hostRef.current);
   };
   // ...AND AGAIN WHEN THE PUBLISH LANDS, which is what the seed alone could
   // not do. The seed runs against whatever the store holds AT MOUNT, and that
@@ -3245,15 +3577,43 @@ export function DevWorkshop(): ReactNode {
   // A DOOR TO THIS PROJECT'S HUB, pressed while its page is already open —
   // the logo menu's "Go to community hub" changes no address, so no route
   // runs. AppView._landOnHub says so; a door to another project is not ours.
+  //
+  // #3620: AND BACK OR FORWARD LANDING ON ONE OF THIS PAGE'S ENTRIES, which
+  // the router announces the same way, marked `traversal`. That shows the
+  // entry's tab and pushes nothing: Back and Forward are not doors, and a
+  // traversal onto the tab already up leaves the page (and its scroll) alone.
+  // A door pushes nothing here either: every door goes on to navigate to the
+  // page's address, and that navigation is its entry.
   useEffect(() => {
     const onDoor = (event: Event) => {
-      const door = (event as CustomEvent<{ slug: string | null; tab: TabKey } | null>).detail;
+      const door = (event as CustomEvent<{ slug: string | null; tab: TabKey; traversal?: boolean } | null>).detail;
+      if (door && door.traversal && door.tab === tabRef.current) return;
       if (!door || (door.slug && door.slug !== v.slug)) return;
       setTab(door.tab);
-      try { window.scrollTo?.({ top: 0 }); } catch { /* no window to scroll */ }
+      // #3583: the scroller that is really there (see scrollToHead). AppView
+      // has forgotten the offset already (_landOnTab), and a door that goes
+      // on to route reads this page at its top when it saves it.
+      scrollToHead(hostRef.current);
     };
     window.addEventListener('usernode:workshop-tab', onDoor);
     return () => window.removeEventListener('usernode:workshop-tab', onDoor);
+  }, [v.slug]);
+  // ANOTHER PROJECT IN THE SAME PAGE (#3555). Going straight from one
+  // project's page to another's keeps the host (#app-view keeps
+  // #dev-workshop and republishes into it), so this is not mounted again,
+  // and the seed above — which is how a door to ANOTHER project's tab is
+  // read, since the listener leaves those alone — never ran for the new
+  // one: it opened on whatever tab the last project was on. A Recents
+  // channel's Discussion pressed beside one project's page, or the
+  // community switcher's hub, landed on the previous project's tab. So when
+  // the project changes, the tab is read afresh as a mount reads it, before
+  // paint, so the old tab never shows under the new name.
+  const tabSlug = useRef<string | null>(v.slug || null);
+  useLayoutEffect(() => {
+    if (!v.slug) return;
+    const was = tabSlug.current;
+    tabSlug.current = v.slug;
+    if (was && was !== v.slug) setTab(freshTab() || 'status');
   }, [v.slug]);
   // Which pane is under the tabs. Lives in a module-global store rather than
   // here, because app-view.js has to read it: `_rerenderWorkshop()` publishes
@@ -3267,6 +3627,14 @@ export function DevWorkshop(): ReactNode {
   const stripSticks = useMediaFlag(WIDE_QUERY);
   useStripInsets(bar, hostRef, stripSticks);
   usePinnedStrip(bar, hostRef, stripSticks, tab);
+  // NO PULL HOOK HERE ANY MORE (pull-to-refresh under the tabs, evan,
+  // 2026-10-01). #3514's usePullGap read the kit's transform off
+  // #dev-forum-scroll and published it as `--ptr-gap` on <html>, so app.css
+  // could paint the gap a pull opened between the header and the band. A pull
+  // no longer moves the band or opens that gap: the kit publishes the pull
+  // itself (`--dev-ptr-pull` on the scroller, public/js/app-view.js) and
+  // app.css slides only what is under the band by it. Nothing in this
+  // component takes part, which is how it stays the only writer of its tree.
   // The toolbar's props reach this root through a store, not a prop — the
   // Workshop is a separate React root from the frame that receives them. See
   // ../actions-store.ts.
@@ -3304,20 +3672,18 @@ export function DevWorkshop(): ReactNode {
     setOpenRows((cur) => (cur[scope] === key ? { ...cur, [scope]: '' } : { ...cur, [scope]: key }));
   };
 
-  // The since list's controls (#2183). `Show older` steps back a week;
+  // The since list's controls (#2183). `Show an earlier week` steps back a
+  // week; each week's `Show N more` puts its next few rows out (#3524);
   // `Clear` moves the baseline to now (AppView owns the stamp and its
   // storage, and republishes) and folds everything back to how it opened, so
-  // what the reader dismissed is under its week's "seen" row rather than
-  // gone. #2240: it is live whenever there is something to fold, new rows
-  // or not.
+  // what the reader dismissed is a press into its week rather than gone.
+  // #2240: it is live whenever there is something to fold, new rows or not.
   const sinceUnfolded = sinceExtra > 0
-    || Object.values(sinceAllNew).some(Boolean)
-    || Object.values(sinceSeen).some(Boolean);
+    || Object.values(sinceMore).some((n) => n > 0);
   const clearSince = () => {
     if (!v.since) return;
     setSinceExtra(0);
-    setSinceAllNew({});
-    setSinceSeen({});
+    setSinceMore({});
     setOpenRows((cur) => ({ ...cur, since: '' }));
     callAppView('_workshopClearSince', slug, v.since.through);
   };
@@ -3340,7 +3706,9 @@ export function DevWorkshop(): ReactNode {
   // A layout effect, so a merged card's kudos pill is in its band on the
   // card's first frame rather than popping in after it (dev-kanban.tsx has
   // the same note).
-  const openSig = `${Object.values(openRows).join('|')}|since:${sinceExtra}:${Object.keys(sinceAllNew).join(',')}:${Object.keys(sinceSeen).join(',')}|work:${workAll}:${mineAll}`;
+  // A week's presses are part of it (#3524): each one mounts rows the
+  // fillers have not seen, so the count, not only which weeks, goes in.
+  const openSig = `${Object.values(openRows).join('|')}|since:${sinceExtra}:${Object.entries(sinceMore).map(([at, n]) => `${at}=${n}`).join(',')}|work:${workAll}:${mineAll}`;
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -3362,15 +3730,26 @@ export function DevWorkshop(): ReactNode {
   // The votes waiting on you: the band's Needs you count, the hub's row,
   // and the Communities tab's badge and switcher (features/workshop/
   // community-scope.ts), which learn it from here while the page is up.
-  const owed = (v.queue || []).filter((row) => row.kind === 'vote').length;
+  //
+  // #3526: LESS THE ONES YOU HAVE SWIPED PAST. `owed` is the band's number,
+  // so it counts only the votes not yet seen (../../workshop/needs-seen.ts,
+  // which this re-renders on). The scope is handed every vote and which ones
+  // rather than this page's answer, and works the same number out itself, so
+  // the tab's badge and the band cannot disagree about a vote seen elsewhere.
+  useNeedsSeen();
+  const owedRows = (v.queue || []).filter((row) => row.kind === 'vote');
+  const owedKeys = owedRows.map(needsRowKey).filter((k): k is string => !!k);
+  const owed = unseenNeeds(v.slug || '', owedRows.length, owedKeys);
+  const owedSig = owedKeys.join(' ');
   useEffect(() => {
     if (!v.slug || v.loading) return;
     describeCommunity(v.slug, {
-      needs: owed,
+      owedCount: owedRows.length,
+      owed: owedKeys,
       ...(own && app.name ? { name: app.name, iconUrl: app.iconUrl, iconEmoji: app.iconEmoji, iconColor: app.iconColor } : {}),
       ...(community ? { audience: community.audience, memberCount: Number(community.member_count) || 0 } : {}),
     });
-  }, [v.slug, v.loading, owed, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]);
+  }, [v.slug, v.loading, owedRows.length, owedSig, own, app.name, app.iconUrl, app.iconEmoji, app.iconColor, community]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (v.loading) return <div ref={hostRef}><CardSkeleton n={4} label="Loading the workshop" /></div>;
   const nextUp = v.nextUp && v.nextUp.t === 'card' ? v.nextUp : null;
@@ -3418,6 +3797,7 @@ export function DevWorkshop(): ReactNode {
   const sinceList = v.since || EMPTY_SINCE;
   const weeks = tab === 'workshop' ? sinceWeeks(sinceList, v.dashboard ? v.dashboard.weeks : null, Date.now()) : [];
   const weeksOpen = Math.min(weeks.length, sinceWeeksOpen(weeks) + sinceExtra);
+  const newFurther = sinceNewFurther(weeks, weeksOpen);
   const firstWeek = v.dashboard ? v.dashboard.firstWeek : null;
 
   return (
@@ -3425,6 +3805,10 @@ export function DevWorkshop(): ReactNode {
       ref={hostRef}
       className="dev-ws"
       data-ws-tab={tab}
+      // #3583: whose page this is, beside which tab it is on. AppView reads
+      // both when it saves the list's offset on the way out (renderDevView),
+      // because by then App.currentApp already names the page coming in.
+      data-ws-slug={slug || undefined}
     >
       {band}
       {pageBar}
@@ -3500,13 +3884,13 @@ export function DevWorkshop(): ReactNode {
         <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} onMore={() => openTab('workshop')} />
       ) : null}
       {owesVote(v.queue)
-        ? <NeedsCard queue={v.queue} canPost={canPost} onOpen={() => openTab('needs')} />
+        ? <NeedsCard queue={v.queue} slug={slug} canPost={canPost} onOpen={() => openTab('needs')} />
         : <NothingToVote queue={v.queue} onOpen={() => openTab('needs')} />}
       {slug && community?.audience !== 'solo' ? (
         <ChannelCard slug={slug} name={app.name || slug} data={community} compact onOpen={() => openTab('discussion')} />
       ) : null}
       {slug ? <ShareItCard slug={slug} name={app.name || undefined} /> : null}
-      {v.mine && v.mine.rows.length ? (
+      {v.mine && (v.mine.rows.length || v.mine.viewer) ? (
         <YourWorkCard
           rows={v.mine.rows}
           slug={slug}
@@ -3527,13 +3911,20 @@ export function DevWorkshop(): ReactNode {
         <ProjectDiscussion slug={slug} name={app.name || community?.name || slug} data={community} />
       ) : null}
 
-      {/* ── THE WORKSHOP TAB: your work, what is open, what changed ──
-          Your own work (its first three, the rest behind a reveal), All
-          items' numbers and its one line (whose head opens All items, the
-          page under this tab), and what moved since your last visit filed
-          under each week's summary. */}
+      {/* ── THE WORKSHOP TAB: how a change gets in, your work, what is open,
+          what changed ──
+          The approval rules, your own work (its first three, the rest behind
+          a reveal), All items' numbers and its one line (whose head opens All
+          items, the page under this tab), and what moved since your last
+          visit filed under each week's summary. */}
       {tab === 'workshop' ? (
       <>
+      {/* ── Approval rules: how a change gets in ──
+          The Workshop page's head (#3528): the rule every change on the page
+          below is held to, read before the work it governs. It was the hero's
+          last line, the head of All items for a round (#852), then this
+          page's foot (#3487). */}
+      {slug ? <ApprovalRules slug={slug} /> : null}
       {/* ── Lately in this project ──
           What changed about the project itself — this week's card, and
           settings changed in the last week — which used to be lines in its
@@ -3705,7 +4096,8 @@ export function DevWorkshop(): ReactNode {
       {/* ── Since your last visit, week by week ──
           The hub's list of what moved and the walk of weekly summaries, as
           one list (see SINCE_FIRST): each week's line, and what moved in it
-          under it. It follows All items (#852 review): the numbers, then the
+          under it, a few rows at a time behind ONE control a week (#3524).
+          It follows All items (#852 review): the numbers, then the
           history behind them. A person who has not joined reads "Recently", as does a
           first visit, which has no last visit to be since. */}
       {v.since || weeks.length ? (
@@ -3751,16 +4143,20 @@ export function DevWorkshop(): ReactNode {
                 canPost={canPost}
                 openKey={openRows.since || null}
                 onToggleRow={(key) => toggleRow('since', key)}
-                allNew={!!sinceAllNew[at]}
-                onAllNew={() => setSinceAllNew((cur) => ({ ...cur, [at]: true }))}
-                seenOpen={!!sinceSeen[at]}
-                onSeen={() => setSinceSeen((cur) => ({ ...cur, [at]: true }))}
+                more={sinceMore[at] || 0}
+                onMore={() => setSinceMore((cur) => ({ ...cur, [at]: (cur[at] || 0) + 1 }))}
               />
             );
           })}
           {/* ALWAYS DRAWN, and disabled rather than absent at the far end:
               a control that is sometimes there is one nobody learns to reach
-              for. Pointing DOWN, at where the week it reveals appears. */}
+              for. Pointing DOWN, at where the week it reveals appears.
+              #3524: it was "Show older", directly under a week's own "N more
+              new": two reveals side by side, and "older" could as well have
+              meant that week's older rows. It names what it reveals now, a
+              WEEK, and sits under a rule of its own, where that week's
+              heading will be. What is new further back is counted on it,
+              since the list opens down to the newest news only. */}
           <button
             type="button"
             className="dev-ws-reveal dev-ws-since-more un-touch-target"
@@ -3769,7 +4165,8 @@ export function DevWorkshop(): ReactNode {
             onClick={() => setSinceExtra(sinceExtra + 1)}
           >
             <ChevronDownIcon className="dev-ws-reveal-chev" aria-hidden="true" />
-            Show older
+            Show an earlier week
+            {newFurther ? <span className="dev-ws-since-more-new">{` · ${newFurther} new`}</span> : null}
           </button>
           {/* The floor. `firstWeek` is the project's beginning, which the
               server names beside a complete history (#3293), so the note
@@ -3785,7 +4182,6 @@ export function DevWorkshop(): ReactNode {
           ) : null}
         </section>
       ) : null}
-
       </>
       ) : null}
 
@@ -3807,10 +4203,6 @@ export function DevWorkshop(): ReactNode {
           tab; its body is what may be empty (see EmptyNote). */}
       {tab === 'all' ? (
         <>
-          {/* ── Approval rules: how a change gets in ──
-              Above the categories they govern (#852). It was the hero's last
-              line, then the Workshop page's foot. */}
-          {slug ? <ApprovalRules slug={slug} /> : null}
           {/* ── The two ways to read the same board ──────────────────────
               The eyebrow here used to say "12 categories" and nothing else:
               a count of a grouping the viewer had no say in. The grouping is

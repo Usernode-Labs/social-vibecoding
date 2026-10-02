@@ -360,9 +360,18 @@ const Leaderboard = {
     Leaderboard._load();
   },
 
-  // Keep the hash deep-linkable (#leaderboard/history, /challenges etc.)
-  // without polluting history — replaceState, and only while we're actually
-  // on a leaderboard hash (never hijack an app route mid-navigation). The
+  // Keep the hash deep-linkable (#leaderboard/history, /challenges etc.),
+  // and only while we're actually on a leaderboard hash (never hijack an app
+  // route mid-navigation).
+  //
+  // #3620: A PRESS IS A PAGE, A ROUTER PASS IS NOT. A tab press on the open
+  // screen (the strip, Kudos' own Top changes | Top users | History, the
+  // event bar's way to History) PUSHES, so Back from Kudos is Challenges
+  // again rather than the Profile screen the leaderboard was opened from.
+  // Everything the router does — a deep link healing to its canonical tab,
+  // Back or Forward arriving on one — runs inside restoreFromHash
+  // (App._isRestoring) or before open(), and keeps REPLACING: Back and
+  // Forward are not doors, and an alias is not somewhere to go back to. The
   // legacy #topochain/leaderboard, #topochain/seasons and #challenges hashes
   // have already been rewritten to their #leaderboard/… form by the router
   // before we get here, so the startsWith guard holds for those entry paths
@@ -383,6 +392,11 @@ const Leaderboard = {
             ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
             : `#leaderboard/${Leaderboard.sub}`;
     if (location.hash.startsWith('#leaderboard') && location.hash !== target) {
+      const pressed = Leaderboard._open
+        && !(typeof App !== 'undefined' && App && App._isRestoring);
+      if (pressed) {
+        try { history.pushState(null, '', target); return; } catch (_) { /* replace, below */ }
+      }
       history.replaceState(null, '', target);
     }
   },

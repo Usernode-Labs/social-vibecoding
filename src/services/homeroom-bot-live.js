@@ -58,6 +58,7 @@
 const log = require('./logger');
 const { stripSpecWrapperFence } = require('./spec-format');
 const { agentApiFailure } = require('./agent-result-text');
+const proposalDescription = require('./proposal-description');
 const { SPEC_DESIGN_BRIEF } = require('./prompts');
 const buildContract = require('./build-contract');
 
@@ -79,11 +80,16 @@ function isStaging() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
-/** Whether the bot acts for real on this app, in this process. */
+/**
+ * Whether the bot acts for real on this app, in this process: an app in
+ * the live list, or (#3624) a project it is building for somebody it talks
+ * to in a DM (settings.firstVersionApps, homeroom-bot-dm.js).
+ */
 function isLiveFor(settings, app) {
   if (!settings || settings.mode === 'off' || isStaging()) return false;
   const live = Array.isArray(settings.liveApps) ? settings.liveApps : [];
-  return !!app && live.includes(app.slug);
+  const built = Array.isArray(settings.firstVersionApps) ? settings.firstVersionApps : [];
+  return !!app && (live.includes(app.slug) || built.includes(app.slug));
 }
 
 const MAX_QUOTED_CHARS = 1500;
@@ -141,6 +147,10 @@ function buildFailedText(reason) {
 function heldText({ cap, verdict, limit }) {
   if (cap === 'proposals_per_app') {
     return `Homeroom bot would build this, but it already has ${limit} proposals open on this app. `
+      + 'It will come back to this issue when one of them is merged or closed.';
+  }
+  if (cap === 'proposals_total') {
+    return `Homeroom bot would build this, but it already has ${limit} proposals open across Homeroom. `
       + 'It will come back to this issue when one of them is merged or closed.';
   }
   const what = verdict === 'question' ? 'a question about' : 'a note on';
@@ -205,10 +215,30 @@ function lastActivity() {
   };
 }
 
+// #3426: a reporter's screenshot (feedback's `/issue-images/<id>` line) is
+// often the only description of what they mean, and the bot used to guess
+// past it: recipebot #47 ("Can not comment", a phone screenshot) was built
+// on an assumption. Said only when the thread has one, in each turn that
+// reads the request: triage, spec and build.
+const ISSUE_IMAGE_URL = /https?:\/\/[^\s)]+\/issue-images\/[A-Za-z0-9_-]+/;
+
+function screenshotNote(seed) {
+  if (!ISSUE_IMAGE_URL.test(String(seed || ''))) return [];
+  return [
+    'The request includes a screenshot (an `/issue-images/<id>` link above). Download each one, for example',
+    '`curl -sS -o /tmp/issue-shot-1.png <url>`, and look at it with your image tool (view_image, or the Read',
+    'tool) before you decide anything: it is often the clearest description of what the reporter means. If the',
+    'tool says this model cannot take images, do not try to decode the file another way (by hand, as ASCII art',
+    'or with OCR): treat what it shows as unknown, and say so.',
+    '',
+  ];
+}
+
 function specPrompt({ seed, buildNote }) {
   return [
     seed,
     '',
+    ...screenshotNote(seed),
     'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
     '',
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
@@ -225,6 +255,9 @@ function specPrompt({ seed, buildNote }) {
     '  two halves, and use ### or deeper for any other heading. "User-facing changes" is for a non-developer:',
     '  what people will see and do differently, no file paths or code. "Technical implementation" holds the',
     '  files, data, edge cases and tests.',
+    '- Titled with what the change DOES, because the proposal is named after it: the way a pull request title',
+    '  reads ("Show the reason beside each challenge credit", not "Credits have no reason" or "Spec for issue',
+    '  #12"), at most 72 characters, and no issue number: the proposal links the issue on its own.',
     '- As small as the request: the plan above, no refactoring or extra features.',
     `- ${SPEC_DESIGN_BRIEF}`,
     '',
@@ -286,14 +319,170 @@ function blockedText(reason) {
   ].join('\n');
 }
 
-/** The spec's "# " title, as routes/sessions.js extractSpecTitle reads it. */
-function specTitle(spec) {
+// The longest spec title the card shows, and the longest the proposal is
+// named with whole (see proposalTitle).
+const SPEC_TITLE_MAX = 120;
+
+/** The spec's whole "# " heading, unclipped, or null. */
+function specHeading(spec) {
   const lines = String(spec || '').split('\n');
   for (let i = 0; i < Math.min(lines.length, 30); i += 1) {
     const line = lines[i].trim();
-    if (line.startsWith('# ') && line.slice(2).trim()) return line.slice(2).trim().slice(0, 120);
+    if (line.startsWith('# ') && line.slice(2).trim()) return line.slice(2).trim();
   }
   return null;
+}
+
+/** The spec's "# " title, as routes/sessions.js extractSpecTitle reads it. */
+function specTitle(spec) {
+  const heading = specHeading(spec);
+  return heading ? heading.slice(0, SPEC_TITLE_MAX) : null;
+}
+
+// ── What the proposal is called, and what it says (#3518) ────────────────
+//
+// The promote route names a pull request from the session's first request
+// and leads it with the coding agent's latest description (pr-metadata's
+// deterministic path, which every OpenRouter session takes). The bot's build
+// gave it neither: its only request was the "Build issue #N: …" seed, and
+// its turn ran outside the dev chat, so no completion row recorded what it
+// said. Every bot proposal came out titled with the issue number and a
+// severed run of the plan, with no summary at all.
+//
+// The spec already holds both halves of a better answer, written for people:
+// a title naming the change (the spec prompt asks for one shaped like a pull
+// request title) and a "User-facing changes" half written for somebody who
+// is not a developer. The build adds the most accurate half: a DESCRIPTION
+// block written after the change exists, the one an OpenRouter dev chat turn
+// ends with (proposal-description.js, #2820).
+
+// Scaffolding a title is not: a "Spec:" label, and the issue number, which
+// the proposal shows as its own Addresses chip.
+const TITLE_LABEL_RE = /^(?:spec(?:ification)?|plan)(?:\s+for\b)?\s*(?:[:\u2013\u2014-]\s*|(?=(?:(?:github\s+)?issue\s+)?#\d))/i;
+const TITLE_ISSUE_LEAD_RE = /^(?:(?:build\s+)?(?:github\s+)?issue\s+#?\d+|#\d+)\s*[:\u00b7\u2013\u2014-]?\s*/i;
+const TITLE_ISSUE_TAIL_RE = /\s*(?:[([]\s*(?:(?:github\s+)?issue\s+)?#\d+\s*[)\]]|[\u2013\u2014-]\s*(?:issue\s+)?#\d+)$/i;
+
+/**
+ * The name the bot proposes a change under: the spec's title, the way the
+ * spec prompt asks for it (what the change does, in pull request form),
+ * with a "Spec:" label or an issue number taken off, or null when there is
+ * none worth using. Null sends the promote route to its own deterministic
+ * name, which since #3518 is the issue's title with the seed peeled off
+ * (session-title.js parseIssueSeed).
+ *
+ * Never cut. The prompt asks for 72 characters, as the platform's own
+ * generated titles are asked for, and a model that runs over has still
+ * written a whole name: a title up to the spec card's own bound is used as
+ * it is, and one past it is not a title, so the fallback names the change
+ * instead. Cutting a name short is the fault this replaces.
+ */
+function proposalTitle(spec) {
+  const heading = specHeading(spec);
+  if (!heading) return null;
+  const title = heading
+    .replace(/[`*]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(TITLE_LABEL_RE, '')
+    .replace(TITLE_ISSUE_LEAD_RE, '')
+    .replace(TITLE_ISSUE_TAIL_RE, '')
+    .replace(/\.+$/, '')
+    .trim();
+  // One word ("Spec", "Leaderboard") names a topic, not a change.
+  if (!title || title.length > SPEC_TITLE_MAX || title.split(' ').length < 2) return null;
+  return title;
+}
+
+/**
+ * The spec's "User-facing changes" half, as far as its "### Assumptions"
+ * subsection: what people will see and do differently, written for somebody
+ * who is not a developer (specPrompt). The assumptions stay in the spec,
+ * which is on the proposal as a card; they are choices, not changes. Null
+ * when the spec has no such half.
+ */
+function specUserFacing(spec) {
+  const lines = String(spec || '').split('\n');
+  const start = lines.findIndex((l) => /^##\s+user[- ]facing changes\s*:?\s*$/i.test(l.trim()));
+  if (start === -1) return null;
+  const kept = [];
+  for (const line of lines.slice(start + 1)) {
+    const t = line.trim();
+    if (/^##\s/.test(t) || /^###\s+assumptions\b/i.test(t)) break;
+    kept.push(line);
+  }
+  const text = kept.join('\n').trim();
+  if (!text) return null;
+  const max = proposalDescription.DESCRIPTION_MAX;
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+/**
+ * What the build said, as the completion row a dev chat turn writes stores
+ * it: `ccOutput` is its message with the DESCRIPTION block taken out, and
+ * `proposalDescription` the block, or the spec's user-facing half when the
+ * build left the block out. A final message that is a wire failure (a run
+ * can commit and then die on the API) says nothing about the change.
+ */
+function buildDescription({ text, spec = null }) {
+  const raw = String(text || '').trim();
+  const said = raw && !agentApiFailure(raw) ? proposalDescription.extract(raw) : { cleanedText: '', description: null };
+  const description = said.description || specUserFacing(spec);
+  return { ccOutput: String(said.cleanedText || '').trim() || description || '', description: description || null };
+}
+
+/**
+ * Write the proposal's name and description onto the build's session, just
+ * before the promote route reads them. Both go through the seams a person's
+ * change uses, so nothing downstream learns about the bot:
+ *   - the name is proposed_pr_title, the author's own title for a change not
+ *     yet proposed, which the route names the pull request with verbatim.
+ *     submit_work stores an external agent's title there, and the bot is
+ *     this change's author the same way. (#2779 keeps a Mayor's start_change
+ *     name out of it because that name is a guess made before any work; the
+ *     spec's title is written from the code, and the proposal goes up as
+ *     soon as the build ends.) Only written while the session has no pull
+ *     request and no chosen title;
+ *   - the description is the completion row every dev chat build leaves
+ *     (a system row carrying ccOutput and proposalDescription), which
+ *     pr-metadata's gatherSessionContext reads for the summary the group
+ *     sees first, and the pull request body leads with.
+ * Best-effort: a proposal that cannot be named or described still goes up,
+ * under the fallback name. Resolves { title, description }; never throws.
+ */
+async function prepareProposal({ pool, bot, sessionId, spec = null, buildText = '', model = null }) {
+  const title = proposalTitle(spec);
+  if (title) {
+    try {
+      await pool.query(
+        `UPDATE chat_sessions SET proposed_pr_title = $1
+          WHERE id = $2 AND user_id = $3 AND pr_number IS NULL AND proposed_pr_title IS NULL`,
+        [title, Number(sessionId), bot.id],
+      );
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not name the proposal; the route names it', { sessionId, err: err.message });
+    }
+  }
+  const { ccOutput, description } = buildDescription({ text: buildText, spec });
+  if (ccOutput) {
+    try {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [Number(sessionId), 'Homeroom bot finished building', JSON.stringify({
+          ccOutput,
+          ...(description ? { proposalDescription: description } : {}),
+          ccOutcome: 'success',
+          agentBackend: 'codex_openrouter',
+          agentModel: model || null,
+        })],
+      );
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not record what the build said; proposing without a summary', {
+        sessionId, err: err.message,
+      });
+    }
+  }
+  return { title, description };
 }
 
 /** The card's preview: the body after the title, as the share route cuts it. */
@@ -627,11 +816,21 @@ async function issuePoster(pool, { app, repo, issueNumber, issue, botLogin = nul
 async function post({
   pool, github, ws, app, repo, issueNumber, kind, runId = null, text,
   msgType = 'system', metadata = null, mention = null, mentions = null, senderId = null, notifications = null,
-  proposalSessionId = null, sender = null, threadMessage = null,
+  proposalSessionId = null, sender = null, threadMessage = null, dm = null,
 }) {
   // Everybody this post tags (mentionTargets); `mention` is the one-person
   // form the older callers pass.
-  const tagged = [...new Set([...(mentions || []), ...(mention ? [mention] : [])].filter(Boolean))];
+  let tagged = [...new Set([...(mentions || []), ...(mention ? [mention] : [])].filter(Boolean))];
+  // #3624: a requester the bot tells in a DM is not also tagged here: the
+  // DM is where the news reaches them, and it would ring twice.
+  if (dm && sender && tagged.length) {
+    try {
+      const recipient = await require('./homeroom-bot-dm').dmRecipient(pool, app.id, issueNumber);
+      if (recipient) tagged = tagged.filter((n) => String(n).toLowerCase() !== recipient.username.toLowerCase());
+    } catch (err) {
+      log.warn('homeroom-bot', 'Could not check the DM recipient (tagging as before)', { app: app.slug, issueNumber, err: err.message });
+    }
+  }
   const handles = tagged.map((n) => `@${n}`).join(' ');
   // #3288: with a sender (the bot's own user), the thread posts are ordinary
   // messages from it, drawn as its bubbles. `msgType` then no longer picks
@@ -713,7 +912,50 @@ async function post({
     ...(tagged.length ? { mentioned: tagged, notified } : {}),
     ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
+  // #3624: the same news, in the requester's DM with the bot, when they
+  // are somebody it talks to there. A post that carries `dm` is one worth
+  // telling them about; the issue stays the record either way.
+  if (dm && sender) {
+    try {
+      await require('./homeroom-bot-dm').relayIssuePost({
+        pool, ws, app, issueNumber, kind, runId, postId, bot: sender, dm,
+      });
+    } catch (err) {
+      log.warn('homeroom-bot', 'DM relay failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
+  }
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
+}
+
+/**
+ * One message from the bot in a proposal's own discussion, recorded like
+ * every post (homeroom_bot_posts) but said nowhere else: no GitHub comment
+ * and nothing in the issue's thread. For news that is the proposal's alone,
+ * such as a revision that fixed its failing checks. Never throws on the
+ * send; resolves { postId, thread }.
+ */
+async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, text, bot, sessionId }) {
+  const { rows } = await pool.query(
+    `INSERT INTO homeroom_bot_posts (app_id, issue_number, run_id, kind)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id`,
+    [app.id, issueNumber, runId, kind],
+  );
+  const postId = rows[0]?.id ?? null;
+  let message = null;
+  try {
+    message = await ws.sendBotMessage(pool, app.id, {
+      user: bot, content: text, thread: { type: 'session', ref: Number(sessionId) },
+    });
+  } catch (err) {
+    log.warn('homeroom-bot', 'Proposal thread post failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
+  }
+  if (postId && message?.id) {
+    await pool.query('UPDATE homeroom_bot_posts SET thread_message_id = $2 WHERE id = $1', [postId, message.id])
+      .catch(() => {});
+  }
+  log.info('homeroom-bot', 'Posted on its proposal', { app: app.slug, issueNumber, kind, sessionId, thread: !!message });
+  return { postId, thread: !!message };
 }
 
 /**
@@ -757,7 +999,13 @@ async function advanceSeen({
   ]);
   const botLogin = String(login || '').toLowerCase();
   const newer = (at) => Number.isFinite(Date.parse(at)) && Date.parse(at) > sinceMs;
-  const someoneElse = comments.some((c) => String(c.author || '').toLowerCase() !== botLogin && newer(c.createdAt))
+  // A comment this run posted is the bot's own whatever the login lookup
+  // said: when it failed, the bot's own note read as a person's reply, and
+  // the issue was triaged again minutes later (todo #78, #3509).
+  const ours = new Set(times);
+  const bots = (c) => ours.has(Date.parse(c.createdAt))
+    || (!!botLogin && String(c.author || '').toLowerCase() === botLogin);
+  const someoneElse = comments.some((c) => !bots(c) && newer(c.createdAt))
     || (thread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt))
     || (proposalThread?.messages || []).some((m) => !isOwnMessage(m) && newer(m.createdAt));
   if (someoneElse) {
@@ -797,7 +1045,7 @@ let votesRouter = null;
  * Run POST /api/sessions/:id/promote as the bot, in-process. Resolves the
  * status and JSON the route answered with; never throws.
  */
-function promoteAsBot({ config, bot, sessionId, router = null }) {
+function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null }) {
   const target = router || (votesRouter ||= require('../routes/votes').voteRoutes(config));
   const url = `/api/sessions/${Number(sessionId)}/promote`;
   return new Promise((resolve) => {
@@ -813,6 +1061,10 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
       user: {
         id: bot.id, username: bot.username, is_admin: false, is_synthetic: true,
         [require('./app-access').HOMEROOM_BOT_PROPOSAL]: true,
+        // Its own ceiling on proposals up for a vote, in place of the
+        // per-user cap (#3576). Symbol-keyed for the same reason.
+        ...(Number.isInteger(ceiling) && ceiling > 0
+          ? { [require('./session-caps').BOT_PROMOTED_CEILING]: ceiling } : {}),
       },
       get() { return undefined; },
       header() { return undefined; },
@@ -840,7 +1092,42 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
   });
 }
 
-function buildPrompt({ seed, buildNote, spec = null }) {
+// #3518: the proposal's summary, the text the group reads before it votes.
+// The same block an OpenRouter dev chat turn ends with (#2820), parsed by
+// proposal-description.js; prepareProposal files it where the promote route
+// reads it.
+const BUILD_DESCRIPTION_LINES = Object.freeze([
+  '',
+  'After that summary, end your final message with a description of the change for the people who will vote on',
+  'it, between these two marker lines:',
+  '',
+  '==== DESCRIPTION ====',
+  'One or two short paragraphs, in plain language: what is different for someone using the app, what they can',
+  'now do, or what stops going wrong.',
+  '==== END DESCRIPTION ====',
+  '',
+  'Write it from what that person would notice, not from what you edited. No file names, code, commit hashes or',
+  'test results: those belong in the summary above it. Skip the block only if you changed nothing.',
+]);
+
+// A build of the platform's own repository runs its tests the way that
+// repository's AGENTS.md asks every agent to: the suites that pin what it
+// changed, never the whole suite, which the platform runs on every proposal
+// anyway. Half the platform's shadow builds ran out of time (2026-10-02),
+// several in a mapped run of thousands of tests chasing failures that were
+// not theirs. Said in the build prompt as well as in AGENTS.md because a
+// build that reads past it loses its whole clock.
+const PLATFORM_TEST_NOTE = Object.freeze([
+  '',
+  'This is the platform\'s own repository, which is large, and the platform runs its whole test suite on the',
+  'proposal by itself. Do not run `npm test` or the whole suite. Run only the suites for the files you changed:',
+  '`npm run test:changed -- --files <the files you changed, comma-separated>` (add `--list` first to see what it',
+  'would run), or `node --test <test file>` for the test files that name them. If that maps to more than a few',
+  'hundred tests because you changed shared code, run only the test files that name your changed files. A',
+  'failure in a suite that does not read anything you changed is not yours: name it in your summary and move on.',
+]);
+
+function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
   const specBlock = spec
     ? [
       '',
@@ -857,6 +1144,7 @@ function buildPrompt({ seed, buildNote, spec = null }) {
   return [
     seed,
     '',
+    ...screenshotNote(seed),
     'You are the Homeroom bot, building this request so the app\'s group can review it as a proposal.',
     'Your triage of the request concluded it is ready to build, with this plan:',
     '',
@@ -869,7 +1157,30 @@ function buildPrompt({ seed, buildNote, spec = null }) {
       heading: 'Make exactly that change, and nothing else:',
       commits: 'harness',
     }),
+    ...(platformRepo ? PLATFORM_TEST_NOTE : []),
+    ...BUILD_DESCRIPTION_LINES,
   ].join('\n');
+}
+
+/**
+ * #3654: make a session run `model`. A turn runs whatever model its session
+ * carries (agent-turn resolveCodexRuntimeContext reads session.agent_model),
+ * and the bot's sessions were stamped once, when they were created: the
+ * triage session per app kept the model it was born with however the setting
+ * changed, while the run ledger recorded the new one. Writes the row and the
+ * object the runtime is resolved from. Best-effort; a no-op when they agree
+ * or there is no model to stamp.
+ */
+async function stampSessionModel(pool, session, model) {
+  if (!session || !model || session.agent_model === model) return false;
+  try {
+    await pool.query('UPDATE chat_sessions SET agent_model = $2 WHERE id = $1', [session.id, model]);
+    session.agent_model = model;
+    return true;
+  } catch (err) {
+    log.warn('homeroom-bot', 'Could not set the session\'s model', { sessionId: session.id, err: err.message });
+    return false;
+  }
 }
 
 /**
@@ -902,7 +1213,7 @@ function readSpec(text) {
 
 async function draftSpec({
   pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps,
-  specBudgetMs = SPEC_TURN_MAX_MS,
+  specBudgetMs = SPEC_TURN_MAX_MS, telemetryComponent = 'homeroom_bot_spec',
 }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
   const budgetMs = Math.min(turnBudgetMs, specBudgetMs);
@@ -921,7 +1232,7 @@ async function draftSpec({
     routed = await sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'scout',
-      telemetryComponent: 'homeroom_bot_spec',
+      telemetryComponent,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
       }),
@@ -933,7 +1244,7 @@ async function draftSpec({
         resumeSessionId: null,
         branchName: session.branch_name,
         ...(ctx || {}),
-        telemetryComponent: 'homeroom_bot_spec',
+        telemetryComponent,
         onProgress: progress.note,
       }),
       retryPredicate: () => null,
@@ -975,7 +1286,10 @@ async function draftSpec({
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
-  onSession = null, presetSpec = null,
+  onSession = null, presetSpec = null, proposalCeiling = null, platformRepo = false,
+  // #3654: the spec turn's own model, when it differs from the build's;
+  // and, for a benchmark trial, its own session title and telemetry.
+  specModel = null, sessionTitle = null, telemetry = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -995,7 +1309,7 @@ async function buildAndPropose({
                'codex_openrouter', 'openrouter', $5, $6)
        RETURNING *`,
       [app.id, bot.id, propose ? issueNumber : null,
-        `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
+        sessionTitle || `${propose ? 'Homeroom bot' : 'Homeroom bot shadow build'}: #${issueNumber} ${title}`,
         model, config.openrouterDefaultCodexReasoning || 'low'],
     );
     session = rows[0];
@@ -1050,7 +1364,9 @@ async function buildAndPropose({
 
   // The request, as the proposal's pull request metadata reads it: the
   // promote route drafts the title and body from the session's last user
-  // message.
+  // message. Its "Build issue #N:" line is scaffolding, peeled off wherever
+  // a name is derived from it (session-title.js parseIssueSeed, #3518), and
+  // the name the bot proposes under is the spec's (prepareProposal).
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content)
      VALUES ($1, 'user', $2)`,
@@ -1070,11 +1386,16 @@ async function buildAndPropose({
 
   // A spec already written, by a spec turn a restart interrupted and
   // recovery finished (#3401), is built from as it is, not written again.
+  if (!presetSpec && specModel && specModel !== model) await stampSessionModel(pool, session, specModel);
   spec = presetSpec
     ? { ok: true, specMd: String(presetSpec), version: null, costUsd: null, preset: true }
     : await draftSpec({
-      pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs, model, deps, specBudgetMs,
+      pool, config, bot, session, containerName, seed, buildNote, turnBudgetMs,
+      model: specModel || model, deps, specBudgetMs,
+      ...(telemetry ? { telemetryComponent: telemetry } : {}),
     });
+  // The build turn runs the build's model again.
+  await stampSessionModel(pool, session, model);
   if (spec.blocked) {
     // Impossible as written: nothing is built, and the caller says why.
     log.info('homeroom-bot', 'The spec found the request impossible; not building', {
@@ -1122,7 +1443,7 @@ async function buildAndPropose({
   }, turnBudgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   activeWorkers.add(session.id);
-  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null });
+  const prompt = buildPrompt({ seed, buildNote, spec: spec.ok ? spec.specMd : null, platformRepo });
   // What the build was last doing, so a turn stopped on its clock says what
   // it was waiting on (#3385): 12 of the first 18 shadow failures were
   // time-outs, most of them cheap, with nothing recorded about why.
@@ -1132,7 +1453,7 @@ async function buildAndPropose({
     routed = await sessions.runCodexAttemptLoop({
       pool, session, userId: bot.id, config, isCodexSession: true,
       turnModel: model, resumeThreadId: null, mode: 'build',
-      telemetryComponent: 'homeroom_bot_build',
+      telemetryComponent: telemetry || 'homeroom_bot_build',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
       }),
@@ -1144,7 +1465,7 @@ async function buildAndPropose({
         resumeSessionId: null,
         branchName,
         ...(ctx || {}),
-        telemetryComponent: 'homeroom_bot_build',
+        telemetryComponent: telemetry || 'homeroom_bot_build',
         onProgress: progress.note,
       }),
       retryPredicate: () => null,
@@ -1194,15 +1515,28 @@ async function buildAndPropose({
     };
   }
 
-  const promoted = await promoteAsBot({ config, bot, sessionId: session.id, router: deps.votesRouter || null });
+  // What the build pushed, recorded on a live run as a shadow build's is (#3509).
+  const pushed = { branchName: session.branch_name, sha: result.sha || null, commits: Number(result.ahead) || 0 };
+  // Named and described first: the route reads both as it opens the pull
+  // request (#3518).
+  await prepareProposal({
+    pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
+    buildText: result.lastResultText, model,
+  });
+  const promoted = await promoteAsBot({
+    config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
+  });
   if (promoted.status !== 200 || !promoted.body?.ok) {
     const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
     // Built but not proposed: the branch holds the work. Left paused, not
     // archived, so a person can open the session and propose it.
     log.warn('homeroom-bot', 'Built but could not propose', { app: app.slug, issueNumber, sessionId: session.id, why });
-    return { ok: false, sessionId: session.id, costUsd, error: `the change was built but could not be proposed: ${why}`, ...specOut() };
+    return {
+      ok: false, sessionId: session.id, ...pushed, costUsd,
+      error: `the change was built but could not be proposed: ${why}`, ...specOut(),
+    };
   }
-  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, costUsd, ...specOut() };
+  return { ok: true, sessionId: session.id, prNumber: promoted.body.prNumber || null, ...pushed, costUsd, ...specOut() };
 }
 
 module.exports = {
@@ -1229,12 +1563,20 @@ module.exports = {
   parseStopMentioning,
   MAX_MENTIONS,
   post,
+  postOnProposal,
   advanceSeen,
   botUsernameOf,
   openBotProposal,
   promoteAsBot,
+  prepareProposal,
+  proposalTitle,
+  specUserFacing,
+  buildDescription,
   buildPrompt,
+  PLATFORM_TEST_NOTE,
+  screenshotNote,
   buildAndPropose,
+  stampSessionModel,
   draftSpec,
   specPrompt,
   specTitle,

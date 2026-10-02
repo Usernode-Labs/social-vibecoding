@@ -1,5 +1,5 @@
 /**
- * The four steps of the welcome tour, as data.
+ * The five steps of the welcome tour, as data.
  *
  * Kept as a plain table with no React in it so the order, the wording, the
  * anchoring and the interaction rules can be asserted without rendering
@@ -110,7 +110,31 @@ export interface TourStep {
  * the join screen and the card already say each of them, and the card is the
  * thing the viewer has just pressed.
  */
+/*
+ * ── #3567: a fifth stop, first: what a community is ─────────────────────
+ *
+ * The join screen asks which communities to join and never says what one
+ * does, and the four stops above take it for granted: Shortcuts names a
+ * private community's mark, Ask for a change posts a request "the members"
+ * vote on. So the tour opens on the idea everything after it rests on:
+ * communities build projects together, by proposing changes and voting them
+ * in. It names the three audiences the way the screen does (AGENTS.md,
+ * "Communities own projects"): Just you, a Private community, a Public
+ * community. It points at the Communities tab, which is where the ones you
+ * are in live, and like every step but the menu's it describes its target
+ * rather than asking for a press: the tab navigates off Home.
+ */
 export const TOUR_STEPS: readonly TourStep[] = [
+  {
+    // The Communities tab: the bottom bar on a phone, the rail from 768px
+    // up. Its key and id are still `workshop` (../../nav/tab-bar.tsx); the
+    // words on it are Communities, or the community it is scoped to, which is
+    // why the copy says "here" rather than repeating a label.
+    id: 'communities',
+    title: 'Communities',
+    body: 'Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.',
+    targets: ['#platform-tab-workshop'],
+  },
   {
     // The Shortcuts section, heading and grid together, so the card never
     // sits on the heading the step is about. `#app-list` is the fallback
@@ -225,7 +249,7 @@ export function nextOpensMenu(index: number): boolean {
   return stepAt(index).advanceOn === 'menu-open';
 }
 
-/** The counter the card prints, e.g. "3 of 4". */
+/** The counter the card prints, e.g. "3 of 5". */
 export function stepCounter(index: number): string {
   return `${clampIndex(index) + 1} of ${TOUR_LENGTH}`;
 }

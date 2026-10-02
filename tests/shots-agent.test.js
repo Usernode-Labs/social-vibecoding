@@ -148,6 +148,11 @@ test('the shots agent prompt asks for before/after shots and leaves judgement to
   assert.match(prompt, /including anything\s+drawn over its edges/, "a corner badge overflows its button");
   assert.match(prompt, /pick the\s+bar or card around it/);
   assert.match(prompt, /create it\s+the same way on both addresses before you shoot either/);
+  // Each persona's demo data, and where the checks' data belongs: a member
+  // story once 404'd on a check path whose fixture is the read-only admin's.
+  assert.match(prompt, /availableFixtures\s+lists it: who it is for \(persona, alsoFor\), what it shows and its path/);
+  assert.match(prompt, /before you decide a change cannot be\s+reached/);
+  assert.match(prompt, /declaredChecks are the app's own checks, run as read_only_admin/);
   assert.match(prompt, /call\s+note_change with the change id and what they leave out/);
   assert.match(prompt, /turn out not to show it, call skip_change/);
   assert.match(prompt, /nothing saved for that change is published/);
@@ -206,6 +211,41 @@ test('the Claude shots agent runs on its own model in a fresh thread, whatever t
   assert.equal(sent[1].model, 'claude-opus-5-5');
 });
 
+test('a shots agent whose process vanished says how, from the worker\'s fixed reasons only', async () => {
+  const session = { id: 42, repo_url: 'https://github.com/acme/demo.git', branch_name: 'proposal' };
+  const input = {
+    pool: {}, session, runId: 'b'.repeat(32),
+    origins: { base: 'http://base:3000', head: 'http://head:3000' }, authTokens: {},
+  };
+  const failWith = async (result) => {
+    const workerService = { ensureWorker: async () => ({}), execInWorker: async () => result };
+    try { await agent.dispatch({ shots: {} }, input, { workerService }); }
+    catch (error) { return error; }
+    assert.fail('the failed turn must throw');
+  };
+
+  // No exit marker: the worker gave up on the turn and says why.
+  const vanished = await failWith({ exitCode: -1, markerlessCause: 'oom_killed' });
+  assert.equal(vanished.code, 'shots_agent_failed');
+  assert.equal(vanished.message, 'The shots agent stopped with an error before it finished.');
+  assert.deepEqual(vanished.detail, { exit: 'exit -1', exitCode: -1, exitCause: 'oom_killed' });
+  assert.equal(vanished.shotsExitCode, -1);
+  assert.equal(vanished.shotsExitCause, 'oom_killed');
+  for (const cause of agent.EXIT_CAUSES) {
+    assert.equal((await failWith({ exitCode: -1, markerlessCause: cause })).shotsExitCause, cause);
+  }
+
+  // A reason the worker does not give is not passed on.
+  const odd = await failWith({ exitCode: -1, markerlessCause: 'killed: see /proc/1/cmdline' });
+  assert.deepEqual(odd.detail, { exit: 'exit -1', exitCode: -1 });
+  assert.equal(odd.shotsExitCause, null);
+
+  // An exit the runner reported itself keeps its code; one with neither
+  // keeps the old one-line detail.
+  assert.deepEqual((await failWith({ exitCode: 137 })).detail, { exit: 'exit 137', exitCode: 137 });
+  assert.equal((await failWith({ ccIsError: true, fatalError: 'provider refused' })).detail, 'provider refused');
+});
+
 test('the worker runs a shots turn on its pinned model, and every other turn on the author allowlist', () => {
   const worker = require('../src/services/worker');
   // Without this, resolve() turned the unlisted Sonnet 5.5 back into Opus 5.5.
@@ -215,8 +255,11 @@ test('the worker runs a shots turn on its pinned model, and every other turn on 
     assert.equal(worker.claudeTurnModel('shots', odd), 'claude-opus-5-5', String(odd));
   }
   for (const mode of ['build', 'scout', 'sync']) {
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-opus-5-5', mode);
-    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5', mode);
+    // #3579: Sonnet 5.5 is on the author allowlist now, and a turn that
+    // still names the retired Sonnet 5 runs on its successor.
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5-5'), 'claude-sonnet-5-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-sonnet-5'), 'claude-sonnet-5-5', mode);
+    assert.equal(worker.claudeTurnModel(mode, 'claude-nope'), 'claude-opus-5-5', mode);
   }
 });
 

@@ -407,7 +407,47 @@ export interface StepRow {
   /** The ledger row's material: the sentence, the roster, the checks, the ops. */
   row?: LedgerRow | null;
   /** The vote step's bar and tally: the same counts the card's pill reads. */
-  vote?: { yes: number; no: number; majority: number; pill: StatusPillState | null } | null;
+  vote?: {
+    yes: number; no: number; majority: number; pill: StatusPillState | null;
+    /** #3234: "Needs N, was M when voting opened", or null when it has not moved. */
+    was?: string | null;
+  } | null;
+  // ── A merge gate's step (app-view.js `_gateStepsView`) ──
+  /** The step's one short line, state first (`_stepLine`); null says nothing. */
+  line?: string | null;
+  /** The controls for the person who can clear the step, and nobody else. */
+  actions?: ActionSpec[];
+  /** The Votes step: who voted (the count is the status pill's). */
+  votes?: string | null;
+  /** #3234 on the Votes step: "Needs N, was M when voting opened". */
+  was?: string | null;
+  /** The Votes step's "?" — How voting works. */
+  help?: boolean;
+  /** The Checks step: what it shows when it opens. */
+  run?: StepRun | null;
+  /** Extra hooks on the row (the superseded-base marker on Checks). */
+  attrs?: Record<string, string>;
+}
+
+/**
+ * What the Checks step shows when it opens (app-view.js `_checksRunView`):
+ * the build as its steps, then the app's declared checks and the unit suite
+ * as bars, the failures by name, and one line of context.
+ */
+export interface StepRun {
+  /** A run is going right now. */
+  live: boolean;
+  /** The run's stage: building, testing, deferred (app-view.js CHECKS_PHASE_COPY). */
+  phase?: string | null;
+  /** Open by itself: while a run is going, and when it failed. */
+  open: boolean;
+  /** The build's steps, and what to say at the bar's end. */
+  build: { steps: LedgerBuildStep[]; value: string } | null;
+  /** The declared checks' counts; null before the first has run. */
+  checks: { ran: number; passed: number; failed: number; expected: number | null; done: boolean } | null;
+  unit: LedgerUnitProgress | null;
+  fails: CheckRow[];
+  note: string | null;
 }
 
 /** The steps sheet: the strip's own headline over its rows, expanded. */
@@ -417,6 +457,8 @@ export interface StepsView {
   done: number | null;
   total: number | null;
   rows: StepRow[];
+  /** One short step per merge gate (`_gateStepsView`), rather than ledger rows. */
+  simple?: boolean;
 }
 
 /** Everything under the card, by topic kind. */

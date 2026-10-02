@@ -1,11 +1,12 @@
 # Contained CLI consolidation and retirement inventory
 
-2 October 2026. Consolidation on local `241e0e6cd9ac45e6110382cbc8b4d5e86846f519`;
-canonical main `a15a460a46b42ad370e7326c561d9e00bc9c5157`. This replaces the
+2 October 2026. Admission checkpoint `2bf702dbd` now incorporates canonical main
+`d600eb4308b0d283ba050addf4c19c915078086c`. This replaces the
 checkpoint-by-checkpoint inventory with current removal decisions. The
 [roadmap](roadmap.md) defines completion; earlier evidence remains in contracts,
 Git history and the local ledger. Admission consolidation below is implemented
-locally; old recovery/replay formats remain. No rollout or production change.
+locally; old recovery/replay formats remain. The [integration record](canonical-integration.md)
+documents canonical reconciliation and current validation. No rollout or production change.
 
 ## What is replaced for this cohort
 
@@ -96,7 +97,7 @@ shared cleanup policy, so its name does not make it historical code.
    live reducer policy or invent a new permanent version merely for code movement.
 
 This is contract consolidation, not another workflow or rollout. Canonical
-integration is the following gate; unknown retention does not block simplifying
+integration is now implemented locally; unknown retention does not block simplifying
 new admission. Its acceptance is fewer admission variants and obsolete branches,
 plus unchanged atomic
 admission, fair scheduling, cross-machine coordination, identity-preserving recovery,
@@ -106,32 +107,34 @@ regressions. Keep all unresolved retention gates explicit. Only the admission
 selector and config shim are recorded as removed here; old recovery/replay, shared
 execution and legacy safeguards remain.
 
-## Canonical integration before PR readiness
+## Canonical integration and remaining readiness gates
 
-At the accepted checkpoint, the branch has 23 commits absent from canonical main;
-canonical has 99 absent from it, from common ancestor
-`f30d0ec1581ea7646685ebf08a9d9a0165e21538`. The earlier audit found 14 overlapping
-changed files, not 14 proven merge conflicts; refresh that inventory at integration.
-Owners and
-adapters overlap in `server.js`, schema, sessions, staging, Kubernetes/application
-runtime, visuals/harvest, import sync and proposal update, plus the SQL baseline
-and three tests. Integrate explicitly on the work branch after consolidation;
-this audit neither merges nor rebases it.
+Integrated canonical `d600eb4308b0d283ba050addf4c19c915078086c` (100 commits
+absent from the accepted branch, 24 branch commits absent from main). Six content
+conflicts were resolved by preserving both contracts: schema, application runtime,
+Kubernetes, staging progress, visuals recovery and the DB-tools credential audit.
+Canonical notifications, imported fresh-head reconciliation, description behavior,
+benchmark recovery exclusions and explicit user/node reporting remain.
 
-Preserve canonical bot checks notifications on live/harvest settlement, imported
-fresh-head reconciliation, proposal-description behavior and benchmark recovery
-exclusions. Reconcile schema additions and SQL inventory. New Kubernetes zone/host
-database affinity, explicit user override and scheduled-node reporting must be
-reviewed against the persisted candidate-spec adapter; do not silently change an
-already admitted specification. Canonical stale-preview inventory recognizes only
-`sv-preview-<app>-s<session>`, not attempt names `sv-p-*`; keep attempt retirement
-under its manifest owner and test the reaper boundary after integration.
+New candidate selection persists canonical zone/host placement; retained specs
+keep their original host-only recipe without changing identities or spec labels.
+Canonical inventory excludes attempt names `sv-p-*`; a regression now explicitly
+checks that boundary. Attempt retirement remains under its persisted resource owner.
+The writer inventory adds only one reviewed canonical shots-demo fixture exception;
+all prior writer fingerprints/counts remain unchanged. No real writer is removed
+or made less restricted.
 
-Refresh writer allowlist fingerprints with reviewed reasons, not blanket acceptance.
-The current dedicated CI runner/path filter predates current CLI/runtime/retirement
-suites and shared execution paths; update them so relevant changes trigger the
-focused real-PG suite. Actual disposable-resource runs remain separate evidence.
-Run affected suites/SQL checks and the contained failure matrix on the integrated
-revision, then review the net diff and explicit supported/retained contracts.
-No production deployment, worker installation or push is authorized; default-off
-code integration alone is not installation compatibility or full migration completion.
+Focused CI now includes shared decision/execution, complete runtime, CLI admission,
+checks/retirement and isolation safeguards, with matching path filters. PostgreSQL
+tests with injected external operations run without a Kubernetes fixture and cannot
+silently skip the CLI contract. Actual-resource tests still require full dedicated
+preflight and remain separate evidence. The workflow uses a disposable loopback
+PostgreSQL service for its interruption child tests. Its command runs locally;
+GitHub execution is unverified until a separately authorized push.
+
+Review the net diff and explicit supported/retained contracts before PR readiness.
+Unknown checks resolution, idempotent gating settlement and installation boundary
+verification remain mandatory; supported-store/trace policy still gates old-format
+removal. No execution owner, lock, timer, handler or replay version was removed in
+integration. No production deployment, worker installation or push is authorized;
+default-off code integration is not full migration completion.

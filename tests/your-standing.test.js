@@ -65,3 +65,59 @@ test('the card renders inside the grid, with the breakdown behind a disclosure',
   const grid = pane.slice(pane.indexOf('<div id="tc-se-grid"'), pane.indexOf('<Grid view={state.grid} />'));
   assert.match(grid, /<YourStanding \/>/, 'first in #tc-se-grid, so it steps aside with a challenge page');
 });
+
+test('challenge points the standings have not caught up with keep the card, with when they count (#3187)', () => {
+  const { standingView, STANDINGS_UPDATE_NOTE } = loadTsx(STANDING);
+  assert.equal(STANDINGS_UPDATE_NOTE,
+    'Standings update every few hours; points from challenges you just finished appear at the next update.');
+  const empty = { ...RANKING, rank: null, total_points: 0 };
+  const view = standingView({ status: 'ready', ranking: empty, breakdown: null, pending: 1500, revealed: false });
+  assert.ok(view, 'someone with 1,500 challenge points still sees the card');
+  assert.equal(view.rank, '–');
+  assert.equal(view.pending, '1,500 pts earned, not in the standings yet');
+  assert.equal(view.note, STANDINGS_UPDATE_NOTE);
+  assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null, pending: 1500 }).pending, null,
+    'a ranked viewer is not told about a pending figure the ranking already carries');
+  assert.equal(standingView({ status: 'ready', ranking: RANKING, breakdown: null }).note, STANDINGS_UPDATE_NOTE,
+    'the card always says how often the standings move');
+
+  const real = loadTsx(STANDING);
+  const state = { status: 'ready', ranking: empty, breakdown: null, pending: 1500, revealed: false };
+  const mod = loadTsx('frontend/src/features/leaderboard/your-standing.tsx', {
+    stubs: { './my-standing.js': { ...real, myStandingStore: { get: () => state, subscribe: () => () => {} } } },
+  });
+  const html = renderToHtml(createElement(mod.YourStanding, {}));
+  assert.match(html, /1,500 pts earned, not in the standings yet/);
+  assert.match(html, /Standings update every few hours; points from challenges you just finished appear at the next update\./);
+});
+
+test('the ledger is read only when the standings have nothing for the viewer', async () => {
+  const { MyStanding, myStandingStore, ledgerPoints } = loadTsx(STANDING);
+  assert.equal(ledgerPoints([{ activities_total: 500 }, { activities_total: 1000 }, { activities_total: 0 }, {}]), 1500);
+  assert.equal(ledgerPoints(null), 0);
+
+  const realFetch = globalThis.fetch;
+  const run = async (ranking) => {
+    const seen = [];
+    globalThis.fetch = async (url) => {
+      seen.push(url);
+      let data = null;
+      if (url.includes('/me/ranking')) data = ranking;
+      else if (url.includes('/me/breakdown')) data = { scope: 'season', events: [] };
+      else if (url.includes('/challenges-api/challenges?')) data = [{ activities_total: 500 }, { activities_total: 1000 }];
+      return { ok: true, status: 200, json: async () => ({ success: true, data }) };
+    };
+    await MyStanding.load();
+    return seen;
+  };
+  try {
+    const seen = await run({ ...RANKING, season_id: 4, rank: null, total_points: 0 });
+    assert.ok(seen.includes('/challenges-api/challenges?season_id=4'), 'the season the ranking resolved');
+    assert.equal(myStandingStore.get().pending, 1500);
+    const ranked = await run({ ...RANKING, season_id: 4 });
+    assert.ok(!ranked.some((u) => u.startsWith('/challenges-api/challenges?')), 'no extra read for a ranked viewer');
+    assert.equal(myStandingStore.get().pending, 0);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

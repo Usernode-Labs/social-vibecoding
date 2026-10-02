@@ -45,12 +45,12 @@
 const GATES = [
   {
     key: 'approvals',
-    label: 'Enough approvals',
+    label: 'Votes',
     actor: 'group',
   },
   {
     key: 'explicit',
-    label: 'Explicit approval from the group',
+    label: 'Explicit approval',
     actor: 'group',
     // Only for a change to dapp.json's admins block, which loses the
     // time-based merge paths entirely.
@@ -58,7 +58,7 @@ const GATES = [
   },
   {
     key: 'admin_yes',
-    label: 'An admin approves it',
+    label: 'Admin approval',
     actor: 'admin',
     applies: (c) => !!c.locked,
   },
@@ -72,17 +72,17 @@ const GATES = [
     // group's, one it cannot push to or could not resolve is the author's.
     // The evaluated entry carries that override (see describe()).
     key: 'integration',
-    label: 'Merges cleanly with main',
+    label: 'No conflicts with main',
     actor: 'auto',
   },
   {
     key: 'checks',
-    label: 'Checks pass',
+    label: 'Checks',
     actor: 'author',
   },
   {
     key: 'shots',
-    label: 'Before/after shots are ready',
+    label: 'Before & after shots',
     actor: 'author',
     // Independently reversible rollout gate. Proposals created before v2
     // enrollment do not acquire a fictional requirement merely because the
@@ -91,7 +91,7 @@ const GATES = [
   },
   {
     key: 'platform_env',
-    label: 'Platform variables have values',
+    label: 'Platform variables',
     actor: 'admin',
     // The platform's own app only: a proposal that declares a required
     // variable with no value would deploy the platform into a crash loop.
@@ -108,7 +108,7 @@ const GATES = [
   },
   {
     key: 'github',
-    label: 'GitHub accepts the merge',
+    label: 'Merge',
     actor: 'auto',
   },
 ];
@@ -271,9 +271,12 @@ function integrationStep(session) {
       };
     }
     if (has('budget')) {
+      // Waiting on the daily budget reset is waiting on a clock: nobody can
+      // clear it, so it is automatic rather than an admin's turn (an admin
+      // read "Waiting on you" with nothing to press).
       return {
-        state: 'waiting', actor: 'admin',
-        note: `conflicts with main${files}; the platform's token budget is exhausted`,
+        state: 'active', actor: 'auto',
+        note: `conflicts with main${files}; resumes after the daily budget reset`,
       };
     }
     return { state: 'active', actor: 'auto', note: `conflicts with main${files}; the platform will resolve it` };
@@ -306,17 +309,36 @@ function summarize(list, viewer) {
     // or the ones left have never been measured — and those are opposite
     // facts. Saying "nothing left to check" for the second is the exact
     // mistake this feature exists to stop: a card that reads as finished when
-    // it has simply never been looked at.
+    // it has simply never been looked at. Nor is it "Nothing needs you",
+    // which is what the platform says while it is actively working.
     if (total && done === total) {
       return {
-        headline: 'Merging now', detail: `all ${total} steps done`,
+        headline: 'Merged', detail: null,
         done, total, current: null, opensFor: null, needsViewer: false,
       };
     }
     return {
-      headline: 'Nothing needs you',
-      detail: 'still working out what this needs',
+      headline: 'Checking what this needs', detail: null,
       done, total, current: null, opensFor: null, needsViewer: false,
+    };
+  }
+
+  // The last step in flight is the merge itself.
+  if (current.key === 'github' && current.state === 'active') {
+    return {
+      headline: 'Merging',
+      detail: current.detail && current.detail.note ? current.detail.note : null,
+      done, total, current: current.key, opensFor: null, needsViewer: false,
+    };
+  }
+
+  // A blocked step is never "Nothing needs you". One with nobody named (a
+  // merge that failed for a reason the gate could not attribute) says so.
+  if (current.state === 'blocked' && current.actor === 'auto') {
+    return {
+      headline: 'Blocked',
+      detail: current.detail && current.detail.note ? current.detail.note : current.label.toLowerCase(),
+      done, total, current: current.key, opensFor: null, needsViewer: false,
     };
   }
 
@@ -415,6 +437,8 @@ function mainStep(session) {
   const since = short ? ` since ${short}` : '';
   const test = s.app_main_check_failing_test ? ` (${s.app_main_check_failing_test})` : '';
   const base = { key: 'main_healthy', label: 'Main is healthy', actor: 'admin' };
+  // The short line's parts, so a surface need not parse them out of the note.
+  const facts = { sha: short, test: s.app_main_check_failing_test || null };
 
   if (paused) {
     const what = confirming
@@ -424,14 +448,20 @@ function mainStep(session) {
       return {
         ...base, state: 'done',
         detail: {
+          ...facts,
           passThrough: 'level_and_green',
           note: `${what}; this head is level with main and its own checks passed on this exact tree, so it merges and re-tests main`,
         },
       };
     }
+    // A first red being re-run is the platform's to settle in minutes, and no
+    // control is offered for it (app-view.js _requirementAction), so it is
+    // in flight rather than an admin's turn. The pause itself still holds.
     return {
-      ...base, state: 'blocked',
-      detail: { paused: true, confirming, note: `${what}; merges are paused until a fix lands or an admin resumes them` },
+      ...base,
+      state: confirming ? 'active' : 'blocked',
+      actor: confirming ? 'auto' : 'admin',
+      detail: { ...facts, paused: true, confirming, note: `${what}; merges are paused until a fix lands or an admin resumes them` },
     };
   }
   return {
@@ -470,7 +500,7 @@ function provisional(session) {
     ? intOrNull(s.qualified_yes_count) : intOrNull(s.yes_count);
   out.push({
     key: 'approvals',
-    label: 'Enough approvals',
+    label: 'Votes',
     actor: 'group',
     state: (required != null && yes != null && yes >= required) ? 'done' : 'waiting',
     detail: (required != null && yes != null) ? { note: `${yes} of ${required}` } : null,
@@ -479,7 +509,7 @@ function provisional(session) {
   const step = integrationStep(s);
   out.push({
     key: 'integration',
-    label: 'Merges cleanly with main',
+    label: 'No conflicts with main',
     actor: step.actor,
     state: step.state,
     detail: step.note ? { note: step.note } : null,
@@ -495,7 +525,7 @@ function provisional(session) {
       : check === 'pending' ? 'active' : 'pending';
   out.push({
     key: 'checks',
-    label: 'Checks pass',
+    label: 'Checks',
     actor: 'author',
     state: checkState,
     detail: check === 'failing' ? { note: 'some checks are failing' }
@@ -514,7 +544,7 @@ function provisional(session) {
     const accepted = exactHead && ['verified', 'not_required', 'overridden'].includes(shotsState);
     out.push({
       key: 'shots',
-      label: 'Before/after shots are ready',
+      label: 'Before & after shots',
       actor: 'author',
       state: accepted ? 'done' : shotsState === 'failed' ? 'blocked' : 'active',
       detail: accepted
@@ -537,7 +567,7 @@ function provisional(session) {
   const allKnownDone = out.every((g) => g.state === 'done');
   out.push({
     key: 'github',
-    label: 'GitHub accepts the merge',
+    label: 'Merge',
     actor: 'auto',
     state: allKnownDone ? 'active' : 'pending',
     detail: allKnownDone ? { note: 'merging shortly' } : null,

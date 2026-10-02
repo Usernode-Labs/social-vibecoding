@@ -11,6 +11,7 @@ const path = require('node:path');
 const workerDir = path.join(__dirname, '..', 'worker');
 const read = (name) => fs.readFileSync(path.join(workerDir, name), 'utf8');
 const { browserAllowedOrigins, hostedAppSlugs, trustedHostedAppOrigins } = require('../worker/shots-hosted-origins');
+const boundary = require('../worker/shots-boundary');
 const hostedContract = require('../worker/shots-hosted-app-contract');
 
 test('only the platform-owned hosted app for this exact run enters the shots catalog', () => {
@@ -126,7 +127,8 @@ test('the shots agent launches Playwright through the content-free timing observ
       assert.equal(config.mcpServers[server].command, 'node');
       assert.equal(args[0], '/usr/local/bin/shots-browser-observer.js');
       assert.ok(args.includes(path.join(dir, 'state', state)));
-      assert.ok(args.includes('http://base.example.invalid;http://head.example.invalid;https://hosted.example.invalid'));
+      // No origin allowlist: the shots proxy is the boundary (shots-boundary.js).
+      assert.ok(!args.includes('--allowed-origins'));
       assert.ok(args.includes('--no-sandbox'));
       assert.ok(args.includes('--caps'));
       assert.ok(args.includes('vision'));
@@ -138,16 +140,31 @@ test('the shots agent launches Playwright through the content-free timing observ
   assert.match(claudeRunner, /SHOTS_HOSTED_ORIGINS_FILE/);
 });
 
-test('only a child-app pair\'s browsers may load the legacy Tailwind CDN', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-cdn-config-'));
+test('the browsers reach the public internet only through the shots proxy, and the catalog is still checked', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shots-egress-config-'));
   try {
-    const allowed = (extra) => writeConfig(dir, extra).config.mcpServers.browser_member.args[
-      writeConfig(dir, extra).config.mcpServers.browser_member.args.indexOf('--allowed-origins') + 1];
-    assert.doesNotMatch(allowed({ SHOTS_PLATFORM_ASSETS: undefined }), /tailwindcss/);
-    assert.doesNotMatch(allowed({ SHOTS_PLATFORM_ASSETS: '0' }), /tailwindcss/);
-    assert.match(allowed({ SHOTS_PLATFORM_ASSETS: '1' }), /;https:\/\/cdn\.tailwindcss\.com$/);
+    for (const assets of [undefined, '0', '1']) {
+      const { config } = writeConfig(dir, { SHOTS_PLATFORM_ASSETS: assets });
+      for (const server of ['browser_member', 'browser_admin', 'browser_full_admin']) {
+        const args = config.mcpServers[server].args;
+        assert.ok(!args.some((arg) => /allowed-origins|blocked-origins|tailwindcss/.test(arg)), server);
+        assert.match(args[args.indexOf('--proxy-server') + 1], /^http:\/\/127\.0\.0\.1:\d+$/, server);
+        // Loopback goes through the proxy too, which refuses it.
+        assert.equal(args[args.indexOf('--proxy-bypass') + 1], '<-loopback>', server);
+      }
+    }
+    // A catalog that does not match the run's pair still fails before any browser starts.
+    fs.writeFileSync(path.join(dir, 'hosted-origins.json'), JSON.stringify({
+      version: 2, baseOrigin: 'http://other.example.invalid', headOrigin: 'http://head.example.invalid', apps: [],
+    }));
+    assert.throws(() => writeConfig(dir));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+  // The proxy, the observer and the bridge each load the boundary from the image.
+  assert.match(read('Dockerfile'), /COPY shots-boundary\.js \/usr\/local\/bin\/shots-boundary\.js/);
+  for (const file of ['shots-origin-proxy.js', 'shots-browser-observer.js', 'shots-mcp.js']) {
+    assert.match(read(file), /require\('\.\/shots-boundary'\)/, file);
   }
 });
 
@@ -369,19 +386,32 @@ test('the shots bridge offers exactly six tools and talks only to its own run', 
   }
 });
 
+// The observer stamps each screenshot with the site it was taken on, and each
+// closed session with every site it showed (shots-boundary.js); these stand
+// in for it.
+const HEAD = 'http://head.example.invalid';
+const BASE = 'http://base.example.invalid';
+function stamp(bridge, persona, name, pageUrl) {
+  const outputDir = path.join(bridge.shotsDir, persona);
+  boundary.stampScreenshot(outputDir, path.join(outputDir, name), pageUrl);
+}
+const uploads = (bridge) => bridge.calls.filter((sent) => sent.path.endsWith('/shot'));
+
 test('save_shot publishes only a plain .png the browser saved in a persona directory', async (t) => {
   const bridge = bridgeFixture(t);
   const image = Buffer.from('png bytes the platform will check');
   fs.writeFileSync(path.join(bridge.shotsDir, 'admin', 'invite-desktop-after.png'), image);
+  stamp(bridge, 'admin', 'invite-desktop-after.png', `${HEAD}/#invite`);
   const shot = { change: 'invite-suggestions', screen: 'desktop', side: 'after' };
 
   const saved = await bridge.call('save_shot', { shots: [{ ...shot, file: 'invite-desktop-after.png' }] });
   assert.equal(saved.isError, false);
   assert.equal(saved.value.saved, 1);
-  assert.equal(bridge.calls.length, 1);
-  const [sent] = bridge.calls;
+  assert.deepEqual(bridge.calls.map((sent) => sent.path),
+    [`/api/internal/shots/${bridge.runId}/context`, `/api/internal/shots/${bridge.runId}/shot`],
+    'the run\'s own addresses come from its brief');
+  const [sent] = uploads(bridge);
   assert.equal(sent.method, 'POST');
-  assert.equal(sent.path, `/api/internal/shots/${bridge.runId}/shot`);
   assert.deepEqual(sent.query, { ...shot, kind: 'screen' });
   assert.equal(sent.headers['content-type'], 'application/octet-stream');
   assert.ok(Buffer.from(sent.body).equals(image));
@@ -391,8 +421,8 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
   assert.equal((await bridge.call('save_shot', { shots: [{
     ...shot, kind: 'element', file: '../../state/invite-desktop-after.png',
   }] })).isError, false);
-  assert.equal(bridge.calls[1].query.kind, 'element');
-  assert.ok(Buffer.from(bridge.calls[1].body).equals(image));
+  assert.equal(uploads(bridge)[1].query.kind, 'element');
+  assert.ok(Buffer.from(uploads(bridge)[1].body).equals(image));
 
   // Browser storage state, hidden or oddly named files, and links are never read.
   fs.writeFileSync(path.join(bridge.dir, 'member.json'), '{"cookies":["secret"]}');
@@ -412,7 +442,7 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
     assert.equal(refused.isError, true, `${file} must be refused`);
     assert.equal(refused.value.results[0].error.code, code, file);
   }
-  assert.equal(bridge.calls.length, 2, 'a refused file never reaches the platform');
+  assert.equal(uploads(bridge).length, 2, 'a refused file never reaches the platform');
 
   // Several files in one call, and one screenshot for two changes: each is
   // its own upload, and a refused one does not stop the rest.
@@ -425,7 +455,45 @@ test('save_shot publishes only a plain .png the browser saved in a persona direc
   assert.equal(batch.value.saved, 2);
   assert.equal(batch.value.refused, 1);
   assert.equal(batch.value.results[2].error.code, 'shot_file_not_found');
-  assert.deepEqual(bridge.calls.slice(2).map((sent) => sent.query.change), ['invite-suggestions', 'saved-toast']);
+  assert.deepEqual(uploads(bridge).slice(2).map((sent) => sent.query.change), ['invite-suggestions', 'saved-toast']);
+});
+
+test('save_shot publishes a shot only from its own side\'s address', async (t) => {
+  const bridge = bridgeFixture(t);
+  const member = path.join(bridge.shotsDir, 'member');
+  const take = (name, pageUrl, pixels = name) => {
+    fs.writeFileSync(path.join(member, name), pixels);
+    if (pageUrl !== undefined) stamp(bridge, 'member', name, pageUrl);
+  };
+  const save = (side, file) => bridge.call('save_shot', { shots: [
+    { change: 'invite-suggestions', screen: 'desktop', side, file },
+  ] });
+
+  take('before.png', `${BASE}/#home`);
+  take('after.png', `${HEAD}/#home?x=1`);
+  take('another-site.png', 'https://example.com/');
+  take('blank.png', 'about:blank');
+  take('unstamped.png');
+  take('replaced.png', `${HEAD}/`);
+  fs.writeFileSync(path.join(member, 'replaced.png'), 'a download that took its name');
+
+  assert.equal((await save('before', 'before.png')).isError, false);
+  assert.equal((await save('after', 'after.png')).isError, false);
+  for (const [side, file] of [
+    ['after', 'before.png'],
+    ['before', 'after.png'],
+    ['after', 'another-site.png'],
+    ['after', 'blank.png'],
+    ['after', 'unstamped.png'],
+    ['after', 'replaced.png'],
+  ]) {
+    const refused = await save(side, file);
+    assert.equal(refused.isError, true, `${side} ${file} must be refused`);
+    assert.equal(refused.value.results[0].error.code, 'shot_not_on_app', `${side} ${file}`);
+    assert.match(refused.value.results[0].error.message, new RegExp(`the ${side} address`));
+  }
+  assert.deepEqual(uploads(bridge).map((sent) => Buffer.from(sent.body).toString()), ['before.png', 'after.png']);
+  assert.equal(bridge.calls.filter((sent) => sent.path.endsWith('/context')).length, 1, 'the brief is read once');
 });
 
 test('save_clip publishes the newest recording and retires every older one', async (t) => {
@@ -437,6 +505,8 @@ test('save_clip publishes the newest recording and retires every older one', asy
     const when = new Date(Date.now() - secondsAgo * 1000);
     fs.utimesSync(file, when, when);
   };
+  // What the observer writes as each recorded session closes, after its clip.
+  const closed = (dir, ...pages) => boundary.recordSession(dir, pages);
   const clip = (change, side) => bridge.call('save_clip', { change, screen: 'desktop', side });
   const lastBody = () => Buffer.from(bridge.calls.at(-1).body).toString();
 
@@ -450,6 +520,7 @@ test('save_clip publishes the newest recording and retires every older one', asy
   record(member, 'stills-session.webm', 'stills', 60);
   record(member, 'motion-before.webm', 'motion before', 10);
   record(member, 'notes.txt', 'not a clip', 0);
+  closed(member, `${BASE}/#lists`);
   const before = await clip('saved-toast', 'before');
   assert.equal(before.isError, false);
   assert.deepEqual(bridge.calls.at(-1).query,
@@ -458,12 +529,16 @@ test('save_clip publishes the newest recording and retires every older one', asy
 
   // Both were retired, so the stale stills session can never be published.
   assert.equal((await clip('saved-toast', 'after')).value.code, 'clip_not_found');
-  record(member, 'motion-after.webm', 'motion after', 0);
+  // A second back: a file's own timestamps come from a coarser clock than Date.now().
+  record(member, 'motion-after.webm', 'motion after', 1);
+  closed(member, `${HEAD}/#lists`);
   assert.equal((await clip('saved-toast', 'after')).isError, false);
   assert.equal(lastBody(), 'motion after');
 
   // A read-only admin's browser records into the admin directory.
-  record(path.join(bridge.shotsDir, 'admin'), 'banner.webm', 'admin banner', 0);
+  const admin = path.join(bridge.shotsDir, 'admin');
+  record(admin, 'banner.webm', 'admin banner', 1);
+  closed(admin, `${BASE}/`);
   assert.equal((await clip('admin-banner', 'before')).isError, false);
   assert.equal(lastBody(), 'admin banner');
 
@@ -471,7 +546,48 @@ test('save_clip publishes the newest recording and retires every older one', asy
   fs.writeFileSync(path.join(bridge.dir, 'elsewhere.webm'), 'not from this browser');
   fs.symlinkSync(path.join(bridge.dir, 'elsewhere.webm'), path.join(member, 'linked.webm'));
   assert.equal((await clip('saved-toast', 'after')).value.code, 'clip_not_found');
-  assert.equal(bridge.calls.filter((sent) => sent.path.endsWith('/shot')).length, 3);
+  assert.equal(uploads(bridge).length, 3);
+});
+
+test('save_clip publishes a recording only when its whole session stayed on its side\'s address', async (t) => {
+  const bridge = bridgeFixture(t);
+  const member = path.join(bridge.shotsDir, 'member');
+  // A second back by default: a file's own timestamps come from a coarser
+  // clock than Date.now(), so a record written next could read as older.
+  const recorded = (name, secondsAgo = 1) => {
+    const file = path.join(member, name);
+    fs.writeFileSync(file, name);
+    const when = new Date(Date.now() - secondsAgo * 1000);
+    fs.utimesSync(file, when, when);
+  };
+  const clip = (side) => bridge.call('save_clip', { change: 'saved-toast', screen: 'desktop', side });
+  const refusedWith = async (side) => {
+    const refused = await clip(side);
+    assert.equal(refused.isError, true);
+    assert.equal(refused.value.code, 'shot_not_on_app');
+    return refused.value.message;
+  };
+
+  // No session record at all.
+  recorded('first.webm');
+  assert.match(await refusedWith('after'), /cannot be told/);
+  // The session left the address, or it was the other side's.
+  boundary.recordSession(member, [`${HEAD}/`, 'https://example.com/']);
+  assert.match(await refusedWith('after'), /not taken on the after address/);
+  boundary.recordSession(member, [`${HEAD}/`]);
+  assert.match(await refusedWith('before'), /not taken on the before address/);
+  // A clip newer than the record came from a session no record covers.
+  recorded('second.webm', -5);
+  assert.match(await refusedWith('after'), /cannot be told/);
+  assert.equal(uploads(bridge).length, 0);
+
+  // Recorded again on the address, it is published.
+  const second = path.join(member, 'second.webm');
+  const earlier = new Date(Date.now() - 1000);
+  fs.utimesSync(second, earlier, earlier);
+  boundary.recordSession(member, [`${HEAD}/#lists`]);
+  assert.equal((await clip('after')).isError, false);
+  assert.equal(Buffer.from(uploads(bridge)[0].body).toString(), 'second.webm');
 });
 
 test('fail_request only toggles an API path a change declared', async (t) => {
@@ -487,4 +603,15 @@ test('fail_request only toggles an API path a change declared', async (t) => {
   assert.equal(control.path, '/__usernode_shots_control/request-failure');
   assert.equal(control.headers['x-shots-control-token'], 'c'.repeat(64));
   assert.deepEqual(JSON.parse(control.body), { path: '/api/lists/demo', enabled: true });
+});
+
+test('a shots turn samples the worker\'s memory through the proxy, which the image carries', () => {
+  // The image copies the sampler beside the proxy that loads it.
+  assert.match(read('Dockerfile'), /COPY shots-memory\.js \/usr\/local\/bin\/shots-memory\.js/);
+  assert.match(read('shots-origin-proxy.js'), /require\('\.\/shots-memory'\)/);
+  // The runner asks for a sample every five seconds, before the proxy starts.
+  const runner = read('run-cc.sh');
+  const asked = runner.indexOf('export SHOTS_MEMORY_SAMPLE_MS=5000');
+  assert.ok(asked > 0, 'the runner sets the interval');
+  assert.ok(asked < runner.indexOf('node /usr/local/bin/shots-origin-proxy.js &'), 'before the proxy starts');
 });

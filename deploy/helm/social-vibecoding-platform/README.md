@@ -96,6 +96,26 @@ Deployment's existing secrets checksum triggers a rollout when these values
 change. After rollout, check the admin mail status and verify delivery to a
 mailbox you control.
 
+For immediate imported proposal head updates, set `secrets.githubWebhookSecret`
+in the same SOPS-encrypted values file. It maps to `GITHUB_WEBHOOK_SECRET` in
+the chart-created Secret; its empty default leaves the webhook disabled.
+With `secrets.create: false`, supply that environment-variable key in
+`secrets.existingSecret` and roll out the platform after changing it.
+
+Publish the updated chart and sync the encrypted values first. The secrets
+checksum rolls out chart-managed changes. Configure the GitHub App webhook,
+or a webhook on each relevant repository, with the same secret, JSON payloads,
+TLS verification enabled, and `pull_request` events sent to
+`https://<config.domain>/api/github/webhook`. Repository webhooks cover only
+their own repository; an App webhook covers its subscribed installations.
+
+An unsigned `ping` must return 401 `Bad signature`; 503 means the running
+process still lacks the secret. A correctly signed ping returns 200 with
+`pong: true`. Check GitHub's Recent deliveries, then verify a real proposal
+head update or the `github-webhook` log entry `Pull request event applied`.
+Delivery HTTP 200 only acknowledges receipt; synchronization runs afterward.
+The periodic sweep remains the fallback for missed deliveries.
+
 For GitHub and X account linking, add both OAuth credential pairs to the same
 encrypted file's existing `secrets` block using the SOPS editor:
 
@@ -280,27 +300,40 @@ control ingress to its Pods. This also permits a cutover-ready configuration
 with the platform, migration Job, and ingress disabled until the database is
 writable.
 
-Previews prefer the node hosting the external CloudNativePG primary by default
-(`config.previewFollowDatabasePrimary: true`). The chart derives
+Previews and production apps prefer to run near the external CloudNativePG
+primary by default (`config.previewFollowDatabasePrimary: true`; the name
+predates apps following it too). The chart derives
 `PREVIEW_DATABASE_CLUSTER` from `postgresql.podSelector["cnpg.io/cluster"]` and
 `PREVIEW_DATABASE_NAMESPACE` from `postgresql.namespace` (or the release
 namespace). Set the flag to `false` to disable the preference. Bundled PostgreSQL
 and external databases without the CNPG cluster selector keep normal placement.
 Installations without Helm can set both environment variables on the platform.
 
-Only staging preview Deployments receive a weight-100 preferred Pod affinity
-term matching that cluster's `cnpg.io/instanceRole: primary` across
-`kubernetes.io/hostname`. Other eligible nodes remain available if the primary's
-node is full, unavailable, or no matching primary exists. This is a scheduler
+Staging preview and production app Deployments receive two preferred Pod
+affinity terms matching that cluster's `cnpg.io/instanceRole: primary`: weight
+100 across `topology.kubernetes.io/zone`, and weight 50 across
+`kubernetes.io/hostname`. The zone term is the one that matters on a cluster
+spread over data centres: a page makes many sequential queries, so a pod in
+another data centre pays that round trip on every one, and checks against such
+a preview fail on data that arrives too late. Label every node with its
+location for the zone term to apply, for example:
+
+```sh
+kubectl label node <node> topology.kubernetes.io/zone=<location>
+```
+
+A node without the label matches no zone, so an unlabelled cluster keeps the
+host preference alone. Other eligible nodes remain available if the zone is
+full, unavailable, or no matching primary exists. This is a scheduler
 preference, not a guarantee: other scheduling scores can outweigh it. It needs
-no node labels beyond the standard hostname, extra runtime RBAC, or node lookup.
+no extra runtime RBAC or node lookup.
 
 After releasing the platform image and chart together, newly created or
-reconciled preview Deployments get this policy. Existing Deployments are not
-patched automatically. Following a database failover, newly scheduled Pods
-prefer the new primary; running previews stay where they are. Opting out affects
-future reconciliation too. Production apps, build Pods, workers and captures
-retain their existing placement. See the
+reconciled preview and app Deployments get this policy. Existing Deployments
+are not patched automatically: a running app moves when it is next deployed.
+Following a database failover, newly scheduled Pods prefer the new primary;
+running pods stay where they are. Opting out affects future reconciliation too.
+Build Pods, workers and captures retain their existing placement. See the
 [Kubernetes affinity documentation](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#inter-pod-affinity-and-anti-affinity)
 and [CloudNativePG labels](https://cloudnative-pg.io/docs/1.28/labels_annotations/).
 

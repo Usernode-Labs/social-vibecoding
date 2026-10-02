@@ -4,9 +4,23 @@
 // address as a username — the handle every other member sees on its
 // messages, its profile address and the leaderboard. This module is the
 // ask that replaces that: on arrival at the signed-in shell, an account
-// the SERVER says has never chosen gets one field, prefilled with a
-// suggestion derived from the address, and cannot go further until it
-// holds a real handle.
+// the SERVER says has never chosen gets one field and cannot go further
+// until it holds a real handle.
+//
+// The field starts EMPTY (#3575). It used to arrive holding a suggestion
+// derived from the address, fetched from GET /api/me/username/suggestion;
+// one press of Continue accepted it, which made the "choice" a username
+// generated from the email — what the request asked us not to do. The route
+// is gone, the person types their own, and the line under the field says
+// who will see it: "Your username will be public to other users on
+// Homeroom." (USERNAME_PUBLIC_NOTE in ./shared.ts; this classic module has
+// no imports, so it spells the same words and a test holds them together).
+//
+// Who still meets this gate: the sign-up paths ask before the session
+// exists (the set-password step, the register form), so it is the backstop
+// for an account flagged some other way — the #2563 backfill of
+// email-as-username accounts that already had a password, or an
+// admin-created account given a password by hand.
 //
 // ── What decides whether to ask ────────────────────────────────────────
 //
@@ -54,8 +68,12 @@
   // The one screenshot state for this step. Every OTHER `?shot=` and
   // `?demo=` route has to stay deterministic — a blocking overlay lifted
   // over an unrelated check would fail it — so the gate skips them all and
-  // this one value opts back in with a fixture suggestion and no fetch.
+  // this one value opts back in, writing nothing.
   const SHOT = 'choose-username';
+
+  // The sentence beside the field (#3575). The same words as
+  // USERNAME_PUBLIC_NOTE in ./shared.ts.
+  const PUBLIC_NOTE = 'Your username will be public to other users on Homeroom.';
 
   const UsernameFirstRun = {
     _presented: false,
@@ -111,7 +129,7 @@
 
       const shot = UsernameFirstRun._shot();
       if (shot === SHOT) {
-        UsernameFirstRun._present({ suggestion: 'ada_lovelace', demo: true });
+        UsernameFirstRun._present({ demo: true });
         return;
       }
       try {
@@ -146,44 +164,17 @@
         return;
       }
 
-      // Present FIRST and fill the field when the suggestion lands. The
-      // flag alone is enough to know the gate applies, and putting the
-      // overlay up before a round trip is what keeps Home from being shown
-      // behind an ask that has not arrived yet.
-      UsernameFirstRun._present({ suggestion: null });
-      let suggestion = null;
-      try {
-        const res = await fetch('/api/me/username/suggestion', {
-          credentials: 'same-origin',
-        });
-        const body = await res.json().catch(() => ({}));
-        if (res.ok) suggestion = body.suggestion || null;
-      } catch (err) {
-        // No suggestion is a perfectly usable state: the field is empty and
-        // the person types their own. console.warn at most.
-        console.warn('[username-first-run] suggestion skipped:', err);
-      }
-      UsernameFirstRun._fill(suggestion);
-    },
-
-    // Prefill the field once the suggestion arrives, unless the person has
-    // already started typing — their keystrokes outrank a late fetch.
-    //
-    // The mirror onto `data-username-suggested` is not decoration: the
-    // declared check in dapp.json asserts the field arrives FILLED, and an
-    // attribute selector reads the attribute, which a `.value` property
-    // write never touches.
-    _fill(suggestion) {
-      const input = UsernameFirstRun._input;
-      if (!input || !suggestion || input.value) return;
-      input.value = suggestion;
-      input.setAttribute('data-username-suggested', suggestion);
-      try { input.setSelectionRange(suggestion.length, suggestion.length); } catch (_) {}
+      // The flag alone is enough to know the gate applies, so the overlay
+      // goes up in this tick, with no round trip in front of it — which is
+      // what keeps Home from being shown behind an ask that has not arrived.
+      UsernameFirstRun._present({});
     },
 
     _present(opts) {
       if (UsernameFirstRun._presented) return;
       UsernameFirstRun._presented = true;
+      // A step of the newcomer's path (#3369); never the screenshot state.
+      if (!(opts && opts.demo)) window.UITelemetry?.navigate?.('username_sheet');
 
       const el = (tag, cls, text) => {
         const node = document.createElement(tag);
@@ -200,12 +191,12 @@
       // sign-in name and your public page address". No promise about
       // changing it later, because POST /api/me/username asks for the
       // current password and an account that arrived by email code may not
-      // have one yet.
+      // have one yet. Who sees it is said once, beside the field (#3575),
+      // so this line no longer says it a second time.
       panel.appendChild(el('p',
         'text-sm text-zinc-600 dark:text-zinc-400 mb-3',
-        'This is your @handle: your sign-in name, your public page ' +
-        'address, and what other members see on everything you post. ' +
-        'Letters, numbers and underscores, 3 to 32 characters.'));
+        'This is your @handle: your sign-in name and your public page ' +
+        'address. Letters, numbers and underscores, 3 to 32 characters.'));
 
       const label = el('label',
         'block text-xs font-medium text-zinc-500 dark:text-zinc-400 mb-1',
@@ -224,8 +215,15 @@
       input.spellcheck = false;
       input.setAttribute('autocapitalize', 'none');
       input.placeholder = 'yourname';
-      UsernameFirstRun._input = input;
+      input.setAttribute('aria-describedby', 'choose-username-public');
       panel.appendChild(input);
+
+      // #3575: next to the field, who will see what goes in it. Its own
+      // line, above the error line, so a refusal never displaces it.
+      const note = el('p', 'text-sm text-zinc-500 dark:text-zinc-400 mt-1', PUBLIC_NOTE);
+      note.id = 'choose-username-public';
+      note.setAttribute('data-choose-username-public', '');
+      panel.appendChild(note);
 
       // The inline error line. Pinned under the field because every rule
       // the server enforces (charset, length, reserved names, availability)
@@ -253,6 +251,7 @@
         if (sheet && sheet.dismiss) sheet.dismiss();
         UsernameFirstRun._presented = false;
         UsernameFirstRun._resolve();
+        window.App?._renotifyNavigation?.();
       };
 
       const submit = async () => {
@@ -330,7 +329,6 @@
         return;
       }
       UsernameFirstRun._sheet = sheet;
-      UsernameFirstRun._fill(opts && opts.suggestion);
       try { input.focus(); } catch (_) {}
     },
 

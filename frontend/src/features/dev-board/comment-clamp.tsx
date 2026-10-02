@@ -53,6 +53,9 @@ export const CLAMP_CLASS = 'line-clamp-4';
  * screen. The 1px slack is for sub-pixel line heights: a body of exactly
  * four lines can measure a fraction over, and a control that says "Show
  * more" and then reveals nothing is worse than no control.
+ *
+ * The agent chat's long messages are measured with this too, at their own
+ * eight lines (#3558, features/agent-session/user-message.tsx).
  */
 export function overflowsClamp(el: { scrollHeight: number; clientHeight: number }): boolean {
   return el.scrollHeight - el.clientHeight > 1;

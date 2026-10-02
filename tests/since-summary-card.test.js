@@ -63,8 +63,18 @@ test('the card says who wrote it, is not a link, and the × hides it until somet
   // Its one way on is a button, not a link: Week by week, the Workshop page
   // (#852).
   assert.match(LANDER, /\{slug \? \(\s*<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>\s*\) : null\}/);
-  assert.match(SRC, /data-ws-since-summary-more="" onClick=\{onMore\}>\s*Week by week/);
-  for (const cls of ['dev-ws-since-card', 'dev-ws-since-card-n', 'dev-ws-since-card-tag', 'dev-ws-since-card-x', 'dev-ws-since-card-text', 'dev-ws-since-card-list']) {
+  assert.match(SRC, /data-ws-since-summary-more="" onClick=\{onMore\}>\s*Week by week\s*<ChevronRightIcon className="w-3\.5 h-3\.5" aria-hidden="true" \/>/);
+  // #3510: in the head's far corner with its arrow, like the Discussion
+  // card's Open, and the × after it at the very end; the count and "AI
+  // summary" moved under the line to make the room.
+  const head = SRC.slice(SRC.indexOf('<div className="dev-ws-head">'), SRC.indexOf('data-ws-since-summary-text'));
+  assert.ok(head.indexOf('<span className="dev-ws-hub-head-end">') >= 0
+    && head.indexOf('<span className="dev-ws-hub-head-end">') < head.indexOf('data-ws-since-summary-more')
+    && head.indexOf('data-ws-since-summary-more') < head.indexOf('data-ws-since-summary-dismiss'),
+    'Week by week then the ×, together at the head\'s end');
+  assert.ok(SRC.indexOf('className="dev-ws-since-card-tag"') > SRC.indexOf('data-ws-since-summary-list'), 'the AI tag under the text');
+  assert.ok(SRC.indexOf('className="dev-ws-since-card-n"') > SRC.indexOf('data-ws-since-summary-list'), 'and the count with it');
+  for (const cls of ['dev-ws-since-card', 'dev-ws-since-card-n', 'dev-ws-since-card-tag', 'dev-ws-since-card-foot', 'dev-ws-since-card-x', 'dev-ws-since-card-text', 'dev-ws-since-card-list']) {
     assert.match(CSS, new RegExp(`\\.${cls} \\{`), `.${cls} has a rule`);
   }
 });

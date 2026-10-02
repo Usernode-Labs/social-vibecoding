@@ -22,7 +22,9 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 //
 // PERMISSIONS: admin-only, enforced by the inline `req.user?.isAdmin` 403
 // gate on /api/gallery/* (src/routes/gallery.js). Read-only surface, so
-// full and view-only admins both get it.
+// full and view-only admins both get it. The one exception is the shots-runs
+// CSV link (ExportRuns below): a bulk download is write-gated server-side,
+// so only a full admin is offered it.
 //
 // ── React-owned (#1120 slice 7) ───────────────────────────────────────
 //
@@ -153,6 +155,19 @@ const PROBLEMS: Array<[string, string]> = [
   ['override', 'Shots waived'],
 ];
 
+// The run states the shots-runs export filters on (services/shots-export.js
+// STATE_FILTERS). `in_progress` is every run still under way.
+const EXPORT_STATES: Array<[string, string]> = [
+  ['', 'All states'],
+  ['failed', 'Failed'],
+  ['verified', 'Verified'],
+  ['in_progress', 'In progress'],
+  ['stale', 'Stale (newer commit)'],
+  ['cancelled', 'Cancelled'],
+  ['not_required', 'Not required'],
+  ['overridden', 'Waived'],
+];
+
 const DOT = <span className="text-zinc-500 dark:text-zinc-500">·</span>;
 
 function Chip({ state, reason }: { state?: string; reason?: string }) {
@@ -257,6 +272,63 @@ function StatsStrip({ s }: { s: Stats }) {
       {item('unsupported agents', s.unsupported_agent || 0, true)}
       {item('overrides', s.override || 0, true)}
       {s.unknown_state ? item('outcome not recorded', s.unknown_state, true) : null}
+    </section>
+  );
+}
+
+// Every shots run as a CSV (GET /api/admin/shots/export.csv), for debugging
+// successes and failures in bulk. Unlike the gallery around it, the file
+// covers every proposal, merged or not: most failed runs never merge.
+//
+// A plain link, not a fetch, the same as the Homeroom bot's export: the
+// endpoint streams the file and the browser receives a download better than
+// a Blob assembled in page memory. The endpoint is requireAdminWrite, so a
+// view-only admin gets a note where the link would be.
+function ExportRuns({ app }: { app: string }) {
+  const canWrite = typeof window !== 'undefined' && !!(window as any).AdminConsole?.canWrite();
+  const [state, setState] = useState('');
+  const [since, setSince] = useState('');
+
+  const params = new URLSearchParams();
+  // The App filter's value is the app's slug; an app listed by numeric id
+  // (no slug) is not one the export can name, so it falls back to all apps.
+  if (app && !/^\d+$/.test(app)) params.set('app', app);
+  if (state) params.set('state', state);
+  if (since) params.set('since', since);
+  const qs = params.toString();
+  const href = `/api/admin/shots/export.csv${qs ? `?${qs}` : ''}`;
+
+  return (
+    <section id="admin-gallery-export-panel" className={`${AdminUI.card} p-3 space-y-2`}>
+      <div>
+        <div className="text-sm font-medium">Export shots runs</div>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+          One row per before & after run on every proposal, merged or not, with its failure
+          details, timings and token use. Uses the App filter above. Runs that did not verify
+          are removed after 30 days unless they are still a proposal's latest run.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">State
+          <select id="admin-gallery-export-state" className={SELECT_CLASS}
+            value={state} onChange={(e) => setState(e.target.value)}>
+            {EXPORT_STATES.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Since
+          <input id="admin-gallery-export-since" type="date" className={SELECT_CLASS}
+            value={since} onChange={(e) => setSince(e.target.value)} />
+        </label>
+        {canWrite ? (
+          <a id="admin-gallery-export" className={AdminUI.btn.outlineSm} href={href} download>
+            Download CSV
+          </a>
+        ) : (
+          <span id="admin-gallery-export-readonly" className="text-xs text-zinc-500 dark:text-zinc-400">
+            Downloading needs full admin access.
+          </span>
+        )}
+      </div>
     </section>
   );
 }
@@ -391,6 +463,8 @@ function GallerySection() {
 
           {/* Stats strip for the current filter */}
           {stats ? <StatsStrip s={stats} /> : null}
+
+          <ExportRuns app={app} />
 
           <div id="admin-gallery-proposals" className="space-y-4">
             {error

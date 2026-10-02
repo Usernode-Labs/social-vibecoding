@@ -405,12 +405,21 @@ async function applyHeadChange({
 // commit (a pin still on the pre-sync head is a guaranteed 409 — the
 // "wasn't merged, because the PR was updated on GitHub" loop of #2100); and
 // the 409 handler itself, which would otherwise release the claim and leave
-// the row waiting for the next sweep.
+// the row waiting for the next sweep. A third is submit_work's app-repo
+// revision (services/proposal-update.js), when GitHub's pull request still
+// reads the commit before the one it just pushed.
+//
+// `fresh` is the native reconcile's #2619 option, for the same reason: the
+// mirror coalesces one fetch per repository, and a caller reading back its
+// own push must not join a fetch that started before it. Pass it when the
+// push and this call are in the same request.
 //
 // Only answers for a head the mirror can see: a branch in the app's own
 // repository. A head on the author's fork is left to the poller, exactly as
 // before. Never throws.
-async function reconcileImportedHead({ config, pool, session, checks = 'defer', notify = true }) {
+async function reconcileImportedHead({
+  config, pool, session, checks = 'defer', notify = true, fresh = false,
+}) {
   try {
     if (!session || session.source !== 'imported' || !session.pr_number) {
       return { reconciled: false, reason: 'not_imported' };
@@ -428,7 +437,7 @@ async function reconcileImportedHead({ config, pool, session, checks = 'defer', 
 
     let dir; let mainSha; let liveHead;
     try {
-      dir = await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: [oldHead] });
+      dir = await mirror.ensureMirror(parsed.owner, parsed.repo, { refs: [oldHead], fresh });
       mainSha = await mirror.defaultBranchSha(dir);
       liveHead = await mirror.resolveBranch(dir, session.branch_name);
     } catch (err) {

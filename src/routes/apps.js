@@ -19,20 +19,24 @@ const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
-const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter } = require('../middleware/rate-limits');
+const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter, feedbackTitleLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
+const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
 const communities = require('../services/communities');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
+const appTemplates = require('../services/app-templates');
 const collabInvites = require('../services/collab-invites');
 const emailInvites = require('../services/email-invites');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const appActivity = require('../services/app-activity');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -492,8 +496,7 @@ async function sweepStuckCreatingApps(pool) {
 // native app returning from the background, say — without leaving the door
 // open. It is the DAILY cap that actually holds the line, because a ceiling
 // on one request is defeated by sending many.
-const ACTIVITY_MAX_PER_POST = 3600;
-const ACTIVITY_MAX_PER_DAY = 86400;
+const { ACTIVITY_MAX_PER_POST, ACTIVITY_MAX_PER_DAY } = appActivity;
 
 /**
  * The seconds to credit for one heartbeat, or `null` to refuse the body.
@@ -505,12 +508,7 @@ const ACTIVITY_MAX_PER_DAY = 86400;
  * was a 400. `Infinity` took the same route. A numeric STRING is refused too:
  * this body comes from our own client, which sends a number.
  */
-function activitySeconds(raw) {
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-  const rounded = Math.round(raw);
-  if (rounded <= 0) return null;
-  return Math.min(rounded, ACTIVITY_MAX_PER_POST);
-}
+const { activitySeconds } = appActivity;
 
 function appRoutes(config, { pool = getPool(config) } = {}) {
   const router = Router();
@@ -929,6 +927,36 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // The create dialog's suggested one-line "What is it?", from what the
+  // person said the project should do (#3624, asked of everyone making a
+  // project since). Any signed-in person who can reach the create dialog;
+  // the platform-access gate in front of /api/ decides who that is. A
+  // helper-model call billed like a session title, and the description's own
+  // first sentence when the model is unavailable.
+  router.post('/api/apps/suggest-description', feedbackTitleLimiter, sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
+    try {
+      const homeroomBotDm = require('../services/homeroom-bot-dm');
+      const brief = typeof req.body?.brief === 'string' ? req.body.brief : '';
+      const name = typeof req.body?.name === 'string' ? req.body.name.slice(0, 120) : '';
+      const out = await homeroomBotDm.suggestShortDescription({ name, brief, max: createOptions.DESCRIPTION_MAX });
+      if (!out) return res.status(400).json({ error: 'Describe the project in a sentence or two first.' });
+      if (out.usage && out.model) {
+        try {
+          const llm = require('../services/llm');
+          const limits = require('../services/limits');
+          await limits.recordSpend(pool, req.user.id, llm.estimateCostCents(out.usage, out.model), { byok: false });
+        } catch (err) {
+          log.warn('apps', 'Short description spend debit failed', { err: err.message });
+        }
+      }
+      return res.json({ description: out.description });
+    } catch (err) {
+      log.error('apps', 'Short description suggestion failed', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/apps', drainGuard, appCreateLimiter, async (req, res) => {
     const { name, repoUrl } = req.body;
 
@@ -943,7 +971,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     if (options.error) {
       return res.status(400).json({ error: options.error });
     }
-    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description } = options;
+    const { collabVisibility, viewVisibility, invitees, inviteEmails, governance: rule, description, template } = options;
 
     // Import-existing pre-flight: parse URL, accept any pending invite
     // for this exact repo, then verify Write access. Anything other
@@ -1089,6 +1117,18 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
         appRow = described[0] || appRow;
       }
 
+      // WHAT IT STARTS FROM (#3521; services/app-templates.js), when it is a
+      // starter rather than the empty scaffold. On the row, like the rule
+      // above, because app-creator scaffolds from the row: a Retry after a
+      // failed create writes the same starter.
+      if (template !== appTemplates.DEFAULT_TEMPLATE) {
+        const { rows: templated } = await pool.query(
+          `UPDATE apps SET template = $1 WHERE id = $2 RETURNING *`,
+          [template, appRow.id]
+        );
+        appRow = templated[0] || appRow;
+      }
+
       // A Group's invites go out now, each the same invite (and the same
       // notification) Members & approvals sends. Best-effort per person: the
       // project exists either way, and anyone missed can be invited from
@@ -1131,6 +1171,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           ...(invited ? { invited } : {}),
           ...(rule ? { approverPolicy: rule.approverPolicy, approvalsRequired: rule.approvalsRequired } : {}),
           ...(description ? { described: true } : {}),
+          ...(template !== appTemplates.DEFAULT_TEMPLATE ? { template } : {}),
         },
       });
 
@@ -1149,7 +1190,24 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       // watchdog will unstick the row after CREATION_TIMEOUT_MS.
       scheduleCreationWatchdog(pool, appRow.id);
 
-      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited });
+      // What the project should do, from the create dialog: filed as its
+      // first request, under its creator's name, once the project runs. For
+      // somebody the Homeroom bot builds for (#3624), the bot builds it and
+      // says so in their DM, which the dialog then offers to open; for
+      // anybody else it is left to the group. Optional here (a connector
+      // or an older client sends none), and never a reason the create fails.
+      let homeroomBot = null;
+      if (!repoUrlNormalized && typeof req.body.brief === 'string' && req.body.brief.trim()) {
+        try {
+          homeroomBot = await require('../services/homeroom-bot-dm').startFirstVersion(pool, config, {
+            app: appRow, user: req.user, brief: req.body.brief,
+          });
+        } catch (err) {
+          log.warn('apps', 'Homeroom bot first version not started', { appId: appRow.id, err: err.message });
+        }
+      }
+
+      res.status(201).json({ app: appAccess.stripAppSecrets(appRow), invited, ...(homeroomBot ? { homeroomBot } : {}) });
       platformLimits.nudge(pool, config, 'apps');
     } catch (err) {
       if (err.code === '23505') {
@@ -3143,6 +3201,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           [appId, req.user.id]
         );
       }
+      // The state row can later be hidden or deleted. Record this explicit
+      // user toggle in the best-effort append-only analytics log so a
+      // successfully captured favorite day survives a later preference.
+      if (favorited) {
+        events.record(pool, {
+          type: events.EVENT_TYPES.APP_FAVORITED,
+          userId: req.user.id,
+          appId,
+          metadata: { source: 'user_favorite_toggle' },
+        });
+      }
       res.json({ ok: true, is_favorited: favorited });
     } catch (err) {
       log.error('apps', 'Failed to toggle favorite', { message: err.message });
@@ -3281,6 +3350,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
       if (joined) {
         await communities.join(pool, app, req.user.id);
+        // "Find people to build with" counts the join now, not on the
+        // rule's next pass (#3564; challengeScorer.scoreOnJoin). Never
+        // throws, so the join answers the same either way.
+        await challengeScorer.scoreOnJoin(pool, config);
       } else {
         const result = await communities.leave(pool, app, req.user.id);
         if (!result.ok) return res.status(result.status).json({ error: result.error });
@@ -3363,12 +3436,72 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
-  router.post('/api/apps/:slug/activity', sameOriginBrowserOnly, async (req, res) => {
-    const seconds = activitySeconds(req.body?.seconds);
-
-    if (seconds === null) {
-      return res.status(400).json({ error: 'Invalid seconds value' });
+  // A successful App-tab entry, distinct from the later activity heartbeat.
+  // This write is awaited because the browser keeps an idempotent retry queue:
+  // only a 2xx means the durable row exists. `getAppForUser` supplies the same
+  // visibility, suspension and viewer-block guard as the app detail request.
+  router.post('/api/apps/:slug/openings', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+    let opening;
+    try {
+      opening = appOpenings.parseOpening(req.body);
+    } catch (err) {
+      if (err instanceof appOpenings.OpeningValidationError) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
     }
+
+    try {
+      const appRow = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!appRow) return res.status(404).json({ error: 'App not found' });
+
+      const result = await appOpenings.record(pool, {
+        userId: req.user.id,
+        appId: appRow.id,
+        opening,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({ ok: true, ...result });
+    } catch (err) {
+      log.error('apps', 'Failed to record app opening', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  router.post('/api/apps/:slug/activity', sameOriginBrowserOnly, async (req, res) => {
+    const modern = req.body && Object.prototype.hasOwnProperty.call(req.body, 'batchId');
+    const legacySeconds = modern ? null : activitySeconds(req.body?.seconds);
+    const activityRequest = modern
+      ? appActivity.parseActivityRequest(req.body)
+      : (legacySeconds === null ? null : { legacy: true, seconds: legacySeconds });
+    if (!activityRequest) {
+      return res.status(400).json({
+        error: modern ? 'Invalid activity payload' : 'Invalid seconds value',
+      });
+    }
+    if (!activityRequest.legacy) {
+      try {
+        const stored = await appActivity.recordActivityBatch(pool, {
+          slug: req.params.slug,
+          user: req.user,
+          request: activityRequest,
+        });
+        if (!stored.duplicate) {
+          await challengeScorer.scoreOnAppTime(pool, config, stored.scoring);
+        }
+        return res.json({ ok: true, duplicate: stored.duplicate });
+      } catch (err) {
+        if (err?.code === 'not_found') return res.status(404).json({ error: 'App not found' });
+        if (err?.code === 'batch_id_reused') {
+          return res.status(409).json({ error: 'Batch ID was reused' });
+        }
+        log.error('apps', 'Failed to track activity batch', { message: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+    const seconds = activityRequest.seconds;
 
     try {
       const appRow = await appAccess.getAppForUser(
@@ -3399,7 +3532,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
          ON CONFLICT (app_id, user_id, date)
          DO UPDATE SET seconds_spent = LEAST(
            app_activity.seconds_spent + EXCLUDED.seconds_spent, $4)
-         RETURNING (xmax = 0) AS inserted`,
+         RETURNING (xmax = 0) AS inserted, seconds_spent`,
         [appRows[0].id, req.user.id, seconds, ACTIVITY_MAX_PER_DAY]
       );
 
@@ -3410,6 +3543,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           appId: appRows[0].id,
         });
       }
+
+      // "Try an app" counts the heartbeat that takes this person's time in
+      // an app they did not make across TRY_APPS_MIN_SECONDS, not the rule's
+      // next pass (#3570; challengeScorer.scoreOnAppTime). Every other
+      // heartbeat is answered without a scoring pass, and nearly all without
+      // even a read: today's total, returned above, says whether this one can
+      // be the crossing at all. Never throws.
+      await challengeScorer.scoreOnAppTime(pool, config, {
+        appId: appRows[0].id,
+        ownerId: appRows[0].created_by,
+        userId: req.user.id,
+        seconds,
+        daySeconds: activityRows[0]?.seconds_spent,
+      });
 
       res.json({ ok: true });
     } catch (err) {

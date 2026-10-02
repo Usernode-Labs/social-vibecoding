@@ -53,7 +53,7 @@ import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { resolveIllustration } from '../../lib/challenge-illustrations';
 import { useIsomorphicLayoutEffect } from '../../lib/legacy-dom';
 import { useStoreState } from '../../lib/use-store-state';
-import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressCadence, ProgressRail } from './challenge-card';
+import { CHALLENGE_CARD_FACE, ChallengeCard, ChallengeMeta, ProgressRail } from './challenge-card';
 import { GroupHeader } from './group-header';
 import { LockedChallengesCard } from './locked-challenges-card';
 import { SeasonProgress, type SeasonProgressView } from './season-progress';
@@ -111,8 +111,8 @@ type CardView = {
   // "5d left" (TopochainChallenges._deadlineOf); null when done, and null
   // under a group header that carries the clock.
   deadline: string | null;
-  // "Updates every 15 min · last 10:42" (TopochainChallenges._cadenceOf) on a
-  // challenge the background scorer counts; null draws no line.
+  // "next count 10:42" (TopochainChallenges._cadenceOf), the meta line's last
+  // part, on a challenge the background scorer counts; null says nothing.
   cadence: string | null;
 };
 
@@ -137,9 +137,11 @@ type GridView =
     progress: SeasonProgressView;
     notice?: string;
     onboardingEventId?: number | null;
-    // While setup gates the event: how many challenges it hides (0 = none
-    // to show, and on an older server without the count).
+    // While Getting started gates the event: how many challenges it hides
+    // (0 = none to show, and on an older server without the count), and the
+    // first few of their names.
     lockedCount?: number;
+    lockedNames?: string[];
     groups: GroupView[];
   };
 
@@ -377,7 +379,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
           className="mb-3 text-sm font-medium text-violet-700 dark:text-violet-400 hover:underline"
           onClick={() => controller()?._toOnboarding(view.onboardingEventId!)}
         >
-          Go to onboarding challenges
+          Go to First challenges
         </button>
       ) : null}
       {/*
@@ -417,9 +419,9 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
         </Fragment>
       )))}
       {/*
-          After the challenges, what setup still hides and what opens it: the
-          locked placeholder, whose second line IS the unlock note, so the
-          note paragraph draws only when there is no placeholder (a locked
+          After the challenges, what Getting started still hides and what
+          opens it: the locked placeholder, whose first line IS the unlock
+          note, so the note paragraph draws only when there is no placeholder (a locked
           event on a server without the count; unlocked, there is no note). Both
           sit under the last card at the grid's own 12px gap. The placeholder's
           wrapper is a GRID too, so on a wide pane it takes one column like a
@@ -427,7 +429,7 @@ function Grid({ view }: { view: GridView | null }): ReactNode {
       */}
       {locked ? (
         <div className={`mt-3 ${GRID}`}>
-          <LockedChallengesCard count={view.lockedCount!} />
+          <LockedChallengesCard count={view.lockedCount!} names={view.lockedNames} />
         </div>
       ) : null}
       {view.notice && !locked ? (
@@ -632,9 +634,8 @@ function ArtworkWell({ slug, tone }: { slug: string | null; tone: string | null 
 
 // The board's order, below the platform header that carries the way back and
 // the name: the category, the title with the card's meta line ("3d left · 720
-// pts so far") and the task, the artwork well, the clean rail (with the
-// card's cadence line under it on a challenge the background scorer counts),
-// the action, then the reading — description,
+// pts so far", plus "next count 9:37" on a challenge the background scorer
+// counts) and the task, the artwork well, the clean rail, the action, then the reading — description,
 // Requirements, Scoring — and Participants under a rule. The board's
 // "Next: …" hint under the action is deliberately absent (owner decision).
 export function DetailPage({ view }: { view: DetailView }): ReactNode {
@@ -648,6 +649,7 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
           deadline={view.deadline}
           text={view.amount ? view.amount.text : null}
           earned={!!view.amount?.earned}
+          cadence={view.cadence}
         />
         {view.task ? <p className={PROSE}>{view.task}</p> : null}
       </div>
@@ -660,7 +662,6 @@ export function DetailPage({ view }: { view: DetailView }): ReactNode {
         name={view.goal}
         counted={view.counted}
       />
-      <ProgressCadence size="lg" text={view.cadence} />
       {view.blockProduction ? <BlockProductionStep view={view.blockProduction} /> : null}
       {view.cta ? <Cta view={view.cta} /> : null}
       {/* #3186: the feedback challenge's count is the viewer's own reports;

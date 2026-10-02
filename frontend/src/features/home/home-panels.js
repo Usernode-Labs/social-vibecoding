@@ -148,8 +148,8 @@ const HomePanels = {
   // expanded block draws this list as it is; the collapsed one picks its four
   // from it (visibleSlots).
   //
-  // The keys, in order: the group (groupRankOf: Get started while unfinished,
-  // This week, Always open, Season challenges, then a finished Get started),
+  // The keys, in order: the group (groupRankOf: First challenges while unfinished,
+  // This week, Always open, Season challenges, then a finished First challenges group),
   // then unfinished challenges first (orderDone, the tab's _isDone: the
   // viewer's own progress on every card), then organiser-featured (`featured`, the
   // flag the tab's personalization row carries), then the tab's public list
@@ -157,7 +157,7 @@ const HomePanels = {
   // `display_order` (the staging demo, or a cache written before the field)
   // keeps the server's sequence for that last key instead. Stable, and the
   // input is not mutated. `onboarding` is the payload's gate summary, which
-  // decides whether Get started is finished (setupFinished).
+  // decides whether the First challenges group is finished (setupFinished).
   orderRows(rows, onboarding) {
     const list = (rows || []).slice();
     const finished = HomePanels.setupFinished(list, onboarding);
@@ -440,6 +440,36 @@ const HomePanels = {
   // four-row budget is now simply THE budget.
   challengesView(panel) {
     const total = Number(panel.total) || 0;
+    // WHILE GETTING STARTED IS LOCKED, ONE LOCKED CARD (2026-10-01). A new
+    // account's season waits on its Getting started list, and that list IS
+    // the First challenges, drawn in full by the card on top of Home
+    // (./getting-started.tsx). So the block does not draw them a second time:
+    // it draws one dashed card saying how many challenges unlock after
+    // Getting started and naming a few, and nothing else, no season progress
+    // over it (the card counts the list) and no footer under it. The rows the
+    // server still sends are the gate's own, and wait for it to open. With
+    // nothing hidden to count (a season of First challenges only) there is no
+    // card to draw, and the block falls back to drawing them, as it always has.
+    const locked = HomePanels.lockedOnboarding(panel);
+    if (locked) {
+      if (HomePanels._expanded[panel.key]) HomePanels._expanded[panel.key] = false;
+      return {
+        key: panel.key,
+        title: panel.title || 'Challenges',
+        summary: HomePanels.summaryLine(panel),
+        season: null,
+        onboardingNote: null,
+        lockedCount: locked.count,
+        lockedNames: locked.names,
+        locked: true,
+        total,
+        allTotal: total,
+        expandable: false,
+        expanded: false,
+        rows: [],
+        groups: [],
+      };
+    }
     const expanded = !!HomePanels._expanded[panel.key];
     const empty = !total
       || !Array.isArray(panel.challenges)
@@ -487,20 +517,17 @@ const HomePanels = {
       // heading; `season` is where it shows.
       summary: HomePanels.summaryLine(panel),
       season,
-      // The unlock note, only while setup gates the season, in the Challenges
-      // tab's words (its grid `notice`). The dashed placeholder carries the
-      // same line whenever it draws, so the block shows the note only without
-      // one. Once unlocked there is nothing to say: no note.
+      // The unlock note, only while Getting started gates the season, in the
+      // Challenges tab's words (its grid `notice`). A closed gate with a count
+      // took the locked branch above, whose card says it, so this is the gate
+      // with nothing to count (an older server, or a season of First
+      // challenges only), drawn as before: the cards, then the note. Once
+      // unlocked there is nothing to say: no note.
       onboardingNote: panel.onboarding && !panel.onboarding.unlocked
-        ? 'Finish these to unlock the rest of the season.'
+        ? 'Finish Getting started to unlock the rest of the season.'
         : null,
-      // How many challenges setup still hides, for the dashed "6 challenges
-      // locked" placeholder under the setup cards. Only while the gate is
-      // closed; a payload without the count (an older server) draws none, and
-      // the block keeps the unlock note under its cards instead.
-      lockedCount: panel.onboarding && !panel.onboarding.unlocked
-        ? (Number(panel.onboarding.hidden_count) || 0)
-        : 0,
+      // Always 0 here: a count above 0 is the locked branch above.
+      lockedCount: 0,
       total,
       allTotal,
       expandable,
@@ -512,6 +539,22 @@ const HomePanels = {
       rows: views,
       groups,
     };
+  },
+
+  // The closed gate's locked card, or null: how many challenges Getting
+  // started still hides from this viewer and the first few of their names
+  // (the server's additive `hidden_count` and `hidden_names`). Null once
+  // unlocked, for a viewer the gate does not apply to (whose payload has no
+  // `onboarding` at all), and when there is nothing hidden to count.
+  lockedOnboarding(panel) {
+    const o = panel && panel.onboarding;
+    if (!o || o.unlocked) return null;
+    const count = Math.floor(Number(o.hidden_count) || 0);
+    if (count < 1) return null;
+    const names = (Array.isArray(o.hidden_names) ? o.hidden_names : [])
+      .map((n) => String(n == null ? '' : n).trim())
+      .filter(Boolean);
+    return { count, names };
   },
 
   // ── The groups ─────────────────────────────────────────────────────
@@ -526,7 +569,7 @@ const HomePanels = {
   // group's rank while setup is unfinished; groupRankOf moves a finished Get
   // started to the end.
   CHALLENGE_GROUPS: {
-    ONBOARDING: { key: 'setup', heading: 'Get started', order: 0 },
+    ONBOARDING: { key: 'setup', heading: 'First challenges', order: 0 },
     WEEKLY: { key: 'week', heading: 'This week', order: 1 },
     PERSISTENT: { key: 'always', heading: 'Always open', order: 2 },
   },
@@ -544,7 +587,7 @@ const HomePanels = {
       ? HomePanels.CHALLENGE_GROUPS[category] : HomePanels.OTHER_GROUP;
   },
 
-  // Whether setup is behind the viewer, which decides where Get started sits.
+  // Whether setup is behind the viewer, which decides where the First challenges group sits.
   // The tab's rule (TopochainChallenges._setupFinished): with an onboarding
   // summary the server's gate says so (`unlocked === true`); without one, the
   // rows must hold at least one setup card and every one of them must be done.
@@ -557,7 +600,7 @@ const HomePanels = {
 
   // The not-done key the ordering sorts on and the collapsed block picks its
   // slots by: the tab's _isDone. Both lists carry the viewer's own `progress`
-  // on every card now. This key used to read it inside Get started only and
+  // on every card now. This key used to read it inside First challenges only and
   // the organiser's `completed` flag everywhere else, which is never set on a
   // challenge the collapsed block receives (the server sends open ones only),
   // so a card the viewer had finished kept its place (#2490). A row without
@@ -568,9 +611,9 @@ const HomePanels = {
     return c.completed === true;
   },
 
-  // A group's rank in the board's order, the tab's _groupRankOf: Get started
+  // A group's rank in the board's order, the tab's _groupRankOf: First challenges
   // while unfinished (0), This week (1), Always open (2), Season challenges
-  // (3), then Get started once finished (4, last), so the block leads with
+  // (3), then First challenges once finished (4, last), so the block leads with
   // what is left to do. Pure: a group from CHALLENGE_GROUPS/OTHER_GROUP and
   // the setupFinished answer.
   groupRankOf(group, setupFinished) {
@@ -600,7 +643,7 @@ const HomePanels = {
   // challengeRowView reads it), taken over the whole group the payload holds,
   // as the tab takes it over its group, not only over the cards the cap left
   // on screen. Always open says it has no deadline. Their cards drop theirs.
-  // Get started has no clock, so its cards keep their own. `views` are changed
+  // First challenges has no clock, so its cards keep their own. `views` are changed
   // in place, which is what keeps `rows` in agreement.
   challengeGroups(rows, views, panel, doneFrom) {
     const seasonEnd = panel && panel.season && panel.season.ends_at;
@@ -781,7 +824,7 @@ const HomePanels = {
   // event's end, the same date the Challenges tab uses — else the season's
   // end; none on a finished or not-open challenge. `group` is the card's key in
   // the board's group table (groupOf). challengeGroups heads every group, hands
-  // the clock to the headers and takes it off every card but Get started's.
+  // the clock to the headers and takes it off every card but those in First challenges.
   challengeRowView(c, panel) {
     const numeric = HomePanels.hasMeter(c);
     const done = !!(c.progress && c.progress.done);
@@ -852,7 +895,7 @@ const HomePanels = {
   //
   // The scope is the season, except while setup gates the rest: the block
   // then holds only the setup challenges, so the progress is setup's ("done
-  // in Get started", the tab's words and its group heading), the
+  // in First challenges", the tab's words and its group heading), the
   // board's "progress has a scope" rule. Deadlines stay on the cards or their
   // group headers, and points on the cards.
   //
@@ -875,7 +918,7 @@ const HomePanels = {
       return {
         done: Math.max(0, Math.min(t, Number(gate.completed) || 0)),
         total: t,
-        caption: 'done in Get started',
+        caption: 'done in First challenges',
       };
     }
     const name = panel.season && typeof panel.season.name === 'string'

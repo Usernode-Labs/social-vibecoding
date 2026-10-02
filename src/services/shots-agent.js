@@ -85,6 +85,14 @@ If a screen needs data you create through the app (hints.setup), create it
 the same way on both addresses before you shoot either, so the two sides
 differ only by the change.
 
+The copies hold demo data for each persona. The brief's availableFixtures
+lists it: who it is for (persona, alsoFor), what it shows and its path. Look
+there for a state the steps need before you decide a change cannot be
+reached, such as an agent run in progress or a proposal with votes. The
+declaredChecks are the app's own checks, run as read_only_admin: their paths
+can show data only that persona has, so another persona may find nothing
+there.
+
 If a change declares intent.controlledFailurePath, call fail_request with
 that path and enabled true just before the step that triggers it, and with
 enabled false once the error is on screen.
@@ -170,6 +178,9 @@ async function ensureShotsWorker(session, { onProgress = null, workerService = w
 // it would turn an id it does not list back into the author default.
 const DEFAULT_AGENT_MODEL = 'claude-sonnet-5-5';
 
+// Why the worker gave up on a turn that left no exit marker.
+const EXIT_CAUSES = new Set(['oom_killed', 'container_gone', 'turn_process_gone', 'probe_unobservable']);
+
 function agentModel(config) {
   return config?.shots?.agentModel || DEFAULT_AGENT_MODEL;
 }
@@ -227,13 +238,25 @@ async function dispatchClaude(config, options, deps) {
   }
   reportDiagnostic(options, { kind: 'turn_end', outcome: failedResult(result) ? 'error' : 'ok' });
   if (failedResult(result)) {
+    // How the process ended: its exit code, and when it left no exit marker
+    // (it was killed, or vanished with its container), the worker's reason
+    // from a fixed set (services/worker.js markerlessCause).
+    const exitCode = Number.isSafeInteger(result?.exitCode) ? result.exitCode : null;
+    const exitCause = EXIT_CAUSES.has(result?.markerlessCause) ? result.markerlessCause : null;
+    const exit = deps.agentTurn.sanitizeError({
+      message: result?.fatalError || `exit ${result?.exitCode ?? result?.agentExit ?? 'unknown'}`,
+    });
     const error = new ShotsAgentError(
       'shots_agent_failed',
       'The shots agent stopped with an error before it finished.',
-      deps.agentTurn.sanitizeError({ message: result?.fatalError || `exit ${result?.exitCode ?? result?.agentExit ?? 'unknown'}` })
+      exitCode == null && !exitCause ? exit : {
+        exit, ...(exitCode != null ? { exitCode } : {}), ...(exitCause ? { exitCause } : {}),
+      }
     );
     error.shotsBackend = 'claude_code';
     error.shotsModel = model;
+    error.shotsExitCode = exitCode;
+    error.shotsExitCause = exitCause;
     throw error;
   }
   return { backend: 'claude_code', model, result, threadId: resultThreadId(result) };
@@ -260,6 +283,7 @@ async function dispatch(config, options, injected = {}) {
 module.exports = {
   ShotsAgentError,
   DEFAULT_AGENT_MODEL,
+  EXIT_CAUSES,
   agentModel,
   SYSTEM_PROMPT,
   TASK_PROMPT,

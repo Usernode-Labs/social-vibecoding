@@ -318,3 +318,76 @@ test('a session gets a Mayor only with a usable key and a model that calls tools
   meta = { status: 'invalid', revision: 3 };
   assert.deepEqual(await mayor.resolveForSession({ pool: {}, config, session, userId: 1 }), { error: 'credential_required' });
 });
+
+test('#3557: a PDF goes to OpenRouter as a file part only for a model listed as taking files', async () => {
+  const pdf = {
+    type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0xLjc=' }, title: 'brief.pdf',
+  };
+  const messages = [{ role: 'user', content: [pdf, { type: 'text', text: 'what does it say?' }] }];
+  const send = async (catalogModel) => {
+    const { fetchImpl, calls } = fakeFetch(completion({ content: 'It says hi.' }));
+    const client = mayor.createClient({
+      apiKey: 'sk-or-v1-session', model: 'vendor/reader', catalogModel, fetchImpl,
+    });
+    await client.streamChat({ messages, systemPrompt: 'You are the Mayor.' });
+    return calls[0].body;
+  };
+
+  const reads = await send({ supportsFiles: true });
+  assert.deepEqual(reads.messages[1], {
+    role: 'user',
+    content: [
+      { type: 'text', text: 'what does it say?' },
+      { type: 'file', file: { filename: 'brief.pdf', file_data: 'data:application/pdf;base64,JVBERi0xLjc=' } },
+    ],
+  });
+  assert.deepEqual(reads.plugins, [{ id: 'file-parser', pdf: { engine: 'native' } }],
+    'the model reads it itself, never a paid OCR fallback');
+
+  for (const catalogModel of [null, { supportsFiles: false }, { supportsImages: true }]) {
+    const text = await send(catalogModel);
+    assert.deepEqual(text.messages[1], {
+      role: 'user',
+      content: '[PDF attachment omitted: brief.pdf — this model cannot read PDFs]\n\nwhat does it say?',
+    });
+    assert.equal(text.plugins, undefined);
+    assert.equal(JSON.stringify(text).includes('JVBERi0'), false, 'no PDF bytes reach a model that cannot read them');
+  }
+});
+
+test('#3557: a 400 on a request with a PDF file part retries once with the PDF named, not sent', async () => {
+  const pdf = {
+    type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0xLjc=' }, title: 'brief.pdf',
+  };
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push(JSON.parse(init.body));
+    const ok = calls.length > 1;
+    return {
+      ok, status: ok ? 200 : 400,
+      text: async () => JSON.stringify(ok ? completion({ content: 'Read the note.' }) : { error: { code: 400 } }),
+    };
+  };
+  const client = mayor.createClient({
+    apiKey: 'sk-or-v1-session', model: 'vendor/reader', catalogModel: { supportsFiles: true }, fetchImpl,
+  });
+  const result = await client.streamChat({
+    messages: [{ role: 'user', content: [pdf, { type: 'text', text: 'what does it say?' }] }],
+    systemPrompt: 'You are the Mayor.',
+  });
+  assert.equal(result.text, 'Read the note.');
+  assert.equal(calls.length, 2, 'exactly one retry');
+  assert.equal(calls[0].messages[1].content[1].type, 'file');
+  assert.equal(typeof calls[1].messages[1].content, 'string');
+  assert.match(calls[1].messages[1].content, /brief\.pdf — PDF\. The model provider could not read it/);
+  assert.equal(calls[1].plugins, undefined);
+  assert.equal(JSON.stringify(calls[1]).includes('JVBERi0'), false);
+
+  // A refusal of a request with no file part is final.
+  const plain = fakeFetch({ error: { code: 400 } }, { status: 400 });
+  const textOnly = mayor.createClient({ apiKey: 'sk-or-v1-session', model: 'vendor/text', fetchImpl: plain.fetchImpl });
+  await assert.rejects(textOnly.streamChat({
+    messages: [{ role: 'user', content: [pdf, { type: 'text', text: 'hi' }] }], systemPrompt: 'Mayor',
+  }));
+  assert.equal(plain.calls.length, 1);
+});

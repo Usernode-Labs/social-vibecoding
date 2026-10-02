@@ -17,7 +17,7 @@ import { CheckIcon, ChevronRightIcon, XIcon } from '@/components/ui/icons';
 import type { AiBudgetFigures } from '../header/ai-budget';
 import { attachmentUrl, type AgentAttachment } from './api';
 import { formatSize } from './attachments';
-import { ANTHROPIC_PREFIX, OPENROUTER_PREFIX, type PickerOption } from './model-choice';
+import { ANTHROPIC_PREFIX, OPENROUTER_PREFIX, shortModelName, type PickerOption } from './model-choice';
 
 // ── Credits ────────────────────────────────────────────────────────────
 
@@ -91,7 +91,7 @@ const BAR_INK: Record<CreditTone, string> = {
  * spells it out. When the row leaves it room it says "$38 left / $50".
  *
  * "Room" is a container query, not a measured width: the pill's wrapper takes
- * the row's free space (it is the row's spacer) and is the query container,
+ * the row's free space (it is the row's spacer) and holds the query container,
  * so the wide label shows once that space is 10rem or more and the pill never
  * reflows the row it measures. Both labels are rendered and CSS picks one;
  * the button's aria-label says the full figures either way.
@@ -100,33 +100,47 @@ const BAR_INK: Record<CreditTone, string> = {
  * pill's own rounding: anchored left, so as credits are spent it drains from
  * the right. It is decoration beside the words, so it is hidden from a
  * screen reader.
+ *
+ * #3574: the room never gets narrower than the short label. A query container
+ * is sized as if it were empty, so the wrapper used to be free to shrink to
+ * nothing; on a phone, beside a long model name, it did, and the pill (which
+ * does not shrink) spilled out of its LEFT edge — the side `justify-end`
+ * overflows to — and was drawn over the model pill. So the container is now
+ * one layer in, filling a one-cell grid, and the other occupant of that cell
+ * is an invisible, zero-height copy of the short label in the pill's own type
+ * and padding. A grid is as wide as what is in it, so the room is at least as
+ * wide as the pill, the row's flexbox has to find the space somewhere else,
+ * and the model pill — `min-w-0`, truncating — is what gives it up.
  */
 export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () => void }) {
   return (
-    <div className="flex min-w-0 flex-1 justify-end [container-type:inline-size]" data-agent-session-credits-room>
-      <button
-        type="button"
-        className={`relative inline-flex h-8 shrink-0 items-center overflow-hidden rounded-full bg-zinc-100 px-3 text-sm font-semibold tabular-nums dark:bg-zinc-700 ${PILL_INK[credit.tone]}`}
-        aria-label={`Credits: ${credit.description}`}
-        title={credit.description}
-        data-agent-session-credits={credit.tone}
-        onClick={onOpen}
-      >
-        <span className="[@container(min-width:10rem)]:hidden" data-agent-session-credits-label="compact">{credit.label}</span>
-        {/* What is left in the tone's ink; the allowance after it in the
-            muted ink, so the colour reads as "how much is left" alone. */}
-        <span className="hidden [@container(min-width:10rem)]:inline" data-agent-session-credits-label="wide">
-          {credit.label}
-          <span className="font-normal text-zinc-500 dark:text-zinc-400">{` / ${credit.allowance}`}</span>
-        </span>
-        <span className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px]" aria-hidden="true">
-          <span
-            className={`block h-full bg-current ${BAR_INK[credit.tone]}`}
-            style={{ width: `${Math.round(credit.fraction * 1000) / 10}%` }}
-            data-agent-session-credits-bar
-          />
-        </span>
-      </button>
+    <div className="grid flex-1 justify-items-end" data-agent-session-credits-room>
+      <span className="invisible col-start-1 row-start-1 h-0 whitespace-nowrap px-3 text-sm font-semibold tabular-nums" aria-hidden="true">{credit.label}</span>
+      <div className="col-start-1 row-start-1 flex w-full justify-end [container-type:inline-size]">
+        <button
+          type="button"
+          className={`relative inline-flex h-8 shrink-0 items-center overflow-hidden rounded-full bg-zinc-100 px-3 text-sm font-semibold tabular-nums dark:bg-zinc-700 ${PILL_INK[credit.tone]}`}
+          aria-label={`Credits: ${credit.description}`}
+          title={credit.description}
+          data-agent-session-credits={credit.tone}
+          onClick={onOpen}
+        >
+          <span className="[@container(min-width:10rem)]:hidden" data-agent-session-credits-label="compact">{credit.label}</span>
+          {/* What is left in the tone's ink; the allowance after it in the
+              muted ink, so the colour reads as "how much is left" alone. */}
+          <span className="hidden [@container(min-width:10rem)]:inline" data-agent-session-credits-label="wide">
+            {credit.label}
+            <span className="font-normal text-zinc-500 dark:text-zinc-400">{` / ${credit.allowance}`}</span>
+          </span>
+          <span className="pointer-events-none absolute inset-x-0 bottom-0 h-[3px]" aria-hidden="true">
+            <span
+              className={`block h-full bg-current ${BAR_INK[credit.tone]}`}
+              style={{ width: `${Math.round(credit.fraction * 1000) / 10}%` }}
+              data-agent-session-credits-bar
+            />
+          </span>
+        </button>
+      </div>
     </div>
   );
 }
@@ -137,8 +151,29 @@ export function CreditPill({ credit, onOpen }: { credit: CreditView; onOpen: () 
  * The pill names the model and, for one that takes a thinking level, that
  * level after it in small muted type (#3079): "GPT-5 High". The label block is
  * centred in the pill; inside it the two words share one baseline.
+ *
+ * #3574: the name it shows is the model's SHORT name (model-choice.ts
+ * shortModelName: "GLM 5.3 Flash", not "Z.ai: GLM 5.3 Flash"), because on a
+ * phone this pill gets what the row has left. `label` stays the full name,
+ * and the pill still says that one to a screen reader and, when the two
+ * differ, as its tooltip. The credits pill beside it keeps its own width
+ * (CreditPill), so a pill short of room gives it up from the inside, in this
+ * order:
+ *
+ *   - The thinking level goes first, whole. The label block is a wrapping
+ *     flex line one line tall that clips the rest, so a level with no room
+ *     beside the name wraps out of sight instead of squeezing it. On one
+ *     unwrapped line the level (`shrink-0`) kept "Extra high" at full width
+ *     while the name shrank to nothing beside it, and then ran out of the
+ *     pill. A screen reader still hears it, and the sheet the pill opens
+ *     still shows it.
+ *   - Then the name is cut with an ellipsis (`truncate`, alone on its line).
+ *   - On a row under 18rem (a 320px phone: the row is a size container in
+ *     index.tsx) the pill's side padding drops from 16px to 12px, to hand
+ *     the name back some of the little room that row has.
  */
 export function ModelPill({ label, effort = '', disabled, open, onOpen, pillRef }: {
+  /** The model's full name, as the catalog gives it. */
   label: string;
   /** The thinking level's label, or '' for a model that takes none. */
   effort?: string;
@@ -147,20 +182,22 @@ export function ModelPill({ label, effort = '', disabled, open, onOpen, pillRef 
   onOpen: () => void;
   pillRef: RefObject<HTMLButtonElement | null>;
 }) {
+  const short = shortModelName(label) || label;
   return (
     <button
       ref={pillRef}
       type="button"
-      className="inline-flex h-10 min-w-0 max-w-[14rem] items-center rounded-full bg-zinc-100 px-4 text-[15px] font-medium text-zinc-900 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
+      className="inline-flex h-10 min-w-0 max-w-[14rem] items-center rounded-full bg-zinc-100 px-4 text-[15px] font-medium [@container(max-width:18rem)]:px-3 text-zinc-900 hover:bg-zinc-200 disabled:opacity-60 dark:bg-zinc-700 dark:text-zinc-100 dark:hover:bg-zinc-600"
       aria-haspopup="dialog"
       aria-expanded={open}
       aria-label={effort ? `Model: ${label}, thinking ${effort}` : `Model: ${label}`}
+      title={short !== label ? label : undefined}
       disabled={disabled}
       data-agent-session-model
       onClick={onOpen}
     >
-      <span className="flex min-w-0 items-baseline gap-1.5">
-        <span className="truncate">{label}</span>
+      <span className="flex h-6 min-w-0 flex-wrap items-baseline justify-center gap-x-1.5 overflow-hidden leading-6">
+        <span className="truncate">{short}</span>
         {effort ? (
           <span className="shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-model-effort>{effort}</span>
         ) : null}

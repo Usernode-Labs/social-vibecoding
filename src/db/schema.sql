@@ -633,6 +633,23 @@ CREATE TABLE IF NOT EXISTS app_activity (
   UNIQUE(app_id, user_id, date)
 );
 
+-- Delivery receipts for engaged-use batches. A browser retains the same UUID
+-- until acknowledgement, so a response lost after COMMIT can be retried
+-- without adding its seconds twice. The payload hash also prevents a caller
+-- from reusing a receipt for different data. Receipts contain user-level
+-- analytics delivery history and therefore do not copy into staging.
+CREATE TABLE IF NOT EXISTS app_activity_receipts (
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  batch_id        UUID NOT NULL,
+  payload_sha256  CHAR(64) NOT NULL,
+  received_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(user_id, batch_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_activity_receipts_received
+  ON app_activity_receipts(received_at);
+COMMENT ON TABLE app_activity_receipts IS 'staging:private';
+
 -- Per-check history: which of an app's declared dapp.json checks have ever
 -- been OBSERVED PASSING, and are therefore allowed to block a merge.
 --
@@ -1634,6 +1651,15 @@ COMMENT ON TABLE chat_session_agent_model_costs IS 'staging:private';
 -- clones with the rest of the row.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS votes_required        INTEGER;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_merge INTEGER;
+
+-- #3234: the electorate a proposal's vote OPENED with. The threshold is
+-- still computed live and merge rules do not read this column; it is shown
+-- only, so a voter can see the goalpost moved ("was N when voting opened")
+-- when members joined or left mid-vote. Set where a row becomes 'promoted'
+-- (routes/votes.js promote and the promote-on-import path) from the same
+-- governance.getElectorate count the gate uses. NULL for rows promoted
+-- before it existed, which show no note.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_promote INTEGER;
 
 -- #788: "explicit approval" flag — this proposal's diff changes a
 -- privilege-granting block in dapp.json (today only the top-level
@@ -2774,6 +2800,24 @@ CREATE INDEX IF NOT EXISTS idx_events_user_created ON events(user_id, created_at
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_llm_invocation_key
   ON events ((metadata->>'invocation_key'))
   WHERE event_type = 'llm_invocation' AND metadata ? 'invocation_key';
+
+-- A navigation keeps one browser-generated UUID through offline / transport
+-- retries. Scope it to its authenticated viewer and app: the same opaque UUID
+-- from another account is unrelated, while an exact replay is one opening.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_dapp_opening_key
+  ON events (user_id, app_id, (metadata->>'openingId'))
+  WHERE event_type = 'dapp_opened' AND metadata ? 'openingId';
+
+-- UI telemetry is uploaded in retryable batches. Both ids are opaque random
+-- client values validated by services/ui-telemetry.js; these indexes make a
+-- lost response safe to replay without double-counting either observations
+-- or delivery receipts.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_experience_event_id
+  ON events (user_id, (metadata->>'eventId'))
+  WHERE event_type = 'ui_experience' AND metadata ? 'eventId';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_ui_delivery_batch_id
+  ON events (user_id, (metadata->>'batchId'))
+  WHERE event_type = 'ui_telemetry_delivery' AND metadata ? 'batchId';
 
 -- Tagged staging:private so the analytics log (which is derived from
 -- chat_sessions / pr_kudos, both already private) is TRUNCATEd in staging
@@ -4274,9 +4318,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_activities_source_key_unique
 -- `measure` is a slug from a fixed list the code implements
 -- (services/topochain/challenge-rules.js: TRY_APPS, USE_APPS_MINUTES,
 -- PROPOSAL_SENT, PROPOSAL_ACCEPTED, USEFUL_FEEDBACK, CONNECT_ACCOUNTS,
--- BLOCK_PRODUCTION_ON). Deliberately NOT free-form logic: the thing that
--- decides who gets points has to be reviewable and testable, so what an
--- admin composes is the CONFIGURATION of a measure, never its body. It is
+-- BLOCK_PRODUCTION_ON, COMMUNITY_JOINED, COMMUNITY_APP_CREATED,
+-- INVITES_JOINED, VOTE_CAST, FEEDBACK_SENT). Deliberately NOT free-form
+-- logic: the thing that decides who gets points has to be reviewable and
+-- testable, so what an admin composes is the CONFIGURATION of a measure,
+-- never its body. It is
 -- also NOT `challenges.kind` — that column already means something to the
 -- phone app (which behaviour a card gets) and to the illustration picker,
 -- and overloading it would tie "how this is scored" to "how this is drawn".
@@ -7641,6 +7687,15 @@ CREATE TABLE IF NOT EXISTS staging_conversation_fixtures (
   PRIMARY KEY (user_id, legacy_id)
 );
 COMMENT ON TABLE staging_conversation_fixtures IS 'staging:private';
+-- #3624: a fifth address, 910005, for the Homeroom bot's DM with a question
+-- open (services/staging-messages.js ensureBotDmFixture). Widening a CHECK
+-- rejects no row already stored.
+DO $$
+BEGIN
+  ALTER TABLE staging_conversation_fixtures DROP CONSTRAINT IF EXISTS staging_conversation_fixtures_legacy_id_check;
+  ALTER TABLE staging_conversation_fixtures ADD CONSTRAINT staging_conversation_fixtures_legacy_id_check
+    CHECK (legacy_id BETWEEN 910001 AND 910005);
+END $$;
 
 CREATE TABLE IF NOT EXISTS staging_app_fixtures (
   app_id INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE
@@ -9457,6 +9512,373 @@ CREATE TABLE IF NOT EXISTS homeroom_bot_mention_optouts (
   PRIMARY KEY (app_id, issue_number, user_id)
 );
 
+-- #3624: the bot in a DM (services/homeroom-bot-dm.js).
+--
+-- A triage question's suggested answers, the default first: what the DM
+-- offers to tap. NULL on every other verdict and on a run before #3624.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS question_answers JSONB;
+
+-- Who each request the live loop looked at is FOR: whoever filed it, or the
+-- creator a project's first version was filed for. Its questions and its
+-- outcome reach that person's DM, and its runs count against their weekly
+-- Homeroom bot allowance.
+CREATE TABLE IF NOT EXISTS homeroom_bot_requesters (
+  app_id         INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number   INTEGER NOT NULL,
+  user_id        INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  issue_title    TEXT,
+  first_version  BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, issue_number)
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_requesters_user
+  ON homeroom_bot_requesters(user_id);
+
+-- Every DM message the bot sent about a request, so a person's reply can
+-- be posted on the right request. A question is a row whose
+-- question_status is set: open until answered, or closed by newer news on
+-- the same request. Private: it indexes direct messages.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_messages (
+  message_id         INTEGER PRIMARY KEY REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  user_id            INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id    INTEGER NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  app_id             INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number       INTEGER NOT NULL,
+  kind               TEXT NOT NULL,
+  run_id             INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  question_status    TEXT,
+  answer_message_id  INTEGER,
+  answered_at        TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT homeroom_bot_dm_messages_status_check
+    CHECK (question_status IS NULL OR question_status IN ('open', 'answered', 'closed'))
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_open
+  ON homeroom_bot_dm_messages(user_id, created_at DESC) WHERE question_status = 'open';
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_issue
+  ON homeroom_bot_dm_messages(user_id, app_id, issue_number);
+COMMENT ON TABLE homeroom_bot_dm_messages IS 'staging:private';
+
+-- A project created with a description ("What should it do?" in the create
+-- dialog): filed as the project's first request, under its creator's name,
+-- once the project is running (waiting, then filing, then filed; failed
+-- after three tries). `bot_builds` says whether the Homeroom bot builds it:
+-- true when the creator is somebody the bot talks to in a DM, and then the
+-- bot acts live on the project while they are on the DM list; false for
+-- everybody else, whose request is filed and left to the group. Private:
+-- the brief is what the person typed, before they chose to post it
+-- anywhere.
+CREATE TABLE IF NOT EXISTS homeroom_bot_first_versions (
+  app_id        INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  brief         TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'waiting',
+  issue_number  INTEGER,
+  attempts      INTEGER NOT NULL DEFAULT 0,
+  error         TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  filed_at      TIMESTAMPTZ,
+  CONSTRAINT homeroom_bot_first_versions_status_check
+    CHECK (status IN ('waiting', 'filing', 'filed', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_first_versions_waiting
+  ON homeroom_bot_first_versions(created_at) WHERE status = 'waiting';
+COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
+-- Every row before the column was one the bot builds, so the default is true.
+ALTER TABLE homeroom_bot_first_versions ADD COLUMN IF NOT EXISTS bot_builds BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- The bot fixing its own failing checks: the head commit a checks
+-- follow-up looked at, on the run that recorded it (a revision, a hand-off
+-- to a person, or a turn that failed), so each failing head gets one look.
+-- NULL on every other run.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_proposal
+  ON homeroom_bot_runs(proposal_session_id) WHERE proposal_session_id IS NOT NULL;
+-- The verdicts export says, per run, whether its news reached the
+-- requester's DM and whether they answered it there.
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_run
+  ON homeroom_bot_dm_messages(run_id) WHERE run_id IS NOT NULL;
+
+-- #3654: what a run can be replayed from. Every triage, follow-up,
+-- checks fix and build stores the text its model read (the seed, the frozen
+-- request thread as JSON, the whole prompt, and a stage's own inputs such as
+-- the spec or the failing checks), the commit the stage ran against and a
+-- hash of the prompt, so the benchmark (services/bench/) can run the same
+-- input through another model. Text is gzip-compressed and stored once per
+-- distinct content (homeroom_bot_snapshot_blobs, keyed by its sha256), and
+-- each text is capped (services/homeroom-bot-snapshots.js). Private: it is
+-- request and DM text, private apps' included.
+CREATE TABLE IF NOT EXISTS homeroom_bot_snapshot_blobs (
+  hash        TEXT PRIMARY KEY,
+  content     BYTEA NOT NULL,
+  chars       INTEGER NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE homeroom_bot_snapshot_blobs IS 'staging:private';
+CREATE TABLE IF NOT EXISTS homeroom_bot_run_snapshots (
+  id            SERIAL PRIMARY KEY,
+  -- NULL for a snapshot imported from a merged pull request rather than
+  -- recorded by a run; kept when its run is deleted.
+  run_id        INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  stage         TEXT NOT NULL,
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number  INTEGER NOT NULL,
+  base_sha      TEXT,
+  prompt_hash   TEXT,
+  -- name to blob hash: seed, thread, prompt, and a stage's own inputs.
+  texts         JSONB NOT NULL DEFAULT '{}',
+  -- Small, structured inputs (a flag, a count, a model id).
+  extra         JSONB NOT NULL DEFAULT '{}',
+  truncated     BOOLEAN NOT NULL DEFAULT FALSE,
+  source        TEXT NOT NULL DEFAULT 'run',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT homeroom_bot_run_snapshots_stage_check
+    CHECK (stage IN ('triage', 'spec', 'build', 'followup', 'checks_fix', 'dm')),
+  CONSTRAINT homeroom_bot_run_snapshots_source_check
+    CHECK (source IN ('run', 'import'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_homeroom_bot_run_snapshots_run_stage
+  ON homeroom_bot_run_snapshots(run_id, stage) WHERE run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_run_snapshots_stage
+  ON homeroom_bot_run_snapshots(stage, created_at DESC);
+COMMENT ON TABLE homeroom_bot_run_snapshots IS 'staging:private';
+
+-- #3654: the verdict a labeller says was right, beside the yes/no rating
+-- (rating_note is no longer erased by a rating), and the model a run's
+-- build ran on (per-stage models: it may differ from the triage's).
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS label_verdict TEXT;
+DO $$
+BEGIN
+  ALTER TABLE homeroom_bot_runs DROP CONSTRAINT IF EXISTS homeroom_bot_runs_label_verdict_check;
+  ALTER TABLE homeroom_bot_runs ADD CONSTRAINT homeroom_bot_runs_label_verdict_check
+    CHECK (label_verdict IS NULL OR label_verdict IN ('question', 'ready', 'person', 'empty', 'answer', 'revise'));
+END $$;
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
+
+-- #3654: the Homeroom bot's benchmark (services/bench/). A SUITE is a set of
+-- tasks drawn from real runs; it is a version (name + version), and freezing
+-- it makes its tasks immutable (services/bench/suites.js refuses every write
+-- to a frozen suite's tasks; "edit" makes the next version). `frozen` is the
+-- versioned core, `rotating` the set refreshed from recent runs.
+CREATE TABLE IF NOT EXISTS bench_suites (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL,
+  version     INTEGER NOT NULL DEFAULT 1,
+  kind        TEXT NOT NULL DEFAULT 'frozen',
+  parent_id   INTEGER REFERENCES bench_suites(id) ON DELETE SET NULL,
+  notes       TEXT,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  frozen_at   TIMESTAMPTZ,
+  CONSTRAINT bench_suites_kind_check CHECK (kind IN ('frozen', 'rotating')),
+  UNIQUE (name, version)
+);
+COMMENT ON TABLE bench_suites IS 'staging:private';
+
+-- One task: a stage of one recorded run (or a merged pull request), the
+-- snapshot it replays, tags to slice results by, and the reference a
+-- candidate is graded against. `label_token` is the opaque id a labelling
+-- session sees instead of the task's own id. Private: tasks come from any
+-- app, private ones included, and the reference is written from them.
+CREATE TABLE IF NOT EXISTS bench_tasks (
+  id                SERIAL PRIMARY KEY,
+  suite_id          INTEGER NOT NULL REFERENCES bench_suites(id) ON DELETE CASCADE,
+  stage             TEXT NOT NULL,
+  source_run_id     INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  snapshot_id       INTEGER NOT NULL REFERENCES homeroom_bot_run_snapshots(id) ON DELETE CASCADE,
+  app_id            INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number      INTEGER,
+  tags              JSONB NOT NULL DEFAULT '{}',
+  reference         JSONB NOT NULL DEFAULT '{}',
+  reference_source  TEXT,
+  labeled_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  labeled_at        TIMESTAMPTZ,
+  label_token       TEXT NOT NULL UNIQUE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bench_tasks_stage_check
+    CHECK (stage IN ('triage', 'spec', 'build', 'followup', 'checks_fix', 'dm')),
+  CONSTRAINT bench_tasks_reference_source_check
+    CHECK (reference_source IS NULL OR reference_source IN ('human', 'opus', 'merged_pr', 'authored'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_tasks_suite ON bench_tasks(suite_id, stage);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_tasks_suite_run_stage
+  ON bench_tasks(suite_id, source_run_id, stage) WHERE source_run_id IS NOT NULL;
+COMMENT ON TABLE bench_tasks IS 'staging:private';
+
+-- #3654 Core v1: a reference written into a suite's checked-in definition by
+-- its author (the adversarial triage tasks) is 'authored'. Widening a CHECK
+-- never rejects a row already stored.
+DO $$
+BEGIN
+  ALTER TABLE bench_tasks DROP CONSTRAINT IF EXISTS bench_tasks_reference_source_check;
+  ALTER TABLE bench_tasks ADD CONSTRAINT bench_tasks_reference_source_check
+    CHECK (reference_source IS NULL OR reference_source IN ('human', 'opus', 'merged_pr', 'authored'));
+END $$;
+
+-- #3654 Core v1: a suite materialized from a checked-in definition
+-- (src/services/bench/suites/*.json, services/bench/core.js), one row per
+-- definition and version. It is what makes materializing idempotent (a
+-- `done` row is never redone unless an admin asks to retry what was
+-- skipped), what the Benchmark area reads its status from (`summary`:
+-- counts per stage and every skipped task with its reason), and what marks
+-- a suite as definition-backed (such a suite freezes only once every task
+-- has its reference). Private like the suites themselves.
+CREATE TABLE IF NOT EXISTS bench_materializations (
+  definition   TEXT NOT NULL,
+  version      INTEGER NOT NULL,
+  suite_id     INTEGER REFERENCES bench_suites(id) ON DELETE SET NULL,
+  status       TEXT NOT NULL DEFAULT 'running',
+  summary      JSONB NOT NULL DEFAULT '{}',
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  started_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at  TIMESTAMPTZ,
+  PRIMARY KEY (definition, version),
+  CONSTRAINT bench_materializations_status_check CHECK (status IN ('running', 'done', 'failed'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_materializations_suite ON bench_materializations(suite_id);
+COMMENT ON TABLE bench_materializations IS 'staging:private';
+
+-- #3654: a benchmark RUN puts a suite's tasks for some stages through some
+-- models, `repeats` times each (a build once), within a dollar cap. Its
+-- TRIALS are one task on one model, one attempt: pending, running, then how
+-- it ended. `ok` means the stage produced an answer to grade; a model that
+-- produced nothing usable is `model_fail`; a platform fault is `infra_fail`
+-- and is kept out of quality; `not_applicable` is a task the model cannot
+-- take (its stage or its context window); `skipped_cap` is what the cap left
+-- unrun. `item_token` is the opaque id a grading session sees: never the
+-- trial id, never the model.
+CREATE TABLE IF NOT EXISTS bench_runs (
+  id              SERIAL PRIMARY KEY,
+  suite_id        INTEGER NOT NULL REFERENCES bench_suites(id) ON DELETE CASCADE,
+  models          TEXT[] NOT NULL,
+  baseline_model  TEXT,
+  stages          TEXT[] NOT NULL,
+  repeats         INTEGER NOT NULL DEFAULT 3,
+  cap_usd         NUMERIC(12,4) NOT NULL DEFAULT 50,
+  concurrency     INTEGER NOT NULL DEFAULT 1,
+  status          TEXT NOT NULL DEFAULT 'queued',
+  spent_usd       NUMERIC(18,8) NOT NULL DEFAULT 0,
+  note            TEXT,
+  started_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at      TIMESTAMPTZ,
+  finished_at     TIMESTAMPTZ,
+  CONSTRAINT bench_runs_status_check
+    CHECK (status IN ('queued', 'running', 'done', 'cancelled', 'capped'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_runs_open ON bench_runs(id) WHERE status IN ('queued', 'running');
+COMMENT ON TABLE bench_runs IS 'staging:private';
+
+CREATE TABLE IF NOT EXISTS bench_trials (
+  id              SERIAL PRIMARY KEY,
+  run_id          INTEGER NOT NULL REFERENCES bench_runs(id) ON DELETE CASCADE,
+  task_id         INTEGER NOT NULL REFERENCES bench_tasks(id) ON DELETE CASCADE,
+  model           TEXT NOT NULL,
+  attempt         INTEGER NOT NULL DEFAULT 1,
+  status          TEXT NOT NULL DEFAULT 'pending',
+  item_token      TEXT NOT NULL UNIQUE,
+  claims          INTEGER NOT NULL DEFAULT 0,
+  est_cost_usd    NUMERIC(12,4),
+  raw_output      TEXT,
+  parsed          JSONB,
+  cost_usd        NUMERIC(18,8),
+  input_tokens    BIGINT,
+  output_tokens   BIGINT,
+  duration_ms     INTEGER,
+  session_id      INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  base_sha        TEXT,
+  build_branch    TEXT,
+  build_sha       TEXT,
+  build_commits   INTEGER,
+  diff            TEXT,
+  changed_files   JSONB,
+  checks          JSONB,
+  deterministic   JSONB,
+  error           TEXT,
+  branch_deleted_at TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  started_at      TIMESTAMPTZ,
+  finished_at     TIMESTAMPTZ,
+  CONSTRAINT bench_trials_status_check
+    CHECK (status IN ('pending', 'running', 'ok', 'model_fail', 'infra_fail', 'timeout',
+                      'not_applicable', 'skipped_cap', 'cancelled')),
+  UNIQUE (run_id, task_id, model, attempt)
+);
+CREATE INDEX IF NOT EXISTS idx_bench_trials_run ON bench_trials(run_id, status);
+CREATE INDEX IF NOT EXISTS idx_bench_trials_pending ON bench_trials(run_id, attempt, id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_bench_trials_branches
+  ON bench_trials(finished_at) WHERE build_branch IS NOT NULL AND branch_deleted_at IS NULL;
+COMMENT ON TABLE bench_trials IS 'staging:private';
+
+-- #3654: a grade of a benchmark trial, by the judge (`opus`: a Claude Opus
+-- session on a person's own plan, through the admin-only connector tools) or
+-- by a person (`human`: an admin in the console, which overrides the judge).
+-- Binary, with the critique the judge wrote first. The deterministic grade
+-- lives on the trial itself (bench_trials.deterministic). Several grades of
+-- one trial are kept; the latest of each grader counts.
+CREATE TABLE IF NOT EXISTS bench_grades (
+  id              SERIAL PRIMARY KEY,
+  trial_id        INTEGER NOT NULL REFERENCES bench_trials(id) ON DELETE CASCADE,
+  grader          TEXT NOT NULL,
+  grader_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  grader_label    TEXT NOT NULL,
+  verdict         TEXT NOT NULL,
+  critique        TEXT,
+  criteria        JSONB NOT NULL DEFAULT '{}',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bench_grades_grader_check CHECK (grader IN ('opus', 'human')),
+  CONSTRAINT bench_grades_verdict_check CHECK (verdict = 'pass' OR verdict = 'fail')
+);
+CREATE INDEX IF NOT EXISTS idx_bench_grades_trial ON bench_grades(trial_id, grader, created_at DESC);
+COMMENT ON TABLE bench_grades IS 'staging:private';
+
+-- #3624 stage 2: the bot's DM is read by a model (homeroom-bot-mayor.js).
+-- One row per answer it wrote: what it cost (counted in the person's weekly
+-- allowance with their requests' runs), how many model calls and which
+-- tools it took, and why it failed when it did. Never the words: those are
+-- the conversation's.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_turns (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE SET NULL,
+  message_id      INTEGER REFERENCES conversation_messages(id) ON DELETE SET NULL,
+  model           TEXT,
+  rounds          INTEGER NOT NULL DEFAULT 0,
+  tools           TEXT[] NOT NULL DEFAULT '{}',
+  input_tokens    INTEGER,
+  output_tokens   INTEGER,
+  cost_usd        NUMERIC(12, 6),
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_turns_user
+  ON homeroom_bot_dm_turns(user_id, created_at DESC);
+COMMENT ON TABLE homeroom_bot_dm_turns IS 'staging:private';
+
+-- #3624 stage 2: something the bot offered to do in a DM, done only when
+-- the person taps to confirm (today: file a new request on a project). The
+-- offer is a bot message with File it / Not now under it; the tap decides
+-- it once.
+CREATE TABLE IF NOT EXISTS homeroom_bot_dm_actions (
+  id              SERIAL PRIMARY KEY,
+  user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  conversation_id INTEGER REFERENCES conversations(id) ON DELETE CASCADE,
+  message_id      INTEGER UNIQUE REFERENCES conversation_messages(id) ON DELETE CASCADE,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  kind            TEXT NOT NULL DEFAULT 'file_request',
+  title           TEXT NOT NULL,
+  details         TEXT,
+  status          TEXT NOT NULL DEFAULT 'open',
+  issue_number    INTEGER,
+  error           TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  decided_at      TIMESTAMPTZ,
+  CONSTRAINT homeroom_bot_dm_actions_kind_check CHECK (kind IN ('file_request')),
+  CONSTRAINT homeroom_bot_dm_actions_status_check
+    CHECK (status IN ('open', 'done', 'declined', 'failed'))
+);
+COMMENT ON TABLE homeroom_bot_dm_actions IS 'staging:private';
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app
@@ -9471,7 +9893,14 @@ INSERT INTO platform_settings (key, value) VALUES
   ('homeroom_bot_live_apps', '[]'),
   ('homeroom_bot_shadow_builds', 'off'),
   ('homeroom_bot_build_concurrency', '2'),
-  ('homeroom_bot_shadow_build_platform', 'off')
+  ('homeroom_bot_shadow_build_platform', 'off'),
+  -- #3624: nobody gets the DM until an admin adds them; $50 a week each.
+  ('homeroom_bot_dm_users', '[]'),
+  ('homeroom_bot_user_weekly_cents', '5000'),
+  -- #3624 stage 2: live work 6 at once, 2 per person; a DM is read.
+  ('homeroom_bot_live_at_once', '6'),
+  ('homeroom_bot_per_person', '2'),
+  ('homeroom_bot_dm_chat', 'on')
 ON CONFLICT (key) DO NOTHING;
 
 -- #2721. Private, durable moderation records; target IDs intentionally have
@@ -10612,8 +11041,8 @@ END $$;
 -- ── Communities, stage 5: the first run ─────────────────────────────────
 --
 -- A new account picks the communities it wants to join (Homeroom first)
--- after its username and the terms, then gets the tour, then a "Getting
--- started" card on Home with three first steps (src/services/onboarding.js).
+-- after its username and the terms, then a "Getting started" card on Home:
+-- the tour, then the season's First challenges (src/services/onboarding.js).
 --
 -- users.needs_communities_choice — this account has not been asked yet.
 -- Set TRUE by every path a person signs up through (email, an activation
@@ -10633,10 +11062,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS communities_onboarded_at TIMESTAMPTZ;
 -- The card's close button. Server state, like the join screen's answer, so
 -- a card closed on the phone is closed on the laptop too.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_closed_at TIMESTAMPTZ;
--- The two places the card sends people that leave no row behind of their
--- own (a visit to the Workshop, a visit to Discover), as
--- { "workshop": "<iso>", "discover": "<iso>" }. Written only while the card
--- is showing, and read only by it.
+-- Visits the card asks for that leave no row behind of their own. The old
+-- card wrote { "workshop": "<iso>", "discover": "<iso>" } on any visit; since
+-- its steps became the season's First challenges (2026-10-01) nothing reads
+-- those two keys. One key is read: "vote_workshop", the last time the Vote
+-- step's Workshop opened while NOTHING was up for a vote in any community
+-- the account is in (services/onboarding.js markWorkshopVisit), which the
+-- scorer's VOTE_CAST counts like a vote. A new key rather than "workshop",
+-- because those old visits were recorded whether or not a vote was waiting.
+-- Reset first run clears the whole column. Kept rather than dropped: this
+-- file is replayed on every boot, and a DROP is the one statement here that
+-- cannot be taken back.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- When this account finished (or skipped) the welcome tour
 -- (frontend/src/features/home/tour). Server state for the same reason as the
@@ -10646,6 +11082,33 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_seen JSONB;
 -- counts, and a browser that has it copies it here once. Reset first run
 -- clears it, so the tour follows the join screen again on every device.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS tour_done_at TIMESTAMPTZ;
+-- The Getting started list that IS the First challenges (evan, 2026-10-01):
+-- the card on Home is the tour plus the season's ONBOARDING challenges, and
+-- until all of them are done the rest of the season is hidden
+-- (src/services/topochain/challenge-onboarding.js). Both only for accounts
+-- made after that shipped; everyone who was already here, and every
+-- signed-out visitor, sees the whole season and no card.
+--
+-- getting_started_gate — this account starts on that list. Set TRUE at
+-- sign-up by the same three INSERTs that set needs_communities_choice
+-- (email, an activation code, a wallet), and by an admin's Reset first run.
+-- A FLAG WRITTEN AT SIGN-UP, for the reasons needs_communities_choice is one
+-- (above): every existing row reads FALSE by default with no backfill, and
+-- so does every account the boot seeds (capture identities, staging
+-- fixtures), which a "created after <date>" rule would have caught on every
+-- fresh database, where every row is new. A cutoff kept as a platform
+-- setting would also need writing once at deploy, and a staging clone would
+-- carry production's value into a database whose seeded accounts are all
+-- younger than it.
+--
+-- getting_started_unlocked_at — when this account's gate first opened (the
+-- tour done and every First challenge done, read anywhere: Home, the
+-- Challenges tab, the phone app). Once set the gate never closes again, so
+-- an ONBOARDING challenge an admin adds to the season later is one more
+-- challenge to do, not a wall that comes back down over a season the person
+-- has already been let into. Reset first run clears it with the rest.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_gate BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS getting_started_unlocked_at TIMESTAMPTZ;
 
 -- ── Communities, stage 6: invite links ──────────────────────────────────
 --
@@ -10991,3 +11454,10 @@ CREATE TABLE IF NOT EXISTS cli_preview_decisions (
 COMMENT ON TABLE cli_preview_handoffs IS 'staging:private';
 COMMENT ON TABLE cli_preview_receipts IS 'staging:private';
 COMMENT ON TABLE cli_preview_decisions IS 'staging:private';
+-- The starter template a project was created from (#3521;
+-- services/app-templates.js TEMPLATE_IDS, validated by POST /api/apps).
+-- Written only for a non-default starter: NULL is `empty`, which is also
+-- what every project created before templates existed, every import and
+-- every fork reads as. app-creator scaffolds from it, so a Retry after a
+-- failed create writes the same starter the creator picked.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS template VARCHAR(40);

@@ -44,21 +44,18 @@ function handler(sql) {
       creators: 10, creators_admin: 1,
     }] };
   }
-  if (/started_admin/.test(sql) && /LEFT JOIN users usr/.test(sql)) {
+  if (/started_admin/.test(sql) && /cohort_sessions AS/.test(sql)) {
     return { rows: [{
       started: 50, started_admin: 5,
       produced_pr: 40, produced_pr_admin: 4,
       promoted: 30, promoted_admin: 3,
       received_vote: 20, received_vote_admin: 2,
       merged: 10, merged_admin: 1,
-    }] };
-  }
-  if (/COUNT\(DISTINCT cs\.user_id\)/.test(sql)) {
-    return { rows: [{
-      started: 25, started_admin: 3,
-      produced_pr: 20, produced_pr_admin: 2,
-      promoted: 15, promoted_admin: 1,
-      merged: 8, merged_admin: 1,
+      reach_started: 25, reach_started_admin: 3,
+      reach_produced_pr: 20, reach_produced_pr_admin: 2,
+      reach_promoted: 15, reach_promoted_admin: 1,
+      reach_received_vote: 10, reach_received_vote_admin: 1,
+      reach_merged: 8, reach_merged_admin: 1,
     }] };
   }
   // Growth.
@@ -135,6 +132,8 @@ test('funnels: every stage carries an _admin companion when includeAdmins=true',
   // Non-admin value stays the base count.
   assert.equal(f.dappUsage.signed_up, 100);
   assert.equal(f.dappUsage.signed_up_admin, 5);
+  assert.equal(f.prSessions.started, 50);
+  assert.equal(f.prUsers.started, 25);
 });
 
 test('growth: each weekly row carries the four _admin companions', async () => {

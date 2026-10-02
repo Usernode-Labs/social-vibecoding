@@ -3272,8 +3272,17 @@ const GroupChat = {
     //              to that flex row).
     // Esc closes; the panel persists across re-renders of the chat
     // tab because the slot lives in the layout, not in body.
+    //
+    // The general chat is not the only layout with the slot: a request's or
+    // a proposal's Discussion is a thread in the Dev topic frame
+    // (features/dev-board/topic-frame.tsx), which carries the same row, and
+    // a spec card there opens the panel beside the topic. Before it did, the
+    // lookup below found nothing and "View full spec" did nothing (#3495).
     const panel = document.getElementById('gc-spec-side-panel');
     if (!panel) return;
+    // The divider is bound on mount by the general chat; the topic frame has
+    // no mount of this module's, so bind it here too. Idempotent per handle.
+    GroupChat._initSpecPanelResizer();
 
     GroupChat._specPanelRaw = content == null ? '' : String(content);
 

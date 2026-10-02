@@ -119,6 +119,12 @@ test('settings default to off and clamp their numbers', () => {
     mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [], liveApps: [],
     turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
     shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
+    // #3624: nobody gets the bot's DM by default; $50 a week each.
+    dmUsers: [], userWeeklyCents: 5000, firstVersionApps: [],
+    // #3654: every stage on the platform default until an admin names one.
+    models: { triage: '', spec: '', build: '', followup: '' },
+    // #3624 stage 2: live work, 6 at once and 2 per person; a DM is read.
+    liveAtOnce: 6, perPerson: 2, dmChat: true,
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
@@ -131,6 +137,20 @@ test('settings default to off and clamp their numbers', () => {
   assert.equal(t.batchSize, 1, 'clamped to the floor');
   assert.deepEqual(t.pausedApps, ['a-b', 'c']);
   assert.deepEqual(bot.parseSettings([{ key: bot.KEY_PAUSED_APPS, value: 'not json' }]).pausedApps, []);
+  const u = bot.parseSettings([
+    { key: bot.KEY_LIVE_AT_ONCE, value: '99' },
+    { key: bot.KEY_PER_PERSON, value: '0' },
+    { key: bot.KEY_DM_CHAT, value: 'off' },
+  ]);
+  assert.equal(u.liveAtOnce, 16, 'clamped to the ceiling');
+  assert.equal(u.perPerson, 1, 'clamped to the floor');
+  assert.equal(u.dmChat, false);
+  assert.deepEqual(bot.validateSettingsPatch({ liveAtOnce: 8, perPerson: 3, dmChat: false }).updates, [
+    [bot.KEY_LIVE_AT_ONCE, '8'], [bot.KEY_PER_PERSON, '3'], [bot.KEY_DM_CHAT, 'off'],
+  ]);
+  assert.equal(bot.validateSettingsPatch({ liveAtOnce: 17 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ perPerson: 5 }).ok, false);
+  assert.equal(bot.validateSettingsPatch({ dmChat: 'yes' }).ok, false);
 });
 
 test('validateSettingsPatch refuses live mode and bad values, accepts a real patch', () => {
@@ -422,7 +442,7 @@ test('a budget stop records WHICH limit tripped, in a column of its own', async 
   const harness = triageHarness({ verdictText: 'x', sessionId: 856 });
   await runToWallClock(t, harness);
   const insert = harness.calls.queries.find((q) => /INSERT INTO homeroom_bot_runs/.test(q.s));
-  assert.match(insert.s, /budget_stop, proposal_session_id\)/, 'the insert names the column');
+  assert.match(insert.s, /budget_stop, proposal_session_id[,)]/, 'the insert names the column');
   assert.ok(insert.params.includes('wall clock'),
     'the limit is stored as data, not left to be grepped out of the error text');
   assert.ok(insert.params.includes('budget: wall clock'), 'and the error line still reads the same');
@@ -931,7 +951,7 @@ test('runOnce: each pass frees rows an unfinished pass claimed, past one turn\'s
 
 test('the loop waits out a fault backoff instead of the 30-second idle', () => {
   assert.match(SRC, /if \(out\.paused === 'infra' && out\.retryInMs > 0\) delay = Math\.max\(IDLE_PASS_DELAY_MS, out\.retryInMs\);/);
-  assert.match(SRC, /if \(r\.ran\) \{ processed \+= 1; clearFault\(\); \}/, 'a turn that ran ends the streak');
+  assert.match(SRC, /if \(r\.ran\) \{ o\.processed = 1; clearFault\(\); \}/, 'a turn that ran ends the streak');
 });
 
 test('releaseBotVolumes frees only the bot\'s own volumes whose worker is gone', async () => {
@@ -1050,7 +1070,10 @@ test('refreshApp queues eligible issues, skips busy and unchanged ones, and drop
   const out = await bot.refreshApp(pool, { id: 9, slug: 'todo', repo_url: 'https://github.com/usernode-bot/todo' }, { github });
   assert.equal(out.queued, 2);
   assert.deepEqual(inserts.map((p) => [p[1], p[2], p[3]]), [[1, 1, 'new'], [5, 2, 'changed']]);
-  assert.deepEqual(deleted, [9, [1, 5]], 'everything else queued for this app is dropped');
+  assert.deepEqual(deleted.slice(0, 2), [9, [1, 5]], 'everything else queued for this app is dropped');
+  // ...except a row the bot queued for itself (a restart's, a failing
+  // check's) on an issue that is open, unchanged and nobody else's: #2.
+  assert.deepEqual(deleted.slice(2), [bot.SELF_QUEUED_REASONS, [2]]);
   assert.equal(out.removed, 2);
 });
 
@@ -1109,12 +1132,16 @@ test('capRoomFor counts the same two things the live check does', async () => {
   const pool = {
     async query(sql) {
       const s = String(sql);
-      if (/FROM chat_sessions/.test(s)) return { rows: [{ cnt: 1 }] };
+      if (/FROM chat_sessions\s+WHERE app_id = \$1/.test(s)) return { rows: [{ cnt: 1 }] };
+      if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) return { rows: [{ cnt: 7 }] };
       if (/FROM homeroom_bot_runs/.test(s)) return { rows: [{ cnt: 12 }] };
       throw new Error(`unexpected query: ${s.slice(0, 60)}`);
     },
   };
-  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9), { proposals_per_app: 1, question_tripwire: 0 });
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9),
+    { proposals_per_app: 4, proposals_total: 0, question_tripwire: 0 }, 'shadow: a ceiling of one app\'s cap');
+  assert.deepEqual(await bot.capRoomFor(pool, { id: 77 }, 9, { liveApps: ['a', 'b'] }),
+    { proposals_per_app: 4, proposals_total: 3, question_tripwire: 0 }, '#3576: 5 per live app, across them all');
   const tripwire = SRC.slice(SRC.indexOf('async function tripwireCount'), SRC.indexOf('async function capRoomFor'));
   assert.match(tripwire, /AND cap_suppressed IS NULL/,
     'a held question is not a posted one; counting it would let every retry keep the window full');

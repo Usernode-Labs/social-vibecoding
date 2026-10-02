@@ -295,8 +295,12 @@ test('the pill is gray in every state and only its ink changes; a bar along its 
 
   const html = pill(view(3840));
   assert.match(html, /aria-label="Credits: \$38\.40 of this week’s \$50\.00 left"/);
-  // The wrapper is the row's spacer and the query container; the labels swap on its width.
-  assert.match(html, /^<div class="flex min-w-0 flex-1 justify-end \[container-type:inline-size\]"/, 'the pill measures the room it has, not itself');
+  // The wrapper is the row's spacer and holds the query container; the labels
+  // swap on its width. #3574 moved the container one layer in, beside an
+  // invisible copy of the short label, so the room can no longer shrink below
+  // the pill and spill it over the model pill
+  // (tests/agent-session-model-pill-room.test.js pins why).
+  assert.match(html, /^<div class="grid flex-1 justify-items-end" data-agent-session-credits-room="true"><span class="invisible [^"]*"[^>]*>\$38 left<\/span><div class="col-start-1 row-start-1 flex w-full justify-end \[container-type:inline-size\]">/, 'the pill measures the room it has, not itself');
   assert.match(html, /<span class="\[@container\(min-width:10rem\)\]:hidden"[^>]*>\$38 left<\/span>/, 'narrow: the short label');
   assert.match(html, /<span class="hidden \[@container\(min-width:10rem\)\]:inline"[^>]*>\$38 left<span class="font-normal text-zinc-500 dark:text-zinc-400"> \/ \$50<\/span><\/span>/,
     'with room: "$38 left" in the tone, " / $50" in the muted ink');

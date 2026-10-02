@@ -85,7 +85,9 @@
     for (var i = 0; i < gates.length; i++) {
       var g = gates[i];
       if (!g || g.key !== 'main_healthy') continue;
-      if (g.state === 'blocked' && g.detail && g.detail.paused) return g.detail;
+      // Blocked, or 'active' while a first red is re-run to confirm: the
+      // pause holds either way (merge-requirements.js mainStep).
+      if ((g.state === 'blocked' || g.state === 'active') && g.detail && g.detail.paused) return g.detail;
       return null;
     }
     return null;

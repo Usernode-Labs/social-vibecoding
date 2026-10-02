@@ -21,6 +21,8 @@ const COMPONENTS = new Set([
   'mayor_phase_1',
   'mayor_data_iteration',
   'mayor_phase_2',
+  // The one extra Mayor round asked for when a turn ended with no reply text.
+  'mayor_empty_retry',
   'headless_decision',
   'headless_wrapup',
   'quick_replies',
@@ -40,6 +42,8 @@ const COMPONENTS = new Set([
   'homeroom_bot_build',
   // Its spec turn, just before that build (live and shadow alike).
   'homeroom_bot_spec',
+  // #3654: a benchmark trial of one of its stages, on a candidate model.
+  'homeroom_bench',
   // The hub's since-your-last-visit line (services/since-summary.js).
   'since_summary',
   'other_helper',

@@ -10,6 +10,30 @@ export interface ConversationUser {
   id: number;
   username: string;
   avatarUrl?: string | null;
+  /** A platform account (the Homeroom bot), not a person (#3624). */
+  bot?: boolean;
+}
+
+/**
+ * #3624: the structured part of a message from the Homeroom bot. Every one
+ * about a request says which; a question carries the answers to tap, the
+ * default first, and its state (open until answered, or closed when newer
+ * news on the request replaced it). `mirrors`: a reply to it is posted on
+ * the request's public discussion.
+ */
+export interface HomeroomBotMeta {
+  kind: string;
+  appSlug?: string;
+  appName?: string;
+  issueNumber?: number;
+  issueTitle?: string;
+  firstVersion?: boolean;
+  mirrors?: boolean;
+  question?: string;
+  answers?: string[];
+  status?: 'open' | 'answered' | 'closed';
+  answer?: string;
+  link?: string;
 }
 
 export interface ConversationMember extends ConversationUser {
@@ -94,6 +118,8 @@ export interface ConversationMessage {
   reactions: MessageReaction[];
   attachments: MessageAttachment[];
   objects: SharedObjectCard[];
+  /** Set by the platform only, on the Homeroom bot's messages (#3624). */
+  metadata?: { homeroomBot?: HomeroomBotMeta } | null;
   /**
    * Whether the VIEWER has saved this message — their own private bookmark,
    * never an aggregate. Hydrated with the page (services/conversations.js), so
@@ -215,6 +241,14 @@ export interface MessagesRoute {
    * scrolled to and flashes. Cleared once shown.
    */
   focusMessageId: number | null;
+  /**
+   * #3494: the conversation is open IN ITS COMMUNITY'S PAGE, not on this
+   * screen — #general, on Homeroom's Discussion tab (`embed` in ./store.ts).
+   * `open` stays false while it is, so nothing that asks whether Messages is
+   * on screen (its chrome, Back, the router) hears yes. Optional so a
+   * fixture without it reads as false.
+   */
+  embedded?: boolean;
 }
 
 /** An agent thread of the inbox (#2813). See `MessagesRoute.agent`. */

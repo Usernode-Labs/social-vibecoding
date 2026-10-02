@@ -375,8 +375,16 @@ html.un-kb .platform-safe-sheet {
    Messages and Android Messages both shrink the content area by the keyboard's
    height and pin the composer above it rather than covering or panning.
    The scroller loses that height instead of being covered, so the transcript
-   stays visible, the composer sits above the keys, and nothing needs to pan,
-   which leaves the settled pin inert rather than destructive.
+   stays visible, the composer sits above the keys, and the settled pin is
+   no longer destructive.
+
+   It is NOT inert, and a column needs it (#3571). iOS pans the page on the
+   tap, before this padding exists, by the most it can: the keyboard's
+   height. The padding then lifts the composer by that height again inside
+   the panned page, so it ends near the top edge, above the screen. The pin
+   (attachKeyboardAvoidance, via attachScreenFx on the legacy-mounted chats)
+   puts the pan back once the keyboard settles. A React column that no
+   controller mounts attaches it itself: lib/composer-keyboard.ts.
 
    Transition shape copied from the kit's own `.un-kb-avoid`: none while the
    keyboard is up so the bar tracks it exactly, eased on the way out so the
@@ -1294,6 +1302,72 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-reply-draft span { display: block; color: var(--accent); font-weight: 700; }
 .messages-quote p,
 .messages-reply-draft p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* #3624: the Homeroom bot's messages. Its name carries a small "Bot"
+   badge; a question it asks carries its suggested answers as pills in the
+   suggestion language Global Chat uses (the default first, marked), a
+   "Something else" pill in the neutral fill, and one muted line saying the
+   answer is posted publicly on the request. */
+.messages-bot-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--dc-raised);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+.messages-bot-question { margin-top: 8px; }
+.messages-bot-answers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.messages-bot-answers button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  max-width: 100%;
+  padding: 6px 13px;
+  border-radius: 9999px;
+  color: var(--brand-ink);
+  background: var(--brand-tint);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.2;
+  text-align: left;
+}
+.messages-bot-answers button:hover { filter: brightness(.97); }
+.messages-bot-answers .messages-bot-other {
+  color: var(--text-secondary);
+  background: var(--dc-raised);
+}
+.messages-bot-default {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: .7;
+}
+.messages-bot-answered {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.messages-bot-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.messages-bot-note svg { margin-top: 1px; }
+.messages-reply-draft .messages-bot-note { display: block; white-space: normal; }
 
 /* Reaction pills, the language's own: a filled neutral chip, and the one
    that is YOURS on a tinted accent ground with accent ink — a fill, not an
@@ -3238,6 +3312,7 @@ html.un-ios.in-native-webview .dc-active-dot-busy.dc-active-dot-promoted {
    flush against siblings (segmented pills, theme mode pills, the Dev
    board's tab strip) — the scale makes adjacent cells appear to shift.
    Keep the brightness dim, drop the transform. */
+.create-template-pill:active,
 .create-kind-row:active,
 .create-mode-pill:active,
 .create-who-pill:active,
@@ -3276,6 +3351,46 @@ html[data-browser-scroller] body {
   overflow: visible;
   isolation: isolate;
   background: var(--home-ground) !important;
+}
+/* ── THE BOTTOM STILL BOUNCES, SO SAFARI CAN TUCK ITS BAR AWAY (#3565) ──
+   "On mobile Safari, if already scrolled to the bottom of the page, cannot
+   scroll down more to make the address bar shrink."
+
+   Safari tucks its toolbar away when a drag moves the page. At the end of
+   an ordinary page there is nothing left to scroll, but the drag still
+   moves the rubber band, and that is enough. This document has no rubber
+   band. `html, body { overscroll-behavior-y: none }` above was written for
+   the bounded shell, whose document never scrolls, to keep the browser's own
+   refresh out of the kit's pull (#737). #1518 made the document the scroller
+   in a phone browser, and on <html> that one rule now switches off the
+   viewport's bounce at BOTH ends: WebKit's main scroll view bounces
+   vertically unless the root's `overscroll-behavior-y` is `none` (WKWebView
+   `_updateScrollViewForTransaction` -> `_setBouncesInternal`). So at the
+   foot of Home, Discover or a project page, with the bar showing, an upward
+   drag moved nothing and the bar stayed.
+
+   The TOP keeps `none`. The kit's pull-to-refresh lives there, and a native
+   bounce or the browser's own refresh would join it. There is no per-edge
+   `overscroll-behavior`, so the edge is told apart by where the page is:
+   lib/browser-scroll.ts marks <html> `data-browser-past-top` while the
+   document sits PAST_TOP_PX (64px) or more below its top, and only then does
+   the viewport take `contain`. That is not `none`, so the far edge bounces
+   (WebKit applies a change to the root's value from the next commit; its
+   own fast/scrolling/ios/overscroll-behavior-on-body.html flips it the other
+   way mid-page). `contain` rather than `auto` so Chrome's refresh stays off
+   if a flick ever outruns the mark to the top. A pull that starts at the
+   top always meets `none`, exactly as before, and a page with less than
+   64px to scroll keeps `none` everywhere. On Android the bottom edge gets
+   the system's stretch back, as on any other page. Body takes the value too
+   only because the rule it overrides names both; WebKit reads <html>.
+
+   Phones only: a narrow desktop window also pages the document, and its
+   trackpad has no toolbar to tuck away. */
+@media (pointer: coarse) {
+  html[data-browser-scroller][data-browser-past-top],
+  html[data-browser-scroller][data-browser-past-top] body {
+    overscroll-behavior-y: contain;
+  }
 }
 /* Body padding reserves these fixed strips at the start of a page. Sticky
    headers must keep reserving them after that padding scrolls away. */
@@ -3449,6 +3564,82 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
   overflow-x: hidden;
 }
 
+/* ── EVERY PAGE BOUNCES, HOWEVER LITTLE IT HOLDS (#3566) ───────────────
+   "Should be able to over scroll on home page down, doesn't feel as native
+   because can't", and after #3591 (#3565) gave Home's foot its bounce back
+   in a phone browser, All communities still did not.
+
+   A page's rubber band comes from one of two places, and a screen has one
+   only if its own place gives it:
+
+   - THE DOCUMENT, in a phone browser, for the screens browser-scroll.ts
+     PAGES (Home, Discover, Leaderboard, Profile, Settings, a project page).
+     #3591's `data-browser-past-top` gives its foot `contain`, which bounces.
+   - ITS OWN SCROLLER everywhere else: every screen in the installed app
+     and the native WebView, and in a phone browser the screens the document
+     does not page (All communities, Your changes / requests / votes, the
+     Messages list). Those roots are `overflow-y: auto` and the bounce is
+     iOS's, which rubber-bands a scroller only when it CAN scroll. One with
+     no range hands the drag to the document, which the bounded shell holds
+     still on purpose (`html, body`: `overflow: hidden`,
+     `overscroll-behavior-y: none`), so neither end moves.
+
+   Measured at 390x664 (iPhone agent, touch), in the phone browser and the
+   installed layout alike: #workshop-screen 572/572 and 620/620
+   (scrollHeight/clientHeight) with two cards on it, #profile-proposals-
+   screen the same, and .messages-list-scroll 457/457 with one conversation.
+   No range, so no bounce at either end. Home, Discover, Profile, Settings
+   and Leaderboard bounced in the installed app only because this account's
+   were longer than the screen; a new account's short page would not.
+
+   SO EVERY PAGE SCROLLER HAS AT LEAST ONE PIXEL TO SCROLL, by #3544's
+   mechanism for a project's short tabs (see "A SHORT TAB STILL HAS
+   SOMETHING TO SCROLL" further down): a 1px box hung 1px below the
+   scroller's bottom edge, which puts that pixel into its scrollable
+   overflow whatever the content does. Absolute and offset from the
+   scroller's own padding box, so neither a flex chain that fills the
+   screen (Home's `.home-body-fill`, an open Settings section) nor a
+   percentage floor can take it back. Past the fold of a long page it is a
+   transparent pixel in the middle of the content and changes nothing.
+
+   A PAGE SAYS IT IS ONE with `data-page-bounce` on its scroller: Home,
+   Discover, All communities, Leaderboard, Profile, Your changes / requests
+   / votes, Settings, Admin, and the Messages list. Every screen root among
+   them is already its own containing block (`position: relative`, inline);
+   the Messages list was not, and becomes one here: its rows are their own
+   containing blocks, and nothing in it was positioned against anything
+   further out (measured).
+
+   ONLY WHERE THE SCROLLER IS THE PAGE: `html:not([data-browser-scroller])`.
+   When the document pages a screen the root is `overflow: visible`, and the
+   pixel would only lengthen the page; that bounce is #3591's. ONLY ON A
+   TOUCH SCREEN: with a mouse, a pixel of range would put a scrollbar on a
+   window that has nothing to scroll.
+
+   NOT the Communities Needs you feed (`[data-workshop-pane="needs"]`): it
+   is fitted to the screen on purpose (#3516) and scrolls inside, like a
+   project's Needs you and Discussion, which #3544 leaves fitted too. NOT the
+   chats (a Messages thread, Global Chat, an agent session): a transcript
+   opens on its newest line and stays there; it is not a page. A project
+   page is #3544's rule. tests/page-overscroll.test.js holds App.SCREEN_IDS
+   against the attribute, so a new screen root carries it or is named there
+   with its reason. */
+@media (pointer: coarse) {
+  html:not([data-browser-scroller]) [data-page-bounce] {
+    position: relative;
+  }
+  html:not([data-browser-scroller]) [data-page-bounce]::after {
+    content: '';
+    position: absolute; left: 0; bottom: -1px;
+    width: 1px; height: 1px;
+    pointer-events: none;
+  }
+  /* A rule of its own, so an engine without `:has()` drops only this. */
+  html:not([data-browser-scroller]) [data-page-bounce]:has([data-workshop-pane="needs"])::after {
+    content: none;
+  }
+}
+
 /* ── `.touch-target-32`: the kit's hit-slop, sized for a dense row ──────
    QA 2026-09-24 Q19. `.un-touch-target` (native.css) grows a control's hit
    box to 44px, which is right for a lone icon in a bar. In a DENSE row it is
@@ -3574,8 +3765,15 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
    `bg-zinc-100` / `dark:bg-zinc-950` body instead of the wallpaper. On a
    desktop the session usually shows inside #messages-screen (listed), which
    hid the omission; the side panel beside an app is phone-width, swaps
-   `messages/agent/<id>` for `agent/<id>`, and so drew it gray. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+   `messages/agent/<id>` for `agent/<id>`, and so drew it gray.
+
+   #profile-proposals-screen IS ONE TOO (#3498). Profile's Your changes,
+   Your requests and Your votes are a drill-in off Me like Settings and the
+   Leaderboard, drawn in the same plane cards, but the screen arrived after
+   these lists and was on none of them: the page kept the gray body and the
+   bar its zinc-200 surface. Every list here that names #workshop-screen,
+   its React-owned sibling, names it as well. */
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #f4f2e4;
   /* The kit's tile-zoom paints the moving #app-view on this (native.js
      sets its inline background to the variable), and it is read from
@@ -3613,7 +3811,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    screen — so on every other route these selectors are exactly the two they
    were. See "THE BAR TAKES THE APP'S TONE" below for the tokens that ride
    along with the ground. */
-:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+:is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
   --home-ground: #0b0d1b;
   /* THE STAR IS AS QUIET HERE AS IT IS ON CREAM. The same halftone raster,
      with its one palette entry re-tinted: #DEEDF8 on #F4F2E4 is a faint cool
@@ -3653,7 +3851,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    at every width on its own — the second rule here gives dark the same
    four extra washes, in its own tints. */
 @media (min-width: 640px) {
-  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(229, 216, 239, 0.55) 138px, rgba(229, 216, 239, 0.275) 198px, rgba(229, 216, 239, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(245, 215, 230, 0.65) 50px, rgba(245, 215, 230, 0.325) 120px, rgba(245, 215, 230, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -3667,7 +3865,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
       var(--home-grain) 0 0 / 240px 240px repeat,
       var(--home-washes);
   }
-  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
+  :is(.dark:not([data-app-tone="light"]), [data-app-tone="dark"]) body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) {
     --home-washes:
       radial-gradient(circle at calc(100% - 92px) 115px, rgba(80, 48, 105, 0.55) 138px, rgba(80, 48, 105, 0.275) 198px, rgba(80, 48, 105, 0) 258px) 0 0 / 100% 100% no-repeat,
       radial-gradient(circle at calc(100% - 62px) 59%, rgba(117, 36, 77, 0.65) 50px, rgba(117, 36, 77, 0.325) 120px, rgba(117, 36, 77, 0) 190px) 0 0 / 100% 100% no-repeat,
@@ -3695,7 +3893,7 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    what makes the launcher → app push read as one bar: both routes paint
    the same wallpaper under the same cleared bar, so the bar's snapshot is
    identical on both sides of the transition and only the page moves. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #global-chat-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #global-chat-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) #platform-header {
   background-color: transparent;
 }
 
@@ -3725,7 +3923,8 @@ body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #bro
    notch in half. The frost IS the edge here. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
-             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header {
+             #global-chat-screen, #agent-session-screen,
+             #profile-proposals-screen):not(.hidden)) #platform-header {
   background-color: var(--dc-sheet-fill);
   backdrop-filter: var(--dc-frost);
   -webkit-backdrop-filter: var(--dc-frost);
@@ -3753,7 +3952,8 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    reaches past its box, so the clip cuts nothing. */
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
-             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header,
+             #global-chat-screen, #agent-session-screen,
+             #profile-proposals-screen):not(.hidden)) #platform-header,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
   background-color: transparent;
   clip-path: inset(0 round 0 0 1.25rem 1.25rem);
@@ -3907,7 +4107,7 @@ body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header {
    value, so the browser chrome and a cold launch frame the page in it.
    The launch cover reads the same ground, so the app opens on the page's
    colour in both modes. */
-body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
+body:has(:is(#home-screen, #app-view, #leaderboard-screen, #profile-screen, #browse-screen, #settings-screen, #messages-screen, #workshop-screen, #profile-proposals-screen, #agent-session-screen, #auth-landing-screen, #auth-login-screen, #auth-register-screen, #auth-waiting-screen, #auth-waitlist-screen, #auth-more-screen):not(.hidden)) .app-launch-cover {
   background-color: var(--home-ground);
 }
 /* THE LANDING ROOT PAINTS THE WALLPAPER ITSELF. #auth-landing-screen is a
@@ -5840,6 +6040,15 @@ body:has(#platform-header.hidden) #app-frame-host {
   gap: 6px;
 }
 
+/* #3559: a status row's sentence, and only its sentence (StatusLine in
+   frontend/src/features/dev-chat/transcript.tsx). It is a flex item, so it
+   was held at the width of its longest word: a step naming a link or a
+   branch pushed the row past the transcript's edge, and the transcript,
+   which scrolls, then slid sideways on a phone. `anywhere` lets the word
+   break inside the row, and lowers the item's min-content with it, which
+   `break-word` would not. The stamp and the clock beside it keep theirs. */
+.dc-status-text { min-width: 0; overflow-wrap: anywhere; }
+
 /* #2597: the venue caption under a running row's heading.
    The heading says what is happening ("Coding agent is running"); this says
    where, in the same muted second-line treatment .dc-cc-note already gives
@@ -6014,7 +6223,10 @@ body:has(#platform-header.hidden) #app-frame-host {
   line-height: 1.45;
 }
 .dc-failure-body { flex: 1; min-width: 0; }
-.dc-failure-text { display: block; min-width: 0; }
+/* #3559: the body may shrink (min-width: 0) but its text did not follow it.
+   A failure that quotes a link, which a build error often does, ran past the
+   card and widened the whole transcript; `anywhere` breaks it in the card. */
+.dc-failure-text { display: block; min-width: 0; overflow-wrap: anywhere; }
 .dc-failure-text a { color: var(--accent); }
 
 /* THE STOP PAIR. Both are "the run did not finish", so both are this card
@@ -6096,6 +6308,11 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-pr-title { font-size: 13px; color: var(--text); font-weight: 500; }
 
 .dc-pr-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* #3605: the lifecycle badge, once proposed, opens the vote page. The badge
+   keeps its own look; the wrapper only adds the link cues. */
+.dc-pr-status-link { display: inline-flex; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 9999px; }
+.dc-pr-status-link:hover .ms-badge { text-decoration: underline; }
+.dc-pr-status-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* #699: expandable report body on the platform-issue draft card. The
    <summary> holds the 300-char preview plus a "Show full report" cue;
@@ -7516,11 +7733,17 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 /* Sibling of .dc-cc-attached-log for the post-turn ccOutput
    markdown summary (rather than a monospaced live-log). Same
    indent + muted color, but body font and a bit more room for
-   structured markdown elements (paragraphs, lists, code blocks). */
+   structured markdown elements (paragraphs, lists, code blocks).
+   #3559: it scrolls down, so it scrolled sideways too, and the agent's
+   summary is where a long path in backticks turns up: the block slid under
+   a finger on a phone. The log beside it breaks its words already; this
+   breaks the summary's inside the block, and a fenced code block, which
+   never wraps, still scrolls sideways inside its own box. */
 .dc-cc-attached-md {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
   max-height: 360px;
   overflow-y: auto;
   margin: 0 12px 12px;
@@ -9944,6 +10167,24 @@ html.un-kb #settings-content-col > .settings-sheet {
   pointer-events: none;
 }
 .dark .notifications-row:not(:last-child)::after { background: rgba(255, 255, 255, 0.08); }
+/* #3538: a notification row in the sheet sits in a slot of its own (the
+   swipe's kit wrap and the desktop × both live in it; see ScreenRow in
+   features/notifications/notifications-sheet.tsx), so whether the ROW is a
+   last child says nothing any more: at a desk the × follows it, and on a
+   phone the kit makes it the last child of its wrap. The hairline goes by
+   the SLOT's place in the list instead, which is the place the row had. */
+.notifications-row-slot .notifications-row::after { content: none; }
+.notifications-row-slot:not(:last-child) .notifications-row::after {
+  content: '';
+  position: absolute;
+  left: 4.75rem;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: var(--border-light);
+  pointer-events: none;
+}
+.dark .notifications-row-slot:not(:last-child) .notifications-row::after { background: rgba(255, 255, 255, 0.08); }
 
 /* ── The dev area on the ladder, and the shared composer card ───────────
    The board column is the STRIP and a topic or the Discussion is the SHEET
@@ -12201,13 +12442,13 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
    A literal, with no dark step, for the reason the button carries none:
    white on #0a6ee0 is 4.9:1 in both themes, where the dark theme's lighter
    accent would not carry white text. */
-#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill, .create-approvals-pill) {
+#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-template-pill, .create-approver-pill, .create-approvals-pill) {
   color: var(--text-primary);
   cursor: pointer;
 }
 #create-card .create-approvals-pill { color: var(--text-muted); }
 #create-card .create-approvals-pill:hover { color: var(--text-primary); }
-#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-approver-pill) .create-choice-caption {
+#create-card :is(.create-who-pill, .create-kind-row, .create-mode-pill, .create-template-pill, .create-approver-pill) .create-choice-caption {
   color: var(--text-muted);
 }
 /* A row that is there but cannot be pressed yet (Document, Video, a
@@ -12222,7 +12463,9 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"],
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"],
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"],
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"],
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"],
+#create-card                            .create-template-pill[aria-pressed="true"],
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"],
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"],
 #create-card[data-approvals="majority"] .create-approvals-pill[data-approvals-pill="majority"],
@@ -12237,7 +12480,9 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 #create-card[data-audience="open"]      .create-who-pill[data-audience-pill="open"] .create-choice-caption,
 #create-card[data-kind="app"]           .create-kind-row[data-kind-pill="app"] .create-choice-caption,
 #create-card[data-mode="new"]           .create-mode-pill[data-mode-pill="new"] .create-choice-caption,
+#create-card[data-mode="template"]      .create-mode-pill[data-mode-pill="template"] .create-choice-caption,
 #create-card[data-mode="import"]        .create-mode-pill[data-mode-pill="import"] .create-choice-caption,
+#create-card                            .create-template-pill[aria-pressed="true"] .create-choice-caption,
 #create-card[data-approvers="anyone"]   .create-approver-pill[data-approver-pill="anyone"] .create-choice-caption,
 #create-card[data-approvers="invited"]  .create-approver-pill[data-approver-pill="invited"] .create-choice-caption {
   color: inherit;
@@ -12267,26 +12512,29 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 /* The repo URL and its check belong to "Import a GitHub repo" alone. */
 #create-card:not([data-mode="import"]) .create-import-block { display: none; }
 
-/* THE STEPS UNFOLD IN ONE CARD (#1911; six of them since the rework).
+/* THE STEPS UNFOLD IN ONE CARD (#1911; seven of them since the rework).
    Every step's section ships on every step — the declared checks select on
    the same ids whichever steps are showing — and #create-card[data-step] is
    the FURTHEST step reached: everything up to it is on screen, the rest is
-   folded. Keyed on the CARD, like data-mode.
+   folded. Keyed on the CARD, like data-mode. The order is who, invite,
+   kind, start, details, about, approve.
 
-   The invite step belongs to a private community, and the approval step to
-   a private or a public community: Just me has nobody else to approve
-   anything. The footer
-   follows data-final, which the component sets from the same rule: Cancel
-   always; Next until the last step, then Create / Import (QA 2026-09-24 Q6:
-   never two accent buttons at once). Either stays dimmed until its step is
-   answered. */
-#create-card[data-step="who"]     :is([data-create-step="invite"], [data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"]),
-#create-card[data-step="invite"]  :is([data-create-step="kind"], [data-create-step="details"], [data-create-step="approve"], [data-create-step="start"]),
-#create-card[data-step="kind"]    :is([data-create-step="details"], [data-create-step="approve"], [data-create-step="start"]),
-#create-card[data-step="details"] :is([data-create-step="approve"], [data-create-step="start"]),
-#create-card[data-step="approve"] [data-create-step="start"],
+   The invite step belongs to a private community, the one-line "about" step
+   to a project made here (an import's repo describes it), and the approval
+   step to a private or a public community: Just me has nobody else to
+   approve anything. The footer follows data-final, which the component sets
+   from the same rule: Cancel always; Next until the last step, then Create
+   / Import (QA 2026-09-24 Q6: never two accent buttons at once). Either
+   stays dimmed until its step is answered. */
+#create-card[data-step="who"]     :is([data-create-step="invite"], [data-create-step="kind"], [data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="invite"]  :is([data-create-step="kind"], [data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="kind"]    :is([data-create-step="start"], [data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="start"]   :is([data-create-step="details"], [data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="details"] :is([data-create-step="about"], [data-create-step="approve"]),
+#create-card[data-step="about"]   [data-create-step="approve"],
 #create-card:not([data-audience="invited"]) [data-create-step="invite"],
-#create-card:is([data-audience="solo"], [data-audience=""]) [data-create-step="approve"] {
+#create-card:is([data-audience="solo"], [data-audience=""]) [data-create-step="approve"],
+#create-card[data-mode="import"] :is([data-create-step="about"], .create-brief-row) {
   display: none;
 }
 #create-card[data-final="false"] #create-submit,
@@ -12297,25 +12545,32 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 /* A question step COLLAPSES to its chosen row once the card moves past it:
    the other rows and the captions fold away, the chevron gives way to
    "Change", and pressing the row reopens the step, its answer still
-   picked. The invite rows, the name and the approval answers stay as they
-   are, still editable. */
+   picked. How to start collapses the same way, keeping the starter picked
+   under a template and the repo's check under an import. The invite rows,
+   the name, the description and the approval answers stay as they are,
+   still editable. */
 #create-card[data-step="who"] [data-create-step="who"] .create-choice-change,
-#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"]) [data-create-step="kind"] .create-choice-change {
+#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"]) [data-create-step="kind"] .create-choice-change,
+#create-card:is([data-step="who"], [data-step="invite"], [data-step="kind"], [data-step="start"]) [data-create-step="start"] .create-choice-change {
   display: none;
 }
 #create-card:not([data-step="who"]) [data-create-step="who"] :is(.create-choice-chevron, .create-choice-caption),
 #create-card:not([data-step="who"])[data-audience="solo"]    .create-who-pill:not([data-audience-pill="solo"]),
 #create-card:not([data-step="who"])[data-audience="invited"] .create-who-pill:not([data-audience-pill="invited"]),
 #create-card:not([data-step="who"])[data-audience="open"]    .create-who-pill:not([data-audience-pill="open"]),
-#create-card:is([data-step="details"], [data-step="approve"], [data-step="start"]) [data-create-step="kind"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon) {
+#create-card:is([data-step="start"], [data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="kind"] :is(.create-choice-chevron, .create-choice-caption, .create-kind-soon),
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"]) [data-create-step="start"] :is(.create-choice-caption, .create-template-pill:not([aria-pressed="true"]), .create-import-hint),
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="new"]      .create-mode-pill:not([data-mode-pill="new"]),
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="template"] .create-mode-pill:not([data-mode-pill="template"]),
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"])[data-mode="import"]   .create-mode-pill:not([data-mode-pill="import"]) {
   display: none;
 }
 #create-card:not([data-step="who"]) .create-who-pill,
-#create-card:is([data-step="details"], [data-step="approve"], [data-step="start"]) .create-kind-row {
+#create-card:is([data-step="start"], [data-step="details"], [data-step="about"], [data-step="approve"]) .create-kind-row,
+#create-card:is([data-step="details"], [data-step="about"], [data-step="approve"]) :is(.create-mode-pill, .create-template-pill) {
   padding-top: 0.5rem;
   padding-bottom: 0.5rem;
 }
-
 /* The invite rows: one card, a hairline between rows (the GroupedList
    recipe's inset sheet line). */
 #create-card .create-invite-list > * + * { box-shadow: inset 0 1px 0 var(--app-sheet-line); }
@@ -12323,17 +12578,19 @@ html.in-native-webview.un-android .un-modal.un-in:has(> #create-card) {
 
 /* AN IMPORT'S DAPP.JSON WINS. Once the check has read it, each earlier
    answer it replaces is dimmed and its heading says so; the notice under
-   the check names them (data-repo-sets lists them: name, desc, vis, gov). */
+   the check names them (data-repo-sets lists them: name, vis, gov). The
+   name step comes after the check and opens on the repo's own name, so it
+   is never dimmed: a name typed over it is only tagged. The approval step
+   comes after it too: a repo that sets the rule dims the choices and says
+   so, in place of asking. */
 #create-card .create-repo-sets-tag { display: none; font-weight: 500; color: var(--text-muted); }
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="vis"] [data-repo-tag="vis"],
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="gov"] [data-repo-tag="gov"],
-#create-card[data-step="start"][data-mode="import"]:is([data-repo-sets~="name"], [data-repo-sets~="desc"]) [data-repo-tag="details"] {
+#create-card[data-mode="import"][data-repo-sets~="vis"]  [data-repo-tag="vis"],
+#create-card[data-mode="import"][data-repo-sets~="gov"]  [data-repo-tag="gov"],
+#create-card[data-mode="import"][data-repo-sets~="name"] [data-repo-tag="details"] {
   display: inline;
 }
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="name"] .create-name-row,
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="desc"] .create-describe-row,
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="gov"]  #create-approve-block,
-#create-card[data-step="start"][data-mode="import"][data-repo-sets~="vis"]  [data-create-step="who"] .create-who-pill {
+#create-card[data-mode="import"][data-repo-sets~="gov"]  #create-approve-block,
+#create-card[data-mode="import"][data-repo-sets~="vis"]  [data-create-step="who"] .create-who-pill {
   opacity: 0.45;
   pointer-events: none;
 }
@@ -14026,6 +14283,18 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-sheet .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
 .dev-vote-sheet .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
 .dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
+/* The Needs you feed's vote sheet (#3613) draws the same picker inline, at
+   the same tap-target size: the switch, the line box, Cancel and the send. */
+.dev-ws-vote-form { display: flex; flex-direction: column; gap: 4px; }
+.dev-ws-vote-form .dev-vote-switch-opt { height: 44px; padding: 0 14px; font-size: 15px; }
+.dev-ws-vote-form .dev-vote-switch-opt svg { width: 16px; height: 16px; }
+.dev-ws-vote-form .dev-vote-switch-opt .dev-vote-n { font-size: 12.5px; }
+.dev-ws-vote-form .dev-vote-switch-label { padding: 0 4px 4px; font-size: 14px; }
+.dev-ws-vote-form .dev-vote-reason { margin-top: 10px; gap: 6px; }
+.dev-ws-vote-form .dev-vote-reason-label { padding: 0 2px 2px; font-size: 14px; }
+.dev-ws-vote-form .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
+.dev-ws-vote-form .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
+.dev-ws-vote-form .dev-vote-reason-cancel, .dev-ws-vote-form .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
 /* "Still yes?": the viewer's Yes was on an earlier version of the proposal
    (#1688). Amber, because it is a question the card is asking them. */
 .dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); }
@@ -15129,6 +15398,72 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-step-vote-bar { flex: 0 0 160px; height: 8px; border-radius: 999px; background: var(--state-neutral-bg); overflow: hidden; }
 .dev-step-vote-bar > i { display: block; height: 100%; border-radius: 999px; background: var(--state-ok); }
 .dev-step-vote-tally { color: var(--text-primary); font-weight: 600; font-size: 12.5px; }
+/* #3234: the threshold moved during the vote; muted, beside the counts. */
+.dev-step-vote-was { color: var(--text-muted); font-size: 12.5px; }
+
+/* ── A merge gate's step: one short line ──
+   The mark, the label and the line on one row (app-view.js _stepLine), a
+   button only for whoever can clear it. The line takes the step's tone when
+   it is waiting on somebody or blocked — the one word a scan is after. */
+.dev-step-main {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; min-width: 0;
+  grid-column: 2 / 4;
+}
+.dev-step-line { font-size: 12.5px; color: var(--text-muted); min-width: 0; }
+.dev-step-active .dev-step-line { color: var(--text-secondary); }
+.dev-step-waiting .dev-step-line { color: var(--state-attention); font-weight: 600; }
+.dev-step-blocked .dev-step-line { color: var(--state-blocked); font-weight: 600; }
+.dev-step-main .dev-ledger-review-line { gap: 4px 8px; }
+/* Who voted is a list of names, not the step's state: it keeps the muted ink
+   whatever the mark says. */
+.dev-step-main .dev-ledger-roster.dev-step-line { color: var(--text-muted); font-weight: 400; }
+.dev-step-main .dev-ledger-help { margin: 0; }
+.dev-step-main .dev-step-vote-was { flex-basis: 100%; font-weight: 400; }
+/* The Checks step is a disclosure: the whole row is its control. */
+.dev-step-toggle {
+  border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left;
+  cursor: pointer; width: 100%;
+}
+.dev-step-toggle:hover .dev-step-label { color: var(--accent); }
+.dev-step-chev {
+  width: 14px; height: 14px; margin-left: auto; align-self: center; flex: none;
+  color: var(--text-muted); transition: transform 150ms;
+}
+.dev-step-toggle[aria-expanded="true"] .dev-step-chev { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .dev-step-chev { transition: none; } }
+/* The run, open: a row per stage — its name, its bar, its count. */
+.dev-step-run {
+  display: grid; grid-template-columns: 5.5rem minmax(0, 1fr) auto; gap: 7px 10px; align-items: center;
+  margin-top: 6px; padding: 10px 12px; border-radius: 10px; background: var(--bg-secondary);
+  font-size: 12px; color: var(--text-muted);
+}
+.dev-step-run-row { display: contents; }
+.dev-step-run-k { color: var(--text-secondary); font-weight: 600; white-space: nowrap; }
+.dev-step-run-v { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.dev-step-run-v.is-bad { color: var(--state-blocked); font-weight: 600; }
+.dev-step-run .dev-ledger-build-bar { flex-basis: auto; height: 8px; margin: 0; gap: 3px; }
+.dev-step-run .dev-ledger-build-seg { background: var(--state-neutral-bg); }
+.dev-step-run .dev-ledger-build-seg.is-done { background: var(--state-ok); }
+.dev-step-run .dev-ledger-build-seg.is-now { background: var(--accent); }
+.dev-step-run-track {
+  position: relative; display: block; height: 8px; border-radius: 999px; overflow: hidden;
+  background: var(--state-neutral-bg);
+}
+.dev-step-run-track > i { position: absolute; top: 0; bottom: 0; left: 0; display: block; }
+.dev-step-run-track > .is-pass { background: var(--state-ok); }
+.dev-step-run-track > .is-fail { background: var(--state-blocked); }
+.dev-step-run-track.is-busy { animation: dev-ledger-progress-pulse 1.4s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .dev-step-run-track.is-busy { animation: none; } }
+.dev-step-run > .dev-ledger-fails { grid-column: 1 / -1; margin: 2px 0 0; }
+.dev-step-run-note { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--text-muted); }
+@media (max-width: 520px) {
+  .dev-step-run { grid-template-columns: 4.25rem minmax(3rem, 1fr) minmax(0, max-content); gap: 7px 8px; }
+  .dev-step-run-v { white-space: normal; }
+}
+
+/* The hero's status row: the card's pill and Vote button, above the band. */
+.dev-topic-hero .dev-card-badges.dev-topic-hero-status { margin-top: 0; }
+.dev-topic-hero .dev-topic-hero-status + .gc-card-actions { margin-top: 8px; }
 
 /* ── Technical details, as a sheet over the page ──
    Opened from the ⋯ menu (DetailsSheet); body-mounted, so no frosted sheet
@@ -15155,6 +15490,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border: 0; border-radius: 9999px; background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer;
 }
 .dev-details-card > .dev-topic-details-body { margin: 0; padding: 0; background: none; font-size: 13.5px; line-height: 1.5; }
+.dev-description-dialog { margin: auto; border: 0; border-radius: 20px; width: min(680px, calc(100% - 24px)); max-height: 85dvh; }
+.dev-description-dialog::backdrop { background: rgba(20, 20, 26, .5); }
 @media (max-width: 480px) {
   .dev-topic-hero { padding: 14px 14px 16px; }
   .dev-topic-hero-title { font-size: 22px; }
@@ -15162,6 +15499,27 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   .dev-step-vote-bar { flex-basis: 120px; }
 }
 #dev-issue-comments .dev-feed-msg-text { font-size: 13px; }
+/* #3490: Homeroom bot's spec, under its sentence (issue-comments.tsx
+   BotSpec). A card in the plane colour with one hairline, the spec's title
+   on it as a row's title (15 over the 13 of its label), folded as GitHub
+   folds it; open, the spec in the spec viewer's own typography. */
+.dev-issue-spec {
+  margin-top: 8px; border-radius: 14px; overflow: hidden;
+  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
+}
+.dev-issue-spec-head {
+  display: flex; align-items: center; gap: 10px; min-height: 44px;
+  padding: 10px 12px; cursor: pointer; list-style: none;
+}
+.dev-issue-spec-head::-webkit-details-marker { display: none; }
+.dev-issue-spec-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1 1 auto; }
+.dev-issue-spec-kicker { font-size: 13px; color: var(--text-muted); }
+.dev-issue-spec-title { font-size: 15px; font-weight: 650; line-height: 1.3; color: var(--text-primary); }
+.dev-issue-spec-chev { width: 18px; height: 18px; flex: none; color: var(--text-muted); transition: transform .15s ease; }
+.dev-issue-spec[open] .dev-issue-spec-chev { transform: rotate(180deg); }
+.dev-issue-spec-body { padding: 2px 12px 14px; border-top: 1px solid var(--app-sheet-line); padding-top: 12px; }
+/* The Workshop row's two-line preview names the spec after the sentence. */
+.dev-feed-comment-spec { display: block; margin-top: 2px; font-weight: 600; color: var(--text-primary); }
 #dev-topic-thread #gc-thread-messages {
   margin: 4px 0 0;
   max-width: 900px;
@@ -15423,8 +15781,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    caret, on the reasoning that most visits do not need the fact — and what
    that produced was a strip nobody opened: the count said something had
    moved and the rows saying what were behind a press. The bargain is the
-   LIST'S LENGTH now (three, then `Show older`), not its existence, which is
-   what the week walk one pane up already does with its own history.
+   LIST'S LENGTH now (three a week, then a few more a press, and `Show an
+   earlier week`), not its existence, which is what the week walk one pane
+   up already does with its own history.
 
    `.dev-ws-since-head` is what `.dev-ws-since-row` was, minus everything
    that said "press me": no pill radius, no pointer, no hover ink, no caret.
@@ -15449,11 +15808,22 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   background: var(--brand-tint); color: var(--brand-ink);
   font-size: 11px; font-variant-numeric: tabular-nums;
 }
-/* `Show older` steps the since list back a week: `.dev-ws-reveal`, centred,
-   caret down at what it is about to reveal, under a stack of full-width
-   rows, so it takes the centred form rather than `.dev-ws-reveal-start`'s
-   lane indent. Nothing of its own but the air between it and the last row. */
+/* `Show an earlier week` steps the since list back a week: `.dev-ws-reveal`,
+   centred, caret down at what it is about to reveal, under a stack of
+   full-width rows, so it takes the centred form rather than
+   `.dev-ws-reveal-start`'s lane indent.
+   #3524: under a week it also takes the week's own hairline, the rule the
+   week it reveals will arrive under. It sat bare beneath that week's "N
+   more new" before, and the two read as one control said twice; the rule
+   puts it outside the week, and the week's own reveal stays inside it
+   (`.dev-ws-since-week-more`). "N new" further back rides it in the accent:
+   a number that asks for the reader. */
 .dev-ws-since-more { margin-top: 2px; }
+.dev-ws-since-week + .dev-ws-since-more {
+  margin-top: 6px; padding-top: 10px;
+  border-top: 1px solid var(--app-sheet-line);
+}
+.dev-ws-since-more-new { color: var(--accent); }
 /* #2183: the control is always drawn and DISABLED when the walk is over,
    rather than leaving — so it reads as spent, not pressable. */
 .dev-ws-reveal:disabled { color: var(--text-muted); opacity: .45; cursor: default; }
@@ -15475,8 +15845,9 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
 .dev-ws-since-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .dev-ws-since-clear:disabled { opacity: .45; cursor: default; }
 .dev-ws-since-clear:disabled:hover { color: var(--text-muted); }
-/* The line across the list (#2183): where `Show older` crosses from what is
-   new into what the reader has already seen. The heading's own shape, one
+/* The line across the list (#2183): where a week's rows cross from what is
+   new into what the reader has already seen (#3524: in the same column,
+   under the same one reveal, rather than behind a fold of their own). The heading's own shape, one
    size down, with the count of the whole rest riding it in plain ink rather
    than the brand tint — these rows are not news. */
 .dev-ws-since-seen {
@@ -15592,7 +15963,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    scroller they scroll in, and `.dev-ws-tabbody` is not a scroller itself,
    so shrinking them to the viewport would clip what they hold rather than
    make it reachable. */
-#dev-workshop > .dev-ws[data-ws-tab="needs"] { min-height: 0; }
+#dev-workshop > .dev-ws[data-ws-tab="needs"],
+#dev-workshop > .dev-ws[data-ws-tab="discussion"] { min-height: 0; }
 /* …AND ON THE TWO TABS THAT GROW, THE LINKS ABOVE MUST NOT SHRINK (#3053).
    `min-height: 0` on #dev-body and #dev-workshop is what lets Needs you be
    bounded; on Current status and All items it let both shrink to the
@@ -15604,9 +15976,67 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
    to scroll it clear. Native layout only — in the browser layout the
    scroller is auto-height and nothing shrinks. `flex-shrink: 0` keeps the
    grow (the lander still fills a short tab) and gives the padding back. */
-#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"])),
-#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"])) { flex-shrink: 0; }
+#dev-body:has(> #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])),
+#dev-workshop:has(> .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])) { flex-shrink: 0; }
 html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
+/* ── A SHORT TAB STILL HAS SOMETHING TO SCROLL (#3520) ──────────────────
+   "Unable to over scroll down on hub page (but can on workshop)", in the
+   installed iPhone app: on the Hub neither end rubber-banded and a pull from
+   the top did not stretch, while the Workshop tab of the same page did both.
+
+   Nothing on the Hub turns the gesture off. Measured in the installed layout
+   at 390x844 (standalone, an iPhone's agent): both tabs scroll in the one
+   #dev-forum-scroll, with the same overflow (auto), overscroll (contain) and
+   touch-action (auto) on it and on every ancestor; neither holds a nested
+   scroller, a touch-action or an overscroll rule of its own; and the kit's
+   pull binds to the scroller on both. What differs is the RANGE. The chain
+   above fills the scroller whenever a growing tab is shorter than the screen
+   ("the lander still fills a short tab"), to exactly its height and not a
+   pixel more: the Hub measured scrollHeight 799 against clientHeight 799,
+   nothing to scroll, and so did a fresh project's Workshop tab. The Workshop
+   tab the report compares against is the one that runs past the screen once
+   a project has history. iOS only rubber-bands a box that can scroll; one
+   with no range hands the drag to the document, which the installed shell
+   holds still on purpose (`html, body`: `overflow: hidden`,
+   `overscroll-behavior-y: none`), so neither end moved.
+
+   So a growing tab is always ONE PIXEL taller than the scroller: a 1px box
+   hung 1px below the scroller's bottom edge, which puts that pixel into its
+   scrollable overflow whatever the content does. The same range a long tab
+   has, so the same bounce at both ends and the same pull at the top as the
+   Workshop's. Past the fold it is a transparent pixel in the middle of the
+   content and changes nothing.
+
+   ABSOLUTE, AND OFFSET FROM THE SCROLLER'S OWN EDGE, because the two
+   obvious ways cannot work here. A 1px spacer in flow is a flex item of this
+   chain, and the grow above takes it back: the lander fills what is left and
+   the total stays the scroller's height. `min-height: calc(100% + 1px)` is a
+   percentage floor in this chain, which is exactly what Firefox dropped (the
+   note above). An absolute box's offsets are against its containing block's
+   padding box, which is definite in every engine, so the scroller becomes
+   that block (`position: relative`, no z-index: no new stacking context; and,
+   measured on all three growing tabs, nothing inside it was positioned
+   against anything further out). Nor does
+   it touch the scroller's bottom padding, the tab-bar clearance #3053 relies
+   on.
+
+   ONLY WHERE IT BOUNCES AND ONLY WHERE THIS IS THE SCROLLER: a phone
+   (`pointer: coarse` under 700px; a pixel of range would put a scrollbar on
+   a desktop window, and from 700px a scrolled strip draws its pinned band),
+   and not in a phone browser, where the document scrolls
+   (`data-browser-scroller`) and the pixel would lengthen the page. Not Needs
+   you or Discussion either: those are fitted on purpose and scroll inside. */
+@media (max-width: 699.98px) and (pointer: coarse) {
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"])) {
+    position: relative;
+  }
+  html:not([data-browser-scroller]) #dev-forum-scroll:has(> #dev-body > #dev-workshop > .dev-ws:not([data-ws-tab="needs"]):not([data-ws-tab="discussion"]))::after {
+    content: '';
+    position: absolute; left: 0; bottom: -1px;
+    width: 1px; height: 1px;
+    pointer-events: none;
+  }
+}
 /* The tab body takes the space the tabs above it leave. */
 .dev-ws-tabbody {
   flex: 1 1 auto; min-height: 0;
@@ -15980,6 +16410,24 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   font-size: 12px; font-weight: 600; color: var(--text-muted);
   font-variant-numeric: tabular-nums; white-space: nowrap;
 }
+/* #3517: the way back on a phone, beside the counter (workshop.tsx draws it
+   there only, from the second item on). A small frosted round, the rail's
+   own fill and line, drawn at 26px but held to the row's 20px by negative
+   margins, so the title under it sits where it does on the first card,
+   which has none: a swipe from one to the next must not nudge the text.
+   `margin-left: auto` takes the row's free space, so it rides beside the
+   counter rather than in the middle of the row; the tap target is the 44px
+   square around it. */
+.dev-ws-item-prev {
+  position: relative; flex: none;
+  width: 26px; height: 26px; margin: -3px -4px -3px auto; padding: 0;
+  display: grid; place-items: center;
+  border: 1px solid var(--app-sheet-line); border-radius: 9999px;
+  background-color: var(--dc-sheet-fill);
+  color: var(--text-secondary); cursor: pointer;
+}
+.dev-ws-item-prev::after { content: ''; position: absolute; inset: -9px; }
+.dev-ws-item-prev-icon { width: 16px; height: 16px; }
 /* After a vote the eyebrow IS the confirmation: the same line, in the ok
    tone, with a tick — no toast over the title. */
 .dev-ws-item-done {
@@ -16060,68 +16508,127 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    `.workshop-scope-tabs`) are gone with the UI overhaul: the list is the
    page, and Needs you is a row at its top that opens the feed below. */
 /* ── The Communities screen's Needs you feed (#3270, workshop/needs-reel.tsx) ──
-   One decision per screen, like a project's own Needs you page: the reel is
-   its own scroller, a screen tall less the bars around it, and snaps a card
-   to the top as it moves. A card is the plane colour, 20px, one hairline —
-   the language's card — with the project it belongs to leading it, the
-   question and its two answers at its foot. */
-.workshop-reel {
-  height: calc(100dvh - 232px); min-height: 360px;
-  margin: 4px 16px 0; overflow-y: auto; overscroll-behavior: contain;
-  scroll-snap-type: y mandatory; scroll-padding-top: 0;
-  display: flex; flex-direction: column; gap: 12px;
-  -webkit-overflow-scrolling: touch;
+   A project's own Needs you feed since #3488 (NeedsFeed, the stage and the
+   item above), in a box a screen tall less the bars around it: the page head
+   over it and the tab bar under it. Each item leads with the project it
+   belongs to, its tile and its name, a door to its hub. */
+.workshop-needs-feed {
+  /* NO HEIGHT HERE ANY MORE (#3516): the phone takes it from the flex chain
+     below and the desktop from its own rule after that. `min-height` is the
+     floor for both: a feed shorter than this is not usable, and on a window
+     that short the screen scrolls instead. */
+  min-height: 360px;
+  margin: 4px 16px 0;
+  display: flex; flex-direction: column;
+}
+/* ON A PHONE THE FEED ENDS WHERE #workshop-screen'S CLEARANCE BEGINS (#3516).
+
+   It was `height: calc(100dvh - 180px - var(--browser-banner-h, 0px))`: the
+   page head and the header over it (116px) and a 56px tab bar with 8px of air
+   under it, measured once in a browser with no insets and nothing parked. Three
+   things at the foot of a phone were not in that number, and each one put the
+   feed's foot under the bar:
+
+   - THE PARKED APP'S STRIP. `--platform-tabs-h` counts it (52px more) the
+     moment an app is parked; this number never did. Measured at 390x844 with
+     an app parked: the feed ran to 828px against a strip whose top was at
+     736 in a phone browser, and to 827 against 716 in the installed layout,
+     so the rail's Try it and More and the item's caption sat under the
+     strip and the bar.
+   - THE INSTALLED APP'S INSETS. An iPhone install reserves the status bar
+     at the top (`--platform-safe-top`, 47-62px) and the bar spends part of
+     the home indicator at the foot (`--platform-tabs-inset`). Nothing
+     parked, the feed still ended 60px under the bar there.
+   - THE "GET THE APP" BANNER in a phone browser. `--browser-banner-h` is
+     declared only on `html[data-browser-scroller]` routes, and this screen is
+     not one (browser-scroll.ts `PAGES`): its root scrolls itself in every
+     layout, so the token read 0 here while the banner pushed the page 48px
+     down.
+
+   And the foot could not be scrolled into view. `.dev-ws-needs-scroll` is
+   `overscroll-behavior: contain`, so a drag on the feed moves between items
+   and never reaches the screen behind it; only a drag on the page head moved
+   the page.
+
+   SO NO ARITHMETIC: THE SCROLLER'S OWN CLEARANCE BOUNDS IT. #workshop-screen
+   is a flex child of the fixed-height body column in both layouts, so it has
+   a definite height, and it carries `.platform-safe-scroll`, whose padding is
+   `max(--platform-tabs-h, --platform-safe-bottom)`: the tab bar, the parked
+   strip when there is one and the home indicator, each counted once, by the
+   same token every other screen clears them with. While the feed is up the
+   screen, its column and the pane become a flex chain and the feed takes
+   what is left above that padding, less `--ws-gap` of air — the line a
+   project's own Needs you deck ends on (`.dev-ws`'s `--ws-area`), whatever
+   the header, the insets, the banner or the strip add up to. The same
+   mechanism the project page uses in the installed layout (see "The lander
+   fills what is left of the scroller"), for the same reason: nothing here
+   depends on a header height being accurate.
+
+   `flex-shrink: 0` on every link, never `min-height: 0`. On a window too
+   short for the 360px floor the column must stay its content's height and
+   make the screen scroll: a link allowed to shrink leaves the feed
+   overflowing it, and a scroller's block-end padding follows its in-flow
+   children, not a descendant that overflows one, so the clearance would
+   reserve nothing (#3053 is the same trap on a project page).
+
+   `:not(.hidden)` on the root is load-bearing. The needs pane stays mounted
+   while you are on another screen, and an id-specific `display` here would
+   otherwise outrank Tailwind's `.hidden` and draw Communities over it.
+   `width: 100%` on the column because auto margins on a flex column's cross
+   axis shrink an item to its content (`#dev-workshop` above has the same
+   note); `max-w-2xl mx-auto` still caps and centres it. Its `pb-8` gives way
+   to `--ws-gap`, which is the air this line has always had above the bar.
+
+   Below 768px only: from there the bar is a rail down the side, nothing is
+   parked at the foot (the strip gives way to Recents), and the rule below
+   keeps the desktop's own line. */
+@media (max-width: 767.98px) {
+  #workshop-screen:not(.hidden):has(> div > [data-workshop-pane="needs"]) {
+    display: flex; flex-direction: column;
+  }
+  #workshop-screen > div:has(> [data-workshop-pane="needs"]) {
+    flex: 1 0 auto; width: 100%;
+    display: flex; flex-direction: column;
+    padding-bottom: var(--ws-gap);
+  }
+  #workshop-screen [data-workshop-pane="needs"] {
+    flex: 1 0 auto;
+    display: flex; flex-direction: column;
+  }
+  #workshop-screen [data-workshop-pane="needs"] > .workshop-needs-feed { flex: 1 0 0px; }
 }
 @media (min-width: 768px) {
-  .workshop-reel { height: calc(100dvh - 190px); max-width: 560px; }
+  /* No tab bar: the stage runs to 8px off the floor, as a project's does, so
+     the rail and its arrows clear the key legend under it. */
+  .workshop-needs-feed { height: calc(100dvh - 124px - var(--browser-banner-h, 0px)); }
+  /* The key legend is centred under the STAGE, not under the stage and the
+     rail: this screen's column is narrower than a project's panel, so the
+     legend is wider than the stage and, centred on both, ran under the
+     rail's arrows. 102px is the rail and its gap. */
+  .workshop-needs-feed .dev-ws-keys { right: 102px; }
+}
+/* Where the window has the room, the feed takes a project's stage width
+   (720px) out of the screen's 672px column, as far as that column's own
+   margins go. */
+@media (min-width: 1180px) {
+  .workshop-needs-feed { margin-left: -80px; margin-right: -80px; }
 }
 .workshop-reel-loading { background: var(--dc-sheet-solid); border-radius: 20px; }
-.workshop-reel-card {
-  flex: 0 0 100%; box-sizing: border-box; scroll-snap-align: start;
-  display: flex; flex-direction: column; gap: 10px;
-  padding: 16px 18px 18px; border-radius: 20px;
-  background: var(--dc-sheet-solid); box-shadow: inset 0 0 0 1px var(--app-sheet-line);
-  overflow: hidden;
-}
-.workshop-reel-top { display: flex; align-items: center; gap: 8px; }
 .workshop-reel-app {
   display: inline-flex; align-items: center; gap: 8px; min-width: 0;
   font-size: 13px; font-weight: 650; color: var(--text-primary); text-decoration: none;
 }
+.dev-ws-item > .workshop-reel-app { align-self: flex-start; max-width: calc(100% - 74px); margin: 12px 0 2px; }
 .workshop-reel-tile {
   width: 26px; height: 26px; flex: none; border-radius: 8px; overflow: hidden;
   display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
 }
-.workshop-reel-pos { margin-left: auto; font-size: 12px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.workshop-reel-what { margin: 0; font-size: 13px; color: var(--text-muted); }
-.workshop-reel-title { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 700; letter-spacing: -.01em; text-wrap: balance; }
-.workshop-reel-title a { color: var(--text-primary); text-decoration: none; }
-.workshop-reel-summary {
-  margin: 0; font-size: 16px; line-height: 1.45; color: var(--text-secondary);
-  display: -webkit-box; -webkit-line-clamp: 8; -webkit-box-orient: vertical; overflow: hidden;
+/* A group decision's vote sheet opens its page: the answer button's shape,
+   as a link, in the accent. */
+.dev-ws-answer-open {
+  display: flex; align-items: center; justify-content: center;
+  border-color: transparent; background: var(--accent); color: #fff; text-decoration: none;
 }
-.workshop-reel-by { margin: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; color: var(--text-muted); }
-.workshop-reel-spacer { flex: 1 1 auto; min-height: 0; }
-.workshop-reel-answers { display: flex; flex-direction: column; gap: 10px; }
-.workshop-reel-ask { margin: 0; font-size: 15px; font-weight: 650; color: var(--text-primary); }
-.workshop-reel-buttons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.workshop-reel-no, .workshop-reel-yes {
-  height: 48px; border: 0; border-radius: 14px; cursor: pointer;
-  font-family: inherit; font-size: 16px; font-weight: 650;
-}
-.workshop-reel-no { background: var(--state-neutral-bg); color: var(--text-primary); }
-.workshop-reel-yes { background: var(--accent); color: #fff; }
-.workshop-reel-no:disabled, .workshop-reel-yes:disabled { opacity: .6; cursor: default; }
-.workshop-reel-open, .workshop-reel-decide {
-  display: inline-flex; align-items: center; gap: 2px; align-self: flex-start;
-  font-size: 14px; font-weight: 600; color: var(--accent); text-decoration: none;
-}
-.workshop-reel-decide {
-  align-self: stretch; justify-content: center; height: 48px; border-radius: 14px;
-  background: var(--accent); color: #fff;
-}
-.workshop-reel-voted { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-secondary); }
-.workshop-reel-voted a { color: var(--accent); }
 /* ── THE PROJECT HUB'S OWN CARDS (features/dev-board/workshop/hub-cards.tsx) ──
    The channel, Needs you, and Members & activity, on the hub tab under the
    hero. They are `.dev-ws-strip` cards with the tab's one heading, and what
@@ -16261,18 +16768,24 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hub-work-more { margin-top: 2px; }
 
 /* ── What landed since you were last here (since-summary-card.tsx) ─────
-   The hub's first card: the window as the heading, the count, "AI summary"
-   when a model wrote it, and the × at the far end; then the sentence at the
-   reading size, or the titles when there are three or fewer. */
+   The hub's first card: the window as the heading, and at the far end Week
+   by week with its arrow (#3510) and the ×; then the sentence at the reading
+   size, or the titles when there are three or fewer; then the count, and
+   "AI summary" under a model's line. */
 .dev-ws-since-card { gap: 6px; }
-.dev-ws-since-card-n { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
-.dev-ws-since-card-tag { margin-left: auto; font-size: 11.5px; color: var(--text-muted); white-space: nowrap; }
+.dev-ws-since-card .dev-ws-head-title { white-space: nowrap; }
+.dev-ws-since-card-foot {
+  margin: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px;
+  font-size: 12px; line-height: 16px; color: var(--text-muted);
+}
+.dev-ws-since-card-n { white-space: nowrap; }
+.dev-ws-since-card-tag { white-space: nowrap; }
+.dev-ws-since-card-n + .dev-ws-since-card-tag::before { content: '·'; margin-right: 6px; }
 .dev-ws-since-card-x {
   width: 28px; height: 28px; margin: -4px -6px -4px 0; flex: none; padding: 0;
   display: grid; place-items: center;
   border: 0; border-radius: 999px; background: transparent; color: var(--text-muted); cursor: pointer;
 }
-.dev-ws-since-card-n + .dev-ws-since-card-x { margin-left: auto; }
 .dev-ws-since-card-x-glyph { width: 14px; height: 14px; stroke-width: 2.25; }
 .dev-ws-since-card-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 @media (hover: hover) {
@@ -16289,8 +16802,8 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
    Each week is a division of the pane, as the walk's windows were: a
    hairline, the week's heading and range, its line, and what moved in it
    nested under a rule at the left, so the rows read as the line's
-   evidence. A week's rows past the first three, and the ones already seen,
-   are one quiet row each until pressed. */
+   evidence. A week's rows past the first three, new and then already seen,
+   come out a few at a time under ONE quiet reveal (#3524). */
 .dev-ws-since-week {
   display: flex; flex-direction: column;
   border-top: 1px solid var(--app-sheet-line);
@@ -16307,22 +16820,15 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
   margin: 10px 0 0; padding-left: 10px;
   border-left: 2px solid var(--app-sheet-line);
 }
-.dev-ws-since-fold {
-  display: flex; align-items: center; gap: 6px; width: 100%;
-  min-height: 36px; box-sizing: border-box; padding: 0 10px;
-  border: 0; border-radius: 12px; cursor: pointer; text-align: left;
-  background: var(--bg-secondary); color: var(--text-muted);
-  font: inherit; font-size: 13px;
-}
-.dev-ws-since-fold-new { color: var(--accent); font-weight: 600; }
-.dev-ws-since-fold-label { flex: 1 1 auto; min-width: 0; }
-.dev-ws-since-fold-check { width: 14px; height: 14px; flex: none; color: var(--state-ok); }
-.dev-ws-since-fold-chev { width: 14px; height: 14px; flex: none; }
-.dev-ws-since-fold:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-@media (hover: hover) {
-  .dev-ws-since-fold:hover { color: var(--text-primary); }
-  .dev-ws-since-fold-new:hover { color: var(--accent); }
-}
+/* #3524: the week's one reveal. It was two grey 36px pill rows stacked
+   here ("N more new" in the accent, "N more you have seen" with a check),
+   the most solid-looking things in the week and two different chevrons
+   side by side. Now it is the pane's own `.dev-ws-reveal`, the gesture
+   every other "more" in the pane uses, set to the LEFT, inside the week's
+   rule, so it belongs to the rows above it and not to `Show an earlier
+   week` below. The count still hidden rides it in the lighter weight. */
+.dev-ws-since-week-more { justify-content: flex-start; padding: 4px 12px 2px; }
+.dev-ws-since-week-left { font-weight: 500; }
 .dev-ws-since-nest > .dev-ws-since-seen { margin-top: 2px; padding-left: 0; }
 
 /* ── Share it (community-card.tsx ShareItCard) ──────────────────────
@@ -16693,6 +17199,19 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hero-actions { display: flex; align-items: center; gap: 8px; }
 .dev-ws-hero-actions:empty { display: none; }
 .dev-ws-hero-desc { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
+/* Two lines at most (#3572), with an ellipsis: the measure the create
+   screen's limit was taken against (services/create-options.js
+   DESCRIPTION_MAX), so a description made there shows whole on a phone,
+   and a longer one from a repository's own dapp.json no longer pushes the
+   hub's actions down the screen. The same three-property clamp as
+   `.home-discover-blurb`. */
+.dev-ws-hero-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 /* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces, then
    "Public community · 23 members". The activity line under the actions: this
@@ -16786,9 +17305,17 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
    for the two hooks that measure it, and bleeds to the column's edges and
    up under the header's overlap (`-mb-2` on the bar, plus the body's own
    top padding), so the colour runs unbroken from the top of the screen to
-   the tabs' underline. */
+   the tabs' underline.
+
+   THE SIDES CANCEL 4px, NOT 12 (#3499). `#dev-body` is `px-3`, but holding
+   the Workshop it narrows to 4px at the sides (`#dev-body:has(>
+   #dev-workshop)`), and the band's bleed was written against the 12. It ran
+   8px past both edges of the screen: harmless where the page itself scrolls
+   (a mobile browser clips #dev-forum-scroll's x-axis), but in an installed
+   app or the native WebView #dev-forum-scroll is the scroller, and its
+   `overflow-y: auto` made those 8px a sideways scroll of the whole hub. */
 .dev-ws-tabs.dev-ws-band {
-  margin: -18px -12px 0;
+  margin: -18px -4px 0;
   /* 18px, not 8: the header's foot overlaps the band's top by ten, and the
      count's badge rises above its word into that strip. */
   padding: 18px 8px 0;
@@ -16849,6 +17376,77 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 /* On a phone the band is the page's own: no pinned sheet behind it (the
    strip's band below is for the pill it replaced). */
 .dev-ws-tabs.dev-ws-band::before { content: none; }
+
+/* ON A PHONE THE BAND PINS UNDER THE HEADER (#3522). It scrolled away with
+   the page, so a long Hub or Workshop left you nowhere to change tab without
+   scrolling back up. It is sticky now at exactly where it rests, so it never
+   moves: the header's coloured foot and the band stay one piece while the
+   page slides under them. From 700px the strip's own pinning takes over (the
+   `min-width: 700px` block, with the pane head measured under it).
+
+   WHERE IT RESTS depends on which element scrolls. In the installed app and
+   the native WebView #dev-forum-scroll does, and its top edge is the
+   scrollport's: the band rests 10px above it (its -18px tuck under the
+   header, less #dev-body's 8px top padding), the part the header covers. On
+   a phone browser the document scrolls, under the sticky header, so the band
+   rests the header's height less its 17px tuck below the viewport's top.
+   `--ws-band-top` carries whichever it is, and the pane head on All items,
+   which pins too, comes to rest under the band (58px: its 18px tuck and its
+   40px row) rather than sliding beneath it.
+
+   Z-INDEX 29: over the cards that scroll under it, and under the header (30)
+   whose foot overlaps its top. */
+@media (max-width: 699.98px) {
+  #dev-workshop { --ws-band-top: -10px; }
+  html[data-browser-scroller="dev-forum-scroll"] #dev-workshop {
+    --ws-band-top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top) - 17px);
+  }
+  .dev-ws-tabs.dev-ws-band {
+    position: sticky;
+    top: var(--ws-band-top);
+    z-index: 29;
+  }
+  #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-band-top) + 58px); }
+}
+/* A PULL TO REFRESH MOVES ONLY THE PAGE UNDER THE TABS (pull-to-refresh
+   under the tabs, evan, 2026-10-01). "When you pull down on a community
+   page, the tabs move down too? I think the tabs should be fixed, and only
+   the page under them move and reveal the refresh."
+
+   The kit's pull slid the whole of #dev-forum-scroll, and the band lives in
+   it, so the header stayed and the band rode down with the page. #3514 then
+   painted the gap that opened between them in the community's colour (a
+   `--ptr-gap` that workshop.tsx read back off the kit's transform), so the
+   two read as one band stretching. That rule is gone with the gap it
+   painted: nothing opens under the header any more.
+
+   app-view.js now opts the scroller into the kit's `pullProperty`: the
+   scroller holds still and carries the pull as `--dev-ptr-pull`, and this
+   slides what comes after the band (the tab body, and All items' back bar
+   with it) by exactly that much. The header, the band and anything above
+   the band stay where they are. The gap opens between the band and the
+   page, and shows the page's own plane, as the air around its cards does:
+   every box from the tab body up to the scroller is transparent, so the
+   kit's layer behind them (anchored at the band's bottom edge, where the
+   spinner hangs) is what shows, and it paints only the spinner.
+
+   UNSET AT REST, so at rest this is no rule at all: `var()` with no
+   fallback and nothing to read is invalid at computed-value time, which
+   leaves `transform: none`, so no stacking context and no containing block
+   where there was none before. A fallback of 0px would make both permanent
+   on the tab body (none of these boxes has a transform of its own for this
+   to override).
+
+   NO BAND (the Workshop still loading, an app that could not load): the
+   kit hangs the spinner from the scroller's top instead (app-view.js's
+   `topEl` finds no band), and everything in the scroller slides, as it all
+   did. AT EVERY WIDTH, outside the phone block above: the kit only pulls on
+   a touch device, and an iPad's row of tabs holds still the same way (the
+   row the band becomes from 768px is the same `.dev-ws-band`). */
+#dev-forum-scroll .dev-ws > .dev-ws-band ~ *,
+#dev-forum-scroll:not(:has(.dev-ws-band)) > * {
+  transform: translateY(var(--dev-ptr-pull));
+}
 
 /* ON A WIDE WINDOW THE TABS ARE THE PANEL'S FIRST ROW (#852 review: they
    sat in the coloured header's row for a round). Not a band: the header
@@ -16931,8 +17529,9 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   color: var(--accent); font: inherit; font-size: 13.5px; font-weight: 600;
   cursor: pointer;
 }
-/* The way to the rest of what landed, week by week. */
-.dev-ws-since-card-more { align-self: flex-start; font-size: 13.5px; font-weight: 600; }
+/* The way to the rest of what landed, week by week: the head's door, which
+   keeps its words on one line beside the window's name. */
+.dev-ws-since-card-more { white-space: nowrap; }
 /* ── "Your communities" (features/workshop/community-switcher.tsx) ──
    The switcher behind the Communities tab: a sheet from the floor on a
    phone (the kit's own when it adopts it; this scrim and panel when not),
@@ -17019,12 +17618,60 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 }
 .community-switcher-tick { flex: none; width: 20px; display: grid; place-items: center; color: var(--text-primary); }
 .community-switcher-note { margin: 0; padding: 10px 12px; font-size: 13px; color: var(--text-muted); }
+/* The Communities screen's sections, in the switcher (#3519): the same small
+   caps label with its count, and the fold row full-width in the accent with
+   no tile, so it reads as more of the same list. */
+.community-switcher-section {
+  display: flex; align-items: center; gap: 6px;
+  margin: 0; padding: 12px 12px 4px;
+  font-size: 12px; font-weight: 700; line-height: 16px;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted);
+}
+.community-switcher-section-n { margin-left: auto; font-variant-numeric: tabular-nums; }
+.community-switcher-more {
+  min-height: 44px; justify-content: center;
+  color: var(--accent); font-size: 14px; font-weight: 650;
+}
+.community-switcher-menu .community-switcher-more { min-height: 40px; }
 
-/* THE DISCUSSION TAB (project-discussion.tsx): the channel's own pane, as
-   tall as the screen leaves it, so its composer sits above the tab bar and
-   its stream scrolls inside it rather than the page. */
-.dev-ws-discussion { display: flex; flex-direction: column; height: calc(100dvh - 210px); min-height: 380px; }
+/* THE DISCUSSION TAB (project-discussion.tsx): the channel's own pane, a
+   FITTED SCREEN like Needs you, so its composer rests on the foot of the
+   reading area and the stream scrolls inside it rather than the page. It
+   was a guessed `calc(100dvh - 210px)`, which stopped short of the bottom
+   (#852 review). The flex chain above bounds it in the native layout;
+   in a mobile browser, where the page scrolls, the tab takes `--ws-fit` as
+   a definite height, at every width. The pane draws its own sheet
+   (general-chat.tsx's `dc-lift dc-lift-session`), which runs off the
+   bottom as it does in Messages, so on a phone it spans the band's width:
+   the screen's, by cancelling the same 4px of `#dev-body` the band does
+   (#3499), not 12. */
+html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
+  height: var(--ws-fit);
+  min-height: var(--ws-fit);
+}
+.dev-ws-discussion { flex: 1 1 auto; min-height: 320px; display: flex; flex-direction: column; }
 .dev-ws-discussion-host { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.dev-ws-discussion-host > * { flex: 1 1 auto; min-height: 0; }
+@media (max-width: 767.98px) {
+  .dev-ws-discussion { margin: 0 -4px; }
+}
+/* THE COMPOSER'S FOOT IS ALREADY CLEAR. `.platform-safe-bar` adds the tab
+   bar's height under every composer, on the rule that inside #app-view the
+   bar is hidden; a project page under the Communities tab shows it, and
+   this fitted box already ends above it, so that reserve left a strip of
+   empty pane under the composer. The bar's own 8px base gap stays. */
+.dev-ws-discussion .platform-safe-bar { padding-bottom: 0.5rem !important; }
+/* HOMEROOM'S ROOM, #general, IN PLACE TOO (#3494). It is Messages' own
+   thread (EmbeddedConversation) rather than the group chat's pane, so it
+   drops the margins it keeps on the Messages strip and fills the tab edge to
+   edge, as a project's own chat does. A reply thread opens beside it on a
+   desktop and over it on a phone, as it does in Messages. */
+.dev-ws-discussion > .messages-layout { flex: 1 1 auto; height: auto; min-height: 0; }
+.messages-layout-embedded > .messages-thread-pane,
+.messages-layout-embedded > .messages-reply-pane { margin: 0; }
+@media (min-width: 768px) {
+  .messages-layout-embedded > .messages-reply-pane { margin-left: 8px; }
+}
 .dev-ws-hero-spark-bar-quiet.dev-ws-hero-spark-bar-on { background: var(--text-muted); }
 .dev-ws-hero-spark-tip {
   position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 6;
@@ -17152,6 +17799,35 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
      surface the cards already use — the same reason tabs.tsx's track is white
      rather than the recessed grey a control gets on a card. */
 
+  /* #3583: WHERE THE BAND PINS, which is the header's foot, and how far that
+     is from the top of whatever scrolls the page.
+
+     On a computer, and in the installed app and the native WebView, that is
+     #dev-forum-scroll, and the header's foot overlaps its top edge by 7px
+     (the header's `-mb-2`, 8px, less `.dc-lift`'s 1px hairline). The strip
+     pinned at 0 rose into the header by that much, and at z-index 30 over
+     the header's 10 its band painted there: a white slab biting the
+     coloured header, which is half of what #3583's screenshot shows.
+
+     Where the DOCUMENT scrolls instead (a tablet in its browser, a window
+     under 768px: lib/browser-scroll.ts) the scrollport is the whole window
+     and the header is sticky over it, so 0 was the top of the SCREEN: the
+     strip pinned there drew straight over the header and hid it. There it
+     is the header's own height, as everything else that sticks under the
+     header in that mode is measured (#browse-search-bar). */
+  #dev-workshop { --ws-pin-top: 7px; }
+  html[data-browser-scroller="dev-forum-scroll"] #dev-workshop {
+    --ws-pin-top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
+  }
+  /* Under 768px the strip is still the coloured band, tucked 18px up under
+     the header's foot, so it rests 15px above the foot (that tuck, less
+     #dev-body's 10px, plus the 7px the foot overlaps the page), and it pins
+     exactly there, the way a phone's does (#3522): it never moves, and its
+     tabs never drop. */
+  @media (max-width: 767.98px) {
+    .dev-ws-tabs.dev-ws-band { top: calc(var(--ws-pin-top, 0px) - 15px); }
+  }
+
   /* EVERYTHING PINS UP HERE, as one band: the tab strip (on All items, its
      back bar) and the head under it, with the grouping, the search and the
      filters. The controls belong WITH the list you are
@@ -17159,7 +17835,8 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
 
      THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
      it comes to rest: under the pinned strip, at the strip's measured height
-     plus the column gap. `top: 0` would slide it under the strip.
+     plus the column gap, counted from where the strip pins (`--ws-pin-top`,
+     #3583). `top: 0` would slide it under the strip.
 
      ABOVE THE STRIP IN PAINT ORDER at rest. The grouping tabs used to hang
      from the head into the strip's band as an "ear" (gone with #852), which
@@ -17170,7 +17847,7 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
      hundred lines BELOW this block, and on equal specificity the later one
      wins — a bare-class override here would apply to nothing. */
   #dev-workshop .dev-ws-pane-head {
-    top: var(--dev-ws-head-top, 0px);
+    top: calc(var(--ws-pin-top, 0px) + var(--dev-ws-head-top, 0px));
     z-index: 31;
   }
   .dev-ws-tabs {
@@ -17210,9 +17887,10 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
        above, `top: 0` was reset to `auto` by the shorthand three lines later:
        the strip stayed `sticky`, pinned to nothing, and scrolled away while
        the head it is supposed to travel with stayed. Measured — the strip's
-       top went to -890 on a 900px scroll. `top: 0` is the scroller's own top;
-       there is no chrome inside it to clear. */
-    top: 0;
+       top went to -890 on a 900px scroll. It was `top: 0`, the scroller's
+       own top, on the reasoning that there was no chrome inside it to clear;
+       there is, the header's foot (#3583, `--ws-pin-top` above). */
+    top: var(--ws-pin-top, 0px);
     /* QA 2026-09-24 Q7: ABOVE THE CARDS, BELOW THE HEAD. Pinned with no
        z-index, the strip sat at the floor of the stacking order, and the
        pane and its cards come later in the tree, so everything that scrolled up past it painted over
@@ -18437,7 +19115,8 @@ html.un-kb #platform-tabs {
 .platform-parked::before,
 body:has(:is(#home-screen, #leaderboard-screen, #profile-screen, #browse-screen,
              #settings-screen, #messages-screen, #workshop-screen,
-             #global-chat-screen, #agent-session-screen):not(.hidden)) #platform-header::before,
+             #global-chat-screen, #agent-session-screen,
+             #profile-proposals-screen):not(.hidden)) #platform-header::before,
 body:has(#app-view:not(.hidden)[data-app-surface="platform"]) #platform-header::before,
 html[data-browser-scroller] #landing-header::before {
   content: '';
@@ -18852,6 +19531,9 @@ html.un-ios {
   font-size: 15px;
   font-weight: 600;
 }
+/* RESUME IS AN ACTION, so it is drawn in the accent, filled (#3618). It was
+   the header's periwinkle, which is the header's own ink and nothing else's,
+   at a tint light enough that the strip's one action read as a tag. */
 .platform-parked-pill {
   flex: none;
   display: inline-flex;
@@ -18859,9 +19541,9 @@ html.un-ios {
   height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid var(--brand-line);
-  background: var(--brand-tint);
-  color: var(--brand-ink);
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
 }
@@ -18933,6 +19615,49 @@ html.un-kb #platform-parked {
 @media (prefers-reduced-motion: reduce) {
   .platform-parked-enter, .platform-parked-leave,
   .platform-parked-enter > *, .platform-parked-leave > * { animation: none; }
+}
+
+/* ── THE APP YOU CLOSED, ON ITS WAY INTO RESUME (#3618) ──────────────
+   frontend/src/features/nav/resume-motion.ts carries the argument: a
+   stand-in for the app (its page colour, its icon) pinned where the app was,
+   shrinking into the Resume control in the rail or the strip. Above the page
+   and the bars, at the kit's zoom layer and under every kit overlay; never a
+   target; gone when the motion ends. The script never runs it with reduced
+   motion; the rule below is the belt to that. */
+.resume-ghost {
+  position: fixed;
+  z-index: 9960;
+  pointer-events: none;
+  transform-origin: 0 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The app's own page colour when its frame reported one (set inline);
+     the page ground otherwise — a card lifted off whatever is behind it,
+     never the wallpaper it would vanish into. */
+  background: var(--bg-primary);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 12px 40px rgba(0, 0, 0, .18);
+  will-change: transform, opacity;
+}
+.resume-ghost-tile {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: 700;
+}
+.resume-ghost-tile > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+@media (prefers-reduced-motion: reduce) {
+  .resume-ghost { display: none; }
 }
 
 
@@ -19151,10 +19876,14 @@ html.un-kb #platform-parked {
      #agent-session-screen was absent by omission (QA 2026-09-24 Q23): it
      arrived after this list, drew from the window's left edge, and its app
      and change chips, the reply suggestions and the start of the composer sat
-     under the rail where they could not be clicked. */
+     under the rail where they could not be clicked.
+
+     #profile-proposals-screen likewise (#3498): Your requests and Your votes
+     centred in the whole window, so from a laptop width down their cards
+     began under the rail. */
   :is(#home-screen, #browse-screen, #workshop-screen, #leaderboard-screen,
       #profile-screen, #admin-screen, #settings-screen, #messages-screen,
-      #global-chat-screen, #agent-session-screen) {
+      #global-chat-screen, #agent-session-screen, #profile-proposals-screen) {
     /* A GUTTER AFTER THE RAIL, MIRRORED ON THE FAR EDGE (#2718 review).
        The rail's hairline was the content's left margin, so a card began
        where the rail ended and the page had air on the right and none on the
@@ -19180,6 +19909,19 @@ html.un-kb #platform-parked {
   html:not(.un-kb) body:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #app-view {
     padding-left: calc(var(--platform-rail-w, 0px) + var(--platform-gutter));
     padding-right: var(--platform-gutter);
+  }
+
+  /* …AND A RUNNING APP, WHEN THE VIEWER PINNED THE RAIL (#3319). Settings →
+     Theme → "Keep sidebar open in apps" keeps the rail docked beside an app
+     (App._syncPlatformTabs publishes it and puts `rail-pinned` on the body).
+     The frame steps out of the rail's column and nothing more: the gutters
+     are a platform page's rhythm, and somebody's program still runs edge to
+     edge in what is left. One class more than the rule above, so it wins.
+     Inside this block only — a phone never gets the class, and a window
+     narrowed past 768px with it set keeps the full-screen app. */
+  html:not(.un-kb) body.rail-pinned:has(#platform-tabs:not(.hidden):not(.platform-tabs-peek):not(.platform-tabs-folded)) #app-view {
+    padding-left: var(--platform-rail-w, 0px);
+    padding-right: 0;
   }
 
   .platform-tabs {
@@ -19494,6 +20236,27 @@ html.un-kb #platform-parked {
     border-radius: 999px;
     /* The unread count's own fill in Messages (`.messages-unread`). */
     background: var(--accent);
+  }
+
+  /* RESUME ON A RUNNING APP YOU LEFT (#3618). The Active row's one action,
+     filled in the accent so the apps waiting for you are the thing the rail
+     points at (recents-list.tsx). It says what the green dot said, so the
+     dot steps aside for it; the row you are in keeps neither. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .platform-recent-resume ~ .platform-recent-live {
+    display: none;
   }
 
   /* ── ACTIVE (#3074) ──────────────────────────────────────────────────
@@ -19894,13 +20657,13 @@ html.un-kb #platform-parked {
 }
 
 
-/* ── The rail, peeked back over an open app (#2718) ──────────────────
-   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
-   the rail, which is what makes it feel like a program rather than a page,
-   and on a laptop the pointer is already at the left edge half the time. The
-   navigation comes back on hover and stops spending width while you work —
-   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
-   rail are all this move. */
+/* ── The rail, peeked back over a folded rail (#2718, #2764) ─────────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: a rail the
+   viewer folded comes back on hover and stops spending width while they
+   work — an auto-hiding dock and Slack's own collapsed rail are this move.
+   NOT over a running app (#3138): an app's own controls put the pointer at
+   the left edge all the time, so the hot zone is not rendered there and the
+   way out is the header's ✕. */
 
 /* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
    it never intercepts a pointer heading for the app's own left edge, wide

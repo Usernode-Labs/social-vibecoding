@@ -58,6 +58,7 @@ import { swatchFor } from '../../messages/format';
 import { CardRowView } from '../card/fold';
 import { FeedMentionMenu, mentionSuggestionsPath, useMentionTypeahead } from '../card/mention-typeahead';
 import type { DevWorkshopView, ListRow } from '../card/model';
+import { isNeedsSeen, needsRowKey, useNeedsSeen } from '../../workshop/needs-seen';
 import { reloadCommunity, type CommunityPayload } from './community-card';
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -314,15 +315,27 @@ export function ReelThumb(): ReactNode {
  * A DOOR to the Needs you tab, and only while a vote is owed (#3408): with
  * none, the lander draws NothingToVote instead, one quiet line rather than
  * a card.
+ *
+ * #3526: THE COUNT IS WHAT YOU HAVE NOT SEEN. A vote swiped past in the feed
+ * unanswered is left out of it, as the band's tab count leaves it out
+ * (../../workshop/needs-seen.ts), and the first title is the first vote you
+ * have not seen. The door stays while any vote is owed, seen or not: the
+ * skipped ones are still there to vote on, and with nothing new it says how
+ * many of those there are instead of a number to act on.
  */
-export function NeedsCard({ queue, canPost, onOpen }: {
+export function NeedsCard({ queue, slug, canPost, onOpen }: {
   queue: DevWorkshopView['queue'];
+  /** Whose votes these are, for the ones passed over. */
+  slug?: string;
   canPost: boolean;
   onOpen: () => void;
 }): ReactNode {
+  useNeedsSeen();
   const votes = queue.filter((row) => row.kind === 'vote');
-  const first = votes.find((row) => row.t === 'card') || null;
-  const count = votes.length;
+  const fresh = votes.filter((row) => !isNeedsSeen(slug, needsRowKey(row)));
+  const skipped = votes.length - fresh.length;
+  const first = fresh.find((row) => row.t === 'card') || null;
+  const count = fresh.length;
   const title = first && first.t === 'card' ? first.card.title.text || first.card.title.title : '';
   return (
     <section className="dev-ws-strip dev-ws-hub-needs" data-ws-hub-needs="" data-ws-hub-needs-votes={String(count)}>
@@ -340,6 +353,12 @@ export function NeedsCard({ queue, canPost, onOpen }: {
                 {first && first.who ? `from @${first.who}` : ''}
                 {first && first.who && count > 1 ? ' · ' : ''}
                 {count > 1 ? `and ${count - 1} more` : ''}
+              </span>
+            </span>
+          ) : skipped ? (
+            <span className="dev-ws-hub-needs-first">
+              <span className="dev-ws-hub-needs-sub" data-ws-hub-needs-skipped="">
+                {`${plural(skipped, 'vote', 'votes')} you skipped ${skipped === 1 ? 'is' : 'are'} still open`}
               </span>
             </span>
           ) : null}
@@ -384,11 +403,16 @@ export function NothingToVote({ queue, onOpen }: {
 export const HUB_WORK_FIRST = 2;
 
 /**
- * YOUR WORK, on the hub: only when you have some. The first two of your
- * items as the board's own folded rows (they open in place, as they do on
- * the Workshop page), and the rest under "Show N more" right below them,
- * which unfolds the list where it is and folds it again as "Show less".
- * Newest activity first, the order the Workshop page lists them in.
+ * YOUR WORK, on the hub. The first two of your items as the board's own
+ * folded rows (they open in place, as they do on the Workshop page), and the
+ * rest under "Show N more" right below them, which unfolds the list where it
+ * is and folds it again as "Show less". Newest activity first, the order the
+ * Workshop page lists them in.
+ *
+ * WITH NOTHING IN PROGRESS it stays, and says so (#3489): it used to leave
+ * the hub, so the place your work appears moved with your workload. The
+ * page draws it for a signed-in viewer only (`mine.viewer`), as the Workshop
+ * page's strip is.
  */
 export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, onAll }: {
   rows: ListRow[];
@@ -402,7 +426,16 @@ export function YourWorkCard({ rows, slug, canPost, openKey, onToggleRow, all, o
   onAll: () => void;
 }): ReactNode {
   const cards = rows.filter((row): row is Extract<ListRow, { t: 'card' }> => row.t === 'card');
-  if (!cards.length) return null;
+  if (!cards.length) {
+    return (
+      <section className="dev-ws-strip dev-ws-hub-work" data-ws-mine-card="">
+        <div className="dev-ws-head">
+          <span className="dev-ws-head-title">Your work</span>
+        </div>
+        <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">No work in progress.</p>
+      </section>
+    );
+  }
   const rest = cards.length - HUB_WORK_FIRST;
   const shown = all ? cards : cards.slice(0, HUB_WORK_FIRST);
   return (

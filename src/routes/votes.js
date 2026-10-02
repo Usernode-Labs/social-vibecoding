@@ -31,6 +31,7 @@ const shotsView = require('../services/shots-view');
 const summaryFreshness = require('../services/summary-freshness');
 const proposalDelivery = require('../services/proposal-delivery');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const {
   reviewedHeadForSession,
   visualHeadForSession,
@@ -2475,16 +2476,21 @@ function voteRoutes(config) {
       // promoted_at anchors the stale-PR sweeper's "no interest since"
       // clock; clearing stale_notified_at handles the re-promote case
       // (a previously-stale PR that's proposed again starts fresh).
+      // #3234: active_users_at_promote is display-only (the vote's "was N
+      // when voting opened" note); the merge gate never reads it.
+      const activeAtPromote = await require('../services/governance')
+        .electorateAtPromote(pool, session.app_id);
       const promoted = await pool.query(
         `UPDATE chat_sessions
             SET status = 'promoted', promoted_at = NOW(),
+                active_users_at_promote = $4,
                 stale_notified_at = NULL,
                 reviewed_head_sha = CASE WHEN source = 'imported'
                   THEN reviewed_head_sha ELSE COALESCE($2, reviewed_head_sha) END,
                 imported_pr_head_sha = CASE WHEN source = 'imported'
                   THEN COALESCE($2, imported_pr_head_sha) ELSE imported_pr_head_sha END
           WHERE id = $1 AND status = $3`,
-        [session.id, promotedHeadSha, session.status]
+        [session.id, promotedHeadSha, session.status, activeAtPromote]
       );
       if (!promoted.rowCount) {
         return res.status(409).json({ error: 'session_state_changed' });
@@ -3035,6 +3041,11 @@ function voteRoutes(config) {
       // Browser imports join the shared In-progress board first. Automated
       // submission paths may opt into the historical straight-to-vote flow
       // with `promote: true`.
+      // #3234: a straight-to-vote import opens its vote here, so it stamps
+      // the electorate the same way the promote route does (display only).
+      const importActiveAtPromote = promote
+        ? await require('../services/governance').electorateAtPromote(pool, app.id)
+        : null;
       const importClient = await pool.connect();
       let inserted;
       let shotsResult = null;
@@ -3048,7 +3059,8 @@ function voteRoutes(config) {
             promoted_at, shared_at, created_at,
             testing_md, testing_path, testing_paths, linked_issues, pr_body,
             pr_summary_md, pr_summary_source, pr_summary_source_head_sha,
-            pr_summary_source_body_hash, pr_summary_applied_version)
+            pr_summary_source_body_hash, pr_summary_applied_version,
+            active_users_at_promote)
          VALUES ($1, $2, $3, $4, $5, $6, $7::text,
             'imported', $8::text, $9, $10, $11,
             CASE WHEN $7::text = 'promoted' THEN NOW() END,
@@ -3057,7 +3069,8 @@ function voteRoutes(config) {
             CASE WHEN $17::text IS NULL THEN NULL ELSE 'author' END,
             CASE WHEN $17::text IS NULL THEN NULL ELSE $8::text END,
             CASE WHEN $17::text IS NULL THEN NULL ELSE $18 END,
-            CASE WHEN $17::text IS NULL THEN NULL ELSE 0 END)
+            CASE WHEN $17::text IS NULL THEN NULL ELSE 0 END,
+            $19::int)
            RETURNING id, status`,
           [
             app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
@@ -3079,6 +3092,7 @@ function voteRoutes(config) {
             // without it renders exactly as it did before this field existed.
             importSummary,
             summaryFreshness.bodyHash(pr.body || null),
+            importActiveAtPromote,
           ]
         ));
         await topicAttrs.selfAssignProposal(
@@ -3537,6 +3551,13 @@ function voteRoutes(config) {
           metadata: { vote, voterId: req.user.id },
         });
       }
+      // "Vote on a change" counts this vote now, not on the rule's next pass
+      // (#3569; challengeScorer.scoreOnVote), so somebody who votes and goes
+      // back to Home finds the step done. On a real vote only, the same gate
+      // every side effect above has: a same-side re-cast returned earlier and
+      // moved nothing, and the schedule counts the rare one that matters.
+      // Never throws, so the vote answers the same either way.
+      await challengeScorer.scoreOnVote(pool, config);
       res.json({ ok: true, merged: false });
 
       // The live head read the response no longer waits on, then the
@@ -3913,6 +3934,8 @@ function voteRoutes(config) {
            -- reports no merge_window_ends_at, so no countdown renders) and
            -- shows the "Explicit approval" chip.
            cs.requires_explicit_approval,
+           -- #3234: the electorate the vote opened with (display only).
+           cs.active_users_at_promote,
            (SELECT COUNT(*) FROM pr_votes pv
              WHERE pv.session_id = cs.id AND pv.vote = 'yes'
                AND ${currentVotePredicateSql('pv', 'cs')}) as yes_count,
@@ -4101,6 +4124,10 @@ function voteRoutes(config) {
         row.requires_explicit_approval = !!row.requires_explicit_approval;
         row.qualified_yes_count = gate.qualifiedYes;
         row.qualified_no_count = gate.qualifiedNo;
+        // #3234: display only — the threshold as it stood when voting opened.
+        row.votes_required_at_promote = governance.requiredAtPromote(
+          gov, row.active_users_at_promote, q.no
+        );
       }
 
       // #1442: the freshness snapshot also rides as a nested camelCase block
@@ -5237,6 +5264,16 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     } catch (err) {
       log.error('votes', 'Merged notification threw', { sessionId: session.id, err: err.message });
     }
+    // #3624: a proposal the Homeroom bot built for somebody it talks to in
+    // a DM: they hear it is live there (the notification above goes to the
+    // proposal's author, which for a bot build is the bot). Never a reason
+    // the merge fails.
+    try {
+      require('../services/homeroom-bot-dm').noteProposalMerged(pool, session)
+        ?.catch?.((err) => log.warn('votes', 'Homeroom bot merged DM failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.warn('votes', 'Homeroom bot merged DM threw', { sessionId: session.id, err: err.message });
+    }
 
     // Resolve any open issue bounties for the issues this PR closes (declared
     // through the session's linked_issues → `Closes #N` in the PR body).
@@ -6157,10 +6194,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
             behindBy: measured.behindBy, mergesClean: measured.mergesClean, checkState,
           },
         });
-        gateTrace.stop('main_healthy', 'blocked', {
+        // A first red being re-run is in flight, not an admin's turn: no
+        // control is offered until it is confirmed (merge-requirements.js
+        // mainStep says the same off the live columns).
+        gateTrace.stop('main_healthy', mainHealth.confirming ? 'active' : 'blocked', {
           sha: mainHealth.sha,
           paused: true,
           confirming: mainHealth.confirming,
+          actor: mainHealth.confirming ? 'auto' : 'admin',
           note: `${what}; merges are paused until a fix lands or an admin resumes them`,
         });
         gateSave();
@@ -6781,10 +6822,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
               : 'auto-resolver queued.'),
         detail: { autoResolve, forced: !!force },
       });
+      // A refusal the platform will not resolve is the author's to sync; the
+      // gate's default actor ('auto') read as "Nothing needs you" over a red ✕.
       gateTrace.revise('github', autoResolve ? 'active' : 'blocked', {
         note: autoResolve
           ? 'GitHub refused the merge, so the platform is resolving it automatically'
           : 'GitHub refused the merge',
+        ...(autoResolve ? {} : { actor: 'author' }),
       });
       gateSave();
       dend(autoResolve ? 'conflict_resolving' : 'conflict_failed', 'Merge conflict at GitHub.');

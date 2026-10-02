@@ -120,6 +120,16 @@
     "migration": "Compose flow invalidation and complete tuple clearing with head adoption."
   },
   {
+    "source": "src/services/shots-demo-states.js",
+    "fingerprint": "cb4c063fb8a9f5e253fc",
+    "count": 1,
+    "fields": [
+      "staging_url"
+    ],
+    "reason": "Canonical shots demonstration installs a fixed preview URL on its reserved member fixture; it does not publish a build.",
+    "migration": "Retain this staging-only fixture exception; never reuse it for real runtime publication."
+  },
+  {
     "source": "src/services/staging-recovery.js",
     "fingerprint": "4089da006cab19a49581",
     "count": 1,

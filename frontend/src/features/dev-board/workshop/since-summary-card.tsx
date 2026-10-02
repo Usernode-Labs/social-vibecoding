@@ -40,7 +40,7 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 
-import { XIcon } from '@/components/ui/icons';
+import { ChevronRightIcon, XIcon } from '@/components/ui/icons';
 
 export type SinceSummary =
   | { state: 'none' }
@@ -128,18 +128,28 @@ export function SinceSummaryCard({ slug, since, onMore }: {
     <section className="dev-ws-strip dev-ws-since-card" data-ws-since-summary={data.state} aria-label={label}>
       <div className="dev-ws-head">
         <span className="dev-ws-head-title">{label}</span>
-        <span className="dev-ws-since-card-n">{plural(data.count, 'change', 'changes')}</span>
-        {data.state === 'ai' ? <span className="dev-ws-since-card-tag">AI summary</span> : null}
-        <button
-          type="button"
-          className="dev-ws-since-card-x un-touch-target"
-          aria-label="Dismiss this summary"
-          title="Dismiss this summary"
-          data-ws-since-summary-dismiss=""
-          onClick={dismiss}
-        >
-          <XIcon className="dev-ws-since-card-x-glyph" aria-hidden="true" />
-        </button>
+        {/* #3510: Week by week is the card's door, in the head's far corner
+            with its arrow, as the other hub cards wear theirs (the
+            Discussion card's Open, All items' See all) — it was a link on a
+            line of its own under the text. The × keeps the very end. */}
+        <span className="dev-ws-hub-head-end">
+          {onMore ? (
+            <button type="button" className="dev-ws-hub-open dev-ws-since-card-more un-touch-target" data-ws-since-summary-more="" onClick={onMore}>
+              Week by week
+              <ChevronRightIcon className="w-3.5 h-3.5" aria-hidden="true" />
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className="dev-ws-since-card-x un-touch-target"
+            aria-label="Dismiss this summary"
+            title="Dismiss this summary"
+            data-ws-since-summary-dismiss=""
+            onClick={dismiss}
+          >
+            <XIcon className="dev-ws-since-card-x-glyph" aria-hidden="true" />
+          </button>
+        </span>
       </div>
       {data.state === 'ai' ? (
         <p className="dev-ws-since-card-text" data-ws-since-summary-text="">{data.text}</p>
@@ -150,11 +160,13 @@ export function SinceSummaryCard({ slug, since, onMore }: {
           ))}
         </ul>
       )}
-      {onMore ? (
-        <button type="button" className="dev-ws-link dev-ws-since-card-more un-touch-target" data-ws-since-summary-more="" onClick={onMore}>
-          Week by week
-        </button>
-      ) : null}
+      {/* How many changes, and who wrote the line, under it: the head's
+          corner is the door now, and a phone's head has no room for the
+          count and the tag beside the window's name. */}
+      <p className="dev-ws-since-card-foot">
+        <span className="dev-ws-since-card-n">{plural(data.count, 'change', 'changes')}</span>
+        {data.state === 'ai' ? <span className="dev-ws-since-card-tag">AI summary</span> : null}
+      </p>
     </section>
   );
 }

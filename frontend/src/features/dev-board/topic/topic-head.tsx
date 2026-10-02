@@ -44,6 +44,7 @@ import { swatchFor } from '../../group-chat/swatch';
 import { topicHeadStore } from './topic-store';
 import { ChangeConversation } from './conversation';
 import { TopicBack } from './topic-back';
+import { DescriptionEditor } from './description-editor';
 import type {
   ChecksVerdict,
   CheckRow,
@@ -60,6 +61,7 @@ import type {
   LedgerRow,
   HeroView,
   StepRow,
+  StepRun,
   StepsView,
 } from './model';
 
@@ -991,6 +993,7 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
   const noSpec = all.find((a) => isVoteSpec(a, 'no'));
   const vote = yesSpec && noSpec ? <VoteButton yes={yesSpec} no={noSpec} /> : null;
   const pills = vote ? all.filter((a) => a !== yesSpec && a !== noSpec) : all;
+  const pill = card.pill && card.pill.state && card.pill.state.label ? card.pill.state : null;
   // The tags: priority, assignee, category, and the linkage. The state
   // chips — checks, behind main, the shots — stay off: the steps say it.
   const badges = (card.badges || []).filter(Boolean);
@@ -1034,13 +1037,22 @@ function ChangeHero({ id, card, body, linkedIssues, onIssuesSaved }: {
           {chips.map((b) => <Badge key={b.key} b={b} />)}
         </div>
       ) : null}
-      {/* The band is the card's (card/dev-card.tsx ActionBand), Vote first.
-          It wears the card's class so the band's own rules — the one-line
-          fold into ⋯, the accent pills, Preview and the hamburger at the
-          right — apply here as on the card; app.css takes the card's box
-          off it. */}
+      {/* The card's two rows, as the board card draws them: the status row —
+          the pill spanning, the Vote button at its right end — then the band
+          (card/dev-card.tsx ActionBand). The pill carries the vote's count,
+          so the Votes step below only names who voted. The rows wear the
+          card's class so the band's own rules — the one-line fold into ⋯,
+          the accent pills, Preview and the hamburger at the right — and the
+          pill's block form apply here as on the card; app.css takes the
+          card's box off it. */}
       <div className="dev-card-topic dev-topic-hero-actions">
-        <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} lead={vote} dense={false} />
+        {pill || vote ? (
+          <div className="dev-card-badges dev-card-status dev-topic-hero-status">
+            {pill ? <StatusPill s={pill} /> : null}
+            {vote}
+          </div>
+        ) : null}
+        <ActionBand actions={pills} menuKey={card.rail.menuKey || ''} preview={card.actionPreview || card.rail.preview || null} dense={false} />
       </div>
       {/* DevChat.renderMarkdown's output — sanitised where it is built. */}
       <Html className="dev-topic-hero-summary dev-topic-about-body" data-topic-part="summary" html={body.summaryHtml || ''} />
@@ -1077,6 +1089,7 @@ function VoteTally({ v }: { v: NonNullable<StepRow['vote']> }): ReactNode {
       <span className="dev-step-vote-bar" aria-hidden="true"><i style={{ width: `${pct}%` }} /></span>
       {v.pill ? <StatusPill s={v.pill} inline /> : null}
       <span className="dev-step-vote-tally">{`Yes ${v.yes} · No ${v.no}`}</span>
+      {v.was ? <span className="dev-step-vote-was">{v.was}</span> : null}
     </div>
   );
 }
@@ -1103,6 +1116,169 @@ function StepRowView({ r, help }: { r: StepRow; help: boolean }): ReactNode {
   );
 }
 
+/** "?" — How voting works, on the Votes step's line. */
+function HelpQuestion(): ReactNode {
+  return (
+    <span className="dev-ledger-help voting-help-hint">
+      <button
+        type="button"
+        className="voting-help-btn un-touch-target"
+        data-voting-help=""
+        aria-label="How voting and merges work"
+        title="How voting and merges work"
+      >?</button>
+    </span>
+  );
+}
+
+/** 13214 → "13,214": a count, grouped the one way the page writes numbers. */
+function fmtCount(n: number): string {
+  return String(Math.trunc(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
+/** One bar: passed from the left, failed after it, the rest the track. */
+function RunTrack({ c, busy }: {
+  c: { ran: number; passed: number; failed: number; expected: number | null } | null; busy?: boolean;
+}): ReactNode {
+  const total = c ? (c.expected && c.expected > 0 ? c.expected : Math.max(c.ran, 1)) : 1;
+  const pct = (n: number) => `${Math.max(0, Math.min(100, (n / total) * 100))}%`;
+  return (
+    <span className={`dev-step-run-track${busy ? ' is-busy' : ''}`} aria-hidden="true">
+      {c ? <i className="is-pass" style={{ width: pct(c.passed) }} /> : null}
+      {c && c.failed ? <i className="is-fail" style={{ left: pct(c.passed), width: pct(c.failed) }} /> : null}
+    </span>
+  );
+}
+
+/**
+ * The Checks step, open: the build as its steps (equal segments — where the
+ * build is, not how long is left; see BuildSteps), then the app's declared
+ * checks and the unit suite as bars, the failures by name with their "Why it
+ * failed" doors, and one line of context — what the run is doing and who
+ * started it, or why it could not run. The build row keeps BuildSteps' hooks
+ * (`data-build-step`, `data-build-progress`, `data-step`) for the checks.
+ */
+function RunPanel({ run, id }: { run: StepRun; id: string }): ReactNode {
+  const b = run.build;
+  const now = b ? b.steps.find((st) => st.state === 'now') : null;
+  const built = b ? b.steps.filter((st) => st.state === 'done').length : 0;
+  const c = run.checks;
+  const checksValue = c && c.ran
+    ? (c.done
+      ? `${fmtCount(c.passed)} passed${c.failed ? ` · ${c.failed} failed` : ''}`
+      : `${fmtCount(c.ran)} / ${c.expected ? fmtCount(c.expected) : '?'}${c.failed ? ` · ${c.failed} failed` : ''}`)
+    : (run.live ? (run.phase === 'testing' ? 'Starting' : 'After the build') : 'Did not run');
+  const u = run.unit;
+  const unitPhase = u && !u.done && (u.phase === 'cloning' || u.phase === 'installing') ? u.phase : null;
+  const unitValue = !u ? '' : unitPhase ? `${unitPhase.charAt(0).toUpperCase()}${unitPhase.slice(1)}`
+    : u.done ? `${fmtCount(u.passed)} passed${u.failed ? ` · ${u.failed} failed` : ''}`
+      : `${fmtCount(u.ran)} / ${u.expected ? `~${fmtCount(u.expected)}` : '?'}${u.failed ? ` · ${u.failed} failed` : ''}`;
+  return (
+    <div className="dev-step-run" id={id}>
+      {b ? (
+        <div className="dev-step-run-row dev-ledger-progress-build" data-build-step={now ? now.key : 'done'}>
+          <span className="dev-step-run-k">Build</span>
+          <span className="dev-ledger-build-bar" aria-hidden="true" data-build-progress={`${built}/${b.steps.length}`}>
+            {b.steps.map((st) => <span key={st.key} className={`dev-ledger-build-seg is-${st.state}`} data-step={st.key} />)}
+          </span>
+          <span className="dev-step-run-v">{b.value}</span>
+        </div>
+      ) : null}
+      <div className="dev-step-run-row" data-checks-progress={c ? `${c.ran}/${c.expected ?? '?'}` : undefined}>
+        <span className="dev-step-run-k">App checks</span>
+        <RunTrack c={c} />
+        <span className={`dev-step-run-v${c && c.failed ? ' is-bad' : ''}`}>{checksValue}</span>
+      </div>
+      {u ? (
+        <div className="dev-step-run-row" data-unit-phase={u.phase}>
+          <span className="dev-step-run-k">Unit tests</span>
+          <RunTrack c={unitPhase ? null : u} busy={!!unitPhase || (!u.done && u.ran === 0)} />
+          <span className={`dev-step-run-v${u.failed ? ' is-bad' : ''}`}>{unitValue}</span>
+        </div>
+      ) : null}
+      {run.fails.length ? (
+        <ul className="dev-ledger-fails">
+          {run.fails.map((f) => <CheckRowView key={f.key} r={f} />)}
+        </ul>
+      ) : null}
+      {run.note ? <p className="dev-step-run-note">{run.note}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * One merge gate's step: the mark, the label and one short line (app-view.js
+ * `_stepLine`, the same words the card's strip uses), then a button only for
+ * the person who can clear it. The Checks step is a disclosure: it opens
+ * onto its run (RunPanel) by itself while a run is going and when it failed,
+ * and a reader's own open or close sticks after that.
+ */
+function GateStepView({ r }: { r: StepRow }): ReactNode {
+  const run = r.run || null;
+  const seed = !!(run && run.open);
+  const [open, setOpen] = useState(seed);
+  // Re-seed on the flip INTO a run: a step that mounted idle and then
+  // started one opens itself, as the card's checklist re-seeds (dev-card.tsx
+  // RequirementsRow). A repaint that still says the same keeps the reader's.
+  const seedRef = useRef(seed);
+  useEffect(() => {
+    if (seed && !seedRef.current) setOpen(true);
+    seedRef.current = seed;
+  }, [seed]);
+  const panelId = `dev-step-run-${r.gate || r.key}`;
+  const main = (
+    <>
+      <span className="dev-step-label">{r.label}</span>
+      {r.line ? <span className="dev-step-line">{r.line}</span> : null}
+    </>
+  );
+  const actions = r.actions || [];
+  return (
+    <li
+      className={`dev-step dev-step-${r.state}`}
+      data-note={r.key}
+      data-req-gate={r.gate || undefined}
+      data-req-state={r.state}
+      {...(r.attrs || {})}
+    >
+      <span className={`dev-step-mark dev-step-mark-${r.state}`} aria-hidden="true">
+        {r.state === 'active' ? <Spinner /> : (STEP_MARK[r.state] || '·')}
+      </span>
+      {run ? (
+        <button
+          type="button"
+          className="dev-step-main dev-step-toggle"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={() => setOpen((v) => !v)}
+        >
+          {main}
+          <ChevronRightIcon className="dev-step-chev" aria-hidden="true" />
+        </button>
+      ) : (
+        <span className="dev-step-main">
+          {main}
+          {r.votes || r.help ? (
+            <span className="dev-ledger-review-line">
+              {r.votes ? <span className="dev-ledger-roster dev-step-line">{r.votes}</span> : null}
+              {r.help ? <HelpQuestion /> : null}
+            </span>
+          ) : null}
+          {r.was ? <span className="dev-step-line dev-step-vote-was">{r.was}</span> : null}
+        </span>
+      )}
+      {(run && open) || actions.length ? (
+        <div className="dev-step-body">
+          {run && open ? <RunPanel run={run} id={panelId} /> : null}
+          {actions.length ? (
+            <span className="dev-ledger-ops">{actions.map((a) => <ActionButton key={a.key} a={a} />)}</span>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 /**
  * The steps: the card's merge-requirements strip (card/dev-card.tsx
  * RequirementsRow) as a sheet — the same headline, detail and count across
@@ -1116,7 +1292,8 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
       <div className="dev-steps rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50">
         <div className="dev-steps-head">
           <span className="dev-steps-headline">{s.headline}</span>
-          {s.detail ? <span className="dev-steps-detail">{`· ${s.detail}`}</span> : null}
+          {/* A gate sheet has no detail: the current step's own line says it. */}
+          {s.detail && !s.simple ? <span className="dev-steps-detail">{`· ${s.detail}`}</span> : null}
           {s.total != null ? <span className="dev-steps-count">{`${s.done}/${s.total}`}</span> : null}
         </div>
         <ol className="dev-steps-list border-t border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
@@ -1124,7 +1301,9 @@ function StepsSheet({ s, help }: { s: StepsView; help: boolean }): ReactNode {
               ledger row it wears, and that changes as the row gains or loses
               detail (_topicStepsView's `useRow`), which remounted the step
               and redrew it from nothing mid-read. */}
-          {s.rows.map((r) => <StepRowView key={r.gate || r.key} r={r} help={help} />)}
+          {s.rows.map((r) => (s.simple
+            ? <GateStepView key={r.gate || r.key} r={r} />
+            : <StepRowView key={r.gate || r.key} r={r} help={help} />))}
         </ol>
       </div>
     </section>
@@ -1285,6 +1464,12 @@ export function ChangeDetail({ card: initialCard, body: initialBody, item, owner
               a body that carries one gets it whatever page it is on. */}
           {body.comments ? <div id="dev-issue-comments" className="dev-topic-sheet dev-topic-comments"></div> : null}
           {body.proposalBody && id ? <DetailsSheet id={Number(id)} html={body.proposalBody.html} /> : null}
+          {id && active && av?._canEditDescription(session) ? <DescriptionEditor key={id} id={Number(id)} onSaved={(data) => {
+            const patch = { pr_summary_md: data.description, pr_summary_input_version: data.version,
+              pr_summary_source: 'author', pr_summary_stale: data.stale, pr_body: data.prBody ?? session?.pr_body };
+            setLoaded((current: any) => ({ ...(current || session || {}), ...patch, id }));
+            av._cacheDescription(Number(id), data);
+          }} /> : null}
         </>
       ) : (
         <>

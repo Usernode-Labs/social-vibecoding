@@ -388,3 +388,27 @@ test('qualifiedCountsBatch: per-id counts restricted to the electorate', async (
   assert.equal(map.get(2), undefined, 'ids with no electorate votes are absent');
   assert.deepEqual(map.get(3), { yes: 0, no: 1 });
 });
+
+// #3234: the threshold as it stood when voting opened (display only). Same
+// requiredVotes over the stamped electorate and today's No votes, so the
+// only difference from the live number is who joined or left.
+test('requiredAtPromote: the stamped electorate\'s threshold, null when unstamped or fixed', () => {
+  const anyone = { approverPolicy: 'anyone', approvalsRequired: null };
+  assert.equal(governance.requiredAtPromote(anyone, 4, 0), activeUsers.requiredVotes(4, 0));
+  assert.equal(governance.requiredAtPromote(anyone, 12, 1), activeUsers.requiredVotes(12, 1));
+  assert.equal(governance.requiredAtPromote(anyone, null, 0), null, 'promoted before the stamp');
+  assert.equal(governance.requiredAtPromote({ approverPolicy: 'anyone', approvalsRequired: 2 }, 4, 0), null,
+    '"at least N" cannot move');
+});
+
+test('electorateAtPromote: the gate\'s electorate count, null when it cannot be read', async () => {
+  const invited = {
+    query: async (sql) => (/FROM apps/.test(sql)
+      ? { rows: [{ approver_policy: 'invited', approvals_required: null }] }
+      : { rows: [{ user_id: 1 }, { user_id: 2 }, { user_id: 3 }] }),
+  };
+  governance.invalidateGovernance(9101);
+  assert.equal(await governance.electorateAtPromote(invited, 9101), 3);
+  governance.invalidateGovernance(9102);
+  assert.equal(await governance.electorateAtPromote({ query: async () => { throw new Error('down'); } }, 9102), null);
+});

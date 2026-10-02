@@ -12,6 +12,7 @@ import {
 import { Skeleton, SkeletonGroup } from '@/components/ui/skeleton';
 import { placeUnderAnchor, type AnchorRect } from '../../lib/anchor-popover';
 import { cardRunLabel, cardRunStarts } from '../../lib/card-runs';
+import { useComposerKeyboard } from '../../lib/composer-keyboard';
 import { unmountLegacyPortal } from '../../lib/legacy-portals';
 import { confirmAction } from '../../lib/confirm';
 import { useMenuKeyboard } from '../../lib/menu-keys';
@@ -25,11 +26,13 @@ import { CreateConversationDialog } from './create-dialog';
 import { ConversationMembersDialog } from './members-dialog';
 import { fullTime, UserAvatar } from './format';
 import { MessageRow } from './message-row';
+import { plainText } from './plain-text';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
 import {
   agentThreadAddress,
   closeThread,
+  embed,
   fullScreenAddress,
   initializeMessagesStore,
   finishDirectBlock,
@@ -44,6 +47,7 @@ import {
   openAgentThread,
   renameConversation,
   openThread,
+  release,
   respond,
   setUserBlocked,
   selectConversation,
@@ -299,7 +303,7 @@ const AppChannelRow = memo(function AppChannelRow({ discussion, active }: { disc
         <div className="messages-row-line">
           <span className="messages-row-preview">
             {discussion.lastMessage
-              ? (discussion.lastBy ? `@${discussion.lastBy}: ${discussion.lastMessage}` : discussion.lastMessage)
+              ? (discussion.lastBy ? `@${discussion.lastBy}: ${plainText(discussion.lastMessage)}` : plainText(discussion.lastMessage))
               : 'No messages yet'}
           </span>
           {unread ? <span className="messages-unread" aria-label={`${unread} unread`}>{unread > 99 ? '99+' : unread}</span> : null}
@@ -863,6 +867,7 @@ function ConversationList() {
           open, so this is a two-pane (md+) gesture. */}
       <div
         className="messages-list-scroll platform-safe-scroll"
+        data-page-bounce=""
         onClick={(e) => {
           if (e.target === e.currentTarget && snap.route.conversationId) openConversation(null);
         }}
@@ -1553,10 +1558,22 @@ function AgentSessionThread({ slug, id }: { slug: string; id: number }) {
   );
 }
 
-function ConversationThread() {
+/**
+ * The open conversation. `embedded` is the copy a community's page mounts
+ * (#3494, EmbeddedConversation below): the same thread, drawn without this
+ * screen's header because the page's own header and tabs already name it.
+ * Exactly one copy draws the thread at a time — the store's route says
+ * which — so the ids its rows carry are never on the page twice.
+ */
+function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
+  // #3571: the kit's keyboard avoidance on this column's scroller, as the
+  // channel, its threads and a dev session get theirs from attachScreenFx.
+  // Its settled pin puts back the pan iOS makes on the tap, which otherwise
+  // left the composer (lifted by `platform-kb-column`) above the screen.
+  useComposerKeyboard(scroller);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
   const conversationId = snap.route.conversationId;
@@ -1610,6 +1627,12 @@ function ConversationThread() {
     });
   }
 
+  // #3494: the room is up in its community's page, so this screen (hidden)
+  // draws no second copy of it; and the page's copy draws nothing once
+  // Messages has taken the store back.
+  if (!!snap.route.embedded !== embedded) {
+    return embedded ? null : <section className="hidden md:flex messages-thread-pane messages-no-selection"><h2>Choose a conversation</h2></section>;
+  }
   if (snap.route.appSlug) return <AppDiscussionThread slug={snap.route.appSlug} />;
   if (snap.route.agent?.kind === 'chat') return <AgentChatThread key={snap.route.agent.id} id={snap.route.agent.id} />;
   if (snap.route.agent?.kind === 'agent') return <MayorSessionThread key={`agent/${snap.route.agent.id}`} id={snap.route.agent.id} />;
@@ -1699,13 +1722,15 @@ function ConversationThread() {
     }
   }
   return (
-    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}`} aria-label={snap.active?.title || 'Conversation'}>
-      <ThreadHeader />
+    <section className={`flex messages-thread-pane platform-kb-column dc-lift dc-lift-session messages-thread-${kind}${embedded ? ' messages-thread-embedded' : ''}`} aria-label={snap.active?.title || 'Conversation'}>
+      {embedded ? null : <ThreadHeader />}
       <InvitationBanner />
-      {/* No `un-kb-avoid` here: the column reserves the keyboard inset now
-          (`platform-kb-column` above), and the kit's class would pad the
-          inside of this scroller on top of that — the inset twice over, as
-          dead space under the last message. */}
+      {/* No `un-kb-avoid` WRITTEN here: the column reserves the keyboard
+          inset (`platform-kb-column` above). The kit adds the class itself
+          once useComposerKeyboard attaches (#3571), as it does to
+          `#gc-messages`, and app.css's `.platform-kb-column .un-kb-avoid`
+          keeps it from padding this scroller with the inset a second time.
+          So this className stays constant: React never strips the kit's. */}
       <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
         {/* Only a thread with nothing to show yet says it is loading (#2907).
             A refresh of the visible thread — the realtime echo of every send
@@ -1782,6 +1807,10 @@ function ReplyThreadPanel() {
   const rootId = snap.route.threadRootId;
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
   const scroller = useRef<HTMLDivElement>(null);
+  // #3571: the same keyboard avoidance as the conversation beside it. On a
+  // phone this pane covers the conversation, so its composer is the one the
+  // keyboard comes up under when a thread is replied to.
+  useComposerKeyboard(scroller);
   const count = useRef(0);
   useEffect(() => {
     if (conversationId && rootId && !snap.loadingThread && snap.active?.id === conversationId) {
@@ -1906,6 +1935,40 @@ function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number })
   );
 }
 
+/**
+ * A conversation drawn IN ITS COMMUNITY'S PAGE (#3494): #general, on
+ * Homeroom's Discussion tab (features/dev-board/workshop/project-discussion.tsx).
+ *
+ * Every other project's Discussion tab mounts its own chat in place, under
+ * the page's header and tabs. #general is a conversation of this store
+ * rather than an app chat, so it went to the Messages screen instead, which
+ * swapped the header, the tabs and the tint for Messages' own (#3491). This
+ * is the same thread, composer and reply threads, mounted in the page:
+ * while `active` it holds the store's one route (`embed`), and it gives it
+ * back when it leaves the screen or unmounts (`release`). The Messages
+ * screen takes the store back whenever it opens — its route() replaces an
+ * embedded one — and the effect below re-embeds once it has closed again.
+ *
+ * `messages-layout` carries the thread's surface tokens; it is not this
+ * screen's strip, so none of the strip's own classes come with it.
+ */
+export function EmbeddedConversation({ conversationId, active }: { conversationId: number; active: boolean }) {
+  const snap = useMessagesSnapshot();
+  const here = !!snap.route.embedded && snap.route.conversationId === conversationId;
+  const messagesOpen = snap.route.open;
+  useEffect(() => {
+    if (!active || messagesOpen) return undefined;
+    embed(conversationId);
+    return () => release(conversationId);
+  }, [active, messagesOpen, conversationId]);
+  return (
+    <div className={`messages-layout messages-layout-embedded${here && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`}>
+      {here ? <ConversationThread embedded /> : null}
+      {here && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
+    </div>
+  );
+}
+
 export function MessagesScreen() {
   const screenRef = useRef<HTMLElement | null>(null);
   const snap = useMessagesSnapshot();
@@ -1974,7 +2037,7 @@ export function MessagesScreen() {
         <div className={layout}>
           <ConversationList />
           <ConversationThread />
-          {snap.route.conversationId && snap.route.threadRootId ? <ReplyThreadPanel /> : null}
+          {snap.route.conversationId && snap.route.threadRootId && !snap.route.embedded ? <ReplyThreadPanel /> : null}
           {snap.route.appSlug && snap.route.threadRootId ? <AppReplyThreadPanel slug={snap.route.appSlug} rootId={snap.route.threadRootId} /> : null}
         </div>
       </main>

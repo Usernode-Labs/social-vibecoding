@@ -279,6 +279,15 @@ const MANIFEST_FILENAME = 'dapp.json';
 // deadline nor RUN_TIMEOUT_MS moves. The step buys 29 slots over the 821
 // declared here.
 //
+// 850 → 860 (#3233, #3489): two proposals in flight together each assumed
+// they were the only one moving the count off 829 — the notification
+// sheet's plain-words app allowance row, and the hub's idle Your work state
+// — and merged together they crossed the 20-slot floor at 831 against 850.
+// Same arithmetic: 860 checks at ~3.9s over the pool of 16 is ~210s of ideal
+// work, and the unchanged 650s TESTS_DEADLINE_MS still clears the 2x margin
+// by ~231s, so neither the deadline nor RUN_TIMEOUT_MS moves. The step buys
+// 29 slots over the 831 declared here.
+//
 // THE RULE AT THE FLOOR, stated once because three guards enforce it and on
 // #4868 they gave opposite advice. Fold first: a check that can share a
 // route with an existing one joins that check's expectSelector with :has()
@@ -290,7 +299,7 @@ const MANIFEST_FILENAME = 'dapp.json';
 // feature is not held behind a second vote because main already sat at the
 // floor. Never delete a check to make room. tests/lib/check-cap.js puts
 // the same words in the failing guards' messages.
-const MAX_DECLARED_TESTS = 850;
+const MAX_DECLARED_TESTS = 860;
 
 // The pre-pool cap, kept for exactly one purpose: services/check-history.js
 // bootstraps an app with no recorded history by marking its first
@@ -680,6 +689,12 @@ function readName(parsed) {
 // read() used to leave it out, and every deploy snapshots read()'s output
 // over `apps.manifest_snapshot`, so a description written into dapp.json
 // never reached any of those surfaces: the first deploy dropped it.
+//
+// #3572: the create screen takes at most 90 characters (two lines of the hub
+// hero on a phone; services/create-options.js DESCRIPTION_MAX). This reader
+// does NOT hold a repository to that: an imported repo's line, or one a
+// proposal lengthened, is kept up to 280 rather than failing the deploy, and
+// each surface clamps what it draws to its lines.
 const MAX_DESCRIPTION_LENGTH = 280;
 function readDescription(parsed) {
   if (typeof parsed?.description !== 'string') return null;

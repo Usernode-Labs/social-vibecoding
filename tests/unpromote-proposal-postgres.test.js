@@ -89,6 +89,7 @@ async function connectPool() {
       approval_epoch INTEGER NOT NULL DEFAULT 0,
       stale_notified_at TIMESTAMPTZ,
       promoted_at TIMESTAMPTZ,
+      active_users_at_promote INTEGER,
       merge_attempt_at TIMESTAMPTZ,
       pr_number INTEGER,
       pr_title TEXT,
@@ -113,7 +114,8 @@ async function connectPool() {
   `);
   const schemaSource = read('src/db/schema.sql');
   for (const table of ['preview_flows', 'preview_bindings', 'preview_flow_heads', 'preview_flow_resources',
-    'preview_action_receipts', 'preview_flow_decisions', 'proposal_review_receipts', 'proposal_review_decisions']) {
+    'preview_action_receipts', 'preview_flow_decisions', 'proposal_review_receipts', 'proposal_review_decisions',
+    'execution_work_requests', 'cli_preview_handoffs']) {
     await pool.query(schemaSource.match(new RegExp(String.raw`CREATE TABLE IF NOT EXISTS ${table} \([\s\S]*?\n\);`))[0]);
   }
   return { pool };
@@ -368,7 +370,7 @@ test('unpromote against a real PostgreSQL', async (t) => {
       // Session 10 was moved back above with two voided votes.
       const { rows: eligible } = await pool.query(PROMOTE_SELECT_SQL, [10, 1]);
       assert.equal(eligible.length, 1, 'the promote route finds the Underway session');
-      const cas = await pool.query(PROMOTE_CAS_SQL, [10, SHA, eligible[0].status]);
+      const cas = await pool.query(PROMOTE_CAS_SQL, [10, SHA, eligible[0].status, 4]);
       assert.equal(cas.rowCount, 1);
       assert.equal(await statusOf(pool, 10), 'promoted');
       assert.equal(await counted(pool, 10), 0, 'the fresh review starts with no votes counted');

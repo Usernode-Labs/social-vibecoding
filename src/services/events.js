@@ -2,14 +2,16 @@
 //
 // Writes rows into the `events` table (see schema.sql) that power the
 // admin /dashboard growth, retention, and funnel views. Emission is
-// deliberately fire-and-forget: a missed analytics row must NEVER break
-// or slow down the user action that produced it, so `record()` swallows
-// every error (logging at debug) and callers do not await it on the hot
-// path — they invoke it and move on.
+// `record()` is deliberately fire-and-forget: a missed ordinary analytics row
+// must NEVER break or slow down the user action that produced it, so it
+// swallows every error (logging at debug). A dapp_opened signal is the one
+// delivery exception: services/app-openings.js awaits an idempotent insert so
+// its client retry queue can distinguish "durable" from "try again".
 //
-// Historical rows (everything that happened before these emitters
-// shipped) are synthesized once by backfillEvents() in src/db/migrate.js,
-// so the dashboard curves are continuous across the cutover.
+// Historical rows for the original event vocabulary are synthesized once
+// by backfillEvents() in src/db/migrate.js. Newer action types can have no
+// complete historical source; callers must treat this as a best-effort log,
+// and analytics may combine it with the corresponding domain table.
 
 const { getPool } = require('../db/pool');
 const log = require('./logger');
@@ -24,10 +26,14 @@ const EVENT_TYPES = Object.freeze({
   // shared #leaderboard/users/<name> link used to mean — `username_history`
   // holds the reservation, this holds the WHEN and the audit trail.
   USERNAME_CHANGED: 'username_changed',
+  // A successful top-level App-tab entry. Written through app-openings.js;
+  // created_at is the bounded occurrence time, while metadata.receivedAt is
+  // the server receipt time after any retry.
   DAPP_OPENED: 'dapp_opened',
   DAPP_ACTIVE_DAY: 'dapp_active_day',
   CHAT_MESSAGE_SENT: 'chat_message_sent',
   PR_VOTE_CAST: 'pr_vote_cast',
+  ISSUE_VOTE_CAST: 'issue_vote_cast',
   PR_VOTE_RECEIVED: 'pr_vote_received',
   KUDOS_GIVEN: 'kudos_given',
   // Retraction of a previously given PR kudos (issue #197). Append-only
@@ -144,6 +150,15 @@ const EVENT_TYPES = Object.freeze({
   // services/llm-telemetry.js; OpenRouter's existing agent_turns ledger is
   // normalized alongside these rows by the admin aggregate report.
   LLM_INVOCATION: 'llm_invocation',
+  // Privacy-bounded client experience records. `services/ui-telemetry.js`
+  // owns the entire metadata vocabulary and rejects arbitrary keys before a
+  // row reaches this table. There is deliberately no historical backfill:
+  // these are observations from instrumented builds, not inferred actions.
+  UI_EXPERIENCE: 'ui_experience',
+  // One server receipt per accepted client batch. This is separate from the
+  // observations so the admin report can say how much telemetry arrived,
+  // how much was retried/dropped locally, and when reporting last worked.
+  UI_TELEMETRY_DELIVERY: 'ui_telemetry_delivery',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

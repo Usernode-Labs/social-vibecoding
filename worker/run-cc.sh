@@ -34,7 +34,7 @@
 # Optional env:
 #   MODE                       build (default) | scout | sync
 #   WORKER_JWT                 required for build/sync; absent for scout
-#   MODEL                      default: claude-sonnet-5
+#   MODEL                      default: claude-sonnet-5-5
 #   COMMIT_MSG                 default: "Changes via Homeroom"
 #   CLAUDE_RESUME_SESSION_ID   if set, passes `--resume <id>` to claude
 #   AGENT_PROVIDER             anthropic (default) | openrouter (#3296). With
@@ -86,7 +86,7 @@ fi
 : "${MODE:=build}"
 : "${BRANCH:=}"
 : "${WORKER_JWT:=}"
-: "${MODEL:=claude-sonnet-5}"
+: "${MODEL:=claude-sonnet-5-5}"
 : "${COMMIT_MSG:=Changes via Homeroom}"
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"
@@ -417,9 +417,17 @@ if [ "$MODE" = "shots" ]; then
   SHOTS_DIAGNOSTIC_TAIL_PID=$!
   export SHOTS_PROXY_PORT=17891
   export SHOTS_PROXY_SERVER="http://127.0.0.1:$SHOTS_PROXY_PORT"
+  # One proxy listener per fixture persona, so a hosted app's pages carry
+  # that persona's identity on every load (shots-origin-proxy.js). The
+  # bootstrap and the control plane keep the shared port above.
+  export SHOTS_PROXY_PERSONA_PORTS='{"member":17892,"read_only_admin":17893,"full_admin":17894}'
   export SHOTS_PROXY_CONTROL_TOKEN=$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")
   export SHOTS_PROXY_READY="$SHOTS_TMP/proxy.ready"
   export SHOTS_ALLOWED_ORIGINS="[\"$SHOTS_BASE_ORIGIN\",\"$SHOTS_HEAD_ORIGIN\"]"
+  # The proxy also samples the worker's memory every 5 seconds into the
+  # shots trace (shots-memory.js), so a turn that dies says whether memory
+  # ran out.
+  export SHOTS_MEMORY_SAMPLE_MS=5000
   node /usr/local/bin/shots-origin-proxy.js &
   SHOTS_PROXY_PID=$!
   trap cleanup_shots EXIT INT TERM
@@ -427,8 +435,11 @@ if [ "$MODE" = "shots" ]; then
   while [ ! -f "$SHOTS_PROXY_READY" ] && [ "$i" -lt 100 ]; do i=$((i+1)); sleep 0.05; done
   [ -f "$SHOTS_PROXY_READY" ] || die "shots origin proxy failed to start"
   echo "__USERNODE_PHASE__ shots_browser_bootstrap"
+  # On failure the bootstrap writes one credential-free line naming the
+  # persona, side, stage and cause; it becomes the run's failure reason.
+  export SHOTS_BOOTSTRAP_FAILURE_FILE="$SHOTS_TMP/browser-bootstrap.failure"
   node /usr/local/bin/shots-browser-bootstrap.js \
-    || die "shots browser authentication failed"
+    || die "$(head -c 300 "$SHOTS_BOOTSTRAP_FAILURE_FILE" 2>/dev/null | tr -d '\r\n' | grep . || echo 'shots browser authentication failed')"
   unset SHOTS_MEMBER_TOKEN SHOTS_ADMIN_TOKEN SHOTS_FULL_ADMIN_TOKEN
   BROWSER_MCP_CONFIG="$SHOTS_TMP/mcp.json"
   node /usr/local/bin/write-shots-mcp-config.js "$BROWSER_MCP_CONFIG" \

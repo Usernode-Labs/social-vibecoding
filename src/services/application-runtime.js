@@ -78,7 +78,7 @@ function dnsAlias({ environment, sessionId, dockerName }) {
 async function deploy(config, {
   app, environment, sessionId, imageRef, env, dockerName,
   port = 3000, memory, cpus, labels, runtimeName = null, internalOnly = false, createOnly = false,
-  command = [],
+  command = [], runAsUser = null,
 }) {
   if (mode(config) === 'docker') {
     const name = runtimeName || dockerName;
@@ -115,9 +115,11 @@ async function deploy(config, {
     // persist the deterministic name rather than the opaque run result.
     return { runtimeKind: 'docker', runtimeName: name, imageRef, hostname, url };
   }
+  // runAsUser is Kubernetes-only: Docker runs the image as its own user and
+  // has no runAsNonRoot to refuse a root image.
   return kubernetes.deployApplication(config, {
     app, environment, sessionId, imageRef, env, cpus, labels, runtimeName, internalOnly, createOnly,
-    command,
+    command, ...(runAsUser != null ? { runAsUser } : {}),
   });
 }
 

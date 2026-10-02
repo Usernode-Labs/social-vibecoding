@@ -4,22 +4,21 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const { verifyIsolatedBuildFixture } = require('./lib/isolated-kpack-fixture');
+const { enabled: postgresEnabled, readPreviewPostgresFixture } = require('./lib/preview-postgres-fixture');
 const { createExecutionDatabase } = require('./lib/execution-database');
 const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
 const { createPreviewWork, PREPARE, PREPARE_CLONE, PREPARE_IMAGE, PREPARE_RUNTIME } = require('../src/services/preview-flow/work');
 const { createExecutionWorker } = require('../src/services/execution/worker');
 
-const isolated = process.env.RUN_ISOLATED_KPACK_TEST === '1';
 const HEAD = 'a'.repeat(40);
 
 async function fixture(t) {
-  const verified = await verifyIsolatedBuildFixture();
-  const db = await createExecutionDatabase(verified.fixture.isolation.database.url);
+  const selected = await readPreviewPostgresFixture();
+  const db = await createExecutionDatabase(selected.databaseUrl);
   t.after(() => db.close());
   await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (1, $1)', [HEAD]);
   const config = {
-    ...verified.fixture.config,
+    ...selected.config,
     databaseUrl: db.url,
     dataEncryptionKey: 'admission-fixture-only',
     nativeCliPreviewHandoffEnabled: true,
@@ -35,7 +34,7 @@ async function fixture(t) {
   return { ...db, config, action };
 }
 
-test('real PostgreSQL: new durable admission has one complete format without legacy opt-in', { skip: !isolated }, async t => {
+test('real PostgreSQL: new durable admission has one complete format without legacy opt-in', { skip: !postgresEnabled }, async t => {
   const f = await fixture(t);
   const owner = createPreviewWork(f.pool, f.config);
   const admitted = await owner.request(f.action);
@@ -61,7 +60,7 @@ test('real PostgreSQL: new durable admission has one complete format without leg
 });
 
 for (const enabled of [undefined, false]) {
-  test(`real PostgreSQL: ${enabled === undefined ? 'unset' : 'disabled'} admission rejects without writes`, { skip: !isolated }, async t => {
+  test(`real PostgreSQL: ${enabled === undefined ? 'unset' : 'disabled'} admission rejects without writes`, { skip: !postgresEnabled }, async t => {
     const f = await fixture(t);
     f.config.nativeCliPreviewHandoffEnabled = enabled;
     f.config.nativePreviewAttempts = true;
@@ -75,7 +74,7 @@ for (const enabled of [undefined, false]) {
 }
 
 for (const workflow of [PREPARE, PREPARE_CLONE, PREPARE_IMAGE]) {
-  test(`real PostgreSQL: retained ${workflow} completes with new admission disabled`, { skip: !isolated }, async t => {
+  test(`real PostgreSQL: retained ${workflow} completes with new admission disabled`, { skip: !postgresEnabled }, async t => {
     const f = await fixture(t);
     f.config.nativeCliPreviewHandoffEnabled = false;
     const retained = createRetainedPreviewWork(f.pool, f.config, { workflow });

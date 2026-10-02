@@ -9,6 +9,9 @@ function demoUser(id, username) {
 
 const DEMO_ADA = demoUser(902783, 'staging-demo-general-ada');
 const DEMO_LIN = demoUser(902784, 'staging-demo-general-lin');
+const CAPTURE_ADMIN_USERNAME = 'usernode-capture-admin';
+const UNREAD_CHECK_KEY = 'staging-capture-unread-check';
+const UNREAD_CHECK_TITLE = 'Preview check-in';
 
 const DEMO_SCREENSHOT_NAME = 'Screenshot 2026-08-13 at 12.44.10\u202fPM.png';
 const DEMO_SCREENSHOT_PNG = Buffer.from(
@@ -308,29 +311,82 @@ async function seedMessages(db, user, recipe, conversationId) {
   }
 }
 
+// Proposal checks share one persistent capture-admin account. The routed demo
+// threads below are supposed to become read when opened, so none can also be
+// the durable unread fixture for list/badge checks. Give that test identity a
+// real group and a real incoming message whose dynamic id is never published
+// as a check route. The ordinary serializer then computes unreadCount from the
+// untouched membership cursor. The per-user advisory lock held by the caller,
+// plus the idempotency key, keeps this bounded to one conversation/message.
+// An existing membership is recognized in any status, so leaving/removal does
+// not make reconciliation create a replacement room.
+async function ensureUnreadCheckFixture(db, user) {
+  if (user?.username !== CAPTURE_ADMIN_USERNAME) return null;
+  const existing = await db.query(
+    `SELECT m.conversation_id
+       FROM conversation_messages m
+       JOIN conversation_members viewer
+         ON viewer.conversation_id = m.conversation_id
+        AND viewer.user_id = $3
+      WHERE m.sender_id = $1
+        AND m.idempotency_key = $2
+      LIMIT 1`,
+    [DEMO_ADA.id, UNREAD_CHECK_KEY, user.id]
+  );
+  if (existing.rows[0]) return existing.rows[0].conversation_id;
+
+  const conversationId = (await db.query(
+    `INSERT INTO conversations (kind, title, created_by, created_at, updated_at)
+     VALUES ('group', $1, $2, '2026-08-13T13:35:00Z', '2026-08-13T13:35:00Z')
+     RETURNING id`,
+    [UNREAD_CHECK_TITLE, DEMO_ADA.id]
+  )).rows[0].id;
+  await db.query(
+    `INSERT INTO conversation_members
+       (conversation_id, user_id, role, status, invited_by, joined_at, responded_at)
+     VALUES ($1, $2, 'owner', 'member', NULL, NOW(), NOW()),
+            ($1, $3, 'member', 'member', $2, NOW(), NOW())`,
+    [conversationId, DEMO_ADA.id, user.id]
+  );
+  await db.query(
+    `INSERT INTO conversation_messages
+       (conversation_id, sender_id, content, idempotency_key, created_at)
+     VALUES ($1, $2, $3, $4, '2026-08-13T13:35:00Z')`,
+    [conversationId, DEMO_ADA.id,
+      'The inbox checks can use this unread preview message.', UNREAD_CHECK_KEY]
+  );
+  return conversationId;
+}
+
 // Serial IDs are allocated by PostgreSQL. Never assign the same private
 // conversation to several viewers just to preserve a screenshot's address.
 async function ensureFixtures(pool, user) {
   if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return new Map();
   return conversations.transaction(pool, async db => {
     await db.query('SELECT pg_advisory_xact_lock(4781, $1)', [user.id]);
+    // The four conversations of this recipe; #3624's bot DM (BOT_DM_LEGACY_ID)
+    // is its own fixture, below.
     const existing = await db.query(
-      'SELECT legacy_id, conversation_id FROM staging_conversation_fixtures WHERE user_id = $1', [user.id]);
+      'SELECT legacy_id, conversation_id FROM staging_conversation_fixtures WHERE user_id = $1 AND legacy_id <= 910004', [user.id]);
     const ids = new Map(existing.rows.map(row => [row.legacy_id, row.conversation_id]));
+    let complete = false;
     if (ids.size === 4) {
-      const complete = await db.query(
+      const probe = await db.query(
         `SELECT COUNT(*)::int AS count FROM conversation_messages
           WHERE (conversation_id = $1 AND idempotency_key = 'staging-inbox-9100202')
              OR (conversation_id = $2 AND idempotency_key = 'staging-inbox-9100413')`,
         [ids.get(910002), ids.get(910004)]);
-      if (complete.rows[0].count === 2) return ids;
+      complete = probe.rows[0].count === 2;
     }
+    if (complete && user.username !== CAPTURE_ADMIN_USERNAME) return ids;
     const actors = await db.query(
       `SELECT id, username FROM users WHERE id = ANY($1::int[])
         AND password = 'staging-demo-not-a-login'`, [[DEMO_ADA.id, DEMO_LIN.id]]);
     if (![DEMO_ADA, DEMO_LIN].every(actor => actors.rows.some(row => row.id === actor.id && row.username === actor.username))) {
       throw new Error('Staging message fixture accounts are missing or conflict with existing users');
     }
+    await ensureUnreadCheckFixture(db, user);
+    if (complete) return ids;
     for (const recipe of demoConversations(user)) {
       if (ids.has(recipe.id)) {
         await seedMessages(db, user, recipe, ids.get(recipe.id));
@@ -388,10 +444,75 @@ async function ensureFixtures(pool, user) {
   });
 }
 
+// #3624: the Homeroom bot's DM, with one question still open, so a staging
+// preview shows the suggested answers and the line saying an answer is
+// public. The bot never acts on staging (homeroom-bot-live.js isLiveFor), so
+// nothing would put a question there otherwise. Obviously fake (a
+// "Staging demo" project and request), never registered as a question the
+// bot is waiting on: an answer tapped here gets the bot's short help, and
+// nothing is posted on any request. The bot's account is the platform's own
+// synthetic user, created here as a bare row when a fresh staging database
+// has none.
+const BOT_DM_LEGACY_ID = 910005;
+const BOT_DM_QUESTION_KEY = 'staging-hrbot-question';
+const BOT_DM_OFFER_KEY = 'staging-hrbot-offer';
+
+async function ensureBotDmFixture(pool, user) {
+  if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return null;
+  await pool.query(
+    `INSERT INTO users (username, password, is_synthetic)
+     VALUES ('homeroom_bot', 'staging-demo-not-a-login', TRUE)
+     ON CONFLICT DO NOTHING`
+  );
+  const bot = (await pool.query(
+    `SELECT id FROM users WHERE username = 'homeroom_bot' AND is_synthetic = TRUE`
+  )).rows[0];
+  if (!bot || bot.id === user.id) return null;
+  const opened = await conversations.ensureAdmittedDirect(pool, bot.id, user.id);
+  if (!opened) return null;
+  await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+    content: '**Staging demo app** · request #12: Staging demo, sort the list by date\n\n'
+      + 'I have a question before I build this:\n\nShould the newest items show first, or the oldest?',
+    idempotency_key: BOT_DM_QUESTION_KEY,
+  }, {
+    metadata: {
+      homeroomBot: {
+        kind: 'question', appName: 'Staging demo app', issueNumber: 12,
+        issueTitle: 'Staging demo, sort the list by date', mirrors: true, status: 'open',
+        question: 'Should the newest items show first, or the oldest?',
+        answers: ['Newest first', 'Oldest first', 'Let me pick each time'],
+      },
+    },
+  });
+  // #3624 stage 2: and a request it offers to file, with File it / Not now.
+  // A demo: no project stands behind it, so a tap files nothing here.
+  await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+    content: 'Here is the request I\'d file for you.\n\n**Staging demo app** · new request: Staging demo, add a dark mode\n\n'
+      + 'Staging demo: a dark mode for the list, switched on from the settings screen.',
+    idempotency_key: BOT_DM_OFFER_KEY,
+  }, {
+    metadata: {
+      homeroomBot: {
+        kind: 'confirm', appName: 'Staging demo app', status: 'open', mirrors: false,
+        question: 'File this as a request on Staging demo app?',
+        answers: ['File it', 'Not now'],
+      },
+    },
+  });
+  await pool.query(
+    `INSERT INTO staging_conversation_fixtures (user_id, legacy_id, conversation_id)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (user_id, legacy_id) DO UPDATE SET conversation_id = EXCLUDED.conversation_id`,
+    [user.id, BOT_DM_LEGACY_ID, opened.conversationId]
+  );
+  return opened.conversationId;
+}
+
 async function resolveLegacyLink(pool, user, id) {
-  if (process.env.USERNODE_ENV !== 'staging' || id < 910001 || id > 910004) return id;
+  if (process.env.USERNODE_ENV !== 'staging' || id < 910001 || id > BOT_DM_LEGACY_ID) return id;
   // A real accessible ID always wins over a historical display-only address.
   if (await conversations.loadMembership(pool, id, user.id, { allowInvited: true })) return id;
+  if (id === BOT_DM_LEGACY_ID) return (await ensureBotDmFixture(pool, user)) || id;
   const ids = await ensureFixtures(pool, user);
   return ids.get(id) || id;
 }
@@ -411,4 +532,7 @@ async function resolveLegacyMessageLink(pool, user, conversationId, id) {
   return stored.rows[0]?.id || id;
 }
 
-module.exports = { ensureFixtures, resolveLegacyLink, resolveLegacyMessageLink, demoConversations, demoMessages };
+module.exports = {
+  ensureFixtures, ensureBotDmFixture, resolveLegacyLink, resolveLegacyMessageLink, demoConversations, demoMessages,
+  BOT_DM_LEGACY_ID,
+};

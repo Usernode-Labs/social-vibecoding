@@ -168,6 +168,42 @@ test('saved desired spec preserves self-app environment and diagnostic labels on
   assert.equal(manifests.deployment.metadata.labels['social.usernode.io/app-id'], '1');
 });
 
+test('new placement follows canonical policy; retained specs adopt their original host-only resources', async () => {
+  const f = stateFixture();
+  const config = settings();
+  config.kubernetes.previewDatabaseNamespace = 'database-fixture';
+  config.kubernetes.previewDatabaseCluster = 'primary-fixture';
+  const desired = selectRuntime(config, {
+    flowId: f.state.flow.id,
+    generation: 1,
+    headSha: HEAD,
+  }, { imageRef: IMAGE, env: {} });
+  const intent = f.state.resource.intent;
+  intent.runtimeOperation.desired = desired;
+  const preferences = () => runtimeManifests(intent, KEY).deployment.spec.template.spec
+    .affinity.podAffinity.preferredDuringSchedulingIgnoredDuringExecution;
+  assert.deepEqual(preferences().map(value => [value.weight, value.podAffinityTerm.topologyKey]), [
+    [100, 'topology.kubernetes.io/zone'],
+    [50, 'kubernetes.io/hostname'],
+  ]);
+
+  // A retained spec predates the placement field. Do not default it while
+  // parsing: its manifest and spec label must still match existing resources.
+  delete desired.databaseAffinity.placement;
+  assert.deepEqual(preferences().map(value => [value.weight, value.podAffinityTerm.topologyKey]), [
+    [100, 'kubernetes.io/hostname'],
+  ]);
+  const api = externalApi();
+  const service = createRuntimeOperations({ clients: () => api.clients, dataKey: KEY, probe: async () => true });
+  assert.equal((await service.prepare(config, intent, context(f))).status, 'healthy');
+  const original = structuredClone([...api.objects]);
+  config.kubernetes.previewDatabaseCluster = 'changed-after-admission';
+  assert.equal((await service.prepare(config, intent, context(f))).status, 'healthy');
+  assert.deepEqual([...api.objects], original);
+  assert.deepEqual(api.creates, RESOURCE_KINDS);
+  assert.equal(desired.databaseAffinity.cluster, 'primary-fixture');
+});
+
 test('injected Kubernetes: pre-Deployment retirement can release dependencies while reconciling a late Secret', async () => {
   const f = stateFixture();
   const api = externalApi();

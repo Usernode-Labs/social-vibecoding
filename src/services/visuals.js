@@ -1774,6 +1774,20 @@ function resolveCaptureScale(row) {
 // trigger, never a second merge path. Fire-and-forget and best-effort: any
 // failure is logged, never thrown, so the capture pipeline's contract is
 // unchanged.
+// The Homeroom bot hears that checks on a proposal of its own settled
+// failing, from the same three places a settled verdict re-drives the merge
+// (a live run, the lifecycle wrapper and the harvest of an orphaned run):
+// it queues one turn to fix them (homeroom-bot.js noteProposalChecks, which
+// leaves every other proposal alone after one indexed read).
+// Fire-and-forget; a non-failing verdict costs nothing.
+function noteBotChecksAfterChecks(pool, session, state) {
+  if (state !== 'failing' || !session?.id) return;
+  Promise.resolve()
+    // Lazy: the bot module loads its live and follow-up modules.
+    .then(() => require('./homeroom-bot').noteProposalChecks(pool, { sessionId: session.id }))
+    .catch(() => {});
+}
+
 function maybeAutoMergeAfterChecks(config, pool, session, state) {
   if ((state !== 'passing' && state !== 'skipped') || !github.isEnabled()) return;
   pool.query(
@@ -1949,7 +1963,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         onError: (err, pool, operation) => publishCaptureError(
           pool, session.id, operation.revision, err, opts.send),
       });
-      if (completed?.state) maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
+      if (completed?.state) {
+        maybeAutoMergeAfterChecks(config, getPool(config), session, completed.state);
+        noteBotChecksAfterChecks(getPool(config), session, completed.state);
+      }
       return completed;
     } catch (err) {
       if (lifecycle.isCancelled(err)) return;
@@ -3236,7 +3253,10 @@ async function settleCaptureRun(config, pool, run) {
   // app-level merge drain so "checks finished after the votes were in"
   // auto-merges just like "votes landed after checks were green".
   // Fire-and-forget; never blocks or fails the capture pipeline.
-  if (!operation) maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
+  if (!operation) {
+    maybeAutoMergeAfterChecks(config, pool, session, checksResult.state);
+    noteBotChecksAfterChecks(pool, session, checksResult.state);
+  }
 
   const dropped = [];
   const stored = await storeArtifacts(pool, session.id, commitHash, targets, shots, dropped);
@@ -3834,6 +3854,7 @@ module.exports = {
   CHECK_PHASES,
   summarizeBootFailure,
   maybeAutoMergeAfterChecks,
+  noteBotChecksAfterChecks,
   consoleSnapshotFromTests,
   resolveDeclaredTests,
   sessionGitRef,

@@ -102,6 +102,62 @@ test('Your changes: in progress (either kind, newest first), then merged, then c
   assert.equal(proposalsView({ proposals: { inProgress: [], merged: [] } }).empty, true);
 });
 
+test('Your changes: one list across projects, each row led by its project\'s icon (#3364)', () => {
+  const profile = require('../src/routes/profile');
+  // The server carries the icon beside the name; an image id that is not a
+  // plain id never becomes a URL.
+  assert.match(profile.MY_PROPOSALS_SQL, /a\.slug AS app_slug, a\.name AS app_name, a\.icon_emoji, a\.icon_image_id/);
+  const shaped = profile.shapeProposals([
+    { section: 'inProgress', session_id: 1, title: 'A', app_slug: 'run-club', app_name: 'Run Club', icon_emoji: '🏃', icon_image_id: null, status: 'active', at: null },
+    { section: 'merged', session_id: 2, title: 'B', app_slug: 'whiteboard', app_name: 'Whiteboard', icon_emoji: null, icon_image_id: 'abc_1', status: 'merged', at: null },
+    { section: 'merged', session_id: 3, title: 'C', app_slug: 'odd', app_name: 'Odd', icon_emoji: null, icon_image_id: '../x', status: 'merged', at: null },
+  ]).proposals;
+  assert.deepEqual([shaped.inProgress[0].appIconEmoji, shaped.inProgress[0].appIconUrl], ['🏃', null]);
+  assert.deepEqual(shaped.merged.map((r) => r.appIconUrl), ['/app-icons/abc_1', null]);
+  const demo = profile.withDemoProposals({ openForVote: [], inProgress: [], merged: [], closed: [] },
+    { slug: 'usernode-2d5619', name: 'Homeroom', icon_emoji: '🏠', icon_image_id: null }, NOW);
+  assert.equal(demo.inProgress[0].appIconEmoji, '🏠');
+
+  // The view hands each row its project in app-card.js's field names.
+  const { proposalsView } = loadTsx(STORE);
+  const view = proposalsView({
+    proposals: {
+      inProgress: [
+        { sessionId: 1, title: 'Dark mode', appSlug: 'run-club', appName: 'Run Club', appIconEmoji: '🏃', at: '2026-09-23T10:00:00Z' },
+      ],
+      openForVote: [
+        { sessionId: 2, title: 'Lasso', appSlug: 'whiteboard', appName: 'Whiteboard', appIconUrl: '/app-icons/abc', at: '2026-09-22T10:00:00Z' },
+      ],
+    },
+  }, NOW);
+  assert.equal(view.sections.length, 1, 'both projects share the one In progress group');
+  assert.deepEqual(view.sections[0].rows.map((r) => r.app), [
+    { slug: 'run-club', name: 'Run Club', icon_emoji: '🏃', icon_url: null },
+    { slug: 'whiteboard', name: 'Whiteboard', icon_emoji: null, icon_url: '/app-icons/abc' },
+  ]);
+
+  // The screen draws the tile ahead of each row: emoji, image, or the letter.
+  const mod = loadTsx(SCREEN);
+  mod.profileProposalsStore.set({
+    open: true, kind: 'changes', error: false,
+    data: { changes: { proposals: {
+      inProgress: [
+        { sessionId: 1, title: 'Dark mode', appSlug: 'run-club', appName: 'Run Club', appIconEmoji: '🏃', at: '2026-09-23T10:00:00Z' },
+        { sessionId: 3, title: 'Tags', appSlug: 'notes', appName: 'Notes', at: '2026-09-21T10:00:00Z' },
+      ],
+      openForVote: [
+        { sessionId: 2, title: 'Lasso', appSlug: 'whiteboard', appName: 'Whiteboard', appIconUrl: '/app-icons/abc', at: '2026-09-22T10:00:00Z' },
+      ],
+    } } },
+  });
+  const out = renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
+  assert.equal((out.match(/data-profile-work-group=/g) || []).length, 1);
+  assert.match(out, /data-icon="emoji" data-profile-work-app="run-club" title="Run Club" aria-hidden="true">[\s\S]*?🏃/);
+  assert.match(out, /data-icon="image" data-profile-work-app="whiteboard" title="Whiteboard" aria-hidden="true"><img src="\/app-icons\/abc"/);
+  assert.match(out, /data-icon="letter" data-profile-work-app="notes" title="Notes" aria-hidden="true">N</);
+  mod.profileProposalsStore.set({ open: false, kind: 'changes', data: {}, error: false });
+});
+
 test('Your requests: open, then done, each opening the request', () => {
   const { requestsView } = loadTsx(STORE);
   const view = requestsView({
@@ -236,4 +292,60 @@ test('the router: three addresses no username can have, one screen, the bar name
   assert.match(app, /window\.UsernodeReact\?\.profileProposals\?\.open\?\.\(view\);/);
   // The dialog's "See your requests" lands on the view.
   assert.match(read('frontend/src/features/dialogs/feedback-controller.js'), /const SEE_MINE_ROUTE = '#profile\/your-requests';/);
+});
+
+// ── The layout (#3498) ─────────────────────────────────────────────────
+//
+// "Your requests + your votes sections are misformatted (gray, behind
+// sidebar) on desktop." The screen arrived after app.css's per-screen route
+// lists and was on none of them, so the body kept its gray `bg-zinc-100`
+// instead of the wallpaper, the bar kept its zinc-200 surface, and the page
+// was not moved over for the desktop rail: its column centred in the whole
+// window and, from a laptop width down, began under the rail. The column
+// also passed its lists `mx-0` (Profile's arrangement) without Profile's
+// `px-4` gutter, so the cards ran edge to edge on a phone.
+
+const CSS = read('public/css/app.css').replace(/\/\*[\s\S]*?\*\//g, '');
+
+// Every selector in app.css, comments stripped, as written before its `{`.
+const SELECTORS = (CSS.match(/[^{}]+(?=\{)/g) || []).map((s) => s.trim());
+
+test('#3498: every wallpaper and bar rule that names Workshop names Your work too', () => {
+  // The rules keyed on a visible screen root: `body:has(:is(<roots>):not(.hidden))`.
+  const routeRules = SELECTORS.filter((sel) => /body:has\(:is\([^)]*#workshop-screen[^)]*\):not\(\.hidden\)\)/.test(sel));
+  // The light and dark ground, their 640px layer sets and the launch cover
+  // (5); the cleared bar, its glass, its clip and its faked layer (4).
+  assert.equal(routeRules.length, 9, 'the nine route rules that name #workshop-screen are found');
+  for (const sel of routeRules) {
+    assert.ok(sel.includes('#profile-proposals-screen'),
+      `${sel.replace(/\s+/g, ' ').slice(0, 90)}… also names #profile-proposals-screen`);
+  }
+  const ground = routeRules.filter((sel) => !sel.includes('#platform-header'));
+  assert.equal(ground.length, 5, 'so the page paints the wallpaper, not the gray body');
+  const bar = routeRules.filter((sel) => sel.includes('#platform-header'));
+  assert.equal(bar.length, 4, 'and the bar wears the same glass as on Workshop');
+});
+
+test('#3498: on a desktop the screen moves over for the rail like its siblings', () => {
+  const desktop = CSS.slice(CSS.indexOf('--platform-rail-w: var(--platform-rail-full);'));
+  const at = desktop.indexOf(':is(#home-screen, #browse-screen, #workshop-screen');
+  assert.ok(at > 0, 'the rail\'s list of screens that move over is found');
+  const rule = desktop.slice(at, desktop.indexOf('}', at));
+  const roots = rule.slice(0, rule.indexOf('{'));
+  assert.match(roots, /#profile-proposals-screen/, 'Your changes, requests and votes clear the rail');
+  assert.match(rule, /padding-left: calc\(var\(--platform-rail-w, 0px\) \+ var\(--platform-gutter\)\);/);
+});
+
+test('#3498: the column is Profile\'s, gutter and all, so its mx-0 lists keep a margin', () => {
+  const profileRoot = read('frontend/src/features/profile/index.tsx')
+    .match(/<div id="profile-root" className="([^"]+)">/);
+  assert.ok(profileRoot, 'Profile\'s column is found');
+  assert.match(profileRoot[1], /\bpx-4\b/, 'Profile\'s column carries the gutter its mx-0 lists rely on');
+  const mod = loadTsx(SCREEN);
+  const html = renderToHtml(createElement(mod.ProfileProposalsScreen, {}));
+  const column = html.match(/^<main id="profile-proposals-screen"[^>]*><div class="([^"]+)">/);
+  assert.ok(column, 'the screen\'s column is found');
+  assert.equal(column[1], profileRoot[1], 'the same column as #profile-root, class for class');
+  assert.match(read(SCREEN), /<GroupedList className="mx-0" tone="plane">/,
+    'the lists still pass mx-0, which is why the column owns the gutter');
 });

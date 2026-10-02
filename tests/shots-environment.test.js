@@ -7,6 +7,7 @@ const environment = require('../src/services/shots-environment');
 const runtime = require('../src/services/application-runtime');
 const dbManager = require('../src/services/db-manager');
 const fixtures = require('../src/services/shots-fixtures');
+const demoStates = require('../src/services/shots-demo-states');
 
 test('shots resource names are deterministic, side-specific, and bounded', () => {
   const runId = '0123456789abcdef0123456789abcdef';
@@ -66,6 +67,7 @@ test('each paired reset serializes clones and adds the same member and full-admi
     hostedApp: fixtures.ensureHostedAppFixture,
     inspect: fixtures.canCopyMemberAgentSession, copy: fixtures.copyMemberAgentSession,
     copyAdmin: fixtures.copyFullAdminAgentSession,
+    inspectDemo: demoStates.inspectDemoStates, installDemo: demoStates.installDemoStates,
   };
   const runId = '2'.repeat(32);
   const slug = 'usernode-2d5619';
@@ -116,6 +118,18 @@ test('each paired reset serializes clones and adds the same member and full-admi
       adminSides.push(side);
       return { id: fixtures.FULL_ADMIN_SESSION_PROFILE, persona: 'full_admin', path: '/#messages/agent/990897', side };
     };
+    // Each side can hold some demo states; only those BOTH can hold are
+    // written, and both sides are written together.
+    const [runs, preview, list] = demoStates.STATE_IDS;
+    demoStates.inspectDemoStates = async ({ side }) => (side === 'base' ? [runs, preview, list] : [list, runs]);
+    const demoCalls = [];
+    demoStates.installDemoStates = async (inputs, stateIds) => {
+      demoCalls.push({ sides: Object.keys(inputs), dbs: [inputs.base.databaseUrl, inputs.head.databaseUrl], stateIds });
+      return {
+        installed: stateIds.map((id) => ({ id, persona: 'member', shows: [{ state: id, path: '/#messages' }] })),
+        skipped: [],
+      };
+    };
     const progress = [];
     const captureDigest = `capture@sha256:${'c'.repeat(64)}`;
     const deployment = await environment.resetPair({
@@ -129,7 +143,14 @@ test('each paired reset serializes clones and adds the same member and full-admi
       'clone_base', 'clone_base_copy_template', 'clone_base_scrub_private',
       'clone_head', 'clone_head_copy_template', 'clone_head_scrub_private',
     ]);
-    assert.equal(deployment.availableFixtures.length, 4);
+    assert.deepEqual(demoCalls, [{
+      sides: ['base', 'head'],
+      dbs: [`postgres://fixture@db/${pair.sides.base.dbName}`, `postgres://fixture@db/${pair.sides.head.dbName}`],
+      stateIds: [runs, list],
+    }]);
+    assert.deepEqual(deployment.availableFixtures.slice(4).map((fixture) => fixture.id), [runs, list]);
+    assert.ok(progress.includes('seed_shots_demo_states'));
+    assert.equal(deployment.availableFixtures.length, 6);
     assert.equal(deployment.availableFixtures[0].persona, 'full_admin');
     assert.deepEqual(deployment.availableFixtures[0].appMembership,
       { appId: 42, slug, status: 'member' });
@@ -147,7 +168,8 @@ test('each paired reset serializes clones and adds the same member and full-admi
     assert.ok(progress.includes('seed_hosted_app_fixture'));
     assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
       .update(`source-fingerprint\n${fixtures.FULL_ADMIN_PROFILE}`
-        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}+${fixtures.PROFILE}+${fixtures.FULL_ADMIN_SESSION_PROFILE}`).digest('hex'));
+        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}+${fixtures.PROFILE}+${fixtures.FULL_ADMIN_SESSION_PROFILE}`
+        + `+${runs}+${list}`).digest('hex'));
   } finally {
     runtime.remove = original.remove;
     runtime.deploy = original.deploy;
@@ -158,6 +180,8 @@ test('each paired reset serializes clones and adds the same member and full-admi
     fixtures.ensureHostedAppFixture = original.hostedApp;
     fixtures.canCopyMemberAgentSession = original.inspect;
     fixtures.copyMemberAgentSession = original.copy;
+    demoStates.inspectDemoStates = original.inspectDemo;
+    demoStates.installDemoStates = original.installDemo;
     fixtures.copyFullAdminAgentSession = original.copyAdmin;
   }
 });
@@ -194,4 +218,95 @@ test('paired cleanup removes the hosted app runtime with both exact revisions', 
     dbManager.dropDatabase = original.drop;
     dbManager.releasePreparedCloneSource = original.release;
   }
+});
+
+test('a failed checkout clone is retried from a clean directory, a bounded number of times', async (t) => {
+  const docker = require('../src/services/docker');
+  const fsp = require('node:fs/promises');
+  const os = require('node:os');
+  const pathMod = require('node:path');
+  const saved = docker.execFileAsync;
+  t.after(() => { docker.execFileAsync = saved; });
+  const dir = await fsp.mkdtemp(pathMod.join(os.tmpdir(), 'shots-clone-'));
+  t.after(() => fsp.rm(dir, { recursive: true, force: true }));
+  const target = pathMod.join(dir, 'base');
+
+  // Fails twice, leaving a partial directory each time, then succeeds.
+  let calls = 0;
+  const seen = [];
+  docker.execFileAsync = async (cmd, args) => {
+    calls += 1;
+    seen.push({ cmd, args, existed: await fsp.stat(target).then(() => true, () => false) });
+    if (calls < 3) {
+      await fsp.mkdir(target, { recursive: true });
+      await fsp.writeFile(pathMod.join(target, 'partial'), 'x');
+      throw Object.assign(new Error('Command failed: git clone'), { code: 128 });
+    }
+    return { stdout: '', stderr: '' };
+  };
+  const waits = [];
+  await environment.cloneWithRetry('https://github.com/o/r.git', target, { wait: async (ms) => { waits.push(ms); } });
+  assert.equal(calls, 3);
+  assert.deepEqual(seen.map((s) => s.existed), [false, false, false], 'each attempt starts from no directory');
+  assert.deepEqual(waits, [2000, 6000]);
+  assert.deepEqual(seen[0].args.slice(0, 6),
+    ['clone', '--depth', '1', '--no-tags', '--recurse-submodules', '--shallow-submodules'],
+    'the clone itself is unchanged');
+
+  // Out of attempts: the last error surfaces, so the run still fails loudly.
+  calls = 0;
+  docker.execFileAsync = async () => { calls += 1; throw Object.assign(new Error('still down'), { code: 128 }); };
+  await assert.rejects(environment.cloneWithRetry('https://github.com/o/r.git', target, { wait: async () => {} }),
+    /still down/);
+  assert.equal(calls, environment.CLONE_ATTEMPTS);
+
+  const src = require('node:fs').readFileSync(pathMod.join(__dirname, '../src/services/shots-environment.js'), 'utf8');
+  assert.match(src, /const checkoutDir = path\.join\(parentDir, side\);\n  await cloneWithRetry\(cloneUrl, checkoutDir\);/,
+    'the exact-revision checkout clones through the retry');
+});
+
+test('a before-side image that runs as root is started as the conventional app user, and only then', async () => {
+  const rejection = Object.assign(
+    new Error('Deployment social-apps/sv-shots-635f26f930d88a1f-b cannot start: app: CreateContainerConfigError: container has runAsNonRoot and image will run as root'),
+    { terminalPodFailure: true }
+  );
+  const calls = [];
+  const deploy = async (_config, params) => {
+    calls.push(params);
+    if (params.runAsUser == null) throw rejection;
+    return { runtimeName: params.runtimeName };
+  };
+  const params = { runtimeName: 'sv-shots-635f26f930d88a1f-b', imageRef: 'x@sha256:1' };
+  const deployed = await environment.deployShotsRuntime({}, params, deploy);
+  assert.deepEqual(deployed, { runtimeName: params.runtimeName });
+  assert.deepEqual(calls.map((c) => c.runAsUser), [undefined, environment.SHOTS_FALLBACK_UID]);
+  assert.equal(environment.SHOTS_FALLBACK_UID, 1000, 'the uid app Dockerfiles declare (USER 1000:1000)');
+
+  // Any other failure is the run's real failure: no second attempt.
+  const other = new Error('Deployment social-apps/x cannot start: app: CrashLoopBackOff');
+  let tries = 0;
+  await assert.rejects(environment.deployShotsRuntime({}, params, async () => { tries += 1; throw other; }), other);
+  assert.equal(tries, 1);
+
+  // The fallback is tried once: if uid 1000 is also refused, that error stands.
+  let attempts = 0;
+  const still = new Error('container has runAsNonRoot and image will run as root');
+  await assert.rejects(environment.deployShotsRuntime({}, params, async () => { attempts += 1; throw still; }), still);
+  assert.equal(attempts, 2);
+
+  // The rejection can arrive in the pod details rather than the message.
+  const detailed = Object.assign(new Error('Deployment social-apps/x cannot start'), {
+    terminalPodDetails: 'app: CreateContainerConfigError: container has runAsNonRoot and image will run as root',
+  });
+  const seen = [];
+  await environment.deployShotsRuntime({}, params, async (_c, p) => {
+    seen.push(p.runAsUser);
+    if (p.runAsUser == null) throw detailed;
+    return {};
+  });
+  assert.deepEqual(seen, [undefined, 1000]);
+
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '../src/services/shots-environment.js'), 'utf8');
+  assert.match(src, /const deployed = await deployShotsRuntime\(config, \{/, 'both shots sides deploy through the fallback');
+  assert.doesNotMatch(src, /await applicationRuntime\.deploy\(config, \{\n\s+app: pair\.app,/);
 });

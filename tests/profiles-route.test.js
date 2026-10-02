@@ -101,13 +101,14 @@ function makePool() {
     }
     // The PUBLIC read. Keyed on id since  (the name was resolved a
     // query earlier), so it is told apart from the owner read below by its
-    // publish/disable filters rather than by its WHERE column.
+    // disable filter rather than by its WHERE column. Publication is decided
+    // in the route since #3554 (a friend request reaches an unpublished
+    // profile), so the row carries profile_published instead of filtering it.
     if (/SELECT u\.id, u\.username, u\.display_name/.test(s)
         && /WHERE u\.id = \$1/.test(s)
-        && /profile_published = TRUE/.test(s)) {
+        && /profile_disabled_at IS NULL/.test(s)) {
       const user = state.users.find((candidate) => (
         candidate.id === params[0]
-        && candidate.profile_published
         && !candidate.profile_disabled_at
       ));
       return { rows: user ? [{ ...user }] : [] };

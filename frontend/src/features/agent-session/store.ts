@@ -1066,8 +1066,14 @@ export function closeAgentSession() {
  * stays as it was).
  */
 async function createFromDraft(draft: AgentDraft): Promise<number | null> {
+  const telemetry = (window as any).UITelemetry;
+  telemetry?.screen?.('change_workspace');
+  const attemptId = telemetry?.attempt?.('change_create', {
+    screen: 'change_workspace', timeoutMs: 15_000, abandonOnHide: true,
+  });
   try {
     const session = await api.createSession(draft.hint, draft.agent);
+    telemetry?.outcome?.(attemptId, 'success');
     publish((current) => ({ sessions: [session, ...current.sessions.filter((s) => s.id !== session.id)] }));
     // Still on screen: this is the conversation now. Left meanwhile: it
     // still gets its message, it just is not what the screen shows.
@@ -1078,6 +1084,11 @@ async function createFromDraft(draft: AgentDraft): Promise<number | null> {
     }
     return session.id;
   } catch (error) {
+    const status = (error as { status?: number })?.status;
+    telemetry?.outcome?.(attemptId, 'failure', {
+      errorCode: status ? telemetry?.errorCodeFor?.(status)
+        : (navigator.onLine === false ? 'offline' : 'network'),
+    });
     if (state.draft === draft) publish({ error: errorText(error, 'Could not start an agent session.') });
     return null;
   }
@@ -1581,6 +1592,20 @@ export async function renameCurrentSession() {
 }
 
 /**
+ * The one question archiving asks, wherever it is asked from: the bar's ⋯
+ * and a swipe on a row of the Homeroom menu's Agent sessions (#3515) do the
+ * same thing to the same session, so they say the same words. Resolves
+ * false, never undefined, when there is no kit to ask with.
+ */
+async function confirmArchive(): Promise<boolean> {
+  return !!(await window.PlatformUI?.confirm?.({
+    title: 'Archive this session?',
+    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
+    confirmLabel: 'Archive',
+  }));
+}
+
+/**
  * Archive the conversation, after a confirm. It leaves the lists; its
  * active change is paused (a change up for a vote keeps its vote), and the
  * conversation stays on screen, read-only, with Unarchive.
@@ -1588,11 +1613,7 @@ export async function renameCurrentSession() {
 export async function archiveCurrentSession() {
   const id = state.id;
   if (!id || state.session?.status === 'archived') return;
-  const ok = await window.PlatformUI?.confirm?.({
-    title: 'Archive this session?',
-    message: 'It leaves your lists and its change is paused. A change up for a vote keeps its vote, and you can unarchive the session at any time.',
-    confirmLabel: 'Archive',
-  });
+  const ok = await confirmArchive();
   if (!ok || state.id !== id) return;
   try {
     const session = await api.archiveSession(id);
@@ -1601,6 +1622,39 @@ export async function archiveCurrentSession() {
     void loadAgentSessions();
   } catch (error) {
     if (state.id === id) publish({ error: errorText(error, 'Could not archive this session.') });
+  }
+}
+
+/**
+ * Archive a session from a LIST rather than from its own screen (#3515): a
+ * left swipe on a row of the Homeroom menu's Agent sessions. The same
+ * confirm and the same route as the ⋯'s Archive above; what differs is
+ * where the answer lands. The row leaves every list at once (the menu,
+ * Recents and Messages all read `sessions`), and the list is read again so
+ * the next session fills the place it left. When it is also the
+ * conversation on screen, that screen takes the archived session, read-only
+ * with Unarchive, exactly as if its own ⋯ had done it.
+ *
+ * Resolves whether it was archived. False is a Cancel or a refusal, and the
+ * caller puts its row back; a refusal also says why, in a toast, because a
+ * list has no error line of its own to say it in, and reads the list again
+ * all the same: the likeliest refusal is "already archived" (another tab
+ * did it), and then the row the caller puts back is gone on that read.
+ */
+export async function archiveListedSession(id: number): Promise<boolean> {
+  if (!id || !(await confirmArchive())) return false;
+  try {
+    const session = await api.archiveSession(id);
+    publish((current) => ({
+      sessions: current.sessions.filter((s) => s.id !== id),
+      ...(current.id === id ? { session } : {}),
+    }));
+    void loadAgentSessions();
+    return true;
+  } catch (error) {
+    window.PlatformUI?.toast?.(errorText(error, 'Could not archive this session.'));
+    void loadAgentSessions();
+    return false;
   }
 }
 
@@ -1963,11 +2017,17 @@ function actionOn(changeId: number, kind?: NonNullable<AgentSessionState['change
  * confirmation is the card's own panel under the button (#3032,
  * ./propose-confirm.tsx), no longer a dialog asked for here. The card then
  * reads "In vote" from the refreshed change.
+ *
+ * `title` is a title the person typed in that panel (#3251), passed only when
+ * it differs from the change's own. It is saved first, so the proposal goes
+ * to the vote under it; if saving fails, nothing is proposed.
  */
-export async function proposeChange(changeId: number) {
+export async function proposeChange(changeId: number, title?: string | null) {
   if (state.changeAction) return;
   publish({ changeAction: { changeId, kind: 'propose' } });
   try {
+    const rename = (title || '').replace(/\s+/g, ' ').trim();
+    if (rename) await api.renameChange(changeId, rename);
     await api.promoteChange(changeId);
     if (state.id != null) await requestSync(state.id);
   } catch (error) {

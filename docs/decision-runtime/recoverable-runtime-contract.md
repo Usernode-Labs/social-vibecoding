@@ -22,6 +22,14 @@ The selected specification cannot be changed on retry. No plaintext environment
 is stored in actions, traces, work input or errors. Preparation creates no stable
 route or Ingress. Activation remains a separate guarded action.
 
+Canonical integration (2 October): newly selected database affinity persists
+`placement: "zone-and-host"`, matching canonical's zone weight 100 / host weight
+50. A retained desired spec without that field keeps host-only weight 100. Parsing
+never defaults the field; manifests, spec labels and observed UIDs of retained
+resources remain unchanged. This is an explicit compatible selection extension
+within `kubernetes-v1`, with adoption regression coverage, rather than a rewrite
+of a saved recipe. Current configuration cannot reselect an admitted specification.
+
 Each resource has a durable submitted flag and observed UID. A guarded action
 records permission/submission before POST, in order Secret → Service → Deployment;
 the predecessor must have a verified UID. A reported UID cannot overwrite a prior

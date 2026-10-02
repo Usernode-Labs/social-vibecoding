@@ -38,9 +38,10 @@
 // "Your communities" is how you change which: a sheet on a phone, a menu on a
 // wide window, opened from the lit tab, the header's name and ⌄, and the All
 // chip here (features/workshop/community-switcher.tsx). The "Which project?"
-// panel both ends of the chip shared is gone, and with it the audience
-// sections and "Show N more" of #3363: the switcher lists every community you
-// are in, newest first, each saying who it is for and what it waits on you for.
+// panel both ends of the chip shared is gone. Its audience sections and "Show
+// N more" (#3363) went with it for a round and are back in the switcher
+// (#3519): every community you are in, in the Communities screen's sections,
+// newest first, each saying who it is for and what it waits on you for.
 //
 // What is pinned, each a way the screens can be quietly wrong:
 //
@@ -116,6 +117,49 @@ test('the switcher says which community you are on, who each is for, and what it
   assert.match(one, /data-switcher-community="garden" aria-current="true"/, 'the tab\'s community is ticked');
   assert.doesNotMatch(one, /data-switcher-community="all" aria-current/);
   assert.match(one, /color-mix\(in srgb, #2e6660 12%, transparent\)/, 'and tinted in its own colour');
+  // #3519: under the Communities screen's section labels, in their order,
+  // each with its count; three or fewer in a section have no fold row.
+  const labels = [...all.matchAll(/<h3 class="community-switcher-section" id="community-switcher-section-([a-z]+)"><span>([^<]+)<\/span>/g)].map((m) => `${m[1]}:${m[2]}`);
+  assert.deepEqual(labels, ['open:Public communities', 'invited:Private communities', 'solo:Just you']);
+  assert.ok(all.indexOf('data-switcher-section="invited"') < all.indexOf('data-switcher-community="club"')
+    && all.indexOf('data-switcher-community="club"') < all.indexOf('data-switcher-section="solo"'), 'each row under its own section');
+  assert.doesNotMatch(all, /data-switcher-more=/);
+});
+
+test('#3519: a long section shows three, then "Show N more"; the community you are on is never folded away', () => {
+  const fixedStore = (state) => ({ get: () => state, set() {}, subscribe: () => () => {} });
+  const slugs = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+  const info = Object.fromEntries(slugs.map((slug) => [slug, {
+    slug, name: slug.toUpperCase(), iconUrl: null, iconEmoji: null, iconColor: null, audience: 'open', memberCount: 2, needs: 0,
+  }]));
+  const real = loadTsx('frontend/src/features/workshop/community-scope.ts');
+  const render = (slug) => {
+    const mod = loadTsx('frontend/src/features/workshop/community-switcher.tsx', {
+      stubs: {
+        './community-scope': {
+          ...real,
+          communityScopeStore: fixedStore({ slug, info, list: slugs, totalNeeds: 0, switcher: 'tab', anchor: null }),
+        },
+      },
+    });
+    return renderToHtml(createElement(mod.SwitcherBody, {}));
+  };
+  const rowsOf = (html) => [...html.matchAll(/data-switcher-community="([^"]+)"/g)].map((m) => m[1]).filter((x) => x !== 'all');
+  const none = render(null);
+  assert.deepEqual(rowsOf(none), ['a', 'b', 'c'], 'three out, newest first');
+  assert.match(none, /data-switcher-more="open" aria-expanded="false">Show 4 more<\/button>/);
+  const fifth = render('e');
+  assert.deepEqual(rowsOf(fifth), ['a', 'b', 'c', 'd', 'e'], 'open far enough to show the tick');
+  assert.match(fifth, /data-switcher-community="e" aria-current="true"/);
+  assert.match(fifth, />Show 2 more<\/button>/);
+  // The fold itself, from the one shared module.
+  const sec = loadTsx('frontend/src/features/workshop/sections.ts');
+  assert.equal(sec.sectionFloor([{ slug: 'a' }, { slug: 'b' }], 'b'), 3);
+  assert.equal(sec.sectionFloor(slugs.map((slug) => ({ slug })), 'f'), 6);
+  assert.deepEqual(sec.sectionFoldFrom(7, 3, 3), sec.sectionFold(7, 3), 'a floor of three is the screen\'s own fold');
+  assert.deepEqual(sec.sectionFoldFrom(7, 6, 6), { shown: 6, label: 'Show 1 more', next: 11 });
+  assert.deepEqual(sec.sectionFoldFrom(7, 11, 6), { shown: 7, label: 'Show fewer', next: 6 }, 'Show fewer stops at the tick');
+  assert.deepEqual(sec.sectionFoldFrom(5, 5, 5), { shown: 5, label: null, next: 5 }, 'no dead Show fewer');
 });
 
 test('#852: every class the switcher draws with has a rule, and the menu floats at a fixed size', () => {
@@ -186,7 +230,11 @@ test('the Needs you row totals every project, and says nothing over a zero', () 
     'no totals with no apps: the empty card already says why the screen is bare');
   assert.match(decl, /acc\.needs \+ \(row\.needs \|\| 0\)/);
   assert.ok(!decl.includes('rows'), 'it sums `all`, every project');
-  assert.match(SCREEN, /\{totals && totals\.needs > 0 \? \(\n\s*<section data-workshop-needs-door=""/);
+  // #3526: drawn while ANY vote is owed (`owed`), the ones swiped past too:
+  // it is the screen's only door to the feed, and a skipped vote is still
+  // one you can cast. `needs`, what the title counts, is the unseen ones.
+  assert.match(decl, /acc\.owed \+ \(row\.owedCount \|\| 0\)/);
+  assert.match(SCREEN, /\{totals && totals\.owed > 0 \? \(\n\s*<section data-workshop-needs-door=""/);
   const dapp = JSON.parse(read('dapp.json'));
   assert.ok(!dapp.tests.some((t) => t.expectText === 'Votes waiting on you'),
     'no declared check waits for the retired legend');
@@ -217,7 +265,7 @@ test('#3051, #852: the header\'s "Communities" switcher is there at every width,
 //
 // The panel drew the screen's three audience sections from one shared module.
 // The switcher lists communities in the screen's own order (orderRows), and
-// the sections stay the screen's.
+// draws the screen's sections and fold from the same module (#3519).
 
 const SECTIONS_SRC = read('frontend/src/features/workshop/sections.ts');
 
@@ -245,8 +293,10 @@ test('#852: a project page leads with its tabs, and All items with its way back 
     });
     return renderToHtml(createElement(mod.DevWorkshop, {}));
   };
-  assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">/);
-  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">[\s\S]*?<\/div><\/div><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
+  // #3583: the page also says whose it is (`data-ws-slug`), which AppView
+  // reads when it saves the list's offset on the way out.
+  assert.match(page('workshop'), /^<div class="dev-ws" data-ws-tab="workshop" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">/);
+  assert.match(page('all'), /^<div class="dev-ws" data-ws-tab="all" data-ws-slug="notes-ab12"><div class="dev-ws-tabs dev-ws-band" data-ws-band="">[\s\S]*?<\/div><\/div><div class="dev-ws-tabs dev-ws-pagebar" data-ws-pagebar="">/);
   const ws = read(WORKSHOP_PATH);
   assert.doesNotMatch(ws, /AppWorkshopScope|useScopeInline|scopeFitsInline|data-ws-scope-inline|SCOPE_INLINE_/);
   const css = read('public/css/app.css');
@@ -255,13 +305,15 @@ test('#852: a project page leads with its tabs, and All items with its way back 
 });
 
 /** #header-title as rendered on an app route, with the stores it reads fixed. */
-function renderHeader({ viewMode = 'workshop', subTab = 'forum', screen = 'app-view' } = {}) {
+function renderHeader({
+  viewMode = 'workshop', subTab = 'forum', screen = 'app-view', name = 'Recipe Box', selfHosted = false,
+} = {}) {
   const mod = loadTsx('frontend/src/features/header/header-title.tsx', {
     stubs: {
-      './header-title-store.js': { headerTitleStore: fixed({ text: 'Recipe Box', subtitle: '' }) },
+      './header-title-store.js': { headerTitleStore: fixed({ text: name, subtitle: '' }) },
       '../nav/nav-store.js': { navStore: fixed({ screen }) },
       '../improve/improve-store.js': {
-        improveStore: fixed({ tab: 'dev', subTab, name: 'Recipe Box', iconUrl: null, iconEmoji: '🍲' }),
+        improveStore: fixed({ tab: 'dev', subTab, name, iconUrl: null, iconEmoji: '🍲', selfHosted }),
       },
       '../dev-board/view-mode-store': { useDevViewMode: () => viewMode },
       '../workshop/community-scope': {
@@ -280,7 +332,9 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
     /const onWorkshop = inApp && tab === 'dev' && subTab === 'forum' && viewMode === 'workshop';/);
   // NO WIDTH IN IT. Until #3295 this was `onWorkshop && phone`, and a desktop
   // kept the name alone in the bar beside a chip in the page.
-  assert.match(header, /const appSwitch = onWorkshop;/);
+  // #3602: a card opened from it switches community too.
+  assert.match(header, /const onCard = inApp && tab === 'dev' && subTab === 'topic';/);
+  assert.match(header, /const appSwitch = onWorkshop \|\| onCard;/);
   assert.match(header, /const showTile = inApp;/);
 
   // A static render runs no effects, so the phone flag is still false: this
@@ -296,8 +350,43 @@ test('#2768, #3295, #852: on the app\'s Workshop the header\'s name opens Your c
   assert.doesNotMatch(kanban, /header-app-switch/);
   assert.match(kanban, /<span id="header-app-tile"[^>]*>[\s\S]*?<\/span><\/span><span class="min-w-0 flex items-baseline gap-1\.5"><span id="header-title-name" class="min-w-0 truncate">Recipe Box<\/span>/);
 
+  // #3602: a card (an issue, a proposal, a decision) opened from the
+  // Workshop keeps the switcher, whichever layout it was opened from.
+  for (const viewMode of ['workshop', 'kanban']) {
+    const card = renderHeader({ subTab: 'topic', viewMode });
+    assert.match(card, /<button id="header-app-switch" type="button"[^>]*aria-label="Recipe Box, switch community"><span id="header-app-tile"/);
+  }
+  // The general chat and an owner session still have no switcher.
+  for (const subTab of ['chat', 'sessions']) {
+    assert.doesNotMatch(renderHeader({ subTab }), /header-app-switch/);
+  }
+
   // No width anywhere in it now: the Communities screen's "All" is the
   // bar's at every width too (#852).
   assert.match(header, /const allAppsSwitcher = screen === 'workshop-screen';/);
   assert.doesNotMatch(header, /PHONE_QUERY|usePhone/);
+});
+
+test('#3497: on Homeroom\'s own pages the switcher names it with the logotype, not the word', () => {
+  // The Communities tab with Homeroom selected: the platform's own row, on
+  // its hub. The bar names the platform with the logotype on Home, and the
+  // switcher here used to be the one place it was plain type.
+  const html = renderHeader({ name: 'Homeroom', selfHosted: true });
+  const button = html.match(/<button id="header-app-switch"[\s\S]*?<\/button>/);
+  assert.ok(button, 'the name is still the switcher');
+  assert.match(button[0], /aria-label="Homeroom, switch community"/,
+    'the button says the name in words, which is why the drawing can be decoration');
+  const label = button[0].match(/<span id="header-title-name" class="min-w-0 truncate">([\s\S]*?)<\/span>/);
+  assert.ok(label, 'the named slot and its truncation stay');
+  assert.match(label[1], /^<svg class="h-5 w-\[77\.5px\]" fill="currentColor" viewBox="0 0 1236\.9 319\.2" aria-hidden="true">/,
+    'the logotype, at the size Home draws it, in the bar\'s own ink');
+  assert.doesNotMatch(label[1], /Homeroom/, 'drawn INSTEAD of the word, not beside it');
+  assert.match(button[0], /<span id="header-app-tile"/, 'the community\'s tile still leads');
+  assert.match(button[0], /<\/span><svg class="w-4 h-4 shrink-0"[^>]*aria-hidden="true">/, 'and the ⌄ still follows');
+
+  // The platform is the self-hosted ROW, not a name: a project somebody
+  // called Homeroom keeps its word.
+  const namesake = renderHeader({ name: 'Homeroom', selfHosted: false });
+  assert.match(namesake, /<span id="header-title-name" class="min-w-0 truncate">Homeroom<\/span>/);
+  assert.doesNotMatch(namesake, /viewBox="0 0 1236\.9 319\.2"/);
 });

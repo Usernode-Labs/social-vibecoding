@@ -3,8 +3,9 @@
  * the only React writer below that host. See ./issue-comments-store.ts.
  */
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 
+import { ChevronDownIcon } from '@/components/ui/icons';
 import { messageStamp } from '../../lib/timestamp';
 import { useStoreState } from '../../lib/use-store-state';
 import { swatchFor } from '../messages/format';
@@ -32,6 +33,48 @@ function Body({ html }: { html: string }) {
   // sets the font size, and `.dev-issue-body` the markdown treatment.
   return (
     <ClampedComment className="dev-feed-msg-text dev-issue-body" contentKey={html} html={wrapper} />
+  );
+}
+
+/**
+ * Which specs the reader has opened, by comment. The host is mounted again on
+ * every WS-driven repaint of the topic head (app-view.js `_loadIssueComments`),
+ * so a spec open in component state alone would fold itself shut under the
+ * reader at the next vote or message.
+ */
+const openSpecs = new Set<string>();
+
+/**
+ * #3490: Homeroom bot's spec, drawn as a spec rather than as the lines of a
+ * comment. On GitHub the bot folds it away under "The spec"; here it is a
+ * card with the spec's title on it, folded the same way, and opening it
+ * shows the spec in the spec viewer's own typography (`.dc-spec-viewer-body`,
+ * headings as headings, paragraphs as paragraphs) at its full length, outside
+ * the comment's four-line clamp.
+ */
+function BotSpec({ id, spec }: { id: string; spec: NonNullable<IssueCommentView['spec']> }) {
+  const wrapper = useMemo(() => ({ __html: spec.html }), [spec.html]);
+  const [open, setOpen] = useState(() => openSpecs.has(id));
+  return (
+    <details
+      className="dev-issue-spec"
+      data-issue-spec=""
+      open={open}
+      onToggle={(e) => {
+        const now = (e.currentTarget as HTMLDetailsElement).open;
+        if (now) openSpecs.add(id); else openSpecs.delete(id);
+        if (now !== open) setOpen(now);
+      }}
+    >
+      <summary className="dev-issue-spec-head">
+        <span className="dev-issue-spec-text">
+          <span className="dev-issue-spec-kicker">The spec</span>
+          {spec.title ? <span className="dev-issue-spec-title">{spec.title}</span> : null}
+        </span>
+        <ChevronDownIcon className="dev-issue-spec-chev" aria-hidden="true" />
+      </summary>
+      <div className="dc-spec-viewer-body dev-issue-spec-body" dangerouslySetInnerHTML={wrapper} />
+    </details>
   );
 }
 
@@ -65,7 +108,8 @@ function Comment({ comment }: { comment: IssueCommentView }) {
             </time>
           ) : null}
         </div>
-        <Body html={comment.bodyHtml} />
+        {comment.spec && !comment.bodyHtml ? null : <Body html={comment.bodyHtml} />}
+        {comment.spec ? <BotSpec id={comment.key} spec={comment.spec} /> : null}
       </div>
     </div>
   );

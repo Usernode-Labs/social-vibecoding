@@ -33,6 +33,7 @@ const illustrationProposals = require('../services/illustration-proposals');
 const { isSessionBusy } = require('../services/active-workers');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 
 // #2089: the board search's server half. Shorter queries are not asked
 // (the browser applies the same floor); the hit list is capped because the
@@ -266,7 +267,7 @@ function stagingMockIssues(repoUrl) {
       + 'feedback modal does.\n\n'
       + '**Screenshot:**\n![Screenshot](/icons/v3/icon-192.png)', 4),
     // #1010: the two targets of the applying / retry-pending mock close
-    // proposals below (stagingMockGovernance 9100005 / 9100006), so the
+    // proposals below (stagingMockGovernance 9100074 / 9100075), so the
     // ?demo=1 preview shows the governance card's spinner state AND the
     // matching "Closing…" state on the target issue's own row.
     mk(900011, '[Mock] Close vote passed — issue is being closed',
@@ -325,6 +326,9 @@ function stagingMockIssues(repoUrl) {
 // countdown is exercisable on a prod-cloned staging DB via ?demo=1. Distinct
 // from stagingMockIssues above (which mocks external GitHub issues). Each row
 // carries precomputed gate fields because mocks bypass the live computation.
+// Ids are 9100070-9100077, a block of their own: they once shared
+// 9100001-9100008 with the merged mocks (votes.js), so one number named two
+// different rows (tests/staging-demo-id-ranges.test.js keeps them apart).
 function stagingMockGovernance() {
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
   const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
@@ -355,14 +359,14 @@ function stagingMockGovernance() {
   });
   return [
     // Unopposed rename, threshold met, window still running → countdown.
-    mk(9100001, 'rename', '[Mock] Rename app to "Staging Demo App"',
+    mk(9100070, 'rename', '[Mock] Rename app to "Staging Demo App"',
       { newName: 'Staging Demo App' }, 6, 2, 0,
       { required: 2, windowEndsAt: hoursAhead(36) }),
     // #2086: an open featured-illustration proposal, so the card's preview
     // (proposed image beside the current one) is reviewable via ?demo=1 on
     // an empty staging DB. The image is a shipped static asset rather than
     // an app-illustrations id, which the empty DB could not serve.
-    mk(9100008, 'featured_illustration', '[Mock] Change the featured illustration',
+    mk(9100077, 'featured_illustration', '[Mock] Change the featured illustration',
       {
         proposed: { url: '/icons/v3/icon-512.png', darkUrl: null, zoom: 1.2, x: 10, y: -5, tint: 'teal' },
         current: { url: '/icons/v3/icon-192.png', darkUrl: null, zoom: 1, x: 0, y: 0 },
@@ -370,14 +374,14 @@ function stagingMockGovernance() {
       }, 5, 1, 0,
       { required: 2, windowEndsAt: hoursAhead(30) }),
     // Contested secret change (down >= 1/3) → no countdown, full count gate.
-    mk(9100002, 'secret_change', '[Mock] Set FEATURE_FLAG to "on"',
+    mk(9100071, 'secret_change', '[Mock] Set FEATURE_FLAG to "on"',
       { key: 'FEATURE_FLAG', action: 'set', hasValue: true }, 8, 4, 3,
       { required: 6, windowEndsAt: null, contested: true }),
     // Close-issue proposal targeting mock issue 900001 (served by
     // stagingMockIssues above), so the ?demo=1 preview shows the new
     // governance card AND the target issue row's disabled "Close
     // proposed" button state.
-    mk(9100003, 'close_issue',
+    mk(9100072, 'close_issue',
       '[Mock] Close issue #900001: "Dark mode toggle resets after refresh"',
       {
         issueNumber: 900001,
@@ -389,7 +393,7 @@ function stagingMockGovernance() {
     // surplus — the approver-only pill + "+2 advisory" chip and the
     // "Yes (0✓ +2)" button labels are reviewable via ?demo=1.
     {
-      ...mk(9100004, 'secret_change',
+      ...mk(9100073, 'secret_change',
         '[Mock] Approver-mode test: set DEMO_FLAG (non-approver votes are advisory)',
         { key: 'DEMO_FLAG', action: 'set', hasValue: true }, 3, 2, 0,
         { required: 1 }),
@@ -403,9 +407,9 @@ function stagingMockGovernance() {
     // already elapsed — the shape a proposal has in the seconds between the
     // deciding vote and the apply landing. They differ only in HOW LONG ago
     // the window ended, which is what selects the state:
-    //   9100005 — 30s ago  → inside the 120s grace → spinner, "Closing issue #900011…"
-    //   9100006 — 10m ago  → past the grace        → "Close pending — will retry automatically"
-    mk(9100005, 'close_issue',
+    //   9100074 — 30s ago  → inside the 120s grace → spinner, "Closing issue #900011…"
+    //   9100075 — 10m ago  → past the grace        → "Close pending — will retry automatically"
+    mk(9100074, 'close_issue',
       '[Mock] Close issue #900011: "Close vote passed — issue is being closed"',
       {
         issueNumber: 900011,
@@ -413,7 +417,7 @@ function stagingMockGovernance() {
         reason: 'Fixed by the theme rework — closing.',
       }, 5, 2, 0,
       { required: 2, windowEndsAt: secsAgo(30) }),
-    mk(9100006, 'close_issue',
+    mk(9100075, 'close_issue',
       '[Mock] Close issue #900012: "Close vote passed a while ago — retry pending"',
       {
         issueNumber: 900012,
@@ -429,7 +433,7 @@ function stagingMockGovernance() {
     // stagingMockCompletedCloseIssues in votes.js; this one exercises the
     // gov card renderer's settled branch in the In-review column's shape.)
     {
-      ...mk(9100007, 'close_issue',
+      ...mk(9100076, 'close_issue',
         '[Mock] Settled: closed issue #900003 by vote — pill only, no ⋯',
         {
           issueNumber: 900003,
@@ -501,6 +505,31 @@ function isStagingMockIssueNumber(number) {
   return stagingMockIssues('https://github.com/example/app').some((i) => i.number === n);
 }
 
+// #3490: the spec comment the Homeroom bot posts when it starts building a
+// request, word for word as specCommentText writes it, around a short spec.
+const MOCK_BOT_SPEC_COMMENT = [
+  '[Mock] Homeroom bot wrote a spec for this request and is building it now. It is here for reference: '
+    + 'nobody needs to approve it, and the proposal will be linked here when it is up.',
+  '',
+  '<details><summary>The spec</summary>',
+  '',
+  '# Keep the Vote and Preview buttons on screen on small phones',
+  '',
+  '## User-facing changes',
+  '',
+  'On a phone as narrow as an iPhone SE, the Vote and Preview buttons on a proposal card move onto a second '
+    + 'line instead of running off the right edge.',
+  '',
+  '- Both buttons stay whole and tappable in portrait.',
+  '- Nothing changes on wider screens.',
+  '',
+  '## Design',
+  '',
+  'The card\'s action row wraps rather than scrolls, and each button keeps its 44px tap target.',
+  '',
+  '</details>',
+].join('\n');
+
 function stagingMockIssueComments(number) {
   const n = Number(number);
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
@@ -569,6 +598,10 @@ function stagingMockIssueComments(number) {
     900003: [
       ...stampLadder(),
       { author: 'staging-tester', body: '[Mock] Happens on my iPhone SE in portrait — the Vote and Preview buttons spill off the right edge.', createdAt: hoursAgo(28) },
+      // #3490: Homeroom bot's spec, in the shape it writes one on a request
+      // (services/homeroom-bot-live.js specCommentText), so the request page
+      // draws it as a spec in a preview.
+      { author: 'usernode-bot', body: MOCK_BOT_SPEC_COMMENT, createdAt: hoursAgo(20) },
       longReply(),
     ],
   };
@@ -1403,12 +1436,23 @@ function issueRoutes(config) {
       // A flip REPLACES the line rather than keeping it: the old sentence
       // argued for the side this vote just left. (votes.js keeps an earlier
       // line on a same-side re-cast; here that click is the toggle above.)
-      await pool.query(
+      const { rows: recordedVotes = [] } = await pool.query(
         `INSERT INTO issue_votes (issue_id, user_id, vote, reason) VALUES ($1, $2, $3, $4)
          ON CONFLICT (issue_id, user_id) DO UPDATE
-           SET vote = EXCLUDED.vote, reason = EXCLUDED.reason, created_at = NOW()`,
+           SET vote = EXCLUDED.vote, reason = EXCLUDED.reason, created_at = NOW()
+         RETURNING id`,
         [issue.id, req.user.id, vote, reason]
       );
+
+      // issue_votes is a current-state row: a flip moves its timestamp and a
+      // same-side click deletes it. Also send each real cast to the best-effort
+      // append-only action log, so a successfully captured day survives that.
+      events.record(pool, {
+        type: events.EVENT_TYPES.ISSUE_VOTE_CAST,
+        userId: req.user.id,
+        appId: issue.app_id,
+        metadata: { vote, issueId: issue.id, issueVoteId: recordedVotes[0]?.id || null },
+      });
 
       let voteSubject;
       if (issue.kind === 'rename') {
@@ -1448,6 +1492,14 @@ function issueRoutes(config) {
       // derive the "being applied" state. The apply pushes its own events
       // when it settles, so this one is purely "a vote landed".
       pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
+
+      // "Vote on a change" counts a vote on a request too, now rather than
+      // on the rule's next pass (#3569; challengeScorer.scoreOnVote). After
+      // the broadcast, so other people's tallies are not held behind it, and
+      // before the apply, so a slow GitHub call cannot keep it waiting. The
+      // retraction above is not a vote cast and returned before this. Never
+      // throws.
+      await challengeScorer.scoreOnVote(pool, config);
 
       let renamed = null;
       let secretChanged = null;

@@ -24,9 +24,11 @@ const {
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const communityInvites = require('../services/community-invites');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const usernames = require('../services/usernames');
+const uiTelemetry = require('../services/ui-telemetry');
 const { verificationKeyFor } = require('../services/wallet-signing-key');
 // One shape for the profile block, shared with PATCH /api/me/profile so
 // /api/auth/me and the write echo identical objects (#982).
@@ -366,6 +368,10 @@ function authRoutes(config) {
       const invite = verified.created
         ? await communityInvites.redeemCarried(pool, req, res, verified.userId)
         : (communityInvites.clearInviteCookie(res), null);
+      // A link whose maker's skip let this person straight in has joined
+      // them already: the challenge for it counts now, not on the rule's
+      // next pass (#3564). A queued one waits for release, and the schedule.
+      if (invite && invite.status === 'joined') await challengeScorer.scoreOnJoin(pool, config);
       if (verified.next === 'signed-in') {
         // The account already has a password, so there is nothing to set up.
         // Clear any stale continuation and hand back the ordinary web session,
@@ -403,19 +409,23 @@ function authRoutes(config) {
       });
       // QA 2026-09-24 Q12: say what the next step IS. `created` means this
       // code just made the account (no account used the address), so the
-      // screen can say so instead of implying one already existed; the
-      // username pair lets it ask for the handle, prefilled, rather than the
-      // waiting room introducing one the person never chose; `waitlisted`
-      // lets it say plainly, before the waiting room, that new accounts
-      // queue. All additive: `ok` and `next` are unchanged, and a client
-      // that ignores the rest behaves exactly as before. Nothing here leaks
-      // to somebody who does not hold the mailbox: the code was just proved.
+      // screen can say so instead of implying one already existed;
+      // `needsUsername` makes it ask for the handle rather than the waiting
+      // room introducing one the person never chose; `waitlisted` lets it
+      // say plainly, before the waiting room, that new accounts queue. `ok`
+      // and `next` are unchanged. Nothing here leaks to somebody who does
+      // not hold the mailbox: the code was just proved.
+      //
+      // #3575: there is no `suggestedUsername` any more. It was a handle
+      // derived from the address that the field arrived holding, and one
+      // press accepted it; the person now types their own into an empty
+      // field, and set-password refuses to finish without it. A shell cached
+      // from before reads the missing field as null — an empty field.
       return res.json({
         ok: true,
         next: 'set-password',
         created: !!verified.created,
         needsUsername: !!verified.needsUsernameChoice,
-        suggestedUsername: verified.suggestedUsername || null,
         waitlisted: typeof verified.waitlisted === 'boolean' ? verified.waitlisted : null,
         ...(invite ? { invite } : {}),
       });
@@ -437,8 +447,10 @@ function authRoutes(config) {
       const completed = await emailSignup.completePassword(pool, {
         signupToken: req.cookies?.[SIGNUP_COOKIE],
         password,
-        // Optional (QA 2026-09-24 Q12): the handle the set-password step
-        // asks a new account for. Absent, the first-run gate asks later.
+        // The handle the set-password step asks a new account for (QA
+        // 2026-09-24 Q12). Required since #3575 for an account that has
+        // never chosen one: absent, the service answers `username_required`
+        // and nothing is spent. Ignored for an account that already has one.
         username: typeof req.body?.username === 'string' ? req.body.username : null,
         createSession,
       });
@@ -455,7 +467,10 @@ function authRoutes(config) {
       if (error instanceof emailSignup.EmailSignupError) {
         // A username refusal leaves the signup session unspent, so the
         // person corrects the field and submits again on the same cookie.
-        if (error.code === 'invalid_username' || error.code === 'username_taken') {
+        // `username_required` (#3575) is the same kind of refusal: the
+        // field was left empty, and filling it is the fix.
+        if (error.code === 'invalid_username' || error.code === 'username_taken'
+            || error.code === 'username_required') {
           return res.status(422).json({ error: error.message, code: error.code, field: 'username' });
         }
         clearSignupCookie(res);
@@ -540,9 +555,11 @@ function authRoutes(config) {
         ({ userId, codeId } = await withTransaction(pool, async (client) => {
           // needs_communities_choice: an account made with a code is asked
           // which communities to join, like an email sign-up (communities,
-          // stage 5; src/services/onboarding.js).
+          // stage 5; src/services/onboarding.js). getting_started_gate: and,
+          // being new, starts on the Getting started list that gates the
+          // season, like an email sign-up (src/db/schema.sql).
           const { rows: userRows } = await client.query(
-            'INSERT INTO users (username, password, needs_communities_choice) VALUES ($1, $2, TRUE) RETURNING id',
+            'INSERT INTO users (username, password, needs_communities_choice, getting_started_gate) VALUES ($1, $2, TRUE, TRUE) RETURNING id',
             [username.trim(), hash]
           );
           const uid = userRows[0].id;
@@ -686,8 +703,10 @@ function authRoutes(config) {
     let needsUsernameChoice = false;
     // Communities, stage 5 (src/services/onboarding.js): the join screen a
     // new account answers after its username and the terms, and the
-    // Getting started card that follows it. Same failure direction as the
-    // flag above: unreadable means no blocking step and no card.
+    // Getting started card that follows it, for an account made since that
+    // card became the First challenges (`getting_started_gate`). Same
+    // failure direction as the flag above: unreadable means no blocking step
+    // and no card.
     let needsCommunitiesChoice = false;
     let showGettingStarted = false;
     // Has this account finished (or skipped) the welcome tour, on any
@@ -702,7 +721,8 @@ function authRoutes(config) {
                 u.needs_username_choice,
                 u.needs_communities_choice,
                 (u.communities_onboarded_at IS NOT NULL
-                  AND u.getting_started_closed_at IS NULL) AS show_getting_started,
+                  AND u.getting_started_closed_at IS NULL
+                  AND u.getting_started_gate) AS show_getting_started,
                 (u.tour_done_at IS NOT NULL) AS tour_done,
                 EXISTS (
                   SELECT 1 FROM credentials.user_ai_credentials credential
@@ -751,10 +771,22 @@ function authRoutes(config) {
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
     const platformApp = await getPlatformApp(pool);
+    // #3624: whether this person builds through the Homeroom bot's DM (an
+    // admin's list, one person at a time). The create dialog asks for a
+    // longer description when it is true. Unreadable means false.
+    let homeroomBotDm = false;
+    try {
+      homeroomBotDm = await require('../services/homeroom-bot-dm').isEnabledFor(pool, req.user);
+    } catch {}
     res.json({
       user: {
         id: req.user.id,
         username: req.user.username,
+        // Browser-check accounts authenticate normally to exercise protected
+        // screens, but their scripted journeys must not enter product UI
+        // analytics. The client waits for this server-owned decision.
+        // People who objected to being recorded answer false too (#3369).
+        uiTelemetryEligible: await uiTelemetry.isRecordable(pool, req.user),
         isAdmin: req.user.isAdmin,
         // View-only admin role (issue #311). `isAdmin` still drives every
         // client read/visibility gate; `canAdminWrite` drives mutating
@@ -762,6 +794,7 @@ function authRoutes(config) {
         // string the admin panel / banners render.
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
+        homeroomBotDm,
         // Derived per-user app-creation affordance. Kept for the home-screen
         // treatment; the numbers below explain that state in the create
         // dialog. A null used/remaining value means the count query was not
@@ -1709,11 +1742,12 @@ function authRoutes(config) {
       const linkExpiresAt = new Date(Date.now() + LINK_TOKEN_TTL_MS);
 
       // needs_communities_choice: asked which communities to join, like
-      // every other new account (communities, stage 5).
+      // every other new account (communities, stage 5); getting_started_gate:
+      // and starts on the Getting started list, like every other new one.
       const { rows } = await pool.query(
         `INSERT INTO users (username, password, usernode_pubkey, wallet_link_token, wallet_link_expires_at,
-                            needs_communities_choice)
-         VALUES ($1, $2, $3, $4, $5, TRUE) RETURNING id`,
+                            needs_communities_choice, getting_started_gate)
+         VALUES ($1, $2, $3, $4, $5, TRUE, TRUE) RETURNING id`,
         [username.trim(), hash, pubkey.trim(), linkToken, linkExpiresAt]
       );
       const userId = rows[0].id;

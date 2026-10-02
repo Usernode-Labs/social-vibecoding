@@ -1496,3 +1496,183 @@ test('the trace keeps when the agent\'s startup reached each step, whatever the 
   assert.deepEqual(Object.keys(summary.firstAtMs).sort(), ['tool_start', 'worker_prepare_start']);
   assert.ok(!('tool_end' in summary.firstAtMs), 'only the startup steps are kept');
 });
+
+test('a draining process starts no shots run and writes no claim for one', async () => {
+  // The next leader's unstarted-claim sweep starts it instead; a run begun
+  // here would only be failed by the shutdown handler seconds later.
+  const pool = { query: async () => { throw new Error('must not load or write anything while shutting down'); } };
+  const refusals = [];
+  const result = await orchestrator.scheduleForSession(
+    { shots: { execute: true } },
+    { pool, sessionId: 42, trigger: 'preview-ready' },
+    {
+      isShuttingDown: () => true,
+      state: {
+        createRun: async () => { throw new Error('must not create a run'); },
+        recordNotStarted: async (_pool, sessionId, text) => { refusals.push({ sessionId, text }); },
+      },
+    }
+  );
+  assert.deepEqual(result, { scheduled: false, reason: 'shutting_down' });
+  assert.deepEqual(refusals, [], 'nothing is recorded on the proposal: it will start, just not here');
+});
+
+test('a person\'s rerun is refused while the process drains, before it writes a planned run', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/shots.js'), 'utf8');
+  assert.match(src, /router\.post\('\/api\/apps\/:slug\/proposals\/:sessionId\/shots\/rerun', sameOriginBrowserOnly, drainGuard,/);
+  assert.match(src, /const \{ drainGuard \} = require\('\.\.\/services\/lifecycle'\);/);
+});
+
+test('a failed shots sign-in reaches the trace and the failure reason with its stage and cause, and no URL', () => {
+  const bootstrap = require('../worker/shots-browser-bootstrap.js');
+  const { SessionBootstrapError } = require('../worker/session-bootstrap');
+  // A Playwright timeout names the navigation URL, token included.
+  const timeout = Object.assign(
+    new Error('page.goto: Timeout 30000ms exceeded.\nnavigating to "http://sv-shots-b:3000/?token=SECRET-TOKEN"'),
+    { name: 'TimeoutError' }
+  );
+  const event = bootstrap.failureEvent(timeout, {
+    persona: 'member', side: 'head', stage: 'navigate', bootstrap: { attempted: true, responseStatus: 302 },
+  });
+  assert.deepEqual(event, {
+    kind: 'auth_bootstrap', outcome: 'error', persona: 'member', side: 'head',
+    failureStage: 'navigate', errorClass: 'timeout', attempted: true, responseStatus: 302,
+  });
+  const summary = bootstrap.failureSummary(event);
+  assert.equal(summary,
+    'shots browser authentication failed (member on head) while opening the app: timeout, HTTP 302');
+  assert.ok(!JSON.stringify(event).includes('SECRET') && !summary.includes('SECRET')
+    && !summary.includes('http://'), 'nothing is copied from the error text');
+
+  // A controlled error keeps its code; an unknown stage reads as configuration.
+  const cookie = bootstrap.failureEvent(
+    new SessionBootstrapError('session_bootstrap_failed', 'The shots browser did not retain its private session cookie.'),
+    { persona: 'full_admin', side: 'base', stage: 'exchange', bootstrap: { responseStatus: 502 } }
+  );
+  assert.equal(cookie.failureCode, 'session_bootstrap_failed');
+  assert.equal(bootstrap.failureSummary(cookie),
+    'shots browser authentication failed (full_admin on base) while exchanging the sign-in token: session_bootstrap_failed, HTTP 502');
+  assert.equal(bootstrap.failureEvent(new Error('x'), { stage: 'nonsense' }).failureStage, 'configure');
+  assert.equal(bootstrap.errorClass(new Error('net::ERR_CONNECTION_REFUSED at http://x')), 'network');
+
+  // The trace keeps exactly those fields.
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { ...event, failureCode: 'x y', note: 'dropped' });
+  orchestrator.recordAgentDiagnostic(metrics, cookie);
+  const [first, second] = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.equal(first.failureStage, 'navigate');
+  assert.equal(first.errorClass, 'timeout');
+  assert.equal(first.outcome, 'error');
+  assert.equal(first.responseStatus, 302);
+  assert.equal(first.failureCode, undefined, 'a code that is not a fixed identifier is dropped');
+  assert.equal(first.note, undefined);
+  assert.equal(second.failureCode, 'session_bootstrap_failed');
+
+  // The runner turns the summary into the run's failure reason.
+  const runner = fs.readFileSync(path.join(__dirname, '../worker/run-cc.sh'), 'utf8');
+  assert.match(runner, /export SHOTS_BOOTSTRAP_FAILURE_FILE="\$SHOTS_TMP\/browser-bootstrap\.failure"/);
+  assert.match(runner, /\|\| die "\$\(head -c 300 "\$SHOTS_BOOTSTRAP_FAILURE_FILE"/);
+});
+
+test('the trace keeps whether a hosted app\'s page load carried the persona identity, as a boolean only', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'head', identityAttached: true });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'document_request', side: 'base', identityAttached: 'member.jwt' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', identityAttached: true });
+  const [attached, junk, other] = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.equal(attached.identityAttached, true);
+  assert.equal(junk.identityAttached, undefined, 'anything but a boolean is dropped');
+  assert.equal(other.identityAttached, undefined, 'and only a page load carries it');
+});
+
+test('the trace counts the shots proxy\'s refusals of a destination by reason only', () => {
+  const metrics = orchestrator.newRunMetrics();
+  for (const blockReason of ['private_address', 'port', 'dns']) {
+    orchestrator.recordAgentDiagnostic(metrics, { kind: 'egress_blocked', blockReason });
+  }
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'egress_blocked', blockReason: '10.0.0.5', host: 'internal.example' });
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', blockReason: 'port' });
+  const events = orchestrator.traceSummary(metrics).agentActivity.events;
+  assert.deepEqual(events.map((event) => [event.kind, event.blockReason]), [
+    ['egress_blocked', 'private_address'], ['egress_blocked', 'port'], ['egress_blocked', 'dns'],
+    ['egress_blocked', undefined], ['tool_start', undefined],
+  ]);
+  assert.doesNotMatch(JSON.stringify(events), /internal\.example|10\.0\.0\.5/);
+});
+
+test('a shots agent that died says how: its exit code and the worker\'s reason, from fixed values', async () => {
+  const fixture = setup({
+    dispatch: async (options) => {
+      options.onShotsDiagnostic({ kind: 'worker_memory', usedMb: 1990, limitMb: 2048, peakMb: 2047, oomKills: 0,
+        rssMb: { browser: 1400, agent: 380, mcp: 120, proxy: 40, other: 50 }, browserProcesses: 9 });
+      throw Object.assign(new Error('The shots agent stopped with an error before it finished.'), {
+        code: 'shots_agent_failed', shotsExitCode: -1, shotsExitCause: 'oom_killed',
+        detail: { exit: 'exit -1', exitCode: -1, exitCause: 'oom_killed' },
+      });
+    },
+  });
+  await assert.rejects(execute(fixture), { code: 'shots_agent_failed' });
+  const trace = fixture.transitions.at(-1).patch.traceSummary;
+  assert.equal(trace.agentDispatches[0].exitCode, -1);
+  assert.equal(trace.agentDispatches[0].exitCause, 'oom_killed');
+  assert.deepEqual(trace.failure.detail, { exit: 'exit -1', exitCode: -1, exitCause: 'oom_killed' });
+  assert.equal(trace.workerMemory.lastUsedMb, 1990);
+  assert.equal(trace.workerMemory.limitMb, 2048);
+
+  // Anything but a known reason is dropped.
+  const odd = setup({
+    dispatch: async () => {
+      throw Object.assign(new Error('stopped'), {
+        code: 'shots_agent_failed', shotsExitCode: 'nine', shotsExitCause: 'killed by /tmp/secret',
+      });
+    },
+  });
+  await assert.rejects(execute(odd), { code: 'shots_agent_failed' });
+  const oddDispatch = odd.transitions.at(-1).patch.traceSummary.agentDispatches[0];
+  assert.equal('exitCode' in oddDispatch, false);
+  assert.equal('exitCause' in oddDispatch, false);
+});
+
+test('the trace keeps the worker\'s memory as a summary of numbers, outside the agent\'s event ring', () => {
+  const metrics = orchestrator.newRunMetrics();
+  orchestrator.recordAgentDiagnostic(metrics, { kind: 'tool_start', tool: 'get_brief', sequence: 1 });
+  const samples = [
+    { usedMb: 900, limitMb: 2048, peakMb: 950, oomKills: 3, rssMb: { browser: 500, agent: 300, mcp: 60, proxy: 30, other: 10 }, browserProcesses: 4 },
+    { usedMb: 2040, limitMb: 2048, peakMb: 2047, oomKills: 4, rssMb: { browser: 1500, agent: 390, mcp: 90, proxy: 30, other: 20 }, browserProcesses: 11 },
+    { usedMb: 1200, limitMb: 2048, peakMb: 2047, oomKills: 5, rssMb: { browser: 700, agent: 'lots', mcp: -1, proxy: 30, other: 9e9, cmdline: 1 }, browserProcesses: 6 },
+    { usedMb: '/proc/1/cmdline', limitMb: null, peakMb: null, oomKills: null, rssMb: null, browserProcesses: null, path: '/tmp/x' },
+  ];
+  for (const sample of samples) orchestrator.recordAgentDiagnostic(metrics, { kind: 'worker_memory', ...sample });
+  const trace = orchestrator.traceSummary(metrics);
+  assert.deepEqual(trace.agentActivity.events.map((event) => event.kind), ['tool_start'],
+    'samples every few seconds would push the agent\'s own events out');
+  const { lastAtMs, ...memory } = trace.workerMemory;
+  assert.ok(Number.isSafeInteger(lastAtMs));
+  assert.deepEqual(memory, {
+    samples: 4, limitMb: 2048, peakUsedMb: 2040, lastUsedMb: null, containerPeakMb: 2047,
+    peakRssMb: { browser: 1500, agent: 390, mcp: 90, proxy: 30, other: 20 }, peakBrowserProcesses: 11,
+    oomKillsDuringTurn: 2,
+  });
+  assert.doesNotMatch(JSON.stringify(trace), /cmdline|tmp|proc/);
+  // A run with no samples has no memory summary at all.
+  assert.equal('workerMemory' in orchestrator.traceSummary(orchestrator.newRunMetrics()), false);
+});
+
+test('the trace counts the proxy\'s refusals by reason and kind of host', () => {
+  const metrics = orchestrator.newRunMetrics();
+  for (const event of [
+    { blockReason: 'private_address', hostKind: 'pair_host' },
+    { blockReason: 'private_address', hostKind: 'pair_host' },
+    { blockReason: 'dns', hostKind: 'other' },
+    { blockReason: 'port', hostKind: 'loopback' },
+    { blockReason: 'private_address', hostKind: 'internal.example' },
+    { blockReason: 'private_address' },
+    { blockReason: '10.0.0.5', hostKind: 'pair_host' },
+  ]) orchestrator.recordAgentDiagnostic(metrics, { kind: 'egress_blocked', ...event });
+  const { agentActivity } = orchestrator.traceSummary(metrics);
+  assert.deepEqual(agentActivity.egressBlocked, {
+    'private_address:pair_host': 2, 'dns:other': 1, 'port:loopback': 1, 'private_address:unknown': 2,
+  });
+  assert.equal(agentActivity.events.at(-3).hostKind, undefined, 'an unknown kind of host is dropped');
+  assert.doesNotMatch(JSON.stringify(agentActivity), /internal\.example|10\.0\.0\.5/);
+});

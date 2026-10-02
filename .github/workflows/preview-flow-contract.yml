@@ -4,16 +4,66 @@ on:
   pull_request:
     paths:
       - 'src/services/preview-flow/**'
+      - 'src/services/decision-runtime/**'
+      - 'src/services/execution/**'
+      - 'src/services/cli-preview-handoff/**'
+      - 'src/services/proposal-review/**'
+      - 'src/services/session-lifecycle.js'
+      - 'src/services/cli-handoff-sync.js'
+      - 'src/services/proposal-update.js'
+      - 'src/services/proposal-description*.js'
+      - 'src/services/pr-import-sync.js'
+      - 'src/services/check-*.js'
+      - 'src/services/preview-lifecycle.js'
+      - 'src/services/unit-suite.js'
+      - 'src/services/visuals.js'
+      - 'src/services/application-runtime.js'
+      - 'src/services/kubernetes.js'
+      - 'src/services/staging-reap.js'
+      - 'src/services/db-manager.js'
+      - 'src/services/docker.js'
+      - 'src/config.js'
+      - 'src/services/secrets.js'
+      - 'src/services/build-retention.js'
+      - 'src/services/homeroom-bot*.js'
+      - 'src/services/bench/**'
+      - 'src/routes/proposal-handoff.js'
+      - 'src/routes/sessions.js'
+      - 'src/routes/votes.js'
       - 'src/services/handoff-pipeline.js'
       - 'src/services/staging.js'
       - 'src/services/staging-recovery.js'
       - 'src/services/build-retention-guard.js'
       - 'server.js'
-      - 'src/db/schema.sql'
+      - 'src/db/**'
+      - 'sql-dynamic-baseline.json'
       - 'scripts/check-sql.js'
       - 'scripts/check-preview-ownership.js'
       - 'scripts/test-preview-flow.js'
+      - 'scripts/preview-preparation-worker.js'
+      - 'scripts/preview-build-retention.js'
+      - 'scripts/test-recoverable-preview-build.js'
+      - 'scripts/kpack-local-fixture.js'
       - 'tests/preview-*.test.js'
+      - 'tests/decision-runtime.test.js'
+      - 'tests/execution-worker.test.js'
+      - 'tests/recoverable-preview-*.test.js'
+      - 'tests/cli-preview-*.test.js'
+      - 'tests/check-*.test.js'
+      - 'tests/checks-retirement*.test.js'
+      - 'tests/review-work.test.js'
+      - 'tests/unpromote-proposal-postgres.test.js'
+      - 'tests/unit-suite-check.test.js'
+      - 'tests/*runtime*.test.js'
+      - 'tests/kubernetes-preview-inventory.test.js'
+      - 'tests/staging-reap.test.js'
+      - 'tests/homeroom-bot*.test.js'
+      - 'tests/pr-import-sync.test.js'
+      - 'tests/proposal-update.test.js'
+      - 'tests/proposal-description*.test.js'
+      - 'tests/lib/**'
+      - 'tests/isolated-kpack-fixture.test.js'
+      - 'tests/kpack-local-fixture.test.js'
       - 'tests/proposal-handoff.test.js'
       - 'tests/staging-build-serialize.test.js'
       - 'tests/local-agent-tail.test.js'
@@ -28,25 +78,31 @@ permissions:
 jobs:
   contract:
     runs-on: ubuntu-latest
-    container: node:24-bookworm
     timeout-minutes: 10
     services:
       postgres:
         image: postgres:15
         env:
           POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      PREVIEW_FLOW_TEST_DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
-      SQL_CHECK_CONNECTION_URL: postgres://postgres:postgres@postgres:5432/postgres
+      PREVIEW_FLOW_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      SQL_CHECK_CONNECTION_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
       - run: npm ci
       - name: PostgreSQL decision and adapter contract
         run: node scripts/test-preview-flow.js
+      - name: Reviewed preview writer ownership
+        run: node scripts/check-preview-ownership.js
       - name: SQL parser and catalog validation
         run: npm run lint:sql

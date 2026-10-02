@@ -19,6 +19,7 @@ const log = require('./logger');
 const pendingSecrets = require('./pending-secrets');
 const stagingEnv = require('./staging-env');
 const shotsFixtures = require('./shots-fixtures');
+const shotsDemoStates = require('./shots-demo-states');
 const { getPool } = require('../db/pool');
 
 const IMAGE_RECIPE = 'v1';
@@ -160,12 +161,49 @@ async function git(args, options = {}) {
   return docker.execFileAsync('git', args, { timeout: options.timeout || 120_000, maxBuffer: 4 * 1024 * 1024 });
 }
 
+// A shallow clone from GitHub fails now and then for reasons that say
+// nothing about the proposal: exit 128 on a reset connection or a GitHub
+// 5xx. One failed attempt used to fail the whole run (two runs on
+// 2026-09-30, both at 13:22 UTC). Retry a bounded number of times, with a
+// pause that gives a brief outage room to pass.
+const CLONE_ATTEMPTS = 3;
+const CLONE_BACKOFF_MS = Object.freeze([2_000, 6_000]);
+
+const sleep = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+async function cloneWithRetry(cloneUrl, checkoutDir, {
+  attempts = CLONE_ATTEMPTS, backoffMs = CLONE_BACKOFF_MS, wait = sleep,
+} = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      // Submodules stay in the clone even though checkoutExactRevision
+      // updates them for the exact revision afterwards: that update is
+      // best-effort (a pinned commit a depth-1 fetch cannot reach fails
+      // it), and then this copy is the only one the build has.
+      await git(['clone', '--depth', '1', '--no-tags', '--recurse-submodules', '--shallow-submodules', cloneUrl, checkoutDir]);
+      return;
+    } catch (error) {
+      lastError = error;
+      // A partial clone leaves a directory `git clone` refuses to reuse.
+      await fs.rm(checkoutDir, { recursive: true, force: true }).catch(() => {});
+      if (attempt < attempts) {
+        log.warn('shots', 'Shots checkout clone failed; retrying', {
+          attempt, attempts, exitCode: error?.code ?? null,
+        });
+        await wait(backoffMs[Math.min(attempt - 1, backoffMs.length - 1)]);
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function checkoutExactRevision({ app, session, sha, side, parentDir }) {
   const revision = exactSha(sha, `${side} SHA`);
   const { owner, repo } = repoParts(app.repo_url);
   const cloneUrl = await github.getCloneUrl(owner, repo);
   const checkoutDir = path.join(parentDir, side);
-  await git(['clone', '--depth', '1', '--no-tags', '--recurse-submodules', '--shallow-submodules', cloneUrl, checkoutDir]);
+  await cloneWithRetry(cloneUrl, checkoutDir);
 
   const refs = [];
   if (side === 'head' && Number(session?.pr_number) > 0) refs.push(`refs/pull/${Number(session.pr_number)}/head`);
@@ -263,6 +301,33 @@ async function buildRevision(config, { app, session, checkout, reuseImageRef = n
     imageDigest: await immutableImageDigest(config, built.imageRef),
     reused: !!built.reused,
   };
+}
+
+// An image that names no USER runs as root, and the pod's runAsNonRoot
+// refuses it before the process starts ("CreateContainerConfigError:
+// container has runAsNonRoot and image will run as root"). App Dockerfiles the
+// platform writes have declared USER 1000:1000 since #2302, but a proposal's
+// BASE side is rebuilt from the commit the proposal started from, which can
+// predate an app's own fix; the proposal is sometimes that fix ("... and fix
+// Dockerfile", 2026-09-30). The shots copies are disposable, so in exactly
+// that case run the image as the conventional app user and take the shots,
+// instead of failing the run over a before-side the app has already fixed.
+// Every other image keeps its own user.
+const ROOT_IMAGE_REJECTION = /runAsNonRoot and image will run as root/;
+const SHOTS_FALLBACK_UID = 1000;
+
+async function deployShotsRuntime(config, params, deploy = applicationRuntime.deploy) {
+  try {
+    return await deploy(config, params);
+  } catch (error) {
+    const text = [error?.message, error?.terminalPodDetails, error?.containerLogs]
+      .filter(Boolean).join('\n');
+    if (params.runAsUser != null || !ROOT_IMAGE_REJECTION.test(text)) throw error;
+    log.warn('shots', 'Shots runtime image runs as root; starting it as the conventional app user', {
+      runtimeName: params.runtimeName || null, uid: SHOTS_FALLBACK_UID,
+    });
+    return deploy(config, { ...params, runAsUser: SHOTS_FALLBACK_UID });
+  }
 }
 
 async function preparePair(config, { pool = getPool(config), run, session, app, onProgress = null }) {
@@ -384,7 +449,7 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
       // only this self-app limit inside disposable shots runtimes; neither
       // production nor an ordinary staging preview receives the override.
       const shotsEnv = shotsCapacityEnv(config, pair.app);
-      const deployed = await applicationRuntime.deploy(config, {
+      const deployed = await deployShotsRuntime(config, {
         app: pair.app,
         environment: 'staging',
         sessionId: pair.sessionId,
@@ -447,6 +512,24 @@ async function resetPair(config, pair, { onProgress = null } = {}) {
           })));
         fixtureProfiles.push(shotsFixtures.FULL_ADMIN_SESSION_PROFILE);
         availableFixtures.push(adminSeeded[0]);
+      }
+      // The demo states (shots-demo-states.js) a screen needs and these
+      // copies cannot reach by themselves. Each goes in only where both
+      // revisions can hold it.
+      onProgress?.({ stage: 'seed_shots_demo_states' });
+      const demoInputs = Object.fromEntries(['base', 'head'].map((side) =>
+        [side, { ...fixtureInputs[side], selfAppSlug: config.selfAppSlug }]));
+      const demoReady = await allSettledValues(['base', 'head'].map((side) =>
+        shotsDemoStates.inspectDemoStates(demoInputs[side])));
+      const stateIds = shotsDemoStates.STATE_IDS.filter((id) =>
+        demoReady.every((ready) => ready.includes(id)));
+      if (stateIds.length) {
+        const demo = await shotsDemoStates.installDemoStates(demoInputs, stateIds);
+        fixtureProfiles.push(...demo.installed.map((state) => state.id));
+        availableFixtures.push(...demo.installed);
+        if (demo.skipped.length) {
+          log.warn('shots', 'Shots demo states left out of a pair', { runId: pair.runId, skipped: demo.skipped });
+        }
       }
       fixtureProfile = fixtureProfiles.join('+');
     }
@@ -520,6 +603,10 @@ module.exports = {
   hostedFixtureApp,
   hostedFixtureImageRef,
   ensureHostedFixtureRuntime,
+  CLONE_ATTEMPTS,
+  cloneWithRetry,
+  SHOTS_FALLBACK_UID,
+  deployShotsRuntime,
   checkoutExactRevision,
   resolvedStagingEnv,
   buildRevision,
