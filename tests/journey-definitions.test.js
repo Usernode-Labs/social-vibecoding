@@ -125,3 +125,24 @@ test('the real-person rule leaves out admins, bots, restricted, deleted, service
   assert.match(usernames, /const RESERVED_PREFIXES = \['usernode', 'staging'\];/);
   assert.deepEqual(journey.notRecorded('no record'), { recorded: false, reason: 'no record' });
 });
+
+test('first-mile steps: expired mail proof reads unknown, and nothing counts past an unfinished account', () => {
+  const now = at('2026-11-15T12:00:00Z');
+  const old = journey.firstMileSteps({
+    released_at: '2026-10-01T09:00:00Z', mail_status: null, code_asked_at: null,
+    user_id: 9, password_set: true, account_at: '2026-10-01T10:00:00Z', has_platform_access: true,
+    access_at: '2026-10-01T10:00:00Z', opened_at: null, needs_username_choice: false,
+    needs_communities_choice: false, first_act_at: null,
+  }, now);
+  assert.deepEqual(old.steps.slice(0, 4).map((s) => s.state), ['done', 'unknown', 'unknown', 'done'],
+    'mail proof older than 30 days is unknown, never "not sent"');
+  assert.equal(old.stuckAt, 'opened');
+  const started = journey.firstMileSteps({
+    released_at: '2026-11-14T09:00:00Z', mail_status: 'sent', mail_at: '2026-11-14T09:00:01Z',
+    code_asked_at: '2026-11-14T10:00:00Z', user_id: 10, password_set: false, has_platform_access: true,
+    needs_username_choice: false, needs_communities_choice: false,
+  }, now);
+  assert.equal(started.stuckAt, 'account');
+  assert.equal(started.furthest, 'code_asked', 'the row\'s defaults do not carry a started account past it');
+  assert.deepEqual(started.steps.slice(4).map((s) => s.state), ['not_yet', 'not_yet', 'not_yet', 'not_yet', 'not_yet']);
+});

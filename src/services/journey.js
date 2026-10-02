@@ -277,8 +277,289 @@ function nextSteps(visitsByPerson, { top = 3 } = {}) {
   return { rows: out, starts };
 }
 
+// ── First mile ─────────────────────────────────────────────────────────
+//
+// Every admit date is a cohort, however small. A person is counted once, at
+// their earliest admit; a member who already had access before that admit is
+// not a newcomer and stays in Earlier members. Admitted addresses with no
+// account yet are rows too: the waitlist row is all there is of them.
+//
+// Parameters, fixed for every first-mile query: $1 the admit day or the
+// newcomer window, $2 now, $3 the reserved name patterns, $4 the left-out ids.
+
+const ADMITTED_CTE = `admitted AS (
+    SELECT DISTINCT ON (COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text))
+           w.id AS signup_id, w.email, w.released_at, w.linked_user_id
+      FROM waitlist_signups w
+     WHERE w.released_at IS NOT NULL
+     ORDER BY COALESCE('u' || w.linked_user_id::text, 'w' || w.id::text), w.released_at, w.id
+  )`;
+
+const NEWCOMER_OR_NO_ACCOUNT = `(u.id IS NULL OR (
+      (u.platform_access_granted_at IS NULL OR u.platform_access_granted_at >= a.released_at)
+      AND ${REAL_PERSON_SQL}))`;
+
+const COHORTS_SQL = `WITH ${ADMITTED_CTE}
+  SELECT to_char((a.released_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS day,
+         COUNT(*)::int AS admitted,
+         COUNT(u.id)::int AS with_account
+    FROM admitted a
+    LEFT JOIN users u ON u.id = a.linked_user_id
+   WHERE a.released_at <= $2::timestamptz
+     AND ($1::text IS NULL OR to_char((a.released_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') = $1::text)
+     AND ${NEWCOMER_OR_NO_ACCOUNT}
+   GROUP BY 1
+   ORDER BY 1 DESC`;
+
+// The facts of one person's first mile, read from the records that already
+// exist (#3369 first-mile survey): the admit mail and the first login code in
+// the mail log (kept 30 days), the account's own columns, the first time the
+// shell was opened (the #general membership row or the first boot in UI
+// telemetry), the first-run sheets as they were shown (telemetry), the
+// welcome message's queue row, the earliest act of any kind, and the failed
+// attempts the telemetry saw.
+const PERSON_FACTS = `
+    m.status AS mail_status, m.error AS mail_error, m.created_at AS mail_at,
+    (SELECT MIN(d.created_at) FROM mail_deliveries d
+      WHERE d.recipient = a.email AND d.kind = 'otp' AND d.created_at >= a.released_at) AS code_asked_at,
+    u.id AS user_id, u.username, u.created_at AS account_at, u.password_set,
+    u.has_platform_access, u.platform_access_granted_at AS access_at,
+    u.needs_username_choice, u.needs_communities_choice, u.communities_onboarded_at,
+    u.tour_done_at, u.getting_started_seen,
+    LEAST(
+      (SELECT MIN(cm.joined_at) FROM conversation_members cm
+         JOIN conversations c ON c.id = cm.conversation_id
+        WHERE c.kind = 'channel' AND cm.user_id = u.id),
+      (SELECT MIN(e.created_at) FROM events e
+        WHERE e.user_id = u.id AND e.event_type = 'ui_experience'
+          AND e.metadata->>'kind' = 'screen_visit')
+    ) AS opened_at,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.user_id = u.id AND e.event_type = 'ui_experience'
+        AND e.metadata->>'kind' = 'screen_visit' AND e.metadata->>'screen' = 'username_sheet') AS username_shown_at,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.user_id = u.id AND e.event_type = 'ui_experience'
+        AND e.metadata->>'kind' = 'screen_visit' AND e.metadata->>'screen' = 'join_sheet') AS join_shown_at,
+    (SELECT MIN(e.created_at) FROM events e WHERE e.user_id = u.id AND e.event_type = 'ui_experience'
+        AND e.metadata->>'kind' = 'screen_visit') AS first_screen_at,
+    q.status AS welcome_status, q.processed_at AS welcome_at,
+    (SELECT MIN(cmsg.created_at) FROM conversation_messages cmsg
+      WHERE q.conversation_id IS NOT NULL AND cmsg.conversation_id = q.conversation_id
+        AND cmsg.sender_id = u.id AND cmsg.deleted_at IS NULL) AS welcome_reply_at,
+    fa.at AS first_act_at, fa.kind AS first_act_kind,
+    (SELECT COUNT(*)::int FROM events e WHERE e.user_id = u.id AND e.event_type = 'ui_experience'
+        AND (e.metadata->>'kind' IN ('loading_timeout', 'navigation_abandonment', 'boot_failure', 'server_failure')
+          OR (e.metadata->>'kind' = 'action_outcome' AND e.metadata->>'outcome' = 'failure'))) AS failed_attempts,
+    (SELECT COUNT(*)::int FROM events e WHERE e.user_id = u.id AND e.event_type = 'ui_experience'
+        AND e.metadata->>'kind' = 'repeated_action') AS repeated_taps`;
+
+const PERSON_JOINS = `
+    LEFT JOIN LATERAL (
+      SELECT d.status, d.error, d.created_at FROM mail_deliveries d
+       WHERE a.email IS NOT NULL AND d.recipient = a.email AND d.kind = 'waitlist_released'
+       ORDER BY d.created_at DESC, d.id DESC LIMIT 1
+    ) m ON TRUE
+    LEFT JOIN welcome_dm_queue q ON q.user_id = u.id
+    LEFT JOIN LATERAL (
+      SELECT x.at, x.kind FROM (
+        SELECT MIN(cmx.created_at) AS at, 'message' AS kind FROM chat_messages cmx
+         WHERE cmx.user_id = u.id AND cmx.msg_type = 'message' AND cmx.deleted_at IS NULL
+        UNION ALL SELECT MIN(cvx.created_at), 'message' FROM conversation_messages cvx
+         WHERE cvx.sender_id = u.id AND cvx.deleted_at IS NULL
+        UNION ALL SELECT MIN(pv.created_at), 'vote' FROM pr_votes pv WHERE pv.user_id = u.id
+        UNION ALL SELECT MIN(iv.created_at), 'vote' FROM issue_votes iv WHERE iv.user_id = u.id
+        UNION ALL SELECT MIN(fr.created_at), 'feedback' FROM feedback_reports fr WHERE fr.user_id = u.id
+        UNION ALL SELECT MIN(i.created_at), 'request' FROM issues i WHERE i.created_by = u.id
+        UNION ALL SELECT MIN(cs.created_at), 'change' FROM chat_sessions cs WHERE cs.user_id = u.id
+        UNION ALL SELECT MIN(aa.date)::timestamptz, 'app' FROM app_activity aa WHERE aa.user_id = u.id
+        UNION ALL SELECT MIN(cmb.joined_at), 'joined' FROM community_members cmb
+         WHERE cmb.user_id = u.id AND cmb.source = 'joined'
+      ) x WHERE x.at IS NOT NULL ORDER BY x.at LIMIT 1
+    ) fa ON TRUE`;
+
+const FIRST_MILE_ADMITTED_SQL = `WITH ${ADMITTED_CTE}
+  SELECT a.signup_id, a.email, a.released_at, ${PERSON_FACTS}
+    FROM admitted a
+    LEFT JOIN users u ON u.id = a.linked_user_id
+    ${PERSON_JOINS}
+   WHERE to_char((a.released_at AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') = $1::text
+     AND a.released_at <= $2::timestamptz
+     AND ${NEWCOMER_OR_NO_ACCOUNT}
+   ORDER BY a.released_at, a.signup_id`;
+
+// People who got access in the newcomer window ($1 days before $2) with no
+// admit of their own: a member's invite link, an activation code, a wallet,
+// a direct grant. Their first mile starts at the account.
+const FIRST_MILE_OTHER_WAY_SQL = `WITH ${ADMITTED_CTE}
+  SELECT NULL::bigint AS signup_id, NULL::text AS email, NULL::timestamptz AS released_at,
+         CASE WHEN u.admitted_by IS NOT NULL THEN 'invite_link' ELSE 'code_wallet_or_grant' END AS door,
+         ${PERSON_FACTS}
+    FROM users u
+    LEFT JOIN admitted a ON FALSE
+    ${PERSON_JOINS}
+   WHERE u.has_platform_access
+     AND u.platform_access_granted_at >= $2::timestamptz - make_interval(days => $1::int)
+     AND u.platform_access_granted_at <= $2::timestamptz
+     AND NOT EXISTS (
+       SELECT 1 FROM waitlist_signups w
+        WHERE w.linked_user_id = u.id AND w.released_at IS NOT NULL
+          AND w.released_at <= u.platform_access_granted_at)
+     AND ${REAL_PERSON_SQL}
+   ORDER BY u.platform_access_granted_at, u.id`;
+
+const MAIL_PROOF_DAYS = 30;
+
+const FIRST_MILE_STEPS = Object.freeze([
+  'admitted', 'mail_sent', 'code_asked', 'account', 'access', 'opened', 'username', 'join', 'first_act',
+]);
+
+/**
+ * One person's first mile, step by step, from the facts row. Each step is
+ * done (with its time where one exists), or, when a later step is done,
+ * skipped (no record of it; the person is past it anyway) or unknown (its
+ * proof has expired). The person sits at their furthest step; the first step
+ * after it that is not done is where they are stuck, with the reason.
+ */
+function firstMileSteps(row, now = new Date()) {
+  const t = (v) => (v ? new Date(v) : null);
+  const nowMs = new Date(now).getTime();
+  const admitted = t(row.released_at);
+  const mailExpired = admitted && nowMs - admitted.getTime() > MAIL_PROOF_DAYS * DAY_MS;
+  const hasAccount = row.user_id != null;
+  const seen = row.getting_started_seen && typeof row.getting_started_seen === 'object' ? row.getting_started_seen : {};
+  const facts = {
+    admitted: admitted ? { done: true, at: admitted } : null,
+    mail_sent: row.mail_status === 'sent'
+      ? { done: true, at: t(row.mail_at) }
+      : { done: false, stuck: row.mail_status ? `Mail not sent: ${row.mail_status}` : 'No admit mail on record',
+        expired: mailExpired && !row.mail_status },
+    code_asked: row.code_asked_at
+      ? { done: true, at: t(row.code_asked_at) }
+      : { done: false, stuck: 'Admitted, never asked for a login code', expired: mailExpired },
+    account: hasAccount && row.password_set !== false
+      ? { done: true, at: t(row.account_at) }
+      : { done: false, stuck: hasAccount ? 'Account started, not finished' : 'Code mailed, no account' },
+    access: row.has_platform_access ? { done: true, at: t(row.access_at) }
+      : { done: false, stuck: 'In the waiting room' },
+    opened: row.opened_at ? { done: true, at: t(row.opened_at) }
+      : { done: false, stuck: 'Has access, never opened Homeroom' },
+    // A flag with no time can be set before the person was ever inside (the
+    // password step chooses one too), so it is done but never moves the
+    // furthest step: `weak`.
+    username: hasAccount && row.needs_username_choice === false
+      ? { done: true, at: null, weak: true }
+      : { done: false, stuck: row.username_shown_at ? 'Username sheet shown, not answered' : 'Username not chosen' },
+    join: row.communities_onboarded_at
+      ? { done: true, at: t(row.communities_onboarded_at), note: seen.join_answer || null }
+      : (hasAccount && row.needs_communities_choice === false
+        ? { done: true, at: null, note: 'not asked', weak: true }
+        : { done: false, stuck: row.join_shown_at ? 'Join screen shown, not answered' : 'Join screen not answered' }),
+    first_act: row.first_act_at ? { done: true, at: t(row.first_act_at), note: row.first_act_kind }
+      : { done: false, stuck: 'Inside, no act yet' },
+  };
+  // Nobody is inside without a finished account: a started one has never
+  // signed in, so the defaults on its row (no username to choose, no join
+  // screen owed) say nothing about the steps after it.
+  if (!facts.account.done) {
+    for (const key of ['access', 'opened', 'username', 'join', 'first_act']) {
+      if (facts[key].done) facts[key] = { done: false, stuck: facts[key].stuck || null };
+    }
+  }
+  const order = admitted ? FIRST_MILE_STEPS : FIRST_MILE_STEPS.slice(FIRST_MILE_STEPS.indexOf('account'));
+  let furthest = -1;
+  order.forEach((key, i) => { if (facts[key] && facts[key].done && !facts[key].weak) furthest = i; });
+  let stuckAt = null;
+  const steps = order.map((key, i) => {
+    const f = facts[key];
+    if (f.done) return { key, state: 'done', at: f.at || null, note: f.note || null };
+    // (A weak "done" above can sit after the stuck step: shown as done, it
+    // does not hide where the person stopped.)
+    if (i < furthest) return { key, state: f.expired ? 'unknown' : 'skipped', at: null, note: null };
+    if (stuckAt == null) {
+      stuckAt = key;
+      return { key, state: 'stuck', at: null, note: f.expired ? 'Proof older than 30 days' : f.stuck };
+    }
+    return { key, state: 'not_yet', at: null, note: null };
+  });
+  const since = admitted || t(row.access_at);
+  return {
+    steps,
+    furthest: furthest >= 0 ? order[furthest] : null,
+    stuckAt,
+    stuckReason: stuckAt ? steps.find((s) => s.key === stuckAt).note : null,
+    daysSince: since ? Math.floor((nowMs - since.getTime()) / DAY_MS) : null,
+    failedAttempts: row.failed_attempts || 0,
+    repeatedTaps: row.repeated_taps || 0,
+    tour: row.tour_done_at ? { ended: seen.tour_ended || null, step: seen.tour_step ?? null, at: t(row.tour_done_at) } : null,
+    welcome: row.welcome_status ? { status: row.welcome_status, at: t(row.welcome_at), replied: !!row.welcome_reply_at } : null,
+  };
+}
+
+function firstMilePerson(row, now) {
+  const mile = firstMileSteps(row, now);
+  return {
+    signupId: row.signup_id != null ? Number(row.signup_id) : null,
+    userId: row.user_id != null ? Number(row.user_id) : null,
+    // A person with no account is known only by the address they joined
+    // with, which Admin › Waitlist already shows to admins.
+    name: row.username || row.email || null,
+    hasAccount: row.user_id != null,
+    door: row.door || (row.released_at ? 'admitted' : null),
+    ...mile,
+  };
+}
+
+/** Counts per step: how many of the cohort are past it (done or skipped). */
+function firstMileCounts(people) {
+  const keys = people.length && people[0].steps ? people[0].steps.map((s) => s.key) : [];
+  return keys.map((key) => ({
+    key,
+    passed: people.filter((p) => {
+      const step = p.steps.find((s) => s.key === key);
+      return step && (step.state === 'done' || step.state === 'skipped' || step.state === 'unknown');
+    }).length,
+    stuck: people.filter((p) => p.stuckAt === key).map((p) => ({
+      userId: p.userId, signupId: p.signupId, name: p.name, days: p.daysSince, reason: p.stuckReason,
+      failedAttempts: p.failedAttempts,
+    })),
+  }));
+}
+
+function realPersonParams(leftOutIds) {
+  return [[...RESERVED_PATTERNS], (leftOutIds || []).map(Number)];
+}
+
+/** The admit-date cohorts, newest first, with "Came in another way". */
+async function cohorts(pool, { now = new Date(), leftOutIds = [] } = {}) {
+  const { rows } = await pool.query(COHORTS_SQL, [null, now, ...realPersonParams(leftOutIds)]);
+  const other = await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...realPersonParams(leftOutIds)]);
+  return {
+    cohorts: rows.map((r) => ({ day: r.day, admitted: r.admitted, withAccount: r.with_account })),
+    otherWay: { people: other.rows.length },
+  };
+}
+
+/** One cohort's first mile: `day` is an admit day, or 'other_way'. */
+async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) {
+  const params = realPersonParams(leftOutIds);
+  const result = day === 'other_way'
+    ? await pool.query(FIRST_MILE_OTHER_WAY_SQL, [NEWCOMER_DAYS, now, ...params])
+    : await pool.query(FIRST_MILE_ADMITTED_SQL, [day, now, ...params]);
+  const people = result.rows.map((row) => firstMilePerson(row, now));
+  return {
+    cohort: day,
+    people,
+    steps: firstMileCounts(people),
+    notRecorded: {
+      followedLink: notRecorded('Nothing records the admit mail being opened or its link followed.'),
+    },
+  };
+}
+
 module.exports = {
+  COHORTS_SQL,
   DAY_MS,
+  FIRST_MILE_ADMITTED_SQL,
+  FIRST_MILE_OTHER_WAY_SQL,
+  FIRST_MILE_STEPS,
   FEW_MOVES,
   GROUP_MAX,
   GROUP_MIN,
@@ -288,6 +569,10 @@ module.exports = {
   RESERVED_PATTERNS,
   VISIT_GAP_MS,
   WEEK_MS,
+  cohorts,
+  firstMile,
+  firstMileCounts,
+  firstMileSteps,
   groupLifecycle,
   isActiveGroup,
   isoDay,
