@@ -771,6 +771,13 @@ function authRoutes(config) {
     // Memoised for 30s inside the service, so this costs nothing on the boot
     // path of every tab; null is a perfectly good answer (the button hides).
     const platformApp = await getPlatformApp(pool);
+    // #3624: whether this person builds through the Homeroom bot's DM (an
+    // admin's list, one person at a time). The create dialog asks for a
+    // longer description when it is true. Unreadable means false.
+    let homeroomBotDm = false;
+    try {
+      homeroomBotDm = await require('../services/homeroom-bot-dm').isEnabledFor(pool, req.user);
+    } catch {}
     res.json({
       user: {
         id: req.user.id,
@@ -786,6 +793,7 @@ function authRoutes(config) {
         // string the admin panel / banners render.
         canAdminWrite: !!req.user.canAdminWrite,
         role: !req.user.isAdmin ? 'user' : (req.user.adminReadonly ? 'view_admin' : 'admin'),
+        homeroomBotDm,
         // Derived per-user app-creation affordance. Kept for the home-screen
         // treatment; the numbers below explain that state in the create
         // dialog. A null used/remaining value means the count query was not

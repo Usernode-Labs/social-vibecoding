@@ -1191,6 +1191,25 @@ export function setReply(scope: ComposerScope, message: ConversationMessage | nu
   publish({});
 }
 
+/**
+ * #3624: answer the Homeroom bot's question with one of its suggested
+ * answers. Sent as an ordinary message quoting the question, which is how
+ * the server knows which request it answers; whatever the person had
+ * typed, and any other reply they had staged, is left as it was.
+ */
+export async function answerBotQuestion(question: ConversationMessage, answer: string): Promise<void> {
+  const conversationId = state.route.conversationId;
+  if (!conversationId || conversationId !== question.conversationId) return;
+  const scope = scopeKey(conversationId, null);
+  const draft = draftFor(scope);
+  const staged = replyFor(scope);
+  replyTargets.set(scope, question);
+  const sending = send({ content: answer });
+  if (draft) setDraft(scope, draft);
+  if (staged && staged.id !== question.id) setReply(scope, staged);
+  await sending;
+}
+
 function idempotencyKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;

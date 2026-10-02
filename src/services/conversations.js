@@ -406,6 +406,9 @@ async function hydrateMessages(db, user, rows) {
     // earlier version wrote that somebody replied to is kept, deleted, as
     // the root of their thread (db/migrate.js clearAutomatedChannelLines).
     const system = row.msg_type === 'system';
+    // #3624: the Homeroom bot's structured part (its question and suggested
+    // answers), on the bot's own live messages only.
+    const metadata = deleted || moderated || system || !row.sender_is_synthetic ? null : publicMetadata(row.metadata);
     return {
       id: row.id,
       conversationId: row.conversation_id,
@@ -413,8 +416,10 @@ async function hydrateMessages(db, user, rows) {
         id: row.sender_id || 0,
         username: system ? 'Homeroom' : (row.sender_username || 'Deleted user'),
         avatarUrl: row.sender_avatar_id ? `/avatars/${row.sender_avatar_id}` : null,
+        ...(row.sender_is_synthetic && !system ? { bot: true } : {}),
       },
       ...(system ? { system: true } : {}),
+      ...(metadata ? { metadata } : {}),
       content: deleted ? '' : row.content,
       moderated,
       createdAt: row.created_at,
@@ -450,8 +455,8 @@ async function hydrateMessages(db, user, rows) {
 
 const MESSAGE_SELECT = `
   SELECT m.id, m.conversation_id, m.sender_id, m.content, m.created_at, m.edited_at,
-         m.deleted_at, m.moderation_hidden_at, m.thread_root_id, m.msg_type,
-         su.username AS sender_username, sua.id AS sender_avatar_id,
+         m.deleted_at, m.moderation_hidden_at, m.thread_root_id, m.msg_type, m.metadata,
+         su.username AS sender_username, sua.id AS sender_avatar_id, su.is_synthetic AS sender_is_synthetic,
          rm.id AS reply_id, rm.sender_id AS reply_sender_id, rm.content AS reply_content,
          rm.deleted_at AS reply_deleted_at,
          ru.username AS reply_sender_username, rua.id AS reply_sender_avatar_id,
@@ -942,8 +947,15 @@ async function createDirect(pool, user, targetUserId) {
   if (!targetUserId || targetUserId === user.id) return null;
   const result = await transaction(pool, async (db) => {
     const [low, high] = await lockPair(db, user.id, targetUserId);
-    const target = await db.query('SELECT id FROM users WHERE id = $1 FOR UPDATE', [targetUserId]);
+    const target = await db.query('SELECT id, is_synthetic FROM users WHERE id = $1 FOR UPDATE', [targetUserId]);
     if (!target.rows.length || await blockedEitherWay(db, user.id, targetUserId)) return null;
+    // #3624: a platform account (the Homeroom bot) cannot answer an
+    // invitation, so a DM with one opens with both already in it, the same
+    // conversation the platform opens when it writes first.
+    if (target.rows[0].is_synthetic) {
+      const opened = await openAdmittedDirect(db, targetUserId, user.id, { requester: user.id });
+      return opened ? { conversationId: opened.conversationId, notifications: [], memberIds: opened.memberIds } : null;
+    }
     // #2386: friendship is standing consent both ways, so a DM between
     // friends has no invitation step (services/friends.js). Lazy require:
     // friends.js builds on this module.
@@ -1116,6 +1128,93 @@ async function createAdmittedGroup(db, ownerId, title, memberIds) {
     );
   }
   return { conversationId, memberIds: [ownerId, ...others] };
+}
+
+// #3624: the direct conversation between a platform account (the Homeroom
+// bot) and a person, with both already in it. The platform writes first,
+// so the person reads it without accepting anything. Runs under the pair
+// lock its callers take. A person who blocked the account, or who left or
+// declined this conversation, gets none: that is how the bot is turned off.
+// `requester` is the person when they opened it themselves (createDirect),
+// which reopens a conversation they had left.
+async function openAdmittedDirect(db, systemUserId, userId, { requester = null } = {}) {
+  const [low, high] = normalizePair(systemUserId, userId);
+  const existing = await db.query(
+    `SELECT p.conversation_id, theirs.status AS their_status
+       FROM conversation_direct_pairs p
+       JOIN conversation_members theirs
+         ON theirs.conversation_id = p.conversation_id AND theirs.user_id = $3
+      WHERE p.user_low_id = $1 AND p.user_high_id = $2
+      FOR UPDATE OF theirs`,
+    [low, high, userId]
+  );
+  if (existing.rows.length) {
+    const row = existing.rows[0];
+    const optedOut = ['declined', 'left', 'removed'].includes(row.their_status);
+    if (optedOut && requester !== userId) return null;
+    await db.query(
+      `UPDATE conversation_members
+          SET status = 'member', responded_at = COALESCE(responded_at, NOW()),
+              joined_at = COALESCE(joined_at, NOW()), left_at = NULL
+        WHERE conversation_id = $1 AND status <> 'member'`,
+      [row.conversation_id]
+    );
+    await db.query(
+      `UPDATE conversations SET status = 'active', updated_at = NOW() WHERE id = $1 AND status <> 'active'`,
+      [row.conversation_id]
+    );
+    return { conversationId: row.conversation_id, created: false, memberIds: [systemUserId, userId] };
+  }
+  const created = await db.query(
+    `INSERT INTO conversations (kind, created_by) VALUES ('direct', $1) RETURNING id`,
+    [systemUserId]
+  );
+  const conversationId = created.rows[0].id;
+  await db.query(
+    `INSERT INTO conversation_direct_pairs (conversation_id, user_low_id, user_high_id)
+     VALUES ($1, $2, $3)`, [conversationId, low, high]
+  );
+  await db.query(
+    `INSERT INTO conversation_members
+       (conversation_id, user_id, role, status, invited_by, responded_at, joined_at)
+     VALUES ($1, $2, 'member', 'member', $2, NOW(), NOW()),
+            ($1, $3, 'member', 'member', $2, NOW(), NOW())`,
+    [conversationId, systemUserId, userId]
+  );
+  return { conversationId, created: true, memberIds: [systemUserId, userId] };
+}
+
+/**
+ * The platform's side of openAdmittedDirect: the bot's DM with a person,
+ * opened (or found) before it writes. Resolves { conversationId, created,
+ * memberIds } or null when the person blocked the bot or left the chat.
+ */
+async function ensureAdmittedDirect(pool, systemUserId, userId) {
+  if (!systemUserId || !userId || systemUserId === userId) return null;
+  return transaction(pool, async (db) => {
+    await lockPair(db, systemUserId, userId);
+    if (await blockedEitherWay(db, systemUserId, userId)) return null;
+    return openAdmittedDirect(db, systemUserId, userId);
+  });
+}
+
+// #3624: a bot message's structured part (the questions it asks with their
+// suggested answers, and the request the message is about). Written by the
+// platform only: sendMessage takes it as a separate argument, never from a
+// request body, and the bot updates it when a question is answered.
+const BOT_METADATA_KEY = 'homeroomBot';
+
+async function setMessageMetadata(db, messageId, metadata) {
+  await db.query(
+    `UPDATE conversation_messages SET metadata = $2 WHERE id = $1 AND deleted_at IS NULL`,
+    [messageId, JSON.stringify(metadata || {})]
+  );
+}
+
+/** What of a message's metadata a reader is shown: the bot's part, or nothing. */
+function publicMetadata(raw) {
+  const value = raw && typeof raw === 'object' ? raw[BOT_METADATA_KEY] : null;
+  return value && typeof value === 'object' && !Array.isArray(value) ? { [BOT_METADATA_KEY]: value } : null;
 }
 
 async function updateTitle(pool, user, conversationId, title) {
@@ -1341,7 +1440,7 @@ function mentionsUsername(content, username) {
   return pattern.test(content);
 }
 
-async function sendMessage(pool, user, conversationId, input) {
+async function sendMessage(pool, user, conversationId, input, { metadata = null } = {}) {
   const attachmentIds = normalizeAttachmentIds(input.attachment_ids ?? input.attachmentIds);
   const refsRaw = input.objects ?? (input.object ? [input.object] : []);
   if (!Array.isArray(refsRaw) || refsRaw.length > MAX_OBJECTS || !attachmentIds) return null;
@@ -1435,12 +1534,14 @@ async function sendMessage(pool, user, conversationId, input) {
       if (!validated) return null;
       objectRefs.push(validated);
     }
+    // #3624: `metadata` is the platform's (the Homeroom bot's questions),
+    // passed beside the input rather than in it, so no request body sets it.
     const inserted = await db.query(
       `INSERT INTO conversation_messages
-         (conversation_id, sender_id, content, reply_to_id, idempotency_key, thread_root_id)
-       VALUES ($1, $2, $3, $4, $5, $6)
+         (conversation_id, sender_id, content, reply_to_id, idempotency_key, thread_root_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [conversationId, user.id, content, replyId, key, threadRootId]
+      [conversationId, user.id, content, replyId, key, threadRootId, JSON.stringify(metadata || {})]
     );
     const messageId = inserted.rows[0].id;
     if (attachmentIds.length) {
@@ -2044,6 +2145,11 @@ module.exports = {
   createDirect,
   createGroup,
   createAdmittedGroup,
+  ensureAdmittedDirect,
+  openAdmittedDirect,
+  setMessageMetadata,
+  publicMetadata,
+  BOT_METADATA_KEY,
   updateTitle,
   respond,
   addMembers,

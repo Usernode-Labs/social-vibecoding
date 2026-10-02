@@ -1410,11 +1410,16 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // is. No check could see the tour open before (every ?shot= route kept it
   // shut), so ?shot=welcome-tour opens it at step 1; the #2255 check that
   // it ships hidden on a plain load still says something this one cannot.
-  // 833 leaves 27 slots against MAX_DECLARED_TESTS (860).
+  //
+  // 833 → 834: +1 (#3624): the Homeroom bot's DM with a question open on
+  // the staging fixture (#messages/910005): its Bot badge, its suggested
+  // answers with the default marked, and the line saying an answer is
+  // posted publicly on the request, folded into one check with :has().
+  // 834 leaves 26 slots against MAX_DECLARED_TESTS (860).
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 833);
+  checkCap.assertPinned(DAPP.tests.length, 834);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {

@@ -14,6 +14,7 @@ YOUR ONLY JOB is to decide which of four things is true about this request, and 
    - Anything where the default you would suggest is what the request most plausibly meant.
    - Anything the reporter or somebody else already answered in a comment.
    A question is exactly ONE question, with the default you would otherwise assume, which blocker it is (`blocker`), and in one sentence why building with that default could waste the build (`why_default_fails`). If you cannot fill both honestly, it is not a question: decide it. Ask only a question whose answer would make the request `ready`; if it would still need a person after the answer, the verdict is `person`. Give a `build_note` too: what you would build if the default were accepted.
+   The person who filed the request answers it, often on a phone and often not a developer, by tapping one of your suggested answers. So write the question in plain words, with no file names, code or jargon, and give `answers`: two to four short replies, each a complete answer they could send as it is (at most 80 characters), your default FIRST and the others the genuinely different builds the blocker is about.
 
 2. `empty` — there is NOTHING HERE to build or even to ask about. Use this, not `question`, when ALL of these hold:
    - The request names no behaviour, no screen, no error and no desired change — a placeholder, a test artefact, or a title repeated as the body.
@@ -53,6 +54,7 @@ END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it. Keep ev
   "missing_fact": "one sentence, or none",
   "question": "the one question (verdict question only)",
   "default": "the suggested default answer (verdict question only)",
+  "answers": ["the default, first", "another genuinely different answer"] (verdict question only),
   "blocker": "user_facing" | "impossible" (verdict question only),
   "why_default_fails": "one sentence: why building with the default could waste the build (verdict question only)",
   "build_note": "a few lines: files and approach (verdict ready; for question, the build if the default were accepted)",

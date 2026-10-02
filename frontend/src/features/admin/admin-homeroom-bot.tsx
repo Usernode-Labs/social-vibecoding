@@ -37,6 +37,19 @@ interface Settings {
   shadowBuilds: boolean;
   buildConcurrency: number;
   shadowBuildPlatform: boolean;
+  // #3624: the people it talks to in a DM, and what each one's requests may
+  // cost the platform in a week (cents; 0 for no limit).
+  dmUsers: string[];
+  userWeeklyCents: number;
+  // The projects it is building for them, live like liveApps.
+  firstVersionApps: string[];
+}
+
+// #3624: one person on the DM list, with what their requests cost this week.
+interface DmUser {
+  username: string;
+  exists: boolean;
+  weeklySpentCents: number | null;
 }
 
 interface BuildLane {
@@ -163,6 +176,7 @@ interface Payload {
   caps: { proposalsPerApp: number; proposalsTotal: number; questionsPerAppPerDay: number };
   builds: BuildLane;
   mentionOptOuts: { total: number; items: MentionOptOut[] };
+  dmUsers?: DmUser[];
 }
 
 // Somebody who asked the bot to stop tagging them on one issue.
@@ -455,6 +469,10 @@ function HomeroomBotSection() {
   // saved. Null is what lets the 30-second poll refresh the rows without
   // throwing away an edit in progress.
   const [liveDraft, setLiveDraft] = useState<string[] | null>(null);
+  // #3624: the DM list as typed (comma or space separated), and the
+  // per-person weekly cap in dollars; null until edited.
+  const [dmDraft, setDmDraft] = useState<string | null>(null);
+  const [userCapDraft, setUserCapDraft] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -616,6 +634,35 @@ function HomeroomBotSection() {
     const willPause = !paused.has(slug);
     if (willPause) paused.add(slug); else paused.delete(slug);
     await saveSettings({ pausedApps: [...paused] }, willPause ? `${slug} paused.` : `${slug} resumed.`);
+  };
+
+  const savedDm = payload?.settings.dmUsers || [];
+  const dmChosen = [...new Set((dmDraft ?? savedDm.join(', ')).split(/[\s,]+/)
+    .map((n) => n.replace(/^@/, '').trim().toLowerCase()).filter(Boolean))];
+  const dmDirty = dmDraft !== null && dmChosen.join(',') !== savedDm.join(',');
+  const saveDm = async () => {
+    if (!dmDirty) return;
+    const data = await write('/api/admin/homeroom-bot/settings', 'PUT', { dmUsers: dmChosen }, dmChosen.length
+      ? `Saved. The bot now talks to ${dmChosen.map((n) => `@${n}`).join(', ')} in a DM.`
+      : 'Saved. The bot talks to nobody in a DM.');
+    if (data) {
+      setDmDraft(null);
+      apply(data as Payload);
+    }
+  };
+  const saveUserCap = async () => {
+    if (userCapDraft === null) return;
+    const dollars = Number(userCapDraft);
+    if (!Number.isFinite(dollars) || dollars < 0) {
+      setStatus({ text: 'Enter a dollar amount (0 for no limit).', tone: 'err' });
+      return;
+    }
+    const data = await write('/api/admin/homeroom-bot/settings', 'PUT', { userWeeklyCents: Math.round(dollars * 100) },
+      dollars > 0 ? `Each person's requests may now cost up to $${dollars.toFixed(2)} a week.` : 'Each person\'s requests now have no weekly limit.');
+    if (data) {
+      setUserCapDraft(null);
+      apply(data as Payload);
+    }
   };
 
   const settings = payload?.settings;
@@ -927,6 +974,61 @@ function HomeroomBotSection() {
               there, and builds the clear requests into proposals for the group to
               vote on. Everywhere else it only records verdicts. The mode above has
               to be on, and a staging copy never acts.
+            </p>
+          </div>
+
+          <div className="md:col-span-3" id="admin-homeroom-bot-dm">
+            <label className={AdminUI.label} htmlFor="admin-homeroom-bot-dm-users">People it talks to in a DM</label>
+            <div className="flex flex-wrap items-center gap-2 mt-1">
+              <input
+                id="admin-homeroom-bot-dm-users"
+                type="text"
+                className={AdminUI.input}
+                placeholder="usernames, separated by commas"
+                value={dmDraft ?? savedDm.join(', ')}
+                disabled={!canWrite}
+                onChange={(e) => setDmDraft(e.target.value)}
+              />
+              {canWrite ? (
+                <button type="button" id="admin-homeroom-bot-dm-save" className={AdminUI.btn.primarySm} disabled={!dmDirty || !!busy} onClick={saveDm}>
+                  Save
+                </button>
+              ) : null}
+            </div>
+            {payload?.dmUsers?.length ? (
+              <ul className="mt-2 space-y-1" id="admin-homeroom-bot-dm-list">
+                {payload.dmUsers.map((u) => (
+                  <li key={u.username} className={AdminUI.muted} data-dm-user={u.username}>
+                    {u.exists
+                      ? `@${u.username}: ${dollarsFromCents(u.weeklySpentCents ?? 0)} of ${settings?.userWeeklyCents ? dollarsFromCents(settings.userWeeklyCents) : 'no limit'} this week`
+                      : `@${u.username}: no account by that name`}
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <label className={AdminUI.label} htmlFor="admin-homeroom-bot-user-cap">Each person's weekly allowance, dollars</label>
+              <input
+                id="admin-homeroom-bot-user-cap"
+                type="number" min="0" step="1" inputMode="decimal"
+                className={`${AdminUI.input} max-w-[8rem]`}
+                value={userCapDraft ?? ((settings?.userWeeklyCents ?? 5000) / 100).toFixed(2)}
+                disabled={!canWrite}
+                onChange={(e) => setUserCapDraft(e.target.value)}
+              />
+              {canWrite ? (
+                <button type="button" id="admin-homeroom-bot-user-cap-save" className={AdminUI.btn.primarySm} disabled={userCapDraft === null || !!busy} onClick={saveUserCap}>
+                  Save
+                </button>
+              ) : null}
+            </div>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-dm-note">
+              For these people the bot brings each request&apos;s questions (with answers to tap), and the news that it is
+              building it, ready to vote on, or live, to their DM with it, and posts their answers on the request. A
+              project they create with a description is built by the bot, and acted on for real while they stay on
+              this list{settings?.firstVersionApps?.length ? ` (now: ${settings.firstVersionApps.map(appName).join(', ')})` : ''}.
+              What their requests cost the platform is capped per person per week, apart from their own agent
+              allowance. Being on the list turns these on; the bot only does the work while the mode above is on.
             </p>
           </div>
         </div>

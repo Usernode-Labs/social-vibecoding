@@ -110,7 +110,7 @@ function followUpPrompt({ seed, proposalBlock = '', prNumber = null, replies = [
     '',
     'Decide what the replies need, and do exactly one thing:',
     '- "answer": they asked about the proposal. Answer them plainly and briefly. Change no files.',
-    '- "ask": they want a change but one fact is missing to make it. Ask one short question. Change no files.',
+    '- "ask": they want a change but one fact is missing to make it. Ask one short question in plain words, and give `answers`: two to four short replies the person could tap to answer it, your suggested default first. Change no files.',
   ];
   if (canRevise) {
     lines.push(
@@ -125,7 +125,7 @@ function followUpPrompt({ seed, proposalBlock = '', prNumber = null, replies = [
     '- "person": what they want is a decision for a person (taste, policy, something outside this app), or it would change what the proposal is. Say so and why. Change no files.',
     '',
     `END YOUR REPLY WITH EXACTLY ONE fenced JSON block, and nothing after it:`,
-    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "summary": "for revise only: one sentence on what you changed", "stop_mentioning": ["name of each person who asked the bot to stop tagging them"], "resume_mentioning": ["name of each person who asked to be tagged again"]}`,
+    `{"action": ${actions}, "reply": "what to post back to them, in plain language", "answers": ["for ask only: your suggested default first", "another answer"], "summary": "for revise only: one sentence on what you changed", "stop_mentioning": ["name of each person who asked the bot to stop tagging them"], "resume_mentioning": ["name of each person who asked to be tagged again"]}`,
     '',
     '`stop_mentioning`: the names, exactly as the replies show them, of anybody who asked the Homeroom bot itself to stop tagging, messaging or notifying them. Only a person asking for themselves, and only about the bot, not about the app\'s own notifications. Usually empty. `resume_mentioning`: anybody who, after asking the bot to stop, asked to be tagged again; list a person in whichever they asked for most recently, never both. If that is all a reply says, "answer" with a short acknowledgement.',
   );
@@ -154,6 +154,12 @@ function parseFollowUp(text) {
     if (!reply) continue;
     return {
       action, reply, summary: clipText(obj.summary, 600) || null,
+      // #3624: an ask's suggested answers, as a triage question's.
+      ...(action === 'ask' ? {
+        answers: Array.isArray(obj.answers)
+          ? obj.answers.filter((a) => typeof a === 'string').map((a) => clipText(a, 200)).filter(Boolean).slice(0, 6)
+          : [],
+      } : {}),
       stopMentioning: parseStopMentioning(obj.stop_mentioning),
       resumeMentioning: parseStopMentioning(obj.resume_mentioning),
     };

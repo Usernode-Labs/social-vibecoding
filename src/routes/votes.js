@@ -5264,6 +5264,16 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     } catch (err) {
       log.error('votes', 'Merged notification threw', { sessionId: session.id, err: err.message });
     }
+    // #3624: a proposal the Homeroom bot built for somebody it talks to in
+    // a DM: they hear it is live there (the notification above goes to the
+    // proposal's author, which for a bot build is the bot). Never a reason
+    // the merge fails.
+    try {
+      require('../services/homeroom-bot-dm').noteProposalMerged(pool, session)
+        ?.catch?.((err) => log.warn('votes', 'Homeroom bot merged DM failed', { sessionId: session.id, err: err.message }));
+    } catch (err) {
+      log.warn('votes', 'Homeroom bot merged DM threw', { sessionId: session.id, err: err.message });
+    }
 
     // Resolve any open issue bounties for the issues this PR closes (declared
     // through the session's linked_issues → `Closes #N` in the PR body).

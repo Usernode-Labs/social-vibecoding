@@ -4,6 +4,7 @@ import type {
   ConversationMessage,
   ConversationSummary,
   ConversationUser,
+  HomeroomBotMeta,
   MessageAttachment,
   MessageReaction,
   MessageThreadSummary,
@@ -69,6 +70,42 @@ export function normalizeUser(input: unknown): ConversationUser {
     id: strictId(pick(row, 'id', 'userId', 'user_id')) || 0,
     username: text(pick(row, 'username', 'name'), 'unknown'),
     avatarUrl: text(pick(row, 'avatarUrl', 'avatar_url')) || null,
+    // #3624: a platform account (the Homeroom bot). Named here, or dropped.
+    ...(pick(row, 'bot') === true ? { bot: true } : {}),
+  };
+}
+
+const BOT_QUESTION_STATES = new Set(['open', 'answered', 'closed']);
+
+/**
+ * #3624: the Homeroom bot's structured part of a message (services/
+ * conversations.js publicMetadata), field by field like everything else
+ * here: its question, the answers to tap and their state. Null for any
+ * message without one.
+ */
+export function normalizeBotMeta(input: unknown): { homeroomBot: HomeroomBotMeta } | null {
+  const bot = record(pick(record(input), 'homeroomBot'));
+  const kind = text(pick(bot, 'kind'));
+  if (!kind) return null;
+  const issueNumber = strictId(pick(bot, 'issueNumber'));
+  const status = text(pick(bot, 'status'));
+  const optional = (key: string) => text(pick(bot, key)) || undefined;
+  const answers = array(pick(bot, 'answers')).filter((a): a is string => typeof a === 'string' && !!a.trim()).slice(0, 6);
+  return {
+    homeroomBot: {
+      kind,
+      appSlug: optional('appSlug'),
+      appName: optional('appName'),
+      ...(issueNumber ? { issueNumber } : {}),
+      issueTitle: optional('issueTitle'),
+      ...(pick(bot, 'firstVersion') === true ? { firstVersion: true } : {}),
+      ...(pick(bot, 'mirrors') === true ? { mirrors: true } : {}),
+      question: optional('question'),
+      ...(answers.length ? { answers } : {}),
+      ...(BOT_QUESTION_STATES.has(status) ? { status: status as HomeroomBotMeta['status'] } : {}),
+      answer: optional('answer'),
+      link: optional('link'),
+    },
   };
 }
 
@@ -185,6 +222,7 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
   };
   const replyRow = record(pick(row, 'reply', 'replyTo', 'reply_to'));
   const replyId = strictId(pick(replyRow, 'id', 'messageId', 'message_id'));
+  const botMeta = normalizeBotMeta(pick(row, 'metadata'));
   return {
     id: strictId(pick(row, 'id', 'messageId', 'message_id')) || 0,
     conversationId,
@@ -210,6 +248,8 @@ export function normalizeMessage(input: unknown, fallbackConversationId = 0): Co
     // exactly what happened to `saved` the first time: the API returned it,
     // the star rendered empty, and nothing anywhere errored.
     saved: pick(row, 'saved', 'bookmarked') === true,
+    // #3624: the Homeroom bot's question and its answers, when it has one.
+    ...(botMeta ? { metadata: botMeta } : {}),
   };
 }
 

@@ -119,6 +119,8 @@ test('settings default to off and clamp their numbers', () => {
     mode: 'off', concurrency: 1, batchSize: 100, pausedApps: [], liveApps: [],
     turnSeconds: 20 * 60, turnInputTokens: 10_000_000,
     shadowBuilds: false, buildConcurrency: 2, shadowBuildPlatform: false,
+    // #3624: nobody gets the bot's DM by default; $50 a week each.
+    dmUsers: [], userWeeklyCents: 5000, firstVersionApps: [],
   });
   const t = bot.parseSettings([
     { key: bot.KEY_MODE, value: 'shadow' },
