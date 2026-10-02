@@ -577,9 +577,8 @@ async function closeOpenQuestions(pool, { userId, appId, issueNumber, ws = null 
 
 /**
  * The requester of a request when the bot tells them its news in a DM:
- * { userId, username }, or null. The bot's post on the request then leaves
- * them untagged (homeroom-bot-live.js post), so the same news does not ring
- * twice.
+ * { userId, username }, or null. Whether the bot's post on the request then
+ * leaves them untagged is for untaggedRequester, from what the DM did.
  */
 async function dmRecipient(pool, appId, issueNumber) {
   const settings = await settingsModule().readSettings(pool);
@@ -588,6 +587,24 @@ async function dmRecipient(pool, appId, issueNumber) {
   return requester && isDmUser(settings, requester.username)
     ? { userId: requester.userId, username: requester.username }
     : null;
+}
+
+/**
+ * #3698: the requester the bot's post on a request leaves untagged, once
+ * relayIssuePost has run for it (`told` is what it resolved). Decided by
+ * what the DM actually did, not by who it would go to: the requester when
+ * it reached them (it rang in their DM, and the post would ring twice), or
+ * when they blocked the bot (nothing from it is for them). Resolves their
+ * username, or null when the post tags them like anybody else: they left
+ * the bot's DM, the DM was refused or the relay failed, and the news still
+ * has to reach them once.
+ */
+async function untaggedRequester(pool, { appId, issueNumber, bot, told = null }) {
+  if (told?.messageId && told.username) return told.username;
+  if (!bot?.id) return null;
+  const recipient = await dmRecipient(pool, appId, issueNumber);
+  if (!recipient) return null;
+  return await conversations.blockedEitherWay(pool, bot.id, recipient.userId) ? recipient.username : null;
 }
 
 /** Update a DM question's state in the message itself, so the reader's chips follow. */
@@ -610,7 +627,9 @@ async function setQuestionState(pool, messageId, patch, { ws = null, conversatio
 /**
  * Called by the bot's post on a request (homeroom-bot-live.js `post`) when
  * the post carries `dm`: the same news, in the requester's DM, when they
- * are somebody the bot talks to there. Resolves what was sent, or null.
+ * are somebody the bot talks to there. Resolves what was sent, with who it
+ * went to ({ conversationId, messageId, duplicate, userId, username }), or
+ * null when nothing reached them.
  */
 async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId = null, postId = null, bot, dm }) {
   if (!dm || !bot?.id) return null;
@@ -651,22 +670,33 @@ async function relayIssuePost({ pool, ws = null, app, issueNumber, kind, runId =
     replyToId: await requestStart(pool, { userId: requester.userId, appId: app.id, issueNumber }),
   });
   if (!sent?.messageId) return null;
+  const told = { ...sent, userId: requester.userId, username: requester.username };
   // The same post relayed again (a retry) was already sent and recorded.
-  if (sent.duplicate) return sent;
-  // Whatever this post says, it is the request's news now: an older
-  // question about it is not waiting for an answer any more.
-  await closeOpenQuestions(pool, { userId: requester.userId, appId: app.id, issueNumber, ws });
-  await pool.query(
-    `INSERT INTO homeroom_bot_dm_messages
-       (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id, question_status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     ON CONFLICT (message_id) DO NOTHING`,
-    [sent.messageId, requester.userId, sent.conversationId, app.id, issueNumber, kind, runId, asks ? 'open' : null],
-  );
+  if (sent.duplicate) return told;
+  // #3698: from here the DM is in front of them, so what follows failing
+  // is logged rather than thrown: a relay that throws is one the post
+  // makes up for by tagging them, and this one did reach them.
+  try {
+    // Whatever this post says, it is the request's news now: an older
+    // question about it is not waiting for an answer any more.
+    await closeOpenQuestions(pool, { userId: requester.userId, appId: app.id, issueNumber, ws });
+    await pool.query(
+      `INSERT INTO homeroom_bot_dm_messages
+         (message_id, user_id, conversation_id, app_id, issue_number, kind, run_id, question_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (message_id) DO NOTHING`,
+      [sent.messageId, requester.userId, sent.conversationId, app.id, issueNumber, kind, runId, asks ? 'open' : null],
+    );
+  } catch (err) {
+    log.warn('homeroom-bot-dm', 'Told the requester, but could not record it', {
+      app: app.slug, issueNumber, kind, userId: requester.userId, err: err.message,
+    });
+    return told;
+  }
   log.info('homeroom-bot-dm', 'Told the requester in their DM', {
     app: app.slug, issueNumber, kind, userId: requester.userId, question: asks,
   });
-  return sent;
+  return told;
 }
 
 /** A proposal the bot built is merged: its requester hears it is live. */
@@ -1116,6 +1146,7 @@ module.exports = {
   weekKey,
   dmText,
   dmRecipient,
+  untaggedRequester,
   requestLine,
   closeOpenQuestions,
   setQuestionState,
