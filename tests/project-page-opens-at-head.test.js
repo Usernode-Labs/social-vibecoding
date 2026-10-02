@@ -118,8 +118,10 @@ test('a page that is not drawn is not pinned, and coming back into view is heard
   const hook = WORKSHOP.slice(WORKSHOP.indexOf('function usePinnedStrip('));
   const body = hook.slice(0, hook.indexOf('\n}\n'));
   assert.match(body, /const strip = bar\.getBoundingClientRect\(\);/);
-  assert.match(body, /const pinned = strip\.height > 0 && body\.getBoundingClientRect\(\)\.top < strip\.bottom \+ WS_GAP_PX - 0\.5;/,
+  assert.match(body, /const pinned = strip\.height > 0 && below\.getBoundingClientRect\(\)\.top < strip\.bottom \+ WS_GAP_PX - 0\.5;/,
     'a hidden page reads every edge as 0, and 0 < 0 + 10 is not a pin');
+  assert.match(body, /const headPinned = !!pane && !!head && pane\.getBoundingClientRect\(\)\.top < head\.getBoundingClientRect\(\)\.top - 0\.5;/,
+    'nor is the head: its pane reads 0 like it, and 0 < 0 - 0.5 is not one either');
   assert.match(body, /new ResizeObserver\(schedule\)/);
   assert.match(body, /seen\?\.observe\(host\);/);
   assert.match(body, /seen\?\.disconnect\(\);/, 'and let go on teardown');
