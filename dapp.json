@@ -5438,9 +5438,9 @@
       "expectText": "Invitation pending"
     },
     {
-      "name": "The Homeroom bot's question in its DM, under its name and Bot badge, carries its suggested answers to tap, the default marked, and says an answer is posted publicly on the request; beside it, a request the bot offers to file has File it and Not now, and no Something else (#3624)",
+      "name": "The Homeroom bot's question in its DM, under its name and Bot badge, carries its suggested answers to tap, the default marked, and says an answer is posted publicly on the request; beside it, a request the bot offers to file has File it and Not now, and no Something else (#3624), and quotes the message it answers (#3707)",
       "path": "/?demo=1#messages/910005",
-      "expectSelector": "#messages-screen:not(.hidden):has([aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-message:has(.messages-bot-badge) .messages-bot-question[data-bot-question=\"open\"] button[data-bot-answer=\"default\"] .messages-bot-default",
+      "expectSelector": "#messages-screen:not(.hidden):has(.messages-quote ~ * > [aria-label^=\"File this\"] > button:last-child:not(.messages-bot-other)) .messages-message:has(.messages-bot-badge) [data-bot-question=\"open\"] button[data-bot-answer=\"default\"] .messages-bot-default",
       "expectText": "public discussion",
       "id": "homeroom-bot-dm-question",
       "visual": true,

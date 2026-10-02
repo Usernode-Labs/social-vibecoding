@@ -164,6 +164,38 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.deepEqual(stored.metadata, {});
   });
 
+  await t.test('#3707: the bot quotes the message it answers: only the person\'s own, in their DM, still there to read', async () => {
+    const { conversationId } = await conversations.ensureAdmittedDirect(pool, bot.id, ada.id);
+    const asked = await conversations.sendMessage(pool, ada, conversationId, { content: 'Can you sort my list?' });
+    const answered = await dm.sendDm(pool, { bot, userId: ada.id, content: 'On it.', replyToId: asked.message.id });
+    const said = await conversations.getMessage(pool, ada, conversationId, answered.messageId);
+    assert.equal(said.reply.id, asked.message.id);
+    assert.equal(said.reply.content, 'Can you sort my list?');
+    assert.equal(said.reply.sender.id, ada.id);
+    const { rows: [bell] } = await pool.query(
+      'SELECT kind FROM notifications WHERE user_id = $1 AND conversation_message_id = $2', [ada.id, answered.messageId],
+    );
+    assert.equal(bell.kind, 'conversation_reply', 'she hears the bot replied to her, as from a person');
+
+    // Anything else is left off, never the message.
+    const samDm = await conversations.ensureAdmittedDirect(pool, bot.id, sam.id);
+    const elsewhere = await conversations.sendMessage(pool, sam, samDm.conversationId, { content: 'Not Ada\'s' });
+    const deleted = await conversations.sendMessage(pool, ada, conversationId, { content: 'Never mind' });
+    await conversations.deleteMessage(pool, ada, conversationId, deleted.message.id);
+    for (const [why, replyToId] of [
+      ['a message in another conversation', elsewhere.message.id],
+      ['the bot\'s own message', answered.messageId],
+      ['a message she deleted', deleted.message.id],
+      ['no message at all', 'x'],
+    ]) {
+      const sent = await dm.sendDm(pool, { bot, userId: ada.id, content: `Plain: ${why}`, replyToId });
+      assert.ok(sent?.messageId, why);
+      const msg = await conversations.getMessage(pool, ada, conversationId, sent.messageId);
+      assert.equal(msg.content, `Plain: ${why}`, why);
+      assert.equal(msg.reply, null, why);
+    }
+  });
+
   await t.test('nothing reaches a DM for somebody who is not on the list', async () => {
     await setting('homeroom_bot_mode', 'shadow');
     await pool.query(
@@ -192,6 +224,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.deepEqual(message.metadata.homeroomBot.answers, ['Newest first', 'Oldest first']);
     assert.equal(message.metadata.homeroomBot.status, 'open');
     assert.equal(message.metadata.homeroomBot.mirrors, true, 'the reader is told answers are public');
+    assert.equal(message.reply, null, 'a request filed on its page did not start in the DM: nothing to quote');
 
     // The same post relayed twice (a retry) sends once.
     const retry = await dm.relayIssuePost({
@@ -226,6 +259,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(after.metadata.homeroomBot.answer, 'Oldest first');
     const thanks = await conversations.getMessage(pool, ada, sent.conversationId, ack.messageId);
     assert.match(thanks.content, /public discussion/, 'and the bot says where it went');
+    assert.equal(thanks.reply.id, answer.message.id, 'quoting the answer it took');
   });
 
   await t.test('the verdicts export says whether a run\'s question reached the DM, and whether it was answered there', async () => {
@@ -288,6 +322,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(threadPosts.length, 0, 'nothing is posted on a request');
     const text = await conversations.getMessage(pool, ada, asked.conversationId, help.messageId);
     assert.equal(text.content, dm.HELP_TEXT);
+    assert.equal(text.reply.id, hello.message.id);
   });
 
   await t.test('with the model on, free text goes to it; a reply quoting a question still goes to the request', async () => {
@@ -327,6 +362,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       const said = await dm.noteUserMessage(pool, {}, { user: ada, conversationId: asked.conversationId, message: reply.message });
       const text = await conversations.getMessage(pool, ada, asked.conversationId, said.messageId);
       assert.match(text.content, /couldn't post that/);
+      assert.equal(text.reply.id, reply.message.id);
     } finally {
       threadAllowed = true;
     }
@@ -508,16 +544,23 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       assert.notEqual(first, staging.BOT_DM_LEGACY_ID);
       const page = await conversations.listMessages(pool, viewer, first, {});
       const messages = page.messages || page;
-      // #3624 stage 2: a question, and a request it offers to file.
-      assert.equal(messages.length, 2, 'one question and one offer, not one per visit');
-      const question = messages.find((m) => m.metadata.homeroomBot.kind === 'question');
+      // #3624 stage 2: a question, and a request it offers to file. #3707:
+      // the offer answers the viewer's ask, between them, and quotes it.
+      assert.equal(messages.length, 3, 'one question, one ask and one offer, not one per visit');
+      const [question, ask, offer] = [...messages].sort((a, b) => a.id - b.id);
+      assert.equal(question.metadata.homeroomBot.kind, 'question');
       assert.equal(question.metadata.homeroomBot.status, 'open');
       assert.deepEqual(question.metadata.homeroomBot.answers, ['Newest first', 'Oldest first', 'Let me pick each time']);
       assert.match(question.content, /Staging demo/);
-      const offer = messages.find((m) => m.metadata.homeroomBot.kind === 'confirm');
+      assert.equal(question.reply, null, 'news about a request filed elsewhere quotes nothing');
+      assert.equal(ask.sender.id, viewer.id, 'the ask is the viewer\'s own');
+      assert.match(ask.content, /^Staging demo: /);
+      assert.equal(offer.metadata.homeroomBot.kind, 'confirm');
       assert.deepEqual(offer.metadata.homeroomBot.answers, ['File it', 'Not now']);
       assert.notEqual(offer.metadata.homeroomBot.mirrors, true, 'an offer posts nothing, so it says nothing is public');
       assert.match(offer.content, /Staging demo, add a dark mode/);
+      assert.equal(offer.reply.id, ask.id, 'the offer quotes the ask it answers');
+      assert.equal(offer.reply.content, ask.content);
       const { rows } = await pool.query('SELECT 1 FROM homeroom_bot_dm_messages WHERE user_id = $1', [viewer.id]);
       assert.equal(rows.length, 0, 'never a question the bot waits on: nothing is posted anywhere');
     } finally {
@@ -532,6 +575,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     const said = await dm.noteUserMessage(pool, {}, { user: sam, conversationId, message: hi.message });
     const text = await conversations.getMessage(pool, sam, conversationId, said.messageId);
     assert.equal(text.content, dm.NOT_ENABLED_TEXT);
+    assert.equal(text.reply.id, hi.message.id);
     assert.ok(!events.slice(from).some((e) => e.payload.type === 'conversation_typing'), 'no typing for a canned line');
   });
 });

@@ -510,6 +510,73 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.equal(msg.metadata.homeroomBot.kind, 'chat', 'an ordinary answer, no File it');
   });
 
+  await t.test('#3707: each answer quotes the message it answers, and a request she started here is quoted by its news', async () => {
+    const run = (message, steps) => mayor.runDmTurn(pool, CONFIG, {
+      bot, user: ada, settings, conversationId: opened.conversationId, message,
+      deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp },
+    });
+    // Two questions sent before either is answered: each answer points at its own.
+    const first = await say('is Pin notes up for a vote yet?');
+    const second = await say('and what about dark mode?');
+    const answers = await Promise.all([
+      run(first, [[['reply', { text: 'Yes, Pin notes is up for a vote.' }]]]),
+      run(second, [[['reply', { text: 'Dark mode waits for your answer.' }]]]),
+    ]);
+    const [one, two] = await Promise.all(answers.map(read));
+    assert.ok(one.id > second.id && two.id > one.id, 'both answers land after both questions');
+    assert.equal(one.reply.id, first.id);
+    assert.equal(one.reply.content, 'is Pin notes up for a vote yet?');
+    assert.equal(two.reply.id, second.id);
+    // Its set answers quote too.
+    const off = await turn('hello?', async () => { throw new Error('not called'); }, { settings: { ...settings, mode: 'off' } });
+    assert.equal((await read(off)).reply.content, 'hello?');
+
+    // The offer quotes what asked for it; File it is answered quoting the tap.
+    const ask = await say('could you add tags to note board?');
+    const offered = await run(ask, [
+      [['offer_request', { project: 'note-board', title: 'Tags', details: 'Tag notes to find them.' }]],
+      [['reply', { text: 'Want me to file this?' }]],
+    ]);
+    assert.equal((await read(offered)).reply.id, ask.id);
+    const tap = await say('File it', { reply_to_id: offered.messageId });
+    const ack = await read(await mayor.decideOffer(pool, CONFIG, { bot, user: ada, settings, message: tap, deps: {} }));
+    assert.equal(ack.reply.id, tap.id);
+    const n = ack.metadata.homeroomBot.issueNumber;
+    assert.ok(n > 0);
+
+    // Its news later on, from the bot's work on it, quotes where it started.
+    const building = await dm.relayIssuePost({ pool, app: notes, issueNumber: n, kind: 'spec', postId: 37071, bot, dm: { building: true } });
+    assert.equal((await read(building)).reply.id, ask.id);
+    const held = await dm.noteOverAllowance(pool, {
+      settings: { ...settings, userWeeklyCents: 100 }, requester: { userId: ada.id, username: ada.username }, app: notes, issueNumber: n, bot,
+    });
+    assert.equal((await read(held)).reply.id, ask.id);
+    const { rows: [built] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at)
+       VALUES ($1, $2, 'tags', 'promoted', 'Tags', NOW()) RETURNING id`,
+      [notes.id, bot.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, proposal_session_id) VALUES ($1, $2, 'live', 'ready', $3)`,
+      [notes.id, n, built.id],
+    );
+    const live = await dm.noteProposalMerged(pool, { id: built.id });
+    assert.match((await read(live)).content, /approved and is live now/);
+    assert.equal((await read(live)).reply.id, ask.id);
+
+    // A request filed anywhere else started nowhere here; one whose start
+    // she deleted is still told, without the quote.
+    const elsewhere = await dm.relayIssuePost({ pool, app: seeds, issueNumber: 3, kind: 'spec', postId: 37072, bot, dm: { building: true } });
+    assert.equal((await read(elsewhere)).reply, null);
+    await conversations.deleteMessage(pool, ada, opened.conversationId, ask.id);
+    const proposed = await dm.relayIssuePost({
+      pool, app: notes, issueNumber: n, kind: 'proposal', postId: 37073, bot,
+      dm: { link: 'https://app.onhomeroom.com/#app/note-board/dev/proposals/1', sessionId: built.id },
+    });
+    assert.match((await read(proposed)).content, /It's built/);
+    assert.equal((await read(proposed)).reply, null);
+  });
+
   await t.test('another person\'s request is never in reach of her tools', async () => {
     const chat = scripted([
       [['request_detail', { project: 'sam-shop', number: 9 }]],
