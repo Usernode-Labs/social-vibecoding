@@ -191,6 +191,36 @@ test('each sync state draws its own shell, and only two carry a button', () => {
 
 // ── 3. The new-change banner ───────────────────────────────────────────
 
+test('the agent-session strip is one link the owner can tap anywhere on it', () => {
+  // #3081: the strip used to be a notice with a Continue button under it —
+  // two controls saying one thing. The conversation address is the strip's
+  // own href now, so the tap target is the whole row.
+  assert.match(BANNERS_TSX, /<a\s+id="dc-agent-session-banner"/,
+    'the strip itself is the anchor');
+  assert.doesNotMatch(
+    BANNERS_TSX.slice(BANNERS_TSX.indexOf('function AgentSessionBanner'),
+      BANNERS_TSX.indexOf('export function DevChatBanners')),
+    /<div id="dc-agent-session-banner"/,
+    'not a div with a separate button under it');
+});
+
+test('the agent-session strip is one link the owner can tap anywhere on it', () => {
+  // #3081: the strip used to be a notice with a Continue button under it —
+  // two controls saying one thing. The conversation address is the strip's
+  // own href now, so the tap target is the whole row.
+  const html = bannersHtml({
+    sync: null, newChange: null, credits: null, creditsLow: null,
+    agentSession: { href: '#messages/agent/9' },
+  });
+  assert.match(html, /<a[^>]*id="dc-agent-session-banner"[^>]*href="#messages\/agent\/9"/,
+    'the row is the anchor');
+  assert.match(html, /data-agent-session-href="#messages\/agent\/9"/,
+    'the href is published for the route tables that read it');
+  assert.match(html, /This change belongs to one of your agent sessions/);
+  assert.doesNotMatch(html, /<div id="dc-agent-session-banner"/,
+    'not a div with a separate button under it');
+});
+
 test('the new-change banner appears only past the active-editing stage', () => {
   const { DevChat, view } = makeDevChat();
   for (const [status, expected] of [

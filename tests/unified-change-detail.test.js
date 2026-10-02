@@ -474,6 +474,137 @@ test('Continue building navigates to the dev session page from every surface', (
     'the event has no publisher left');
 });
 
+test('a change started from an agent session sends its OWNER to the conversation from every door', () => {
+  const agentChange = { ...failing, agent_session_id: 77 };
+  const av = context();
+  av._mySessions = [agentChange];
+  const source = fs.readFileSync('public/js/app-view.js', 'utf8');
+
+  // The Build door and the ⋯ "Open session" row: openChangeWorkspace reads
+  // the door, openProposalSession re-reads the same item, so the two cannot
+  // disagree about where a tap lands.
+  const workspaceMethod = source.slice(source.indexOf('  openChangeWorkspace(id) {'),
+    source.indexOf('\n  /**', source.indexOf('  openChangeWorkspace(id) {')))
+    .trim().replace(/,$/, '');
+  const proposalMethod = source.slice(source.indexOf('  openProposalSession(sessionId) {'),
+    source.indexOf('\n  // Imported PRs', source.indexOf('  openProposalSession(sessionId) {')))
+    .trim().replace(/,$/, '');
+  let recorded = null;
+  const makeWindow = () => {
+    const loc = { hash: '', get hash() { return recorded || ''; }, set hash(v) { recorded = v; } };
+    return loc;
+  };
+  const win = { location: makeWindow() };
+  const c = { AppView: av, document: { querySelector: () => ({}) } };
+  c.window = win;
+  const openWorkspace = vm.runInNewContext(`({ ${workspaceMethod} }).openChangeWorkspace`, c);
+  openWorkspace(4073);
+  assert.equal(recorded, '#messages/agent/77',
+    'the change page\u2019s Build door leads to the agent conversation');
+
+  recorded = null;
+  av._findItem = (kind, id) => (kind === 'proposal' && Number(id) === 4073 ? agentChange : null);
+  const openProposal = vm.runInNewContext(`({ ${proposalMethod} }).openProposalSession`,
+    { AppView: av, window: { location: makeWindow() } });
+  openProposal(4073);
+  assert.equal(recorded, '#messages/agent/77',
+    'the ⋯ Open session row leads to the same conversation');
+  av._findItem = undefined;
+
+  // A change with no conversation behind it keeps today's dev-session route.
+  const plainAv = context();
+  plainAv._findItem = () => null;
+  plainAv._buildDoorView = () => null;
+  const switched = [];
+  plainAv.App = { user: { id: 42 }, switchTab: (...args) => switched.push(args) };
+  recorded = null;
+  const plainOpen = vm.runInNewContext(`({ ${proposalMethod} }).openProposalSession`,
+    { AppView: plainAv, window: { location: makeWindow() }, App: plainAv.App });
+  plainOpen(4073);
+  assert.equal(recorded, null, 'no hash navigation without an agent session');
+  assert.deepEqual(switched, [['dev', 4073, 'sessions']],
+    'an ordinary change still opens its dev session');
+});
+
+test('the owner deep-linking the dev-session route lands in the agent conversation', async () => {
+  const agentChange = { ...failing, agent_session_id: 77 };
+  const av = context();
+  const unmounted = [];
+  const container = { innerHTML: '', querySelector: () => null };
+  av._devContainer = () => container;
+  av._hasCurrentAppRecord = () => true;
+  av._loadDevData = async () => {};
+  av._renderSessionTranscriptPage = async () => false;
+  av._reactDevBoard = () => ({ publishTopicHead() {}, mountChangePage() {}, unmount(el) { unmounted.push(el); } });
+  const renderChat = [];
+  const DevChat = {
+    NEW_SESSION_REF: 'new', currentSession: null, sessions: [],
+    stagingPanel: { open: false }, specViewer: { open: false, sessionId: null },
+    reset() { DevChat.currentSession = null; },
+    async loadSessions() {},
+    async openSession(id) { DevChat.currentSession = { ...agentChange, id: Number(id) }; },
+    renderChatView() { renderChat.push(true); },
+    startActiveSessionsPoll() {}, stopActiveSessionsPoll() {}, renderSessionList() {},
+  };
+  let recordedHash = null;
+  const loc = { search: '', hash: '', pathname: '/',
+    set hash(v) { recordedHash = v; }, get hash() { return recordedHash || ''; } };
+  const c = { AppView: av, DevChat,
+    App: { user: { id: 42 }, currentApp: 'example', currentTab: 'dev', switchTab() {} },
+    document: { getElementById: (id) => (id === 'dev-section' ? container : null),
+      querySelector: () => null, querySelectorAll: () => ({ forEach: () => {} }),
+      createElement: () => ({ classList: { add() {}, remove() {} }, style: {} }), body: { appendChild() {} } },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    addEventListener() {}, localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
+    sessionStorage: { getItem: () => null, setItem() {} },
+    relTime: () => 'just now', escapeHtml: (s) => String(s), escapeAttr: (s) => String(s),
+    location: loc, URLSearchParams, PlatformUI: { isTouch: () => false, toast() {} } };
+  c.window = { location: loc };
+  c.globalThis = c;
+  const src = fs.readFileSync('public/js/app-view.js', 'utf8');
+  const start = src.indexOf('async renderDevChatTab(restoreSessionId', src.indexOf('  // Forum revision'));
+  const end = src.indexOf('\n  // Fetch the current secrets summary', start);
+  const method = src.slice(start, end).trim().replace(/,$/, '');
+  const { renderDevChatTab } = vm.runInNewContext(`({ ${method} })`, c);
+  const render = renderDevChatTab;
+  await render(4073);
+  assert.equal(recordedHash, '#messages/agent/77',
+    'the deep link hands the owner to the conversation, not a 409-ing chat');
+  assert.deepEqual(renderChat, [], 'the 409-ing dev chat never renders');
+  assert.deepEqual(unmounted, [], 'no board teardown is involved');
+});
+
+test('the Messages-side change row names the conversation, not the 409-ing dev chat', () => {
+  // The spec's door covers every surface; the Messages inbox's own change
+  // row is one of them. `inboxSessionView` rewrites the href for a session
+  // that carries an agent session id; a plain change keeps the dev route.
+  const SCREEN = fs.readFileSync('frontend/src/features/messages/index.tsx', 'utf8');
+  const body = SCREEN.slice(SCREEN.indexOf('function inboxSessionView'),
+    SCREEN.indexOf('\nconst AgentSessionRow'));
+  // The slice is TypeScript; strip the annotations the body carries so the
+  // plain-JS Function constructor can run it.
+  const jsBody = body.replace('function inboxSessionView(session: SessionRowView): SessionRowView {',
+    'function inboxSessionView(session) {');
+  const fn = new Function('session', 'agentThreadAddress', `${jsBody}\nreturn inboxSessionView(session);`);
+  const inboxSessionView = (session) => fn(session,
+    (t) => (t.kind === 'agent' ? `#messages/agent/${t.id}` : `#messages/session/${t.slug}/${t.id}`));
+  const row = (over) => ({
+    key: 's4073', kind: 'session', id: 4073, appSlug: 'example', appName: 'Example',
+    icon: { kind: 'letter', letter: 'E' }, title: 'Authenticate previews',
+    href: '#app/example/dev/proposals/4073', status: 'Ready', busy: false,
+    awaitingInput: false, ...over,
+  });
+  assert.equal(inboxSessionView(row({ agentSessionId: 77 })).href,
+    '#messages/agent/77', 'an agent-session change opens its conversation');
+  assert.equal(inboxSessionView(row({})).href,
+    '#messages/session/example/4073', 'a plain change keeps its inbox dev-session address');
+  const task = { key: 't1', kind: 'task', id: 5, appSlug: null, appName: 'Example',
+    icon: { kind: 'letter', letter: 'E' }, title: 'Work order', href: '#app/example/dev/proposals/5',
+    status: 'Handed off', busy: false, awaitingInput: false, agentSessionId: null };
+  assert.equal(inboxSessionView(task).href, task.href, 'a work order keeps its destination');
+});
+
 test('an old ?conversation=workspace link lands on the dev session page', () => {
   const av = context();
   const source = fs.readFileSync('public/js/app-view.js', 'utf8');

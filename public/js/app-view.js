@@ -4408,9 +4408,13 @@ const AppView = {
       if (body.build) {
         onBand.push({
           key: 'build', cls: 'gc-vote-btn', label: body.build.label,
-          title: body.build.kind === 'owner'
-            ? 'Open the dev session behind this change'
-            : 'Read the dev chat that built this change',
+          // #3081: for the owner of a change an agent session started, the
+          // door opens the conversation, so the tooltip names that.
+          title: body.build.agentSessionId
+            ? 'Open the agent conversation behind this change'
+            : body.build.kind === 'owner'
+              ? 'Open the dev session behind this change'
+              : 'Read the dev chat that built this change',
           act: { fn: 'openChangeWorkspace', args: [item.id] },
         });
       }
@@ -13031,7 +13035,11 @@ const AppView = {
       items.push({
         label: 'Open session',
         icon: 'session',
-        title: 'Open the dev session behind this proposal',
+        // #3081: for a change an agent session started, this opens the
+        // conversation now, so the tooltip names what it actually opens
+        // rather than the dev chat it used to.
+        title: pr.agent_session_id ? 'Open the agent conversation behind this proposal'
+          : 'Open the dev session behind this proposal',
         act: () => AppView.openProposalSession(pr.id),
       });
     }
@@ -15497,8 +15505,21 @@ const AppView = {
   // proposal.
   // "Open session" on a proposal card — jump into the dev session
   // behind the proposal (proposer only; sessions are owner-scoped).
+  // #3081/#2779: a change the owner started from an agent session is
+  // revised in that conversation — its own dev chat takes no new
+  // messages (the chat route answers 409 for it) — so this hands the
+  // change to the conversation instead of its 409-ing dev session
+  // page. Other members' reads of the change are not the owner's
+  // routes and never come through here.
   openProposalSession(sessionId) {
     if (!sessionId) return;
+    const item = typeof AppView._findItem === 'function'
+      ? AppView._findItem('proposal', sessionId) : null;
+    const door = item ? AppView._buildDoorView(item) : null;
+    if (door && door.agentSessionId) {
+      window.location.hash = `#messages/agent/${door.agentSessionId}`;
+      return;
+    }
     if (typeof App !== 'undefined' && App.switchTab) {
       App.switchTab('dev', sessionId, 'sessions');
     }
@@ -20850,6 +20871,23 @@ const AppView = {
     if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
       if (await AppView._renderSessionTranscriptPage(restoreSessionId)) return;
       return unavailable();
+    }
+
+    // #3081/#2779: the owner reached the 409-ing dev-session page anyway —
+    // an old bookmark, Back, a link that pre-dates the conversation
+    // routes. The change belongs to its agent conversation; render it and
+    // the strip would only say to leave, so hand the session over here
+    // instead. The same door `_buildDoorView` draws the owner's pill and
+    // the ⋯ row from decides it, so a deep link cannot disagree with the
+    // surfaces that open this route. Other members never reach this: the
+    // workspace GET answers them 404 and the published-chat branch above
+    // returns first.
+    if (!embedded
+        && DevChat.currentSession.agent_session_id
+        && Number(DevChat.currentSession.user_id) === Number(App.user?.id)
+        && AppView._buildDoorView(DevChat.currentSession)?.agentSessionId) {
+      window.location.hash = `#messages/agent/${DevChat.currentSession.agent_session_id}`;
+      return;
     }
 
     // #846: an imported PR has NO dev chat — its code lives on GitHub and

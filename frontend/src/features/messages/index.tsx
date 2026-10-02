@@ -464,6 +464,17 @@ const AgentChatRow = memo(function AgentChatRow({ chat, active }: { chat: AgentC
  * keeps its own destination.
  */
 function inboxSessionView(session: SessionRowView): SessionRowView {
+  // #3081: a change the OWNER started from an agent session is revised in
+  // that conversation (#2779) — its dev chat takes no new messages — so the
+  // row leads there instead of the dev-session route the 409 guard sends
+  // back. Every surface the door drives must name the same place; this row
+  // is the Messages-side of that door. A work order keeps its destination.
+  if (session.kind === 'session' && session.agentSessionId) {
+    return {
+      ...session,
+      href: agentThreadAddress({ kind: 'agent', id: session.agentSessionId }),
+    };
+  }
   if (session.kind !== 'session' || !session.appSlug) return session;
   return {
     ...session,

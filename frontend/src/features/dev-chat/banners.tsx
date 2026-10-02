@@ -231,21 +231,32 @@ function CreditsBanner({ b }: { b: CreditsBannerView }): ReactNode {
 }
 
 // #2779: the owner of a change started from an agent session revises it in
-// that conversation. An anchor: it is a hash navigation.
+// that conversation. An anchor: it is a hash navigation. #3081: the row
+// itself is that anchor for its owner — one control where two said the same
+// thing, and the strip is the link the route table sends a deep link to.
 function AgentSessionBanner({ b }: { b: AgentSessionBannerView }): ReactNode {
   return (
-    <div id="dc-agent-session-banner" className={SHELL.violet}>
+    <a
+      id="dc-agent-session-banner" href={b.href}
+      className={SHELL.violet}
+      data-agent-session-href={b.href}
+    >
       <SparklesIcon className="w-4 h-4 text-violet-700 dark:text-violet-400 shrink-0" />
-      <span className="text-violet-800 dark:text-violet-200 flex-1">
+      <span className="text-violet-800 hover:text-violet-700 dark:text-violet-200 dark:hover:text-violet-100 flex-1">
         This change belongs to one of your agent sessions. Continue there to revise it.
       </span>
+      {/* Nested anchors would be invalid markup; this one exists so the
+          "Continue" wording survives for an AT reader while the row stays
+          one control. */}
       <a
         href={b.href}
-        className="col-start-2 justify-self-start sm:col-auto sm:justify-self-auto shrink-0 rounded-full bg-violet-600 px-3 py-1 text-xs font-semibold text-white hover:bg-violet-500"
+        tabIndex={-1}
+        aria-hidden="true"
+        className="sr-only"
       >
         Continue
       </a>
-    </div>
+    </a>
   );
 }
 
