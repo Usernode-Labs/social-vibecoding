@@ -506,7 +506,11 @@ function isStagingMockIssueNumber(number) {
 }
 
 // #3490: the spec comment the Homeroom bot posts when it starts building a
-// request, word for word as specCommentText writes it, around a short spec.
+// request, word for word as specCommentText writes it. #3693: around a spec
+// as long as a real one, so this route clips it (clipIssueComments, 2,000
+// characters) and cuts its closing `</details>` off, as it does a real one;
+// a short spec here is how the request page could pass every check and
+// still show the raw markers on every real request.
 const MOCK_BOT_SPEC_COMMENT = [
   '[Mock] Homeroom bot wrote a spec for this request and is building it now. It is here for reference: '
     + 'nobody needs to approve it, and the proposal will be linked here when it is up.',
@@ -526,6 +530,41 @@ const MOCK_BOT_SPEC_COMMENT = [
   '## Design',
   '',
   'The card\'s action row wraps rather than scrolls, and each button keeps its 44px tap target.',
+  '',
+  '### Assumptions',
+  '',
+  '- "Small phones" means anything 375 pixels wide or narrower, in portrait.',
+  '- The order of the buttons stays the same when they wrap: Vote first, then Preview.',
+  '- Landscape already has room for both buttons on one line, so it is left as it is.',
+  '',
+  '## Technical approach',
+  '',
+  'The proposal card\'s action row is a flex row with `flex-wrap: nowrap` and a fixed gap. It becomes '
+    + '`flex-wrap: wrap`, with the gap applied on both axes so the second line sits as far below the first '
+    + 'as the buttons sit apart. Each button keeps `min-height: 44px` and stops shrinking below its label, so '
+    + 'a long translated label wraps the row instead of squeezing the text.',
+  '',
+  'The vote count beside the buttons moves with the first line. It is not allowed to wrap on its own, so it '
+    + 'never ends up alone on a line under the buttons it counts.',
+  '',
+  '## Files',
+  '',
+  '- The proposal card\'s action row component, for the wrap and the gap.',
+  '- The card\'s stylesheet, for the minimum button height on narrow screens.',
+  '- The card\'s unit test, for a row that wraps at 320 pixels and stays on one line at 768.',
+  '',
+  '## Testing',
+  '',
+  '1. Open the Workshop on a phone in portrait, or a desktop window 320 pixels wide.',
+  '2. Find a proposal card with both a Vote and a Preview button.',
+  '3. Both buttons are whole, on screen, and at least 44 pixels tall; tapping each one works.',
+  '4. Widen the window past 768 pixels: the buttons are back on one line, exactly as before.',
+  '',
+  '## Out of scope',
+  '',
+  '- The card\'s title and summary, which already wrap.',
+  '- The Board\'s columns view, whose cards carry no Preview button.',
+  '- Any change to what Vote or Preview do when they are tapped.',
   '',
   '</details>',
 ].join('\n');
@@ -626,6 +665,34 @@ function stagingMockIssueComments(number) {
     },
     longReply(),
   ];
+}
+
+// #3693: an issue's GitHub comments as its request page shows them, without
+// the Homeroom bot's comments that the issue's own thread already carries.
+// The bot posts everything twice, as a GitHub comment and as its message in
+// the thread (services/homeroom-bot-live.js post), and the page draws the
+// two threads one above the other, so each post read twice: "Homeroom bot
+// is looking at this request" over the same line from homeroom_bot, and the
+// spec's comment over its spec card. The thread copy is the one kept: it
+// tags people and carries the card. Matched by the comment ids the bot
+// recorded (threadCopiedCommentIds), never by text or author, so a person's
+// comment and a bot comment with no thread copy always stay. Best-effort:
+// when the lookup fails the thread is shown whole, as before; a line said
+// twice is better than one lost.
+async function withoutBotThreadCopies(pool, appId, issueNumber, comments) {
+  const list = Array.isArray(comments) ? comments : [];
+  if (!list.some((c) => c && c.id != null)) return list;
+  let copied;
+  try {
+    copied = await require('../services/homeroom-bot-live').threadCopiedCommentIds(pool, appId, issueNumber);
+  } catch (err) {
+    log.warn('issues', 'Could not read the Homeroom bot posts (showing the whole thread)', {
+      appId, issueNumber, err: err.message,
+    });
+    return list;
+  }
+  if (!copied || !copied.size) return list;
+  return list.filter((c) => !(c && c.id != null && copied.has(String(c.id))));
 }
 
 // Pick the "In progress" chip's link destination from an issue's live
@@ -2271,7 +2338,8 @@ function issueRoutes(config) {
   // view's comment section. Lazy — fetched only when a viewer opens an
   // issue topic, never as part of the list payload, so the panel's
   // rate-limit cost is unchanged. Collab-gated like the list route above.
-  // Returns `{ comments: [{ author, body, createdAt }], truncated, note? }`;
+  // Returns `{ comments: [{ author, body, createdAt }], truncated, note? }`,
+  // without the Homeroom bot's comments its thread already carries (#3693);
   // github.fetchIssueComments never throws (failures degrade to an empty
   // list with a note). In staging the thread is backed by mock comments
   // when the live fetch is empty/unavailable, so the section is reviewable.
@@ -2313,12 +2381,17 @@ function issueRoutes(config) {
       }
 
       const raw = await github.fetchIssueComments(parsed.owner, parsed.repo, number);
-      let { comments, truncated } = github.clipIssueComments(raw.comments, { wasTruncated: raw.truncated });
+      // #3693: the bot's posts the issue's thread already shows are left
+      // out before the clip, so they never take one of its places.
+      const shown = await withoutBotThreadCopies(pool, app.id, number, raw.comments);
+      let { comments, truncated } = github.clipIssueComments(shown, { wasTruncated: raw.truncated });
 
       // Staging-only fallback: an empty (or degraded) live thread would
       // render nothing in the preview — substitute mocks so the section is
-      // reviewable. Strictly a no-op in production.
-      if (IS_STAGING && comments.length === 0) {
+      // reviewable. Strictly a no-op in production. Empty as GitHub sent it:
+      // a thread emptied only by leaving out the bot's thread copies is what
+      // a preview should show, not a gap to fill with fixtures.
+      if (IS_STAGING && (raw.comments || []).length === 0) {
         const clipped = github.clipIssueComments(stagingMockIssueComments(number));
         comments = clipped.comments;
         truncated = clipped.truncated;

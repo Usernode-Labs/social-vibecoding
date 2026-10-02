@@ -12005,9 +12005,15 @@ const AppView = {
   // comment's own lines. Split, the sentence stays the comment and the spec
   // is drawn as a spec: its "# " title, and the rest as the spec viewer
   // draws it. A bot's comment only, and only that shape; null otherwise.
+  //
+  // #3693: the closing `</details>` is optional. The comments route clips
+  // every body at 2,000 characters (github.clipIssueComments) and a spec is
+  // nearly always longer, so on a real request the close was cut off, this
+  // matched nothing, and the markers were back on screen as text. A clipped
+  // spec is drawn as a spec too, ending in the clip's own "… [truncated]".
   _botSpecOf(c) {
     if (!c || !AppView._isBotCommentAuthor(c.author)) return null;
-    const m = /^([\s\S]*?)<details>\s*<summary>\s*The spec\s*<\/summary>([\s\S]*?)<\/details>\s*$/
+    const m = /^([\s\S]*?)<details>\s*<summary>\s*The spec\s*<\/summary>([\s\S]*?)(?:<\/details>\s*)?$/
       .exec(String(c.body || ''));
     if (!m) return null;
     const lines = m[2].split('\n');

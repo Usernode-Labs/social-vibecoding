@@ -30,7 +30,10 @@
 // Every post goes to two places: a GitHub comment on the issue, and a
 // message from the bot's own user in the issue's Homeroom discussion thread
 // (an ordinary message since #3288, drawn as its bubble; it used to be a
-// system line). Every post is recorded in homeroom_bot_posts.
+// system line). Every post is recorded in homeroom_bot_posts. The request
+// page draws both threads, so it shows each post once: the GitHub copy of a
+// post whose thread copy landed is left out there (#3693,
+// threadCopiedCommentIds).
 //
 // ── The loop this must never start ───────────────────────────────────────
 //
@@ -959,6 +962,30 @@ async function postOnProposal({ pool, ws, app, issueNumber, runId = null, kind, 
 }
 
 /**
+ * #3693: the bot's GitHub comments on this issue that its Homeroom thread
+ * already carries, as GitHub comment ids (strings: the column is a BIGINT,
+ * which pg hands back as text). `post` says everything in both places, and
+ * the request page, which draws both threads, leaves these out of its
+ * GitHub half (routes/issues.js withoutBotThreadCopies). Only a post whose
+ * copy in THIS issue's thread landed and still stands: when the thread send
+ * failed, or the message was deleted, the GitHub comment is the one place
+ * it was said, and it stays. GitHub itself keeps every comment.
+ */
+async function threadCopiedCommentIds(pool, appId, issueNumber) {
+  const { rows } = await pool.query(
+    `SELECT p.github_comment_id
+       FROM homeroom_bot_posts p
+       JOIN chat_messages m
+         ON m.id = p.thread_message_id AND m.app_id = p.app_id
+        AND m.thread_type = 'issue' AND m.thread_ref = p.issue_number
+        AND m.deleted_at IS NULL
+      WHERE p.app_id = $1 AND p.issue_number = $2 AND p.github_comment_id IS NOT NULL`,
+    [appId, issueNumber],
+  );
+  return new Set(rows.map((r) => String(r.github_comment_id)));
+}
+
+/**
  * The GitHub account the bot comments as, or null when it cannot be read.
  * `github.getBotUsername()` is async. Used unawaited, the Promise reached
  * the triage seed, where tagging a GitHub comment called .toLowerCase() on
@@ -1564,6 +1591,7 @@ module.exports = {
   MAX_MENTIONS,
   post,
   postOnProposal,
+  threadCopiedCommentIds,
   advanceSeen,
   botUsernameOf,
   openBotProposal,
