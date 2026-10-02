@@ -674,7 +674,7 @@ const SHOT = (n) => n.repeat(32);
 // The board route answers JSON; `/issue-images/<id>` answers whatever
 // `images[id]` says: { bytes, contentType?, contentLength? }, { status },
 // or { throws }. An id with no entry is a 404, like a GC'd orphan.
-function imageConnector(issues, images, { delegation = null } = {}) {
+function imageConnector(issues, images, { delegation = null, imageInput } = {}) {
   const calls = [];
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
@@ -709,7 +709,7 @@ function imageConnector(issues, images, { delegation = null } = {}) {
     user: { id: 7, username: 'ada' },
     clientName: 'Claude', clientId: 'c1',
     origin: ORIGIN, baseUrl: 'http://platform.internal',
-    pool: null, config: {}, tokenId: null, grantId: null, delegation,
+    pool: null, config: {}, tokenId: null, grantId: null, delegation, imageInput,
   });
   return { handlers, specs, calls, restore: () => { globalThis.fetch = realFetch; } };
 }
@@ -822,7 +822,7 @@ test('get_request leaves out an image a provider would refuse, and still answers
   }
 });
 
-test('get_request skips the pictures when asked, and for the Mayor', async () => {
+test('get_request skips the pictures when asked, and for a model that cannot see them', async () => {
   const issues = [{ number: 5, title: 'Five', body: `![s](https://app.onhomeroom.com/issue-images/${SHOT('f')})` }];
   const images = { [SHOT('f')]: { bytes: pngBytes(100, 100) } };
 
@@ -837,14 +837,22 @@ test('get_request skips the pictures when asked, and for the Mayor', async () =>
     optedOut.restore();
   }
 
-  // The Mayor's shim keeps only text blocks, so nothing is fetched for it.
-  const mayor = imageConnector(issues, images, { delegation: { kind: 'agent_mayor' } });
+  // The Mayor's shim says what its turn's model can do. A text-only model is
+  // fetched nothing; one that can look gets the pictures like anyone else.
+  const textOnly = imageConnector(issues, images, { delegation: { kind: 'agent_mayor' }, imageInput: false });
   try {
-    const result = await mayor.handlers.get('get_request')({ slug: 'recipe-box', number: 5 });
+    const result = await textOnly.handlers.get('get_request')({ slug: 'recipe-box', number: 5 });
     assert.equal(result.structuredContent.images[0].reason, 'not_requested');
-    assert.deepEqual(mayor.calls.map((x) => x.pathname), ['/api/apps/recipe-box/github-issues']);
+    assert.deepEqual(textOnly.calls.map((x) => x.pathname), ['/api/apps/recipe-box/github-issues']);
   } finally {
-    mayor.restore();
+    textOnly.restore();
+  }
+  const seeing = imageConnector(issues, images, { delegation: { kind: 'agent_mayor' }, imageInput: true });
+  try {
+    const result = await seeing.handlers.get('get_request')({ slug: 'recipe-box', number: 5 });
+    assert.deepEqual(result.content.map((b) => b.type), ['text', 'text', 'image']);
+  } finally {
+    seeing.restore();
   }
 
   // The coding agent inside a worker gets them: its bridge passes content on.

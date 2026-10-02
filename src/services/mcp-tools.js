@@ -1581,6 +1581,10 @@ function registerTools(server, ctx) {
   const {
     accessToken, scopes, user, clientName, clientId, origin, pool, baseUrl, config,
     tokenId, grantId, delegation = null,
+    // Whether the model on the other end can look at pictures. An external
+    // client leaves it unset and gets them; the Mayor's in-process shim says
+    // what its turn's model can do (mayor/mcp-shim.js).
+    imageInput,
   } = ctx;
   // #2779: one registry, three kinds of caller. The kind comes from the
   // token's delegation (none means an external client that went through
@@ -2319,11 +2323,10 @@ function registerTools(server, ctx) {
         ? `Request #${wanted} was not among this app's open requests, but the board could not be read in full (${note}) — it may exist.`
         : `Request #${wanted} is not open on this app. Check list_requests.`);
     }
-    // The Mayor's shim keeps only the text blocks of a result
-    // (services/mayor/mcp-shim.js), so fetching pictures for it would move
-    // megabytes to be thrown away. It still gets the list, and the links.
+    // A caller whose model cannot look at pictures (`imageInput: false`)
+    // still gets the list, and the links, but nothing is fetched for it.
     const pictures = await requestImages(baseUrl, origin, wanted, match.body, {
-      include: includeImages !== false && kind !== 'agent_mayor',
+      include: includeImages !== false && imageInput !== false,
     });
     return readResult('get_request', {
       ...shapeRequest(match, { bodyMax: MAX_REQUEST_BODY_CHARS }),

@@ -36,6 +36,9 @@ const { READ_SCOPE, SERVER_NAME, SERVER_VERSION } = require('../mcp-connect-cons
 
 const SESSION_RATE_PER_MINUTE = 120;
 const MAX_RESULT_CHARS = 24 * 1024;
+// At most this many pictures reach the model in one turn, across all of its
+// tool calls: each one is sent again on every later round of the turn.
+const MAX_TURN_IMAGES = 6;
 
 // Where a tool's loopback calls land. The pod's own port rather than the
 // in-cluster service, so a call made for this turn is answered by the process
@@ -57,15 +60,69 @@ function toModelTools(mcpTools) {
 }
 
 // One tool result, flattened to what the Mayor loop needs: whether it failed,
-// the structured payload for code, and the text the model reads (bounded).
+// the structured payload for code, the text the model reads (bounded), and
+// any pictures. get_request returns a request's screenshots as image blocks,
+// each straight after a Homeroom line that names it; that line travels with
+// its picture in `images` rather than in `text`, so clipping a long text
+// never separates a picture from what it is. A shim opened without
+// `imageInput` is never sent any, and `images` stays empty.
 function normalizeResult(result) {
   const content = Array.isArray(result && result.content) ? result.content : [];
-  const text = content.filter((block) => block && block.type === 'text').map((block) => block.text).join('\n');
+  const isImage = (block) => !!block && block.type === 'image'
+    && typeof block.data === 'string' && typeof block.mimeType === 'string';
+  const text = content
+    .filter((block, i) => block && block.type === 'text' && !isImage(content[i + 1]))
+    .map((block) => block.text)
+    .join('\n');
+  const images = [];
+  content.forEach((block, i) => {
+    if (!isImage(block)) return;
+    const before = content[i - 1];
+    images.push({
+      label: before && before.type === 'text' ? before.text : null,
+      mimeType: block.mimeType,
+      data: block.data,
+    });
+  });
   return {
     isError: !!(result && result.isError),
     structured: (result && result.structuredContent) || null,
     text: text.length > MAX_RESULT_CHARS ? `${text.slice(0, MAX_RESULT_CHARS)}… [truncated]` : text,
+    images,
   };
+}
+
+// One turn's allowance of pictures. Returns a function that keeps as many of
+// a result's pictures as are left and says how many it dropped.
+function turnImageBudget(max = MAX_TURN_IMAGES) {
+  let left = max;
+  return (answer) => {
+    const images = Array.isArray(answer && answer.images) ? answer.images : [];
+    const kept = images.slice(0, Math.max(0, left));
+    left -= kept.length;
+    return { ...answer, images: kept, omitted: images.length - kept.length };
+  };
+}
+
+// A normalized result as Anthropic tool_result content: the plain text when
+// there are no pictures, otherwise the text, then each picture after its
+// line. A provider client that cannot show pictures turns these back into
+// placeholder lines (openrouter-mayor.js).
+function toolResultContent(answer) {
+  const images = Array.isArray(answer && answer.images) ? answer.images : [];
+  const omitted = Number(answer && answer.omitted) || 0;
+  const note = omitted > 0
+    ? `[Homeroom: ${omitted} more screenshot${omitted === 1 ? '' : 's'} left out: this turn has shown as many as it may. Their links are in \`images\` above.]`
+    : '';
+  const text = [String((answer && answer.text) || ''), note].filter(Boolean).join('\n');
+  if (!images.length) return text;
+  return [
+    ...(text ? [{ type: 'text', text }] : []),
+    ...images.flatMap((image) => [
+      ...(image.label ? [{ type: 'text', text: image.label }] : []),
+      { type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.data } },
+    ]),
+  ];
 }
 
 async function openMayorMcp({
@@ -82,6 +139,10 @@ async function openMayorMcp({
   // with no session (the Homeroom bot's DM, #3624) names one per person, so
   // two people never share a bucket.
   rateSubject = null,
+  // Whether the model this turn talks to can look at pictures. Only then do
+  // the tools fetch any (get_request's screenshots): for a text-only model
+  // they would be megabytes moved to be thrown away.
+  imageInput = false,
 }) {
   const issued = await mcpOauth.issueDelegatedAccess(pool, {
     userId, kind: 'agent_mayor', agentSessionId, appId, changeId, scopes, ttlSeconds,
@@ -129,6 +190,7 @@ async function openMayorMcp({
       baseUrl: baseUrl || loopbackBaseUrl(config),
       pool,
       config,
+      imageInput: imageInput === true,
     });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     await server.connect(serverTransport);
@@ -202,8 +264,11 @@ async function openMayorMcp({
 module.exports = {
   SESSION_RATE_PER_MINUTE,
   MAX_RESULT_CHARS,
+  MAX_TURN_IMAGES,
   loopbackBaseUrl,
   toModelTools,
   normalizeResult,
+  turnImageBudget,
+  toolResultContent,
   openMayorMcp,
 };

@@ -49,10 +49,23 @@ const REASONING_EFFORT_ORDER = Object.freeze(['minimal', 'low', 'medium', 'high'
 // rows and the coding agent's rows do, so model-costs normalizes all three.
 const MODEL_LABEL_PREFIX = 'openrouter/';
 
-// The Codex runner gives OpenRouter models text input only
-// (worker/build-codex-model-catalog.js). The Mayor follows the same rule, so
-// an image attachment reaches it as a line naming the image, not its bytes.
+// The Codex runner gives an OpenRouter model image input only when the
+// catalog lists it (#3426, worker/build-codex-model-catalog.js). The Mayor
+// follows the same rule: for any other model a picture (a user's attachment,
+// or a request's screenshot in a tool result) reaches it as a line, not bytes.
 const IMAGE_PLACEHOLDER = '[image attachment omitted: this model reads text only]';
+// The line instead when the model takes pictures but the provider refused a
+// request that carried some, and it was sent again without them.
+const IMAGE_REFUSED_PLACEHOLDER = '[image omitted: the model provider could not read it]';
+
+function isBase64Image(block) {
+  return !!block && block.type === 'image' && block.source?.type === 'base64'
+    && typeof block.source.media_type === 'string' && typeof block.source.data === 'string';
+}
+
+function imagePart(block) {
+  return { type: 'image_url', image_url: { url: `data:${block.source.media_type};base64,${block.source.data}` } };
+}
 
 // #3557: a PDF the user attached reaches the Mayor as an Anthropic document
 // block (attachments.js). It is passed on as an OpenRouter file part only
@@ -95,14 +108,14 @@ function bareModelId(modelId) {
   return String(modelId || '').trim().replace(/^openrouter\//, '');
 }
 
-function textOfBlocks(content) {
+function textOfBlocks(content, imagePlaceholder = IMAGE_PLACEHOLDER) {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content.map((block) => {
     if (typeof block === 'string') return block;
     if (!block || typeof block !== 'object') return '';
     if (block.type === 'text' && typeof block.text === 'string') return block.text;
-    if (block.type === 'image') return IMAGE_PLACEHOLDER;
+    if (block.type === 'image') return imagePlaceholder;
     if (block.type === 'document') return documentPlaceholder(block);
     return '';
   }).filter(Boolean).join('\n\n');
@@ -130,7 +143,14 @@ function toolCallArguments(input) {
 //     they must come FIRST, straight after the assistant message whose calls
 //     they answer. Any text in the same user turn follows as a user message.
 // Thinking blocks are the provider's own and never replayed.
-function toChatMessages(systemPrompt, messages, { fileInput = false } = {}) {
+//
+// With `imageInput`, pictures go to the model as image parts. A `tool`
+// message carries text only, so a tool result's pictures (a request's
+// screenshots, each after the line that names it) move to the user message
+// that follows the results, and the tool message says they are coming.
+function toChatMessages(systemPrompt, messages, {
+  fileInput = false, imageInput = false, imagePlaceholder = IMAGE_PLACEHOLDER,
+} = {}) {
   const out = [];
   const system = systemText(systemPrompt);
   if (system) out.push({ role: 'system', content: system });
@@ -163,9 +183,28 @@ function toChatMessages(systemPrompt, messages, { fileInput = false } = {}) {
       continue;
     }
     const rest = [];
+    const shown = [];
     for (const block of content) {
       if (block && block.type === 'tool_result') {
-        const resultText = textOfBlocks(block.content);
+        const blocks = Array.isArray(block.content) ? block.content : [];
+        const pictures = imageInput ? blocks.filter(isBase64Image) : [];
+        let resultText;
+        if (pictures.length) {
+          const isLabel = (b, i) => b && b.type === 'text' && isBase64Image(blocks[i + 1]);
+          blocks.forEach((b, i) => {
+            if (!isBase64Image(b)) return;
+            if (isLabel(blocks[i - 1], i - 1)) shown.push({ type: 'text', text: blocks[i - 1].text });
+            shown.push(imagePart(b));
+          });
+          resultText = [
+            textOfBlocks(blocks.filter((b, i) => !isBase64Image(b) && !isLabel(b, i)), imagePlaceholder),
+            pictures.length === 1
+              ? '[Homeroom: 1 picture from this result follows after the tool results.]'
+              : `[Homeroom: ${pictures.length} pictures from this result follow after the tool results.]`,
+          ].filter(Boolean).join('\n\n');
+        } else {
+          resultText = textOfBlocks(block.content, imagePlaceholder);
+        }
         out.push({
           role: 'tool',
           tool_call_id: String(block.tool_use_id || ''),
@@ -176,11 +215,15 @@ function toChatMessages(systemPrompt, messages, { fileInput = false } = {}) {
       }
     }
     const files = fileInput ? rest.filter(isPdfDocument) : [];
-    const text = textOfBlocks(files.length ? rest.filter((block) => !isPdfDocument(block)) : rest);
-    if (files.length) {
+    const own = imageInput ? rest.filter(isBase64Image) : [];
+    const text = textOfBlocks(
+      rest.filter((block) => !files.includes(block) && !own.includes(block)), imagePlaceholder,
+    );
+    const parts = [...files.map(filePart), ...own.map(imagePart), ...shown];
+    if (parts.length) {
       out.push({
         role: 'user',
-        content: [...(text ? [{ type: 'text', text }] : []), ...files.map(filePart)],
+        content: [...(text ? [{ type: 'text', text }] : []), ...parts],
       });
     } else if (text) {
       out.push({ role: 'user', content: text });
@@ -232,16 +275,23 @@ function reasoningEffortFor(catalogModel) {
 }
 
 function hasFileParts(request) {
+  return hasParts(request, 'file');
+}
+
+function hasParts(request, type) {
   return Array.isArray(request?.messages) && request.messages.some((m) => (
-    Array.isArray(m.content) && m.content.some((part) => part && part.type === 'file')
+    Array.isArray(m.content) && m.content.some((part) => part && part.type === type)
   ));
 }
 
 function buildRequest({
   model, reasoningEffort, systemPrompt, messages, tools, toolChoice, maxTokens, sessionId, fileInput = false,
+  imageInput = false, imagePlaceholder = IMAGE_PLACEHOLDER,
 }) {
   const chatTools = toChatTools(tools);
-  const chatMessages = toChatMessages(systemPrompt, messages, { fileInput: fileInput === true });
+  const chatMessages = toChatMessages(systemPrompt, messages, {
+    fileInput: fileInput === true, imageInput: imageInput === true, imagePlaceholder,
+  });
   const request = {
     model: bareModelId(model),
     messages: chatMessages,
@@ -414,6 +464,8 @@ function createClient({
   const reasoningEffort = reasoningEffortFor(catalogModel);
   // #3557: PDFs go through only for a model the catalog lists as taking files.
   const fileInput = catalogModel?.supportsFiles === true;
+  // Pictures likewise, for a model it lists as taking images.
+  const imageInput = catalogModel?.supportsImages === true;
 
   async function streamChat({
     messages, systemPrompt, tools, toolChoice, onToken, onDone, onError, signal, maxTokens, telemetryContext,
@@ -421,8 +473,9 @@ function createClient({
     // `model` and `apiKey` from the caller are deliberately ignored: this
     // client is bound to the session's OpenRouter model and key, and a
     // Claude id or an Anthropic key must never reach OpenRouter.
-    const request = (history) => buildRequest({
+    const request = (history, { images = imageInput } = {}) => buildRequest({
       model: boundModel, reasoningEffort, systemPrompt, messages: history, tools, toolChoice, maxTokens, sessionId, fileInput,
+      imageInput: images, imagePlaceholder: images === imageInput ? IMAGE_PLACEHOLDER : IMAGE_REFUSED_PLACEHOLDER,
     });
     const body = request(messages);
     const startedAt = Date.now();
@@ -483,9 +536,11 @@ function createClient({
         // #3557: a PDF the provider cannot take fails the whole request, and
         // the Mayor replays it on later turns. A request that carried one
         // and was refused as invalid is retried ONCE with each PDF replaced
-        // by a line naming it.
-        if (!(err instanceof OpenRouterMayorError) || err.status !== 400 || !hasFileParts(body)) throw err;
-        completion = await send(request(withoutDocuments(messages)));
+        // by a line naming it. A picture is treated the same way.
+        const files = hasFileParts(body);
+        const pictures = hasParts(body, 'image_url');
+        if (!(err instanceof OpenRouterMayorError) || err.status !== 400 || (!files && !pictures)) throw err;
+        completion = await send(request(files ? withoutDocuments(messages) : messages, { images: !pictures && imageInput }));
       }
       const result = fromChatCompletion(completion, { requestedModel: boundModel });
       recordTelemetry({
@@ -510,6 +565,9 @@ function createClient({
     model: boundModel,
     modelLabel: modelLabel(boundModel),
     reasoningEffort,
+    // Read by the agent-session Mayor to decide whether the platform tools
+    // fetch a request's screenshots for this model at all.
+    imageInput,
     isEnabled: () => true,
     streamChat,
     estimateCostCents: (usage) => estimateCostCents(usage, catalogModel),
@@ -571,6 +629,7 @@ module.exports = {
   DEFAULT_MAX_OUTPUT_TOKENS,
   MAYOR_REASONING_EFFORT,
   IMAGE_PLACEHOLDER,
+  IMAGE_REFUSED_PLACEHOLDER,
   OpenRouterMayorError,
   modelLabel,
   toChatMessages,
