@@ -201,3 +201,33 @@ test('a build stamps its spec model for the spec turn and its build model for th
   assert.equal(out.ok, true);
   assert.deepEqual(seen, [['scout', 'minimax/minimax-m3'], ['build', 'openai/gpt-5.6-luna']]);
 });
+
+test('a follow-up turn runs the follow-up model on a proposal session born with the build model', async () => {
+  const followup = require('../src/services/homeroom-bot-followup');
+  const queries = [];
+  const resolvedWith = [];
+  const pool = { async query(s, params) { queries.push({ s, params }); return { rows: [], rowCount: 1 }; } };
+  const session = { id: 602, branch_name: 'bot/todo-12', agent_model: 'moonshotai/kimi-k2.7-code' };
+  const out = await followup.runFollowUpTurn({
+    pool, config: {}, bot: BOT, repo: { owner: 'usernode-bot', repo: 'todo' }, session, prompt: 'Address the review.',
+    mode: 'build', issueNumber: 12, turnBudgetMs: 60000, model: 'qwen/qwen3.8-flash',
+    deps: {
+      worker: {
+        async ensureWorkerImage() {}, async ensureWorker() { return 'usernode-worker-602'; },
+        async execInWorker() { return { lastResultText: 'done' }; }, async stopTurn() {},
+      },
+      agentTurn: { async resolveCodexRuntimeContext({ session: s }) { resolvedWith.push(s.agent_model); return { agentModel: s.agent_model }; } },
+      sessions: {
+        async runCodexAttemptLoop({ dispatchOnce, resolveRuntime }) {
+          const r = await dispatchOnce(await resolveRuntime());
+          return { result: r, error: null, estimatedCostUsd: 0.01 };
+        },
+      },
+      activeWorkers: new Set(),
+    },
+  });
+  assert.ok(!out.routed?.error, JSON.stringify(out.routed));
+  assert.deepEqual(resolvedWith, ['qwen/qwen3.8-flash'], 'the session was re-stamped before the turn resolved its model');
+  const stamp = queries.find((q) => /UPDATE chat_sessions SET agent_model = \$2 WHERE id = \$1/.test(q.s));
+  assert.deepEqual(stamp?.params, [602, 'qwen/qwen3.8-flash']);
+});

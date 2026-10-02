@@ -559,4 +559,11 @@ test('the benchmark judge\'s four routes are allowed, and every one is full-admi
   for (const [, method, route, gate] of routes) {
     assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
   }
+  // The judge's writes are rate-limited per user (admins are not exempt:
+  // only admins can call them at all), and guarded after the limiter.
+  const writes = [...src.matchAll(/router\.post\('(\/api\/bot-bench\/[^']+)', ([^(]+)handler\(/g)];
+  assert.equal(writes.length, 2);
+  for (const [, route, chain] of writes) {
+    assert.match(chain, /requireAdminWrite, benchGradingLimiter, sameOriginBrowserOnly,/, `${route} is limited, then guarded`);
+  }
 });
