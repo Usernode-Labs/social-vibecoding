@@ -2471,6 +2471,10 @@ test('the work order presents every submit shape, in order of preference', async
   assert.ok(pushAt < order.indexOf('SUBMIT IT YOURSELF'));
   assert.match(order, /1\. COMMIT, THEN MAKE A PATCH/);
   assert.match(order, /the patch text from step 1 as `patch`/);
+  // #3687: the agent picks the hand-in shape itself rather than asking a
+  // possibly non-technical user which to use.
+  assert.match(order, /Choose patch or branch yourself/);
+  assert.match(order, /making that patch-or-branch choice yourself rather than asking the user/);
   assert.match(order, /Patches over about 250 KB are refused/);
   assert.match(order, /4\. IF THE PATCH IS REFUSED as too large, push a branch/);
   // The exact identifiers the fallback needs are all still printed.

@@ -2423,9 +2423,11 @@ test('prepare_work chooses self-execution before handoff', () => {
   const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
   assert.match(desc, /repository, filesystem, shell or code-editing tools/);
   assert.match(desc, /do not relay `guidance` or send the user elsewhere/);
+  assert.match(desc, /choose patch or branch yourself and do not ask the user/);
   assert.match(body, /FIRST inspect the tools available in THIS conversation/);
   assert.match(body, /do not render guidance and do not send/);
   assert.match(body, /branch or patch you produced/);
+  assert.match(body, /Choose patch or branch yourself and do not ask the user/);
   assert.match(body, /Only if this conversation lacks code-editing tools/);
 });
 
