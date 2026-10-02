@@ -86,7 +86,7 @@
 
 import type { RefObject } from 'react';
 
-import { ChevronDownIcon, Squares2X2Icon } from '@/components/ui/icons';
+import { ChevronDownIcon, UserGroupIcon } from '@/components/ui/icons';
 import { Wordmark } from '@/components/ui/wordmark';
 
 import { useStoreState } from '../../lib/use-store-state';
@@ -171,8 +171,9 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
         {appSwitch ? null : tile}
         {allAppsSwitcher ? (
           /* THE COMMUNITIES SWITCHER, in the bar (#3271, at every width
-             since #852): the grid, "Communities" and the ⌄, opening Your
-             communities. */
+             since #852): the people glyph — matching the Communities tab's
+             All-communities face (tab-bar.tsx) — "Communities" and the ⌄,
+             opening Your communities. */
           <button
             id="header-scope-switch"
             type="button"
@@ -185,7 +186,7 @@ export function HeaderTitle({ titleRef }: { titleRef: RefObject<HTMLHeadingEleme
             aria-label="Communities: all of yours, or open one"
             onClick={(e) => toggleSwitcher('header', e.currentTarget)}
           >
-            <Squares2X2Icon className="w-5 h-5 shrink-0" aria-hidden="true" />
+            <UserGroupIcon className="w-5 h-5 shrink-0" aria-hidden="true" />
             <span id="header-title-name" className="min-w-0 truncate">Communities</span>
             <ChevronDownIcon className="w-4 h-4 shrink-0" aria-hidden="true" />
           </button>
