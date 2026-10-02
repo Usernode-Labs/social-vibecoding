@@ -159,7 +159,7 @@ function taskScores(trials) {
  * paired difference against the baseline per stage, slices by a tag, and
  * the cost-vs-quality points with their Pareto frontier.
  */
-async function runReport(pool, runId, { slice = 'verdict' } = {}) {
+async function runReport(pool, runId, { slice = 'verdict', trials: loaded = null } = {}) {
   const { rows: [run] } = await pool.query(
     `SELECT r.id, r.suite_id, r.models, r.baseline_model, r.stages, r.repeats, r.status, r.created_at, r.started_at,
             r.finished_at, r.cap_usd::float8 AS cap_usd, r.spent_usd::float8 AS spent_usd, s.name AS suite_name, s.version AS suite_version,
@@ -168,7 +168,7 @@ async function runReport(pool, runId, { slice = 'verdict' } = {}) {
     [Number(runId)],
   );
   if (!run) return null;
-  const trials = await runTrials(pool, runId);
+  const trials = loaded || await runTrials(pool, runId);
   const rows = [];
   const paired = [];
   const points = [];
@@ -214,6 +214,136 @@ async function runReport(pool, runId, { slice = 'verdict' } = {}) {
   };
 }
 
+// ── The connector's view of a run (get_bench_run) ─────────────────────────
+//
+// The same report, with nothing in it that names one trial. A session that
+// grades blind items (services/bench/grading.js) can also read a run, so
+// what it reads is counted per stage and model and never per trial: no trial
+// or task id, no item token, no issue number, no branch, no app. The slices
+// leave out app_slug for the same reason, and a failure reason is the
+// trial's error with its numbers, branch names and SHAs taken out, so that
+// reasons group and none of them points back at one trial.
+
+const CONNECTOR_SLICE_KEYS = Object.freeze(SLICE_KEYS.filter((k) => k !== 'app_slug'));
+const FAILURE_STATUSES = Object.freeze(['model_fail', 'infra_fail', 'timeout', 'not_applicable', 'skipped_cap', 'cancelled']);
+const MAX_REASON_CHARS = 200;
+const MAX_REASONS_PER_CELL = 10;
+const SAFE_TAG_RE = /^[A-Za-z0-9_.-]{1,40}$/;
+
+/**
+ * A trial's error as a reason that can be grouped and shown: whitespace
+ * collapsed, `bench/` branch names, SHAs and every run of digits replaced,
+ * cut to 200 characters. Pure.
+ */
+function reasonText(error) {
+  const text = String(error == null ? '' : error)
+    .replace(/\s+/g, ' ')
+    .replace(/\bbench\/[^\s'"`,;)]+/g, 'bench/…')
+    .replace(/\b[0-9a-f]{7,40}\b/gi, (m) => (/\d/.test(m) ? '<sha>' : m))
+    .replace(/\d+/g, 'N')
+    .trim();
+  if (!text) return '(no reason recorded)';
+  return text.length > MAX_REASON_CHARS ? `${text.slice(0, MAX_REASON_CHARS - 1)}…` : text;
+}
+
+/** Trial counts by status, and failure reasons grouped by (status, reason). Pure. */
+function statusAndReasons(trials) {
+  const statuses = {};
+  const reasons = new Map();
+  for (const t of trials) {
+    statuses[t.status] = (statuses[t.status] || 0) + 1;
+    if (!FAILURE_STATUSES.includes(t.status)) continue;
+    const reason = reasonText(t.error);
+    const key = `${t.status}\u0000${reason}`;
+    if (!reasons.has(key)) reasons.set(key, { status: t.status, reason, count: 0 });
+    reasons.get(key).count += 1;
+  }
+  const all = [...reasons.values()].sort((a, b) => b.count - a.count || a.status.localeCompare(b.status) || a.reason.localeCompare(b.reason));
+  return { statuses, failureReasons: all.slice(0, MAX_REASONS_PER_CELL), moreReasons: Math.max(0, all.length - MAX_REASONS_PER_CELL) };
+}
+
+/**
+ * A slice's groups with any value that is not a plain tag folded into
+ * '(other)': a tag is written by whoever labelled the task. Pure.
+ */
+function safeGroups(groups) {
+  const out = new Map();
+  for (const g of groups) {
+    const value = SAFE_TAG_RE.test(g.value) ? g.value : '(other)';
+    const id = `${g.stage}|${g.model}|${value}`;
+    if (!out.has(id)) out.set(id, { stage: g.stage, model: g.model, value, pass: 0, fail: 0 });
+    out.get(id).pass += g.pass;
+    out.get(id).fail += g.fail;
+  }
+  return [...out.values()].map((g) => ({ ...g, n: g.pass + g.fail, accuracy: g.pass + g.fail ? g.pass / (g.pass + g.fail) : null }));
+}
+
+/**
+ * A run's results as aggregates only: per stage and model, trial counts by
+ * status, the graded pass/fail and accuracy, cost, and failure reasons; the
+ * paired difference against the baseline with its interval; one slice; the
+ * judge's agreement with people. Every field is copied by name, so a field
+ * added to the report later does not reach the connector by accident.
+ * Null when there is no such run.
+ */
+async function runAggregates(pool, runId, { slice = 'verdict', agreement = null } = {}) {
+  const trials = await runTrials(pool, runId);
+  const key = CONNECTOR_SLICE_KEYS.includes(slice) ? slice : 'verdict';
+  const report = await runReport(pool, runId, { slice: key, trials });
+  if (!report) return null;
+  const frontier = new Set(report.pareto.filter((p) => p.frontier).map((p) => p.key));
+  const cells = report.rows.map((r) => {
+    const mine = trials.filter((t) => t.stage === r.stage && t.model === r.model);
+    return {
+      stage: r.stage,
+      model: r.model,
+      baseline: r.baseline,
+      trials: r.trials,
+      ...statusAndReasons(mine),
+      graded: r.graded,
+      pass: r.pass,
+      fail: r.fail,
+      pendingJudge: r.pending,
+      unlabelled: r.unlabelled,
+      accuracy: r.accuracy,
+      passK: { k: r.passK.k, tasks: r.passK.tasks, passAll: r.passK.passAll, value: r.passK.value },
+      costUsd: r.costUsd,
+      costPerAttempt: r.costPerAttempt,
+      costPerSuccess: r.costPerSuccess,
+      timeoutRate: r.timeoutRate,
+      infraRate: r.infraRate,
+      p50Ms: r.p50Ms,
+      p95Ms: r.p95Ms,
+      paretoFrontier: frontier.has(`${r.stage}|${r.model}`),
+    };
+  });
+  const run = report.run;
+  const overall = statusAndReasons(trials);
+  return {
+    run: {
+      id: run.id, suiteId: run.suiteId, suiteName: run.suiteName, suiteVersion: run.suiteVersion, suiteFrozen: run.suiteFrozen,
+      status: run.status, models: run.models, baseline: run.baseline, stages: run.stages, repeats: run.repeats,
+      capUsd: run.capUsd, spentUsd: run.spentUsd, createdAt: run.createdAt, startedAt: run.startedAt, finishedAt: run.finishedAt,
+    },
+    trials: trials.length,
+    statuses: overall.statuses,
+    pendingJudge: cells.reduce((s, c) => s + c.pendingJudge, 0),
+    cells,
+    paired: report.paired.map((p) => ({
+      stage: p.stage, model: p.model, baselineModel: p.baselineModel, n: p.n, apps: p.apps, diff: p.diff, low: p.low, high: p.high,
+    })),
+    slice: {
+      key: report.slice.key,
+      keys: CONNECTOR_SLICE_KEYS,
+      groups: safeGroups(report.slice.groups),
+    },
+    agreement: agreement ? {
+      n: agreement.n, agreement: agreement.agreement, tpr: agreement.tpr, tnr: agreement.tnr,
+      positives: agreement.positives, negatives: agreement.negatives,
+    } : null,
+  };
+}
+
 const CSV_COLUMNS = Object.freeze([
   'trial_id', 'run_id', 'task_id', 'stage', 'app_slug', 'issue_number', 'model', 'attempt', 'status', 'final_verdict',
   'deterministic_pass', 'opus_verdict', 'human_verdict', 'cost_usd', 'input_tokens', 'output_tokens', 'duration_ms',
@@ -245,6 +375,8 @@ async function csvRows(pool, runId) {
 
 module.exports = {
   SLICE_KEYS,
+  CONNECTOR_SLICE_KEYS,
+  FAILURE_STATUSES,
   CSV_COLUMNS,
   runTrials,
   summarize,
@@ -252,5 +384,8 @@ module.exports = {
   sliceGroups,
   taskScores,
   runReport,
+  reasonText,
+  statusAndReasons,
+  runAggregates,
   csvRows,
 };
