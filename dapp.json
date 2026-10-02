@@ -2609,9 +2609,9 @@
       "expectText": "Discussion"
     },
     {
-      "name": "The Communities tab wears the community you are in: its tile (in a ring on a phone's bar) and its name",
+      "name": "The Communities tab wears the community you are in: its tile (in a ring on a phone's bar), but keeps the word (#3709)",
       "path": "/?demo=1#app/usernode-2d5619/workshop",
-      "expectSelector": "#platform-tabs #platform-tab-workshop[aria-current=\"page\"] .platform-tab-ring:not(.platform-tab-ring-all) > .platform-tab-tile",
+      "expectSelector": "#platform-tabs #platform-tab-workshop[aria-current=\"page\"][aria-label^=\"Communities, on \"] .platform-tab-ring:not(.platform-tab-ring-all) > .platform-tab-tile",
       "expectText": "Homeroom"
     },
     {
