@@ -272,6 +272,48 @@ test('launch validation: models, stages, repeats, the $50 default cap and concur
   assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], capUsd: 5000 }).status, 400);
   assert.equal(lane.validateLaunch({ suiteId: 1, models: ['not a model'], stages: ['triage'] }).status, 400);
   assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['judge'] }).status, 400);
-  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], concurrency: 3 }).status, 400);
+  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], concurrency: 8 }).concurrency, 8, 'up to eight at once');
+  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'] }).concurrency, 1, 'one when left out');
+  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], concurrency: 9 }).status, 400);
+  assert.equal(lane.validateLaunch({ suiteId: 1, models: ['a/b'], stages: ['triage'], concurrency: 0 }).status, 400);
   assert.equal(lane.validateLaunch({ suiteId: 1, models: [], stages: ['triage'] }).status, 400);
+});
+
+test('after a restart: only a trial\'s last turn is finished from its journal, read as the live stage reads it', async (t) => {
+  const side = spySideEffects(t);
+  const scout = { mode: 'scout' };
+  const build = { mode: 'build' };
+  assert.equal(runner.resumableTurn('triage', scout), true);
+  assert.equal(runner.resumableTurn('followup', build), true);
+  assert.equal(runner.resumableTurn('checks_fix', build), true);
+  assert.equal(runner.resumableTurn('build', build), true, 'the build turn is a build\'s last');
+  assert.equal(runner.resumableTurn('build', scout), false, 'its spec turn has the build still to run');
+  assert.equal(runner.resumableTurn('dm', scout), false, 'a DM conversation is several turns');
+  assert.equal(runner.resumableTurn('spec', scout), false);
+  assert.equal(runner.resumableTurn('triage', null), false);
+
+  // A follow-up that revised: the same reader as the live stage, diffed from its recorded base.
+  const h = harness();
+  const out = await runner.recoverStage({
+    stage: 'followup', snapshot: snapshot('followup'), task: { id: 1, stage: 'followup', reference: {} }, trial: TRIAL,
+    session: { id: 7001, spec_md: '' }, activeTurn: build, repo: REPO, deps: h.deps, baseSha: BASE, branch: 'bench/r3-t44',
+    result: { lastResultText: '```json\n{"action":"revise","reply":"Made it blue","summary":"Blue pins"}\n```', pushOk: true, sha: 'd'.repeat(40), ahead: 1 },
+  });
+  assert.equal(out.status, 'ok');
+  assert.equal(out.parsed.action, 'revise');
+  assert.equal(out.parsed.moved, true);
+  assert.equal(out.build_sha, 'd'.repeat(40));
+  assert.match(out.diff, /app\.js/);
+  assert.deepEqual(h.gh.calls.pinned, [], 'nothing is cut or pushed by recovery');
+  // A triage turn that ended on the trial's clock is a timeout, as live.
+  const timedOut = await runner.recoverStage({
+    stage: 'triage', snapshot: snapshot('triage'), task: { id: 1, stage: 'triage', reference: {} }, trial: TRIAL,
+    session: { id: 7001 }, activeTurn: scout, repo: REPO, deps: h.deps, baseSha: BASE, timedOut: true, result: { lastResultText: '' },
+  });
+  assert.equal(timedOut.status, 'timeout');
+  assert.equal(await runner.recoverStage({
+    stage: 'dm', snapshot: snapshot('triage'), task: { id: 1, stage: 'dm', reference: {} }, trial: TRIAL,
+    session: { id: 7001 }, activeTurn: scout, repo: REPO, deps: h.deps, result: {},
+  }), null);
+  assert.deepEqual(side, []);
 });

@@ -9829,6 +9829,16 @@ CREATE INDEX IF NOT EXISTS idx_bench_trials_pending ON bench_trials(run_id, atte
 CREATE INDEX IF NOT EXISTS idx_bench_trials_branches
   ON bench_trials(finished_at) WHERE build_branch IS NOT NULL AND branch_deleted_at IS NULL;
 COMMENT ON TABLE bench_trials IS 'staging:private';
+-- A trial a restart interrupted (services/bench/lane.js "After a restart"):
+-- what the abandoned attempts spent, charged to the run when each was put
+-- back in the queue and kept apart from cost_usd, which is the finishing
+-- attempt's own; and when restart recovery finished the trial from its last
+-- turn instead of running it again. session_id, base_sha and build_branch
+-- are written as soon as they exist, before any turn runs.
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS interrupted_cost_usd NUMERIC(18,8) NOT NULL DEFAULT 0;
+ALTER TABLE bench_trials ADD COLUMN IF NOT EXISTS recovered_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_bench_trials_running_session
+  ON bench_trials(session_id) WHERE status = 'running';
 
 -- #3654: a grade of a benchmark trial, by the judge (`opus`: a Claude Opus
 -- session on a person's own plan, through the admin-only connector tools) or

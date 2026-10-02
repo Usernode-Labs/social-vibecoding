@@ -2643,9 +2643,11 @@ async function abandonOrphanShotsTurn({
   if (!containerRunning) await worker.destroyWorker(containerName);
 }
 
-// #3654: a benchmark trial's worker that outlived a restart. The same
-// abandonment as a shots turn's (above), then the session is archived: no
-// trial is ever resumed, the lane runs it again from the start.
+// #3654: a benchmark trial's worker that outlived a restart, when its turn
+// is not one recovery can finish (adoptBenchOrphan, below). The same
+// abandonment as a shots turn's (above), then the session is archived and
+// the trial put straight back in the lane's queue, what the attempt spent
+// charged to its run: the lane runs it again from the start.
 async function abandonOrphanBenchTurn({
   pool, session, sessionId, containerName, containerRunning, retryRuntimeRecovery,
 }) {
@@ -2677,6 +2679,64 @@ async function abandonOrphanBenchTurn({
   ).catch(() => {});
   await worker.destroyWorker(containerName).catch(() => {});
   log.warn('server', 'Abandoned a benchmark trial\'s worker after restart', { containerName, sessionId });
+  // After the attempt is terminalized, so the ledger it is charged from is
+  // final. Never throws.
+  await require('./src/services/bench/lane').releaseTrialOfSession(pool, sessionId, {
+    why: 'its turn was abandoned after a restart',
+  });
+}
+
+/**
+ * #3654: a benchmark trial's worker that outlived a restart, still running
+ * the trial's LAST turn (a triage, a follow-up, a checks fix, a build's build
+ * turn). Followed to its end like the bot's own (adoptBotOrphan): the journal
+ * is replayed by resumeDetachedTurn, which hands the result to the lane
+ * instead of the dev-chat tail (no PR, staging, wrap-up or notification),
+ * while the trial holds its lane slot and keeps its own clock. Resolves
+ * false, having done nothing, for a turn the lane cannot finish this way;
+ * the caller abandons it. A recovery that fails without a retry scheduled
+ * puts the trial back in the queue.
+ */
+async function adoptBenchOrphan({
+  config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
+}) {
+  const activeTurn = session.active_turn || null;
+  if (containerState !== 'running' || !activeTurn || !activeTurn.journal) return false;
+  if (session.status !== 'active') return false;
+  const lane = require('./src/services/bench/lane');
+  let plan = null;
+  try {
+    plan = await lane.recoveryPlan(pool, session, activeTurn);
+  } catch (err) {
+    log.warn('server', 'Benchmark recovery plan failed; abandoning the turn', { sessionId, err: err.message });
+    return false;
+  }
+  if (!plan || !plan.resumable) return false;
+  if (worker.usesKubernetesWorkers()) {
+    // As for any adoption: the startup inventory may be stale. A worker that
+    // cannot be confirmed running is abandoned instead.
+    let state = null;
+    try { state = await worker.getWorkerStatus(containerName); } catch (_) { state = null; }
+    if (state !== 'running') return false;
+  }
+  log.info('server', 'Adopting a benchmark trial\'s last turn for the lane to finish', {
+    sessionId, containerName, trialId: plan.trial.id, stage: plan.trial.stage, mode: activeTurn.mode,
+  });
+  worker.adoptWarmWorker(sessionId, containerName);
+  try {
+    await lane.holdRecoveredTrial(plan.trial, sessionId, resumeDetachedTurn({
+      config, pool, staging, broadcastGlobal, session, sessionId, containerName, activeTurn,
+    }));
+  } catch (err) {
+    // A retained turn is retried by the caller's scheduler and adopted
+    // again; anything else will not be, so the trial goes back now.
+    if (!(err?.retainActiveTurn && recoveryRetry.shouldRetryRecoveryError(err))) {
+      await lane.releaseTrialOfSession(pool, sessionId, { why: `recovery failed: ${err.message}` });
+    }
+    throw err;
+  }
+  await worker.destroyWorker(containerName).catch(() => {});
+  return true;
 }
 
 function homeroomBotRecovery() {
@@ -2779,11 +2839,16 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     return;
   }
 
-  // #3654: a Homeroom bot benchmark trial is never recovered into anything:
-  // the dev-chat tail below would open a PR, build staging and notify, none
-  // of which a trial may do. Its turn is stopped and abandoned; the lane
-  // puts the trial back in its queue once it is stale (services/bench/lane.js).
+  // #3654: a Homeroom bot benchmark trial is never recovered into the
+  // dev-chat tail below, which would open a PR, build staging and notify,
+  // none of which a trial may do. Its last turn is followed to its end and
+  // finished by the lane (adoptBenchOrphan); any other turn is stopped and
+  // abandoned, and the trial put back in the lane's queue at once
+  // (services/bench/lane.js).
   if (require('./src/services/bench/runner').isBenchSession(session)) {
+    if (await adoptBenchOrphan({
+      config, pool, staging, broadcastGlobal, session, sessionId, containerName, containerState,
+    })) return;
     await abandonOrphanBenchTurn({
       pool, session, sessionId, containerName,
       containerRunning: containerState === 'running',
@@ -4163,12 +4228,18 @@ async function resumeDetachedTurnInner({
   // #3401: a bot turn keeps the bot's own clock across the restart. The
   // live path stopped it at its budget; recovery would otherwise follow it
   // for as long as the agent cares to run.
-  const botTurn = homeroomBotRecovery().isRecoveredBotSession(session);
+  //
+  // #3654: and a benchmark trial's, whose result is the lane's to record.
+  // Checked first: a trial's session is never the bot's, but the dev-chat
+  // tail must be unreachable for it whatever the bot check says.
+  const benchTurn = require('./src/services/bench/runner').isBenchSession(session);
+  const botTurn = !benchTurn && homeroomBotRecovery().isRecoveredBotSession(session);
   let botTimedOut = false;
   let botClock = null;
-  if (botTurn) {
-    const deadline = await homeroomBotRecovery()
-      .recoveryDeadline(pool, config, session, activeTurn).catch(() => null);
+  if (botTurn || benchTurn) {
+    const deadline = await (benchTurn
+      ? require('./src/services/bench/lane').recoveryDeadline(pool, config, session, activeTurn)
+      : homeroomBotRecovery().recoveryDeadline(pool, config, session, activeTurn)).catch(() => null);
     if (deadline != null) {
       botClock = setTimeout(() => {
         botTimedOut = true;
@@ -4210,8 +4281,9 @@ async function resumeDetachedTurnInner({
     // #1378: the stop machinery kills the agent process and appends an exit
     // marker, so a stopped turn usually resolves rather than throwing — but
     // when it does throw, the user still asked for this to end. Close it as
-    // a stop instead of reporting a failure they caused on purpose.
-    if (handle.stopped) {
+    // a stop instead of reporting a failure they caused on purpose. (A
+    // benchmark turn writes no stop card: its trial is put back below.)
+    if (handle.stopped && !benchTurn) {
       await finishAsStopped(activeTurn);
       return;
     }
@@ -4257,6 +4329,19 @@ async function resumeDetachedTurnInner({
         });
         throw ledgerErr;
       }
+    }
+    // #3654: the trial goes back in the lane's queue, its spend charged;
+    // nothing is said anywhere.
+    if (benchTurn) {
+      const benchCleanup = turnCleanupArgs(activeTurn);
+      recoveryRetry.requireDurableTurnCleanup(
+        await worker.finishTurn(sessionId, benchCleanup),
+        benchCleanup,
+      );
+      await require('./src/services/bench/lane').releaseTrialOfSession(pool, sessionId, {
+        why: `the journal replay failed: ${err.message}`,
+      });
+      return;
     }
     // #3401: the bot's run goes back in the queue unspent; no breadcrumb
     // or stalled notification, which nobody reads on the bot's session.
@@ -4318,7 +4403,9 @@ async function resumeDetachedTurnInner({
   // Everything below — the Codex fresh-retry, the api-error retry inside
   // finalize, the Mayor wrap-up — is work for a turn that is meant to keep
   // going, so none of it may run. Close the turn as a stop and return.
-  if (handle.stopped) {
+  // (A benchmark turn writes no stop card either: the lane records the
+  // trial as stopped on its clock, below.)
+  if (handle.stopped && !benchTurn) {
     await finishAsStopped(recoveryActiveTurn, result);
     return;
   }
@@ -4409,6 +4496,22 @@ async function resumeDetachedTurnInner({
   // turn record is cleared. Recording first: a failed clear is retried by
   // the retained-recovery timer, and the bot's writes are guarded so the
   // repeat records nothing twice.
+  // #3654: likewise a benchmark trial's: the lane reads the result as the
+  // live stage would and records the trial (or, failing that, puts it back
+  // in the queue), then the turn record is cleared. Its writes are guarded
+  // on the trial still running, so a retried clear records nothing twice.
+  if (benchTurn) {
+    await require('./src/services/bench/lane').finishRecoveredTrial({
+      pool, config, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut || !!handle.stopped,
+    });
+    const benchCleanup = turnCleanupArgs(recoveryActiveTurn);
+    recoveryRetry.requireDurableTurnCleanup(
+      await worker.finishTurn(sessionId, benchCleanup),
+      benchCleanup,
+    );
+    return;
+  }
+
   if (botTurn) {
     await homeroomBotRecovery().finishRecoveredTurn({
       pool, session, activeTurn: recoveryActiveTurn, result, timedOut: botTimedOut,

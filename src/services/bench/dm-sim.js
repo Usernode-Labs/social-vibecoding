@@ -128,7 +128,7 @@ async function dmStage(ctx) {
     return { status: 'infra_fail', error: `branch: ${err.message}` };
   }
   const session = await runner.openSession(pool, config, { user, app, model, branch, title });
-  ctx.onSession?.(session.id);
+  await ctx.onSession?.(session.id, { baseSha: base, branch });
 
   const conversation = [];
   const totals = { cost: null, input: null, output: null, raw: [] };

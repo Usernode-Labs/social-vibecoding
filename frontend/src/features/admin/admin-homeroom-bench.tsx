@@ -804,7 +804,7 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
   const [suites, setSuites] = useState<Suite[]>([]);
   const [runs, setRuns] = useState<Run[] | null>(null);
   const [models, setModels] = useState<Model[]>([]);
-  const [defaults, setDefaults] = useState({ capUsd: 50, repeats: 3, maxConcurrency: 2 });
+  const [defaults, setDefaults] = useState({ capUsd: 50, repeats: 3, maxConcurrency: 8 });
   const [hiddenChecks, setHiddenChecks] = useState('');
   const [launcher, setLauncher] = useState<LauncherDefaults | null>(null);
   const [core, setCore] = useState<CoreStatus | null>(null);
