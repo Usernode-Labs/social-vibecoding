@@ -14121,6 +14121,18 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-sheet .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
 .dev-vote-sheet .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
 .dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
+/* The Needs you feed's vote sheet (#3613) draws the same picker inline, at
+   the same tap-target size: the switch, the line box, Cancel and the send. */
+.dev-ws-vote-form { display: flex; flex-direction: column; gap: 4px; }
+.dev-ws-vote-form .dev-vote-switch-opt { height: 44px; padding: 0 14px; font-size: 15px; }
+.dev-ws-vote-form .dev-vote-switch-opt svg { width: 16px; height: 16px; }
+.dev-ws-vote-form .dev-vote-switch-opt .dev-vote-n { font-size: 12.5px; }
+.dev-ws-vote-form .dev-vote-switch-label { padding: 0 4px 4px; font-size: 14px; }
+.dev-ws-vote-form .dev-vote-reason { margin-top: 10px; gap: 6px; }
+.dev-ws-vote-form .dev-vote-reason-label { padding: 0 2px 2px; font-size: 14px; }
+.dev-ws-vote-form .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
+.dev-ws-vote-form .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
+.dev-ws-vote-form .dev-vote-reason-cancel, .dev-ws-vote-form .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
 /* "Still yes?": the viewer's Yes was on an earlier version of the proposal
    (#1688). Amber, because it is a question the card is asking them. */
 .dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); }

@@ -1398,6 +1398,10 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // in services/app-manifest.js. 831 leaves 29 slots against the new
   // MAX_DECLARED_TESTS (860), clear of the 20-slot floor.
   //
+  // 831 → 831: #3579 folded rather than added. The dev chat picker offering
+  // Sonnet 5.5 in place of Sonnet 5 is pinned on the #2117 flat-list check,
+  // which already reads the same <select> on the same session.
+  //
   // 831 → 832: +1 (#3521): the create dialog's "Start from a template" now
   // opens four starters under its row, a state no check could reach before
   // (the row was a dimmed Soon). Reached by ?shot=create-template. 832

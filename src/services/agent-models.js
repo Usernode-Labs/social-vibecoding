@@ -142,6 +142,13 @@ function acceptsImages(m) {
   return Array.isArray(modalities) && modalities.includes('image');
 }
 
+// #3557: the same list's 'file' entry, which is how OpenRouter marks a model
+// that reads a PDF itself.
+function acceptsFiles(m) {
+  const modalities = m?.architecture?.input_modalities;
+  return Array.isArray(modalities) && modalities.includes('file');
+}
+
 // Sanitize a raw OpenRouter model into the UI-friendly shape.
 function sanitizeModel(m, compatibility, { recommended = false } = {}) {
   const pricing = m.pricing || {};
@@ -207,6 +214,14 @@ function sanitizeModel(m, compatibility, { recommended = false } = {}) {
   // images is declared able to. Non-enumerable for the same reason.
   Object.defineProperty(sanitized, 'supportsImages', {
     value: acceptsImages(m),
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  // #3557: whether it lists file (PDF) input, read by the OpenRouter Mayor
+  // and the coding turn's runtime metadata. Non-enumerable likewise.
+  Object.defineProperty(sanitized, 'supportsFiles', {
+    value: acceptsFiles(m),
     enumerable: false,
     configurable: false,
     writable: false,
