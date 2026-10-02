@@ -1353,7 +1353,10 @@ export function CreateAppDialog() {
             }}
             onSetSecrets={() => {
               const slug = created.slug;
-              dialog.close();
+              // The secrets dialog pushes its own back-button record as it
+              // opens, and a plain close's queued history.back() would land
+              // on that record and close it again (#3683).
+              dialog.closeForNavigation();
               // Published by features/app-secrets — a bare global read is
               // what broke the last cross-surface jump, so guard it and
               // leave the tile's own "fix secrets" path as the fallback.

@@ -23,8 +23,10 @@ function setup(fetch) {
     setAccessProposalOpen(v){s.accessProposalOpen=v;},
     currentAccessMode(app){return app.collab_visibility==='public'?'public':(app.view_visibility==='private'?'private':'public-invite');},
     visibilityForAccess(mode){return ACCESS_MODES.find((item)=>item.id===mode);},
-    dialog:{close(){s.closed=true;}},
-    window:{App:{navigateHome(){s.home=true;}},Home:{load(){}},PlatformUI:{toast(){}}},
+    dialog:{close(){s.closed=true;s.order.push('close');},
+      closeForNavigation(){s.closed=true;s.order.push('closeForNavigation');}},
+    window:{App:{navigateHome(){s.home=true;s.order.push('navigateHome');}},Home:{load(){}},PlatformUI:{toast(){}}},
+    order:[],
   };
   vm.createContext(s); vm.runInContext(`${handler('load')}\n${handler('proposeAccess')}\n${handler('remove')}`,s);
   s.submit=()=>s.remove({preventDefault(){}}); return s;
@@ -116,6 +118,14 @@ test('the blocked notice names the reason the server gave (#2161)',()=>{
   }
   assert.match(source,/id="app-delete-blocked"/,'the notice is the declared check\u2019s anchor');
   assert.match(source,/id="app-delete-shared-ack"/,'the admin acknowledgement is a real checkbox');
+});
+test('a deletion closes as a navigating close before it goes Home (#3683)',async()=>{
+  // A plain close spends the dialog's back-button record with a queued
+  // history.back(), which lands after Home's address and puts the viewer back
+  // on the page of the app they just deleted.
+  const s=setup(async()=>ok());
+  await s.submit();
+  assert.deepEqual(s.order,['closeForNavigation','navigateHome']);
 });
 test('double submission makes one DELETE and waits before navigation',async()=>{
   const request=deferred();let calls=0;const s=setup(async(path,opts)=>{assert.equal(path,'/api/apps/test-app');assert.equal(opts.method,'DELETE');calls++;return request.promise;});

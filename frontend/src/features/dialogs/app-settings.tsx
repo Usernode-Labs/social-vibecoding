@@ -214,7 +214,10 @@ export function AppSettingsDialog() {
       pending.current = false;
       setBusy(false);
     }
-    dialog.close();
+    // The app is gone, so this goes Home, an address written in the same
+    // task: a plain close would queue a history.back() that lands after it
+    // and returns the viewer to the deleted app's page (#3683).
+    dialog.closeForNavigation();
     window.App?.navigateHome?.();
     window.PlatformUI?.toast?.('App deleted for everyone.');
     // Refresh failure must not imply the completed deletion failed.

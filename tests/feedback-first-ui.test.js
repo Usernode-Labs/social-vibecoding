@@ -23,7 +23,7 @@ function element(id) {
   };
 }
 function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
-  const els = new Map(), timers = new Map(), calls = [], fixes = [], nav = [], toasts = [];
+  const els = new Map(), timers = new Map(), calls = [], fixes = [], nav = [], toasts = [], closes = [];
   let id = 0, queueHooks, failedReads = 0;
   const el = id => { if (!els.has(id)) els.set(id, element(id)); return els.get(id); };
   const sandbox = {
@@ -54,10 +54,14 @@ function harness({ response = { firstFeedback: moment }, ok = true } = {}) {
   sandbox.UsernodeReact = { dialogs: { feedback: {
     open(opts) { el('feedback-modal').classList.remove('hidden'); sandbox.Feedback._open(opts); },
   } } };
-  el('feedback-cancel').addEventListener('click', () => { el('feedback-modal').classList.add('hidden'); sandbox.Feedback._reset(); });
+  el('feedback-cancel').addEventListener('click', () => {
+    // Where the page stood when the dialog closed — see #3683 below.
+    closes.push({ hash: sandbox.location.hash, navigations: nav.length });
+    el('feedback-modal').classList.add('hidden'); sandbox.Feedback._reset();
+  });
   sandbox.App.openFeedbackModal();
   return {
-    sandbox, el, timers, calls, fixes, nav, toasts,
+    sandbox, el, timers, calls, fixes, nav, toasts, closes,
     failedReads: () => failedReads,
     // #2707: this harness opens with an app on screen, so BOTH destinations
     // are real and none is preselected — a submit refuses until one is tapped.
@@ -102,6 +106,23 @@ test('try a fix opens the filed issue through the existing editable-draft flow',
   h.el('feedback-first-fix').click(); h.el('feedback-first-fix').click(); await settle();
   assert.deepEqual(h.nav, [['filed-app', 'dev', 41, 'issues']]);
   assert.deepEqual(h.fixes, [41]);
+});
+// #3683: closing spends the dialog's back-button record with a history.back()
+// that the browser queues, so it lands after an address written later in the
+// same click and undoes it: the viewer stays where they sent the request
+// from. Every way on writes its address FIRST, and the close then finds the
+// page already moved and leaves the record alone (lib/back-stack.ts).
+test('every way on from the first-request moment moves the address before the dialog closes', async () => {
+  const board = harness(); await board.submit();
+  board.el('feedback-first-board').click();
+  assert.deepEqual(board.closes, [{ hash: '#app/filed-app/board', navigations: 0 }]);
+  const fix = harness(); await fix.submit();
+  fix.el('feedback-first-fix').click(); await settle();
+  assert.deepEqual(fix.closes, [{ hash: '', navigations: 1 }], 'navigateToApp has written the address');
+  assert.deepEqual(fix.fixes, [41], 'and the fix still starts once the app is open');
+  const mine = harness(); await mine.submit();
+  mine.el('feedback-first-mine').click();
+  assert.deepEqual(mine.closes, [{ hash: '#profile/your-requests', navigations: 0 }]);
 });
 test('view-only access keeps the board usable and explains the disabled fix', async () => {
   const h = harness({ response: { firstFeedback: { ...moment, canFix: false } } });
