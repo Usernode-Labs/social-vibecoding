@@ -284,7 +284,8 @@ test('a claimed build reads the thread as it is now, builds without proposing, a
   assert.equal(args.seed, 'ISSUE #12 1c 1t', 'the issue, its comments and its thread, read at build time');
   assert.deepEqual(args.repo, REPO);
   assert.equal(args.turnBudgetMs, 1_200_000, 'the same wall clock a triage turn has');
-  assert.deepEqual(recorded(h).params, [900, true, 'dev/homeroom_bot-s6001', 'c'.repeat(40), 2, null, 0.04, 6001, null]);
+  // #3654: the last value is the model the build ran on (no default in this config).
+  assert.deepEqual(recorded(h).params, [900, true, 'dev/homeroom_bot-s6001', 'c'.repeat(40), 2, null, 0.04, 6001, null, null]);
   assert.deepEqual(h.calls.spend, [4], 'paid from the weekly allowance');
 });
 

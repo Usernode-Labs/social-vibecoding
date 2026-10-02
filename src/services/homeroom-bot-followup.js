@@ -373,6 +373,9 @@ async function runFollowUpTurn({
   // build that made the proposal, and the prompt carries everything since.
   await pool.query('UPDATE chat_sessions SET agent_thread_id = NULL WHERE id = $1', [session.id]).catch(() => {});
   session.agent_thread_id = null;
+  // #3654: the proposal's session carries the model it was BUILT with; the
+  // follow-up runs the follow-up stage's own model.
+  await require('./homeroom-bot-live').stampSessionModel(pool, session, model);
 
   let stopped = false;
   let stopping = null;

@@ -529,3 +529,41 @@ test('the demo routes are on the list only because every one of them is gated on
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/promote'), true);
   assert.equal(policy.isConnectorApiRequest('POST', '/api/apps/recipe-box/demo/reset'), true);
 });
+
+// #3654: the Homeroom bot benchmark's judge. Four routes outside /api/admin
+// (which a connector can never reach), allowed because every handler refuses
+// anybody who is not a full platform admin before it reads a thing: they
+// hand out tasks from every app, private ones included.
+test('the benchmark judge\'s four routes are allowed, and every one is full-admin gated', () => {
+  for (const [method, target] of [
+    ['GET', '/api/bot-bench/queue'],
+    ['GET', '/api/bot-bench/items/abcdefgh12345678'],
+    ['POST', '/api/bot-bench/items/abcdefgh12345678/grade'],
+    ['POST', '/api/bot-bench/tasks/abcdefgh12345678/label'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), true, `${method} ${target}`);
+  }
+  for (const [method, target] of [
+    ['POST', '/api/bot-bench/queue'],
+    ['DELETE', '/api/bot-bench/items/abcdefgh12345678'],
+    ['POST', '/api/bot-bench/items/abcdefgh12345678'],
+    ['GET', '/api/bot-bench/runs'],
+    ['GET', '/api/admin/homeroom-bot/bench/runs'],
+    ['POST', '/api/admin/homeroom-bot/bench/trials/1/grade'],
+  ]) {
+    assert.equal(policy.isConnectorApiRequest(method, target), false, `${method} ${target} is refused`);
+  }
+  const src = fs.readFileSync(path.join(__dirname, '../src/routes/homeroom-bench.js'), 'utf8');
+  const routes = [...src.matchAll(/router\.(get|post)\('(\/api\/bot-bench\/[^']+)', ([a-zA-Z]+)/g)];
+  assert.equal(routes.length, 4);
+  for (const [, method, route, gate] of routes) {
+    assert.equal(gate, 'requireAdminWrite', `${method.toUpperCase()} ${route} is full-admin gated first`);
+  }
+  // The judge's writes are rate-limited per user (admins are not exempt:
+  // only admins can call them at all), and guarded after the limiter.
+  const writes = [...src.matchAll(/router\.post\('(\/api\/bot-bench\/[^']+)', ([^(]+)handler\(/g)];
+  assert.equal(writes.length, 2);
+  for (const [, route, chain] of writes) {
+    assert.match(chain, /requireAdminWrite, benchGradingLimiter, sameOriginBrowserOnly,/, `${route} is limited, then guarded`);
+  }
+});

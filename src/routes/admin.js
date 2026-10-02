@@ -1355,11 +1355,19 @@ function adminRoutes(config) {
     }
   });
 
+  // #3654: each field is changed only when the body carries it, so the
+  // table's one-tap Yes/No (a rating alone) no longer erases a note, and the
+  // verdict a labeller says was right rides beside them.
   router.post('/api/admin/homeroom-bot/runs/:id/rating', requireAdminWrite, async (req, res) => {
     try {
-      const { rating = null, note = null } = req.body || {};
+      const body = req.body || {};
+      const has = (key) => Object.prototype.hasOwnProperty.call(body, key);
       const result = await homeroomBot.rateRun(pool, {
-        id: req.params.id, rating, note, actorId: req.user.id,
+        id: req.params.id,
+        rating: has('rating') ? body.rating : undefined,
+        note: has('note') ? body.note : undefined,
+        labelVerdict: has('labelVerdict') ? body.labelVerdict : undefined,
+        actorId: req.user.id,
       });
       if (!result.ok) return res.status(result.status || 400).json({ error: result.error });
       res.json({ run: result.run });
