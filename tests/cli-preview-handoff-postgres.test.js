@@ -1,5 +1,7 @@
 'use strict';
 
+const { replayHistorical } = require('./lib/historical-replay');
+
 // Real isolated PostgreSQL; external preparation/activation/checks are injected.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -281,7 +283,7 @@ test('C8 enrolled aggregate rejects competing synchronous and durable preparatio
   const original = (await f.owner.trace(1))[0];
   const historical = { ...original, reducer_version: 9, pre_state: { ...original.pre_state } };
   delete historical.pre_state.cliAdmission;
-  assert.deepEqual(replayDecision(historical), original.decision, 'Retained v9 traces keep their original decision contract');
+  assert.deepEqual(replayHistorical('preview-flow', historical), original.decision, 'Retained v9 traces keep their original decision contract');
 });
 
 test('CLI admission uses the complete contract without enabling legacy Dev attempts', { skip: !postgresEnabled }, async t => {
@@ -327,7 +329,7 @@ test('C9 completion requires the verdict and release of manifest/lifecycle owner
     type: 'CliPreviewChecksObserved', actionId: randomUUID(), ...identity,
   } };
   historical.pre_state.checksOutstanding = true;
-  assert.equal(replayDecision(historical).accepted, true, 'C8 traces preserve their original completion policy');
+  assert.equal(replayHistorical('cli-preview-handoff', historical).accepted, true, 'C8 traces preserve their original completion policy');
 });
 
 test('C10 unit resource receipt remains scoped to its admitted run after supersession', { skip: !postgresEnabled }, async t => {
@@ -462,7 +464,7 @@ test('unknown checks: blocked outcome survives reply loss, restart and admission
     type: 'RequestCliPreviewChecks', actionId: randomUUID(), sessionId: 1,
     flowId: f.admitted.work.input.identity.flowId, headSha: HEAD, force: true,
   } };
-  assert.equal(replayDecision(historical).accepted, true, 'Retained v2 does not acquire the new v3 guard');
+  assert.equal(replayHistorical('cli-preview-handoff', historical).accepted, true, 'Retained v2 does not acquire the new v3 guard');
 });
 
 test('unknown checks: persistence error rolls back block, manifest and journals', { skip: !postgresEnabled }, async t => {

@@ -16,6 +16,8 @@ async function runWorker({
   previewOptions = {},
   onError = () => {},
 }) {
+  await require('../src/services/preview-flow/experimental-support').assertSupportedExperimentalStore(pool);
+
   // This process does not pass through server.js startup. Initialize SDK
   // dependencies before any execution can invoke an adapter or gate policy.
   // Failure leaves durable work unclaimed for a later process to recover.

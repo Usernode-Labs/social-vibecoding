@@ -65,14 +65,14 @@ process.once('message', async ({ databaseUrl, config, apiUrl, runScript = null }
     const work = createPreviewWork(pool, config, {
       store,
       images,
-      inspect: async () => ({ present: false, receipt: null }),
       clones: { prepare: async () => ({ status: 'complete', databaseOid: '123' }) },
       async prepare(_config, _session, _app, _head, candidate) {
+        await candidate.prepareClone();
         await candidate.prepareImage(runScript);
         throw new Error('The interruption fixture must stop before runtime preparation');
       },
     });
-    const handler = work.handlers['native-preview-kpack-prepare'];
+    const handler = work.handlers['native-preview-kubernetes-prepare'];
     const run = handler.run;
     handler.run = async context => {
       try {

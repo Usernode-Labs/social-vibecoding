@@ -8,13 +8,11 @@ const { fork } = require('node:child_process');
 const { once } = require('node:events');
 const { Client } = require('pg');
 const { createExecutionDatabase } = require('./lib/execution-database');
-const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
 const { candidateResources } = require('../src/services/preview-flow/candidate-resources');
 const { createCloneOperations } = require('../src/services/preview-flow/clone-operation');
-const { PREPARE, PREPARE_CLONE } = require('../src/services/preview-flow/work');
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
-const { createExecutionWorker } = require('../src/services/execution/worker');
-const { replayDecision } = require('../src/services/preview-flow/reducer');
+const { createSessionDecisionRuntime } = require('../src/services/decision-runtime');
+const { encrypt } = require('../src/services/secrets');
 
 const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL;
 
@@ -317,114 +315,6 @@ test('real clone: unmarked or physically replaced databases cannot be adopted or
   assert.equal((await clones.prepare(vanished, password)).status, 'retired');
 });
 
-test('real shared runtime and clone: interrupted copy and lost completion receipt recover without replacing serving state', { skip: !databaseUrl }, async t => {
-  const resource = await resources(t);
-  const sessionId = 1000000 + process.pid;
-  const db = await createExecutionDatabase(databaseUrl);
-  t.after(() => db.close());
-  await db.pool.query('UPDATE apps SET slug=$1', [resource.sourceDb.slice(4)]);
-  await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES ($1,$2)', [sessionId, HEAD]);
-  await db.pool.query('CREATE TABLE objects (name text PRIMARY KEY, receipt jsonb)');
-  const config = { databaseUrl: db.url, appRuntime: 'docker', dataEncryptionKey: 'test-key' };
-  let runtimeCreates = 0;
-  const adapters = {
-    clones: resource.operations(),
-    async inspect(_config, intent) {
-      const object = (await db.pool.query('SELECT receipt FROM objects WHERE name=$1', [intent.runtimeName])).rows[0];
-      return { present: !!object, receipt: object?.receipt || null };
-    },
-    async prepare(_config, _session, _app, head, candidate) {
-      assert.equal(candidate.preparedClone, true);
-      assert.equal((await resource.operations().inspect(candidate.intent)).status, 'complete');
-      const credentialUrl = new URL(resource.url);
-      credentialUrl.pathname = `/${candidate.intent.dbName}`;
-      credentialUrl.username = `${candidate.intent.dbName}_owner`;
-      credentialUrl.password = candidate.password;
-      const previewDatabase = new Client({ connectionString: credentialUrl.toString() });
-      try {
-        await previewDatabase.connect();
-        assert.equal((await previewDatabase.query('SELECT secret FROM people')).rows[0].secret, null);
-      } finally {
-        await previewDatabase.end();
-      }
-      runtimeCreates++;
-      const receipt = { commitSha: head, stagingUrl: `http://${candidate.intent.runtimeName}:3000`, runtimeKind: 'docker',
-        runtimeName: candidate.intent.runtimeName, containerId: candidate.intent.runtimeName, imageRef: 'injected:image',
-        buildRef: null, physicalId: randomUUID(), attemptId: candidate.intent.attemptId };
-      await db.pool.query('INSERT INTO objects VALUES ($1,$2)', [receipt.runtimeName, JSON.stringify(receipt)]);
-      return receipt;
-    },
-  };
-  const work = createRetainedPreviewWork(db.pool, config, { ...adapters, workflow: PREPARE_CLONE });
-  const request = { type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId, headSha: HEAD, startedStatus: 'active' };
-  const admission = await work.seedRetained(request);
-  assert.equal(admission.work.workflow, PREPARE_CLONE);
-  const intent = admission.work.input.intent;
-  resource.remember(intent);
-  const owner = createPreviewFlow(db.pool);
-  const cloneAction = { type: 'RequestCandidateClone', actionId: randomUUID(), sessionId,
-    ...admission.work.input.identity, operationId: randomUUID() };
-  assert.equal((await owner.apply(cloneAction)).decision.reason, 'clone_operation_mismatch');
-  await db.pool.query('UPDATE chat_sessions SET checks_commit_sha=$1 WHERE id=$2', ['b'.repeat(40), sessionId]);
-  assert.equal((await owner.apply({ ...cloneAction, actionId: randomUUID(), operationId: intent.attemptId })).decision.reason,
-    'head_changed');
-  await db.pool.query('UPDATE chat_sessions SET checks_commit_sha=$1 WHERE id=$2', [HEAD, sessionId]);
-  // The actual worker child owns the claim, guards and reserved credential.
-  // Shorten its expired lease after SIGKILL rather than waiting sixty seconds.
-  const first = admission.work;
-  await interrupted(resource, intent, 'copy_committed', null, { platformUrl: db.url, config });
-  const oid = (await resource.operations().inspect(intent)).database.oid;
-  await db.pool.query("UPDATE execution_work_requests SET lease_until=clock_timestamp()-interval '1 second'");
-  let lost = false;
-  const recovered = createRetainedPreviewWork(db.pool, config, { ...adapters, workflow: PREPARE_CLONE, owner: {
-    ...owner,
-    async apply(action) {
-      const receipt = await owner.apply(action);
-      if (action.type === 'CandidateClonePrepared' && !lost) {
-        lost = true;
-        throw new Error('Lost platform decision acknowledgment');
-      }
-      return receipt;
-    },
-  } });
-  async function executeUntil(predicate, handlers) {
-    await waitFor(async () => {
-      if (await predicate()) return true;
-      await db.pool.query('UPDATE execution_work_requests SET due_at=clock_timestamp() WHERE id=$1', [first.id]);
-      const worker = createExecutionWorker({ store: work.store, handlers, concurrency: 1 });
-      await worker.tick();
-      await worker.drain();
-      return predicate();
-    });
-  }
-  await executeUntil(() => lost, recovered.handlers);
-  assert.equal(runtimeCreates, 0);
-  assert.equal((await owner.read(sessionId)).flow.state, 'preparing');
-  assert.equal((await owner.read(sessionId)).resource.clonePrepared, true);
-  await executeUntil(async () => (await work.store.read(first.id)).status === 'succeeded', work.handlers);
-  const stored = await work.store.read(first.id);
-  assert.equal(stored.status, 'succeeded');
-  assert.equal(stored.result.accepted, true);
-  assert.equal(runtimeCreates, 1, 'runtime adapter is injected; it executes only after real clone recovery');
-  const state = await owner.read(sessionId);
-  assert.equal(state.flow.id, admission.decision.flow.id);
-  assert.equal(state.flow.state, 'candidate');
-  assert.equal(state.preview.runtimeName, 'serving', 'preparation never activates');
-  assert.equal(state.binding, null);
-  assert.equal((await resource.operations().inspect(intent)).databaseOid, oid);
-  for (const entry of await owner.trace(sessionId)) assert.deepEqual(replayDecision(entry), entry.decision);
-  // A different historical fixture format does not reinterpret retained work.
-  const compatibility = createRetainedPreviewWork(db.pool, config, { ...adapters, workflow: PREPARE });
-  assert.equal((await compatibility.seedRetained(request)).work.id, admission.work.id);
-  assert.ok(compatibility.handlers[PREPARE] && compatibility.handlers[PREPARE_CLONE]);
-  await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (2,$1)', [HEAD]);
-  const oldRequest = { ...request, actionId: randomUUID(), sessionId: 2 };
-  const legacy = await compatibility.seedRetained(oldRequest);
-  assert.equal(legacy.work.workflow, PREPARE);
-  assert.equal(legacy.work.input.intent.cloneOperation, undefined);
-  assert.equal((await work.seedRetained(oldRequest)).work.id, legacy.work.id, 'existing admission keeps its old contract');
-});
-
 for (const runtimeKind of ['docker', 'kubernetes']) {
   test(`real clone with injected ${runtimeKind} transport: domain cleanup preserves a successor and blocks stale completion`, {
     skip: !databaseUrl,
@@ -436,14 +326,35 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
     await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (1,$1)', [HEAD]);
     const config = { databaseUrl: db.url, appRuntime: runtimeKind, jwtSecret: 'test',
       kubernetes: { appNamespace: 'apps', appDomain: 'test.local' }, dataEncryptionKey: 'test-key' };
-    const work = createRetainedPreviewWork(db.pool, config, { workflow: PREPARE_CLONE, clones: resource.operations() });
+    const owner = createPreviewFlow(db.pool);
+    const decisions = createSessionDecisionRuntime(db.pool);
+
+    async function reserve(action) {
+      const admission = await owner.apply(action);
+      const flow = admission.decision.flow;
+      const intent = {
+        ...candidateResources(config, 1, flow.attemptId),
+        cloneOperation: { kind: 'template-v1', sourceDb: resource.sourceDb },
+      };
+      await decisions.transact(transaction =>
+        owner.reserveCandidateInTransaction(transaction, 1, flow.id, intent, {
+          credentialEnc: encrypt(password, config.dataEncryptionKey),
+          preparationOwner: 'bounded',
+        }));
+      return {
+        ...admission,
+        intent,
+        identity: { flowId: flow.id, generation: flow.generation, headSha: HEAD },
+      };
+    }
+
     const action = { type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId: 1, headSha: HEAD, startedStatus: 'active' };
-    const predecessor = await work.seedRetained(action);
-    const oldIntent = predecessor.work.input.intent;
+    const predecessor = await reserve(action);
+    const oldIntent = predecessor.intent;
     resource.remember(oldIntent);
     await resource.operations().prepare(oldIntent, password);
-    const successor = await work.seedRetained({ ...action, actionId: randomUUID() });
-    const nextIntent = successor.work.input.intent;
+    const successor = await reserve({ ...action, actionId: randomUUID() });
+    const nextIntent = successor.intent;
     resource.remember(nextIntent);
     const next = await resource.operations().prepare(nextIntent, password);
     const runtime = require('../src/services/preview-flow/candidate-runtime');
@@ -459,9 +370,8 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
     assert.ok(removals.every(name => name === oldIntent.runtimeName));
     assert.equal((await resource.operations().inspect(oldIntent)).status, 'retired');
     assert.equal((await resource.operations().inspect(nextIntent)).databaseOid, next.databaseOid);
-    const owner = createPreviewFlow(db.pool);
     const stale = await owner.apply({ type: 'CandidateClonePrepared', actionId: randomUUID(), sessionId: 1,
-      ...predecessor.work.input.identity, operationId: oldIntent.attemptId, databaseOid: next.databaseOid });
+      ...predecessor.identity, operationId: oldIntent.attemptId, databaseOid: next.databaseOid });
     assert.equal(stale.decision.reason, 'superseded_flow');
     const state = await owner.read(1);
     assert.equal(state.preview.runtimeName, 'serving');

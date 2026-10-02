@@ -1,0 +1,143 @@
+{
+  "format": 1,
+  "producingRevision": "c01dc0687f0075a0591a3b7540ad4765e7d176e0",
+  "nodeVersion": "v24.19.0",
+  "dependencies": {
+    "zod": "3.25.76"
+  },
+  "versions": {
+    "preview-flow": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10
+    ],
+    "cli-preview-handoff": [
+      1,
+      2,
+      3
+    ],
+    "proposal-review": [
+      1,
+      2
+    ]
+  },
+  "sources": {
+    "src/services/preview-flow/versions/v1.js": "e184c72f275a3c052e71ec8e781051d176e3883b69e948739ef8733be97968d1",
+    "src/services/preview-flow/versions/v2.js": "5113e849c6bdf7b2f3e81985f7a0a20919a5083d2de6088f8ba0c349bfaae885",
+    "src/services/preview-flow/versions/v3.js": "cbc928577353cf8b18db5419b9af33b1be1ef3373ec92eb8d43d686e5134238e",
+    "src/services/preview-flow/versions/v4.js": "b3f789496f191d5d4704d2b83007b88f29ea17a0bce8d89d28160c2510036290",
+    "src/services/preview-flow/versions/v5.js": "083fb4c410051eb28eee0318238558795385a34f9d9953644b2bd938df675c90",
+    "src/services/preview-flow/versions/v6.js": "1ce5cffeee1c05462d1db54dd67676e39a308a6feab6e426c0d070f4f5852f75",
+    "src/services/preview-flow/versions/v7.js": "8d68faead0a2853ae12e53977fc0f466af66463d078a0fd6fdac519152c159c3",
+    "src/services/preview-flow/versions/v8.js": "f3a248cd6da33eed7e034554233b9629e8cc200ec55bb3c106bfd07e6f970588",
+    "src/services/preview-flow/versions/v9.js": "425740d18d8747db52897d5f78ee44f8b64e4a93331c2b41d5e88b92a5d21f18",
+    "src/services/cli-preview-handoff/versions/v1.js": "cfa64373c9c431fb835c4c586fb29c8d7c027c95038228ba91c5bb68d9923f9b",
+    "src/services/cli-preview-handoff/versions/v2.js": "3ceae53301cd11e8ef566c457f9028e8cbe474d5c9f6f5f2e717d0368a5c5b1a",
+    "src/services/preview-flow/enabling-conditions.js": "b509fe9e6b2f3d99797c77b5da83717dd81b59de18be729783fead97ebc13bb3",
+    "src/services/preview-flow/actions.js": "80bb25ebcf9c9c9ef537edc5548d46baad5eb750973e014b03a9420d9cb16d02",
+    "node_modules/zod/index.cjs": "69025493407e0f37f24e01e363452d75ae43a89aac18eb24806706b5b534b459",
+    "node_modules/zod/v3/external.cjs": "224ff76e204434ec469f71dbba41d475db1ea873d3f3a5c26d75ab3a9c9f5f11",
+    "node_modules/zod/v3/errors.cjs": "bd32dbc86faeec2de1cc8e42ee3b29af2cbeb24fb5e3b57d7f056bb09cf8d4bd",
+    "node_modules/zod/v3/locales/en.cjs": "9f9d945a9e4c920a0790654b6c213839ad90b7414bada0a23c0284d45c8ed840",
+    "node_modules/zod/v3/ZodError.cjs": "88b9cdd780a91656965e07b94c86c0e4729f97923d45cc9d7944b0973a462503",
+    "node_modules/zod/v3/helpers/util.cjs": "9b75d4955de684d11371054bbf8e4d747cb1ad7284ae1eda85d4c188b84c47fc",
+    "node_modules/zod/v3/helpers/parseUtil.cjs": "40aaa18765f13ae1a933c6f215ecceb6d3afee89eaa23bb080997e08c30a5b00",
+    "node_modules/zod/v3/helpers/typeAliases.cjs": "d43aa81f5bc89faa359e0f97c814ba25155591ff078fbb9bfd40f8c7c9683230",
+    "node_modules/zod/v3/types.cjs": "06487cc05ed45c5dd29789bf0aa75734d1ce06592a7f2665ba4ca90a68e8a3e1",
+    "node_modules/zod/v3/helpers/errorUtil.cjs": "9c9e5dec7d1e9fce6a967735adf0333abd44d5e94a0225537c60ceed0c4f606a",
+    "src/services/preview-flow/runtime-intent.js": "d3a46e6fedc08e9adc2405417346797c869d68b44b596540b23f8cb164533a53",
+    "src/services/secrets.js": "2cb23ede88126850368d363edbbdd13f33b93525e5d835dbcd9fb9c96095f416",
+    "src/services/preview-flow/image-build-intent.js": "a350d470b2790f06c40b36e037f0ca407a42372c3fab200d8010d138bbb45559",
+    "src/services/proposal-review/versions/v1.js": "aacfaaee410afd6dd8db20ad741ebe1c2c6c8664231684ad81467ddb2e0791f0",
+    "package.json": "3a2aa80cf752adb6709023cb0168f8f656a747f384d1af7e6d5b527ce390220d",
+    "package-lock.json": "5d1bbdbff1e7fbdc9b150faa953f78cc5bec3a961d6098882556a4ebf318f3ce",
+    "node_modules/zod/package.json": "70eedbe34fd52385a4ae2f3e5759b19682189f0118ea73a6e7c32c677f61668e",
+    "node_modules/zod/LICENSE": "3f1189b28e3866e0d979968d466b78f813f76827cfdca1fbb124cc0a5c8841f8",
+    "src/services/preview-flow/work.js": "e4ad4660b14418420ca5a3c4d90332166656986c176d8493c80cfe10183cc8c2",
+    "tests/lib/retained-preview-work.js": "fa51e8c4a31850b4b2655c87c741e72a28b9c53f2c3ea421951fdb6548dbe7ae",
+    "tests/preview-flow.test.js": "d63156d5f8fe8a7ad4630a06cfd22228655ef4065789e1ad1ad1e7568085bb3b",
+    "tests/preview-candidate.test.js": "568fff2b564889ee5c31afa4e970eea171fba24b6d9413967b162567be93ad7e",
+    "tests/preview-work.test.js": "655421660ec7f8e61ef6c9d082933e332a9713fbbd2a9ede539cb18d71144bba",
+    "tests/preview-admission.test.js": "480d35824f0ec585cd823ff4c1b51a3875190db15b69e102bf7d456fb0c18d00",
+    "tests/recoverable-preview-clone.test.js": "9290be061d0c97bbeed544efe92b6aebb65062c59026260e29b9acfaa9029c31",
+    "tests/recoverable-preview-build.test.js": "fbac294ec38fb54d65c1d7a173c51afe0d7d6993a736a5bbfc7a71c52913e56b",
+    "tests/recoverable-preview-build-integration.test.js": "2093dead96a2d33f886fc16ac3322ab0a1b937fba1fcc03ae33978269960de17",
+    "tests/recoverable-preview-runtime.test.js": "6289cc338b962124406b87e49d4072611a4b452d957511aaa281c985b874f294",
+    "tests/cli-preview-handoff-postgres.test.js": "7ae91a758ea232df96e7917e00eed0489756f44473ed309ed6c41e3bd8e4a385",
+    "tests/review-work.test.js": "fc2f26c35427d92ff54d6de1528c3b1183ec0af27052efb42da419eac9b20917",
+    "src/services/staging.js": "27008c260decef0569e2d4bec8f36a17872148f9c050b7ad0b7986bdff42a42e",
+    "tests/staging-build-serialize.test.js": "a9f97f6e9b1e84f92f53eb3c851c31870f39f4fec6ca8aa63c67ace9d4ac097e",
+    "tests/lib/preview-worker-child.js": "d035b081154911205e2f96958d48d6aaee2596e7d51ab7d1cc42f9737908ed4f",
+    "tests/lib/recoverable-build-child.js": "7333b7ddaa0707dc334224916ba4bcbcd1871450ccd9ececf777148a0b74e6a1",
+    "tests/lib/clone-operation-child.js": "75ac128b4243fcb2522b1c5af088adc982675b69a6e56313399a0823fdd09312",
+    "src/services/preview-flow/reducer.js": "8051c3eb701f5bed375b2da7fd7826afd2d42ab17242677bbfe1c88a7ef7f2cf",
+    "src/services/preview-flow/candidate-reducer.js": "7b3015604443aa502876557d9d32be7438de981a1ac69561bd068a3107ce6793",
+    "src/services/preview-flow/legacy-reducer.js": "2c0ac9ff33a9b05fb660376a002131970471add01e75e5c9c8cc22da2b1ad9f7",
+    "src/services/preview-flow/runtime-reducer.js": "7b7058fd732a26b61f811d7db95fdbbdfef7b0dafc6567ff69fb6948316c0562",
+    "src/services/cli-preview-handoff/reducer.js": "7b79925ee2a56c2509dcd44a0580bc2d09c9600e3e7fc7ea1de4541a1492d540",
+    "src/services/proposal-review/reducer.js": "b162601f7b94ae7e7f18e58d65e4d7c8f3ad2476872592a7bd5776f9f85b15f6"
+  },
+  "artifacts": {
+    "replay.cjs": "9a8858529a9d26690f7d8f19722de9564f0deb18340add4cfa2d585fab896a2c",
+    "sources.json.gz": "4d0f2e121d7f66a63b9120fc9c19587510483a3d608e207bb84e5ed3f77b1479",
+    "goldens.jsonl": "5af120cbf5bb9760a35b831be4eaba8a109aa14ba2ae95b1df8d47c405bea519"
+  },
+  "replayBoundary": "Reducer execution only. Lazy Kubernetes recipe selection is not part of replay and is unavailable; I/O/execution tests are provenance snapshots, not offline runnable integration tests.",
+  "historicalVersions": {
+    "preview-flow": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "cli-preview-handoff": [
+      1,
+      2
+    ],
+    "proposal-review": [
+      1
+    ]
+  },
+  "reducers": {
+    "preview-flow": {
+      "1": "src/services/preview-flow/versions/v1.js",
+      "2": "src/services/preview-flow/versions/v2.js",
+      "3": "src/services/preview-flow/versions/v3.js",
+      "4": "src/services/preview-flow/versions/v4.js",
+      "5": "src/services/preview-flow/versions/v5.js",
+      "6": "src/services/preview-flow/versions/v6.js",
+      "7": "src/services/preview-flow/versions/v7.js",
+      "8": "src/services/preview-flow/versions/v8.js",
+      "9": "src/services/preview-flow/versions/v9.js",
+      "10": "src/services/preview-flow/reducer.js"
+    },
+    "cli-preview-handoff": {
+      "1": "src/services/cli-preview-handoff/versions/v1.js",
+      "2": "src/services/cli-preview-handoff/versions/v2.js",
+      "3": "src/services/cli-preview-handoff/reducer.js"
+    },
+    "proposal-review": {
+      "1": "src/services/proposal-review/versions/v1.js",
+      "2": "src/services/proposal-review/reducer.js"
+    }
+  },
+  "producerSuites": [
+    "tests/preview-flow.test.js",
+    "tests/preview-candidate.test.js",
+    "tests/recoverable-preview-runtime.test.js",
+    "tests/cli-preview-handoff-postgres.test.js",
+    "tests/review-work.test.js"
+  ]
+}

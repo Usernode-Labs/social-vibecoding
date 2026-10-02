@@ -1,5 +1,14 @@
 # Supported CLI contract and retention review
 
+**Current support decision (2 October):** [fresh experimental stores only](experimental-retention-decision.md).
+Historical reducers, dependency bytes, golden sources and exported test traces are
+in the verified offline archive. Three partial handlers and twelve replay-only
+reducers are removed. Current complete work recovers with admission disabled;
+startup refuses unsupported stores instead of stranding removed work.
+The earlier review below records why this gate was required; its unknown-store
+removal gate is superseded by that explicit decision. Production and legacy
+safeguards remain. Public HTTPS/private identity and installation proof remain.
+
 Reviewed 2 October 2026 at accepted local `d24b0c0dd15fd22ee9654243e423ce449777d925`;
 canonical main `4c0ef27fb7381e9ecb89e2732e6c2c784b9395c6` was fetched and inspected.
 The subsequent pinned integration is `d9cf30cd73a0810be72b199f8b2a194f8c56b793`

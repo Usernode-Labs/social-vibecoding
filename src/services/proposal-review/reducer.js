@@ -86,11 +86,8 @@ function reduce(state, action, facts) {
 }
 
 function replayDecision(entry) {
-  if (entry.reducer_version === 1) {
-    return require('./versions/v1').reduce(entry.pre_state, entry.action, entry.facts);
-  }
   if (entry.reducer_version !== REDUCER_VERSION) {
-    throw new Error(`Unsupported proposal review reducer version: ${entry.reducer_version}`);
+    throw new Error(`Unsupported proposal-review reducer version: ${entry.reducer_version}; use the offline historical archive`);
   }
   return reduce(entry.pre_state, entry.action, entry.facts);
 }

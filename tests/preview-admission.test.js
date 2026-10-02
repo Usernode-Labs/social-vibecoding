@@ -6,8 +6,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { enabled: postgresEnabled, readPreviewPostgresFixture } = require('./lib/preview-postgres-fixture');
 const { createExecutionDatabase } = require('./lib/execution-database');
-const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
-const { createPreviewWork, PREPARE, PREPARE_CLONE, PREPARE_IMAGE, PREPARE_RUNTIME } = require('../src/services/preview-flow/work');
+const { createPreviewWork, PREPARE_RUNTIME } = require('../src/services/preview-flow/work');
 const { createExecutionWorker } = require('../src/services/execution/worker');
 
 const HEAD = 'a'.repeat(40);
@@ -70,58 +69,5 @@ for (const enabled of [undefined, false]) {
       'preview_flow_decisions', 'execution_work_requests', 'execution_work_events']) {
       assert.equal((await f.pool.query(`SELECT * FROM ${table}`)).rowCount, 0, table);
     }
-  });
-}
-
-for (const workflow of [PREPARE, PREPARE_CLONE, PREPARE_IMAGE]) {
-  test(`real PostgreSQL: retained ${workflow} completes with new admission disabled`, { skip: !postgresEnabled }, async t => {
-    const f = await fixture(t);
-    f.config.nativeCliPreviewHandoffEnabled = false;
-    const retained = createRetainedPreviewWork(f.pool, f.config, { workflow });
-    const admitted = await retained.seedRetained(f.action);
-    const imageRef = `${f.config.kubernetes.repositoryPrefix}/demo@sha256:${'b'.repeat(64)}`;
-    let preparations = 0;
-    const recovery = createPreviewWork(f.pool, f.config, {
-      lock: async (_config, _classifier, _sessionId, run) => run(),
-      inspect: async () => ({ present: false, receipt: null }),
-      clones: {
-        prepare: async () => ({ status: 'complete', databaseOid: '123' }),
-      },
-      images: {
-        prepare: async intent => ({
-          status: 'succeeded',
-          uid: 'retained-build',
-          imageRef,
-          buildRef: `${intent.buildOperation.namespace}/sv-p-${intent.attemptId.replaceAll('-', '')}`,
-        }),
-      },
-      async prepare(_config, _session, _app, headSha, candidate) {
-        preparations++;
-        const image = candidate.prepareImage ? await candidate.prepareImage(null) : { imageRef, buildRef: null };
-        if (candidate.onRuntimeStarting) await candidate.onRuntimeStarting();
-        await candidate.onClonePrepared();
-        return {
-          commitSha: headSha,
-          stagingUrl: `http://${candidate.intent.runtimeName}:3000`,
-          runtimeKind: 'kubernetes',
-          runtimeName: candidate.intent.runtimeName,
-          containerId: null,
-          physicalId: randomUUID(),
-          ...image,
-        };
-      },
-    });
-    await assert.rejects(recovery.request({ ...f.action, actionId: randomUUID() }), /experimentally disabled/);
-    const worker = createExecutionWorker({ store: recovery.store, handlers: recovery.handlers, concurrency: 1 });
-    await worker.tick();
-    await worker.drain();
-    const completed = await recovery.store.read(admitted.work.id);
-    assert.equal(completed.workflow, workflow);
-    assert.deepEqual(completed.input, admitted.work.input);
-    assert.equal(completed.status, 'succeeded');
-    assert.equal(completed.result.accepted, true);
-    assert.equal(preparations, 1);
-    assert.equal((await f.pool.query('SELECT staging_runtime_name FROM chat_sessions')).rows[0].staging_runtime_name, 'serving');
-    assert.equal((await f.pool.query('SELECT * FROM execution_work_requests')).rowCount, 1);
   });
 }

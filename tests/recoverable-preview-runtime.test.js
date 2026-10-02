@@ -11,7 +11,8 @@ const { createRuntimeOperations } = require('../src/services/preview-flow/runtim
 const { parseAction } = require('../src/services/preview-flow/actions');
 const { reduce, replayDecision } = require('../src/services/preview-flow/reducer');
 const { reduceRuntime } = require('../src/services/preview-flow/runtime-reducer');
-const { reduce: reduceV8 } = require('../src/services/preview-flow/versions/v8');
+const { replayHistorical } = require('./lib/historical-replay');
+const { createInjectedRuntimeApi: externalApi } = require('./lib/injected-preview-runtime');
 
 const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL;
 const HEAD = 'a'.repeat(40);
@@ -58,48 +59,6 @@ function stateFixture() {
   return { state, desired, apply };
 }
 
-function externalApi() {
-  const objects = new Map();
-  const creates = [];
-  const deletes = [];
-  let version = 0;
-  const clients = { core: {}, apps: {} };
-  for (const [kind, suffix] of [['secret', 'Secret'], ['service', 'Service'], ['deployment', 'Deployment']]) {
-    const api = kind === 'deployment' ? clients.apps : clients.core;
-    api[`readNamespaced${suffix}`] = async ({ name }) => {
-      const object = objects.get(`${kind}/${name}`);
-      if (!object) throw { code: 404 };
-      return structuredClone(object);
-    };
-    api[`createNamespaced${suffix}`] = async ({ body }) => {
-      const key = `${kind}/${body.metadata.name}`;
-      if (objects.has(key)) throw { code: 409 };
-      const object = structuredClone(body);
-      object.metadata = { ...object.metadata, uid: randomUUID(), resourceVersion: String(++version), generation: 1 };
-      if (kind === 'deployment') object.status = { observedGeneration: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 };
-      objects.set(key, object);
-      creates.push(kind);
-      return structuredClone(object);
-    };
-    api[`deleteNamespaced${suffix}`] = async ({ name, body }) => {
-      const key = `${kind}/${name}`;
-      const object = objects.get(key);
-      if (!object) throw { code: 404 };
-      assert.equal(body.preconditions.uid, object.metadata.uid);
-      assert.equal(body.preconditions.resourceVersion, object.metadata.resourceVersion);
-      deletes.push(kind);
-      objects.delete(key);
-    };
-  }
-  const deployment = () => [...objects.entries()].find(([key]) => key.startsWith('deployment/'))?.[1];
-  clients.apps.listNamespacedReplicaSet = async () => ({ items: deployment() ? [{ metadata: { uid: 'owned-rs', ownerReferences: [{ controller: true, uid: deployment().metadata.uid }] } }] : [] });
-  clients.core.listNamespacedPod = async () => ({ items: deployment() ? [{
-    metadata: { uid: 'owned-pod', labels: deployment().spec.template.metadata.labels, ownerReferences: [{ controller: true, uid: 'owned-rs' }] },
-    spec: deployment().spec.template.spec, status: { conditions: [{ type: 'Ready', status: 'True' }] },
-  }] : [] });
-  clients.core.readNamespacedEndpoints = async () => ({ subsets: [{ addresses: [{ targetRef: { uid: 'owned-pod' } }] }] });
-  return { objects, creates, deletes, clients };
-}
 
 function context(f) {
   return {
@@ -147,9 +106,9 @@ test('C5 runtime guards are pure and historical v8 completion remains replayable
   assert.equal(reduce(state, action, {}).reason, 'candidate_runtime_unconfirmed');
   // Existing v8 work has no runtime operation. Its frozen policy must remain
   // independent of future guards, even if a supplied trace includes new fields.
-  const old = reduceV8(state, action, {});
+  const old = replayHistorical('preview-flow', { reducer_version: 8, pre_state: state, action, facts: {} });
   assert.equal(old.accepted, true);
-  assert.deepEqual(replayDecision({ reducer_version: 8, pre_state: state, action, facts: {} }), old);
+  assert.throws(() => replayDecision({ reducer_version: 8, pre_state: state, action, facts: {} }), /Unsupported/);
   assert.deepEqual(state, before);
 });
 

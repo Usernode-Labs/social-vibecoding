@@ -13,6 +13,7 @@ const SUITES = [
   'tests/decision-runtime.test.js',
   'tests/execution-worker.test.js',
   'tests/preview-admission.test.js',
+  'tests/experimental-support.test.js',
   'tests/preview-work.test.js',
   'tests/recoverable-preview-clone.test.js',
   'tests/recoverable-preview-build.test.js',

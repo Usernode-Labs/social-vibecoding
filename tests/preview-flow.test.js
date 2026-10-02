@@ -1,5 +1,7 @@
 'use strict';
 
+const { replayHistorical } = require('./lib/historical-replay');
+
 const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -148,12 +150,12 @@ test('checkpoint version-one traces retain their original policy and decision sh
       headSha: HEAD,
     }],
   };
-  assert.deepEqual(replayDecision({ reducer_version: 1, pre_state: preState, action: actionInput, facts }), expected);
+  assert.deepEqual(replayHistorical('preview-flow', { reducer_version: 1, pre_state: preState, action: actionInput, facts }), expected);
   assert.deepEqual(reduce(preState, actionInput, facts), { ...expected, supersededFlow: { ...preState.flow, state: 'superseded' } });
 
   const ready = { ...actionInput, type: 'PreviewReady', ...flowIdentity(preState.flow), receipt: runtimeReceipt() };
   delete ready.startedStatus;
-  assert.deepEqual(replayDecision({ reducer_version: 1, pre_state: preState, action: ready, facts: {} }),
+  assert.deepEqual(replayHistorical('preview-flow', { reducer_version: 1, pre_state: preState, action: ready, facts: {} }),
     {
       accepted: true,
       reason: 'runtime_published',
@@ -164,7 +166,7 @@ test('checkpoint version-one traces retain their original policy and decision sh
     });
 
   const retiring = { ...preState, resource: { cleanupStarted: true } };
-  assert.deepEqual(replayDecision({ reducer_version: 1, pre_state: retiring, action: ready, facts: {} }),
+  assert.deepEqual(replayHistorical('preview-flow', { reducer_version: 1, pre_state: retiring, action: ready, facts: {} }),
     {
       accepted: false,
       reason: 'resource_retiring',

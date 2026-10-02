@@ -117,12 +117,13 @@ kpack configuration. The authenticated CLI adapter retains its existing policies
 the shared transaction commits accepted head/details and required work together.
 No capability combination may admit a partial durable preparation contract.
 
-Disabling admission rejects new preparation but does not change the registry or
-the meaning of already persisted work. Retained earlier kinds still recover under
-their original input/checkpoint contract. Replay snapshots, synchronous native
-attempt opt-in, locks, lifecycle and cleanup protections remain. Removing old
-handlers/trace formats requires the separate supported-store/retention decision;
-that gate does not block simplifying new admission. No rollout default changes.
+Disabling admission rejects new preparation; supported complete work still
+recovers under its persisted contract. The explicit
+[fresh-store-only decision](experimental-retention-decision.md) now permits
+removal of earlier partial kinds after independent offline archival. Startup
+refuses unsupported stores without deleting their obligations. Current replay,
+synchronous native opt-in, lifecycle/retention locks and legacy safeguards remain.
+No rollout default changes.
 
 - [`preview-flow/work.js`](../../src/services/preview-flow/work.js) is the trusted
   internal preparation owner. The default-off CLI adapter invokes transactional

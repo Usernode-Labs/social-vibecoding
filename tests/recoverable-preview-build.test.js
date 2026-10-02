@@ -8,11 +8,12 @@ const { once } = require('node:events');
 const { createImageBuildOperations } = require('../src/services/preview-flow/image-build-operation');
 const { reserveImageBuild, buildManifest } = require('../src/services/preview-flow/image-build-intent');
 const { candidateResources } = require('../src/services/preview-flow/candidate-resources');
-const { createPreviewWork, PREPARE, PREPARE_CLONE, PREPARE_IMAGE } = require('../src/services/preview-flow/work');
+const { createPreviewWork, PREPARE_RUNTIME } = require('../src/services/preview-flow/work');
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { replayDecision } = require('../src/services/preview-flow/reducer');
 const { createExecutionDatabase } = require('./lib/execution-database');
-const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
+const { createInjectedRuntimeApi } = require('./lib/injected-preview-runtime');
+const { createRuntimeOperations } = require('../src/services/preview-flow/runtime-operation');
 
 const HEAD = 'a'.repeat(40);
 const databaseUrl = process.env.PREVIEW_FLOW_TEST_DATABASE_URL || process.env.SQL_CHECK_CONNECTION_URL;
@@ -50,7 +51,8 @@ function intent() {
 function externalApi() {
   const objects = new Map();
   const pods = new Map();
-  const deployments = new Map();
+  const runtime = createInjectedRuntimeApi();
+  const deployments = runtime.deployments;
   let creates = 0;
   const clients = {
     custom: {
@@ -83,6 +85,9 @@ function externalApi() {
       },
     },
   };
+  Object.assign(clients.core, runtime.clients.core);
+  Object.assign(clients.apps, runtime.clients.apps);
+
   function object(resource) {
     const body = buildManifest(resource);
     return objects.get(`${body.metadata.namespace}/${body.metadata.name}`);
@@ -95,7 +100,7 @@ function externalApi() {
       latestImage: `${resource.buildOperation.repository}@sha256:${'c'.repeat(64)}`,
     };
   }
-  return { clients, objects, pods, deployments, object, succeed, creates: () => creates };
+  return { clients, objects, pods, deployments, runtime, object, succeed, creates: () => creates };
 }
 
 async function preparation(service, resource, checkpoint = {}) {
@@ -284,46 +289,25 @@ async function fixture(t, settings = config(), {
     }
     return result;
   };
-  let deploys = 0;
-  const work = createRetainedPreviewWork(db.pool, settings, {
-    workflow: PREPARE_IMAGE,
+  const work = createPreviewWork(db.pool, settings, {
     owner,
     images,
     clones: { prepare: async () => ({ status: 'complete', databaseOid: '123' }), inspect: async () => ({ status: 'complete' }) },
-    inspect: runtimeReceiptLoss ? require('../src/services/preview-flow/candidate-runtime').observePreparedCandidate
-      : async () => ({ present: false, receipt: null }),
-    async prepare(_config, _session, _app, head, candidate, identity) {
-      if (!candidate.prepareImage) return assert.fail('legacy preparation not expected');
+    runtimes: createRuntimeOperations({ clients: () => api.clients, dataKey: settings.dataEncryptionKey,
+      probe: (...args) => require('../src/services/application-runtime').probeHealth(...args) }),
+    async prepare(_config, _session, _app, head, candidate) {
+      await candidate.prepareClone();
       const build = await candidate.prepareImage(null);
-      await candidate.onRuntimeStarting();
-      deploys++;
-      const physicalId = randomUUID();
-      if (runtimeReceiptLoss) {
-        api.deployments.set(`${candidate.intent.namespace}/${candidate.intent.runtimeName}`, {
-          metadata: {
-            uid: physicalId,
-            labels: {
-              'social.usernode.io/preview-flow': identity.flowId,
-              'social.usernode.io/preview-head': head,
-            },
-          },
-          spec: { template: { spec: { containers: [{ name: 'app', image: build.imageRef }] } } },
-        });
-      }
-      return {
-        commitSha: head,
-        stagingUrl: runtimeReceiptLoss ? require('../src/services/application-runtime').appOrigin(settings, candidate.intent)
-          : `http://${candidate.intent.runtimeName}:3000`,
-        runtimeKind: 'kubernetes', runtimeName: candidate.intent.runtimeName, containerId: null,
-        imageRef: build.imageRef, buildRef: build.buildRef, physicalId,
-      };
+      const deployed = await candidate.prepareRuntime({ imageRef: build.imageRef, env: {} });
+      return { ...deployed, commitSha: head, stagingUrl: deployed.url };
     },
   });
+  t.mock.method(require('../src/services/application-runtime'), 'probeHealth', async () => true);
   async function run() {
     await db.pool.query('UPDATE execution_work_requests SET due_at = clock_timestamp()');
-    const [attempt] = await work.store.claim(randomUUID(), [PREPARE_IMAGE], 1);
+    const [attempt] = await work.store.claim(randomUUID(), [PREPARE_RUNTIME], 1);
     assert.ok(attempt);
-    const handler = work.handlers[PREPARE_IMAGE];
+    const handler = work.handlers[PREPARE_RUNTIME];
     try {
       const proposed = await handler.run({ attempt, signal: new AbortController().signal,
         checkpoint: value => work.store.checkpoint(attempt, value) });
@@ -334,14 +318,14 @@ async function fixture(t, settings = config(), {
     }
   }
   const action = { type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId, headSha: HEAD, startedStatus: 'active' };
-  return { ...db, api, work, run, owner, action, settings, deploys: () => deploys };
+  return { ...db, api, work, run, owner, action, settings, deploys: () => api.runtime.creates.filter(kind => kind === 'deployment').length };
 }
 
 for (const loss of ['interruption', 'create acknowledgment', 'decision acknowledgment']) {
   test(`real PostgreSQL / injected kpack: recovery after ${loss} keeps serving state and journals`, { skip: !databaseUrl }, async t => {
     const f = await fixture(t, config(), { replyLoss: loss === 'create acknowledgment', decisionLoss: loss === 'decision acknowledgment' });
-    const admitted = await f.work.seedRetained(f.action);
-    assert.equal(admitted.work.workflow, PREPARE_IMAGE);
+    const admitted = await f.work.request(f.action);
+    assert.equal(admitted.work.workflow, PREPARE_RUNTIME);
     if (loss === 'create acknowledgment') await assert.rejects(f.run(), /acknowledgment loss/);
     else assert.equal((await f.run()).outcome, 'waiting');
     let state = await f.owner.read(f.action.sessionId);
@@ -369,7 +353,7 @@ for (const loss of ['interruption', 'create acknowledgment', 'decision acknowled
 
 test('real PostgreSQL / injected kpack: stale image completion and runtime permission are rejected', { skip: !databaseUrl }, async t => {
   const f = await fixture(t);
-  await f.work.seedRetained(f.action);
+  await f.work.request(f.action);
   await f.run();
   const state = await f.owner.read(f.action.sessionId);
   const identity = { flowId: state.flow.id, generation: state.flow.generation, headSha: HEAD,
@@ -388,21 +372,14 @@ test('real PostgreSQL / injected kpack: stale image completion and runtime permi
   assert.equal((await f.owner.read(f.action.sessionId)).preview.runtimeName, 'serving');
 });
 
-test('real PostgreSQL: new admission preserves retained kinds and their frozen recipe', { skip: !databaseUrl }, async t => {
-  for (const workflow of [PREPARE, PREPARE_CLONE]) {
-    const f = await fixture(t);
-    const retained = createRetainedPreviewWork(f.pool, f.settings, { workflow });
-    const before = await retained.seedRetained(f.action);
-    const changed = createPreviewWork(f.pool, f.settings);
-    const replayed = await changed.request(f.action);
-    assert.equal(replayed.work.workflow, workflow);
-    assert.deepEqual(replayed.work.input, before.work.input);
-  }
+test('real PostgreSQL: complete admission freezes its recipe across configuration changes', { skip: !databaseUrl }, async t => {
   const f = await fixture(t);
-  const admitted = await f.work.seedRetained(f.action);
+  const admitted = await f.work.request(f.action);
   f.settings.kubernetes.builderImage = `changed/builder@sha256:${'d'.repeat(64)}`;
-  assert.notEqual(admitted.work.input.intent.buildOperation.builderImage, f.settings.kubernetes.builderImage);
-  assert.ok(f.work.handlers[PREPARE] && f.work.handlers[PREPARE_CLONE] && f.work.handlers[PREPARE_IMAGE]);
+  const replayed = await f.work.request(f.action);
+  assert.deepEqual(replayed.work.input, admitted.work.input);
+  assert.equal(replayed.work.id, admitted.work.id);
+  assert.deepEqual(Object.keys(f.work.handlers).sort(), ['native-preview-kubernetes-prepare', 'native-preview-retire']);
 });
 
 for (const invalid of ['docker', 'auto', 'mutable builder', 'admission disabled']) {
@@ -424,7 +401,7 @@ for (const invalid of ['docker', 'auto', 'mutable builder', 'admission disabled'
 test('real PostgreSQL + HTTP / injected Build: SIGKILL of the actual worker recovers its original claim and Build', { skip: !databaseUrl }, async t => {
   const { fork } = require('node:child_process');
   const f = await fixture(t);
-  const admitted = await f.work.seedRetained(f.action);
+  const admitted = await f.work.request(f.action);
   const server = createServer(async (request, response) => {
     try {
       let value;
@@ -489,7 +466,7 @@ test('real PostgreSQL + HTTP / injected Build: SIGKILL of the actual worker reco
 for (const kind of ['build', 'infrastructure', 'unknown']) {
   test(`real PostgreSQL / injected kpack: ${kind} failure settles the domain with an explicit cause`, { skip: !databaseUrl }, async t => {
     const f = await fixture(t);
-    await f.work.seedRetained(f.action);
+    await f.work.request(f.action);
     await f.run();
     const resource = (await f.owner.read(f.action.sessionId)).resource.intent;
     const build = f.api.object(resource);
@@ -511,12 +488,12 @@ for (const kind of ['build', 'infrastructure', 'unknown']) {
 
 test('real PostgreSQL / injected runtimes: cleanup defers for a live Build and preserves its successor after completion', { skip: !databaseUrl }, async t => {
   const f = await fixture(t);
-  await f.work.seedRetained(f.action);
+  await f.work.request(f.action);
   await f.run();
   const old = await f.owner.read(f.action.sessionId);
   await f.owner.apply({ type: 'PreparationFailed', actionId: randomUUID(), sessionId: f.action.sessionId,
     flowId: old.flow.id, generation: old.flow.generation, headSha: HEAD, detail: 'Retired isolated test attempt' });
-  await f.work.seedRetained({ ...f.action, actionId: randomUUID() });
+  await f.work.request({ ...f.action, actionId: randomUUID() });
   const successor = await f.owner.read(f.action.sessionId);
   const removals = [];
   t.mock.method(require('../src/services/preview-flow/binding-adapters'), 'inspect', async () => ({ target: 'serving', token: null, uid: null }));
@@ -525,6 +502,7 @@ test('real PostgreSQL / injected runtimes: cleanup defers for a live Build and p
   t.mock.method(require('../src/services/docker'), 'execFileAsync', async () => {});
   const cleanup = require('../src/services/preview-flow/cleanup').createCleanup({
     images: createImageBuildOperations({ clients: () => f.api.clients }),
+    runtimes: createRuntimeOperations({ clients: () => f.api.clients, dataKey: f.settings.dataEncryptionKey }),
     clones: { remove: async resource => { assert.equal(resource.dbName, old.resource.intent.dbName); return { status: 'removed' }; } },
   });
   const cleanupRequest = { pool: f.pool, config: f.settings, sessionId: f.action.sessionId, flowId: old.flow.id };
@@ -533,7 +511,7 @@ test('real PostgreSQL / injected runtimes: cleanup defers for a live Build and p
   assert.equal((await f.pool.query('SELECT cleanup_completed_at FROM preview_flow_resources WHERE flow_id = $1', [old.flow.id])).rows[0].cleanup_completed_at, null);
   f.api.succeed(old.resource.intent);
   await cleanup.underBuildLock(cleanupRequest);
-  assert.deepEqual(removals, [old.resource.intent.runtimeName]);
+  assert.deepEqual(removals, [old.resource.intent.runtimeName], 'before desired runtime selection, attempt-specific removal still protects the successor');
   const current = await f.owner.read(f.action.sessionId);
   assert.equal(current.flow.id, successor.flow.id);
   assert.equal(current.resource.intent.runtimeName, successor.resource.intent.runtimeName);
@@ -584,7 +562,7 @@ test('injected Kubernetes inventory: legacy failed/app deletion and success rete
 
 test('real PostgreSQL: recipe writes and decision journal roll back together after a persistence error', { skip: !databaseUrl }, async t => {
   const f = await fixture(t);
-  await f.work.seedRetained(f.action);
+  await f.work.request(f.action);
   const initial = await f.owner.read(f.action.sessionId);
   await f.owner.markClonePrepared(f.action.sessionId, initial.flow.id);
   const action = { type: 'RequestCandidateImageBuild', actionId: randomUUID(), sessionId: f.action.sessionId,
@@ -615,7 +593,7 @@ test('real PostgreSQL: recipe writes and decision journal roll back together aft
 
 test('real PostgreSQL: candidate completion cannot bypass its reserved image receipt', { skip: !databaseUrl }, async t => {
   const f = await fixture(t);
-  await f.work.seedRetained(f.action);
+  await f.work.request(f.action);
   await f.run();
   const state = await f.owner.read(f.action.sessionId);
   const receipt = {
@@ -643,7 +621,7 @@ test('injected kpack: failed or rejected submission checkpoint prevents external
 for (const loss of ['before', 'after']) {
   test(`real PostgreSQL / production observer: healthy runtime adoption repairs ${loss}-persistence receipt loss`, { skip: !databaseUrl }, async t => {
     const f = await fixture(t, config(), { runtimeReceiptLoss: loss });
-    await f.work.seedRetained(f.action);
+    await f.work.request(f.action);
     const servingPreview = (await f.owner.read(f.action.sessionId)).preview;
     await f.run();
     const resource = (await f.owner.read(f.action.sessionId)).resource.intent;
@@ -686,7 +664,7 @@ for (const conflict of adoptionConflicts) {
   test(`real PostgreSQL / production observer: recovery rejects conflicting ${conflict}`, { skip: !databaseUrl }, async t => {
     const persistedReceipt = conflict === 'runtime UID' || conflict === 'stored Build reference';
     const f = await fixture(t, config(), { runtimeReceiptLoss: persistedReceipt ? 'after' : 'before' });
-    await f.work.seedRetained(f.action);
+    await f.work.request(f.action);
     await f.run();
     const resource = (await f.owner.read(f.action.sessionId)).resource.intent;
     f.api.succeed(resource);
@@ -731,9 +709,9 @@ for (const conflict of adoptionConflicts) {
         break;
     }
 
-    const observationError = ['runtime owner', 'runtime head', 'runtime UID', 'stored Build reference'].includes(conflict);
+    const observationError = conflict === 'stored Build reference';
     if (observationError) {
-      await assert.rejects(f.run(), error => error.permanent === true);
+      await assert.rejects(f.run(), /conflicting receipt/);
     } else {
       const result = await f.run();
       assert.notEqual(result.result?.prepared, true);

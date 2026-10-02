@@ -3,13 +3,13 @@
 const { createSessionDecisionRuntime } = require('../decision-runtime');
 const { readState } = require('../preview-flow/store');
 const { parseAction } = require('./actions');
-const { reduce } = require('./reducer');
+const { reduce, REDUCER_VERSION } = require('./reducer');
 
 function createCliPreviewHandoff(pool) {
   const runtime = createSessionDecisionRuntime(pool);
   const machine = {
     name: 'cli-preview-handoff',
-    version: 3,
+    version: REDUCER_VERSION,
     parseAction,
     reduce,
     async load(client, session, { sessionId, lock }) {

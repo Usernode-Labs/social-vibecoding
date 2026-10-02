@@ -19,6 +19,7 @@ const bootstrap = `
   for (const name of ['node:http', 'node:https']) {
     require(name).request = () => { throw new Error('Network forbidden in bootstrap regression'); };
   }
+  stub('./src/services/preview-flow/experimental-support', { async assertSupportedExperimentalStore() {} });
   const github = require('./src/services/github');
   const llm = require('./src/services/llm');
   assert.equal(github.isEnabled(), false);

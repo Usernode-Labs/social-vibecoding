@@ -4,8 +4,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { createExecutionDatabase } = require('./lib/execution-database');
-const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
-const { PREPARE, RETIRE } = require('../src/services/preview-flow/work');
+const { completePreviewConfig, createCompletePreviewWork } = require('./lib/complete-preview-work');
+const { createInjectedRuntimeApi } = require('./lib/injected-preview-runtime');
+const { createRuntimeOperations } = require('../src/services/preview-flow/runtime-operation');
+const { PREPARE_RUNTIME, RETIRE } = require('../src/services/preview-flow/work');
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { createGuard } = require('../src/services/build-retention-guard');
 const { replayDecision } = require('../src/services/preview-flow/reducer');
@@ -37,65 +39,62 @@ function failOnce(pool, matches, after = false) {
   };
 }
 
-async function fixture(t, kind = 'docker') {
+async function fixture(t) {
   const db = await createExecutionDatabase(databaseUrl);
   t.after(() => db.close());
   await db.pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (1, $1)', [HEAD]);
-  await db.pool.query('CREATE TABLE objects (name TEXT PRIMARY KEY, receipt JSONB)');
-  const config = { databaseUrl: db.url, appRuntime: kind, kubernetes: { appNamespace: 'apps' },
-    dataEncryptionKey: 'test-encryption-key', };
+  const config = completePreviewConfig({ databaseUrl: db.url });
+  const api = createInjectedRuntimeApi();
   const guard = createGuard({ onLockLost: () => { throw new Error('Unexpected guard loss'); } });
-  let creates = 0;
+  const runtimes = createRuntimeOperations({ clients: () => api.clients, dataKey: config.dataEncryptionKey,
+    probe: async () => true });
   const adapters = {
     lock: guard.withResourceUse,
-    async inspect(_config, intent) {
-      const object = (await db.pool.query('SELECT receipt FROM objects WHERE name = $1', [intent.runtimeName])).rows[0];
-      return { present: !!object, receipt: object?.receipt || null };
+    runtimes,
+    clones: {
+      prepare: async () => ({ status: 'complete', databaseOid: '123' }),
+      inspect: async () => ({ status: 'complete' }),
     },
-    async prepare(_config, session, app, head, candidate) {
-      creates++;
-      await candidate.onClonePrepared();
-      const receipt = {
-        commitSha: head, stagingUrl: `http://${candidate.intent.runtimeName}:3000`,
-        runtimeKind: kind, runtimeName: candidate.intent.runtimeName,
-        containerId: kind === 'docker' ? candidate.intent.runtimeName : null,
-        imageRef: `image:${candidate.intent.attemptId}`, buildRef: null,
-        physicalId: randomUUID(), attemptId: candidate.intent.attemptId,
-      };
-      await db.pool.query('INSERT INTO objects VALUES ($1, $2)', [receipt.runtimeName, JSON.stringify(receipt)]);
-      return receipt;
+    images: {
+      prepare: async () => ({ status: 'succeeded', uid: 'injected-build', imageRef: `example.test/images/demo@sha256:${'c'.repeat(64)}` }),
+      inspect: async () => ({ status: 'succeeded', uid: 'injected-build', imageRef: `example.test/images/demo@sha256:${'c'.repeat(64)}` }),
+    },
+    async prepare(_config, _session, _app, head, candidate) {
+      await candidate.prepareClone();
+      const built = await candidate.prepareImage(null);
+      const deployed = await candidate.prepareRuntime({ imageRef: built.imageRef, env: {} });
+      return { ...deployed, commitSha: head, stagingUrl: deployed.url };
     },
     async cleanup({ sessionId, flowId }) {
       const owner = createPreviewFlow(db.pool);
       const allowed = await owner.apply({ type: 'RequestPreviewCleanup', actionId: randomUUID(), sessionId, flowId });
       if (!allowed.decision.accepted) return { protected: true };
-      await db.pool.query('DELETE FROM objects WHERE name = $1', [allowed.current.resource.intent.runtimeName]);
       await owner.apply({ type: 'PreviewCleanupCompleted', actionId: randomUUID(), sessionId, flowId, disposition: 'removed' });
     },
   };
-  const work = createRetainedPreviewWork(db.pool, config, adapters);
-  async function execute(workflow = PREPARE, executor = work) {
-    await db.pool.query("UPDATE execution_work_requests SET due_at = clock_timestamp() WHERE workflow = $1", [workflow]);
+  const work = createCompletePreviewWork(db.pool, config, adapters);
+  async function execute(workflow = PREPARE_RUNTIME, executor = work) {
+    await db.pool.query('UPDATE execution_work_requests SET due_at = clock_timestamp() WHERE workflow = $1', [workflow]);
     const [attempt] = await executor.store.claim(randomUUID(), [workflow], 1);
     const handler = executor.handlers[workflow];
     const proposed = await handler.run({ attempt, signal: new AbortController().signal,
       checkpoint: value => executor.store.checkpoint(attempt, value) });
     return executor.store.settle(attempt, proposed, handler.commit);
   }
-  return { ...db, config, adapters, work, execute, creates: () => creates };
+  return { ...db, config, adapters, work, execute, creates: () => api.creates.filter(kind => kind === 'deployment').length };
 }
 
-test('real PostgreSQL: retained-work fixture atomically seeds resources, decision, work and original receipt', { skip: !databaseUrl }, async t => {
+test('real PostgreSQL: complete admission is atomic and a lost commit reply joins the same work', { skip: !databaseUrl }, async t => {
   const { pool, config, adapters, work } = await fixture(t);
-  const broken = createRetainedPreviewWork(failOnce(pool, sql => sql.includes('INSERT INTO execution_work_events')), config, adapters);
+  const broken = createCompletePreviewWork(failOnce(pool, sql => sql.includes('INSERT INTO execution_work_events')), config, adapters);
   const action = request();
-  await assert.rejects(broken.seedRetained(action));
+  await assert.rejects(broken.request(action));
   for (const table of ['preview_flows', 'preview_action_receipts', 'preview_flow_decisions', 'preview_flow_resources', 'execution_work_requests']) {
     assert.equal((await pool.query(`SELECT * FROM ${table}`)).rowCount, 0, table);
   }
-  const lost = createRetainedPreviewWork(failOnce(pool, sql => sql === 'COMMIT', true), config, adapters);
-  await assert.rejects(lost.seedRetained(action));
-  const retried = await work.seedRetained(action);
+  const lost = createCompletePreviewWork(failOnce(pool, sql => sql === 'COMMIT', true), config, adapters);
+  await assert.rejects(lost.request(action));
+  const retried = await work.request(action);
   assert.equal(retried.replayed, true);
   assert.equal((await pool.query('SELECT * FROM execution_work_requests')).rowCount, 1);
   assert.equal((await pool.query('SELECT * FROM preview_flow_resources')).rowCount, 1);
@@ -103,127 +102,22 @@ test('real PostgreSQL: retained-work fixture atomically seeds resources, decisio
   for (const row of await createPreviewFlow(pool).trace(1)) assert.deepEqual(replayDecision(row), row.decision);
 });
 
-for (const kind of ['docker', 'kubernetes']) {
-  test(`real PostgreSQL ${kind}: preparation preserves serving state and candidate ownership between claims`, { skip: !databaseUrl }, async t => {
-    const { pool, work, execute, creates } = await fixture(t, kind);
-    const admitted = await work.seedRetained(request());
-    await work.census();
-    assert.equal((await pool.query('SELECT * FROM execution_work_requests WHERE workflow = $1', [RETIRE])).rowCount, 0);
-    const prepared = await execute();
-    assert.equal(prepared.result.accepted, true);
-    assert.equal(creates(), 1);
-    const state = await createPreviewFlow(pool).read(1);
-    assert.equal(state.flow.state, 'candidate');
-    assert.equal(state.preview.runtimeName, 'serving');
-    assert.equal(state.binding, null);
-    assert.equal((await createPreviewFlow(pool).apply({ type: 'RequestPreviewCleanup', actionId: randomUUID(),
-      sessionId: 1, flowId: admitted.decision.flow.id })).decision.reason, 'preparation_owned');
-    await work.census();
-    assert.equal((await pool.query('SELECT * FROM execution_work_requests WHERE workflow = $1', [RETIRE])).rowCount, 0);
-  });
-
-  test(`real PostgreSQL ${kind}: lost runtime receipt acknowledgment is adopted without another creation`, { skip: !databaseUrl }, async t => {
-    const { pool, config, adapters, work, execute, creates } = await fixture(t, kind);
-    const broken = createRetainedPreviewWork(failOnce(pool, sql => sql.includes('INSERT INTO preview_flow_resources (flow_id, session_id, receipt)')), config, adapters);
-    await broken.seedRetained(request());
-    await assert.rejects(execute(PREPARE, broken));
-    await pool.query("UPDATE execution_work_requests SET lease_until = clock_timestamp() - INTERVAL '1 second'");
-    const result = await execute();
-    assert.equal(result.result.accepted, true);
-    assert.equal(creates(), 1);
-    assert.equal((await work.store.read((await pool.query('SELECT id FROM execution_work_requests')).rows[0].id)).status, 'succeeded');
-  });
-
-  test(`real PostgreSQL ${kind}: interrupted creation is retired; completed absence still catches late resources`, { skip: !databaseUrl }, async t => {
-    const { pool, work, execute } = await fixture(t, kind);
-    const admission = await work.seedRetained(request());
-    const [interrupted] = await work.store.claim(randomUUID(), [PREPARE]);
-    await work.store.checkpoint(interrupted, { creationStarted: true });
-    await pool.query("UPDATE execution_work_requests SET lease_until = clock_timestamp() - INTERVAL '1 second'");
-    const retired = await execute();
-    assert.equal(retired.result.prepared, false);
-    await execute(RETIRE);
-    assert.ok((await pool.query('SELECT cleanup_completed_at FROM preview_flow_resources')).rows[0].cleanup_completed_at);
-    // A remote create accepted before the crash finishes after absence was observed.
-    await pool.query('INSERT INTO objects VALUES ($1, $2)', [admission.work.input.intent.runtimeName, JSON.stringify({ late: true })]);
-    await execute(RETIRE);
-    assert.equal((await pool.query('SELECT * FROM objects')).rowCount, 0);
-    assert.equal((await pool.query('SELECT status FROM execution_work_requests WHERE workflow = $1', [RETIRE])).rows[0].status, 'queued');
-    assert.equal((await createPreviewFlow(pool).read(1)).preview.runtimeName, 'serving');
-  });
-
-  test(`real PostgreSQL ${kind}: stale preparation result schedules retirement and cannot damage successor`, { skip: !databaseUrl }, async t => {
-    const { pool, work, execute } = await fixture(t, kind);
-    const old = await work.seedRetained(request());
-    const [attempt] = await work.store.claim(randomUUID(), [PREPARE]);
-    const proposed = await work.handlers[PREPARE].run({ attempt, signal: new AbortController().signal,
-      checkpoint: value => work.store.checkpoint(attempt, value) });
-    const next = await work.seedRetained(request());
-    const stale = await work.store.settle(attempt, proposed, work.handlers[PREPARE].commit);
-    assert.equal(stale.result.accepted, false);
-    assert.equal(stale.result.reason, 'superseded_flow');
-    await execute();
-    await execute(RETIRE);
-    assert.deepEqual((await pool.query('SELECT name FROM objects')).rows.map(row => row.name), [next.work.input.intent.runtimeName]);
-    assert.notEqual(old.work.input.intent.runtimeName, next.work.input.intent.runtimeName);
-    for (const row of await createPreviewFlow(pool).trace(1)) assert.deepEqual(replayDecision(row), row.decision);
-  });
-}
-
-test('real PostgreSQL: dedicated worker death after creation recovers in a different OS process', { skip: !databaseUrl }, async t => {
-  const { fork } = require('node:child_process');
-  const { once } = require('node:events');
-  const { pool, work, url } = await fixture(t);
-  const admission = await work.seedRetained(request());
-  const children = [];
-  t.after(() => { for (const child of children) if (child.exitCode === null) child.kill('SIGKILL'); });
-  function launch(stopAfterCreate) {
-    const child = fork(require.resolve('./lib/preview-worker-child'), [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] });
-    children.push(child);
-    child.send({ databaseUrl: url, stopAfterCreate });
-    return child;
-  }
-  const first = launch(true);
-  assert.deepEqual((await once(first, 'message'))[0], { created: true });
-  first.kill('SIGKILL');
-  await once(first, 'exit');
+test('real PostgreSQL: complete preparation preserves serving and recovery with admission disabled adopts the candidate', { skip: !databaseUrl }, async t => {
+  const { pool, config, adapters, work, execute, creates } = await fixture(t);
+  const admitted = await work.request(request());
+  const [attempt] = await work.store.claim(randomUUID(), [PREPARE_RUNTIME]);
+  const result = await work.handlers[PREPARE_RUNTIME].run({ attempt, signal: new AbortController().signal,
+    checkpoint: value => work.store.checkpoint(attempt, value) });
+  const receipt = result.result.receipt;
+  config.nativeCliPreviewHandoffEnabled = false;
+  const recovery = createCompletePreviewWork(pool, config, adapters);
+  await assert.rejects(recovery.request(request()), /experimentally disabled/);
   await pool.query("UPDATE execution_work_requests SET lease_until = clock_timestamp() - INTERVAL '1 second'");
-  const restarted = launch(false);
-  assert.deepEqual((await once(restarted, 'message'))[0], { completed: true });
-  await once(restarted, 'exit');
-  assert.equal((await work.store.read(admission.work.id)).status, 'succeeded');
-  assert.equal((await pool.query('SELECT * FROM objects')).rowCount, 1);
-  assert.equal((await createPreviewFlow(pool).read(1)).flow.state, 'candidate');
-});
-
-test('real PostgreSQL: expiry cannot release a live creator resource lock or authorize another creation', { skip: !databaseUrl }, async t => {
-  const { pool, config, adapters, work } = await fixture(t);
-  let finish;
-  let entered;
-  const pending = new Promise(resolve => { finish = resolve; });
-  const started = new Promise(resolve => { entered = resolve; });
-  const held = createRetainedPreviewWork(pool, config, { ...adapters,
-    async prepare(...args) { entered(); await pending; return adapters.prepare(...args); },
-  });
-  await work.seedRetained(request());
-  const [old] = await work.store.claim(randomUUID(), [PREPARE]);
-  const preparation = held.handlers[PREPARE].run({ attempt: old, signal: new AbortController().signal,
-    checkpoint: value => work.store.checkpoint(old, value) });
-  await started;
-  await pool.query("UPDATE execution_work_requests SET lease_until = clock_timestamp() - INTERVAL '1 second'");
-  const [next] = await work.store.claim(randomUUID(), [PREPARE]);
-  const busy = await work.handlers[PREPARE].run({ attempt: next, signal: new AbortController().signal,
-    checkpoint: value => work.store.checkpoint(next, value) });
-  assert.equal(busy.code, 'resource_busy');
-  await work.store.settle(next, busy, work.handlers[PREPARE].commit);
-  finish();
-  const oldResult = await preparation;
-  assert.deepEqual(await work.store.settle(old, oldResult, held.handlers[PREPARE].commit), { lostClaim: true });
-  await pool.query("UPDATE execution_work_requests SET due_at = clock_timestamp()");
-  const [retry] = await work.store.claim(randomUUID(), [PREPARE]);
-  const adopted = await work.handlers[PREPARE].run({ attempt: retry, signal: new AbortController().signal,
-    checkpoint: value => work.store.checkpoint(retry, value) });
-  assert.equal((await work.store.settle(retry, adopted, work.handlers[PREPARE].commit)).result.accepted, true);
+  assert.equal((await execute(PREPARE_RUNTIME, recovery)).result.accepted, true);
+  assert.deepEqual((await createPreviewFlow(pool).read(1)).resource.receipt, receipt);
+  assert.equal((await work.store.read(admitted.work.id)).status, 'succeeded');
+  assert.equal((await createPreviewFlow(pool).read(1)).preview.runtimeName, 'serving');
+  assert.equal(creates(), 1);
 });
 
 test('candidate observation checks physical owner, built head and health; errors never imply absence', async t => {
@@ -270,15 +164,15 @@ test('candidate observation checks physical owner, built head and health; errors
 for (const afterCommit of [false, true]) {
   test(`real PostgreSQL: preparation settlement ${afterCommit ? 'loses commit acknowledgment' : 'rolls back after mapping failure'} without duplicate decisions`, { skip: !databaseUrl }, async t => {
     const { pool, config, adapters, work, execute, creates } = await fixture(t);
-    const admission = await work.seedRetained(request());
-    const broken = createRetainedPreviewWork(failOnce(pool, sql => afterCommit ? sql === 'COMMIT'
+    const admission = await work.request(request());
+    const broken = createCompletePreviewWork(failOnce(pool, sql => afterCommit ? sql === 'COMMIT'
       : sql.includes('INSERT INTO preview_flow_decisions'), afterCommit), config, adapters);
     // Work is already claimed before injecting completion failure. Its clone
     // checkpoint and runtime receipt remain outside the settlement transaction.
-    const [attempt] = await work.store.claim(randomUUID(), [PREPARE]);
-    const result = await work.handlers[PREPARE].run({ attempt, signal: new AbortController().signal,
+    const [attempt] = await work.store.claim(randomUUID(), [PREPARE_RUNTIME]);
+    const result = await work.handlers[PREPARE_RUNTIME].run({ attempt, signal: new AbortController().signal,
       checkpoint: value => work.store.checkpoint(attempt, value) });
-    await assert.rejects(broken.store.settle(attempt, result, broken.handlers[PREPARE].commit));
+    await assert.rejects(broken.store.settle(attempt, result, broken.handlers[PREPARE_RUNTIME].commit));
     if (!afterCommit) {
       assert.equal((await createPreviewFlow(pool).read(1)).flow.state, 'preparing');
       await pool.query("UPDATE execution_work_requests SET lease_until = clock_timestamp() - INTERVAL '1 second'");
@@ -295,11 +189,11 @@ test('real PostgreSQL: busy discovery rolls back without blocking polling or lat
   const { runWorker } = require('../scripts/preview-preparation-worker');
   const { pool, config, adapters, work } = await fixture(t);
   await pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES (2, $1), (3, $1)', [HEAD]);
-  const oldest = await work.seedRetained(request());
-  const later = await work.seedRetained({ ...request(), sessionId: 3 });
+  const oldest = await work.request(request());
+  const later = await work.request({ ...request(), sessionId: 3 });
   // Retire domain permission before holding the oldest aggregate lock.
   await pool.query("UPDATE chat_sessions SET status = 'archived' WHERE id IN (1, 3)");
-  const unrelated = await work.seedRetained({ ...request(), sessionId: 2 });
+  const unrelated = await work.request({ ...request(), sessionId: 2 });
   // Remove preparation from discovery assertions: these obligations already
   // have stable resources and only their cleanup must now be discovered.
   await pool.query("UPDATE execution_work_requests SET status = 'succeeded' WHERE session_id IN (1, 3)");

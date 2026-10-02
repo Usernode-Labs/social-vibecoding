@@ -3,31 +3,9 @@
 const { verifyDisposablePostgres } = require('./disposable-postgres');
 
 const { createCloneOperations } = require('../../src/services/preview-flow/clone-operation');
-const { createPreviewWork } = require('../../src/services/preview-flow/work');
-const { createExecutionWorker } = require('../../src/services/execution/worker');
-const { Pool } = require('pg');
-
-async function runAdmittedWork(platformUrl, config, clones) {
-  const pool = new Pool({ connectionString: platformUrl });
-  try {
-    const preview = createPreviewWork(pool, config, {
-      clones,
-      inspect: async () => ({ present: false, receipt: null }),
-      prepare: async () => { throw new Error('Child must interrupt before runtime preparation'); },
-    });
-    const worker = createExecutionWorker({ store: preview.store, handlers: preview.handlers, concurrency: 1 });
-    await worker.tick();
-    await worker.drain();
-    return { completed: true };
-  } finally {
-    await pool.end();
-  }
-}
-
-process.on('message', async ({ databaseUrl, intent, password, stopAfter, platformUrl, config }) => {
+process.on('message', async ({ databaseUrl, intent, password, stopAfter }) => {
   try {
     await verifyDisposablePostgres(databaseUrl, { maintenanceDatabase: true });
-    if (platformUrl) await verifyDisposablePostgres(platformUrl);
 
     const clones = createCloneOperations({
       databaseUrl,
@@ -39,9 +17,7 @@ process.on('message', async ({ databaseUrl, intent, password, stopAfter, platfor
         await new Promise(() => {});
       },
     });
-    const result = platformUrl
-      ? await runAdmittedWork(platformUrl, config, clones)
-      : await clones.prepare(intent, password);
+    const result = await clones.prepare(intent, password);
     process.send({ result });
     process.disconnect();
   } catch (error) {

@@ -1,5 +1,13 @@
 # Recoverable candidate template clone
 
+Historical checkpoint evidence below describes the original experiment.
+The [current fresh-store-only contract](experimental-retention-decision.md)
+archives its code/traces and removes partial handlers and historical live replay.
+Current preparation uses the same named operation inside the complete Kubernetes
+flow. Capability flags and one-shot staging hooks described below are retired;
+production/legacy protections remain. Use the [roadmap](roadmap.md) for current scope.
+
+
 **Current admission:** only complete `native-preview-kubernetes-prepare` is newly
 admitted under the default-off CLI switch. Earlier capability flags and partial
 formats described below are historical recovery/evidence contracts, not new

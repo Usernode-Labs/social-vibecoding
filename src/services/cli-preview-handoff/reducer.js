@@ -1,5 +1,7 @@
 'use strict';
 
+const REDUCER_VERSION = 3;
+
 const { nativeHeadCondition } = require('../preview-flow/enabling-conditions');
 
 function reject(reason) {
@@ -96,10 +98,10 @@ function reduce(state, action) {
 }
 
 function replayDecision(entry) {
-  if (entry.reducer_version === 1) return require('./versions/v1').reduce(entry.pre_state, entry.action);
-  if (entry.reducer_version === 2) return require('./versions/v2').reduce(entry.pre_state, entry.action);
-  if (entry.reducer_version === 3) return reduce(entry.pre_state, entry.action);
-  throw new Error(`Unsupported CLI handoff reducer version: ${entry.reducer_version}`);
+  if (entry.reducer_version !== REDUCER_VERSION) {
+    throw new Error(`Unsupported cli-preview-handoff reducer version: ${entry.reducer_version}; use the offline historical archive`);
+  }
+  return reduce(entry.pre_state, entry.action);
 }
 
-module.exports = { reduce, checksSettled, replayDecision };
+module.exports = { reduce, checksSettled, replayDecision, REDUCER_VERSION };

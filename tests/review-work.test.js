@@ -4,11 +4,11 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { createExecutionDatabase } = require('./lib/execution-database');
-const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
+const { completePreviewConfig, createCompletePreviewWork } = require('./lib/complete-preview-work');
 const { createReviewWork, ANNOUNCE_RETURN } = require('../src/services/proposal-review/work');
 const { createProposalReview } = require('../src/services/proposal-review/store');
 const { replayDecision } = require('../src/services/proposal-review/reducer');
-const { PREPARE } = require('../src/services/preview-flow/work');
+const { PREPARE_RUNTIME } = require('../src/services/preview-flow/work');
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { createExecutionWorker } = require('../src/services/execution/worker');
 
@@ -212,21 +212,14 @@ test('real PostgreSQL: shared scheduler progresses beyond a busy preview batch a
   await pool.query('DELETE FROM chat_sessions');
   let previewsBusy = true;
   let reviewFailing = true;
-  const preview = createRetainedPreviewWork(pool, config, {
+  const preview = createCompletePreviewWork(pool, completePreviewConfig({ ...config, appRuntime: 'kubernetes', nativeCliPreviewHandoffEnabled: true }), {
     store: review.store,
     lock: async (_config, _classifier, _sessionId, run) => previewsBusy ? { busy: true } : run(),
-    inspect: async () => ({ present: false, receipt: null }),
-    prepare: async (_config, session, app, head, candidate) => {
-      await candidate.onClonePrepared();
-      return { commitSha: head, stagingUrl: `http://${candidate.intent.runtimeName}:3000`,
-        runtimeKind: 'docker', runtimeName: candidate.intent.runtimeName, containerId: candidate.intent.runtimeName,
-        imageRef: 'test:image', buildRef: null, physicalId: randomUUID(), attemptId: candidate.intent.attemptId };
-    },
   });
   const previewWork = [];
   for (let id = 1; id <= 25; id++) {
     await pool.query('INSERT INTO chat_sessions (id, checks_commit_sha) VALUES ($1, $2)', [id, HEAD]);
-    previewWork.push((await preview.seedRetained({ type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId: id,
+    previewWork.push((await preview.request({ type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId: id,
       headSha: HEAD, startedStatus: 'active' })).work);
   }
   const reviewWork = [];
@@ -255,12 +248,12 @@ test('real PostgreSQL: shared scheduler progresses beyond a busy preview batch a
     await progress(async () => (await pool.query('SELECT * FROM chat_messages')).rowCount === 5);
     assert.equal(previewsBusy, true);
     assert.equal(reviewFailing, true);
-    const pending = await pool.query("SELECT * FROM execution_work_requests WHERE workflow = $1", [PREPARE]);
+    const pending = await pool.query("SELECT * FROM execution_work_requests WHERE workflow = $1", [PREPARE_RUNTIME]);
     assert.equal(pending.rowCount, 25);
     assert.ok(pending.rows.every(row => row.status !== 'succeeded' && row.attempt_count > 0));
     previewsBusy = false;
     await pool.query("UPDATE execution_work_requests SET due_at = clock_timestamp() WHERE status = 'queued'");
-    await progress(async () => (await pool.query("SELECT * FROM execution_work_requests WHERE workflow = $1 AND status = 'succeeded'", [PREPARE])).rowCount === 25);
+    await progress(async () => (await pool.query("SELECT * FROM execution_work_requests WHERE workflow = $1 AND status = 'succeeded'", [PREPARE_RUNTIME])).rowCount === 25);
     assert.ok(['queued', 'running'].includes((await review.store.read(reviewWork[0].id)).status),
       'failing review obligation remains queued or in an unfinished retry attempt');
     reviewFailing = false;

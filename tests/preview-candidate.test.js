@@ -1,5 +1,7 @@
 'use strict';
 
+const { replayHistorical } = require('./lib/historical-replay');
+
 const { verifyDisposablePostgres } = require('./lib/disposable-postgres');
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -137,7 +139,7 @@ test('completed isolated cleanup authorizes another observation while frozen B1 
   const next = reduceCandidate(state, { ...action, actionId: randomUUID() }, {});
   assert.notEqual(next.effects[0].effectKey, decision.effects[0].effectKey, 'a later observation is new work');
 
-  assert.deepEqual(replayDecision({ reducer_version: 3, pre_state: state, action, facts: {} }), {
+  assert.deepEqual(replayHistorical('preview-flow', { reducer_version: 3, pre_state: state, action, facts: {} }), {
     accepted: true,
     reason: 'cleanup_already_completed',
     flow: null,
@@ -145,7 +147,7 @@ test('completed isolated cleanup authorizes another observation while frozen B1 
     disposition: 'removed',
     effects: [],
   });
-  assert.deepEqual(replayDecision({ reducer_version: 4, pre_state: state, action, facts: {} }), decision,
+  assert.deepEqual(replayHistorical('preview-flow', { reducer_version: 4, pre_state: state, action, facts: {} }), decision,
     'the frozen delayed-creation policy keeps its original reconciliation decision');
   assert.equal(reduceCandidate(state, { ...action, flowId: randomUUID() }, {}).reason, 'resource_missing');
   assert.equal(reduceCandidate({ ...state, binding: { desired: { attemptId: intent.attemptId } } }, action, {}).reason,

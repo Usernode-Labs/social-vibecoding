@@ -532,8 +532,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     if (!candidate?.prepareClone) {
       try {
         const exists = await dbManager.databaseExists(stagingDbNameStr, { strict: true });
-        if (candidate?.preparedClone && !exists) throw new Error('Prepared candidate clone is missing');
-        if (candidate && exists && !candidate.preparedClone) {
+        if (candidate && exists) {
           throw new Error('Candidate clone already exists; abandon this attempt rather than overwrite it');
         }
         parallelPreparation = !exists;
@@ -590,10 +589,6 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
         let cloned;
         if (candidate?.prepareClone) {
           cloned = await candidate.prepareClone();
-        } else if (candidate?.preparedClone) {
-          const inspection = await require('./preview-flow/clone-operation').createCloneOperations().inspect(candidate.intent);
-          if (inspection.status !== 'complete') throw new Error('Candidate clone completion is unconfirmed');
-          cloned = { password: candidate.password, via: 'recovered-template' };
         } else {
           cloned = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr, {
             viaTemplate: true,
@@ -636,7 +631,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
     } finally {
       await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     }
-    if (candidate) await candidate.onClonePrepared();
+    if (candidate?.onClonePrepared) await candidate.onClonePrepared();
     const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, cloned.password);
 
     // 4. Stop existing staging container if any. Short grace: a preview
@@ -702,7 +697,6 @@ async function buildAndDeployStagingInner(config, session, app, commitHash, opti
       runtimeLabels[require('./preview-flow/candidate-runtime').HEAD_LABEL] = resolvedRevision;
     }
 
-    if (candidate?.onRuntimeStarting) await candidate.onRuntimeStarting();
     const deploy = candidate?.prepareRuntime
       || (params => applicationRuntime.deploy(config, params));
     const deployed = await deploy({

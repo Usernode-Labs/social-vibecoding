@@ -1,6 +1,6 @@
 # Lifecycle migration: current roadmap
 
-2 October 2026. Accepted review `3f51e2b3f` now incorporates explicitly pinned
+2 October 2026. Accepted product `c01dc0687` incorporates explicitly pinned
 canonical main `d9cf30cd73a0810be72b199f8b2a194f8c56b793` at merge
 `6730b091306c0dcbcf22579548dc2dd273b2f1f7`. Benchmark orphan recovery,
 sealed-checkout validity and fresh live approval behavior are preserved.
@@ -25,8 +25,9 @@ evidence; progress means guarantees demonstrated **and replaced machinery remove
   candidate in disposable fixtures. Recovery adopts verified database OIDs,
   Build UID/digest and runtime UIDs, including partial creation and lost replies.
   New admission now emits only that complete contract; four capability flags and
-  the CLI configuration shim are removed. Retained formats still recover with
-  admission disabled.
+  the CLI configuration shim are removed. Complete work recovers with admission
+  disabled. Historical partial formats and replay dispatch are removed after
+  verified offline archival under the fresh-store-only decision.
 - **Separate activation:** preparation preserves serving; desired/observed bindings
   and conditional operations protect successors under retained locks.
 - **Durable CLI handoff and checks:** atomic head/admission and candidate-to-
@@ -52,7 +53,7 @@ injected interruption points do not prove public-edge or installation compatibil
 
 | Deliverable | Kind | Scope / completion evidence |
 | --- | --- | --- |
-| Current CLI contract | **Review and new-admission consolidation complete**; remaining inventory/archive/removal | [Contract and retention decisions](supported-cli-contract-review.md) distinguish handlers, receipt retry and replay. Local fixture audit is complete; named supported stores/exports remain unknown. Remove only unused early dispatch and archive-only replay copies after that gate; keep legacy safeguards. |
+| Current CLI contract | **Consolidation, support decision and archive/removal implemented** | [Fresh-store-only decision](experimental-retention-decision.md): no supported historical store; local physical fixtures are retired. Offline sources/dependencies, goldens and test traces replay independently. Three partial handlers and twelve replay-only reducers are removed. Startup refuses unsupported work/traces; legacy protections remain. |
 | Canonical main and CI | **Pinned reconciliation and focused verification complete** | Pinned `d9cf30cd7` is integrated; current focused PostgreSQL, SQL, writer and actual checks/retirement evidence is recorded in the integration contract. GitHub CI/Linux installation is not demonstrated by local coverage. |
 | Unknown outcomes and idempotent gating | **Implementation and contained verification complete** | [Unknown outcomes](unknown-check-outcomes-contract.md), [atomic settlement/dependency delivery](idempotent-check-settlement-contract.md). Permanent evidence loss remains explicitly blocked with the original reconciliation owner. Unmarked retained manifests and old terminal verdicts without receipts remain inventory/reconciliation limits; never recount unknown history. No new implementation gate for these accepted corrections. |
 | Capture/standalone boundaries | **Packaged HTTP/main/schema/non-root restart proof complete**; remaining compatibility verification | [Packaged proof](packaged-cli-entrypoints-contract.md) records actual clone/Build/runtime/Jobs, stable identities, normal check-heartbeat recovery and durable bot delivery. The source/image tuple is recorded; GitHub/bot effects and internal origin transport remain substituted. Least-privilege RBAC, supervision, protocol edge cases, local TLS/assets and private identity exchange remain. No new workflow/cohort. |
@@ -82,10 +83,9 @@ This scope does not require rewriting every platform lifecycle.
   its own proof; current protections and locators remain until then.
 - Broader turn, merge and release lifecycle refactors after this migration.
 
-**Next action:** obtain the explicit named supported-store/export decision and
-verify the remaining public/private and installation boundaries. Reconcile
-unmarked checks only if a named supported store retains them. Close the
-named store/export and replay-archive decision before the removal slice. The
-contract/retention review and packaged HTTP/worker coordination are complete;
-global retained inventory and full installation compatibility are not. New callers remain behind the first supported CLI gate. Running
+**Next action:** prove public HTTPS/private capture and the remaining installation
+boundaries. The fresh-only support decision and offline archive/removal are
+implemented. Unsupported historical stores require inventory and reconciliation
+before reuse. New callers remain behind the first supported CLI gate. Global
+legacy inventory and full installation compatibility remain unproved.
 GitHub CI requires separate push authorization; this roadmap does not authorize it.

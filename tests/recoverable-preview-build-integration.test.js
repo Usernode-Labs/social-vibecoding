@@ -9,8 +9,8 @@ const { once } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const { setTimeout: delay } = require('node:timers/promises');
 const { createExecutionDatabase } = require('./lib/execution-database');
-const { createRetainedPreviewWork } = require('./lib/retained-preview-work');
-const { PREPARE_IMAGE } = require('../src/services/preview-flow/work');
+const { createCompletePreviewWork } = require('./lib/complete-preview-work');
+const { PREPARE_RUNTIME } = require('../src/services/preview-flow/work');
 const { createPreviewFlow } = require('../src/services/preview-flow/store');
 const { createImageBuildOperations } = require('../src/services/preview-flow/image-build-operation');
 const { buildManifest } = require('../src/services/preview-flow/image-build-intent');
@@ -26,7 +26,7 @@ test('actual kpack + PostgreSQL: interrupted worker adopts the same Build UID an
   t.after(() => kubernetes._setClientsForTest(new Proxy({}, {
     get() { throw new Error('Isolated test ended; ambient Kubernetes clients are forbidden'); },
   })));
-  const config = fixture.config;
+  const config = { ...fixture.config, nativeCliPreviewHandoffEnabled: true };
   const db = await createExecutionDatabase(fixture.isolation.database.url);
   t.after(() => db.close());
   const sessionId = 3000000 + process.pid;
@@ -46,25 +46,19 @@ test('actual kpack + PostgreSQL: interrupted worker adopts the same Build UID an
     }
     return result;
   };
-  const work = createRetainedPreviewWork(db.pool, config, {
-    workflow: PREPARE_IMAGE,
+  const work = createCompletePreviewWork(db.pool, config, {
     owner,
     images,
     clones: { prepare: async () => ({ status: 'complete', databaseOid: '123' }) },
-    inspect: async () => ({ present: false, receipt: null }),
     async prepare(_config, _session, _app, head, candidate) {
+      await candidate.prepareClone();
       const built = await candidate.prepareImage(fixture.runScript);
-      await candidate.onRuntimeStarting();
-      // Real image build, injected runtime deployment. This proves no routing.
-      return {
-        runtimeKind: 'kubernetes', runtimeName: candidate.intent.runtimeName,
-        containerId: null, physicalId: randomUUID(), commitSha: head,
-        stagingUrl: `http://${candidate.intent.runtimeName}:3000`,
-        imageRef: built.imageRef, buildRef: built.buildRef,
-      };
+      // Build is actual; clone and the runtime transport are explicitly injected.
+      const deployed = await candidate.prepareRuntime({ imageRef: built.imageRef, env: {} });
+      return { ...deployed, commitSha: head, stagingUrl: deployed.url };
     },
   });
-  const admitted = await work.seedRetained({ type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId,
+  const admitted = await work.request({ type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId,
     headSha: fixture.revision, startedStatus: 'active' });
   const child = fork(require.resolve('./lib/recoverable-build-child'), [], {
     execArgv: [], stdio: ['ignore', 'ignore', 'inherit', 'ipc'],
@@ -84,12 +78,12 @@ test('actual kpack + PostgreSQL: interrupted worker adopts the same Build UID an
   const before = await images.inspect(resource);
   assert.ok(before.uid, 'actual API must expose the created Build');
   await db.pool.query('UPDATE execution_work_requests SET lease_until = clock_timestamp() - INTERVAL \'1 second\' WHERE id = $1', [admitted.work.id]);
-  const handler = work.handlers[PREPARE_IMAGE];
+  const handler = work.handlers[PREPARE_RUNTIME];
   const deadline = Date.now() + 1000 * (resource.buildOperation.activeDeadlineSeconds + 120);
   let complete = false;
   while (!complete && Date.now() < deadline) {
     await db.pool.query('UPDATE execution_work_requests SET due_at = clock_timestamp() WHERE id = $1', [admitted.work.id]);
-    const [attempt] = await work.store.claim(randomUUID(), [PREPARE_IMAGE], 1);
+    const [attempt] = await work.store.claim(randomUUID(), [PREPARE_RUNTIME], 1);
     try {
       const result = await handler.run({ attempt, signal: new AbortController().signal,
         checkpoint: value => work.store.checkpoint(attempt, value) });
@@ -132,7 +126,7 @@ async function actualFixture(t, runScript) {
   const db = await createExecutionDatabase(fixture.isolation.database.url);
   t.after(() => db.close());
   const config = {
-    ...fixture.config, kubernetes: { ...fixture.config.kubernetes }, databaseUrl: db.url, dataEncryptionKey: 'disposable-integration-only',
+    ...fixture.config, nativeCliPreviewHandoffEnabled: true, kubernetes: { ...fixture.config.kubernetes }, databaseUrl: db.url, dataEncryptionKey: 'disposable-integration-only',
   };
   const sessionId = 4000000 + process.pid;
   await db.pool.query('UPDATE apps SET repo_url = $1 WHERE id = 1', [fixture.repoUrl]);
@@ -140,35 +134,29 @@ async function actualFixture(t, runScript) {
   const owner = createPreviewFlow(db.pool);
   const images = createImageBuildOperations({ clients: () => clients });
   let deployments = 0;
-  const work = createRetainedPreviewWork(db.pool, config, {
-    workflow: PREPARE_IMAGE,
+  const work = createCompletePreviewWork(db.pool, config, {
     owner, images,
     clones: { prepare: async () => ({ status: 'complete', databaseOid: '123' }) },
-    inspect: async () => ({ present: false, receipt: null }),
     async prepare(_config, _session, _app, head, candidate) {
+      await candidate.prepareClone();
       const built = await candidate.prepareImage(runScript);
-      await candidate.onRuntimeStarting();
+      const deployed = await candidate.prepareRuntime({ imageRef: built.imageRef, env: {} });
       deployments++;
-      return {
-        runtimeKind: 'kubernetes', runtimeName: candidate.intent.runtimeName,
-        containerId: null, physicalId: randomUUID(), commitSha: head,
-        stagingUrl: `http://${candidate.intent.runtimeName}:3000`,
-        imageRef: built.imageRef, buildRef: built.buildRef,
-      };
+      return { ...deployed, commitSha: head, stagingUrl: deployed.url };
     },
   });
   async function admit() {
-    return work.seedRetained({
+    return work.request({
       type: 'RequestCandidatePreview', actionId: randomUUID(), sessionId,
       headSha: fixture.revision, startedStatus: 'active',
     });
   }
   async function pollWork(id) {
     const deadline = Date.now() + 1000 * (config.kubernetes.activeDeadlineSeconds + 120);
-    const handler = work.handlers[PREPARE_IMAGE];
+    const handler = work.handlers[PREPARE_RUNTIME];
     while (Date.now() < deadline) {
       await db.pool.query('UPDATE execution_work_requests SET due_at = clock_timestamp() WHERE id = $1', [id]);
-      const [attempt] = await work.store.claim(randomUUID(), [PREPARE_IMAGE], 1);
+      const [attempt] = await work.store.claim(randomUUID(), [PREPARE_RUNTIME], 1);
       assert.ok(attempt, 'eligible work must be claimable');
       const result = await handler.run({
         attempt, signal: new AbortController().signal,
@@ -224,7 +212,7 @@ test('actual kpack + PostgreSQL: delayed creation after absent cleanup remains d
 }, async t => {
   const f = await actualFixture(t, null);
   const admitted = await f.admit();
-  const [claim] = await f.work.store.claim(randomUUID(), [PREPARE_IMAGE], 1);
+  const [claim] = await f.work.store.claim(randomUUID(), [PREPARE_RUNTIME], 1);
   assert.equal(claim.id, admitted.work.id);
 
   async function authorizeImage(runScript) {

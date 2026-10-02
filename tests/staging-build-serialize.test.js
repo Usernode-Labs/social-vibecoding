@@ -237,7 +237,11 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
       await subject.prepareCandidateUnderBuildLock(config, mkSession(7), mkApp, headSha, {
         intent,
         password: '1'.repeat(48),
-        preparedClone: true,
+        async prepareClone() {
+          const observation = await require('../src/services/preview-flow/clone-operation').createCloneOperations().inspect(intent);
+          if (observation.status !== 'complete') throw new Error('Candidate clone completion is unconfirmed');
+          return { password: '1'.repeat(48), via: 'recovered-template' };
+        },
         preparationOwner: 'bounded',
         onClonePrepared: async () => {},
       }, { flowId: randomUUID(), generation: 1, headSha });
@@ -264,7 +268,11 @@ for (const runtimeKind of ['docker', 'kubernetes']) {
       await assert.rejects(subject.prepareCandidateUnderBuildLock(config, mkSession(7), mkApp, headSha, {
         intent,
         password: '1'.repeat(48),
-        preparedClone: true,
+        async prepareClone() {
+          const observation = await require('../src/services/preview-flow/clone-operation').createCloneOperations().inspect(intent);
+          if (observation.status !== 'complete') throw new Error('Candidate clone completion is unconfirmed');
+          return { password: '1'.repeat(48), via: 'recovered-template' };
+        },
         preparationOwner: 'bounded',
         onClonePrepared: async () => {},
       }, { flowId: randomUUID(), generation: 1, headSha }), /completion is unconfirmed/);
@@ -694,7 +702,7 @@ for (const outcome of ['complete', 'waiting', 'runtime unauthorized', 'wrong rev
     const candidate = {
       intent,
       password: '1'.repeat(48),
-      preparedClone: true,
+      async prepareClone() { phases.push('clone'); return { password: this.password, via: 'recovered-template' }; },
       preparationOwner: 'bounded',
       async prepareImage(script) {
         assert.equal(script, null);
@@ -702,11 +710,12 @@ for (const outcome of ['complete', 'waiting', 'runtime unauthorized', 'wrong rev
         if (outcome === 'waiting') throw new Error('Image is still running');
         return { runtimeKind: 'kubernetes', imageRef: 'registry/verified@sha256:digest', buildRef: 'builds/attempt' };
       },
-      async onClonePrepared() { phases.push('clone'); },
-      async onRuntimeStarting() {
+      async prepareRuntime(params) {
         phases.push('runtime authorized');
         assert.equal(deployments.length, 0);
         if (outcome === 'runtime unauthorized') throw new Error('Runtime permission rejected');
+        deployments.push(params);
+        return { ...params, runtimeKind: 'kubernetes', runtimeName: intent.runtimeName, containerId: null, url: 'http://candidate', physicalId: 'deployment' };
       },
     };
     try {
@@ -714,7 +723,7 @@ for (const outcome of ['complete', 'waiting', 'runtime unauthorized', 'wrong rev
         { flowId: randomUUID(), generation: 1, headSha });
       if (outcome === 'complete') {
         const result = await prepare;
-        assert.deepEqual(phases, ['image', 'clone', 'runtime authorized']);
+        assert.deepEqual(phases, ['clone', 'image', 'runtime authorized']);
         assert.equal(result.imageRef, 'registry/verified@sha256:digest');
         assert.equal(deployments[0].imageRef, result.imageRef);
         assert.equal(deployments[0].internalOnly, true);

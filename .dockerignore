@@ -14,3 +14,6 @@ public/shell/worker.js
 SPEC.md
 TODO
 template/
+
+# Historical replay is an offline archive, never part of a shipped runtime.
+archives/experimental-replay-c01dc0687
