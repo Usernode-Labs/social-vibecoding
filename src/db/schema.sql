@@ -9755,6 +9755,28 @@ CREATE INDEX IF NOT EXISTS idx_bench_trials_branches
   ON bench_trials(finished_at) WHERE build_branch IS NOT NULL AND branch_deleted_at IS NULL;
 COMMENT ON TABLE bench_trials IS 'staging:private';
 
+-- #3654: a grade of a benchmark trial, by the judge (`opus`: a Claude Opus
+-- session on a person's own plan, through the admin-only connector tools) or
+-- by a person (`human`: an admin in the console, which overrides the judge).
+-- Binary, with the critique the judge wrote first. The deterministic grade
+-- lives on the trial itself (bench_trials.deterministic). Several grades of
+-- one trial are kept; the latest of each grader counts.
+CREATE TABLE IF NOT EXISTS bench_grades (
+  id              SERIAL PRIMARY KEY,
+  trial_id        INTEGER NOT NULL REFERENCES bench_trials(id) ON DELETE CASCADE,
+  grader          TEXT NOT NULL,
+  grader_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  grader_label    TEXT NOT NULL,
+  verdict         TEXT NOT NULL,
+  critique        TEXT,
+  criteria        JSONB NOT NULL DEFAULT '{}',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bench_grades_grader_check CHECK (grader IN ('opus', 'human')),
+  CONSTRAINT bench_grades_verdict_check CHECK (verdict IN ('pass', 'fail'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_grades_trial ON bench_grades(trial_id, grader, created_at DESC);
+COMMENT ON TABLE bench_grades IS 'staging:private';
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app

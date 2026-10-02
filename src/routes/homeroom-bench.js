@@ -15,6 +15,8 @@ const suites = require('../services/bench/suites');
 const catalog = require('../services/bench/catalog');
 const lane = require('../services/bench/lane');
 const runner = require('../services/bench/runner');
+const grading = require('../services/bench/grading');
+const { benchGradingLimiter } = require('../middleware/rate-limits');
 
 const BASE = '/api/admin/homeroom-bot/bench';
 
@@ -120,7 +122,10 @@ function homeroomBenchRoutes(config) {
     if (!id) return { ok: false, status: 400, error: 'Invalid task id' };
     const { reference = {}, tags = {} } = req.body || {};
     if (typeof reference !== 'object' || typeof tags !== 'object') return { ok: false, status: 400, error: 'reference and tags must be objects' };
-    return suites.setReference(pool, { taskId: id, patch: reference || {}, tags: tags || {}, source: 'human', actorId: req.user.id });
+    const out = await suites.setReference(pool, { taskId: id, patch: reference || {}, tags: tags || {}, source: 'human', actorId: req.user.id });
+    // Trials already run on the task are graded again against it.
+    if (out.ok) await require('../services/bench/graders').regradeTask(pool, id, { github: runner.guardedGithub(require('../services/github')) });
+    return out;
   }));
 
   router.get('/api/admin/homeroom-bot/bench/sample', handler('Sample bench tasks', async (req) => {
@@ -163,6 +168,75 @@ function homeroomBenchRoutes(config) {
     const out = await lane.cancelRun(pool, id);
     if (out.ok) log.info('bench', 'Run cancelled', { by: req.user.username, runId: id });
     return out;
+  }));
+
+  // ── Grading (#3654 D) ───────────────────────────────────────────────
+
+  // The console's spot check of a run: its judged trials, blind, with the
+  // judge's grade and critique; and how far the judge agrees with people.
+  router.get('/api/admin/homeroom-bot/bench/runs/:id/review', handler('Review bench grades', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
+    return {
+      items: await grading.spotCheck(pool, { runId: id, limit: Number(req.query?.limit) || 20 }),
+      agreement: await grading.agreement(pool, { runId: id }),
+    };
+  }));
+
+  // A person's grade: it overrides the judge's on that trial.
+  router.post('/api/admin/homeroom-bot/bench/trials/:id/grade', requireAdminWrite, handler('Grade bench trial', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid trial id' };
+    const { verdict, critique } = req.body || {};
+    return grading.overrideGrade(pool, { trialId: id, verdict, critique, user: req.user });
+  }));
+
+  // ── The judge's doors, for the admin-only connector tools ───────────
+  //
+  // OUTSIDE /api/admin on purpose: a connector token can never reach
+  // /api/admin (services/cli-api-policy.js denies the prefix outright), so
+  // these four are on the connector's allowlist under their own prefix, and
+  // each one refuses anybody who is not a FULL platform admin before it reads
+  // a thing (requireAdminWrite: is_admin and not view-only). They hand out
+  // tasks from any app, private ones included, which is why a member's
+  // connector must never reach them. The grading writes are rate limited per
+  // person. A grade sent through a connector or the CLI is recorded as the
+  // judge's (`opus`), with the person's name; one sent from a browser is a
+  // person's.
+  const graderOf = (req) => (req.cliAuthenticated ? 'opus' : 'human');
+
+  router.get('/api/bot-bench/queue', requireAdminWrite, handler('Bench grading queue', async (req) => {
+    const kind = req.query?.kind === 'label' ? 'label' : 'grade';
+    return grading.queue(pool, { kind, limit: Number(req.query?.limit) || 20 });
+  }));
+
+  router.get('/api/bot-bench/items/:token', requireAdminWrite, handler('Bench item', async (req) => grading.getItem(pool, req.params.token)));
+
+  router.post('/api/bot-bench/items/:token/grade', requireAdminWrite, benchGradingLimiter, handler('Bench grade', async (req) => {
+    const { verdict, critique, criteria } = req.body || {};
+    return grading.submitGrade(pool, {
+      itemId: req.params.token, verdict, critique, criteria: criteria && typeof criteria === 'object' ? criteria : {},
+      grader: graderOf(req), user: req.user,
+    });
+  }));
+
+  router.post('/api/bot-bench/tasks/:token/label', requireAdminWrite, benchGradingLimiter, handler('Bench label', async (req) => {
+    const b = req.body || {};
+    const github = require('../services/github');
+    return grading.labelTask(pool, {
+      itemId: req.params.token,
+      verdict: b.verdict ?? null,
+      action: b.action ?? null,
+      answers: b.answers ?? null,
+      notes: b.notes ?? null,
+      expectedFiles: b.expectedFiles ?? null,
+      allowedTestEdits: b.allowedTestEdits ?? null,
+      specPoints: b.specPoints ?? null,
+      tags: b.tags && typeof b.tags === 'object' ? b.tags : {},
+      source: graderOf(req) === 'opus' ? 'opus' : 'human',
+      user: req.user,
+      regrade: { github: runner.guardedGithub(github) },
+    });
   }));
 
   return router;

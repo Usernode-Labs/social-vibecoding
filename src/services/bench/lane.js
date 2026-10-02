@@ -343,11 +343,12 @@ async function executeTrial(pool, config, trialRow, deps = {}) {
   if (patch.build_branch && !(patch.build_commits > 0) && row?.repo_url) {
     await deleteBranch(pool, d.github, row.repo_url, patch.build_branch, trialRow.id);
   }
-  if (d.afterTrial) {
-    await Promise.resolve(d.afterTrial(pool, trialRow.id)).catch((err) => {
-      log.warn('bench', 'After-trial grading failed', { trialId: trialRow.id, err: err.message });
-    });
-  }
+  // The deterministic grade, at once: a build's diff-scope rule reads the
+  // branch while it is still there.
+  const grade = d.afterTrial || ((p, id) => require('./graders').gradeTrial(p, id, { github: d.github }));
+  await Promise.resolve(grade(pool, trialRow.id)).catch((err) => {
+    log.warn('bench', 'After-trial grading failed', { trialId: trialRow.id, err: err.message });
+  });
   log.info('bench', 'Trial finished', {
     trialId: trialRow.id, runId: trialRow.run_id, stage: row?.stage, status: after?.status || patch.status, costUsd: cost,
   });
