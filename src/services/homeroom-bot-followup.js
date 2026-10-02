@@ -423,6 +423,10 @@ async function runFollowUpTurn({
       telemetryComponent: 'homeroom_bot_followup',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The platform's per-model choice of CLI, as the bot's build makes
+        // it (#3296). The saved thread is cleared above, so a proposal built
+        // in the other CLI is never resumed across the switch.
+        harness: 'auto',
       }),
       dispatchOnce: (ctx) => { pricing = ctx?.pricingSnapshot || pricing; return worker.execInWorker(session.id, {
         mode,

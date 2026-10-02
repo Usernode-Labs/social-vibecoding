@@ -9,9 +9,10 @@
 //     buildPrompt, homeroom-bot-followup followUpPrompt / checksFixPrompt /
 //     parseFollowUp / headMoved;
 //   * the same worker and OpenRouter path (sessions.runCodexAttemptLoop with
-//     agent-turn resolveCodexRuntimeContext), the same codex harness, the
-//     same reasoning effort and the same wall clocks the bot's own turns get,
-//     whatever the model;
+//     agent-turn resolveCodexRuntimeContext), the same harness (the
+//     platform's per-model choice of CLI, 'auto', as the bot's own turns
+//     ask for it), the same reasoning effort and the same wall clocks the
+//     bot's own turns get, whatever the model;
 //   * a session per trial, stamped with the trial's model, so the model that
 //     ran is the model the turn resolved (and agent_turns says so).
 //
@@ -205,8 +206,11 @@ async function openSession(pool, config, { user, app, model, branch, title }) {
 
 /**
  * One turn on a trial's session, the way the bot runs its own: a fresh
- * thread, the session's model stamped, the wall clock as the stop. Resolves
- * { routed, result, stopped, infra, costUsd, usage }; never throws.
+ * thread, the session's model stamped, the wall clock as the stop. `prompt`
+ * is the text, or a function of the runtime the turn resolved for a prompt
+ * that depends on it (the triage's, whose design self-check follows what the
+ * model can see). Resolves { routed, result, stopped, infra, costUsd, usage,
+ * prompt }, `prompt` being what was sent; never throws.
  */
 async function runTurn({ pool, config, user, session, repo, prompt, mode, model, budgetMs, deps, commitMsg = '' }) {
   const { worker, sessions, agentTurn, activeWorkers } = deps;
@@ -234,6 +238,7 @@ async function runTurn({ pool, config, user, session, repo, prompt, mode, model,
   }, budgetMs);
   if (typeof timer.unref === 'function') timer.unref();
   let pricing = null;
+  let sent = typeof prompt === 'function' ? null : prompt;
   let routed;
   try {
     routed = await sessions.runCodexAttemptLoop({
@@ -242,11 +247,14 @@ async function runTurn({ pool, config, user, session, repo, prompt, mode, model,
       telemetryComponent: TELEMETRY,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: user.id, model, resumeThreadId: null, config,
+        // As the bot's own turns ask for it (#3296).
+        harness: 'auto',
       }),
       dispatchOnce: (ctx) => {
         pricing = ctx?.pricingSnapshot || pricing;
+        sent = typeof prompt === 'function' ? prompt(ctx) : prompt;
         return worker.execInWorker(session.id, {
-          mode, prompt, model, commitMsg, resumeSessionId: null, branchName: session.branch_name,
+          mode, prompt: sent, model, commitMsg, resumeSessionId: null, branchName: session.branch_name,
           ...(ctx || {}), telemetryComponent: TELEMETRY, onProgress: () => {},
         });
       },
@@ -273,7 +281,7 @@ async function runTurn({ pool, config, user, session, repo, prompt, mode, model,
   const relay = bot.relaySpend(result.relayUsage, pricing, agentTurn);
   const ledger = Number.isFinite(routed?.estimatedCostUsd) ? routed.estimatedCostUsd : null;
   return {
-    routed, result, stopped, infra: false,
+    routed, result, stopped, infra: false, prompt: sent,
     costUsd: ledger ?? relay?.costUsd ?? null,
     usage: {
       inputTokens: Number.isFinite(result.inputTokens) ? result.inputTokens : (relay?.inputTokens ?? null),
@@ -356,10 +364,10 @@ function turnFields(turn) {
   };
 }
 
-function triagePrompt(snapshot, seed) {
+function triagePrompt(snapshot, seed, readsImages = false) {
   const bot = require('../homeroom-bot');
   return bot.triagePromptFor({
-    seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion,
+    seed, issueNumber: snapshot.issueNumber, firstVersion: !!snapshot.extra?.firstVersion, readsImages,
   });
 }
 
@@ -395,7 +403,6 @@ async function triageStage(ctx) {
   const { pool, config, snapshot, model, user, app, repo, trial, deps, budgets, title } = ctx;
   const seed = ctx.seedOverride || snapshot.texts.seed;
   if (!seed) return { status: 'infra_fail', error: 'the snapshot has no seed' };
-  const prompt = triagePrompt(snapshot, seed);
   const branch = branchFor(trial);
   let base;
   try {
@@ -405,11 +412,14 @@ async function triageStage(ctx) {
   }
   const session = ctx.session || await openSession(pool, config, { user, app, model, branch, title });
   await ctx.onSession?.(session.id, { baseSha: base, branch });
+  // Rendered at dispatch for what the trial's model can see, as the bot's
+  // own triage is (homeroom-bot.js runTriage).
   const turn = await runTurn({
-    pool, config, user, session, repo, prompt, mode: 'scout', model, budgetMs: budgets.turnMs, deps,
+    pool, config, user, session, repo, mode: 'scout', model, budgetMs: budgets.turnMs, deps,
+    prompt: (runtime) => triagePrompt(snapshot, seed, require('../prompts').runtimeReadsImages(runtime)),
   });
   const out = { session_id: session.id, base_sha: base, build_branch: branch, ...turnFields(turn), session };
-  return triageResult({ turn, out, prompt, snapshot });
+  return triageResult({ turn, out, prompt: turn.prompt || triagePrompt(snapshot, seed), snapshot });
 }
 
 async function specStage(ctx) {

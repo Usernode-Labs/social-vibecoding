@@ -145,10 +145,15 @@ async function threadHarnessFor(pool, sessionId, threadId) {
 // before the dispatch, so a later failure to start the attempt does not
 // consume a paid provider request.
 //
-// `harness` picks the CLI (#3296). The default, 'codex', is what every caller
-// that predates harnesses gets, so the Homeroom bot and before & after shots keep
-// running exactly as before. 'auto' asks the platform's per-model map
-// (config.openrouterModelHarnesses); the dev chat's scout and build use it.
+// `harness` picks the CLI (#3296). The default, 'codex', is what a caller
+// that names none gets: the CLI every OpenRouter turn ran in before
+// harnesses existed. 'auto' asks the platform's per-model map
+// (config.openrouterModelHarnesses). The dev chat's scout and build use it,
+// and so does every coding turn of the Homeroom bot (its triage, spec,
+// build and follow-up) and of a benchmark trial that replays them, so GLM
+// runs in Claude Code there too and a model the map leaves on Codex stays
+// there. Before & after shots do not come through here: they run on Claude
+// Code with Anthropic's models.
 async function resolveCodexRuntimeContext({
   pool, session, userId, model, reasoningEffort, resumeThreadId, config = {},
   harness = registry.DEFAULT_OPENROUTER_HARNESS,

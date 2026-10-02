@@ -1262,8 +1262,14 @@ function triagePrompt() {
 //
 // It goes AFTER the request and the triage instructions, fenced and
 // labelled as reference, so it is never read as the task.
-function triageReference() {
-  const designGuidance = require('./prompts').getDesignGuidance({ readsImages: false });
+//
+// Its one variable line, the design self-check, follows what the turn's
+// model can see (prompts.runtimeReadsImages). It used to be the text-only
+// line for every model, which told GLM 5.3 Flash, a model that takes images,
+// "you read text, not images" in the same prompt that asks it to look at the
+// reporter's screenshot.
+function triageReference({ readsImages = false } = {}) {
+  const designGuidance = require('./prompts').getDesignGuidance({ readsImages });
   return `==== PLATFORM REFERENCE (for looking things up; not the request) ====
 
 The Homeroom platform's own conventions (its rules for every app on it: its native UI kit, its \`--un-*\` theme tokens, its APIs and what an app may do) are one tool call away. Call \`get_platform_conventions\` with no arguments for the essentials and an index of its sections, then with a section's slug to read just that section. Use it when the request turns on the platform; nothing in this reference is a task.
@@ -1286,13 +1292,16 @@ function triageClosing(issueNumber) {
 /**
  * #3654: the whole triage prompt for one request, as runTriage sends it and
  * as the benchmark rebuilds it from a snapshot's seed. Pure apart from the
- * cached prompt file and the design guidance it reads.
+ * cached prompt file and the design guidance it reads. `readsImages` is
+ * whether the turn's model takes images, from the runtime the turn resolved
+ * (prompts.runtimeReadsImages); a prompt rebuilt without it is the text-only
+ * one every triage ran before it existed.
  */
-function triagePromptFor({ seed, issueNumber, firstVersion = false }) {
+function triagePromptFor({ seed, issueNumber, firstVersion = false, readsImages = false }) {
   return [
     seed, live.screenshotNote(seed).join('\n').trim(), triagePrompt(),
     firstVersion ? FIRST_VERSION_NOTE : null,
-    triageReference(), triageClosing(issueNumber),
+    triageReference({ readsImages }), triageClosing(issueNumber),
   ].filter(Boolean).join('\n\n');
 }
 
@@ -1860,7 +1869,11 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
   const seed = sessions.buildHeadlessSeed(
     issueNumber, issue, comments, botUsername, thread?.messages || [],
   );
-  const prompt = triagePromptFor({ seed, issueNumber, firstVersion: !!requester?.firstVersion });
+  const promptInput = { seed, issueNumber, firstVersion: !!requester?.firstVersion };
+  // The prompt as it stands before the turn resolves its model. The one sent
+  // is rendered at dispatch, for what that model can see, and replaces this
+  // in the snapshot (below).
+  const prompt = triagePromptFor(promptInput);
   snapshot = {
     stage: 'triage', appId: app.id, issueNumber,
     // The scout turn resets its workspace to the session branch's tip
@@ -1959,24 +1972,36 @@ async function runTriage(pool, config, { bot, app, item, mode, settings = null, 
       telemetryComponent: 'homeroom_bot_triage',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The platform's per-model choice of CLI, as the dev chat's scout
+        // makes it (#3296): GLM runs in Claude Code.
+        harness: 'auto',
       }),
-      dispatchOnce: (ctx) => { pricing = ctx?.pricingSnapshot || pricing; return worker.execInWorker(session.id, {
-        mode: 'scout',
-        // No `onUsage` here, deliberately (#3035). Neither agent the bot can
-        // run reports usage until its turn is over, so a token check wired
-        // to the stop can only ever fire on a finished turn — and did, on
-        // every one, discarding the verdict and killing the next issue. The
-        // token limit is read after the turn instead, below, and never
-        // throws a result away. The wall clock is what ends a runaway.
-        prompt,
-        model,
-        commitMsg: '',
-        resumeSessionId: null,
-        branchName: session.branch_name,
-        ...(ctx || {}),
-        telemetryComponent: 'homeroom_bot_triage',
-        onProgress: () => {},
-      }); },
+      dispatchOnce: (ctx) => {
+        pricing = ctx?.pricingSnapshot || pricing;
+        // Rendered for what this turn's model can see, as its runtime
+        // resolved it, and recorded as what the turn read.
+        const turnPrompt = triagePromptFor({
+          ...promptInput, readsImages: require('./prompts').runtimeReadsImages(ctx),
+        });
+        snapshot.texts.prompt = turnPrompt;
+        return worker.execInWorker(session.id, {
+          mode: 'scout',
+          // No `onUsage` here, deliberately (#3035). Neither agent the bot can
+          // run reports usage until its turn is over, so a token check wired
+          // to the stop can only ever fire on a finished turn — and did, on
+          // every one, discarding the verdict and killing the next issue. The
+          // token limit is read after the turn instead, below, and never
+          // throws a result away. The wall clock is what ends a runaway.
+          prompt: turnPrompt,
+          model,
+          commitMsg: '',
+          resumeSessionId: null,
+          branchName: session.branch_name,
+          ...(ctx || {}),
+          telemetryComponent: 'homeroom_bot_triage',
+          onProgress: () => {},
+        });
+      },
       retryPredicate: () => null,
       sendStatus: async () => {},
       waitForStopped: async () => {},

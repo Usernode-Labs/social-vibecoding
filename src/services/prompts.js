@@ -42,11 +42,16 @@ function getAppConventions() {
 // platform's own kit before anything invented, one primary action and one
 // word per concept, the four data states, and a self-check before commit.
 // Claude and OpenRouter sessions get the same text so the two backends stay
-// in parity; the one line that differs is HOW the agent checks its work,
-// because the Codex runner gives OpenRouter models text input only
-// (worker/build-codex-model-catalog.js), so they read the page's
-// accessibility snapshot where Claude looks at screenshots. A separate file
-// so it can be tuned without touching the 150 KB conventions document.
+// in parity; the one line that differs is HOW the agent checks its work, and
+// it follows what the model running the turn can see, not which backend or
+// CLI runs it. Claude, and an OpenRouter model whose catalog entry lists
+// image input, look at screenshots: since #3426 both OpenRouter runners hand
+// such a model its screenshots (Codex's model catalog declares image input,
+// worker/build-codex-model-catalog.js; Claude Code's request adapter passes
+// image blocks, worker/claude-openrouter-request.js). A text-only model gets
+// a note in place of each screenshot, so it reads the page's accessibility
+// snapshot instead. See runtimeReadsImages below. A separate file so it can
+// be tuned without touching the 150 KB conventions document.
 const DESIGN_GUIDANCE_PATH = path.join(__dirname, '..', 'prompts', 'design-guidance.md');
 const DESIGN_SELF_CHECK_TOKEN = '{{DESIGN_SELF_CHECK}}';
 const DESIGN_CHECKLIST = 'confirm: one primary action; headings make sense on their own; no new colours or fonts; nothing boxed in a card that could be plain layout; the same words as the rest of the app. Fix what fails and check again, within the in-loop browser\'s time budget.';
@@ -70,6 +75,18 @@ function getDesignGuidance({ readsImages = true } = {}) {
   return cachedDesignGuidance
     .split(DESIGN_SELF_CHECK_TOKEN)
     .join(readsImages ? DESIGN_SELF_CHECK.images : DESIGN_SELF_CHECK.text);
+}
+
+// Whether the model an OpenRouter coding turn runs reads images, from the
+// runtime its attempt resolved (agent-turn.js resolveCodexRuntimeContext):
+// OpenRouter's catalog flag, agentModelMetadata.supportsImages. It is the
+// same value the worker turns into AGENT_MODEL_SUPPORTS_IMAGES, which decides
+// whether either runner hands the model a screenshot or a note, so a prompt
+// that reads it never tells the model it can see what the runner will not
+// show it, or the reverse. Unknown is no, as it is there. A Claude turn on
+// Anthropic has no such runtime and always reads images.
+function runtimeReadsImages(runtimeContext) {
+  return runtimeContext?.agentModelMetadata?.supportsImages === true;
 }
 
 // The same decisions, made once at spec time so the build inherits them
@@ -371,6 +388,7 @@ function getLaunchpadInstructions({ appName, slug, targetProposalId, spec } = {}
 module.exports = {
   getAppConventions,
   getDesignGuidance,
+  runtimeReadsImages,
   SPEC_DESIGN_BRIEF,
   getLaunchpadInstructions,
   SPEC_HANDOFF_MAX_CHARS,

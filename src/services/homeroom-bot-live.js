@@ -1266,6 +1266,9 @@ async function draftSpec({
       telemetryComponent,
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The platform's per-model choice of CLI, as the dev chat's scout
+        // makes it (#3296): GLM runs in Claude Code.
+        harness: 'auto',
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'scout',
@@ -1487,6 +1490,13 @@ async function buildAndPropose({
       telemetryComponent: telemetry || 'homeroom_bot_build',
       resolveRuntime: () => agentTurn.resolveCodexRuntimeContext({
         pool, session, userId: bot.id, model, resumeThreadId: null, config,
+        // The dev chat's build makes the same choice (#3296). The bot's
+        // build works as it is under either CLI: the worker, not the agent,
+        // commits and pushes what the turn leaves (buildPrompt's commits:
+        // 'harness'; both runners use worker/session-branch.sh), and an
+        // OpenRouter build needs no handbook as system context in either
+        // (run-cc.sh).
+        harness: 'auto',
       }),
       dispatchOnce: (ctx) => worker.execInWorker(session.id, {
         mode: 'build',
