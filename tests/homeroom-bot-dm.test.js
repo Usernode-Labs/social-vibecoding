@@ -115,8 +115,9 @@ test('a first version gets the longer build clocks', () => {
   const app = { repo_url: 'https://github.com/usernode-bot/x' };
   const plain = bot.buildBudgets(app, {}, 60_000);
   const first = bot.buildBudgets(app, {}, 60_000, { firstVersion: true });
-  assert.equal(first.turnBudgetMs, plain.turnBudgetMs * bot.PLATFORM_BUILD_TIME_FACTOR);
-  assert.equal(first.specBudgetMs, plain.specBudgetMs * bot.PLATFORM_BUILD_TIME_FACTOR);
+  assert.equal(first.turnBudgetMs, plain.turnBudgetMs * bot.FIRST_VERSION_BUILD_TIME_FACTOR);
+  assert.equal(first.specBudgetMs, plain.specBudgetMs * bot.FIRST_VERSION_BUILD_TIME_FACTOR);
+  assert.equal(bot.FIRST_VERSION_BUILD_TIME_FACTOR, 2, 'a starter template is small; only the change is larger');
 });
 
 // ── What the DM says ─────────────────────────────────────────────────────

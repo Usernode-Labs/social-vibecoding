@@ -217,6 +217,49 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.match(thanks.content, /public discussion/, 'and the bot says where it went');
   });
 
+  await t.test('the verdicts export says whether a run\'s question reached the DM, and whether it was answered there', async () => {
+    await pool.query(
+      `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, 8, $2, 'Dark mode')`,
+      [app.id, ada.id],
+    );
+    const { rows: [asked] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, question, question_answers)
+       VALUES ($1, 8, 'live', 'question', 'Follow the system setting?', $2) RETURNING id`,
+      [app.id, JSON.stringify(['Follow the system', 'Always dark', 'A toggle'])],
+    );
+    const { rows: [quiet] } = await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, question, question_answers)
+       VALUES ($1, 8, 'live', 'question', 'Which page?', $2) RETURNING id`,
+      [app.id, JSON.stringify(['Home'])],
+    );
+    const sent = await dm.relayIssuePost({
+      pool, app, issueNumber: 8, kind: 'question', runId: asked.id, postId: 81, bot,
+      dm: { question: 'Follow the system setting?', answers: ['Follow the system', 'Always dark', 'A toggle'] },
+    });
+    const exported = async () => {
+      const rows = [];
+      for await (const chunk of homeroomBot.iterateRunsForExport(pool, { app: app.slug })) rows.push(...chunk);
+      const cols = homeroomBot.EXPORT_COLUMNS;
+      const pick = (id, col) => homeroomBot.exportRow(rows.find((r) => r.id === id))[cols.indexOf(col)];
+      return { pick };
+    };
+    let { pick } = await exported();
+    assert.equal(pick(asked.id, 'question_answers'), 'Follow the system | Always dark | A toggle');
+    assert.match(pick(asked.id, 'dm_sent_at'), /^\d{4}-\d\d-\d\dT/, 'sent to her DM');
+    assert.equal(pick(asked.id, 'dm_answered_at'), '', 'not answered yet');
+    assert.equal(pick(quiet.id, 'dm_sent_at'), '', 'a run whose news never reached a DM');
+    assert.equal(pick(quiet.id, 'question_answers'), 'Home');
+
+    const answer = await conversations.sendMessage(pool, ada, sent.conversationId, {
+      content: 'Always dark', reply_to_id: sent.messageId,
+    });
+    await dm.noteUserMessage(pool, {}, { user: ada, conversationId: sent.conversationId, message: answer.message });
+    ({ pick } = await exported());
+    assert.match(pick(asked.id, 'dm_answered_at'), /^\d{4}-\d\d-\d\dT/, 'answered from the DM');
+    const cols = homeroomBot.EXPORT_COLUMNS;
+    assert.ok(cols.indexOf('question_answers') > cols.indexOf('build_session_id'), 'appended after every older column');
+  });
+
   await t.test('newer news on a request closes its open question; a reply with nothing open gets the help', async () => {
     const asked = await dm.relayIssuePost({
       pool, app, issueNumber: 7, kind: 'question', postId: 3, bot, dm: { question: 'Show dates?', answers: ['Yes'] },

@@ -9565,6 +9565,18 @@ CREATE INDEX IF NOT EXISTS idx_homeroom_bot_first_versions_waiting
   ON homeroom_bot_first_versions(created_at) WHERE status = 'waiting';
 COMMENT ON TABLE homeroom_bot_first_versions IS 'staging:private';
 
+-- The bot fixing its own failing checks: the head commit a checks
+-- follow-up looked at, on the run that recorded it (a revision, a hand-off
+-- to a person, or a turn that failed), so each failing head gets one look.
+-- NULL on every other run.
+ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS checks_head_sha TEXT;
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_runs_proposal
+  ON homeroom_bot_runs(proposal_session_id) WHERE proposal_session_id IS NOT NULL;
+-- The verdicts export says, per run, whether its news reached the
+-- requester's DM and whether they answered it there.
+CREATE INDEX IF NOT EXISTS idx_homeroom_bot_dm_messages_run
+  ON homeroom_bot_dm_messages(run_id) WHERE run_id IS NOT NULL;
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app
