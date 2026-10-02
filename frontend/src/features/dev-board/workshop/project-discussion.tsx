@@ -29,16 +29,38 @@
  * composer and reply threads (features/messages/index.tsx
  * EmbeddedConversation), holding the store's one route while this page is
  * the screen on show. `generalRoom` reads which conversation it is.
+ *
+ * ── Every way into the room ends here, at its place (#3653) ───────────
+ *
+ * A notification, a message link, a `#name` reference or an old address of
+ * the room used to open it on a page of its own, with its own back button.
+ * They come to this tab now (app.js App.openDiscussionInHub and the
+ * router's redirects), carrying what they named in the room as a TARGET
+ * (AppView._stashDiscussionTarget): a reply thread, opened beside the room
+ * here as it opens beside it in Messages, or a message, brought into view
+ * and flashed. The tab takes it when it shows the room, and again when a
+ * door is followed while the room is already up. A reply thread opened from
+ * the room itself comes the same way (public/js/group-chat.js
+ * openReplyThread), with no address of its own: the page's address is the
+ * page's, as it is for #general's threads.
  */
 
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 
+import { XIcon } from '@/components/ui/icons';
 import type { CommunityPayload } from './community-card';
-import { EmbeddedConversation } from '../../messages';
+import { AppReplyThreadPane, EmbeddedConversation } from '../../messages';
 import { navStore } from '../../nav/nav-store.js';
 import { useStoreState } from '../../../lib/use-store-state';
 
 type Channel = NonNullable<CommunityPayload['channel']>;
+
+/** What a door asked for in the room (AppView._stashDiscussionTarget). */
+export interface DiscussionTarget {
+  threadRootId: number | null;
+  focusMessageId: number | null;
+  conversationId: number | null;
+}
 
 /** A channel this page can mount: an app's own, addressed in Messages' app threads. */
 function embeddable(channel: Channel | null): boolean {
@@ -59,6 +81,20 @@ export function generalRoom(data: CommunityPayload | null | undefined): number |
   return id && id <= 2147483647 ? id : null;
 }
 
+/** The target waiting for `slug`'s room, taken, or null. */
+export function takeDiscussionTarget(slug: string): DiscussionTarget | null {
+  const view = (window as unknown as {
+    AppView?: { _takeDiscussionTarget?: (slug: string) => Partial<DiscussionTarget> | null };
+  }).AppView;
+  const t = view?._takeDiscussionTarget?.(slug) || null;
+  if (!t) return null;
+  return {
+    threadRootId: t.threadRootId || null,
+    focusMessageId: t.focusMessageId || null,
+    conversationId: t.conversationId || null,
+  };
+}
+
 export function ProjectDiscussion({ slug, name, data }: {
   slug: string;
   name: string;
@@ -75,6 +111,12 @@ export function ProjectDiscussion({ slug, name, data }: {
   // lights no tab).
   const { screen, tab } = useStoreState(navStore) as { screen: string | null; tab: string | null };
   const onShow = screen === 'app-view' && !!tab;
+  // #3653: the reply thread open beside a project's own channel, and the
+  // place a door named in #general. `key` makes the same thread asked for
+  // again (a second notification for it) a fresh mount: the router's pass
+  // on the way here lets go of whatever thread the group chat had.
+  const [thread, setThread] = useState<{ rootId: number; key: number } | null>(null);
+  const [roomAt, setRoomAt] = useState<{ threadRootId: number | null; focusMessageId: number | null } | null>(null);
 
   useEffect(() => {
     const el = host.current;
@@ -97,6 +139,59 @@ export function ProjectDiscussion({ slug, name, data }: {
     };
   }, [slug, name, readOnly, mountable]);
 
+  // A thread belongs to the room it was opened in.
+  useEffect(() => { setThread(null); setRoomAt(null); }, [slug]);
+
+  // THE DOOR'S TARGET, taken once the page knows which room this is (the
+  // community record has landed): now, and whenever a door is followed
+  // while the tab is up. Declared after the mount above and run in the same
+  // commit, so a message to bring into view is asked for before the group
+  // chat's first history load (a macrotask later) can answer it.
+  const known = !!data;
+  useEffect(() => {
+    if (!known) return undefined;
+    const apply = () => {
+      const target = takeDiscussionTarget(slug);
+      if (!target) return;
+      if (room) {
+        // #general's place is the store's to find: its thread opens beside
+        // it, its message is read around and flashed (EmbeddedConversation).
+        if (target.threadRootId || target.focusMessageId) {
+          setRoomAt({ threadRootId: target.threadRootId, focusMessageId: target.focusMessageId });
+        }
+        return;
+      }
+      if (!mountable) return;
+      if (target.focusMessageId) {
+        // The group chat scrolls to it and flashes it once its stream has
+        // it, and opens the reply thread it lives in when it is a reply.
+        (window as any).GroupChat?.revealMessage?.(slug, target.focusMessageId);
+      }
+      if (target.threadRootId) {
+        const rootId = target.threadRootId;
+        setThread((cur) => ({ rootId, key: (cur?.key || 0) + 1 }));
+      }
+    };
+    apply();
+    // A door followed while the tab is up: taken a turn later, once the
+    // router's own pass (which may render this page afresh) is over — a
+    // fresh copy takes it as it mounts instead, and this one lets it be.
+    let live = true;
+    let timer = 0;
+    const onTarget = (event: Event) => {
+      const detail = (event as CustomEvent<{ slug?: string } | null>).detail;
+      if (!detail || detail.slug !== slug) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => { if (live) apply(); }, 0);
+    };
+    window.addEventListener('usernode:workshop-discussion', onTarget);
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+      window.removeEventListener('usernode:workshop-discussion', onTarget);
+    };
+  }, [slug, known, room, mountable]);
+
   if (!data) return null;
   if (room) {
     return (
@@ -106,16 +201,47 @@ export function ProjectDiscussion({ slug, name, data }: {
         data-ws-discussion-room={channel?.handle || ''}
         aria-label={`${name} discussion`}
       >
-        <EmbeddedConversation conversationId={room} active={onShow} />
+        <EmbeddedConversation conversationId={room} active={onShow} at={roomAt} />
       </section>
     );
   }
   if (!mountable) {
     return <p className="dev-ws-week-note" data-ws-discussion-none="">This project has no discussion you can read.</p>;
   }
+  // The section's class says whether a thread is beside the room; the
+  // host's own never changes, and its subtree stays the group chat's.
+  // `data-discussion-app` names the room as Messages' pane does, so the
+  // group chat brings a message into view here at once when it is already
+  // up (GroupChat.revealMessage).
   return (
-    <section className="dev-ws-discussion" data-ws-discussion="" aria-label={`${name} discussion`}>
+    <section
+      className={`dev-ws-discussion${thread ? ' dev-ws-discussion-threaded' : ''}`}
+      data-ws-discussion=""
+      data-discussion-app={slug}
+      aria-label={`${name} discussion`}
+    >
       <div ref={host} className="dev-ws-discussion-host" />
+      {thread ? (
+        <AppReplyThreadPane
+          key={`${thread.rootId}:${thread.key}`}
+          slug={slug}
+          rootId={thread.rootId}
+          ready
+          readOnly={readOnly}
+          where={name}
+          close={(
+            <button
+              type="button"
+              className="messages-thread-action"
+              aria-label="Close thread"
+              title="Close thread"
+              onClick={() => setThread(null)}
+            >
+              <XIcon aria-hidden="true" />
+            </button>
+          )}
+        />
+      ) : null}
     </section>
   );
 }

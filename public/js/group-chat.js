@@ -1747,13 +1747,29 @@ const GroupChat = {
     return `#messages/app/${encodeURIComponent(slug)}/m/${Number(id)}`;
   },
 
-  // Open the reply thread under a general-chat message: beside the channel in
-  // Messages, which is where a reply thread lives — also when the row was
-  // tapped on the app's own Discussion page.
+  // Open the reply thread under a general-chat message, beside the channel.
+  // #3653: on the channel's project page — its Discussion tab, where the room
+  // lives — it opens there, in place: the room has no address of its own on
+  // that page, and leaving for Messages to read a thread was leaving the
+  // community for a page apart from it. Anywhere else (Homeroom's archived
+  // app chat, in Messages) it is the thread's Messages address.
   openReplyThread(id) {
     const slug = GroupChat.appSlug;
     if (!slug || !id) return;
+    if (GroupChat._openThreadInPage(slug, id)) return;
     location.hash = `#messages/app/${encodeURIComponent(slug)}/thread/${Number(id)}`;
+  },
+
+  // Is `slug`'s channel on screen in its project page's Discussion tab
+  // (features/dev-board/workshop/project-discussion.tsx)? Then open the
+  // reply thread under `rootId` there and say so.
+  _openThreadInPage(slug, rootId) {
+    const container = document.getElementById('gc-messages');
+    const tab = container && container.closest && container.closest('[data-ws-discussion]');
+    if (!tab || tab.getAttribute('data-discussion-app') !== slug) return false;
+    if (typeof AppView === 'undefined' || !AppView._stashDiscussionTarget) return false;
+    AppView._stashDiscussionTarget(slug, { threadRootId: Number(rootId) });
+    return true;
   },
 
   isReplyThreadOpen(id) {
@@ -3655,7 +3671,8 @@ const GroupChat = {
   // A mention, a reply, a reaction or a saved message names ONE message of an
   // app's discussion, and the discussion opened at the newest with that
   // message somewhere above it. The bell asks for it here as it opens the
-  // discussion in Messages (Notifications._openAppDiscussion); the first
+  // discussion (Notifications._openAppDiscussion), and so does the project
+  // page's Discussion tab for a message link it was sent to (#3653); the first
   // history load of that app — or the remount of an app already loaded, or
   // this call itself when that discussion is the one already open — scrolls
   // it to the middle of the stream and flashes it, the highlight a quote's
@@ -3670,8 +3687,9 @@ const GroupChat = {
     const id = Number(messageId);
     if (!appSlug || !Number.isSafeInteger(id) || id <= 0) return;
     GroupChat._pendingReveal = { slug: appSlug, id, at: Date.now() };
-    // Now, only when the stream on screen is that discussion's pane in
-    // Messages: anywhere else the click is about to move the reader there,
+    // Now, only when the stream on screen is that discussion's pane — in
+    // Messages, or its project page's Discussion tab, which carries the same
+    // attribute: anywhere else the click is about to move the reader there,
     // and the mount it lands on applies it.
     const container = document.getElementById('gc-messages');
     const pane = container && container.closest && container.closest('[data-discussion-app]');
@@ -3698,7 +3716,8 @@ const GroupChat = {
     if (loadedReply) {
       const root = Number(loadedReply.thread_ref ?? (loadedReply.thread && loadedReply.thread.ref));
       GroupChat._pendingReveal = null;
-      if (Number.isSafeInteger(root) && root > 0) {
+      if (Number.isSafeInteger(root) && root > 0
+          && !GroupChat._openThreadInPage(want.slug, root)) {
         const address = `#messages/app/${encodeURIComponent(want.slug)}/thread/${root}`;
         const messages = window.UsernodeReact?.messages;
         if (messages?.openAddress) messages.openAddress(address);
@@ -3759,6 +3778,8 @@ const GroupChat = {
       const root = Number(body && body.focus && body.focus.thread_ref);
       if (Number.isSafeInteger(root) && root > 0 && root !== want.id) {
         GroupChat._pendingReveal = null;
+        // On the project page, beside the channel there (#3653).
+        if (GroupChat._openThreadInPage(slug, root)) return;
         const address = `#messages/app/${encodeURIComponent(slug)}/thread/${root}`;
         const messages = window.UsernodeReact?.messages;
         if (messages?.openAddress) messages.openAddress(address);

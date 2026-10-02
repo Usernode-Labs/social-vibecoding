@@ -395,7 +395,7 @@ test('issue card: read-only viewer gets no primary, keeps a read-safe ⋯', () =
   assertCardActionContract(AppView, html, { primary: 0, menu: true });
   // join(), not deepEqual: the vm context has its own Array prototype, so
   // deepStrictEqual on a cross-realm array fails on the prototype alone.
-  assert.equal(menuLabels(AppView, html).join('|'), 'Share to Messages|Open on GitHub',
+  assert.equal(menuLabels(AppView, html).join('|'), 'Share to…|Open on GitHub',
     'only the read-safe rows survive for a read-only viewer');
   AppView.appData = null;
 });

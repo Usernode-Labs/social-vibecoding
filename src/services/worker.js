@@ -4398,6 +4398,58 @@ async function destroyCcVolume(sessionId) {
   _warmRegistry.delete(sessionId);
 }
 
+// A before/after shots run works inside its proposal's own worker, and a
+// merge retires that worker. Retiring it mid-run killed the shots agent
+// about 30 seconds later, when Kubernetes' grace period for the deleted
+// pod ran out (exit cause container_gone). So a shots run holds the worker
+// for as long as it runs: a retirement that arrives meanwhile is recorded,
+// and the release of the last hold carries it out. Whichever comes second
+// does the teardown, and only once.
+//
+// Both sides run in this process (the platform is one pod, and the shots
+// control plane is in memory for the same reason), and each checks the
+// other and records itself in one synchronous step, so neither can slip
+// between the other's check and record. A restart drops the holds along
+// with the runs that held them; the hourly volume sweep frees a merged
+// change's leftover volume.
+const _workerHolds = new Map();
+
+function holdWorker(sessionId) {
+  const id = Number(sessionId);
+  const hold = _workerHolds.get(id) || { count: 0, retire: false };
+  hold.count += 1;
+  _workerHolds.set(id, hold);
+  let released = false;
+  return {
+    // Resolves true when this release retired the worker.
+    async release() {
+      if (released) return false;
+      released = true;
+      hold.count -= 1;
+      if (hold.count > 0) return false;
+      if (_workerHolds.get(id) === hold) _workerHolds.delete(id);
+      if (!hold.retire) return false;
+      log.info('worker', 'Retiring the worker a shots run kept through its merge', { sessionId: id });
+      await destroyCcVolume(id);
+      return true;
+    },
+  };
+}
+
+// The change is finished for good (it merged): delete its worker and
+// volume now, or when the shots run holding them ends.
+async function retireWorker(sessionId) {
+  const id = Number(sessionId);
+  const hold = _workerHolds.get(id);
+  if (hold) {
+    hold.retire = true;
+    log.info('worker', 'Worker retirement waits for its shots run to finish', { sessionId: id });
+    return { deferred: true };
+  }
+  await destroyCcVolume(id);
+  return { deferred: false };
+}
+
 // Kubernetes worker state volumes, one per change (see
 // worker-volume-reclaim.js). A Docker host has no volume quota to manage.
 async function listWorkerVolumes() {
@@ -4665,6 +4717,8 @@ module.exports = {
   listOrphanWorkers,
   destroyWorker,
   destroyCcVolume,
+  holdWorker,
+  retireWorker,
   listWorkerVolumes,
   eraseAccountWorkspace,
   setAccountDeletionGuard,

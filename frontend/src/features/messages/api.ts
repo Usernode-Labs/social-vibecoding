@@ -17,6 +17,7 @@ import type {
   ThreadRootRef,
   UserSearchResult,
 } from './types';
+import type { HomeroomLink } from './homeroom-links';
 import { plainText } from './plain-text';
 
 const MAX_ID = 2_147_483_647;
@@ -161,9 +162,9 @@ function normalizeAttachment(input: unknown, conversationId: number): MessageAtt
 function normalizeObject(input: unknown): SharedObjectCard {
   const row = record(input);
   const ref = record(pick(row, 'reference', 'ref') ?? row);
-  const type = text(pick(ref, 'type', 'kind')) as SharedObjectReference['type'];
+  const type = text(pick(ref, 'type', 'kind')) as SharedObjectCard['type'];
   return {
-    type: ['app', 'issue', 'proposal', 'governance', 'spec'].includes(type) ? type : 'app',
+    type: ['app', 'issue', 'proposal', 'governance', 'spec', 'hub', 'discussion'].includes(type) ? type : 'app',
     appId: strictId(pick(ref, 'appId', 'app_id')) || undefined,
     appSlug: text(pick(ref, 'appSlug', 'app_slug')) || undefined,
     issueNumber: strictId(pick(ref, 'issueNumber', 'issue_number')) || undefined,
@@ -548,6 +549,36 @@ export async function listAppItems(slug: string, type: 'issue' | 'proposal' | 'g
       status: text(pick(row, 'status')) || undefined,
     };
   }).filter((item) => item.id);
+}
+
+/**
+ * #3660: the cards a message's Homeroom links stand for, as the server
+ * resolves them for THIS viewer — one answer per link, in order, and an
+ * unavailable one for a page they cannot see. Only the parsed page goes up
+ * (./homeroom-links.ts), never the link itself.
+ */
+export async function resolveLinkCards(links: ReadonlyArray<Pick<HomeroomLink, 'type' | 'appSlug' | 'issueNumber' | 'sessionId' | 'proposalId'>>): Promise<SharedObjectCard[]> {
+  const refs = links.map((link) => ({
+    type: link.type,
+    app_slug: link.appSlug,
+    ...(link.issueNumber ? { issue_number: link.issueNumber } : {}),
+    ...(link.sessionId ? { session_id: link.sessionId } : {}),
+    ...(link.proposalId ? { proposal_id: link.proposalId } : {}),
+  }));
+  const data = record(await request<unknown>('/api/link-cards', { method: 'POST', body: JSON.stringify({ refs }) }));
+  return array(pick(data, 'cards')).map(normalizeObject);
+}
+
+/**
+ * #3660: post a message to an app's discussion (its general stream) over
+ * the REST twin of the chat socket — the same canonical write
+ * (routes/chat.js), for a page that has no socket open to that app.
+ */
+export async function postAppMessage(slug: string, content: string): Promise<void> {
+  await request<unknown>(`/api/apps/${encodeURIComponent(slug)}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ content: content.slice(0, 8000) }),
+  });
 }
 
 export async function reportMessage(

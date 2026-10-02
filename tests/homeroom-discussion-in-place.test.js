@@ -198,7 +198,8 @@ test('#3494: exactly one copy of the thread is drawn, and the page\'s has no hea
   assert.match(SCREEN, /\{snap\.route\.conversationId && snap\.route\.threadRootId && !snap\.route\.embedded \? <ReplyThreadPanel \/> : null\}/);
   // The page's copy holds the store only while it is on screen, and gives it back.
   const embedded = SCREEN.slice(SCREEN.indexOf('export function EmbeddedConversation('), SCREEN.indexOf('export function MessagesScreen('));
-  assert.match(embedded, /if \(!active \|\| messagesOpen\) return undefined;\s*embed\(conversationId\);\s*return \(\) => release\(conversationId\);/);
+  // #3653: with the place a door named in the room, taken once (`take`).
+  assert.match(embedded, /if \(!active \|\| messagesOpen\) return undefined;\s*embed\(conversationId, take\(\)\);\s*return \(\) => release\(conversationId\);/);
   assert.match(embedded, /\{here \? <ConversationThread embedded \/> : null\}/);
   assert.match(embedded, /\{here && snap\.route\.threadRootId \? <ReplyThreadPanel \/> : null\}/);
 });
@@ -225,7 +226,7 @@ test('#3494: the Discussion tab turns for Homeroom too, and mounts #general whil
   assert.equal(seen.length, 1);
   assert.equal(seen[0].conversationId, 1);
   assert.equal(seen[0].active, false, 'not on screen until the router has revealed #app-view');
-  assert.match(PD, /<EmbeddedConversation conversationId=\{room\} active=\{onShow\} \/>/);
+  assert.match(PD, /<EmbeddedConversation conversationId=\{room\} active=\{onShow\} at=\{roomAt\} \/>/);
   assert.match(PD, /const onShow = screen === 'app-view' && !!tab;/, 'on show: the project page, not the running app behind it');
   assert.doesNotMatch(html, /data-ws-discussion-elsewhere|data-ws-discussion-open/, 'no door');
 
@@ -233,7 +234,7 @@ test('#3494: the Discussion tab turns for Homeroom too, and mounts #general whil
   const own = renderToHtml(createElement(ProjectDiscussion, {
     slug: 'garden', name: 'Garden', data: { channel: { handle: null, href: '#messages/app/garden', post_url: '/api/apps/garden/messages' } },
   }));
-  assert.match(own, /<section class="dev-ws-discussion" data-ws-discussion="" aria-label="Garden discussion"><div class="dev-ws-discussion-host"><\/div><\/section>/);
+  assert.match(own, /<section class="dev-ws-discussion" data-ws-discussion="" data-discussion-app="garden" aria-label="Garden discussion"><div class="dev-ws-discussion-host"><\/div><\/section>/);
 });
 
 test('#3494: the room fills the tab edge to edge, as a project\'s own chat does', () => {

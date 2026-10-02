@@ -110,7 +110,16 @@ export interface SharedObjectReference {
   version?: number;
 }
 
-export interface SharedObjectCard extends SharedObjectReference {
+/**
+ * What a card under a message can be: anything that can be shared, plus the
+ * two pages a pasted Homeroom link can name that are not items (#3660) — a
+ * community's hub and its discussion. Those two are never stored on a
+ * message; they are drawn from the message's own text (./link-cards.tsx).
+ */
+export type ObjectCardType = SharedObjectType | 'hub' | 'discussion';
+
+export interface SharedObjectCard extends Omit<SharedObjectReference, 'type'> {
+  type: ObjectCardType;
   available: boolean;
   title?: string | null;
   subtitle?: string | null;

@@ -289,15 +289,19 @@ test('proposal, author, imported PR: no Open session (there is no in-app session
 test('proposal, read-only viewer: only read-safe rows survive', () => {
   const AppView = makeAppView({ readOnly: true, admin: true });
   const labels = menuLabels(AppView, proposalCardHtml(AppView, PR({ pr_url: 'https://gh/pr/7' })));
-  assert.equal(labels.join('|'), 'Share to Messages|View PR on GitHub');
+  assert.equal(labels.join('|'), 'Share to…|View PR on GitHub');
 });
 
-test('issue and proposal menus share their exact card references to Messages', () => {
+test('issue and proposal menus open Share to… with their exact card references (#3660)', () => {
   const AppView = makeAppView({ readOnly: true });
   AppView.appData = { id: 10, slug: 'usernode-2d5619', can_collaborate: false };
-  const shared = [];
+  const opened = [];
+  const toMessages = [];
+  AppView.__sandbox.UsernodeReact.dialogs = {
+    shareTo: { open: (reference) => { opened.push(JSON.parse(JSON.stringify(reference))); } },
+  };
   AppView.__sandbox.UsernodeReact.messages = {
-    share: (reference) => { shared.push(JSON.parse(JSON.stringify(reference))); },
+    share: (reference) => { toMessages.push(JSON.parse(JSON.stringify(reference))); },
   };
 
   const issueMenu = menuItems(AppView, issueCardHtml(
@@ -306,8 +310,8 @@ test('issue and proposal menus share their exact card references to Messages', (
   const proposalMenu = menuItems(AppView, proposalCardHtml(
     AppView, PR({ id: 4209, pr_url: 'https://gh/pr/4209' }), { noNav: true },
   ));
-  const issueShare = issueMenu.find((item) => item.label === 'Share to Messages');
-  const proposalShare = proposalMenu.find((item) => item.label === 'Share to Messages');
+  const issueShare = issueMenu.find((item) => item.label === 'Share to…');
+  const proposalShare = proposalMenu.find((item) => item.label === 'Share to…');
 
   assert.ok(issueShare, 'read-only issue topic cards remain shareable');
   assert.ok(proposalShare, 'read-only proposal topic cards remain shareable');
@@ -315,9 +319,18 @@ test('issue and proposal menus share their exact card references to Messages', (
   assert.equal(proposalShare.icon, 'share');
   issueShare.act();
   proposalShare.act();
-  assert.deepEqual(shared, [
+  assert.deepEqual(opened, [
+    { type: 'issue', issueNumber: 1956, title: 'Fix the thing', appId: 10, appSlug: 'usernode-2d5619' },
+    { type: 'proposal', sessionId: 4209, title: 'Tidy the header', appId: 10, appSlug: 'usernode-2d5619' },
+  ], 'the dialog gets the card by identity, with its title to show');
+  assert.deepEqual(toMessages, [], 'nothing goes to the Messages screen while the dialog exists');
+
+  // A shell from before the dialog: the card still reaches Messages, by
+  // identity alone, the way it always did.
+  delete AppView.__sandbox.UsernodeReact.dialogs;
+  issueShare.act();
+  assert.deepEqual(toMessages, [
     { type: 'issue', issueNumber: 1956, appId: 10, appSlug: 'usernode-2d5619' },
-    { type: 'proposal', sessionId: 4209, appId: 10, appSlug: 'usernode-2d5619' },
   ]);
 });
 

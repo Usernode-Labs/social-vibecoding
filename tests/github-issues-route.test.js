@@ -664,6 +664,152 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
   }
 });
 
+// ── #3693: the Homeroom bot's posts, once ────────────────────────────────
+//
+// The bot says each thing on GitHub AND in the issue's own thread, and the
+// request page draws both threads, so "Homeroom bot is looking at this
+// request" read twice. The comments route leaves out the bot's comments
+// whose thread copy it recorded (homeroom_bot_posts), by comment id.
+
+const BOT_THREAD = [
+  { id: 3001, user: { login: 'reporter' }, body: 'Dark mode please.', created_at: '2026-10-02T18:20:00Z' },
+  { id: 3002, user: { login: 'usernode-bot' }, body: 'Homeroom bot is looking at this request.', created_at: '2026-10-02T18:24:00Z' },
+  { id: 3003, user: { login: 'usernode-bot' }, body: 'Homeroom bot wrote a spec for this request.', created_at: '2026-10-02T18:27:00Z' },
+  { id: 3004, user: { login: 'usernode-bot' }, body: 'Thanks for the report.', created_at: '2026-10-02T18:30:00Z' },
+];
+
+function stubBotThread(comments = BOT_THREAD) {
+  global.fetch = async (url, opts) => {
+    if (String(url).includes('api.github.com') && String(url).includes('/comments')) {
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => comments };
+    }
+    return baselineFetch(url, opts);
+  };
+}
+
+test('#3693: the bot\'s comments its Homeroom thread already carries are left out, by id', async () => {
+  stubBotThread();
+  const asked = [];
+  poolQueryHandler = async (sql, params) => {
+    if (/FROM homeroom_bot_posts/.test(String(sql))) {
+      asked.push({ sql: String(sql), params });
+      // pg hands a BIGINT back as a string.
+      return { rows: [{ github_comment_id: '3002' }, { github_comment_id: '3003' }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.deepStrictEqual(body.comments.map((c) => c.body), [
+      'Dark mode please.',
+      // A bot comment with no thread copy is the one place it was said.
+      'Thanks for the report.',
+    ]);
+    assert.strictEqual(body.truncated, false);
+    assert.ok(body.comments.every((c) => !('id' in c)), 'the response keeps its shape');
+
+    assert.strictEqual(asked.length, 1);
+    assert.deepStrictEqual(asked[0].params, [1, 142], 'this app, this issue');
+    // Only a thread copy that landed in THIS issue's thread and still stands.
+    assert.match(asked[0].sql, /JOIN chat_messages m/);
+    assert.match(asked[0].sql, /m\.thread_type = 'issue' AND m\.thread_ref = p\.issue_number/);
+    assert.match(asked[0].sql, /m\.deleted_at IS NULL/);
+    assert.match(asked[0].sql, /p\.github_comment_id IS NOT NULL/);
+  } finally {
+    global.fetch = baselineFetch;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#3693: the bot\'s posts are left out BEFORE the clip, so they never take a place', async () => {
+  // One bot post, then the 30 people's comments the clip keeps: had the
+  // bot post been counted, the clip would report earlier comments dropped.
+  const people = Array.from({ length: 30 }, (_, k) => ({
+    id: 4000 + k, user: { login: `person-${k}` }, body: `reply ${k}`, created_at: '2026-10-02T19:00:00Z',
+  }));
+  stubBotThread([BOT_THREAD[1], ...people]);
+  poolQueryHandler = async (sql) => (/FROM homeroom_bot_posts/.test(String(sql))
+    ? { rows: [{ github_comment_id: '3002' }] }
+    : { rows: [] });
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments`);
+    const body = await res.json();
+    assert.strictEqual(body.comments.length, 30);
+    assert.strictEqual(body.truncated, false, 'nothing a reader could want was dropped');
+  } finally {
+    global.fetch = baselineFetch;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#3693: a failed lookup shows the whole thread, as before', async () => {
+  stubBotThread();
+  poolQueryHandler = async (sql) => {
+    if (/FROM homeroom_bot_posts/.test(String(sql))) throw new Error('relation does not exist');
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/142/comments`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.comments.length, BOT_THREAD.length);
+  } finally {
+    global.fetch = baselineFetch;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#3693: staging does not fill a thread emptied by the dedupe with fixtures', async () => {
+  // The staging fallback is for a thread GitHub sent back empty. A thread
+  // that only held the bot's thread copies is exactly what a reviewer of
+  // this fix has to see empty.
+  stubBotThread([BOT_THREAD[1], BOT_THREAD[2]]);
+  poolQueryHandler = async (sql) => (/FROM homeroom_bot_posts/.test(String(sql))
+    ? { rows: [{ github_comment_id: '3002' }, { github_comment_id: '3003' }] }
+    : { rows: [] });
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/1585/comments`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.deepStrictEqual(body.comments, []);
+  } finally {
+    global.fetch = baselineFetch;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('#3693: the staging spec comment is as long as a real one, so the route clips it like one', async () => {
+  // dapp.json's check on issue 900003 asserts the spec renders as a spec
+  // card. With a short fixture it passed while every real request showed
+  // the raw `<details>` markers: a real spec is clipped, its close cut off.
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues/900003/comments?demo=1`);
+    const body = await res.json();
+    const spec = body.comments.find((c) => /<details><summary>The spec<\/summary>/.test(c.body));
+    assert.ok(spec, 'the thread carries the bot\'s spec comment');
+    assert.match(spec.body, /… \[truncated\]$/, 'clipped, as a real spec is');
+    assert.doesNotMatch(spec.body, /<\/details>/, 'with its close cut off');
+  } finally {
+    server.close();
+  }
+});
+
 // ── "In progress" status: dispatch-derived sessions + manual claims ──────
 //
 // GET /github-issues composes per-issue `in_progress` from (a) LIVE

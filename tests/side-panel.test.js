@@ -63,7 +63,7 @@ const R = api.routes;
 
 // ── 1. The address table ─────────────────────────────────────────────────
 
-test('the panel\'s pages: an app\'s Workshop and work, its discussion, conversations, agent chats', () => {
+test('the panel\'s pages: an app\'s Workshop and work, conversations, agent chats', () => {
   const kinds = {
     'app/notes-ab12/workshop': 'workshop',
     'app/notes-ab12/board': 'workshop',
@@ -76,9 +76,11 @@ test('the panel\'s pages: an app\'s Workshop and work, its discussion, conversat
     'app/notes-ab12/dev/sessions/new': 'new-change',
     'app/notes-ab12/dev/sessions/41': 'change',
     'app/notes-ab12/dev/shared/41': 'change',
-    'app/notes-ab12/dev/chat': 'discussion',
-    'app/notes-ab12/group-chat': 'discussion',
-    'messages/app/notes-ab12': 'discussion',
+    // #3653: an app's discussion is its project page's Discussion tab, so
+    // its old addresses are that page.
+    'app/notes-ab12/dev/chat': 'workshop',
+    'app/notes-ab12/group-chat': 'workshop',
+    'messages/app/notes-ab12': 'workshop',
     'messages/4242': 'thread',
     'messages': 'messages',
     'chat': 'chat',
@@ -166,9 +168,13 @@ test('an app\'s App tab is never the panel\'s: it names the app to hand to the t
   assert.equal(R.appTabSlug('messages/12'), null);
 });
 
-test('Back climbs: a discussion or a message to Messages, a proposal, an issue or a change to the Workshop', () => {
-  assert.equal(R.parentRoute('messages/app/notes-ab12'), 'messages');
-  assert.equal(R.parentRoute('app/notes-ab12/dev/chat'), 'messages');
+test('Back climbs: a message to Messages, a proposal, an issue or a change to the Workshop', () => {
+  // #3653: an app's discussion is its project page, which has nothing above it.
+  assert.equal(R.parentRoute('messages/app/notes-ab12'), null);
+  assert.equal(R.parentRoute('app/notes-ab12/dev/chat'), null);
+  assert.equal(R.samePage('messages/app/notes-ab12/thread/7', 'app/notes-ab12/workshop'), true,
+    'the redirect to the page is not a navigation');
+  assert.equal(R.samePage('app/notes-ab12/dev/chat', 'app/notes-ab12/workshop'), true);
   assert.equal(R.parentRoute('messages/4242'), 'messages');
   assert.equal(R.parentRoute('chat/abc'), 'messages');
   for (const route of ['app/notes-ab12/dev/proposals/12', 'app/notes-ab12/dev/issues/7',
@@ -181,7 +187,7 @@ test('Back climbs: a discussion or a message to Messages, a proposal, an issue o
 
 test('the title is the page\'s own header title, except where that would only name the app', () => {
   assert.equal(R.titleFor('messages/4242', 'Design review'), 'Design review');
-  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Notes', 'a discussion is its app\'s');
+  assert.equal(R.titleFor('messages/app/notes-ab12', 'Notes'), 'Workshop', 'a discussion is its project page (#3653)');
   assert.equal(R.titleFor('app/notes-ab12/workshop', 'Notes'), 'Workshop', 'the Workshop is the Workshop, as the prototype titles it');
   assert.equal(R.titleFor('messages', 'Inbox'), 'Messages', 'and the inbox is Messages');
   assert.equal(R.titleFor('app/notes-ab12/dev/proposals/12', 'Notes'), 'Proposal');
@@ -191,7 +197,7 @@ test('the title is the page\'s own header title, except where that would only na
   // Derived from the route while the document has said nothing yet.
   assert.equal(R.titleFor('app/notes-ab12/workshop', ''), 'Workshop');
   assert.equal(R.titleFor('messages/4242', ''), 'Messages');
-  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Discussion');
+  assert.equal(R.titleFor('messages/app/notes-ab12', ''), 'Workshop');
 });
 
 test('the panel document\'s address keeps the top window\'s query, less its own and the load-scoped ones', () => {
@@ -367,16 +373,16 @@ test('opening starts ONE document, and later pages are navigations inside it', (
   assert.equal(s.canBack, false);
   const gone = fakeFrame();
   // A second page asked for while it boots is where it goes once it can.
-  api.take('messages/app/notes-ab12');
+  api.take('messages/4242');
   assert.deepEqual(gone, [], 'nothing to tell a document that has not booted');
   api.embeddedApi.ready('app/notes-ab12/workshop', 'Workshop');
-  assert.deepEqual(gone, [['messages/app/notes-ab12', null]]);
+  assert.deepEqual(gone, [['messages/4242', null]]);
   s = api.sidePanelStore.get();
   assert.equal(s.loading, false);
-  assert.equal(s.route, 'messages/app/notes-ab12');
+  assert.equal(s.route, 'messages/4242');
   assert.equal(s.canBack, true, 'the Workshop it was opened on is behind it');
-  api.embeddedApi.navigated('messages/app/notes-ab12', 'Notes', false);
-  assert.equal(api.sidePanelStore.get().title, 'Notes');
+  api.embeddedApi.navigated('messages/4242', 'Design review', false);
+  assert.equal(api.sidePanelStore.get().title, 'Design review');
   // Another page: the same frame, navigated.
   api.take('app/notes-ab12/dev/proposals/12');
   assert.deepEqual(gone.at(-1), ['app/notes-ab12/dev/proposals/12', null]);

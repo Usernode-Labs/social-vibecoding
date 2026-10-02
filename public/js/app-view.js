@@ -3432,13 +3432,13 @@ const AppView = {
     // the change asked for the old Activity feed to be removed and replaced by
     // the board's stream, and the three views are exactly three.
     //
-    // The screen, its route and every link into it are untouched: a mention,
-    // a reply, a reaction and a shared spec all still land here, and
-    // /app/<slug>/dev/chat (and the legacy #app/<slug>/group-chat) still
-    // resolve. Its browse-to-it door is the chip menu's "Discussion" row
-    // (features/app-context/app-context-sheet.tsx) — a destination with its
-    // own page, which is what that menu lists, rather than a fourth segment
-    // in a strip whose three entries are three readings of the same work.
+    // #3653: AND IT IS HOMEROOM'S ARCHIVE ALONE NOW. A project's channel is
+    // its page's Discussion tab, so every way into this screen for one — its
+    // address, the legacy #app/<slug>/group-chat, a mention, a reply, a
+    // shared spec — is turned to that tab before it gets here
+    // (App._chatToDiscussionTab, in App.switchTab). The one room it still
+    // draws is the platform's own old project discussion, read-only, which
+    // is no project's tab: Homeroom's holds #general.
     if (subTab === 'chat') {
       // The app's name stays the chip's label and the subtitle qualifies it —
       // replacing the name here was the chip forgetting which app it was in.
@@ -4417,8 +4417,10 @@ const AppView = {
       if (proposal && !AppView.readOnly) {
         onBand.push({
           key: 'share', cls: 'gc-vote-btn', label: 'Share',
-          title: 'Share this proposal in a private conversation',
-          act: { fn: '_shareCardToMessages', args: [{ type: 'proposal', sessionId: item.id }] },
+          title: 'Share this proposal to a chat or a discussion',
+          act: { fn: '_shareCardToMessages', args: [{
+            type: 'proposal', sessionId: item.id, title: item.session_title || item.pr_title || null,
+          }] },
         });
       }
       // The rows the band now carries leave the menu — with one guard. The
@@ -5553,16 +5555,23 @@ const AppView = {
     return `${AppView._menuIconGlyph(it)}  ${it.label}`;
   },
 
-  // Hand one card to Messages by identity only. Messages owns destination
-  // selection and attachment confirmation; the server resolves the live
-  // title/state and re-checks access for every recipient when it is sent.
+  // Hand one card to Share to… (#3660) by identity, plus its title to show.
+  // The dialog (features/messages/share-to-dialog.tsx) is where the sharer
+  // picks a DM, a group, #general or an app's discussion, and it posts the
+  // card there; the server resolves the live title/state and re-checks
+  // access for every reader. Without the dialog (a shell from before it),
+  // the card goes to Messages the way it used to.
   _shareCardToMessages(reference) {
     const app = AppView.appData || {};
-    return window.UsernodeReact?.messages?.share?.({
+    const card = {
       ...reference,
       appId: app.id,
       appSlug: app.slug || App.currentApp,
-    });
+    };
+    const dialog = window.UsernodeReact?.dialogs?.shareTo;
+    if (dialog) return dialog.open(card);
+    const { title: _title, ...ref } = card;
+    return window.UsernodeReact?.messages?.share?.(ref);
   },
 
   // Register `items` under `key` and return the ⋯ trigger, or '' when there
@@ -8352,6 +8361,71 @@ const AppView = {
       window.dispatchEvent(new CustomEvent('usernode:workshop-tab', { detail: { slug: slug || null, tab: key } }));
     } catch {}
     if (slug) AppView._saveFeedScroll(slug, 0);
+  },
+  /**
+   * #3653: EVERY DOOR TO A DISCUSSION IS A DOOR TO THE DISCUSSION TAB.
+   *
+   * A notification, a message link, a `#name` reference, an old bookmark:
+   * each names a room, and often a place in it — a reply thread, or one
+   * message. The room is its project page's Discussion tab now, under the
+   * page's coloured header and its tabs, so those addresses are taken there
+   * (App.openDiscussionInHub, and the router's redirects in app.js) rather
+   * than to a page of their own with a back button of its own.
+   *
+   * The place in the room travels as a TARGET the tab takes when it shows
+   * the room (dev-board/workshop/project-discussion.tsx): `threadRootId`
+   * opens that reply thread beside the room, `focusMessageId` brings that
+   * message into view, `conversationId` names #general on Homeroom's page.
+   * One target at a time, for one project, and only for the TTL below: a
+   * page opened much later is not moved by a door it never saw. `from` is
+   * the address the door was, for the one door that may have to go back to
+   * it (App._chatToDiscussionTab: Homeroom's own archived app chat).
+   */
+  DISCUSSION_TARGET_TTL_MS: 30000,
+  _discussionTarget: null,
+  _stashDiscussionTarget(slug, target) {
+    if (!slug) return;
+    const id = (v) => {
+      const n = Number(v);
+      return Number.isSafeInteger(n) && n > 0 && n <= 2147483647 ? n : null;
+    };
+    const t = target || {};
+    AppView._discussionTarget = {
+      slug,
+      threadRootId: id(t.threadRootId),
+      focusMessageId: id(t.focusMessageId),
+      conversationId: id(t.conversationId),
+      from: typeof t.from === 'string' && t.from ? t.from : null,
+      at: Date.now(),
+    };
+    // A tab already showing that room takes it now; one not mounted yet
+    // takes it when it mounts.
+    try {
+      window.dispatchEvent(new CustomEvent('usernode:workshop-discussion', { detail: { slug } }));
+    } catch {}
+  },
+  // The target waiting for `slug`'s Discussion tab, left where it is.
+  _peekDiscussionTarget(slug) {
+    const t = AppView._discussionTarget;
+    if (!t || !slug || t.slug !== slug) return null;
+    if (Date.now() - t.at > AppView.DISCUSSION_TARGET_TTL_MS) {
+      AppView._discussionTarget = null;
+      return null;
+    }
+    return t;
+  },
+  // The same, taken: a target opens its thread or its message once.
+  _takeDiscussionTarget(slug) {
+    const t = AppView._peekDiscussionTarget(slug);
+    if (t) AppView._discussionTarget = null;
+    return t;
+  },
+  // A door to the Discussion tab with a place in it: the target first, so
+  // the page the tab door turns (or mounts) finds it waiting.
+  _landOnDiscussion(slug, target) {
+    if (!slug) return;
+    AppView._stashDiscussionTarget(slug, target);
+    AppView._landOnTab(slug, 'discussion');
   },
   // Rows per lane per theme before "+N more · Open on Board".
   WORKSHOP_LANE_MAX: 8,
@@ -12005,9 +12079,15 @@ const AppView = {
   // comment's own lines. Split, the sentence stays the comment and the spec
   // is drawn as a spec: its "# " title, and the rest as the spec viewer
   // draws it. A bot's comment only, and only that shape; null otherwise.
+  //
+  // #3693: the closing `</details>` is optional. The comments route clips
+  // every body at 2,000 characters (github.clipIssueComments) and a spec is
+  // nearly always longer, so on a real request the close was cut off, this
+  // matched nothing, and the markers were back on screen as text. A clipped
+  // spec is drawn as a spec too, ending in the clip's own "… [truncated]".
   _botSpecOf(c) {
     if (!c || !AppView._isBotCommentAuthor(c.author)) return null;
-    const m = /^([\s\S]*?)<details>\s*<summary>\s*The spec\s*<\/summary>([\s\S]*?)<\/details>\s*$/
+    const m = /^([\s\S]*?)<details>\s*<summary>\s*The spec\s*<\/summary>([\s\S]*?)(?:<\/details>\s*)?$/
       .exec(String(c.body || ''));
     if (!m) return null;
     const lines = m[2].split('\n');
@@ -13049,10 +13129,12 @@ const AppView = {
       items.push(...AppView._attrMenuItems('proposal', pr.id, pr));
     }
     items.push({
-      label: 'Share to Messages',
+      label: 'Share to…',
       icon: 'share',
-      title: 'Share this proposal card in a private conversation',
-      act: () => AppView._shareCardToMessages({ type: 'proposal', sessionId: pr.id }),
+      title: 'Share this proposal card to a chat or a discussion',
+      act: () => AppView._shareCardToMessages({
+        type: 'proposal', sessionId: pr.id, title: pr.session_title || pr.pr_title || null,
+      }),
     });
     if (pr.pr_url) {
       items.push({
@@ -17004,10 +17086,10 @@ const AppView = {
       }
     }
     items.push({
-      label: 'Share to Messages',
+      label: 'Share to…',
       icon: 'share',
-      title: 'Share this issue card in a private conversation',
-      act: () => AppView._shareCardToMessages({ type: 'issue', issueNumber: n }),
+      title: 'Share this issue card to a chat or a discussion',
+      act: () => AppView._shareCardToMessages({ type: 'issue', issueNumber: n, title: issue.title || null }),
     });
     if (issue.htmlUrl) {
       items.push({
