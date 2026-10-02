@@ -15,9 +15,10 @@
 //     next light one (triage, DM, follow-up) instead of holding the run.
 //     And at most eight trials in flight across every run, counting the ones
 //     restart recovery is finishing.
-//   * Never while the live bot is using every build slot it has
-//     (homeroom-bot isLiveLaneSaturated): the benchmark waits for the bot,
-//     not the other way round.
+//   * Never while the live bot's live builds (ones a person is waiting for)
+//     use every build slot it has (homeroom-bot isLiveLaneSaturated): the
+//     benchmark waits for them, not the other way round. Shadow builds do
+//     not hold it back; they are experiments too.
 //   * The cap. Before a trial is claimed, what the run has spent, plus the
 //     estimate of every trial still under way, plus this trial's estimate
 //     (catalog.estimateTrialCost, deliberately pessimistic), must stay inside
