@@ -47,6 +47,7 @@ function rows(list, base = '2026-10-02T10:00:00Z') {
   const t0 = at(base).getTime();
   return list.map(([seconds, kind, screen, via, sequence]) => ({
     at: new Date(t0 + seconds * 1000), kind, screen, via, sequence,
+    outcome: kind === 'action_outcome' ? 'success' : undefined,
   }));
 }
 
@@ -54,7 +55,7 @@ test('visits are cut by 30 minutes of nothing, or by a return, never by page loa
   const visits = journey.splitVisits(rows([
     [0, 'screen_visit', 'home', 'own', 1],
     [20, 'screen_visit', 'discover', 'own', 2],
-    [25, 'action_attempt', 'app_detail', null, 3],
+    [25, 'action_outcome', 'app_detail', null, 3],
     [1500, 'screen_visit', 'app', 'own', 4], // 25 minutes later, same visit
     [1560, 'screen_hidden', 'app', null, 5],
     [1560 + 1800, 'screen_visit', 'app', 'returned', 6], // a return starts a new visit

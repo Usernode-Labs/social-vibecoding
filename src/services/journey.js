@@ -177,7 +177,8 @@ function splitVisits(rows, { gapMs = VISIT_GAP_MS } = {}) {
       current.hiddenAt = null;
     } else if (r.kind === 'screen_hidden') {
       current.hiddenAt = r.t;
-    } else if (r.kind === 'action_attempt' || r.kind === 'action_outcome') {
+    } else if (r.kind === 'action_outcome' && r.outcome === 'success') {
+      // Something worked: a landing. A failed or abandoned attempt is not.
       current.acted = true;
     }
     current.lastAt = r.t;
@@ -1040,7 +1041,8 @@ async function inviteLoop(pool, { week, leftOutIds = [] } = {}) {
 // their delivery receipts in the window reported dropped events (a gap in the
 // data must never read as a move). $1 from, $2 to, $3 the people.
 const NAV_ROWS_SQL = `SELECT e.user_id, e.created_at AS at, e.metadata->>'kind' AS kind,
-         e.metadata->>'screen' AS screen, e.metadata->>'via' AS via, a.slug AS app_slug,
+         e.metadata->>'screen' AS screen, e.metadata->>'via' AS via, e.metadata->>'outcome' AS outcome,
+         a.slug AS app_slug,
          (e.metadata->>'sequence')::int AS sequence
     FROM events e
     LEFT JOIN apps a ON a.id = e.app_id
@@ -1066,7 +1068,9 @@ async function visitsFor(pool, { userIds, from, to }) {
   for (const r of rows) {
     const id = Number(r.user_id);
     if (!grouped.has(id)) grouped.set(id, []);
-    grouped.get(id).push({ at: r.at, kind: r.kind, screen: r.screen, via: r.via, appSlug: r.app_slug, sequence: r.sequence });
+    grouped.get(id).push({
+      at: r.at, kind: r.kind, screen: r.screen, via: r.via, outcome: r.outcome, appSlug: r.app_slug, sequence: r.sequence,
+    });
   }
   const byPerson = new Map();
   const noNavigation = [];
@@ -1099,6 +1103,126 @@ async function newcomerNextSteps(pool, { now = new Date(), leftOutIds = [] } = {
   return nextStepCounts(pool, { from, to, userIds: rows.map((r) => r.id) });
 }
 
+// ── One person ─────────────────────────────────────────────────────────
+//
+// Everything about one person, for the dialog the page opens from a name:
+// their first mile, the first-run marks, and from navigation what they found
+// and came back to, possibly lost visits, failed attempts, whether they opened
+// Challenges, and their First challenges with the time each was done.
+
+const PERSON_SQL = `WITH ${ADMITTED_CTE}
+  SELECT a.signup_id, a.email, a.released_at, ${PERSON_FACTS}
+    FROM users u
+    LEFT JOIN admitted a ON a.linked_user_id = u.id
+      AND (u.platform_access_granted_at IS NULL OR u.platform_access_granted_at >= a.released_at)
+    ${PERSON_JOINS}
+   WHERE u.id = $1::int AND u.created_at <= $2::timestamptz`;
+
+// Apps the person used in the window [$2, $3): first day ever, days used for
+// 30 seconds or more in the window, seconds on the first day, whether they
+// made it, and whether it is on their Home (a project they belong to and did
+// not hide, or one they pinned), the same rule Home itself uses.
+const PERSON_APPS_SQL = `SELECT ap.id, ap.slug, ap.name, ap.created_by = $1::int AS own,
+         MIN(aa.date) AS first_day,
+         (SELECT MIN(a0.date) FROM app_activity a0 WHERE a0.user_id = $1::int AND a0.app_id = ap.id) AS first_ever,
+         (SELECT a1.seconds_spent FROM app_activity a1 WHERE a1.user_id = $1::int AND a1.app_id = ap.id
+           ORDER BY a1.date LIMIT 1) AS first_day_seconds,
+         COUNT(*) FILTER (WHERE aa.seconds_spent >= 30)::int AS days_used,
+         (EXISTS (SELECT 1 FROM app_favorites f WHERE f.user_id = $1::int AND f.app_id = ap.id AND f.hidden IS NOT TRUE)
+          OR (ap.created_by = $1::int)
+          OR EXISTS (SELECT 1 FROM app_collaborators c WHERE c.user_id = $1::int AND c.app_id = ap.id
+                       AND c.accepted_at IS NOT NULL)) AS on_home
+    FROM app_activity aa JOIN apps ap ON ap.id = aa.app_id
+   WHERE aa.user_id = $1::int
+     AND aa.date >= ($2::timestamptz AT TIME ZONE 'UTC')::date AND aa.date < ($3::timestamptz AT TIME ZONE 'UTC')::date
+   GROUP BY ap.id, ap.slug, ap.name, ap.created_by
+   ORDER BY days_used DESC, ap.slug`;
+
+// The person's challenge credits since $2, with whether each is one of the
+// First challenges (the ONBOARDING category, which the Getting started card
+// is built from), from the ledger the scorer writes the moment an act counts.
+const PERSON_CHALLENGES_SQL = `SELECT ua.challenge_id, COALESCE(c.goal, ct.goal) AS title, ua.points, ua.activity_at, ua.source,
+         UPPER(TRIM(COALESCE(ct.category, ''))) = 'ONBOARDING' AS first_challenge
+    FROM user_activities ua
+    LEFT JOIN challenges c ON c.id = ua.challenge_id
+    LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
+   WHERE ua.user_id = $1::int AND ua.activity_at >= $2::timestamptz AND ua.activity_at < $3::timestamptz
+     AND ua.challenge_id IS NOT NULL
+   ORDER BY ua.activity_at`;
+
+async function person(pool, { userId, now = new Date() } = {}) {
+  const id = Number(userId);
+  if (!Number.isSafeInteger(id) || id <= 0) return null;
+  const { rows } = await pool.query(PERSON_SQL, [id, now]);
+  const row = rows[0];
+  if (!row) return null;
+  const mile = firstMileSteps(row, now);
+  const since = row.released_at || row.access_at || row.account_at;
+  const to = new Date(now);
+  const from = since ? new Date(Math.min(new Date(since).getTime(), to.getTime() - NEWCOMER_DAYS * DAY_MS))
+    : new Date(to.getTime() - NEWCOMER_DAYS * DAY_MS);
+  const [{ byPerson, leftOut }, apps, challenges] = await Promise.all([
+    visitsFor(pool, { userIds: [id], from, to }),
+    pool.query(PERSON_APPS_SQL, [id, from, to]),
+    pool.query(PERSON_CHALLENGES_SQL, [id, from, to]),
+  ]);
+  const visits = byPerson.get(id) || [];
+  const steps = visits.flatMap((v) => v.steps);
+  const viaFor = (slug) => (steps.find((st) => st.appSlug === slug && (st.screen === 'app' || st.screen === 'project')) || {}).via || null;
+  const firstWindowDay = new Date(from).toISOString().slice(0, 10);
+  const appRows = apps.rows.map((a) => ({
+    slug: a.slug,
+    name: a.name,
+    own: a.own === true,
+    firstEver: a.first_ever ? new Date(a.first_ever).toISOString().slice(0, 10) : null,
+    daysUsed: a.days_used,
+    onHome: a.on_home === true,
+    firstDaySeconds: a.first_day_seconds,
+    via: viaFor(a.slug),
+  }));
+  const found = appRows.filter((a) => !a.own && a.firstEver && a.firstEver >= firstWindowDay).map((a) => ({
+    slug: a.slug, name: a.name,
+    how: a.via === 'handed' ? 'handed' : (a.via ? 'own' : null),
+    stayed: a.firstDaySeconds == null ? null : a.firstDaySeconds >= LOST_CUTOFFS.landingSeconds,
+    seconds: a.firstDaySeconds,
+  }));
+  const cameBackTo = appRows.filter((a) => a.daysUsed >= 2).map((a) => ({ slug: a.slug, name: a.name, days: a.daysUsed }));
+  const ways = new Map();
+  for (const v of visits) {
+    const first = v.steps[0];
+    if (first && first.via) ways.set(first.via, (ways.get(first.via) || 0) + 1);
+  }
+  const lostVisits = visits.map((v) => ({ v, reading: lostReading(v) })).filter((x) => x.reading.possiblyLost)
+    .map(({ v, reading }) => ({
+      at: new Date(v.start).toISOString(),
+      path: v.steps.map((st) => (st.appSlug ? `${st.screen}:${st.appSlug}` : st.screen)),
+      ...reading,
+    }));
+  const challengesOpenedAt = (steps.find((st) => st.screen === 'challenges') || {}).t || null;
+  return {
+    userId: id,
+    name: row.username,
+    cohort: row.released_at ? isoDay(row.released_at) : null,
+    firstMile: mile,
+    found,
+    cameBackTo,
+    usedOftenNotOnHome: appRows.filter((a) => a.daysUsed >= 3 && !a.onHome).map((a) => ({ slug: a.slug, name: a.name, days: a.daysUsed })),
+    waysIn: Object.fromEntries(ways),
+    visits: visits.length,
+    possiblyLost: lostVisits,
+    failedAttempts: mile.failedAttempts,
+    repeatedTaps: mile.repeatedTaps,
+    challenges: {
+      openedAt: challengesOpenedAt ? new Date(challengesOpenedAt).toISOString() : null,
+      credits: challenges.rows.map((c) => ({
+        challengeId: c.challenge_id, title: c.title, points: c.points, at: c.activity_at, firstChallenge: c.first_challenge === true,
+      })),
+    },
+    navigation: leftOut.droppedEvents.includes(id) ? notRecorded('Some of this person\'s telemetry was lost in this window.')
+      : (visits.length ? { recorded: true } : notRecorded('No navigation recorded for this person yet.')),
+  };
+}
+
 module.exports = {
   COHORTS_SQL,
   CHANGE_LOOP_SQL,
@@ -1108,6 +1232,9 @@ module.exports = {
   LOOP_STEPS,
   NAV_ROWS_SQL,
   NEWCOMER_IDS_SQL,
+  PERSON_APPS_SQL,
+  PERSON_CHALLENGES_SQL,
+  PERSON_SQL,
   LIVE_CHANGES_SQL,
   WAITING_SQL,
   DAY_MS,
@@ -1144,6 +1271,7 @@ module.exports = {
   notRecorded,
   parseDay,
   parseWeek,
+  person,
   previousWeek,
   splitVisits,
   stages,
