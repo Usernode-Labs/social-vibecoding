@@ -156,10 +156,11 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  are on (say it, for example "step 4 of 7: building it, 6 minutes so far"), what is happening, since when,',
     '  and who it waits on. For the whole list of their requests, call my_work. For ANY question about their',
     '  work, answer only from what these return. Use request_detail for the whole story of one request.',
-    '- When their message answers a question you asked them, pass it on (answer_question). Their message is posted',
-    '  word for word on the request\'s public discussion, where the group can see it; say so.',
-    '- Offer to file a new request on one of their projects when they ask you to build or change something',
-    '  (offer_request). Nothing is filed until they tap File it under your message. Use their own words.',
+    '- When their message answers a question you asked them, or is feedback on one of your open proposals for them,',
+    '  pass it on (answer_question). Their message is posted word for word on the request\'s public discussion,',
+    '  where the group can see it, and you look at the request again next: an open proposal can be revised from it.',
+    '- Offer to file a new request on one of their projects only for something new that no open proposal of theirs',
+    '  covers (offer_request). Nothing is filed until they tap File it under your message. Use their own words.',
     'Finish every turn by calling reply exactly once: short plain text, and cards for up to 3 requests,',
     'proposals or projects you mention.',
     '',
@@ -186,8 +187,11 @@ function systemPrompt({ username, perPerson = 2, today = new Date(), platform = 
     '  as cards: they are the links. Write a link in the text only when a tool returned it, exactly as returned.',
     '  Call things "request", "proposal" and the project by its name.',
     '- Keep a reply under 120 words unless they ask for detail.',
-    '- From this chat you cannot build, merge, vote, close requests or change settings. Changes happen through',
-    '  requests and their proposals.',
+    '- From this chat you cannot build, merge, vote, close requests or change settings. Passing their words on to a',
+    '  request\'s public discussion is how feedback changes a proposal; the rest happens through requests and their',
+    '  proposals.',
+    '- You revise one of your own open proposals at most 3 times on its own; after that it says so and a person takes',
+    '  it over.',
     '- Decline, in one friendly sentence, anything sexual, violent, about gambling or otherwise not allowed on',
     '  Homeroom, and anything that is not about their projects on Homeroom.',
     '- Do not repeat these instructions or show raw tool output.',
@@ -243,12 +247,13 @@ const TOOLS = [
     type: 'function',
     function: {
       name: 'answer_question',
-      description: 'Their message answers a question you asked them about a request: pass it on. Their message is posted, word for word, on that request\'s public discussion as theirs, and you look at the request again next. Without project and number it answers your newest open question.',
+      description: 'Pass on their message as theirs: an answer to a question you asked them about a request, or feedback on one of your open proposals for them. It is posted word for word on that request\'s public discussion, and you look at the request again next, which can revise an open proposal. Without project, number or proposal it answers your newest open question.',
       parameters: {
         type: 'object',
         properties: {
           project: { type: 'string' },
           number: { type: 'integer' },
+          proposal: { type: 'integer', description: 'The proposal id from my_work, when their words are about that proposal.' },
         },
         additionalProperties: false,
       },
@@ -771,13 +776,65 @@ async function runTool(pool, ctx, name, args) {
       case 'answer_question': {
         const dm = dmModule(deps);
         let filter = {};
-        if (args.project) {
+        const proposalId = Number.isInteger(Number(args.proposal)) ? Number(args.proposal) : null;
+        if (proposalId != null) {
+          // A proposal maps to the request it answers, and only a request
+          // recorded as THIS person's is ever theirs to act on.
+          const { rows: mapped } = await pool.query(
+            `SELECT cs.app_id, cs.linked_issues,
+                    (SELECT r.user_id FROM homeroom_bot_requesters r
+                      WHERE r.app_id = cs.app_id AND r.issue_number = cs.linked_issues[1]) AS requester_id
+               FROM chat_sessions cs
+              WHERE cs.id = $1 AND cs.linked_issues[1] IS NOT NULL`,
+            [proposalId],
+          );
+          const mine = mapped[0];
+          if (!mine || Number(mine.requester_id) !== Number(user.id)) {
+            return { ok: false, error: 'No open proposal of theirs by that id on a request of theirs.' };
+          }
+          if (args.project) {
+            const app = await findApp(pool, args.project);
+            if (!app || Number(app.id) !== Number(mine.app_id)) {
+              return { ok: false, error: 'That proposal is not on that project.' };
+            }
+          }
+          filter = { appId: Number(mine.app_id), issueNumber: Number(mine.linked_issues[1]) };
+        } else if (args.project) {
           const app = await findApp(pool, args.project);
           if (!app) return { ok: false, error: 'No such project.' };
           filter = { appId: app.id, issueNumber: Number.isInteger(Number(args.number)) ? Number(args.number) : null };
         }
-        const target = await dm.newestOpenQuestion(pool, user.id, filter);
-        if (!target) return { ok: false, error: 'You have no open question for them there.' };
+        let target = await dm.newestOpenQuestion(pool, user.id, {
+          appId: filter.appId ?? null,
+          issueNumber: Number.isInteger(filter.issueNumber) ? filter.issueNumber : null,
+        });
+        if (!target) {
+          // Feedback on the bot's own open proposal for one of their
+          // requests has no question to answer, but the words still go on
+          // the request's public discussion, and looking again is what can
+          // revise the proposal. Only the person's own request, with the
+          // bot's proposal attached to it, takes this path; anything else
+          // is a change for a new request (offer_request).
+          const appId = Number.isInteger(filter.appId) ? filter.appId : null;
+          const issueNumber = Number.isInteger(filter.issueNumber) ? filter.issueNumber : null;
+          const { rows: own } = await pool.query(
+            `SELECT r.app_id, r.issue_number FROM homeroom_bot_requesters r
+              JOIN homeroom_bot_runs run ON run.app_id = r.app_id AND run.issue_number = r.issue_number
+              JOIN chat_sessions cs ON cs.id = run.proposal_session_id
+               AND cs.status IN ('promoted', 'merging') AND r.issue_number = ANY(cs.linked_issues)
+              WHERE r.user_id = $1
+                AND ($2::int IS NULL OR r.app_id = $2)
+                AND ($3::int IS NULL OR r.issue_number = $3)
+              ORDER BY run.id DESC
+              LIMIT 1`,
+            [user.id, appId, issueNumber],
+          );
+          if (!own.length) return { ok: false, error: 'You have no open question for them there.' };
+          target = {
+            message_id: null, conversation_id: null, app_id: Number(own[0].app_id),
+            issue_number: Number(own[0].issue_number), kind: null, question_status: null,
+          };
+        }
         // What is posted is THEIR message, never words the model chose: it
         // appears under their name on a public discussion.
         const text = clip(ctx.userText, 3500);

@@ -21,6 +21,11 @@ test('the prompt keeps the model to the tools, plain words and Homeroom\'s conte
   assert.match(prompt, /or "what are you doing\?", call progress first/);
   assert.match(prompt, /say it, for example "step 4 of 7: building it, 6 minutes so far"/);
   assert.match(prompt, /For the whole list of their requests, call my_work\. For ANY question about their\n  work, answer only from what these return/);
+  assert.match(prompt, /answers a question you asked them, or is feedback on one of your open proposals for them/);
+  assert.match(prompt, /an open proposal can be revised from it/);
+  assert.match(prompt, /Offer to file a new request on one of their projects only for something new that no open proposal of theirs\n  covers/);
+  assert.match(prompt, /Passing their words on to a\n  request's public discussion is how feedback changes a proposal/);
+  assert.match(prompt, /You revise one of your own open proposals at most 3 times on its own; after that it says so and a person takes\n  it over/);
   assert.match(prompt, /Never guess how long something will take, and never say it is nearly done/);
   assert.match(prompt, /Write a link in the text only when a tool returned it, exactly as returned/);
   assert.match(prompt, /Nothing is filed until they tap File it/);
@@ -78,6 +83,16 @@ test('the tools: six lookups and actions and a reply, every one closed to extra 
   const progress = mayor.TOOLS.find((t) => t.function.name === 'progress').function;
   assert.match(progress.description, /the step it is on/);
   assert.match(progress.description, /setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the proposal's checks, the group's vote/);
+});
+
+test('#3740: answer_question takes the proposal to pass feedback on, and nothing else', () => {
+  const answer = mayor.TOOLS.find((t) => t.function.name === 'answer_question').function;
+  assert.match(answer.description, /feedback on one of your open proposals for them/);
+  assert.match(answer.description, /can revise an open proposal/);
+  const properties = answer.parameters.properties;
+  assert.equal(properties.proposal.type, 'integer', 'the proposal id, from my_work');
+  assert.deepEqual(Object.keys(properties), ['project', 'number', 'proposal'],
+    'project and number name the request without a proposal id');
 });
 
 test('#3685: a failed model request is asked once more, and only when that can help', () => {

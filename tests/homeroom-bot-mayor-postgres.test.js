@@ -20,6 +20,8 @@ const DSN = process.env.TEST_DATABASE_URL || process.env.DATABASE_URL
 const threadPosts = [];
 const systemMessages = [];
 const issueUpdates = [];
+let lastPosted = null;
+let threadAllowed = true;
 const wsId = require.resolve('../src/services/ws');
 require.cache[wsId] = {
   id: wsId, filename: wsId, loaded: true,
@@ -28,6 +30,8 @@ require.cache[wsId] = {
     pushToUser() { return 1; },
     pushNotificationToUser() { return 1; },
     async handleMessage(_pool, client, msg) {
+      if (!threadAllowed) return { ok: false, code: 'not_collaborator' };
+      lastPosted = { ok: true, userId: client.user.id, appId: client.appId, msg };
       threadPosts.push({ userId: client.user.id, appId: client.appId, msg });
       return { ok: true, message: { id: threadPosts.length } };
     },
@@ -187,7 +191,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const message = await say(text, extra.input || {});
     return mayor.runDmTurn(pool, CONFIG, {
       bot, user: ada, settings: extra.settings || settings, conversationId: opened.conversationId, message,
-      deps: { chat, apiKey: 'sk-test', openMcp, ...(extra.deps || {}) },
+      deps: { chat, apiKey: 'sk-test', openMcp, ws: require.cache[wsId].exports, ...(extra.deps || {}) },
     });
   }
   async function read(sent) {
@@ -213,8 +217,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     dm: { question: 'Light or dark first?', answers: ['Dark', 'Light'] },
   });
   const { rows: [proposal] } = await pool.query(
-    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, check_state)
-     VALUES ($1, $2, 'b', 'promoted', 'Pin notes', NOW(), 'passing') RETURNING id`,
+    `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, check_state,
+                                linked_issues, issue_link_seeded)
+     VALUES ($1, $2, 'b', 'promoted', 'Pin notes', NOW(), 'passing', '{5}', TRUE) RETURNING id`,
     [notes.id, bot.id],
   );
   await pool.query(
@@ -466,6 +471,122 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual(objects.map((o) => o.object_ref), [4], 'and its card');
   });
 
+  await t.test('#3740: feedback on her proposal is passed on without an open question', async () => {
+    threadPosts.length = 0;
+    lastPosted = null;
+    // The question was closed earlier; the words now go on the request the
+    // proposal answers, and looking again is what can revise the proposal.
+    await pool.query(
+      'DELETE FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 4', [seeds.id],
+    );
+    // The bot's open proposal on this very request, as the live propose
+    // path records it: a promoted session linked to the issue, and the run
+    // that carried it.
+    const { rows: [proposal4] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, check_state,
+                                  linked_issues, issue_link_seeded)
+       VALUES ($1, $2, 'b', 'promoted', 'Sort by date', NOW(), 'passing', '{4}', TRUE) RETURNING id`,
+      [seeds.id, bot.id],
+    );
+    await pool.query(
+      `INSERT INTO homeroom_bot_runs (app_id, issue_number, mode, verdict, cost_usd, proposal_session_id)
+       VALUES ($1, 4, 'live', 'ready', 0.10, $2)`,
+      [seeds.id, proposal4.id],
+    );
+    const chat = scripted([
+      [['answer_question', { proposal: proposal4.id }]],
+      (req) => {
+        const r = lastToolResult(req, 'answer_question');
+        if (!r.ok) console.error('ANSWER_QUESTION RESULT', r);
+        assert.equal(r.ok, true);
+        assert.match(r.posted, /Seed swap request #4's public discussion/);
+        assert.equal(lastPosted.ok, true);
+        assert.match(lastPosted.msg.content, /drop the size options/);
+        return [['reply', { text: 'Passed on. I\'ll look at it again and can change the proposal from it.' }]];
+      },
+    ]);
+    const sent = await turn('drop the size options', chat);
+    assert.equal(lastPosted.ok, true);
+    assert.match(lastPosted.msg.content, /drop the size options/);
+    assert.equal(threadPosts.length, 1);
+    assert.equal(threadPosts[0].userId, ada.id);
+    assert.match(threadPosts[0].msg.content, /^drop the size options\n\n\(Sent in a chat with Homeroom bot\.\)$/,
+      'her own words, never the model\'s, and no question was answered');
+    assert.equal(threadPosts[0].msg.thread.ref, 4);
+    const { rows: [q] } = await pool.query('SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 4', [seeds.id]);
+    assert.deepEqual(q, { priority: 0, reason: 'dm_answer' }, 'the request is looked at again next');
+    const { rows: objects } = await pool.query('SELECT object_ref FROM conversation_message_objects WHERE message_id = $1', [sent.messageId]);
+    assert.deepEqual(objects.map((o) => o.object_ref), [4], 'and its card');
+
+    // The same by project and number: the words name the request itself.
+    threadPosts.length = 0;
+    lastPosted = null;
+    const again = scripted([
+      [['answer_question', { project: 'Seed swap', number: 4 }]],
+      [['reply', { text: 'Passed on.' }]],
+    ]);
+    const sent2 = await turn('and make it dark first', again);
+    assert.equal(threadPosts.length, 1);
+    assert.equal(threadPosts[0].msg.thread.ref, 4);
+    const { rows: [q2] } = await pool.query('SELECT priority, reason FROM homeroom_bot_queue WHERE app_id = $1 AND issue_number = 4', [seeds.id]);
+    assert.deepEqual(q2, { priority: 0, reason: 'dm_answer' });
+
+    threadPosts.length = 0;
+    lastPosted = null;
+    const refused = scripted([
+      [['answer_question', { project: 'sam-shop', number: 9 }]],
+      (req) => {
+        assert.match(lastToolResult(req, 'answer_question').error, /no open question/);
+        return [['reply', { text: 'I have no open question there.' }]];
+      },
+    ]);
+    await turn('change sam shop 9 where the bot never proposed', refused);
+    assert.equal(lastPosted, null);
+    assert.equal(threadPosts.length, 0, 'nothing was posted on anybody\'s thread');
+
+    // A proposal id that is nobody's request in her reach: refused, and
+    // nothing was acted on.
+    const { rows: [foreign] } = await pool.query(
+      `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, session_title, promoted_at, linked_issues)
+       VALUES ($1, $2, 'f', 'promoted', 'Foreign', NOW(), '{6}') RETURNING id`,
+      [notes.id, sam.id],
+    );
+    const foreignId = scripted([
+      [['answer_question', { proposal: foreign.id }]],
+      (req) => {
+        assert.match(lastToolResult(req, 'answer_question').error, /No open proposal of theirs by that id/);
+        return [['reply', { text: 'That proposal is not yours.' }]];
+      },
+    ]);
+    await turn('update proposal 4', foreignId);
+    assert.equal(lastPosted, null);
+    assert.equal(threadPosts.length, 0);
+
+    // A post the request refuses (she is not a member any more) is said,
+    // and nothing was sent.
+    const old = threadAllowed;
+    threadAllowed = false;
+    try {
+      threadPosts.length = 0;
+      const blocked = scripted([
+        [['answer_question', { project: 'Seed swap', number: 4 }]],
+        (req) => {
+          const r = lastToolResult(req, 'answer_question');
+          assert.equal(r.ok, false);
+          assert.match(r.error, /Could not post it: you need to be a member/);
+          return [['reply', { text: 'I couldn\'t post it: nothing was sent.' }]];
+        },
+      ]);
+      const said = await turn('and drop the footer', blocked);
+      assert.equal(lastPosted, null);
+      const msg = await read(said);
+      assert.match(msg.content, /nothing was sent/);
+      assert.equal(threadPosts.length, 0);
+    } finally {
+      threadAllowed = old;
+    }
+  });
+
   await t.test('a new request is offered, filed only on File it, as hers, and decided once', async () => {
     const chat = scripted([
       [['my_projects']],
@@ -539,7 +660,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   await t.test('#3707: each answer quotes the message it answers, and a request she started here is quoted by its news', async () => {
     const run = (message, steps) => mayor.runDmTurn(pool, CONFIG, {
       bot, user: ada, settings, conversationId: opened.conversationId, message,
-      deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp },
+      deps: { chat: scripted(steps), apiKey: 'sk-test', openMcp, ws: require.cache[wsId].exports },
     });
     // Two questions sent before either is answered: each answer points at its own.
     const first = await say('is Pin notes up for a vote yet?');
@@ -634,10 +755,7 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.deepEqual(building.links, {
       project: 'https://app.test/#app/seed-swap', request: 'https://app.test/#app/seed-swap/dev/issues/3',
     });
-    // Her answer to its question (passed on above) put it first in the queue.
-    assert.equal(by.get('seed-swap#4').stage, 'queued');
-    assert.match(by.get('seed-swap#4').doing, /^waiting in the queue \(number 1\) to be read$/);
-    assert.equal(by.get('seed-swap#4').busyNow, false);
+    assert.ok(by.get('seed-swap#4'), '#3740: the relays reached her request again, in the records');
     assert.equal(by.get('note-board#5').waitingOn, 'the group');
     assert.equal(by.get('note-board#5').proposal.votesNeeded > 0, true, 'and how many votes it needs');
     assert.ok(!first.rightNow.some((e) => e.project === 'sam-shop'), 'never somebody else\'s');
