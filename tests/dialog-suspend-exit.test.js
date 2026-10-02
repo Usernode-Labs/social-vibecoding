@@ -179,7 +179,7 @@ function fakeKit() {
 
 const GLOBALS = ['window', 'document', 'MutationObserver', 'PlatformUI'];
 
-function mountDialog(t, { kit = null } = {}) {
+function mountDialog(t, { kit = null, win = null } = {}) {
   const saved = GLOBALS.map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]);
   t.after(() => {
     for (const [name, descriptor] of saved) {
@@ -189,7 +189,7 @@ function mountDialog(t, { kit = null } = {}) {
   });
   // Present before the bundle evaluates: back-stack.ts creates the shell's
   // one stack at module load, and only when there is a window to hang it on.
-  globalThis.window = {
+  globalThis.window = win || {
     history: { state: null, pushState(state) { this.state = state; }, back() {} },
     addEventListener() {},
   };
@@ -330,4 +330,81 @@ test('an ordinary kit dismissal still closes the dialog and runs its teardown', 
   assert.ok(root.classList.contains('hidden'));
   assert.deepEqual(lifecycle, ['onOpen', 'onClose']);
   assert.equal(backClaims(), 0, 'the claim is handed back');
+});
+
+// ── #3683: a close on the way somewhere ──────────────────────────────────
+//
+// "Open my chat with Homeroom bot" closes the create dialog and writes
+// #messages/<id> in the same click. A plain close hands its back-press claim
+// back by spending the record it pushed with history.back(), which a browser
+// QUEUES — so the traversal landed after the new address and took the viewer
+// straight back to where they were: the button did nothing. The navigating
+// close spends that record a task later, and only if nothing moved.
+
+/** A window whose address the test moves, and which logs every back(). */
+function historyWindow(start) {
+  const backs = [];
+  const win = {
+    location: { href: start },
+    history: {
+      state: null,
+      pushState(state) { this.state = state; },
+      back() { backs.push(win.location.href); },
+    },
+    addEventListener() {},
+  };
+  return { win, backs };
+}
+
+test('#3683: a plain close spends its record at once, ahead of the address the caller writes', async (t) => {
+  // The bug, pinned so the reason for closeForNavigation stays visible: the
+  // back() is asked for while the page is still on the old address, and the
+  // browser runs it after the navigation below — undoing it.
+  const { win, backs } = historyWindow('https://homeroom.test/');
+  const { controller } = mountDialog(t, { win });
+  controller().open();
+  await settle();
+
+  controller().close();
+  assert.deepEqual(backs, ['https://homeroom.test/'], 'history.back() is already queued');
+  win.location.href = 'https://homeroom.test/#messages/42';
+  await settle();
+});
+
+test('#3683: closeForNavigation leaves the history alone when the caller navigates', async (t) => {
+  const { win, backs } = historyWindow('https://homeroom.test/');
+  const { root, lifecycle, controller, backClaims } = mountDialog(t, { win });
+  controller().open();
+  await settle();
+  assert.equal(backClaims(), 1);
+
+  controller().closeForNavigation();
+  // openMessages(chat), in the same click: it writes the hash.
+  win.location.href = 'https://homeroom.test/#messages/42';
+  await settle();
+  assert.deepEqual(backs, [], 'no history.back() is left to undo the navigation');
+  assert.equal(backClaims(), 0, 'the claim is handed back all the same');
+  assert.ok(root.classList.contains('hidden'), 'the dialog is closed');
+  assert.deepEqual(lifecycle, ['onOpen', 'onClose'], 'with its ordinary teardown');
+});
+
+test('#3683: closeForNavigation still spends the record when nothing moved', async (t) => {
+  // A destination that did not navigate after all (the side panel took the
+  // conversation, or a guarded global was missing): the record must not
+  // linger, or the next back press does nothing.
+  const { win, backs } = historyWindow('https://homeroom.test/');
+  const { controller, backClaims } = mountDialog(t, { win });
+  controller().open();
+  await settle();
+
+  controller().closeForNavigation();
+  assert.deepEqual(backs, [], 'not spent in the same task');
+  await settle();
+  assert.deepEqual(backs, ['https://homeroom.test/'], 'spent a task later, from on top of it');
+  assert.equal(backClaims(), 0);
+});
+
+test('#3683: closeForNavigation is published with the controller', async (t) => {
+  const { controller } = mountDialog(t);
+  assert.equal(typeof controller().closeForNavigation, 'function');
 });
