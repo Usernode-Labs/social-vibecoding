@@ -78,6 +78,10 @@ async function openMayorMcp({
   changeId = null,
   ttlSeconds = undefined,
   baseUrl = null,
+  // The rate bucket's key. An agent session's own id by default; a caller
+  // with no session (the Homeroom bot's DM, #3624) names one per person, so
+  // two people never share a bucket.
+  rateSubject = null,
 }) {
   const issued = await mcpOauth.issueDelegatedAccess(pool, {
     userId, kind: 'agent_mayor', agentSessionId, appId, changeId, scopes, ttlSeconds,
@@ -139,7 +143,7 @@ async function openMayorMcp({
       try {
         bucket = await consumeSharedTokenBucket(pool, {
           namespace: 'agent-mayor-mcp',
-          subject: String(agentSessionId),
+          subject: String(rateSubject ?? agentSessionId),
           ratePerMinute: SESSION_RATE_PER_MINUTE,
           capacity: SESSION_RATE_PER_MINUTE,
         });

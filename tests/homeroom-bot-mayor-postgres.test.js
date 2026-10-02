@@ -164,11 +164,29 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     const sent = await conversations.sendMessage(pool, ada, opened.conversationId, { content: text, ...extra });
     return sent.message;
   }
+  // The agent-session Mayor's connector, as the shim hands it over: a read
+  // and a write, of which only the read may reach the model.
+  const platformCalls = [];
+  let platformClosed = 0;
+  async function openMcp(opts) {
+    platformCalls.push({ opened: opts });
+    return {
+      modelTools: [
+        { name: 'get_request', description: 'Read one request.', input_schema: { type: 'object', properties: { slug: { type: 'string' }, number: { type: 'integer' } } } },
+        { name: 'create_request', description: 'File a request.', input_schema: { type: 'object', properties: {} } },
+      ],
+      async call(name, args) {
+        platformCalls.push({ name, args });
+        return { isError: false, text: '<untrusted-content>Request #3: Sort by date. Sort the list newest first.</untrusted-content>' };
+      },
+      async close() { platformClosed += 1; },
+    };
+  }
   async function turn(text, chat, extra = {}) {
     const message = await say(text, extra.input || {});
     return mayor.runDmTurn(pool, CONFIG, {
       bot, user: ada, settings: extra.settings || settings, conversationId: opened.conversationId, message,
-      deps: { chat, apiKey: 'sk-test', ...(extra.deps || {}) },
+      deps: { chat, apiKey: 'sk-test', openMcp, ...(extra.deps || {}) },
     });
   }
   async function read(sent) {
@@ -222,7 +240,9 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
   await t.test('my_work is one person\'s: each request\'s state, the proposal\'s votes, what runs now', async () => {
     const work = await mayor.myWork(pool, { userId: ada.id, settings });
     const by = new Map(work.requests.map((r) => [`${r.project}#${r.number}`, r]));
-    assert.equal(by.get('seed-swap#3').status, 'working on it now');
+    assert.equal(by.get('seed-swap#3').status, 'looking at it now');
+    assert.ok(by.get('seed-swap#3').since, 'and since when');
+    assert.equal(by.get('seed-swap#3').botBuildsHere, true);
     assert.equal(by.get('seed-swap#4').status, 'waiting for their answer to your question');
     assert.equal(by.get('note-board#5').status, 'proposal up for the group\'s vote');
     assert.equal(by.get('note-board#5').proposal.proposal, proposal.id);
@@ -230,6 +250,48 @@ test('the Homeroom bot DM, read by a model, against the full PostgreSQL schema',
     assert.match(by.get('note-board#6').status, /^waiting in your queue \(number 1\)$/);
     assert.ok(!by.has('sam-shop#9'), 'never somebody else\'s request');
     assert.deepEqual(work.workingOnNow.map((w) => `${w.project}#${w.number}`), ['seed-swap#3']);
+    assert.deepEqual(work.allowance, { usedThisWeek: '$0.10', weeklyAllowance: '$50.00', left: '$49.90' });
+    assert.equal(work.botIsOn, true);
+
+    // Its "I'm building this now" during this turn of work makes it building.
+    await dm.relayIssuePost({ pool, app: seeds, issueNumber: 3, kind: 'spec', postId: 2, bot, dm: { building: true } });
+    const later = await mayor.myWork(pool, { userId: ada.id, settings });
+    assert.equal(later.requests.find((r) => r.number === 3 && r.project === 'seed-swap').status, 'building it now');
+
+    // A project the bot is not on: it says so, rather than seeming idle.
+    const off = await mayor.myWork(pool, { userId: ada.id, settings: { ...settings, liveApps: ['seed-swap'] } });
+    assert.equal(off.requests.find((r) => r.project === 'note-board').botBuildsHere, false);
+    const projects = await mayor.myProjects(pool, { user: ada, settings: { ...settings, liveApps: ['seed-swap'] } });
+    assert.deepEqual(projects.projects.map((p) => `${p.project}:${p.botBuildsHere}`).sort(), ['note-board:false', 'seed-swap:true']);
+  });
+
+  await t.test('it reads the platform through the Mayor\'s connector: reads only, on its own grant, closed after', async () => {
+    platformCalls.length = 0;
+    const closedBefore = platformClosed;
+    const seen = [];
+    const chat = scripted([
+      [['get_request', { slug: 'seed-swap', number: 3 }]],
+      (req) => {
+        assert.match(lastToolResult(req, 'get_request').result, /Sort the list newest first/);
+        return [['reply', { text: 'It asks for newest first.' }]];
+      },
+    ], seen);
+    await turn('what does my sort request say?', chat);
+    const offered = seen[0].tools.map((tool) => tool.function.name);
+    assert.ok(offered.includes('get_request'));
+    assert.ok(!offered.includes('create_request'), 'a write of the Mayor\'s is never offered here');
+    assert.deepEqual(platformCalls[0].opened.agentSessionId, null);
+    assert.equal(platformCalls[0].opened.rateSubject, `hrbot-dm-${ada.id}`);
+    assert.equal(platformCalls[0].opened.userId, ada.id, 'the grant is the person\'s: it sees what they see');
+    assert.deepEqual(platformCalls[1], { name: 'get_request', args: { slug: 'seed-swap', number: 3 } });
+    assert.equal(platformClosed, closedBefore + 1, 'the grant is closed when the turn ends');
+    assert.match(seen[0].messages[0].content, /PLATFORM RULES\n## What Homeroom is/);
+
+    // Without the platform the turn still answers on its own tools.
+    const bare = [];
+    await turn('hello', scripted([[['reply', { text: 'hi' }]]], bare), { deps: { openMcp: async () => { throw new Error('no grant'); } } });
+    assert.ok(!bare[0].tools.some((tool) => tool.function.name === 'get_request'));
+    assert.doesNotMatch(bare[0].messages[0].content, /use get_request/);
   });
 
   await t.test('"what are you working on?" gets an answer from my_work, with its cards, and costs her allowance', async () => {
