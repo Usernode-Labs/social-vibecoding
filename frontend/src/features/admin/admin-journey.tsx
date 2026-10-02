@@ -129,7 +129,11 @@ const JUI = Object.freeze({
   avatar: 'inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-violet-100 dark:bg-violet-500/25 text-[11px] font-semibold text-violet-800 dark:text-violet-200',
   chipTap: 'hover:bg-zinc-200 dark:hover:bg-zinc-700',
   chipDashed: 'border border-dashed border-zinc-300 dark:border-zinc-600 bg-transparent dark:bg-transparent text-zinc-500 dark:text-zinc-400',
-  cohort: 'inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-colors',
+  // The filter bar's controls are one family: 24px pills, chips, arrows and
+  // the search alike, so nothing in the bar stands taller than the rest.
+  cohort: 'inline-flex h-6 items-center rounded-full px-3 text-xs font-medium transition-colors',
+  stepper: 'inline-flex h-6 w-6 items-center justify-center rounded-full bg-zinc-100 dark:bg-zinc-800 text-xs text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700 disabled:opacity-40',
+  search: 'h-6 w-full sm:w-44 rounded-full border-0 bg-zinc-100 dark:bg-zinc-800 px-3 text-xs text-zinc-900 dark:text-zinc-100 placeholder:text-zinc-500 dark:placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-violet-500',
   mileGrid: 'grid items-center gap-x-1 gap-y-1.5 grid-cols-[repeat(9,minmax(0,1fr))_2.5rem] sm:grid-cols-[7.5rem_repeat(9,minmax(0,1fr))_2.5rem]',
   pathStep: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-zinc-700 dark:text-zinc-300',
 });
@@ -1096,8 +1100,9 @@ type PersonData = {
   navigation: { recorded: true } | NotRecorded;
 };
 
-function PersonView({ userId, onBack }: { userId: number; onBack: () => void }) {
+function PersonView({ userId, onBack, onName }: { userId: number; onBack: () => void; onName: (name: string) => void }) {
   const { data: p, failed } = useJourney<PersonData>(`/api/admin/journey/people/${userId}`);
+  useEffect(() => { if (p) onName(p.name); }, [p, onName]);
   const section = (label: string, body: ReactNode) => (
     <div className="mt-4">
       <div className={JUI.label}>{label}</div>
@@ -1208,7 +1213,7 @@ function PersonSearch({ onPick }: { onPick: (id: number) => void }) {
   };
   return (
     <div className="w-full sm:w-auto">
-      <input className={`${AdminUI.input} sm:w-48 py-1`} value={q} placeholder="Find a person"
+      <input className={JUI.search} value={q} placeholder="Find a person"
         aria-label="Find a person" onChange={(e) => setQ(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') find(); }} onBlur={() => { if (q.trim()) find(); }} />
       {matches ? (
@@ -1232,7 +1237,9 @@ function JourneySection() {
   const [dialog, setDialog] = useState<DialogKey | null>(null);
   const [names, setNames] = useState<NamesList | null>(null);
   const [person, setPerson] = useState<number | null>(null);
+  const [personName, setPersonName] = useState<string | null>(null);
   const openPerson = useCallback((id: number) => {
+    setPersonName(null);
     setNames(null);
     setDialog(null);
     setPerson(id);
@@ -1272,18 +1279,18 @@ function JourneySection() {
           <button type="button" aria-pressed={allTime} className={chip(allTime)}
             onClick={() => setScope({ ...scope, week: 'all' })}>All time</button>
           <span className="inline-flex items-center gap-1">
-            <button type="button" className={AdminUI.btn.outlineSm} aria-label="Week before"
+            <button type="button" className={JUI.stepper} aria-label="Week before"
               disabled={!shown} onClick={() => toWeek(shown && addDays(shown, -7))}>‹</button>
             <button type="button" id="admin-journey-week" aria-pressed={!allTime} className={chip(!allTime)}
               disabled={!shown} onClick={() => toWeek(shown)}>{shown ? `Week of ${weekLabel(shown)}` : 'Week'}</button>
-            <button type="button" className={`${AdminUI.btn.outlineSm} disabled:opacity-40`} aria-label="Week after"
+            <button type="button" className={JUI.stepper} aria-label="Week after"
               disabled={allTime ? !shown : !canNext} onClick={() => toWeek(shown && (allTime ? shown : addDays(shown, 7)))}>›</button>
           </span>
         </div>
         <div className="mt-2 flex flex-wrap items-center gap-1.5" data-journey-filter="who">
           <span className={`${JUI.label} w-12`}>Who</span>
           {person != null ? (
-            <button type="button" className={chip(true)} onClick={() => setPerson(null)}>One person ×</button>
+            <button type="button" className={chip(true)} aria-label="Back to everyone" onClick={() => setPerson(null)}>{personName || 'One person'} ×</button>
           ) : whoChips.map(([v, label]) => (
             <button key={v ?? 'everyone'} type="button" aria-pressed={scope.cohort === v} className={chip(scope.cohort === v)}
               onClick={() => setScope({ ...scope, cohort: v })}>{label}</button>
@@ -1291,7 +1298,7 @@ function JourneySection() {
           <PersonSearch onPick={openPerson} />
         </div>
       </div>
-      {person != null ? <PersonView userId={person} onBack={() => setPerson(null)} /> : s ? (
+      {person != null ? <PersonView userId={person} onBack={() => setPerson(null)} onName={setPersonName} /> : s ? (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
           <NorthStarCard s={s} scope={scope} onOpen={openPerson} onDetails={() => setDialog('checks')} />
           <StagesCard scope={scope} onNames={setNames} />
