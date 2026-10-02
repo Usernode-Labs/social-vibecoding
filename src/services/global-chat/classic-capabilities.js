@@ -42,6 +42,7 @@ const DEVELOPMENT_DETAIL_PATH = '/api/sessions/:id';
 const DEVELOPMENT_TASK_MAX_CHARS = 12_000;
 const SETTING_GROUPS = Object.freeze(inventory.settings.map((item) => item.key));
 const SETTINGS_READ_PATHS = Object.freeze({
+  profile: ['/api/auth/me'],
   theme: [],
   language: ['/api/auth/me'],
   alerts: ['/api/me/notification-preferences', '/api/me/mobile-push-preferences'],
@@ -55,8 +56,11 @@ const SETTINGS_READ_PATHS = Object.freeze({
     '/api/me/credentials/openrouter',
     '/api/me/credentials/openrouter/allowance',
   ],
+  usage: ['/api/me/ai-budget'],
   'api-key': ['/api/auth/me', '/api/me/ai-budget'],
-  connectors: ['/api/me/connectors', '/api/me/social-identities', '/api/me/github'],
+  'build-venue': ['/api/auth/me'],
+  connectors: ['/api/me/connectors'],
+  'linked-accounts': ['/api/me/social-identities', '/api/me/github'],
   'app-ai': ['/api/me/llm-grants'],
   'app-permissions': ['/api/me/permission-grants'],
   'agent-files': ['/api/me/agent-files'],
@@ -77,12 +81,14 @@ const SETTINGS_ACTION_MATCHERS = Object.freeze({
   'global-chat': [/^manual:settings\.global_chat\.update$/],
   openrouter: [/coding-agent/, /credentials\/openrouter/],
   'api-key': [/anthropic|api-key|credential/i],
-  connectors: [/connectors|social-identities|github/],
+  'build-venue': [/dev-flow/],
+  connectors: [/connectors/],
+  'linked-accounts': [/social-identities|github/],
   'app-ai': [/llm-grants/],
   'app-permissions': [/permission-grants|device-permission/],
   'agent-files': [/agent-files/],
   cli: [/cli-tokens|local-agents/],
-  experimental: [/ai-progress-estimate|session-bridge|dev-flow/],
+  experimental: [/ai-progress-estimate|session-bridge/],
   usernode: [/\/api\/v4\/mobile|wallet|staking/],
 });
 
@@ -474,12 +480,11 @@ function authProjection(group, data) {
   if (!user || typeof user !== 'object') return data;
   const fields = {
     language: ['locale'],
+    profile: ['username', 'displayName'],
     username: ['username'],
     'api-key': ['hasApiKey', 'keyLast4', 'demoKey'],
-    experimental: [
-      'aiProgressEstimate', 'sessionBridgeEnabled', 'devFlowPreference',
-      'externalFlowsAvailable',
-    ],
+    'build-venue': ['devFlowPreference', 'externalFlowsAvailable'],
+    experimental: ['aiProgressEstimate', 'sessionBridgeEnabled'],
   }[group] || [];
   return Object.fromEntries(fields.filter((key) => Object.hasOwn(user, key)).map((key) => [key, user[key]]));
 }

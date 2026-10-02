@@ -185,18 +185,22 @@ test('the moved control keeps the ids app.css draws it with', () => {
   }
 });
 
-// It is the FIRST setting, and therefore the section a bare #settings opens.
-test('theme leads the settings registry and is the default section', () => {
+// THE UI OVERHAUL made Theme the first setting and the default section. The
+// settings restructure made Account the default page (Profile leads it) and
+// gave Theme the head of the Appearance page, in Preferences, where the
+// developer console's switch joins it.
+test('theme leads the Appearance page in Preferences', () => {
   const settings = fs.readFileSync(
     path.join(__dirname, '..', 'frontend', 'src', 'features', 'settings', 'settings.js'),
     'utf8',
   );
-  const list = settings.slice(settings.indexOf('SECTIONS: ['));
-  const first = list.slice(0, list.indexOf(']'));
-  assert.match(first.split('\n').find((l) => l.includes("key: '")) || '', /key: 'theme'/,
-    'theme is the first entry in SECTIONS');
-  assert.match(settings, /DEFAULT_SECTION: 'theme'/,
-    'a bare #settings resolves to it');
+  const list = settings.slice(settings.indexOf('SECTIONS: ['), settings.indexOf('    PAGES: {'));
+  const lines = list.split('\n').filter((l) => l.includes("page: 'theme'"));
+  assert.match(lines[0] || '', /\{ key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' \}/,
+    'theme is the first part of its page');
+  assert.match(settings, /theme: 'Appearance',/, 'and that page is labelled Appearance');
+  assert.doesNotMatch(settings, /DEFAULT_SECTION: 'theme'/,
+    'a bare #settings opens Account now, not Theme');
 });
 
 test('index.html exposes the three data-theme-mode buttons', () => {

@@ -4,12 +4,20 @@
  *
  * ── What this renders ─────────────────────────────────────────────────
  *
- * `#settings-nav-desktop` — the grouped sidebar: section buttons in a <nav>,
- * the current one marked `aria-current="page"` (which dapp.json selects on).
- * It was a `role="tab"` set with no tablist around it until QA 2026-09-24.
+ * `#settings-nav-desktop` — the grouped sidebar: one button per PAGE in a
+ * <nav>, the current one marked `aria-current="page"` (which dapp.json
+ * selects on). It was a `role="tab"` set with no tablist around it until QA
+ * 2026-09-24.
  * `#settings-mobile-menu-host` — the phone's level-1 menu, a LIST of drawer
  * rows: no current marker, a 44px minimum target and a chevron, exactly as
  * the admin console's level-1 menu.
+ *
+ * Both open with the same FILTER box. A page is a stack of parts since the
+ * settings restructure (see SECTIONS in ../settings.js), so "where is
+ * Password?" no longer has a row of its own to answer it; typing does. A
+ * query swaps the grouped list for a flat list of the pages that match, each
+ * naming the parts that did, and choosing one opens that page scrolled to
+ * the first matching part.
  *
  * Both are fed by ./settings-nav-store.js, which ../settings.js writes from
  * `_renderNav()`. The grouping is shared (`_groupedSections()`), so the two
@@ -20,8 +28,9 @@
  *
  * Both hosts ship EMPTY in the hand-written shell, and both descriptors start
  * `null`, so the prerendered markup is the two empty elements and nothing
- * else. `Settings.init()` runs from ../index.tsx's layout effect and paints
- * them; no data is fetched during render.
+ * else — the filter box included, which renders only beside a descriptor.
+ * `Settings.init()` runs from ../index.tsx's layout effect and paints them;
+ * no data is fetched during render.
  *
  * ── Why the active row's className comes from the module ──────────────
  *
@@ -29,7 +38,10 @@
  * in-plain-JS rule (the vm harnesses evaluate that file's real source), and
  * it is also how the string survives the conversion character for character
  * instead of being retyped here. The static classes — group wrappers,
- * headings, menu rows — are this file's, because they never vary.
+ * headings, menu rows — are this file's, because they never vary. So are the
+ * filter's matches: ../settings.js hands over each page's lower-cased terms
+ * (`_filterTerms`), and the only work here is comparing them with what the
+ * viewer typed.
  *
  * ── Whitespace ────────────────────────────────────────────────────────
  *
@@ -38,45 +50,55 @@
  * label is a single expression inside its own element.
  */
 
+import { useEffect, useState } from 'react';
+import type { KeyboardEvent } from 'react';
+
 import { GroupedList, ListRow, SectionHeader } from '@/components/ui/grouped-list';
-import { ChevronDownIcon, WarningTriangleIcon } from '@/components/ui/icons';
+import { Input } from '@/components/ui/input';
 
 import { useStoreState } from '../../lib/use-store-state';
 import { settingsNavStore } from './settings-nav-store.js';
 
-interface NavItem {
+interface FilterPart {
   key: string;
   label: string;
+  terms: string;
+}
+
+/** What ../settings.js's `_filterTerms` attaches to every row, on both hosts. */
+interface Filterable {
+  key: string;
+  label: string;
+  terms: string;
+  parts: FilterPart[];
+}
+
+interface NavItem extends Filterable {
   active: boolean;
   className: string;
 }
 
-/**
- * The three disclosure fields ../settings.js attaches to BOTH descriptors
- * (`_groupDisclosure`). `collapsible` is false for every group but Advanced,
- * and a non-collapsible group renders exactly the markup it did before #1554
- * — a plain heading, no button, no wrapper element.
- */
-interface Disclosure {
-  collapsible: boolean;
-  expanded: boolean;
-  domId: string | null;
-}
-
-interface NavGroup extends Disclosure {
+interface NavGroup {
   name: string;
   first: boolean;
   items: NavItem[];
 }
 
-interface MenuGroup extends Disclosure {
+interface MenuGroup {
   name: string;
-  items: { key: string; label: string }[];
+  items: Filterable[];
 }
 
 interface NavState {
   desktop: NavGroup[] | null;
   mobile: MenuGroup[] | null;
+  visit: number;
+}
+
+/** One page that matched the filter, and the parts on it that did. */
+interface FilterHit {
+  item: Filterable;
+  parts: FilterPart[];
 }
 
 /** `Settings._navClick` — the single handler both hosts route through. */
@@ -85,13 +107,103 @@ const navClick = (key: string) => {
 };
 
 /**
- * `Settings._toggleGroup` — the disclosure handler both hosts route through.
- * A press mutates the persisted set and repaints the nav; it never changes
- * the section, the hash or the content pane.
+ * The pages whose label, part labels or keywords contain every word of the
+ * query, in menu order. A page that matched on its own label lists no parts
+ * (the row already says why it is there); one that matched through its parts
+ * names them, so "password" answers "Account · Password" rather than a bare
+ * "Account" that leaves the viewer guessing.
  */
-const toggleGroup = (name: string) => {
-  (window as { Settings?: { _toggleGroup?(name: string): void } }).Settings?._toggleGroup?.(name);
-};
+function filterPages(groups: { items: Filterable[] }[], query: string): FilterHit[] {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const hits: FilterHit[] = [];
+  for (const group of groups) {
+    for (const item of group.items) {
+      const parts = item.parts.filter((p) => words.every((w) => p.terms.includes(w)));
+      const own = words.every((w) => item.terms.includes(w));
+      // Words spread across the page label and one part ("account email")
+      // still find the page: each word only has to land somewhere on it.
+      const anywhere = words.every((w) => item.terms.includes(w) || item.parts.some((p) => p.terms.includes(w)));
+      if (!own && !parts.length && !anywhere) continue;
+      // Repeating the label of a page's only part ("Usage" under "Usage")
+      // says nothing.
+      const named = own ? [] : parts.filter((p) => p.label !== item.label);
+      hits.push({ item, parts: named });
+    }
+  }
+  return hits;
+}
+
+/**
+ * The filter's query, emptied on every new visit to the screen (`visit` is
+ * Settings._visit). Kept across page switches within a visit, so a viewer
+ * can work down a list of results.
+ */
+function useFilterQuery(visit: number): [string, (q: string) => void] {
+  const [query, setQuery] = useState('');
+  useEffect(() => { setQuery(''); }, [visit]);
+  return [query, setQuery];
+}
+
+/** Where choosing a hit goes: the first matching part, else the page. */
+const hitTarget = (hit: FilterHit) => (hit.parts[0] ? hit.parts[0].key : hit.item.key);
+
+/**
+ * Choosing a hit opens it and empties the box. The filter is a way to a page,
+ * not a view of its own: once the page is open, the menu goes back to the
+ * grouped list with that page marked current, so the viewer can see where
+ * they landed instead of a results list that marks nothing.
+ */
+function choose(hit: FilterHit, setQuery: (q: string) => void) {
+  setQuery('');
+  navClick(hitTarget(hit));
+}
+
+/**
+ * The filter field, identical on both hosts apart from its id (both hosts are
+ * in the document at phone width, so the ids must differ). Enter opens the
+ * first hit; Escape clears. A `search` input, so the platform's own clear
+ * control and the "search" keyboard return key come for free.
+ */
+function FilterField({ id, query, setQuery, hits }: {
+  id: string;
+  query: string;
+  setQuery: (q: string) => void;
+  hits: FilterHit[];
+}) {
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && hits[0]) {
+      e.preventDefault();
+      choose(hits[0], setQuery);
+    } else if (e.key === 'Escape' && query) {
+      e.preventDefault();
+      setQuery('');
+    }
+  };
+  return (
+    <Input
+      id={id}
+      type="search"
+      data-settings-filter=""
+      aria-label="Find a setting"
+      placeholder="Find a setting"
+      autoComplete="off"
+      spellCheck={false}
+      value={query}
+      onChange={(e) => setQuery(e.currentTarget.value)}
+      onKeyDown={onKeyDown}
+    />
+  );
+}
+
+/** The one line both hosts show when nothing matches. */
+function NoMatch({ query, className }: { query: string; className: string }) {
+  return (
+    <p data-settings-filter-empty="" role="status" className={className}>
+      {`No settings match “${query.trim()}”.`}
+    </p>
+  );
+}
 
 /** Carried over verbatim from the retired _navItemsHtml / _mobileMenuHtml. */
 const GROUP_SPACED = 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800';
@@ -102,57 +214,18 @@ const GROUP_SPACED = 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800';
 // thing that made it read as the old vocabulary.
 const NAV_HEADING = 'px-3 pb-1';
 const MENU_ROW = 'settings-menu-row min-h-[44px] py-2 text-zinc-700 dark:text-zinc-200 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors';
-
-// The collapsible heading is a real <button>, so Tab plus Enter/Space come
-// for free and no keydown handler is needed, with the aria-expanded /
-// aria-controls pair and the platform's chevron idiom (down when open, right
-// when closed) — the admin console's _groupToggleHtml, as JSX.
-const TOGGLE_BASE = 'flex w-full items-center gap-1.5 text-left';
-const CHEVRON = 'w-3 h-3 shrink-0 transition-transform';
-const CHEVRON_CLOSED = 'w-3 h-3 shrink-0 transition-transform -rotate-90';
+// The sidebar's filter hits: the row's own class string, unhighlighted, with
+// room for the matched parts under the label.
+const HIT_ROW = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800';
+const HIT_PARTS = 'block text-xs font-normal text-zinc-500 dark:text-zinc-400';
 
 /**
- * The heading of one group, on either surface. `collapsible` groups get the
- * button; everything else keeps the bare SectionHeader it always had, so the
- * only heading whose shape changes is Advanced's.
- */
-function GroupHeading({ group, className }: { group: Disclosure & { name: string }; className: string }) {
-  if (!group.collapsible) {
-    return <SectionHeader className={className}>{group.name}</SectionHeader>;
-  }
-  // No em dash and no punctuation: this string is read out by screen readers
-  // and shown as the hover title.
-  const label = `${group.expanded ? 'Collapse' : 'Expand'} ${group.name}`;
-  return (
-    <SectionHeader className={className}>
-      <button
-        type="button"
-        data-settings-group-toggle={group.name}
-        aria-expanded={group.expanded ? 'true' : 'false'}
-        aria-controls={group.domId || undefined}
-        title={label}
-        aria-label={label}
-        className={TOGGLE_BASE}
-        onClick={() => toggleGroup(group.name)}
-      >
-        <ChevronDownIcon className={group.expanded ? CHEVRON : CHEVRON_CLOSED} />
-        <span className="flex-1 min-w-0 truncate">{group.name}</span>
-      </button>
-    </SectionHeader>
-  );
-}
-
-/**
- * One sidebar row. Extracted so both branches of the group body below render
- * the SAME element — a collapsible group wraps its rows for aria-controls,
- * every other group keeps them as direct children, and neither is allowed to
- * grow its own copy of the row.
+ * One sidebar row. Navigation, not a tab set (QA 2026-09-24 Q20): a tab
+ * needs a tablist parent, and these rows sit in a <nav> between group
+ * headings, which no tablist may hold. They are the section links of that
+ * <nav>, so the current one says so with aria-current.
  */
 function NavRow({ item }: { item: NavItem }) {
-  // Navigation, not a tab set (QA 2026-09-24 Q20): a tab needs a tablist
-  // parent, and these rows sit in a <nav> between group headings, which no
-  // tablist may hold. They are the section links of that <nav>, so the
-  // current one says so with aria-current.
   return (
     <button
       type="button"
@@ -161,18 +234,8 @@ function NavRow({ item }: { item: NavItem }) {
       className={item.className}
       onClick={() => navClick(item.key)}
     >
-      <SettingsLabel item={item} />
+      {item.label}
     </button>
-  );
-}
-
-function SettingsLabel({ item }: { item: { key: string; label: string } }) {
-  if (item.key !== 'delete-account') return <>{item.label}</>;
-  return (
-    <span className="flex items-center gap-2 text-red-700 dark:text-red-400">
-      <WarningTriangleIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
-      <span>{item.label}</span>
-    </span>
   );
 }
 
@@ -183,26 +246,42 @@ function SettingsLabel({ item }: { item: { key: string; label: string } }) {
  * ../index.tsx so the whole subtree has one owner.
  */
 export function SettingsNavDesktop() {
-  const { desktop } = useStoreState(settingsNavStore) as NavState;
+  const { desktop, visit } = useStoreState(settingsNavStore) as NavState;
+  const [query, setQuery] = useFilterQuery(visit);
+  const groups = desktop || [];
+  const hits = filterPages(groups, query);
+  const filtering = query.trim() !== '';
   return (
     <nav id="settings-nav-desktop" aria-label="Settings sections" className="space-y-1">
-      {(desktop || []).map((group) => (
+      {desktop ? (
+        <div className="pb-3">
+          <FilterField id="settings-filter-desktop" query={query} setQuery={setQuery} hits={hits} />
+        </div>
+      ) : null}
+      {filtering ? (
+        <div data-settings-filter-results="">
+          {hits.map((hit) => (
+            <button
+              key={hit.item.key}
+              type="button"
+              data-settings-nav={hit.item.key}
+              className={HIT_ROW}
+              onClick={() => choose(hit, setQuery)}
+            >
+              <span className="block">{hit.item.label}</span>
+              {hit.parts.length ? (
+                <span className={HIT_PARTS}>{hit.parts.map((p) => p.label).join(' · ')}</span>
+              ) : null}
+            </button>
+          ))}
+          {hits.length ? null : (
+            <NoMatch query={query} className="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400" />
+          )}
+        </div>
+      ) : groups.map((group) => (
         <div key={group.name} className={group.first ? '' : GROUP_SPACED}>
-          <GroupHeading group={group} className={NAV_HEADING} />
-          {/*
-              The rows of a COLLAPSIBLE group get their own element, so
-              aria-controls has something to point at and `hidden` takes them
-              out of tab order rather than just out of sight. Every other
-              group keeps the rows as direct children of this div, exactly as
-              before #1554 — the wrapper carries no classes of its own, so it
-              adds no spacing either way (`space-y-1` is the host <nav>'s and
-              applies to the group divs, never to the rows).
-          */}
-          {group.collapsible ? (
-            <div id={group.domId || undefined} className={group.expanded ? undefined : 'hidden'}>
-              {group.items.map((item) => <NavRow key={item.key} item={item} />)}
-            </div>
-          ) : group.items.map((item) => <NavRow key={item.key} item={item} />)}
+          <SectionHeader className={NAV_HEADING}>{group.name}</SectionHeader>
+          {group.items.map((item) => <NavRow key={item.key} item={item} />)}
         </div>
       ))}
     </nav>
@@ -215,16 +294,44 @@ export function SettingsNavDesktop() {
  * that a viewport change without a repaint still cannot show two navs.
  */
 export function SettingsMobileMenu() {
-  const { mobile } = useStoreState(settingsNavStore) as NavState;
+  const { mobile, visit } = useStoreState(settingsNavStore) as NavState;
+  const [query, setQuery] = useFilterQuery(visit);
+  const groups = mobile || [];
+  const hits = filterPages(groups, query);
+  const filtering = query.trim() !== '';
   return (
     <div id="settings-mobile-menu-host" className="md:hidden">
-      {(mobile || []).map((group) => (
+      {mobile ? (
+        <div className="px-1 pb-4">
+          <FilterField id="settings-filter-mobile" query={query} setQuery={setQuery} hits={hits} />
+        </div>
+      ) : null}
+      {filtering ? (
+        <div className="mb-5" data-settings-filter-results="">
+          {hits.length ? (
+            <GroupedList className="mx-0">
+              {hits.map((hit) => (
+                <ListRow
+                  key={hit.item.key}
+                  as="button"
+                  inset="text"
+                  data-settings-nav={hit.item.key}
+                  className={MENU_ROW}
+                  titleClassName="font-normal"
+                  title={hit.item.label}
+                  subtitle={hit.parts.length ? hit.parts.map((p) => p.label).join(' · ') : undefined}
+                  onClick={() => choose(hit, setQuery)}
+                />
+              ))}
+            </GroupedList>
+          ) : (
+            <NoMatch query={query} className="px-4 text-[15px] text-zinc-500 dark:text-zinc-400" />
+          )}
+        </div>
+      ) : groups.map((group) => (
         <div key={group.name} className="mb-5">
-          <GroupHeading group={group} className="px-4 pb-1.5" />
-          <GroupedList
-            id={group.domId || undefined}
-            className={group.collapsible && !group.expanded ? 'mx-0 hidden' : 'mx-0'}
-          >
+          <SectionHeader className="px-4 pb-1.5">{group.name}</SectionHeader>
+          <GroupedList className="mx-0">
             {group.items.map((item) => (
               <ListRow
                 key={item.key}
@@ -237,7 +344,7 @@ export function SettingsMobileMenu() {
                 // one-word menu entries with no second line, so bold made the
                 // whole menu read as a stack of headings.
                 titleClassName="font-normal"
-                title={<SettingsLabel item={item} />}
+                title={item.label}
                 onClick={() => navClick(item.key)}
               />
             ))}

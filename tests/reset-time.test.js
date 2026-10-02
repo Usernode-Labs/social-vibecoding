@@ -140,6 +140,6 @@ test('no user-visible copy still spells the reset in UTC alone', () => {
   }
   assert.match(read('frontend/src/main.tsx'), /import '\.\/lib\/reset-time';/,
     'the bundle publishes window.ResetTime for the classic scripts');
-  assert.match(read('frontend/src/features/settings/sections/api-key.tsx'), /id="settings-spend-reset"/,
+  assert.match(read('frontend/src/features/settings/sections/usage.tsx'), /id="settings-spend-reset"/,
     'the spend card names its reset line so Settings can localize it');
 });

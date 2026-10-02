@@ -535,7 +535,7 @@ test('schema, routing and bundled profile UI pin privacy and current-shell integ
   assert.match(publicCard, /verifiedSocialLinksView/);
   assert.match(publicCard, /target="_blank"/);
   assert.match(publicCard, /rel="noopener noreferrer"/);
-  assert.match(profileSheet, /#settings\/connectors/);
+  assert.match(profileSheet, /#settings\/linked-accounts/);
   assert.match(profileSheet, /Connect or change social accounts/);
   assert.match(profileSheet, /Provider verification and public visibility are managed separately/);
   assert.doesNotMatch(profileSheet, /onChange=\{\(e\) => set(?:Github|X)/);

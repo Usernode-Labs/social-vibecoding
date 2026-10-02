@@ -85,18 +85,6 @@
     return cadence ? `${cadence} ${noun}` : noun;
   }
 
-  // #1554 — which nav groups the viewer has EXPANDED, persisted per device.
-  //
-  // The set stores the EXPANDED names, which is the opposite of the admin
-  // console's NAV_COLLAPSED_KEY, and the inversion is deliberate on both
-  // sides. There, every group ships open and "absent means expanded" is what
-  // keeps a newly added section visible to someone whose store predates it.
-  // Here, exactly one group exists to ship SHUT — the whole point of moving
-  // the rarely used panes into it — so "absent means collapsed" is what makes
-  // an empty store, a cleared store and a first visit all agree with the
-  // declared check that says Advanced starts closed.
-  const NAV_EXPANDED_KEY = 'settings_nav_expanded_groups_v1';
-
   // ── Post-logout landing (#1524) ───────────────────────────────────────
   //
   // Signing out always ends on the PUBLIC LANDING page, on every surface.
@@ -181,9 +169,10 @@
 
     // ── Screen state ─────────────────────────────────────────────────────
     _open: false,
-    // Which section is showing (or would show on a viewport crossing). It
-    // doubles as "last visited in this tab": open() keeps it when it is still
-    // a visible key, so returning to Settings lands where you left off.
+    // Which PAGE is showing (or would show on a viewport crossing) — a page
+    // key, never a part key (see SECTIONS). It doubles as "last visited in
+    // this tab": open() keeps it when it is still a visible page, so
+    // returning to Settings lands where you left off.
     //
     // THAT IS WHY THE INITIAL VALUE MATTERS. It was 'api-key', hard-coded
     // here before DEFAULT_SECTION existed, and a bare #settings on a fresh
@@ -191,8 +180,15 @@
     // OVERHAUL putting Theme first had no effect at all until this moved too.
     // Kept as a literal because DEFAULT_SECTION is declared further down this
     // same object literal; the two are pinned together by
-    // tests/theme-mode.test.js.
-    _section: 'theme',
+    // tests/settings-screen.test.js.
+    _section: 'account',
+    // The PART a deep link named, when it is not the first part of its page
+    // (#settings/password opens Account and scrolls to Password). Null when
+    // the page itself was asked for. Spent by _scrollToAnchor().
+    _anchor: null,
+    // Counts open() calls, so the nav's filter box can start each visit
+    // empty instead of greeting a returning viewer with last week's query.
+    _visit: 0,
     // Which level the phone layout is showing: 1 = the section menu,
     // 2 = one section. Kept in sync on desktop too (it is ignored there)
     // so a viewport crossing resolves without guessing.
@@ -225,25 +221,85 @@
     // discipline as AdminConsole.DESKTOP_MEDIA.
     DESKTOP_MEDIA: '(min-width: 768px)',
 
-    // Sections. Keys are the #settings/<key> hash segments and the
-    // [data-settings-section] wrapper values in index.html; `group` is the
-    // heading they sit under — in the desktop sidebar AND in the mobile
-    // level-1 menu, which share _groupedSections(). Order here IS menu
-    // order, and the first VISIBLE entry is the default section.
+    // ── Parts and pages ───────────────────────────────────────────────────
     //
-    // `gate` names the INNER node whose own `hidden` decides whether the
-    // section is offered at all — Homeroom Wallet (wallet linking enabled),
-    // Homeroom app (the native bridge's getSettingsState capability) and
-    // Admin preview (a real platform admin). Those gates live in
-    // _renderWalletSection / _renderUsernodeSection / _renderAdminSection
-    // and are read here, never duplicated. Sections with no `gate` are
-    // always offered.
+    // Each entry below is a PART: one [data-settings-section] wrapper in
+    // ./sections, and the #settings/<key> address that has always reached it.
+    // Parts that share a `page` are shown together as ONE row of the nav and
+    // one screen of content; a part without `page` is a page of its own,
+    // keyed by its own key. Page labels live in PAGES; a one-part page uses
+    // its part's label.
+    //
+    // The settings restructure folded twenty-three rows (seven of them behind
+    // a collapsed "Advanced" group, #1554) into a dozen pages a viewer can
+    // read without opening anything. Every old address still works: a part
+    // key resolves to its page and scrolls to that part (_resolve,
+    // _scrollToAnchor), so the out-of-credits card's #settings/cli, the
+    // profile editor's #settings/username and every server-written link keep
+    // landing on the thing they named.
+    //
+    // Order here IS menu order and DOM order (./sections/index.tsx renders
+    // the wrappers in this sequence, so a page's parts stack the way they are
+    // listed). The parts of one page must be contiguous. The group of a page
+    // is its first part's group, and the first VISIBLE page is the default.
+    //
+    // `gate` names the INNER node whose own `hidden` decides whether the part
+    // is offered at all — Homeroom Wallet (wallet linking enabled), Language
+    // (a saved locale), Homeroom app (the native bridge) and Admin preview (a
+    // real platform admin). Those gates live in their _render* methods and
+    // are read here, never duplicated. A page is offered while any of its
+    // parts is. A gated part that is a page of its own hides exactly one row;
+    // one that shares a page (Admin preview, on Appearance) hides only its
+    // own block, and its address opens that page either way.
     SECTIONS: [
-      // THE UI OVERHAUL moved Theme here out of the hamburger drawer, where it
-      // was the drawer's first row. It leads the registry — and is therefore
-      // DEFAULT_SECTION below — because it is the setting most people arrive
-      // looking for and the only one that needs no explanation.
-      { key: 'theme', label: 'Theme', group: 'Preferences' },
+      // ── Account ─────────────────────────────────────────────────────────
+      // Who you are and how you sign in, on one page, with Delete account at
+      // its foot, apart from everything harmless above it (GitHub's and
+      // Apple's placement: easy to find, never next to a routine control).
+      { key: 'profile', label: 'Profile', group: 'Account', page: 'account' },
+      { key: 'username', label: 'Username', group: 'Account', page: 'account' },
+      { key: 'email', label: 'Email & recovery', group: 'Account', page: 'account' },
+      { key: 'password', label: 'Password', group: 'Account', page: 'account' },
+      { key: 'delete-account', label: 'Delete account', group: 'Account', page: 'account' },
+      // GitHub and X, which decide the daily credits and can be shown on the
+      // public page. They shared a pane with the chat connectors, which have
+      // nothing to do with identity.
+      { key: 'linked-accounts', label: 'Linked accounts', group: 'Account' },
+      { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
+
+      // ── AI & building ───────────────────────────────────────────────────
+      // The allowance leads: it is the figure most builders open Settings to
+      // find. OpenRouter follows it — the included key and the default
+      // session model — and the Anthropic key, the one you add when the
+      // allowance runs out, comes last.
+      { key: 'usage', label: 'Usage', group: 'AI & building', page: 'ai' },
+      { key: 'openrouter', label: 'OpenRouter', group: 'AI & building', page: 'ai' },
+      { key: 'api-key', label: 'Anthropic API key', group: 'AI & building', page: 'ai' },
+      // Everything about building from outside Homeroom: the chat connectors
+      // (Claude, ChatGPT, Codex), the default hand-off they make possible, and
+      // the CLI credentials. The out-of-credits card deep-links
+      // #settings/connectors and #settings/cli; both land on this page
+      // (public/js/credit-options.js). Connectors leads because the page is
+      // keyed by it: a page key that named a LATER part would open the page
+      // scrolled past everything above that part.
+      { key: 'connectors', label: 'Connectors', group: 'AI & building', page: 'connectors' },
+      { key: 'build-venue', label: 'Where changes get built', group: 'AI & building', page: 'connectors' },
+      { key: 'cli', label: 'CLI & coding-agent access', group: 'AI & building', page: 'connectors' },
+      { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & building' },
+      { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & building' },
+      { key: 'experimental', label: 'Experimental', group: 'AI & building' },
+
+      // ── Preferences ─────────────────────────────────────────────────────
+      // THE UI OVERHAUL moved Theme here out of the hamburger drawer. The
+      // developer console's switch and the admin preview are the same kind of
+      // setting — what the shell shows on this device — so they share its
+      // page. Admin preview is gated to real admins; for everyone else its
+      // wrapper is empty and the page is Theme and the console switch. It had
+      // a group of its own, which put an "Admin" heading directly above the
+      // footer's own Admin block.
+      { key: 'theme', label: 'Theme', group: 'Preferences', page: 'theme' },
+      { key: 'dev-console', label: 'Developer console', group: 'Preferences', page: 'theme' },
+      { key: 'admin-preview', label: 'Admin preview', group: 'Preferences', page: 'theme', gate: 'settings-admin-section' },
       // #1556: GATED, and the gate is "this user already picked a language".
       // The value is app-facing only (the iframe JWT `locale` claim and
       // usernode.getUserLocale) and the platform shell is English-only, so a
@@ -254,65 +310,70 @@
       // are untouched; to re-launch the picker, drop this `gate` and the two
       // gate lines in _renderLanguageSection.
       { key: 'language', label: 'Language', group: 'Preferences', gate: 'settings-language-section' },
-      { key: 'alerts', label: 'Notifications & alerts', group: 'Preferences' },
-      { key: 'blocked-apps', label: 'Blocked apps', group: 'Preferences' },
-      // The replay control for Home's welcome tour (#2255). Last in
-      // Preferences: it configures nothing, it re-runs something, and the
-      // tour's own Skip promises this row exists.
-      { key: 'tour', label: 'Welcome tour', group: 'Preferences' },
-      // "Home screen widgets" sat here. THE UI OVERHAUL made Discover,
-      // Challenges and Create app FIXED SECTIONS of the home screen rather
-      // than draggable, hideable widgets, so there is nothing left for the
-      // section to configure.
+      { key: 'alerts', label: 'Notifications', group: 'Preferences' },
+      // What each app may do: the device access and AI spending you granted,
+      // and the apps you blocked. They were split between Preferences and the
+      // collapsed Advanced group, which hid two privacy controls from the
+      // people they protect.
+      { key: 'app-permissions', label: 'App device permissions', group: 'Preferences', page: 'app-permissions' },
+      { key: 'app-ai', label: 'App AI permissions', group: 'Preferences', page: 'app-permissions' },
+      { key: 'blocked-apps', label: 'Blocked apps', group: 'Preferences', page: 'app-permissions' },
 
-      { key: 'username', label: 'Username', group: 'Account' },
-      { key: 'email', label: 'Email & recovery', group: 'Account' },
-      { key: 'password', label: 'Password', group: 'Account' },
-      { key: 'delete-account', label: 'Delete account', group: 'Account' },
-      { key: 'wallet', label: 'Homeroom Wallet', group: 'Account', gate: 'wallet-section' },
-
-      { key: 'global-chat', label: 'Global Chat (experimental)', group: 'AI & agents' },
-      { key: 'openrouter', label: 'OpenRouter', group: 'AI & agents' },
-      { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
-      // Own section (not folded into 'cli') so the out-of-credits card can
-      // deep-link #settings/connectors as one of its three routes; see
-      // public/js/credit-options.js.
-      { key: 'connectors', label: 'Social accounts & connectors', group: 'AI & agents' },
-
-      // ── Advanced ──────────────────────────────────────────────────────
-      //
-      // #1554: the four groups above were seven, and the tail of them were
-      // panes most people never open — per-app AI grants, agent instruction
-      // files, the CLI, the developer console, experimental toggles, the
-      // native-app diagnostics, the admin preview and the build readout.
-      // They are all still here and still deep-linkable; the group they sit
-      // in just ships COLLAPSED (see ADVANCED_GROUP below), so the menu opens
-      // at three short sections instead of seventeen rows.
-      //
-      // The order inside it runs configuration first, then reference: the
-      // two AI-adjacent panes that are rarely touched, the three developer
-      // ones, the two gated ones, and About last — it is the pane you come to
-      // Settings to READ, and the Improve panel is where the same facts turn
-      // into something to act on (a build in flight, a reload waiting). See
-      // sections/about.tsx.
-      { key: 'app-ai', label: 'App AI permissions', group: 'Advanced' },
-      { key: 'app-permissions', label: 'App device permissions', group: 'Advanced' },
-      { key: 'agent-files', label: 'Agent instructions & skills', group: 'Advanced' },
-      { key: 'cli', label: 'CLI & coding-agent access', group: 'Advanced' },
-      { key: 'dev-console', label: 'Developer console', group: 'Advanced' },
-      { key: 'experimental', label: 'Experimental', group: 'Advanced' },
-      { key: 'usernode', label: 'Homeroom app', group: 'Advanced', gate: 'settings-usernode-section' },
-      { key: 'admin-preview', label: 'Admin preview', group: 'Advanced', gate: 'settings-admin-section' },
-      { key: 'about', label: 'About', group: 'Advanced' },
+      // ── Help & about ────────────────────────────────────────────────────
+      // Panes you come to read or replay rather than configure. The welcome
+      // tour's own Skip promises its row exists (#2255). About is last among
+      // them — the Improve panel is where the same facts turn into something
+      // to act on (a build in flight, a reload waiting). See sections/about.tsx.
+      { key: 'tour', label: 'Welcome tour', group: 'Help & about' },
+      { key: 'usernode', label: 'Homeroom app', group: 'Help & about', gate: 'settings-usernode-section' },
+      { key: 'about', label: 'About', group: 'Help & about' },
     ],
 
-    // The one group that collapses (#1554). Every other group is short and
-    // always open, so this is a NAME rather than a per-entry flag: adding a
-    // rarely-used section means giving it `group: 'Advanced'` and nothing
-    // else. _isCollapsibleGroup is the single reader.
-    ADVANCED_GROUP: 'Advanced',
+    // The label of each page that holds more than one part. A page of one
+    // part is labelled by that part; the label here is also the title the
+    // phone's header shows inside the page.
+    PAGES: {
+      account: 'Account',
+      ai: 'AI usage & models',
+      connectors: 'Connectors & CLI',
+      theme: 'Appearance',
+      'app-permissions': 'App permissions',
+    },
 
-    DEFAULT_SECTION: 'theme',
+    // Extra words the nav's filter box matches for each part, beyond its own
+    // label and its page's. Lower case, space separated: the words people
+    // type for a thing, not the words the pane uses for it.
+    KEYWORDS: {
+      profile: 'name display photo avatar picture bio public page',
+      username: 'handle rename at',
+      email: 'address verify verification recovery',
+      password: 'sign in login security',
+      'delete-account': 'close remove deactivate anonymise anonymize',
+      'linked-accounts': 'github x twitter social verified daily credits connect',
+      wallet: 'crypto link qr',
+      usage: 'allowance limit credits budget spend remaining weekly',
+      'api-key': 'claude byok key sk-ant billing',
+      openrouter: 'model glm deepseek reasoning default coding agent key',
+      'build-venue': 'claude code codex hand off handoff default build',
+      connectors: 'mcp claude chatgpt codex chat connector',
+      cli: 'terminal token credentials revoke local agent opencode claude code',
+      'agent-files': 'instructions skills agents md claude md prompt files',
+      'global-chat': 'model cap chat',
+      experimental: 'beta labs progress estimate session bridge local agent',
+      theme: 'dark light mode appearance sidebar',
+      'dev-console': 'bug icon logs errors debug developer',
+      language: 'locale translate',
+      alerts: 'notifications sound push phone mute bell chime',
+      'app-permissions': 'camera microphone location screen device',
+      'app-ai': 'ai spending cap grants budget',
+      'blocked-apps': 'block hide unblock',
+      tour: 'walkthrough help onboarding',
+      usernode: 'mobile phone native diagnostics block production',
+      about: 'version build terms',
+      'admin-preview': 'non-admin view as',
+    },
+
+    DEFAULT_SECTION: 'account',
 
     init() {
       // The entry point is the drawer's Settings row, a real anchor to
@@ -674,8 +735,8 @@
         // the menu at all, and it lands here — possibly AFTER a cold-boot
         // deep link has already painted. Re-resolve the menu.
         this._renderWalletSection();
-        // The preference lands here too, and Connections may already be
-        // painted (a cold-boot deep link to #settings/connectors renders
+        // The preference lands here too, and its page may already be
+        // painted (a cold-boot deep link to #settings/build-venue renders
         // before this resolves). Same reasoning as the wallet row above.
         this._renderDevFlowSection();
         // #1556: `locale` decides whether the Language row is in the menu at
@@ -731,7 +792,7 @@
 
     isOpen() { return Settings._open; },
 
-    // The sixteen panes are not in the prerendered document any more: the
+    // The panes are not in the prerendered document any more: the
     // island mounts them on the screen's first reveal (lib/mount-on-reveal.ts,
     // #settings-section-content ships empty like #admin-section-content).
     // Everything below open() reads their ids on its next line — _renderBody
@@ -790,6 +851,9 @@
     open(section, opts) {
       Settings._ensureMounted();
       Settings._open = true;
+      // A new visit starts with an empty filter box: the nav components
+      // clear their query whenever this changes (see _renderNav).
+      Settings._visit += 1;
       Settings._pushedFromMenu = false;
       Settings._menuScrollTop = 0;
       Settings._chromeSuspended = !!(opts && opts.chrome === false);
@@ -800,10 +864,11 @@
       Settings._pendingSection = null;
       Settings._renderAllSections();
 
-      const visible = Settings._visibleSections();
-      const valid = !!section && visible.some((s) => s.key === section);
+      const visible = Settings._visiblePages();
+      const target = Settings._resolve(section);
+      const valid = !!target.page && visible.some((p) => p.key === target.page);
       Settings._notePendingSection(section, valid);
-      const fallback = visible.some((s) => s.key === Settings._section)
+      const fallback = visible.some((p) => p.key === Settings._section)
         ? Settings._section
         : (visible[0] ? visible[0].key : Settings.DEFAULT_SECTION);
 
@@ -813,16 +878,16 @@
       if (Settings._isMobile() && !valid) {
         Settings._level = 1;
         Settings._section = fallback;
-        Settings._ensureActiveGroupExpanded();
+        Settings._anchor = null;
         Settings._renderNav();
         Settings._renderContent();
         Settings._syncChrome();
         return;
       }
       Settings._level = 2;
-      Settings._section = valid ? section : fallback;
-      Settings._ensureActiveGroupExpanded();
-      Settings.setSection(Settings._section, { writeHash: false });
+      Settings._section = valid ? target.page : fallback;
+      Settings._anchor = valid ? target.anchor : null;
+      Settings.setSection(Settings._section, { writeHash: false, anchor: Settings._anchor });
       // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
       // header ends up showing the section's name rather than "Settings".
       Settings._syncChrome();
@@ -850,25 +915,34 @@
     // repaints through refreshMenu(), not through here.
     route(section) {
       Settings._ensureMounted();
-      const visible = Settings._visibleSections();
-      const valid = !!section && visible.some((s) => s.key === section);
+      const visible = Settings._visiblePages();
+      const target = Settings._resolve(section);
+      const valid = !!target.page && visible.some((p) => p.key === target.page);
       Settings._notePendingSection(section, valid);
       const mobile = Settings._isMobile();
-      // The level and section this call WOULD end on. Level 1 keeps whatever
-      // section sits behind the menu, so there the level is the whole target.
+      // The level, page and part this call WOULD end on. Level 1 keeps
+      // whatever page sits behind the menu, so there the level is the whole
+      // target. The part is part of the target: #settings/password while
+      // Account is already showing is a different request (scroll to it),
+      // while the duplicate dispatch of one traversal carries the same one.
       const targetLevel = (!mobile || valid) ? 2 : 1;
       const targetSection = valid
-        ? section
+        ? target.page
         : (mobile ? Settings._section : (visible[0] ? visible[0].key : Settings.DEFAULT_SECTION));
+      const targetAnchor = valid ? target.anchor : null;
       if (targetLevel === Settings._level && targetSection === Settings._section) {
-        Settings._markRoute('skipped');
-        return;
+        // Same page at the same level. Only a different PART makes it a new
+        // request; anything else is the duplicate, and it stops here.
+        if (targetLevel === 1 || targetAnchor === Settings._anchor) {
+          Settings._markRoute('skipped');
+          return;
+        }
       }
       Settings._markRoute('applied');
       if (!mobile) {
-        Settings._section = targetSection;
-        Settings._ensureActiveGroupExpanded();
-        Settings.setSection(targetSection, { writeHash: false });
+        // setSection() assigns the page and part itself, and decides from the
+        // page it replaces whether to start the new one at its top.
+        Settings.setSection(targetSection, { writeHash: false, anchor: targetAnchor });
         Settings._level = 2;
         Settings._syncChrome();
         return;
@@ -882,17 +956,19 @@
         Settings._menuScrollTop = Settings._level === 1
           ? Settings._scrollTop()
           : Settings._menuScrollTop;
-        Settings._section = section;
+        Settings._section = target.page;
+        Settings._anchor = targetAnchor;
       } else {
         Settings._pushedFromMenu = false;
+        Settings._anchor = null;
       }
       Settings._level = targetLevel;
-      Settings._ensureActiveGroupExpanded();
       Settings._transition(() => {
         Settings._renderNav();
         Settings._renderContent();
         Settings._syncChrome();
         Settings._restoreScroll();
+        Settings._scrollToAnchor();
       }, type);
     },
 
@@ -978,7 +1054,7 @@
         const onChange = () => {
           if (!Settings._open) return;
           if (!mql.matches && Settings._level !== 1) {
-            Settings._writeHash(Settings._section);
+            Settings._writeHash(Settings._anchor || Settings._section);
           }
           Settings._renderNav();
           Settings._renderContent();
@@ -1015,6 +1091,56 @@
       });
     },
 
+    // The page a part lives on: its `page`, or its own key.
+    _pageKey(s) {
+      return String((s && (s.page || s.key)) || '');
+    },
+
+    // What an address segment asks for: `{ page, anchor }`. A page key opens
+    // that page at its top. A part key opens the page the part lives on,
+    // scrolled to the part — unless it is that page's FIRST part, whose
+    // address simply is the page (#settings/profile → Account at its top;
+    // #settings/password → Account, scrolled to Password). Anything unknown
+    // is `{ page: null }`, which every caller treats as "not a valid
+    // section".
+    _resolve(key) {
+      const k = key == null ? '' : String(key);
+      if (!k) return { page: null, anchor: null };
+      const part = Settings.SECTIONS.find((s) => s.key === k);
+      if (part) {
+        const page = Settings._pageKey(part);
+        const first = Settings.SECTIONS.find((s) => Settings._pageKey(s) === page);
+        return { page, anchor: first && first.key !== k ? k : null };
+      }
+      if (Settings.SECTIONS.some((s) => Settings._pageKey(s) === k)) {
+        return { page: k, anchor: null };
+      }
+      return { page: null, anchor: null };
+    },
+
+    // The pages the viewer may navigate to, in registry order: every page
+    // with at least one visible part. Each carries its label, its group (its
+    // first part's) and the parts the viewer can see on it. This is what the
+    // nav lists and what open()/route()/setSection() validate against.
+    _visiblePages() {
+      const pages = [];
+      for (const s of Settings._visibleSections()) {
+        const key = Settings._pageKey(s);
+        let p = pages.find((x) => x.key === key);
+        if (!p) {
+          p = {
+            key,
+            label: Settings.PAGES[key] || s.label,
+            group: s.group || 'Other',
+            parts: [],
+          };
+          pages.push(p);
+        }
+        p.parts.push(s);
+      }
+      return pages;
+    },
+
     // Remember a deep link to a REGISTERED section that is not offered yet
     // (its gate resolves later), so _renderNavIfOpen can finish the route
     // instead of leaving the viewer on the menu. Anything else clears it.
@@ -1023,164 +1149,52 @@
         && Settings.SECTIONS.some((s) => s.key === section && s.gate)) ? section : null;
     },
 
-    // The visible sections bucketed by `group`, in first-appearance order.
-    // Shared by the desktop sidebar and the mobile level-1 menu so the two
-    // can never drift into different groupings.
+    // The visible PAGES bucketed by group, in first-appearance order. Shared
+    // by the desktop sidebar and the mobile level-1 menu so the two can never
+    // drift into different groupings.
+    //
+    // No group collapses any more. #1554 shut seven rarely used panes inside
+    // an "Advanced" group to keep the menu short; folding parts into pages
+    // made it short without hiding anything, and two of those seven (what an
+    // app may use on your device, what it may spend) were privacy controls
+    // that should never have needed a disclosure to find.
     _groupedSections() {
       const groups = [];
-      for (const s of Settings._visibleSections()) {
-        const name = s.group || 'Other';
+      for (const p of Settings._visiblePages()) {
+        const name = p.group || 'Other';
         let g = groups.find((x) => x.name === name);
         if (!g) { g = { name, items: [] }; groups.push(g); }
-        g.items.push(s);
+        g.items.push(p);
       }
       return groups;
-    },
-
-    // ── Collapsible groups (#1554) ────────────────────────────────────────
-    //
-    // One group collapses, and it ships collapsed. The set below holds the
-    // groups the viewer has OPENED (see NAV_EXPANDED_KEY), never derives
-    // anything from the DOM, and is read by both surfaces through
-    // _navView/_menuView — so a toggle survives a section switch, a viewport
-    // crossing and a reload identically.
-    _expandedGroups: null,
-
-    // The group the ACTIVE section lives in, revealed for exactly as long as
-    // that section is active and never written to storage — see
-    // _ensureActiveGroupExpanded for why the arrival reveal is transient.
-    _revealedGroup: null,
-
-    _isCollapsibleGroup(name) {
-      return String(name) === Settings.ADVANCED_GROUP;
-    },
-
-    _expanded() {
-      if (!Settings._expandedGroups) Settings._loadExpandedGroups();
-      return Settings._expandedGroups;
-    },
-
-    // Corrupt, foreign or unavailable storage all resolve to "nothing
-    // expanded": this runs inside a render path, so it must never throw.
-    _loadExpandedGroups() {
-      Settings._expandedGroups = new Set();
-      // Only render/toggle paths reach here, but the guard sits next to the
-      // storage read regardless — the prerender pass and the vm harnesses
-      // evaluate this module in Node, where there is no localStorage.
-      if (typeof window === 'undefined') return;
-      try {
-        const raw = localStorage.getItem(NAV_EXPANDED_KEY);
-        const arr = raw ? JSON.parse(raw) : [];
-        if (!Array.isArray(arr)) return;
-        // Prune names that are no longer a collapsible group, so a renamed or
-        // un-collapsed group can't leave a stale entry behind. Pruning is the
-        // safe direction here: the worst a dropped name does is close a group
-        // the viewer had opened.
-        let changed = false;
-        for (const name of arr) {
-          const key = String(name);
-          if (Settings._isCollapsibleGroup(key)) Settings._expandedGroups.add(key);
-          else changed = true;
-        }
-        if (changed) Settings._saveExpandedGroups();
-      } catch {
-        Settings._expandedGroups = new Set();
-      }
-    },
-
-    _saveExpandedGroups() {
-      try {
-        localStorage.setItem(
-          NAV_EXPANDED_KEY,
-          JSON.stringify([...Settings._expanded()])
-        );
-      } catch { /* storage may be unavailable; non-fatal, in-memory for the session */ }
-    },
-
-    _isGroupExpanded(name) {
-      if (!Settings._isCollapsibleGroup(name)) return true;
-      const key = String(name);
-      return Settings._expanded().has(key) || Settings._revealedGroup === key;
-    },
-
-    _setGroupExpanded(name, expanded) {
-      const set = Settings._expanded();
-      const key = String(name);
-      if (expanded) set.add(key);
-      else set.delete(key);
-      Settings._saveExpandedGroups();
-    },
-
-    // A press is a MENU-ONLY action: it mutates the persisted set and
-    // repaints the nav, and never setSection, _renderContent, _writeHash or
-    // location.hash. The section on screen keeps rendering untouched, and a
-    // phone repaint of the CONTENT would tear the menu down mid-gesture.
-    _toggleGroup(name) {
-      if (!Settings._isCollapsibleGroup(name)) return;
-      const open = !Settings._isGroupExpanded(name);
-      // Closing has to drop the arrival reveal as well, or pressing the
-      // heading of the group you are standing in is a button that visibly
-      // does nothing.
-      if (!open) Settings._revealedGroup = null;
-      Settings._setGroupExpanded(name, open);
-      Settings._renderNav();
-    },
-
-    // "Never hide where I am": arriving at a section reveals its group, so a
-    // deep link into Advanced (#settings/cli from the out-of-credits card,
-    // #settings/api-key from the consent modal, a bookmark) can't leave the
-    // highlighted row invisible.
-    //
-    // The reveal is TRANSIENT — it sets _revealedGroup, and does not touch
-    // the persisted set. Persisting it would make one deep link into About
-    // or CLI the last time that viewer ever sees Advanced shut, which is the
-    // whole feature; it would also make "Advanced ships collapsed" depend on
-    // where the browser had been before, and the capture container walks the
-    // declared #settings routes as hash cohorts of ONE document, in
-    // declaration order (#settings/about lands before #settings). Deriving
-    // the reveal from the active section instead makes both surfaces answer
-    // the same way whatever route came first.
-    //
-    // Called on ARRIVAL only, and it CLEARS as readily as it sets: leaving
-    // Advanced for a Preferences pane closes it again, and the viewer's own
-    // toggle is the only thing that outlives the visit.
-    _ensureActiveGroupExpanded() {
-      const s = Settings._visibleSections().find((x) => x.key === Settings._section);
-      const name = s ? String(s.group || 'Other') : '';
-      Settings._revealedGroup =
-        name && Settings._isCollapsibleGroup(name) ? name : null;
     },
 
     str(s) {
       return String(s == null ? '' : s);
     },
 
-    // aria-controls targets have to be unique, and at phone width the hidden
-    // desktop sidebar and the level-1 menu are BOTH in the document — hence
-    // one id prefix per surface ('settings-nav-group', 'settings-menu-group'),
-    // exactly like AdminConsole._groupDomId.
-    _groupDomId(prefix, name) {
-      return `${prefix}-${String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}`;
-    },
-
-    // The three disclosure fields both descriptors carry. A group that does
-    // not collapse gets `collapsible: false` and renders exactly the markup
-    // it always did — plain heading, no button, no wrapper id — so the only
-    // group that changes shape is Advanced.
-    _groupDisclosure(prefix, name) {
-      const collapsible = Settings._isCollapsibleGroup(name);
+    // What the nav's filter box matches a page on, and what it can show under
+    // a matching row: the page label, then each visible part with its own
+    // label and KEYWORDS. Lower-cased here once, so the component only ever
+    // compares. A part is listed even when it is the page's only one — the
+    // component decides whether its label is worth repeating.
+    _filterTerms(p) {
       return {
-        collapsible,
-        expanded: collapsible ? Settings._isGroupExpanded(name) : true,
-        domId: collapsible ? Settings._groupDomId(prefix, name) : null,
+        terms: Settings.str(p.label).toLowerCase(),
+        parts: p.parts.map((s) => ({
+          key: s.key,
+          label: Settings.str(s.label),
+          terms: `${Settings.str(s.label)} ${Settings.KEYWORDS[s.key] || ''}`.toLowerCase(),
+        })),
       };
     },
 
-    // Desktop sidebar rows, grouped under headings.
+    // Desktop sidebar rows, grouped under headings — one row per PAGE.
     //
     // A DESCRIPTOR, not HTML, since #1191 slice 6 conversion 8 —
     // ./settings-nav.tsx is the only writer of #settings-nav-desktop now. The
-    // shape is `[{ name, first, items: [{ key, label, active, className }] }]`.
+    // shape is `[{ name, first, items: [{ key, label, active, className,
+    // terms, parts }] }]`.
     //
     // `className` is computed HERE rather than in the component on purpose:
     // it is the one class string on this screen that varies with state, it is
@@ -1191,23 +1205,19 @@
     // compile.
     _navView() {
       const active = Settings._section;
-      const item = (s) => ({
-        key: s.key,
-        label: Settings.str(s.label),
-        active: s.key === active,
+      const item = (p) => ({
+        key: p.key,
+        label: Settings.str(p.label),
+        active: p.key === active,
         className: 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
-          + (s.key === 'delete-account'
-            ? (s.key === active
-              ? 'bg-red-500/10 text-red-700 dark:text-red-400'
-              : 'text-red-700 dark:text-red-400 hover:bg-red-500/10')
-            : s.key === active
+          + (p.key === active
             ? 'bg-violet-600/10 text-violet-700 dark:text-violet-400'
             : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+        ...Settings._filterTerms(p),
       });
       return Settings._groupedSections().map((g, i) => ({
         name: Settings.str(g.name),
         first: i === 0,
-        ...Settings._groupDisclosure('settings-nav-group', g.name),
         items: g.items.map(item),
       }));
     },
@@ -1222,8 +1232,11 @@
     _menuView() {
       return Settings._groupedSections().map((g) => ({
         name: Settings.str(g.name),
-        ...Settings._groupDisclosure('settings-menu-group', g.name),
-        items: g.items.map((s) => ({ key: s.key, label: Settings.str(s.label) })),
+        items: g.items.map((p) => ({
+          key: p.key,
+          label: Settings.str(p.label),
+          ...Settings._filterTerms(p),
+        })),
       }));
     },
 
@@ -1238,6 +1251,7 @@
       Settings._store?.set({
         desktop: Settings._navView(),
         mobile: showMenu ? Settings._menuView() : null,
+        visit: Settings._visit,
       });
     },
 
@@ -1267,15 +1281,31 @@
       location.hash = target;
     },
 
+    // `key` may be a page or a part: a part opens its page scrolled to it
+    // (the filter box's matched-part rows, open()'s and route()'s deep links
+    // pass `opts.anchor` already resolved). An unknown or unavailable key
+    // falls back to the first visible page, as it always has.
     setSection(key, opts) {
-      const visible = Settings._visibleSections();
-      if (!visible.some((s) => s.key === key)) {
-        key = visible[0] ? visible[0].key : Settings.DEFAULT_SECTION;
+      const visible = Settings._visiblePages();
+      const target = Settings._resolve(key);
+      let page = target.page;
+      let anchor = opts && 'anchor' in opts ? opts.anchor : target.anchor;
+      if (!page || !visible.some((p) => p.key === page)) {
+        page = visible[0] ? visible[0].key : Settings.DEFAULT_SECTION;
+        anchor = null;
       }
-      Settings._section = key;
-      if (!opts || opts.writeHash !== false) Settings._writeHash(key);
+      const changed = page !== Settings._section;
+      Settings._section = page;
+      Settings._anchor = anchor || null;
+      if (!opts || opts.writeHash !== false) Settings._writeHash(Settings._anchor || page);
       Settings._renderNav();
       Settings._renderContent();
+      // A different page starts at its top. Pages are several parts long
+      // now, so keeping the old scroll offset across a sidebar switch would
+      // open the next page part-way down. A part deep link scrolls to the
+      // part instead.
+      if (Settings._anchor) Settings._scrollToAnchor();
+      else if (changed) Settings._restoreScroll();
     },
 
     // Section switches update the address without polluting history —
@@ -1284,7 +1314,7 @@
     // Entering/leaving the screen still gets a real history entry via
     // normal hash navigation.
     //
-    // Mobile writes #settings/api-key rather than bare #settings: down here
+    // Mobile writes #settings/account rather than bare #settings: down here
     // a bare #settings means the MENU, so the default section needs an
     // explicit segment to stay distinguishable (and deep-linkable) from
     // level 1. Desktop keeps the default → bare #settings mapping.
@@ -1299,7 +1329,7 @@
     },
 
     // The single dispatcher for what goes in the content area: the mobile
-    // level-1 menu, or exactly one section wrapper.
+    // level-1 menu, or every part wrapper of exactly one page.
     _renderContent() {
       const host = document.getElementById('settings-section-content');
       const footer = document.getElementById('settings-footer');
@@ -1307,11 +1337,12 @@
       if (host) {
         host.classList.toggle('hidden', menuLevel);
         host.querySelectorAll('[data-settings-section]').forEach((el) => {
-          el.classList.toggle('hidden', menuLevel || el.dataset.settingsSection !== Settings._section);
+          const page = Settings._resolve(el.dataset.settingsSection).page;
+          el.classList.toggle('hidden', menuLevel || page !== Settings._section);
         });
       }
       if (footer) Settings._syncFooter();
-      // The AI-credit figure in the Anthropic API key section renders from a
+      // The AI-credit figure in the Usage part renders from a
       // me-scoped fetch and is throttled inside AiCredit, so refreshing it on
       // every section change is cheap and keeps it honest. This is where the
       // hamburger's open-time refresh went when the row moved here.
@@ -1388,6 +1419,20 @@
       return el ? el.scrollTop : 0;
     },
 
+    // A deep link to a part that is not its page's first: bring it into view
+    // once its page is showing. scrollIntoView rather than a scrollTop sum,
+    // because the scroller differs by surface (the screen on desktop, the
+    // document in the phone's browser-scroller mode) and the browser already
+    // knows which one holds the node. Never on the phone's menu level, where
+    // the wrappers are not on screen at all.
+    _scrollToAnchor() {
+      const key = Settings._anchor;
+      if (!key || (Settings._isMobile() && Settings._level === 1)) return;
+      const el = document.querySelector?.(`[data-settings-section="${key}"]`);
+      if (!el || el.classList.contains('hidden')) return;
+      try { el.scrollIntoView({ block: 'start' }); } catch { /* old engines: no scroll */ }
+    },
+
     // A pushed screen starts at the top; a pop restores where the menu was.
     _restoreScroll() {
       const screen = document.getElementById('settings-screen');
@@ -1434,8 +1479,8 @@
       if (App.setBackIcon) App.setBackIcon('arrow', inSection ? Settings._upHref() : '#profile');
       if (!App.setHeaderTitle) return;
       if (inSection) {
-        const s = Settings._visibleSections().find((x) => x.key === Settings._section);
-        App.setHeaderTitle(s ? s.label : 'Settings');
+        const p = Settings._visiblePages().find((x) => x.key === Settings._section);
+        App.setHeaderTitle(p ? p.label : 'Settings');
       } else {
         App.setHeaderTitle('Settings');
       }
@@ -1460,10 +1505,9 @@
           return;
         }
       }
-      Settings._ensureActiveGroupExpanded();
       Settings._renderNav();
-      // A section that just became unavailable must not stay on screen.
-      if (!Settings._visibleSections().some((s) => s.key === Settings._section)) {
+      // A page that just became unavailable must not stay on screen.
+      if (!Settings._visiblePages().some((p) => p.key === Settings._section)) {
         Settings.setSection(Settings._section);
       }
     },

@@ -101,7 +101,7 @@ for (const provider of ['github', 'x']) {
         headers: { Cookie: 'session=different-account' },
       });
       assert.equal(response.status, 302);
-      assert.equal(response.headers.get('location'), `${config.cliAuthOrigin}/#settings/connectors?identity=account_mismatch&provider=${provider}`);
+      assert.equal(response.headers.get('location'), `${config.cliAuthOrigin}/#settings/linked-accounts?identity=account_mismatch&provider=${provider}`);
       assert.equal(queries.some(q => /INSERT INTO social_identity_oauth_states/.test(q.sql)), false);
     }
   });
@@ -278,7 +278,7 @@ test('a provider error on the callback is reported for what it is, not as a canc
     });
     assert.equal(response.status, 302, extra);
     assert.equal(response.headers.get('location'),
-      `${config.cliAuthOrigin}/#settings/connectors?identity=${status}&provider=github`, extra);
+      `${config.cliAuthOrigin}/#settings/linked-accounts?identity=${status}&provider=github`, extra);
     const consumed = queries.find(q => /DELETE FROM social_identity_oauth_states\s+WHERE state_hash/.test(q.sql));
     assert.ok(consumed, 'the OAuth state is still validated and consumed');
     assert.equal(consumed.params[1], 7, 'bound to the signed-in user');

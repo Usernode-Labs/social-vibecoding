@@ -2580,7 +2580,7 @@ const DevChat = {
         return {
           title: 'Platform credits are locked until you connect GitHub or X. Your own Anthropic key remains available.',
           parts: [
-            { text: 'platform credits locked', className: 'text-amber-800 dark:text-amber-400 hover:underline', href: '#settings/connectors' },
+            { text: 'platform credits locked', className: 'text-amber-800 dark:text-amber-400 hover:underline', href: '#settings/linked-accounts' },
             { text: ' · ', className: muted },
             { text: `your key · ${last4}`, className: 'text-emerald-700 dark:text-emerald-400' },
           ],
@@ -2591,7 +2591,7 @@ const DevChat = {
         parts: [{
           text: 'verify account · unlock $10/day',
           className: 'text-amber-800 dark:text-amber-400 font-medium hover:underline',
-          href: '#settings/connectors',
+          href: '#settings/linked-accounts',
           title: 'Connect GitHub or X to unlock $10/day',
         }],
       };
@@ -3817,7 +3817,7 @@ const DevChat = {
     const react = window.UsernodeReact && window.UsernodeReact.devChat;
     if (!react || typeof react.openNativeSocialConnect !== 'function') {
       // A bundle without the bridge method: Settings still has the row.
-      window.location.hash = '#settings/connectors';
+      window.location.hash = '#settings/linked-accounts';
       return;
     }
     try {

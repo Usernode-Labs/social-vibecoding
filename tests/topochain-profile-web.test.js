@@ -284,7 +284,7 @@ test('social accounts in Edit profile are proof status, not free-text claims', (
   assert.match(profileSheetTsx, /Verified social accounts/);
   assert.match(profileSheetTsx, /id="profile-edit-github"/);
   assert.match(profileSheetTsx, /id="profile-edit-x"/);
-  assert.match(profileSheetTsx, /#settings\/connectors/);
+  assert.match(profileSheetTsx, /#settings\/linked-accounts/);
   assert.doesNotMatch(profileSheetTsx, /setGithub|setX/);
   const save = profileJs.slice(profileJs.indexOf('async _save('));
   assert.doesNotMatch(save.slice(0, 2500), /github|\bx\b/,
@@ -565,7 +565,7 @@ test('?shot=profile-edit opens the sheet for the screenshot capture', () => {
   assert.ok(verifiedSocials, 'the edit-profile check must cover proof-backed social accounts');
   assert.match(verifiedSocials.expectSelector, /#profile-edit-github:not\(:has\(input\)\)/);
   assert.match(verifiedSocials.expectSelector, /#profile-edit-x:not\(:has\(input\)\)/);
-  assert.match(verifiedSocials.expectSelector, /a\[href='#settings\/connectors'\]/);
+  assert.match(verifiedSocials.expectSelector, /a\[href='#settings\/linked-accounts'\]/);
   assert.equal(verifiedSocials.expectText, 'Connect or change social accounts');
 });
 
