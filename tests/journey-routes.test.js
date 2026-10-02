@@ -90,7 +90,21 @@ test('every Journey route answers, refuses bad input, and is admins only', { tim
   assert.equal((await get(paths.firstMile)).json.people[0].name, 'mia');
   assert.equal((await get('/api/admin/journey/cohorts')).json.cohorts[0].day, admitted);
 
+  // The page's filters: all time, and one admit cohort.
+  const allStages = (await get('/api/admin/journey/stages?week=all')).json;
+  assert.equal(allStages.week, 'all');
+  assert.equal(typeof allStages.counts.stay, 'number', 'Stay over all time is a count, not "known next week"');
+  const allSummary = (await get('/api/admin/journey/summary?week=all')).json;
+  assert.equal(allSummary.allTime, true);
+  assert.notEqual(allSummary.groups.week, 'all', 'the North Star headline stays a week');
+  assert.equal((await get('/api/admin/journey/loops?week=all')).status, 200);
+  const cohortStages = (await get(`/api/admin/journey/stages?cohort=${admitted}`)).json;
+  assert.ok(cohortStages.people.every((x) => x.userId === mia), 'a cohort narrows to its members');
+  assert.equal((await get('/api/admin/journey/summary?week=all&cohort=other_way')).status, 200);
+
   for (const bad of ['/api/admin/journey/stages?week=2026-10-06', '/api/admin/journey/summary?week=monday',
+    '/api/admin/journey/stages?cohort=yesterday', '/api/admin/journey/loops?cohort=2026-02-30',
+    '/api/admin/journey/summary?week=all&cohort=x',
     '/api/admin/journey/first-mile', '/api/admin/journey/first-mile?admitted=2026-02-30',
     '/api/admin/journey/next-steps?admitted=x']) {
     assert.equal((await get(bad)).status, 400, bad);

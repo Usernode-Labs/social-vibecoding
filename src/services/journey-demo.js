@@ -44,7 +44,22 @@ function cohorts() {
   };
 }
 
+// Everyone in a demo cohort reached every step: the earlier cohort and the
+// one person who came in another way.
+const allDone = (p, at, extra = {}) => firstMilePerson(p, journey.FIRST_MILE_STEPS
+  .map((key) => step(key, 'done', key === 'username' ? null : at)), { daysSince: 11, ...extra });
+
 function firstMile(day) {
+  if (day === '2026-09-24') {
+    const people = [P.okafor, P.jun, P.sable].map((p) => allDone(p, '2026-09-24T10:00:00Z'));
+    return { demo: true, cohort: day, people, steps: journey.firstMileCounts(people),
+      notRecorded: { followedLink: journey.notRecorded('Nothing records the admit mail being opened or its link followed.') } };
+  }
+  if (day === 'other_way') {
+    const people = [allDone(P.rafa, '2026-09-20T10:00:00Z', { door: 'activation code' })];
+    people[0].steps = people[0].steps.slice(journey.FIRST_MILE_STEPS.indexOf('account'));
+    return { demo: true, cohort: day, people, steps: journey.firstMileCounts(people), notRecorded: {} };
+  }
   const D = '2026-10-05T09:10:00Z';
   const people = [
     firstMilePerson(P.mira, [
@@ -83,7 +98,14 @@ function firstMile(day) {
   };
 }
 
-function stages() {
+// The people of a demo cohort, or null for everyone.
+function members(day) {
+  if (!day) return null;
+  return new Set(firstMile(day).people.filter((p) => p.userId).map((p) => p.userId));
+}
+
+function stages(day, all = false) {
+  const ids = members(day);
   const people = [
     { ...P.mira, arrive: true, explore: true, activate: true, belong: true, use: false, stay: true, invite: false, activateKinds: ['vote'], stoppedAt: 'stay' },
     { ...P.tobi, arrive: true, explore: false, activate: false, belong: false, use: false, stay: false, invite: false, activateKinds: [], stoppedAt: 'arrive' },
@@ -91,18 +113,20 @@ function stages() {
     { ...P.jun, arrive: true, explore: true, activate: true, belong: true, use: false, stay: true, invite: false, activateKinds: ['feedback', 'vote'], stoppedAt: 'stay' },
     { ...P.sable, arrive: true, explore: true, activate: true, belong: false, use: true, stay: true, invite: false, activateKinds: ['change'], stoppedAt: 'stay' },
     { ...P.rafa, arrive: true, explore: true, activate: true, belong: true, use: false, stay: true, invite: true, activateKinds: ['vote'], stoppedAt: 'invite' },
-  ];
+  ].filter((p) => !ids || ids.has(p.userId));
   const counts = {};
   const stoppedAt = {};
   for (const key of journey.STAGES) {
     counts[key] = people.filter((p) => p[key]).length;
     stoppedAt[key] = people.filter((p) => p.stoppedAt === key).map((p) => ({ userId: p.userId, name: p.name }));
   }
-  return { demo: true, week: '2026-09-28', finished: true, counts, stoppedAt, people };
+  return { demo: true, week: all ? 'all' : '2026-09-28', finished: !all, counts, stoppedAt, people };
 }
 
-function activeGroups() {
-  return {
+function activeGroups(day) {
+  const ids = members(day);
+  const keep = (g) => !ids || g.people.some((p) => ids.has(p.userId));
+  const all = {
     demo: true,
     week: '2026-09-28',
     finished: true,
@@ -120,6 +144,11 @@ function activeGroups() {
     homeroom: { changes: 11, people: 19 },
     oneShort: [{ slug: 'tally', name: 'Tally', people: [P.tobi], why: 'a change is waiting for a yes from someone else', since: '2026-10-01T10:00:00Z' }],
   };
+  if (!ids) return all;
+  const groups = all.groups.filter(keep);
+  // A cohort's trend can never be above its own count of groups in the demo.
+  const trend = all.trend.map((t, i) => ({ ...t, count: i === all.trend.length - 1 ? groups.length : Math.min(t.count, groups.length) }));
+  return { ...all, count: groups.length, trend, groups, wentQuiet: all.wentQuiet.filter(keep), oneShort: all.oneShort.filter(keep) };
 }
 
 function trustChecks() {
@@ -139,11 +168,12 @@ function coverage() {
   };
 }
 
-function loops() {
-  return {
+function loops(day, allTime = false) {
+  const ids = members(day);
+  const all = {
     demo: true,
     change: {
-      week: '2026-09-28',
+      week: allTime ? 'all' : '2026-09-28',
       steps: journey.LOOP_STEPS,
       atStep: { notice: 9, make_sense: 6, sketch: 5, decide: 4, go_live: 3, hear_back: { status: 'coming' } },
       turnsClosed: { status: 'coming' },
@@ -163,6 +193,25 @@ function loops() {
       counts: { invited: 1, arrived: 1, did_something: 1, invited_someone: 0 },
       pairs: [{ host: P.rafa, invitee: P.sable, letInAt: '2026-10-02T09:00:00Z', arrived: true, didSomething: true, invitedSomeone: false }],
     },
+  };
+  if (!ids) return all;
+  // Narrowed the way journey.changeLoop and journey.inviteLoop narrow.
+  const mine = (t) => t.reporter && ids.has(t.reporter.userId);
+  const open = all.change.open.filter(mine);
+  const live = all.change.live.filter(mine);
+  const atStep = {};
+  for (const key of journey.LOOP_STEPS) {
+    atStep[key] = key === 'hear_back' ? { status: 'coming' }
+      : key === 'go_live' ? live.length : open.filter((t) => t.step === key).length;
+  }
+  const pairs = all.invite.pairs.filter((x) => ids.has(x.host.userId) || ids.has(x.invitee.userId));
+  return {
+    ...all,
+    change: { ...all.change, open, live, atStep, perProject: all.change.perProject.filter((p) => live.some((t) => t.slug === p.slug)) },
+    invite: { ...all.invite, pairs, counts: {
+      invited: pairs.length, arrived: pairs.filter((x) => x.arrived).length,
+      did_something: pairs.filter((x) => x.didSomething).length, invited_someone: pairs.filter((x) => x.invitedSomeone).length,
+    } },
   };
 }
 
@@ -205,18 +254,25 @@ function person(userId) {
   };
 }
 
-function summary() {
-  const mile = firstMile();
+// "All time" in the demo: the same headline week, with sixteen weeks of trend.
+const EARLIER_TREND = [0, 0, 1, 1, 0, 1, 2, 1].map((count, i) => ({
+  week: new Date(Date.UTC(2026, 5, 15 + i * 7)).toISOString().slice(0, 10), count,
+}));
+
+function summary(day, all = false) {
+  const mile = firstMile(day === 'other_way' || day === '2026-09-24' ? day : undefined);
+  const groups = activeGroups(day);
   return {
     demo: true,
     week: '2026-09-28',
+    allTime: all,
     thisWeekSoFar: { week: '2026-10-05', count: 1 },
-    groups: activeGroups(),
+    groups: all ? { ...groups, trend: [...EARLIER_TREND.map((t) => ({ ...t, count: Math.min(t.count, groups.count) })), ...groups.trend] } : groups,
     stuck: mile.people.filter((p) => p.stuckAt).map((p) => ({
       userId: p.userId, name: p.name, cohort: mile.cohort, stuckAt: p.stuckAt, reason: p.stuckReason,
       days: p.daysSince, failedAttempts: p.failedAttempts,
     })),
-    openTurns: loops().change.open,
+    openTurns: loops(day).change.open,
     trust: trustChecks(),
     coverage: coverage(),
   };

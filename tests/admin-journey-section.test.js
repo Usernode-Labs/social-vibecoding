@@ -105,12 +105,25 @@ test('the demo rides on ?demo=1 and cannot be edited', () => {
 });
 
 test('details open in dialogs, one at a time on top', () => {
-  for (const id of ['names', 'leftout', 'checks', 'person']) {
+  for (const id of ['names', 'leftout', 'checks']) {
     assert.ok(src.includes(`id="admin-journey-${id}-dialog"`), `${id} is a dialog`);
   }
   assert.match(src, /if \(open\[open\.length - 1\] === panel\.current\) onClose\(\);/,
     'Escape closes only the topmost dialog');
   assert.ok(!src.includes('_confirm('), 'confirmations stay inside the dialog');
+});
+
+test('filters: all time or a week, everyone or one cohort; a person gets a view of their own', () => {
+  assert.match(src, /useState<Scope>\(\{ week: 'all', cohort: null \}\)/, 'the default is all time, for everyone');
+  assert.match(src, /if \(week\) q\.set\('week', scope\.week\);\n  if \(scope\.cohort\) q\.set\('cohort', scope\.cohort\);/,
+    'the summary, stages and loops reads carry the scope');
+  for (const read of ['summary', 'stages', 'loops']) {
+    assert.ok(src.includes(`scoped('/api/admin/journey/${read}', scope)`), `${read} follows the filters`);
+  }
+  assert.match(src, /\{person != null \? <PersonView userId=\{person\}/, 'one person replaces the cards');
+  assert.match(src, /\{scope\.cohort \? null : <div id="admin-journey-checks"/,
+    'the platform-wide checks leave a cohort view instead of reading as the cohort\'s');
+  assert.match(src, /\{scope\.cohort \? null : <div className="mt-1 mb-4" id="admin-journey-team">/);
 });
 
 test('one declared check opens the demo page', () => {

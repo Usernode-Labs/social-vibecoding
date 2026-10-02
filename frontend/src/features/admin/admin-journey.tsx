@@ -153,6 +153,7 @@ type MilePerson = {
 };
 type Summary = {
   demo?: boolean;
+  allTime?: boolean;
   week: string;
   thisWeekSoFar: { week: string; count: number };
   groups: {
@@ -167,7 +168,7 @@ type Summary = {
     teamShare: { team: number; of: number };
     lockstep: { possible: Array<{ userId: number; name: string; yesVotes: number; withinSeconds: number }>; cutoffs: Record<string, number> };
   };
-  coverage: { activePeople: number; withNavigation: number; byDay: Array<{ day: string; build: string; rows: number }> };
+  coverage: { week?: string; activePeople: number; withNavigation: number; byDay: Array<{ day: string; build: string; rows: number }> };
 };
 
 type OpenPerson = (userId: number) => void;
@@ -244,6 +245,18 @@ function Empty({ children }: { children: ReactNode }) {
 function withDemo(path: string): string {
   if (!DEMO) return path;
   return `${path}${path.includes('?') ? '&' : '?'}demo=1`;
+}
+
+// What the page is narrowed to: a week (YYYY-MM-DD) or "all", and one admit
+// cohort or everyone. A person is not a filter: they get a view of their own.
+type Scope = { week: string; cohort: string | null };
+
+function scoped(path: string, scope: Scope, { week = true }: { week?: boolean } = {}): string {
+  const q = new URLSearchParams();
+  if (week) q.set('week', scope.week);
+  if (scope.cohort) q.set('cohort', scope.cohort);
+  const qs = q.toString();
+  return qs ? `${path}?${qs}` : path;
 }
 
 /** One GET, re-run when `path` changes; a late answer never replaces a newer one. */
@@ -433,15 +446,23 @@ const LIFECYCLE_FILL: Record<string, string> = {
   went_quiet: 'bg-amber-400',
 };
 
+// Up to twelve weeks sit beside the number with a count on every bar; a
+// longer history ("all time") takes the card's width, and only the week
+// shown and the highest week carry their count.
+const TREND_LABELLED = 12;
+
 function Trend({ trend, shown }: { trend: Array<{ week: string; count: number }>; shown: string }) {
   if (!trend.length) return null;
   const max = Math.max(1, ...trend.map((t) => t.count));
+  const many = trend.length > TREND_LABELLED;
   return (
-    <div className="shrink-0" aria-label={`Active groups over ${trend.length} weeks`}>
-      <div className="flex items-end gap-1 h-14">
+    <div className={many ? 'w-full' : 'shrink-0'} aria-label={`Active groups over ${trend.length} weeks`}>
+      <div className={`flex items-end h-14 ${many ? 'gap-0.5' : 'gap-1'}`}>
         {trend.map((t) => (
-          <div key={t.week} className="flex w-5 flex-col items-center justify-end h-full">
-            <span className="text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{t.count}</span>
+          <div key={t.week} className={`flex flex-col items-center justify-end h-full ${many ? 'flex-1 min-w-0' : 'w-5'}`}>
+            <span className="text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">
+              {!many || t.week === shown || t.count === max ? t.count : ''}
+            </span>
             <div className={`w-full rounded-sm ${t.week === shown ? 'bg-violet-500' : 'bg-zinc-300 dark:bg-zinc-600'}`}
               style={{ height: `${Math.max(4, Math.round((t.count / max) * 100))}%` }} />
           </div>
@@ -454,7 +475,7 @@ function Trend({ trend, shown }: { trend: Array<{ week: string; count: number }>
   );
 }
 
-function NorthStarCard({ s, onOpen, onDetails }: { s: Summary; onOpen: OpenPerson; onDetails: () => void }) {
+function NorthStarCard({ s, scope, onOpen, onDetails }: { s: Summary; scope: Scope; onOpen: OpenPerson; onDetails: () => void }) {
   const g = s.groups;
   const trend = g.trend || [];
   const prev = trend.length > 1 ? trend[trend.length - 2].count : null;
@@ -467,7 +488,7 @@ function NorthStarCard({ s, onOpen, onDetails }: { s: Summary; onOpen: OpenPerso
     <Card id="admin-journey-groups" title="Active groups"
       note={`week of ${weekLabel(g.week)}${g.finished ? '' : ', so far'}`}
       action={<button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={onDetails}>Details</button>}>
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div id="admin-journey-north-star" className={JUI.headline}>{g.count}</div>
           <div className={`${JUI.fine} mt-1`}>
@@ -511,7 +532,8 @@ function NorthStarCard({ s, onOpen, onDetails }: { s: Summary; onOpen: OpenPerso
       </div>
       {/* The votes behind the number: a group is real only when its yes
           votes are. Both qualify this count, so they sit under it. */}
-      <div id="admin-journey-checks" className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+      {/* The checks read the whole platform, so a cohort view leaves them out. */}
+      {scope.cohort ? null : <div id="admin-journey-checks" className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
         <div>
           <div className="flex justify-between text-sm mb-1">
             <span>Live changes with a yes from someone else</span>
@@ -526,7 +548,7 @@ function NorthStarCard({ s, onOpen, onDetails }: { s: Summary; onOpen: OpenPerso
           <span>{lockstep.length ? 'Voting in lockstep' : 'Nobody voting in lockstep'}</span>
           {lockstep.length ? <Chips people={lockstep} onOpen={onOpen} /> : null}
         </div>
-      </div>
+      </div>}
       {g.homeroom ? (
         <p className={`${JUI.fine} mt-3`}>Homeroom itself, not counted: {g.homeroom.changes} live, {g.homeroom.people} people.</p>
       ) : null}
@@ -549,77 +571,107 @@ const STEP_FILL: Record<string, string> = {
   not_yet: 'bg-zinc-200 dark:bg-zinc-700',
 };
 
-function FirstMileCard({ s, onOpen }: { s: Summary; onOpen: OpenPerson }) {
-  const { data: cohorts } = useJourney<Cohorts>('/api/admin/journey/cohorts');
-  const [day, setDay] = useState<string | null>(null);
-  const picked = day || cohorts?.cohorts[0]?.day || (cohorts ? 'other_way' : null);
-  const { data: mile, failed } = useJourney<FirstMile>(picked ? `/api/admin/journey/first-mile?admitted=${picked}` : null);
-  const stuckIn = (c: string) => s.stuck.filter((p) => p.cohort === c).length;
-  const n = mile?.people.length || 0;
+const MILE_KEYS = Object.keys(MILE_STEPS);
+
+// The first mile of several cohorts at once ("everyone"): one read per
+// cohort, all or nothing.
+function useMiles(days: string[] | null): { miles: FirstMile[] | null; failed: boolean } {
+  const [miles, setMiles] = useState<FirstMile[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  const key = days ? days.join(',') : null;
+  useEffect(() => {
+    if (!key) return undefined;
+    let live = true;
+    setMiles(null);
+    setFailed(false);
+    Promise.all(key.split(',').map((d) => consoleApi().fetchJson(withDemo(`/api/admin/journey/first-mile?admitted=${d}`))))
+      .then((rs: Array<{ ok: boolean; data: FirstMile | null }>) => {
+        if (!live) return;
+        if (rs.some((x) => !x.ok || !x.data)) { setFailed(true); return; }
+        setMiles(rs.map((x) => x.data as FirstMile));
+      });
+    return () => { live = false; };
+  }, [key]);
+  return { miles, failed };
+}
+
+function FirstMileCard({ cohorts, scope, onOpen }: { cohorts: Cohorts | null; scope: Scope; onOpen: OpenPerson }) {
+  const days = scope.cohort ? [scope.cohort]
+    : cohorts ? [...cohorts.cohorts.map((c) => c.day), 'other_way'] : null;
+  const { miles, failed } = useMiles(days);
+  const groups = (miles || []).filter((m) => m.people.length);
+  const people = groups.flatMap((m) => m.people);
+  const n = people.length;
+  // Every person on the same nine columns. Someone who came in another way
+  // has no admit, mail or code step: those cells are drawn empty, dashed.
+  const cellOf = (p: MilePerson, key: string) => p.steps.find((st) => st.key === key) || null;
+  const passed = (key: string) => people.filter((p) => {
+    const st = cellOf(p, key);
+    return st && (st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
+  }).length;
+  const label = (cohort: string) => (cohort === 'other_way' ? 'Came in another way' : `Admitted ${weekLabel(cohort)}`);
   return (
-    <Card id="admin-journey-mile" title="First mile" note="admit mail to first act">
-      {cohorts ? (
-        <div className="flex flex-wrap gap-1.5 mb-3">
-          {[...cohorts.cohorts.map((c) => [c.day, weekLabel(c.day), c.admitted] as const),
-            ['other_way', 'Another way', cohorts.otherWay.people] as const].map(([v, label, count]) => (
-            <button key={v} type="button" aria-pressed={picked === v}
-              className={`${JUI.cohort} ${picked === v ? JUI.chipOn : JUI.chipOff}`} onClick={() => setDay(v)}>
-              {label} · {count}
-              {stuckIn(v) ? <span className="ml-1 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-amber-400 px-1 text-[11px] text-amber-950">{stuckIn(v)}</span> : null}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {mile ? (n ? (
+    <Card id="admin-journey-mile" title="First mile" note={`admit mail to first act · ${scope.cohort ? 'this cohort' : 'every cohort'}, any week`}>
+      {miles ? (n ? (
         <>
           {/* One grid for the staircase and every track, so each bar stands
               over its own column of cells. On a phone the name takes a row
               of its own and the nine columns keep the full width. */}
           <div className={JUI.mileGrid}>
             <span className="hidden sm:block" />
-            {mile.steps.map((st, i) => (
-              <div key={st.key} className="flex flex-col items-stretch justify-end h-16" data-journey-mile-step={st.key}>
-                <span className="text-center text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{st.passed}</span>
-                <div className={`rounded-sm ${i === mile.steps.length - 1 ? 'bg-emerald-500' : 'bg-violet-300 dark:bg-violet-400/50'}`}
-                  style={{ height: `${Math.max(4, Math.round((st.passed / n) * 100))}%` }} />
+            {MILE_KEYS.map((key, i) => (
+              <div key={key} className="flex flex-col items-stretch justify-end h-16" data-journey-mile-step={key}>
+                <span className="text-center text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{passed(key)}</span>
+                <div className={`rounded-sm ${i === MILE_KEYS.length - 1 ? 'bg-emerald-500' : 'bg-violet-300 dark:bg-violet-400/50'}`}
+                  style={{ height: `${Math.max(4, Math.round((passed(key) / n) * 100))}%` }} />
               </div>
             ))}
             <span />
             <span className="hidden sm:block" />
-            {mile.steps.map((st) => (
-              <span key={st.key} className="min-w-0 text-center text-[10px] leading-tight tracking-tight text-zinc-500 dark:text-zinc-400">{MILE_SHORT[st.key] || st.key}</span>
+            {MILE_KEYS.map((key) => (
+              <span key={key} className="min-w-0 text-center text-[10px] leading-tight tracking-tight text-zinc-500 dark:text-zinc-400">{MILE_SHORT[key] || key}</span>
             ))}
             <span />
-            <span className="col-span-full h-2" />
-            {mile.people.map((p, i) => {
-              const done = p.steps.every((st) => st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
-              return (
-                <div key={`${p.userId ?? p.name}-${i}`} className="contents">
-                  <span className="col-span-10 sm:col-span-1 min-w-0 mt-1 sm:mt-0"><PersonChip person={p} onOpen={onOpen} /></span>
-                  {p.steps.map((st) => <span key={st.key} title={MILE_STEPS[st.key]} className={`h-2.5 rounded-sm ${STEP_FILL[st.state] || STEP_FILL.not_yet}`} />)}
-                  <span className={`text-right text-xs tabular-nums ${p.stuckAt ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
-                    {p.stuckAt ? `${p.daysSince} d` : done ? '✓' : ''}
-                  </span>
-                </div>
-              );
-            })}
+            {groups.map((m) => (
+              <div key={m.cohort} className="contents">
+                <span className={`col-span-full mt-2 ${JUI.label}`}>{label(m.cohort)} · {m.people.length}</span>
+                {m.people.map((p, i) => {
+                  const done = p.steps.every((st) => st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
+                  return (
+                    <div key={`${p.userId ?? p.name}-${i}`} className="contents">
+                      <span className="col-span-10 sm:col-span-1 min-w-0 mt-1 sm:mt-0"><PersonChip person={p} onOpen={onOpen} /></span>
+                      {MILE_KEYS.map((key) => {
+                        const st = cellOf(p, key);
+                        return st
+                          ? <span key={key} title={MILE_STEPS[key]} className={`h-2.5 rounded-sm ${STEP_FILL[st.state] || STEP_FILL.not_yet}`} />
+                          : <span key={key} className="h-2.5 rounded-sm border border-dashed border-zinc-300 dark:border-zinc-600" />;
+                      })}
+                      <span className={`text-right text-xs tabular-nums ${p.stuckAt ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                        {p.stuckAt ? `${p.daysSince} d` : done ? '✓' : ''}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
           </div>
           <Legend items={[[STEP_FILL.done, 'done'], [STEP_FILL.stuck, 'stuck, days since'], [STEP_FILL.not_yet, 'not yet']]} />
         </>
-      ) : <Empty>Nobody in this cohort.</Empty>) : picked ? <Loading failed={failed} what="the first mile" /> : null}
+      ) : <Empty>Nobody here yet.</Empty>) : days ? <Loading failed={failed} what="the first mile" /> : null}
     </Card>
   );
 }
 
 // ── Stages ─────────────────────────────────────────────────────────────
 
-function StagesCard({ week, onNames }: { week: string | null; onNames: (n: NamesList) => void }) {
-  const { data, failed } = useJourney<Stages>(`/api/admin/journey/stages${week ? `?week=${week}` : ''}`);
+function StagesCard({ scope, onNames }: { scope: Scope; onNames: (n: NamesList) => void }) {
+  const { data, failed } = useJourney<Stages>(scoped('/api/admin/journey/stages', scope));
   if (!data) return <Card id="admin-journey-stages" title="Stages"><Loading failed={failed} what="the stages" /></Card>;
   const nums = STAGES.map(([k]) => data.counts[k]).filter((v): v is number => typeof v === 'number');
   const max = Math.max(1, ...nums);
   return (
-    <Card id="admin-journey-stages" title="Stages" note="one yes or no per person">
+    <Card id="admin-journey-stages" title="Stages"
+      note={data.week === 'all' ? 'all time · furthest each person reached' : `week of ${weekLabel(data.week)} · one yes or no per person`}>
       <div className="space-y-1.5">
         {STAGES.map(([key, label, means]) => {
           const v = data.counts[key];
@@ -702,24 +754,24 @@ function Ring({ label, steps, value, names, closes }: {
   );
 }
 
-function LoopCard({ data, failed, s }: { data: Loops | null; failed: boolean; s: Summary }) {
+function LoopCard({ data, failed, s, scope }: { data: Loops | null; failed: boolean; s: Summary; scope: Scope }) {
   if (!data) return <Card id="admin-journey-loop" title="Change loop"><Loading failed={failed} what="the change loop" /></Card>;
   const open = data.change.open;
   const maxDays = Math.max(1, ...open.map((t) => t.days || 0));
   const team = s.trust.teamShare;
   return (
-    <Card id="admin-journey-loop" title="Change loop" note="turns at each step">
+    <Card id="admin-journey-loop" title="Change loop" note={data.change.week === 'all' ? 'all time · turns at each step' : `week of ${weekLabel(data.change.week)} · turns at each step`}>
       <Ring label="The change loop, turns at each step" steps={data.change.steps}
         value={(k) => data.change.atStep[k]} names={LOOP_STEPS} closes="go_live" />
       {/* Who made what went live this week: the loop is meant to be turned
           by people, so the team's share sits beside it. */}
-      <div className="mt-1 mb-4" id="admin-journey-team">
+      {scope.cohort ? null : <div className="mt-1 mb-4" id="admin-journey-team">
         <div className="flex justify-between text-sm mb-1">
-          <span>Went live this week</span>
+          <span>Went live, week of {weekLabel(s.groups.week)}</span>
           <span className="tabular-nums">{team.of - team.team} by people · {team.team} by the team</span>
         </div>
         <UnitBar n={team.of - team.team} of={team.of} fill="bg-violet-500" rest="bg-zinc-300 dark:bg-zinc-600" />
-      </div>
+      </div>}
       <div className={`${JUI.label} mt-2 mb-1.5`}>Open turns, days waiting</div>
       {open.length ? (
         <div className="space-y-2" id="admin-journey-turns">
@@ -783,21 +835,11 @@ const NEXT_FILLS = ['bg-violet-500', 'bg-violet-300 dark:bg-violet-400/60', 'bg-
 const OTHER_FILL = 'bg-zinc-300 dark:bg-zinc-600';
 const LEFT_FILL = 'bg-red-300 dark:bg-red-400/70';
 
-function NextCard({ s }: { s: Summary }) {
-  const { data: cohorts } = useJourney<Cohorts>('/api/admin/journey/cohorts');
-  const [scope, setScope] = useState<string | null>(null);
-  const { data, failed } = useJourney<NextSteps>(`/api/admin/journey/next-steps${scope ? `?admitted=${scope}` : ''}`);
-  const scopes: Array<[string | null, string]> = [[null, 'All newcomers'],
-    ...(cohorts ? cohorts.cohorts.map((c) => [c.day, weekLabel(c.day)] as [string, string]) : []),
-    ...(cohorts ? [['other_way', 'Another way'] as [string, string]] : [])];
+function NextCard({ s, scope }: { s: Summary; scope: Scope }) {
+  const { data, failed } = useJourney<NextSteps>(`/api/admin/journey/next-steps${scope.cohort ? `?admitted=${scope.cohort}` : ''}`);
   return (
-    <Card id="admin-journey-next" title="Where newcomers go next" note="first 28 days">
-      <div className="flex flex-wrap gap-1.5 mb-3">
-        {scopes.map(([v, label]) => (
-          <button key={v ?? 'all'} type="button" aria-pressed={scope === v}
-            className={`${JUI.cohort} ${scope === v ? JUI.chipOn : JUI.chipOff}`} onClick={() => setScope(v)}>{label}</button>
-        ))}
-      </div>
+    <Card id="admin-journey-next" title="Where newcomers go next"
+      note={`${scope.cohort ? 'this cohort' : 'all newcomers'} · their first 28 days`}>
       {data ? (data.rows.length ? (
         <div className="space-y-3">
           {data.rows.slice(0, 6).map((r) => {
@@ -836,7 +878,7 @@ function NextCard({ s }: { s: Summary }) {
           broken hook, not people who stopped exploring. */}
       <div className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800" id="admin-journey-coverage">
         <div className="flex justify-between text-sm mb-1">
-          <span>Navigation recorded</span>
+          <span>Navigation recorded, week of {weekLabel(s.coverage.week || s.groups.week)}</span>
           <span className="tabular-nums">{s.coverage.withNavigation} / {s.coverage.activePeople} active people</span>
         </div>
         <UnitBar n={s.coverage.withNavigation} of={s.coverage.activePeople} fill="bg-emerald-500" />
@@ -1054,7 +1096,7 @@ type PersonData = {
   navigation: { recorded: true } | NotRecorded;
 };
 
-function PersonDialog({ userId, onClose }: { userId: number; onClose: () => void }) {
+function PersonView({ userId, onBack }: { userId: number; onBack: () => void }) {
   const { data: p, failed } = useJourney<PersonData>(`/api/admin/journey/people/${userId}`);
   const section = (label: string, body: ReactNode) => (
     <div className="mt-4">
@@ -1064,14 +1106,18 @@ function PersonDialog({ userId, onClose }: { userId: number; onClose: () => void
   );
   let prevAt: string | null = null;
   return (
-    <Dialog id="admin-journey-person-dialog" title={p ? p.name : 'Person'} onClose={onClose}>
+    <section id="admin-journey-person" className={JUI.card}>
+      <div className="flex flex-wrap items-center gap-2 mb-1">
+        <button type="button" className={`${JUI.cohort} ${JUI.chipOff}`} onClick={onBack}>← Everyone</button>
+        <h3 className={AdminUI.sectionTitle}>{p ? p.name : 'Person'}</h3>
+      </div>
       {p ? (
         <>
           <p className={AdminUI.muted}>
             {p.cohort ? `Admitted ${weekLabel(p.cohort)}` : 'No admit date'} · {plural(p.visits, 'visit', 'visits')}
             {' · '}
             <button type="button" className={AdminUI.btn.link}
-              onClick={() => { onClose(); location.hash = `#admin/support/${p.userId}`; }}>Open in Support</button>
+              onClick={() => { location.hash = `#admin/support/${p.userId}`; }}>Open in Support</button>
           </p>
           {isNotRecorded(p.navigation) ? <p className={`${JUI.fine} mt-1`}>Navigation not recorded yet: {p.navigation.reason}</p> : null}
           {section('First mile', p.firstMile.steps.map((st) => {
@@ -1137,7 +1183,7 @@ function PersonDialog({ userId, onClose }: { userId: number; onClose: () => void
           ))}
         </>
       ) : <Loading failed={failed} what="this person" />}
-    </Dialog>
+    </section>
   );
 }
 
@@ -1150,57 +1196,114 @@ function addDays(iso: string, n: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Find one person by name or id (Support's search) and open their view.
+function PersonSearch({ onPick }: { onPick: (id: number) => void }) {
+  const [q, setQ] = useState('');
+  const [matches, setMatches] = useState<Suggestion[] | null>(null);
+  const find = async () => {
+    const term = q.trim().replace(/^@/, '');
+    if (!term) { setMatches(null); return; }
+    const res = await consoleApi().fetchJson(`/api/admin/support/search?q=${encodeURIComponent(term)}`);
+    setMatches(res.ok && res.data ? (res.data.results || []).slice(0, 6) : []);
+  };
+  return (
+    <div className="w-full sm:w-auto">
+      <input className={`${AdminUI.input} sm:w-48 py-1`} value={q} placeholder="Find a person"
+        aria-label="Find a person" onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') find(); }} onBlur={() => { if (q.trim()) find(); }} />
+      {matches ? (
+        <div className="flex flex-wrap gap-1 mt-1.5">
+          {matches.length ? matches.map((m) => (
+            <PersonChip key={m.id} person={{ userId: m.id, name: m.username }} onOpen={(id) => { setMatches(null); setQ(''); onPick(id); }} />
+          )) : <span className={JUI.fine}>No match.</span>}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function JourneySection() {
-  const [week, setWeek] = useState<string | null>(null);
-  const { data: s, failed, reload } = useJourney<Summary>(`/api/admin/journey/summary${week ? `?week=${week}` : ''}`);
+  // The default is all time, for everyone; a week or a cohort narrows it.
+  const [scope, setScope] = useState<Scope>({ week: 'all', cohort: null });
+  const { data: s, failed, reload } = useJourney<Summary>(scoped('/api/admin/journey/summary', scope));
   // Both loops come from one read, so the two cards share it.
-  const { data: loops, failed: loopsFailed } = useJourney<Loops>(`/api/admin/journey/loops${week ? `?week=${week}` : ''}`);
+  const { data: loops, failed: loopsFailed } = useJourney<Loops>(scoped('/api/admin/journey/loops', scope));
+  const { data: cohorts } = useJourney<Cohorts>('/api/admin/journey/cohorts');
   const [dialog, setDialog] = useState<DialogKey | null>(null);
   const [names, setNames] = useState<NamesList | null>(null);
   const [person, setPerson] = useState<number | null>(null);
-  const openPerson = useCallback((id: number) => setPerson(id), []);
+  const openPerson = useCallback((id: number) => {
+    setNames(null);
+    setDialog(null);
+    setPerson(id);
+    document.getElementById('admin-journey')?.scrollIntoView({ block: 'start' });
+  }, []);
   const closeDialog = useCallback(() => setDialog(null), []);
   const closeNames = useCallback(() => setNames(null), []);
-  const closePerson = useCallback(() => setPerson(null), []);
 
-  const shown = s?.groups.week || week;
+  // The week the arrows step from: the one shown, or in "all time" the
+  // headline week.
+  const allTime = scope.week === 'all';
+  const shown = allTime ? (s?.groups.week || null) : scope.week;
   const current = s?.thisWeekSoFar.week || null;
   const canNext = !!(shown && current && shown < current);
+  const toWeek = (w: string | null) => w && setScope({ ...scope, week: w });
+  const chip = (on: boolean) => `${JUI.cohort} ${on ? JUI.chipOn : JUI.chipOff}`;
+  const whoChips: Array<[string | null, string]> = [[null, 'Everyone'],
+    ...(cohorts ? cohorts.cohorts.map((c) => [c.day, `${weekLabel(c.day)} · ${c.admitted}`] as [string, string]) : []),
+    ...(cohorts ? [['other_way', `Another way · ${cohorts.otherWay.people}`] as [string, string]] : [])];
 
   return (
     <div id="admin-journey" className="space-y-4">
-      <div className={`${JUI.card} flex flex-wrap items-center justify-between gap-3`}>
-        <div className="flex items-center gap-2">
-          <h2 className={AdminUI.cardTitle}>Journey</h2>
-          {s?.demo ? <span className={AdminUI.badge.warn}>demo</span> : null}
+      <div className={JUI.card} id="admin-journey-filters">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <h2 className={AdminUI.cardTitle}>Journey</h2>
+            {s?.demo ? <span className={AdminUI.badge.warn}>demo</span> : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" className={`${AdminUI.btn.ghost} text-xs`} data-journey-open="leftout"
+              onClick={() => setDialog('leftout')}>Left out</button>
+            <button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={reload}>Refresh</button>
+          </div>
         </div>
-        <div className="flex items-center gap-1">
-          <button type="button" className={AdminUI.btn.outlineSm} aria-label="Week before"
-            disabled={!shown} onClick={() => shown && setWeek(addDays(shown, -7))}>‹</button>
-          <span id="admin-journey-week" className="text-sm px-2 whitespace-nowrap">
-            {shown ? `Week of ${weekLabel(shown)}` : '…'}
+        <div className="mt-3 flex flex-wrap items-center gap-1.5" data-journey-filter="when">
+          <span className={`${JUI.label} w-12`}>When</span>
+          <button type="button" aria-pressed={allTime} className={chip(allTime)}
+            onClick={() => setScope({ ...scope, week: 'all' })}>All time</button>
+          <span className="inline-flex items-center gap-1">
+            <button type="button" className={AdminUI.btn.outlineSm} aria-label="Week before"
+              disabled={!shown} onClick={() => toWeek(shown && addDays(shown, -7))}>‹</button>
+            <button type="button" id="admin-journey-week" aria-pressed={!allTime} className={chip(!allTime)}
+              disabled={!shown} onClick={() => toWeek(shown)}>{shown ? `Week of ${weekLabel(shown)}` : 'Week'}</button>
+            <button type="button" className={`${AdminUI.btn.outlineSm} disabled:opacity-40`} aria-label="Week after"
+              disabled={allTime ? !shown : !canNext} onClick={() => toWeek(shown && (allTime ? shown : addDays(shown, 7)))}>›</button>
           </span>
-          <button type="button" className={`${AdminUI.btn.outlineSm} disabled:opacity-40`} aria-label="Week after"
-            disabled={!canNext} onClick={() => shown && setWeek(addDays(shown, 7))}>›</button>
-          <button type="button" className={`${AdminUI.btn.ghost} text-xs ml-2`} data-journey-open="leftout"
-            onClick={() => setDialog('leftout')}>Left out</button>
-          <button type="button" className={`${AdminUI.btn.link} text-xs ml-2`} onClick={reload}>Refresh</button>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-1.5" data-journey-filter="who">
+          <span className={`${JUI.label} w-12`}>Who</span>
+          {person != null ? (
+            <button type="button" className={chip(true)} onClick={() => setPerson(null)}>One person ×</button>
+          ) : whoChips.map(([v, label]) => (
+            <button key={v ?? 'everyone'} type="button" aria-pressed={scope.cohort === v} className={chip(scope.cohort === v)}
+              onClick={() => setScope({ ...scope, cohort: v })}>{label}</button>
+          ))}
+          <PersonSearch onPick={openPerson} />
         </div>
       </div>
-      {s ? (
+      {person != null ? <PersonView userId={person} onBack={() => setPerson(null)} /> : s ? (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-          <NorthStarCard s={s} onOpen={openPerson} onDetails={() => setDialog('checks')} />
-          <StagesCard week={week} onNames={setNames} />
-          <div className="xl:col-span-2"><FirstMileCard s={s} onOpen={openPerson} /></div>
-          <LoopCard data={loops} failed={loopsFailed} s={s} />
+          <NorthStarCard s={s} scope={scope} onOpen={openPerson} onDetails={() => setDialog('checks')} />
+          <StagesCard scope={scope} onNames={setNames} />
+          <div className="xl:col-span-2"><FirstMileCard cohorts={cohorts} scope={scope} onOpen={openPerson} /></div>
+          <LoopCard data={loops} failed={loopsFailed} s={s} scope={scope} />
           <InviteCard data={loops} failed={loopsFailed} onOpen={openPerson} />
-          <div className="xl:col-span-2"><NextCard s={s} /></div>
+          <div className="xl:col-span-2"><NextCard s={s} scope={scope} /></div>
         </div>
       ) : <div className={JUI.card}><Loading failed={failed} what="the journey" /></div>}
       {dialog === 'checks' && s ? <ChecksDialog s={s} onOpen={openPerson} onClose={closeDialog} /> : null}
       {dialog === 'leftout' ? <LeftOutDialog onOpen={openPerson} onClose={closeDialog} /> : null}
       {names ? <NamesDialog list={names} onOpen={openPerson} onClose={closeNames} /> : null}
-      {person != null ? <PersonDialog userId={person} onClose={closePerson} /> : null}
     </div>
   );
 }

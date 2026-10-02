@@ -126,6 +126,20 @@ test('stages, groups and coverage for one finished week', { timeout: 120000 }, a
   const quiet = await journey.activeGroups(pool, { week: journey.parseWeek('2026-09-28', now), now });
   assert.deepEqual(quiet.wentQuiet.map((x) => x.slug), ['run-club'], 'active last week, not this one');
 
+  const full = await journey.activeGroups(pool, { week, now, trendAll: true });
+  assert.equal(full.trend[0].week, '2026-09-14', 'all time starts at the week of the first live change');
+  assert.equal(full.trend.at(-1).count, g.count);
+  const mine = await journey.activeGroups(pool, { week, now, memberIds: new Set([cy]) });
+  assert.equal(mine.count, 0, 'a cohort sees only the groups its members were in');
+
+  const ever = await journey.stages(pool, { week: journey.allTime(now), now });
+  const everBy = Object.fromEntries(ever.people.map((p) => [p.name, p]));
+  assert.equal(ever.week, 'all');
+  assert.equal(everBy.ana.stay, true, 'ana arrived two weeks in a row at some point');
+  assert.equal(typeof ever.counts.stay, 'number');
+  const narrowed = await journey.stages(pool, { week, now, memberIds: new Set([eve]) });
+  assert.deepEqual(narrowed.people.map((p) => p.name), ['eve']);
+
   const left = await journey.activeGroups(pool, { week, now, leftOutIds: [ben] });
   assert.equal(left.count, 0, 'a left-out person does not make a group');
 
