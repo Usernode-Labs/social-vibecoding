@@ -1703,6 +1703,46 @@ form.agent-session-composer:focus-within {
 .messages-send svg { width: 20px; height: 20px; stroke-width: 2.4; }
 .messages-send:hover { background: var(--accent-light); }
 .messages-send:disabled { opacity: .35; }
+/* #3735: ONE COMPACT LINE ON A PHONE. Below 768px the card is the "+", the
+   field and the send disc on a single 44px row, and it grows only with what
+   is typed, up to the field's 140px ceiling as everywhere. It was about 75px:
+   8px of padding round a 40px row, plus the character count's line, which is
+   laid out even while empty (composer.tsx says why) and so drew a blank band
+   under the field. On a phone:
+
+   - the card pads 4px above and below a 36px row, 4 + 36 + 4 = 44, so with
+     its 22px radius it is a pill whose send disc sits concentric in the
+     right-hand cap;
+   - the field is 36px tall (7 + 22 + 7) and keeps its 17px type;
+   - the count's line is not laid out until the text nears the limit, where
+     it appears in amber (`data-near-limit`);
+   - the "+" and the disc are drawn at 36px and stay 44px tap targets, the
+     platform's minimum: a pseudo-element overhangs each by 4px, into the
+     card's padding and the row's 6px gap, and so never over the field.
+
+   The bar round the card is not touched: the tab bar, home-indicator and
+   keyboard clearances (`.platform-safe-bar`, `.platform-kb-column`) are as
+   they were. From 768px up nothing here applies. */
+@media (max-width: 767px) {
+  .messages-composer-card { padding: 4px 4px 4px 8px; }
+  /* A reply, a shared item or files staged above the row keep the 8px the
+     card always had over them: at 4px the reply's square left edge would
+     cross the card's rounded corner. */
+  .messages-composer-card > .messages-reply-draft:first-child,
+  .messages-composer-card > .messages-pending-object:first-child,
+  .messages-composer-card > .dc-attach-strip:first-child { margin-top: 4px; }
+  .messages-composer-input { min-height: 36px; padding: 7px 4px; }
+  .messages-send { width: 36px; height: 36px; }
+  /* The "+" sits in its menu's wrapper, which as a block would hold it on a
+     text line whose strut can add a few pixels under it: a flex box is
+     exactly the button's height, so the row is the field's 36px. */
+  .messages-composer-add { display: flex; }
+  .messages-composer-action,
+  .messages-send { position: relative; }
+  .messages-composer-action::after,
+  .messages-send::after { content: ''; position: absolute; inset: -4px; }
+  .messages-composer-count:not([data-near-limit]) { display: none; }
+}
 .messages-reply-draft,
 .messages-pending-object { margin-bottom: 6px; }
 .messages-reply-draft {
@@ -10316,6 +10356,19 @@ html.un-kb #settings-content-col > .settings-sheet {
 }
 .gc-send:hover { background: var(--accent-light); }
 .gc-send:disabled { opacity: .35; }
+/* #3735: the same compact line on a phone as the Messages composer (the
+   phone block after `.messages-send` above): a 44px pill, 4px of padding
+   round a 36px row, with the paperclip and the send disc drawn at 36px and
+   each held to a 44px tap target by a 4px overhang. */
+@media (max-width: 767px) {
+  .gc-composer-card { padding: 4px 4px 4px 8px; }
+  .gc-composer-card .gc-composer-input { min-height: 36px; padding-top: 7px; padding-bottom: 7px; }
+  .gc-send { width: 36px; height: 36px; }
+  .gc-composer-glyph,
+  .gc-send { position: relative; }
+  .gc-composer-glyph::after,
+  .gc-send::after { content: ''; position: absolute; inset: -4px; }
+}
 
 /* ── The dev chat's three-layer lift ──────────────────────
    The move a running app already makes, repeated once per layer. A

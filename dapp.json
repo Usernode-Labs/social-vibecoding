@@ -3145,9 +3145,9 @@
       "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift.dc-lift-session.messages-thread-direct:not(:has(.messages-bubble)) .messages-message-self > :is(span[aria-hidden], img[alt=\"\"]) + .min-w-0 > .messages-message-head time"
     },
     {
-      "name": "...and the sheet carries the conversation's own title row",
+      "name": "...and the sheet carries the conversation's own title row, and ends in the message box: the \"+\", the field and the send disc on one row, its character count marked as not near the limit, which a phone does not lay out, so there it is one compact line (#3735)",
       "path": "/?demo=1#messages/910001",
-      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift-session .messages-thread-header .messages-thread-name + .messages-thread-sub"
+      "expectSelector": "#messages-screen:not(.hidden) .messages-thread-pane.dc-lift-session:has(.messages-composer-add + textarea + .messages-send):has(.messages-composer-count:not([data-near-limit])) .messages-thread-header .messages-thread-name + .messages-thread-sub"
     },
     {
       "name": "A group conversation is a named-row transcript",
