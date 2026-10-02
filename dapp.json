@@ -1095,10 +1095,10 @@
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"assignee\"]"
     },
     {
-      "name": "Issue cards can be shared directly to Messages from the hamburger menu (#1956)",
+      "name": "Issue cards can be shared to a chat or a discussion from the hamburger menu (#1956, #3660)",
       "path": "/?demo=1&view=kanban&shot=card-menu&card=issue:900009&cards=open#app/usernode-2d5619/dev",
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"share\"]",
-      "expectText": "Share to Messages"
+      "expectText": "Share to…"
     },
     {
       "name": "Dev board: attribute chips keep the small label inside the 20px box",
@@ -1129,10 +1129,10 @@
       "expectText": "Technical details"
     },
     {
-      "name": "Proposal cards can be shared directly to Messages from the hamburger menu (#1956)",
+      "name": "Proposal cards can be shared to a chat or a discussion from the hamburger menu (#1956, #3660)",
       "path": "/?demo=1&shot=card-menu&card=proposal:9000043&cards=open#app/usernode-2d5619/board",
       "expectSelector": ".dev-card-menu [data-menu-idx][data-menu-row=\"share\"]",
-      "expectText": "Share to Messages"
+      "expectText": "Share to…"
     },
     {
       "name": "A directly-opened proposal opens its assignee picker (#1324, #1330)",

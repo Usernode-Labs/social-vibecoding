@@ -29,6 +29,7 @@ import { MessageRow } from './message-row';
 import { plainText } from './plain-text';
 import { useDismiss } from '../message-actions/use-dismiss';
 import { ShareItemDialog } from './share-dialog';
+import { ShareToDialog } from './share-to-dialog';
 import {
   agentThreadAddress,
   closeThread,
@@ -2044,6 +2045,7 @@ export function MessagesScreen() {
       <CreateConversationDialog />
       <ConversationMembersDialog />
       <ShareItemDialog />
+      <ShareToDialog />
     </>
   );
 }

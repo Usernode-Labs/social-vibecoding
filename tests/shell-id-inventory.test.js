@@ -850,6 +850,10 @@ const ADDED_IDS = {
   'messages-create-dialog': 'React-owned direct/group conversation creation dialog (#488).',
   'messages-members-dialog': 'React-owned group membership and invitation dialog (#488).',
   'messages-share-dialog': 'React-owned typed Homeroom item chooser for Messages (#488).',
+  // #3660: a card's ⋯ menu said "Share to Messages" and took the sharer to
+  // the Messages screen to pick a conversation and attach the card there.
+  // Share to… is one dialog instead, mounted beside the Messages dialogs.
+  'share-to-dialog': 'React-owned Share to… dialog (#3660): pick a DM, a group, #general or an app\'s discussion, and the card is posted there (features/messages/share-to-dialog.tsx).',
   'notifications-saved': 'Pinned "Saved" section at the top of the bell drawer, holding the messages this user bookmarked (#1280).',
   // #1344 — eligible users may claim one company-funded OpenRouter key.
   // These are static settings controls; settings.js owns their state. The

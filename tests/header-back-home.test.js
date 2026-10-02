@@ -555,7 +555,7 @@ test('the topic page draws both chips, Messages first, styled alike (#3691)', ()
 
 test('the shared card and the router wire the Messages origin (#3103)', () => {
   const FORMAT = read('frontend/src/features/messages/format.tsx');
-  assert.match(FORMAT, /className="messages-object-card"[^>]*onClick=\{\(event\) => recordObjectOrigin\(event, object\.href as string\)\}/,
+  assert.match(FORMAT, /className="messages-object-card"[^>]*onClick=\{\(event\) => recordObjectOrigin\(event, object\.href as string(?:, inboxOnly)?\)\}/,
     'the card anchor records its origin on click, keeping its class and href');
   const fn = FORMAT.slice(FORMAT.indexOf('export function recordObjectOrigin('),
     FORMAT.indexOf('export function ObjectCard('));

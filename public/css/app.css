@@ -1481,6 +1481,19 @@ html.un-kb .platform-kb-column .un-kb-avoid {
 .messages-attachment-view { color: var(--accent); font-size: 13px; font-weight: 600; }
 .messages-object-card:hover { background: var(--messages-surface-2); }
 .messages-object-unavailable { opacity: .6; }
+/* #3660: a Homeroom link's card under a message in an app's discussion
+   (features/messages/link-cards.tsx). That transcript is drawn on the app's
+   own pages as well as in this inbox — outside .messages-layout, where the
+   card's two surfaces are not defined — so there it wears the surface the
+   discussion's own boxes do (.gc-event-box): the frosted sheet fill and its
+   hairline. */
+.gc-msg .messages-link-embeds { margin-top: 6px; }
+.gc-msg .messages-link-embeds .messages-object-card {
+  background-color: var(--dc-sheet-fill);
+  box-shadow: 0 0 0 1px var(--app-sheet-line) inset;
+}
+.gc-msg .messages-link-embeds .messages-object-card:hover { background-color: var(--bg-tertiary); }
+.gc-msg .messages-link-embeds .messages-object-icon { background: var(--bg-tertiary); }
 /* #2884: under the first card of a folded run, in the column the message
    writes in (16px inset + 36px avatar + 12px gap). */
 .messages-card-run { padding: 0 16px 6px 64px; }

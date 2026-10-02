@@ -1836,6 +1836,34 @@ export async function share(reference?: SharedObjectReference): Promise<void> {
   }
 }
 
+/**
+ * #3660: a card posted straight into a conversation from outside it — the
+ * Share to… dialog (./share-to-dialog.tsx) — with the sharer's note as its
+ * words. Not `send()`, which writes into whichever conversation is open:
+ * this one names its destination. The server checks the sharer can see the
+ * card, and each reader's view of it, exactly as for a card shared from the
+ * composer. When that conversation is the one on screen the message is
+ * drawn at once, as the composer's own send draws it; either way the inbox
+ * is re-read so the conversation moves to the top.
+ */
+export async function shareToConversation(conversationId: number, object: SharedObjectReference, note = ''): Promise<void> {
+  if (!validId(conversationId)) throw new Error('Choose a conversation.');
+  const message = await api.sendMessage(conversationId, {
+    content: note.trim().slice(0, 8000),
+    object,
+    idempotencyKey: idempotencyKey(),
+  });
+  if (state.route.conversationId === conversationId && message.id > 0) {
+    publish({
+      messages: state.messages
+        .filter((item) => item.id !== message.id)
+        .concat(message)
+        .sort(transcriptOrder),
+    });
+  }
+  await loadConversations(true);
+}
+
 export function takePendingShare(): SharedObjectReference | null | undefined {
   const value = pendingShare;
   pendingShare = undefined;

@@ -4417,8 +4417,10 @@ const AppView = {
       if (proposal && !AppView.readOnly) {
         onBand.push({
           key: 'share', cls: 'gc-vote-btn', label: 'Share',
-          title: 'Share this proposal in a private conversation',
-          act: { fn: '_shareCardToMessages', args: [{ type: 'proposal', sessionId: item.id }] },
+          title: 'Share this proposal to a chat or a discussion',
+          act: { fn: '_shareCardToMessages', args: [{
+            type: 'proposal', sessionId: item.id, title: item.session_title || item.pr_title || null,
+          }] },
         });
       }
       // The rows the band now carries leave the menu — with one guard. The
@@ -5553,16 +5555,23 @@ const AppView = {
     return `${AppView._menuIconGlyph(it)}  ${it.label}`;
   },
 
-  // Hand one card to Messages by identity only. Messages owns destination
-  // selection and attachment confirmation; the server resolves the live
-  // title/state and re-checks access for every recipient when it is sent.
+  // Hand one card to Share to… (#3660) by identity, plus its title to show.
+  // The dialog (features/messages/share-to-dialog.tsx) is where the sharer
+  // picks a DM, a group, #general or an app's discussion, and it posts the
+  // card there; the server resolves the live title/state and re-checks
+  // access for every reader. Without the dialog (a shell from before it),
+  // the card goes to Messages the way it used to.
   _shareCardToMessages(reference) {
     const app = AppView.appData || {};
-    return window.UsernodeReact?.messages?.share?.({
+    const card = {
       ...reference,
       appId: app.id,
       appSlug: app.slug || App.currentApp,
-    });
+    };
+    const dialog = window.UsernodeReact?.dialogs?.shareTo;
+    if (dialog) return dialog.open(card);
+    const { title: _title, ...ref } = card;
+    return window.UsernodeReact?.messages?.share?.(ref);
   },
 
   // Register `items` under `key` and return the ⋯ trigger, or '' when there
@@ -13049,10 +13058,12 @@ const AppView = {
       items.push(...AppView._attrMenuItems('proposal', pr.id, pr));
     }
     items.push({
-      label: 'Share to Messages',
+      label: 'Share to…',
       icon: 'share',
-      title: 'Share this proposal card in a private conversation',
-      act: () => AppView._shareCardToMessages({ type: 'proposal', sessionId: pr.id }),
+      title: 'Share this proposal card to a chat or a discussion',
+      act: () => AppView._shareCardToMessages({
+        type: 'proposal', sessionId: pr.id, title: pr.session_title || pr.pr_title || null,
+      }),
     });
     if (pr.pr_url) {
       items.push({
@@ -17004,10 +17015,10 @@ const AppView = {
       }
     }
     items.push({
-      label: 'Share to Messages',
+      label: 'Share to…',
       icon: 'share',
-      title: 'Share this issue card in a private conversation',
-      act: () => AppView._shareCardToMessages({ type: 'issue', issueNumber: n }),
+      title: 'Share this issue card to a chat or a discussion',
+      act: () => AppView._shareCardToMessages({ type: 'issue', issueNumber: n, title: issue.title || null }),
     });
     if (issue.htmlUrl) {
       items.push({
