@@ -418,6 +418,46 @@ test('C10 admission records a reason for no suite and propagates failed inspecti
   await assert.rejects(unitSuite.inspectRequirement(enrolledUnitOptions), /metadata reply lost/);
 });
 
+test('enrolled unit inspection cannot exempt a suite when GitHub is unavailable', async t => {
+  const github = require('../src/services/github');
+  t.mock.method(github, 'isEnabled', () => false);
+  t.mock.method(github, 'getFileContent', async () => assert.fail('Unavailable source cannot be inspected'));
+  await assert.rejects(unitSuite.inspectRequirement(enrolledUnitOptions), {
+    code: 'UNIT_SUITE_REQUIREMENT_UNAVAILABLE',
+  });
+  assert.equal(await unitSuite.maybeRunUnitSuite({ ...enrolledUnitOptions, requirement: null }), null,
+    'Legacy callers retain their existing unavailable-source no-op');
+});
+
+for (const missing of ['repoOwner', 'repoName', 'ref']) {
+  test(`enrolled unit inspection cannot exempt a suite without ${missing}`, async t => {
+    t.mock.method(require('../src/services/github'), 'isEnabled', () => true);
+    await assert.rejects(unitSuite.inspectRequirement({ ...enrolledUnitOptions, [missing]: null }), {
+      code: 'UNIT_SUITE_REQUIREMENT_UNAVAILABLE',
+    });
+  });
+}
+
+test('intentional unit-suite deferral remains an exemption with unavailable GitHub', async t => {
+  t.mock.method(require('../src/services/github'), 'isEnabled', () => false);
+  assert.deepEqual(await unitSuite.inspectRequirement({ ...enrolledUnitOptions, deferred: true }), {
+    version: 1, state: 'not-required', reason: 'checks_deferred',
+  });
+});
+
+test('intentional unit-suite feature disable remains an exemption with unavailable GitHub', async t => {
+  const previous = process.env.UNIT_SUITE_CHECK_ENABLED;
+  process.env.UNIT_SUITE_CHECK_ENABLED = '0';
+  t.after(() => {
+    if (previous === undefined) delete process.env.UNIT_SUITE_CHECK_ENABLED;
+    else process.env.UNIT_SUITE_CHECK_ENABLED = previous;
+  });
+  t.mock.method(require('../src/services/github'), 'isEnabled', () => false);
+  assert.deepEqual(await unitSuite.inspectRequirement(enrolledUnitOptions), {
+    version: 1, state: 'not-required', reason: 'feature_disabled',
+  });
+});
+
 for (const graduated of [false, true]) {
   test(`C10 observed ordinary unit failure preserves ${graduated ? 'blocking' : 'advisory'} graduation`, async t => {
     const github = require('../src/services/github');

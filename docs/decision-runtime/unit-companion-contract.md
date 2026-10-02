@@ -5,9 +5,15 @@ Reuse its lifecycle lock, manifest, harvester, guarded settlement and graduation
 policy. No new executor, caller migration or rollout.
 
 Before dispatching either check Job, persist `unitSuite` version 1 in the full
-manifest. `not-required` names the admission reason (disabled, unavailable GitHub
-source, no runnable script, or policy deferral). Metadata lookup failure is an
-error before dispatch, not proof that no suite exists. `submitted` means the
+manifest. `not-required` names an intentional admission reason (feature disabled,
+verified absence of a runnable script, or policy deferral). Unavailable GitHub,
+missing source identity and metadata lookup failure cannot establish an exemption:
+inspection throws before dispatch. The existing provisional manifest/lifecycle
+retains an explicit `launch_manifest_incomplete` reconciliation obligation; a
+restart must not invent a no-suite result or launch competing Jobs. Restored
+prerequisites alone do not prove that an unknown original launch ended.
+Legacy callers retain their best-effort unavailable-source no-op. This correction
+does not rewrite already admitted manifest decisions. `submitted` means the
 required unit Job may be creating, running or complete; it is written before
 external creation. Its stable identity is the session/run/kind Job name. An
 acknowledged creation records `observed` with the exact Job name and UID. Never

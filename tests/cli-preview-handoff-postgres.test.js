@@ -598,6 +598,48 @@ for (const manifest of [null, { launched: false, durableCli: true }]) {
   });
 }
 
+test('unavailable unit inspection retains a provisional run and cannot settle or launch replacement checks', { skip: !postgresEnabled }, async t => {
+  const f = await pendingChecks(t);
+  await f.pool.query('DELETE FROM preview_operations WHERE session_id = 1');
+  await f.runs.finish(f.pool, f.runId);
+  t.mock.method(require('../src/services/github'), 'isEnabled', () => false);
+  const kubernetes = require('../src/services/kubernetes');
+  t.mock.method(kubernetes, 'runCaptureJob', async () => assert.fail('No capture dispatch before inspection'));
+  t.mock.method(kubernetes, 'runUnitSuiteJob', async () => assert.fail('No unit dispatch before inspection'));
+  const lifecycle = require('../src/services/preview-lifecycle').createLifecycle({
+    poolFor: () => f.pool,
+    lock: async (_config, _classifier, _sessionId, run) => run(),
+    checks: () => ({ cancelPreviewChecks: async () => {} }),
+  });
+  const serving = (await f.session()).staging_runtime_name;
+  const result = await lifecycle.run(f.config, await f.session(), HEAD, 'capture', async operation => {
+    operation.durableChecks = true;
+    f.runId = operation.runId;
+    assert.equal(await f.runs.record(f.pool, {
+      sessionId: 1,
+      runId: operation.runId,
+      commitSha: HEAD,
+      manifest: { launched: false, durableCli: true },
+    }), true);
+    await require('../src/services/unit-suite').inspectRequirement({
+      repoOwner: 'fixture', repoName: 'app', ref: HEAD,
+    });
+    assert.fail('Unavailable inspection must not authorize dispatch or a verdict');
+  }, { onError: async () => assert.fail('Unknown requirement cannot publish an error verdict') });
+
+  assert.equal(result.checksBlocked.reason, 'launch_manifest_incomplete');
+  assert.equal((await f.session()).check_state, 'pending');
+  assert.equal((await f.session()).staging_runtime_name, serving);
+  const previous = (await f.pool.query('SELECT * FROM preview_operations WHERE session_id = 1')).rows[0];
+  assert.equal(previous.state, 'running');
+  assert.equal(previous.run_id, f.runId);
+  const recovery = await require('../src/services/cli-preview-handoff/checks').recoverCaptureRun(f.config, {
+    pool: f.pool, session: await f.session(), previous, force: true,
+  });
+  assert.equal(recovery.handled, true);
+  assert.ok(await f.runs.read(f.pool, f.runId, 1), 'Unknown admission retains its reconciliation locator');
+});
+
 test('unknown checks: launching process exposes lost external acknowledgment without retiring the run', { skip: !postgresEnabled }, async t => {
   const f = await pendingChecks(t);
   await f.pool.query('DELETE FROM preview_operations WHERE session_id = 1');

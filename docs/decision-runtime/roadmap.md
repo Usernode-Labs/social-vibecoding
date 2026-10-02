@@ -29,11 +29,33 @@ Exact evidence/substitutions: [support assessment](supported-cli-contract-review
 All test mutation paths require verified disposable destination ownership; a URL
 or test flag is insufficient. See [PostgreSQL preflight](postgres-test-isolation.md).
 
-## Remaining mandatory work
+## Separate completion gates
+
+**Merge the default-off pilot:** review against the explicitly integrated canonical
+pin, preserve shared paths used with admission off and legacy protections, pass
+focused PostgreSQL/SQL/writer/replay and adapter checks, and disclose evidence
+limits. No introduced blocking regression may remain. This is a code-review gate;
+it does not require production installation, private screenshot permission, or
+another workflow. See the [frozen final review](final-pilot-review.md).
+
+**Enable this CLI cohort:** verify the supported installation and image/schema/
+protocol tuple below, supervise the worker and retain recovery when admission is
+disabled. Keep unknown outcomes visible with a reconciliation owner. Establish
+operating capacity for retained locks, recurring cleanup and journals. Scope the
+supported capture promise accurately: required assertions/unit gating is verified;
+ordinary private screenshots remain a separate product follow-up. A merge does
+not authorize enabling admission or production access.
+
+**Migrate another caller:** inventory its writers/consumers and retained work;
+prove cutover, restart and rollback before removing its competing owners. Docker
+requires its own resource proof. The shared foundation and second-workflow reuse
+are already demonstrated; neither another framework nor more workflows is a
+requirement for merging this pilot.
+
+## Remaining mandatory work beyond merging the pilot
 
 | Deliverable | Kind | Completion evidence |
 | --- | --- | --- |
-| Ordinary private-project screenshots | **Product permission decision / bounded implementation**, not an installation assumption | Shipped screenshot identity has no automatic membership or run-scoped grant. Do not substitute admin screenshots or manually member the fixture. Demonstrate narrowly authorized private capture before promising this use case; preserve denied-credential and privacy tests. |
 | Supported installation | **Verification of installation prerequisites**, bounded corrections only if proof fails | Separate supervised worker/migration/web processes, least-privilege RBAC and clone privileges, public HTTPS/assets, identity keys, matching runtime configuration and available Job images. Disposable cluster-admin/TLS-router evidence does not prove a production installation. No production access is authorized. |
 | Supported image/schema/protocol tuple | **Release verification** | Pin backend/schema/capture/unit digests and exercised transport/parser cases. No negotiated version handshake or arbitrary mixed-version guarantee. Actual GitHub delivery and GitHub CI require separate authorization/evidence. |
 | Remaining preview/check writers | **Implementation + consolidation + verification**, after the CLI gate | Hosted/imported/manual/promotion/fleet/head-invalidation/teardown/recovery callers; prove Docker separately. Drain/adopt retained obligations and remove competing owners/allowlist entries before claiming cutover. |
@@ -48,8 +70,9 @@ stores are unsupported until named inventory/reconciliation, not permanent forma
 
 **First supported CLI slice:** the contained native CLI Kubernetes/kpack contract,
 complete real preparation, durable checks/gates and repeated-use retirement proofs,
-plus an explicitly verified permission/installation/image tuple. The ordinary
-private screenshot gap currently prevents promising all private projects.
+plus an explicitly verified installation/image tuple and stated capture permissions.
+Ordinary private screenshots are excluded until their separate permission follow-up
+is demonstrated; their absence does not invalidate required checks or block merging.
 Recovery with admission off must retain one owner; no competing builder, detached
 required continuation, restart recapture or best-effort required settlement remains.
 Completing this gate does **not** authorize production rollout.
@@ -66,7 +89,13 @@ per operation, correlated outcomes and cutover/restart/rollback verification.
 Remove legacy writers only after their callers and retained obligations are handled.
 This does not require rewriting every platform lifecycle.
 
-## Optional follow-ups and retained limitations
+## Separate product follow-up and optional hardening
+
+Ordinary private-project screenshots need a permission-policy decision and a
+bounded, verified grant mechanism before being promised. The valid screenshot
+identity has no automatic private-project membership. This pre-existing product
+gap is outside the frozen pilot review; do not conceal it with fixture membership
+or admin screenshots. Existing denied-credential/privacy checks remain required.
 
 Narrower locks, database-role enforcement beyond module/CI boundaries, stronger
 optional media/notification delivery, source-fetch optimization, terminal artifact

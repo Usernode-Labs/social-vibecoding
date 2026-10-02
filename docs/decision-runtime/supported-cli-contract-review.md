@@ -1,6 +1,6 @@
 # Bounded CLI support assessment
 
-Reviewed against accepted `511e84e35769b31950d5fa45cfaf7e340d3ccbd4` and its
+Reviewed through accepted `cd0d708a37afb59b6b684adaca13e5d349971df9` and its
 explicit canonical integration at `d9cf30cd73a0810be72b199f8b2a194f8c56b793`.
 Read-only canonical fetch on 2 October returned
 `74276a2fb7002da251e1b3975ae22b81dbc765e3`; the relevant capture, identity,
@@ -25,8 +25,11 @@ membered fixture proves authorized capture only. The current unmodified-membersh
 proof is recorded in the [HTTPS contract](https-private-capture-contract.md).
 Required assertions/unit checks can still pass while optional screenshot artifacts
 are unavailable. That verdict is preserved policy, not proof of capture success.
-The first CLI gate including ordinary private projects therefore remains open.
-Do not expand migration on the strength of admin assertions or fixture grants.
+Ordinary private screenshots remain outside the supported capture promise and
+are a separate product follow-up, not a blocker for merging the default-off pilot.
+Do not infer screenshot success from admin assertions or fixture grants.
+The [frozen final review](final-pilot-review.md) separates merge, enablement and
+further-caller gates and records the introduced unit-inspection regression/fix.
 
 The shipped sequence is concrete: authenticated CLI admission authorizes the session
 author; [`visuals`](../../src/services/visuals.js) then looks up the separate seeded
@@ -141,7 +144,7 @@ These limits neither justify removing safeguards nor require another framework.
 
 ## Remaining requirements, without adding capabilities
 
-1. **Private screenshot permission — policy/implementation decision.** The current
+1. **Private screenshot permission — separate product follow-up, out of scope.** The current
    shipped identity has no ordinary private-project permission. A bounded remedy
    must define who authorizes which run/origin and revoke/reconcile it safely;
    blanket membership/admin screenshots would change privacy policy. Preserve the
@@ -162,8 +165,9 @@ creator-tombstone compaction and Temporal reconsideration are optional follow-up
 Unknown creation and live consumer protection are essential correctness safeguards,
 not optional hardening. Their conservative retention remains explicit.
 
-**Review recommendation:** retain the contained/default-off slice and resolve the
-private permission policy before expanding the promised CLI contract. The shared
+**Review recommendation:** merge the contained/default-off slice after the frozen
+review's checks pass; verify installation before enabling it. Keep private
+screenshots outside the promise until their separate permission remedy is proved. The shared
 foundation and second-workflow checkpoints are complete; full caller migration,
 production installation and rollout are not. No additional machine or framework
 is needed to conclude this assessment.

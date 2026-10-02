@@ -111,7 +111,9 @@ async function inspectRequirement({ repoOwner, repoName, ref, deferred = false }
   if (deferred) return { version: 1, state: 'not-required', reason: 'checks_deferred' };
   if (!isEnabled()) return { version: 1, state: 'not-required', reason: 'feature_disabled' };
   if (!github.isEnabled() || !repoOwner || !repoName || !ref) {
-    return { version: 1, state: 'not-required', reason: 'source_unavailable' };
+    throw Object.assign(new Error('Unit-suite requirement cannot be inspected without available GitHub and an exact source'), {
+      code: 'UNIT_SUITE_REQUIREMENT_UNAVAILABLE',
+    });
   }
   const rawPackage = await github.getFileContent(repoOwner, repoName, UNIT_CHECK_PATH, ref);
   return hasRunnableTestScript(rawPackage)
@@ -409,6 +411,10 @@ async function maybeRunUnitSuite({
 }) {
   let admission = requirement;
   if (!admission) {
+    // Legacy callers still skip unavailable source. Enrolled callers inspect
+    // before dispatch and cannot turn missing prerequisites into an exemption.
+    if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
+
     try { admission = await inspectRequirement({ repoOwner, repoName, ref }); }
     catch (err) {
       log.warn('unit-suite', 'package.json fetch failed — skipping unit suite', {

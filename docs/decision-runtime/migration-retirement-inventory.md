@@ -3,7 +3,12 @@
 2 October 2026. The cohort remains default-off. Progress is demonstrated
 ownership replacement and removed code, not added checkpoint numbers.
 See the [roadmap](roadmap.md), [support decision](experimental-retention-decision.md)
-and [packaged proof](packaged-cli-entrypoints-contract.md).
+and [packaged proof](packaged-cli-entrypoints-contract.md). The
+[frozen final review](final-pilot-review.md) distinguishes default-off merge,
+installation/enablement and further-caller migration. Private screenshots are a
+separate product follow-up. The final correction removes only an unjustified
+`source_unavailable` unit exemption for new enrolled inspection; it adds no work
+kind, executor, flag or cleanup owner. Legacy unavailable-source skipping remains.
 
 | Mechanism | Current status / replacement | Removal gate |
 | --- | --- | --- |
