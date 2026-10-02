@@ -688,7 +688,7 @@ async function recoverStage({
   // The build turn. The spec turn before it stored its spec on the session.
   if (!baseSha) throw new Error('the build has no base on record');
   const r = result || {};
-  const turnFailed = timedOut ? null : require('../homeroom-bot-live').failedClaudeTurn(r, { apiFailure: true });
+  const turnFailed = timedOut ? null : require('../homeroom-bot-live').failedClaudeTurn(r);
   const landed = !timedOut && !turnFailed && r.pushOk === true && Number(r.ahead) > 0;
   const specMd = String(session.spec_md || '').trim() ? session.spec_md : null;
   const built = {

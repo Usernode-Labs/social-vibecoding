@@ -99,7 +99,7 @@ test('the head moved when a build turn pushed a new commit, whatever the model s
 });
 
 test('a turn Claude Code ran that failed never moved the head, whatever it pushed; a Codex turn is read as before', () => {
-  for (const failed of [{ ccExit: 1 }, { exitCode: 2 }, { ccIsError: true }]) {
+  for (const failed of [{ ccExit: 1 }, { exitCode: 2 }, { ccIsError: true }, { lastResultText: 'API Error: 429 rate limited' }]) {
     const result = { agentHarness: 'claude', pushOk: true, sha: NEW_HEAD, ...failed };
     assert.equal(followup.headMoved({ mode: 'build', result, reviewedHeadSha: OLD_HEAD, action: 'revise' }), false, JSON.stringify(failed));
   }
@@ -349,6 +349,28 @@ test('a GLM follow-up whose agent failed is no revision: its push is never recon
   assert.equal(out2.verdict, 'failed');
   assert.equal(insertOf(silent).params[18], 'the follow-up turn failed (the agent exited with code 1)');
   assert.equal(silent.calls.reconciled.length, 0);
+});
+
+test('a GLM follow-up that ended on an API error with exit 0 is no revision, whatever it pushed', async (t) => {
+  const notice = 'API Error: 429 {"error":{"message":"Provider returned error","code":429}}';
+  // Pushed anyway (a runner that did not discard it): never reconciled.
+  const h = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    result: { agentHarness: 'claude', ccExit: 0, exitCode: 0, pushOk: true, sha: NEW_HEAD, lastResultText: notice },
+  });
+  const out = await run(t, h);
+  assert.equal(out.verdict, 'failed');
+  assert.equal(h.calls.reconciled.length, 0, 'the proposal stays as it was voted on');
+  assert.equal(insertOf(h).params[18], 'the follow-up turn failed (it ended on an API error)');
+  // Discarded by run-cc.sh, as it now is: the same, and the reason is named.
+  const discarded = harness({
+    comments: [{ author: 'evan', body: 'Make it #000', createdAt: '2026-09-26T11:30:00Z' }],
+    result: { agentHarness: 'claude', ccExit: 0, exitCode: 1, pushOk: false, sha: null, lastResultText: notice },
+  });
+  const out2 = await run(t, discarded);
+  assert.equal(out2.verdict, 'failed');
+  assert.equal(discarded.calls.reconciled.length, 0);
+  assert.equal(insertOf(discarded).params[18], 'the follow-up turn failed (the agent exited with code 1)');
 });
 
 test('a Codex follow-up whose agent failed fails exactly as it did', async (t) => {

@@ -46,7 +46,8 @@
 #                              AGENT_MODEL_MAX_OUTPUT_TOKENS and
 #                              AGENT_REASONING_EFFORT are optional.
 #   DISCARD_FAILED_TURN        1: a build whose claude failed commits and
-#                              pushes nothing (the Homeroom bot's turns)
+#                              pushes nothing (the Homeroom bot's turns);
+#                              needs TURN_JOURNAL to read the final result
 #   PAT                        legacy back-compat — not set by the
 #                              current platform. The push step uses
 #                              `usernode-push` (which calls back into
@@ -508,17 +509,18 @@ fi
 # (DISCARD_FAILED_TURN=1: the Homeroom bot's OpenRouter builds, whose push is
 # what the bot proposes, or a revision of a proposal already up for a vote),
 # exactly as run-codex-agent.sh treats every failed turn. Failed is claude
-# exiting non-zero, or its final result reporting an error. Otherwise a failed
-# turn's work is kept, which a person's dev chat wants. The next turn starts
-# from the session branch as GitHub has it, so nothing discarded here
-# survives it.
+# exiting non-zero, or, read from this turn's journal, its final result
+# reporting an error or ending on the runtime's own "API Error" notice, which
+# Claude Code can exit 0 after (agent-api-failure.js: the definition the
+# platform judges the turn by). Otherwise a failed turn's work is kept, which
+# a person's dev chat wants. The next turn starts from the session branch as
+# GitHub has it, so nothing discarded here survives it.
 if [ "${DISCARD_FAILED_TURN:-}" = "1" ]; then
   TURN_FAILED=""
   if [ "$CC_EXIT" -ne 0 ]; then
     TURN_FAILED="claude exited non-zero ($CC_EXIT)"
-  elif [ -n "${TURN_JOURNAL:-}" ] && [ -f "$TURN_JOURNAL" ] \
-      && grep '^{"type":"result"' "$TURN_JOURNAL" | tail -n 1 | grep -q '"is_error":true'; then
-    TURN_FAILED="claude's result was an error"
+  elif [ -n "${TURN_JOURNAL:-}" ] && [ -f "$TURN_JOURNAL" ]; then
+    TURN_FAILED=$(node "$(dirname "$0")/agent-api-failure.js" "$TURN_JOURNAL" 2>/dev/null || true)
   fi
   if [ -n "$TURN_FAILED" ]; then
     echo "__USERNODE_WARN__ $TURN_FAILED; skipping commit/push"

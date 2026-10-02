@@ -304,8 +304,9 @@ const prompt = fs.readFileSync(0, 'utf8');
   await reply.text();
   fs.writeFileSync(${JSON.stringify(runtimeLog)}, JSON.stringify({ args: process.argv.slice(2), status: reply.status }));
   console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'cc-or-1' }));
-  // STUB_IS_ERROR / STUB_EXIT: a turn that failed, the two ways Claude Code says so.
-  console.log(JSON.stringify({ type: 'result', is_error: process.env.STUB_IS_ERROR === '1', result: 'done', session_id: 'cc-or-1', usage: { input_tokens: 5, output_tokens: 7 } }));
+  // STUB_IS_ERROR / STUB_EXIT / STUB_RESULT: a turn that failed, each way
+  // Claude Code says so, and the final message it ended on.
+  console.log(JSON.stringify({ type: 'result', is_error: process.env.STUB_IS_ERROR === '1', result: process.env.STUB_RESULT || 'done', session_id: 'cc-or-1', usage: { input_tokens: 5, output_tokens: 7 } }));
   process.exitCode = Number(process.env.STUB_EXIT || 0);
 })();
 `);
@@ -778,4 +779,97 @@ test('a Claude-harness turn stopped before its result is priced from the usage i
   }, agentTurn);
   assert.equal(spend.requests, 2);
   assert.ok(spend.costUsd > 0, 'priced, so the weekly pool is debited');
+});
+
+// ── A turn that ended on the runtime's API error notice ────────────────
+//
+// Claude Code can give up on a provider (an OpenRouter 429 once its own
+// retries are spent) and exit 0, its final message the runtime's "API Error"
+// notice. run-cc.sh judges that with the host's own definition
+// (worker/agent-api-failure.js), so a follow-up that ended this way pushes
+// nothing onto the proposal, and the host does not count it as a revision.
+
+const API_ERROR = 'API Error: 429 {"error":{"message":"Provider returned error","code":429}}';
+
+test('the worker and the host read one definition of the API error notice', () => {
+  const shared = require('../worker/agent-api-failure');
+  assert.equal(require('../src/services/agent-result-text').agentApiFailure, shared.agentApiFailure);
+  const journal = (result, extra = {}) => [
+    '__USERNODE_PHASE__ claude (mode build)',
+    JSON.stringify({ type: 'result', is_error: true, result: 'a subagent', parent_tool_use_id: 'toolu_1' }),
+    JSON.stringify({ type: 'result', is_error: false, result, ...extra }),
+    '__USERNODE_CODING_PROVIDER__ {"kind":"provider_request_end"}',
+  ].join('\n');
+  assert.equal(shared.failedFinalResult(journal(API_ERROR)), 'claude ended on an API error');
+  assert.equal(shared.failedFinalResult(journal('Edited app.js.\n\nAPI Error: Connection lost mid-response. The response above may be incomplete.')), 'claude ended on an API error');
+  assert.equal(shared.failedFinalResult(journal('done', { is_error: true })), "claude's result was an error");
+  // Anchored as the host's check is: a message that mentions an API error is not one.
+  assert.equal(shared.failedFinalResult(journal('Fixed the API error handling in the fetch helper.\n\nAPI error messages now say what to retry.')), null);
+  assert.equal(shared.failedFinalResult(journal('done')), null);
+  assert.equal(shared.failedFinalResult('no result at all'), null);
+  // The host reads the same notice the same way.
+  assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 0, lastResultText: API_ERROR }), 'it ended on an API error');
+  assert.equal(live.failedClaudeTurn({ agentHarness: 'claude', ccExit: 0, exitCode: 0, lastResultText: 'Fixed the API error handling.' }), null);
+  // The image ships it beside the runner that calls it.
+  assert.match(fs.readFileSync(path.join(ROOT, 'worker', 'Dockerfile'), 'utf8'), /COPY agent-api-failure\.js \/usr\/local\/bin\/agent-api-failure\.js/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'worker', 'run-cc.sh'), 'utf8'), /node "\$\(dirname "\$0"\)\/agent-api-failure\.js" "\$TURN_JOURNAL"/);
+});
+
+test('a GLM follow-up that ended on an API error with exit 0 pushes nothing, and is no revision', async (t) => {
+  // The follow-up's own dispatch, through the real runtime and worker.
+  stubRuntime(t);
+  const { worker, calls } = loadWorker(t, JOURNAL);
+  const out = await followup.runFollowUpTurn({
+    pool: { async query() { return { rows: [], rowCount: 1 }; } },
+    config: CONFIG, bot: BOT, repo: { owner: 'usernode-bot', repo: 'todo' },
+    session: { id: 602, branch_name: 'dev/homeroom_bot-602', agent_backend: 'codex_openrouter', agent_model: GLM, agent_config_version: 1 },
+    prompt: 'Make it #000.', mode: 'build', issueNumber: 12, turnBudgetMs: 60_000, model: GLM,
+    deps: {
+      worker: {
+        async ensureWorkerImage() {},
+        async ensureWorker(id) { worker.adoptWarmWorker(id, `usernode-worker-${id}`); return `usernode-worker-${id}`; },
+        execInWorker: (id, opts) => worker.execInWorker(id, opts),
+        async stopTurn() {},
+      },
+      agentTurn,
+      sessions: { runCodexAttemptLoop: sessions.runCodexAttemptLoop },
+      activeWorkers: new Set(),
+    },
+  });
+  assert.ok(!out.routed?.error, JSON.stringify(out.routed));
+  const { env } = readDispatch(calls.find((c) => c.args?.[0] === 'exec' && c.args?.[1] === '-d'));
+  assert.equal(env.MODE, 'build');
+  assert.equal(env.AGENT_PROVIDER, 'openrouter');
+  assert.equal(env.DISCARD_FAILED_TURN, '1');
+
+  // run-cc.sh with that env, the turn ending on the notice with exit 0:
+  // nothing is committed or pushed.
+  const upstream = await fakeOpenRouter();
+  t.after(() => upstream.close());
+  const committed = (fx) => fs.readFileSync(fx.gitLog, 'utf8').split('\n').filter((l) => /^(add|commit)\b/.test(l));
+  const fx = runnerFixture();
+  const ran = await runRunCc(env, fx, upstream, { STUB_RESULT: API_ERROR });
+  assert.equal(ran.code, 1, ran.out);
+  assert.match(ran.out, /__USERNODE_WARN__ claude ended on an API error; skipping commit\/push/);
+  assert.match(ran.out, /__USERNODE_RESULT__ cc_exit=0 ahead=0 behind=0 sha= push_ok=0 mode=build/);
+  assert.doesNotMatch(ran.out, /__USERNODE_PHASE__ (commit|push)\b/);
+  assert.deepEqual(committed(fx), []);
+
+  // That journal, read back as the host reads it, is a failed turn and no revision.
+  const state = worker.newWatchState();
+  state.agentBackend = 'codex_openrouter';
+  state.agentHarness = 'claude';
+  for (const line of ran.out.split('\n')) worker.parseLine(line, () => {}, state);
+  state.exitCode = ran.code;
+  assert.equal(live.failedClaudeTurn(state), 'the agent exited with code 1');
+  assert.equal(followup.headMoved({ mode: 'build', result: state, reviewedHeadSha: 'a'.repeat(40), action: 'revise' }), false);
+
+  // A good turn that only mentions an API error is committed as before.
+  const fx2 = runnerFixture();
+  const good = await runRunCc(env, fx2, upstream, {
+    STUB_RESULT: 'Fixed the API error handling in the fetch helper.\n\nAPI error messages now say what to retry.',
+  });
+  assert.equal(good.code, 0, good.out);
+  assert.match(good.out, /__USERNODE_PHASE__ commit/);
+  assert.ok(committed(fx2).some((line) => line.startsWith('commit')), 'committed');
 });

@@ -2814,7 +2814,7 @@ async function finishRecoveredTurn({ pool, session, activeTurn, result = {}, tim
     return 'requeued';
   }
 
-  const turnFailed = timedOut ? null : live.failedClaudeTurn(result, { apiFailure: true });
+  const turnFailed = timedOut ? null : live.failedClaudeTurn(result);
   const built = result.pushOk === true && Number(result.ahead) > 0 && !timedOut && !turnFailed;
   const error = built ? null
     : timedOut ? `the build ran past its time limit${note}`
@@ -2969,7 +2969,7 @@ async function completeRecoveredLive({ pool, config = {}, sessionId, deps = {} }
     const note = ' (finished after a restart)';
     // A failed turn is a failed build here as on the live path.
     const turnFailed = plan.mode === 'scout' || plan.timedOut
-      ? null : live.failedClaudeTurn(plan.result, { apiFailure: true });
+      ? null : live.failedClaudeTurn(plan.result);
     let built;
     if (plan.mode === 'scout') {
       built = { ok: false, sessionId: Number(sessionId), blocked: specRead.blocked };

@@ -1203,18 +1203,20 @@ function buildPrompt({ seed, buildNote, spec = null, platformRepo = false }) {
  * no check here and its outcome is exactly what it was. The bot's turns ask
  * run-cc.sh to do the same (`discardFailedTurn`); this is the host's half,
  * which also names the reason. Failed means the agent exited non-zero
- * (cc_exit, or the wrapper's exit code), or its final result said is_error.
- * `apiFailure` also counts a run whose final message is the runtime's own
- * "API Error" notice (agent-result-text.js), which Claude Code can end on
- * with exit 0: a build checks that, since nothing it left is proposed.
+ * (cc_exit, or the wrapper's exit code), its final result said is_error, or
+ * its final message is the runtime's own "API Error" notice, which Claude
+ * Code can end on with exit 0 (an OpenRouter 429 once its retries are
+ * spent). run-cc.sh reads that notice with the same definition
+ * (worker/agent-api-failure.js), so the worker and the host agree on which
+ * turns failed.
  */
-function failedClaudeTurn(result, { apiFailure = false } = {}) {
+function failedClaudeTurn(result) {
   if (!result || result.agentHarness !== 'claude') return null;
   const exited = (code) => Number.isInteger(code) && code > 0;
   if (exited(result.ccExit)) return `the agent exited with code ${result.ccExit}`;
   if (result.ccIsError === true) return 'the agent reported an error';
   if (exited(result.exitCode)) return `the agent exited with code ${result.exitCode}`;
-  if (apiFailure && agentApiFailure(result.lastResultText)) return 'it ended on an API error';
+  if (agentApiFailure(result.lastResultText)) return 'it ended on an API error';
   return null;
 }
 
@@ -1567,7 +1569,7 @@ async function buildAndPropose({
   }
   if (routed?.error) return { ...(await fail(`the build turn failed (${routed.error})`)), costUsd };
   // A failed turn is a failed build, whatever it left behind (failedClaudeTurn).
-  const turnFailed = failedClaudeTurn(result, { apiFailure: true });
+  const turnFailed = failedClaudeTurn(result);
   if (turnFailed) return { ...(await fail(`the build turn failed (${turnFailed})`)), costUsd };
   if (!result.pushOk || !(Number(result.ahead) > 0)) {
     return { ...(await fail('the build produced no change to propose')), costUsd };
