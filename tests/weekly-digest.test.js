@@ -10,8 +10,10 @@
 //   3. a quiet app — nothing merged, nothing open — gets no card at all;
 //   4. the claim is the stamp: an app another instance stamped first is
 //      left alone;
-//   5. the plain-text line reads as a sentence, names people, and counts
-//      what the card does not list.
+//   5. the plain-text line reads as a sentence, lists the three newest
+//      changes and the three longest-waiting proposals, counts the rest,
+//      and names nobody (#3678) — not even from a card stored while it
+//      still carried each change's author and backers.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -74,11 +76,11 @@ function makePool({ apps = [], merged = {}, open = {}, claimable = true } = {}) 
 
 const tiers = { id: 3, slug: 'tiers', name: 'Community Tier Lists' };
 const landed = [
-  { id: 41, pr_number: 41, pr_title: 'Custom tier colors', merged_at: '2026-09-16T10:00:00Z', author: 'evan', backers: ['alice', 'bob'] },
-  { id: 42, pr_number: 42, pr_title: 'Mobile drag fix', merged_at: '2026-09-15T10:00:00Z', author: 'carol', backers: [] },
+  { id: 41, pr_number: 41, pr_title: 'Custom tier colors', merged_at: '2026-09-16T10:00:00Z' },
+  { id: 42, pr_number: 42, pr_title: 'Mobile drag fix', merged_at: '2026-09-15T10:00:00Z' },
 ];
 const waiting = [
-  { id: 44, pr_number: 44, pr_title: 'Dark mode toggle', author: 'dave' },
+  { id: 44, pr_number: 44, pr_title: 'Dark mode toggle' },
 ];
 
 test('nothing happens outside Friday from the posting hour', async () => {
@@ -110,11 +112,17 @@ test('on Friday a due app gets one card with its data, and its active members a 
   assert.equal(weekly.slug, 'tiers');
   assert.equal(weekly.mergedTotal, 2);
   assert.equal(weekly.openTotal, 1);
-  assert.deepEqual(weekly.merged[0], {
-    id: 41, prNumber: 41, title: 'Custom tier colors', author: 'evan', backers: ['alice', 'bob'],
-  });
-  assert.equal(weekly.open[0].title, 'Dark mode toggle');
-  assert.equal(weekly.open[0].backers, undefined, 'an open proposal has no backers yet');
+  assert.deepEqual(weekly.merged, [
+    { id: 41, prNumber: 41, title: 'Custom tier colors' },
+    { id: 42, prNumber: 42, title: 'Mobile drag fix' },
+  ], 'newest first, and nobody named: no author, no backers (#3678)');
+  assert.deepEqual(weekly.open, [{ id: 44, prNumber: 44, title: 'Dark mode toggle' }]);
+
+  // #3678: the card names nobody, so neither read fetches a name: no join to
+  // users for the author, and no walk of the votes for the backers.
+  const reads = pool.queries.filter((q) => /cs\.status = '(merged|promoted)'/.test(q.sql));
+  assert.equal(reads.length, 2);
+  for (const q of reads) assert.doesNotMatch(q.sql, /username|JOIN users|pr_votes/);
 
   const claim = pool.queries.find((q) => /UPDATE apps\s+SET weekly_digest_at/.test(q.sql));
   assert.ok(claim, 'the stamp is the claim');
@@ -150,23 +158,48 @@ test('an app another instance stamped first is left alone', async () => {
   assert.ok(!pool.queries.some((q) => /INSERT INTO events/.test(q.sql)), 'no card recorded');
 });
 
-test('the plain line reads as a sentence and counts what it does not list', () => {
-  const many = Array.from({ length: digest.MAX_LISTED + 3 }, (_, i) => ({
-    id: i, prNumber: 100 + i, title: `Change ${i}`, author: 'evan', backers: [],
-  }));
+test('the plain line lists three of each, counts the rest, and names nobody', () => {
+  assert.equal(digest.MAX_LISTED, 3, 'one short sentence, not a changelog');
+
+  // A new card: gather() keeps the three newest changes and the three
+  // longest-waiting proposals; the totals say how many there were.
   const line = digest.contentLine({
     app: 'Community Tier Lists',
-    merged: many.slice(0, digest.MAX_LISTED),
-    mergedTotal: many.length,
-    open: [{ id: 44, prNumber: 44, title: 'Dark mode toggle', author: 'dave' }],
+    merged: [0, 1, 2].map((i) => ({ id: i, prNumber: 100 + i, title: `Change ${i}` })),
+    mergedTotal: 11,
+    open: [{ id: 44, prNumber: 44, title: 'Dark mode toggle' }],
     openTotal: 1,
   });
-  assert.match(line, /^This week on Community Tier Lists: 11 changes went live: Change 0 \(evan\); /);
-  assert.match(line, /; and 3 more\. One proposal is waiting for eyes: Dark mode toggle \(PR #44\)\.$/);
+  assert.equal(line, 'This week on Community Tier Lists: 11 changes went live: Change 0; Change 1; Change 2; and 8 more. '
+    + 'One proposal is waiting for eyes: Dark mode toggle (PR #44).');
 
-  const named = digest.contentLine({
-    app: 'Tiers', merged: [{ id: 1, prNumber: 41, title: 'Custom tier colors', author: 'evan', backers: ['alice', 'bob'] }],
+  const one = digest.contentLine({
+    app: 'Tiers', merged: [{ id: 1, prNumber: 41, title: 'Custom tier colors' }],
     mergedTotal: 1, open: [], openTotal: 0,
   });
-  assert.equal(named, 'This week on Tiers: 1 change went live: Custom tier colors (evan, backed by alice and bob).');
+  assert.equal(one, 'This week on Tiers: 1 change went live: Custom tier colors.');
+
+  assert.equal(digest.contentLine({ app: 'Tiers', merged: [], mergedTotal: 0, open: [{ id: 9, prNumber: null, title: 'Untitled idea' }], openTotal: 1 }),
+    'This week on Tiers: Nothing landed this week. One proposal is waiting for eyes: Untitled idea.');
+});
+
+test('a card stored before #3678, eight entries with their people, reads short and names nobody', () => {
+  // The card is drawn from the record (app-notices.js), so the one already
+  // on a project's Workshop is what the request quoted: eight changes, each
+  // with its author and backers, and every open proposal.
+  const people = ['Bruno', 'evan', 'flushthefashion', 'madza', 'panse08', 'staples270_50098', 'snait', 'cyrcle_0', 'ocank14'];
+  const stored = {
+    app: 'Homeroom',
+    merged: Array.from({ length: 8 }, (_, i) => ({
+      id: i, prNumber: 3600 + i, title: `Change ${i}`, author: people[i], backers: people.slice(i + 1, i + 4),
+    })),
+    mergedTotal: 312,
+    open: Array.from({ length: 5 }, (_, i) => ({ id: 90 + i, prNumber: 3670 + i, title: `Proposal ${i}`, author: people[i] })),
+    openTotal: 5,
+  };
+  const line = digest.contentLine(stored);
+  assert.equal(line, 'This week on Homeroom: 312 changes went live: Change 0; Change 1; Change 2; and 309 more. '
+    + '5 proposals are waiting for eyes: Proposal 0 (PR #3670); Proposal 1 (PR #3671); Proposal 2 (PR #3672); and 2 more.');
+  for (const name of people) assert.ok(!line.includes(name), `${name} is not named`);
+  assert.doesNotMatch(line, /backed by|\((?!PR #)/, 'no credit, and no bracket but a PR number');
 });

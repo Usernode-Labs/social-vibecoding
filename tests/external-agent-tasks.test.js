@@ -564,6 +564,10 @@ test('every guidance step is an action the HUMAN takes, never agent narration', 
     assert.match(result.guidance[result.guidance.length - 1], /submit the change to Homeroom itself/);
     assert.match(result.guidance[result.guidance.length - 1], /can't submit/);
     assert.match(result.guidance[result.guidance.length - 2], /exactly as written/);
+    // #3687: the agent picks patch or branch itself; if one asks anyway, the
+    // person is told what to answer instead of meeting a git question cold.
+    assert.match(result.guidance[result.guidance.length - 2],
+      /If it asks whether to send a patch or a branch, tell it to choose for itself\./);
   }
 });
 
@@ -2473,6 +2477,13 @@ test('the work order presents every submit shape, in order of preference', async
   assert.match(order, /the patch text from step 1 as `patch`/);
   assert.match(order, /Patches over about 250 KB are refused/);
   assert.match(order, /4\. IF THE PATCH IS REFUSED as too large, push a branch/);
+  // #3687: the choice between them belongs to the agent, said both in the
+  // rules and at the step where it is made, after the rule it applies.
+  assert.match(order, /The choice is yours, never the user's\./);
+  const decideAt = order.indexOf('Patch or branch is YOUR decision, by the rule above');
+  assert.ok(decideAt > pushAt && decideAt < order.indexOf('SUBMIT IT YOURSELF'),
+    'the decision line closes step 1, after both options are on the page');
+  assert.match(order, /never ask the user which to use: most users are not developers/);
   // The exact identifiers the fallback needs are all still printed.
   assert.match(order, /Homeroom task id:\s+31/);
   assert.match(order, /with taskId 31 and the patch text/);
@@ -3633,6 +3644,9 @@ test('the update work order asks for proposalId, and never offers the patch fall
   assert.match(result.workOrder, /DO NOT SEND A PATCH on this path/);
   assert.doesNotMatch(result.workOrder, /git format-patch/);
   assert.doesNotMatch(result.workOrder, /pr_open_failed/, 'there is no pull request to open on this path');
+  // #3687: with only a branch on offer there is no choice to hand over, so
+  // the patch-or-branch line belongs to new work alone.
+  assert.doesNotMatch(result.workOrder, /Patch or branch is YOUR decision/);
 });
 
 test('an update work order still starts the branch at the proposal’s head, and says so', async () => {

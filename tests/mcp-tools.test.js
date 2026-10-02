@@ -2433,8 +2433,48 @@ test('prepare_work chooses self-execution before handoff', () => {
   assert.match(desc, /do not relay `guidance` or send the user elsewhere/);
   assert.match(body, /FIRST inspect the tools available in THIS conversation/);
   assert.match(body, /do not render guidance and do not send/);
-  assert.match(body, /branch or patch you produced/);
+  assert.match(body, /the patch you produced, or the branch if the work order's/);
   assert.match(body, /Only if this conversation lacks code-editing tools/);
+});
+
+// #3687. Every surface named a patch as the default and a branch as the
+// exception, and none said whose choice that was, so Claude Code on the web
+// asked the user "patch or branch?", a question a non-developer cannot answer.
+// Each place the hand-in is described now says the agent decides, a patch by
+// default, and never puts the choice to the user.
+test('patch or branch is the agent\'s call on every surface, never the user\'s', () => {
+  const charter = require('../src/services/mcp-charter');
+
+  // The always-delivered instructions, which a host that never calls
+  // get_connector_guidance still reads, within the same budget.
+  assert.match(tools.SERVER_INSTRUCTIONS, /submit_work yourself \(patch by default; you choose, not the user\)/);
+
+  // The charter carries the whole rule, including the exceptions.
+  const handling = charter.CHARTER_SECTIONS.find((s) => s.id === 'work-order-handling');
+  assert.match(handling.text, /fallback for a patch over about 250 KB, or for an agent that already pushes there/);
+  assert.match(handling.text, /coding agent's decision, never the user's/);
+  assert.match(handling.text, /do not ask the user to choose/);
+  const both = charter.CHARTER_SECTIONS.find((s) => s.id === 'you-may-be-both');
+  assert.match(both.text, /a patch by default/);
+  assert.match(both.text, /never a question for the user/);
+  assert.doesNotMatch(both.text, /Then push and call submit_work/,
+    'a patch needs no push, so the charter no longer tells the agent to push first');
+
+  // prepare_work: its description, and the nextStep a capable host acts on.
+  const idx = SRC.indexOf("server.registerTool('prepare_work'");
+  const desc = SRC.slice(idx, SRC.indexOf('inputSchema:', idx));
+  const body = SRC.slice(idx, SRC.indexOf("server.registerTool('submit_work'"));
+  assert.match(desc, /with your patch \(or branch: your call, never the user's\)/);
+  assert.match(body, /never ask the user to choose between a patch and a branch/);
+
+  // submit_work: shapes (1) and (2) say whose choice separates them, and the
+  // `patch` field repeats it where the argument is filled in.
+  const sIdx = SRC.indexOf("server.registerTool('submit_work'");
+  const sDesc = SRC.slice(sIdx, SRC.indexOf('inputSchema:', sIdx));
+  assert.match(sDesc, /if the patch is over about 250 KB or you already push to your fork/);
+  assert.match(sDesc, /your call between \(1\) and \(2\), never the user's/);
+  const sBlock = SRC.slice(sIdx, SRC.indexOf("server.registerTool('start_platform_build'"));
+  assert.match(sBlock, /Patch or branch is your decision: never ask the user to choose/);
 });
 
 test('prepare_work returns the human steps separately from the work order', () => {

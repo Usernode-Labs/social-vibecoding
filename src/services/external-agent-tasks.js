@@ -494,7 +494,13 @@ function buildGuidance({
     steps.push(`Open your coding agent on ${forkRef}, cloning it first if it works from a terminal.`);
   }
 
-  steps.push('Paste the work order below into it, exactly as written.');
+  // #3687: the work order tells the agent to choose between a patch and a
+  // branch itself. If one asks anyway, the person is told what to answer
+  // rather than left facing a question about git they cannot judge.
+  steps.push(
+    'Paste the work order below into it, exactly as written. '
+    + 'If it asks whether to send a patch or a branch, tell it to choose for itself.'
+  );
   // The coding agent submits for itself now — the Homeroom connector is
   // attached to the user's ACCOUNT, not to this conversation, so a Claude
   // Code session has it too. The human is no longer the courier; they are
@@ -903,8 +909,9 @@ function buildWorkOrder({
     'RULES',
     ...(hasTask && !update
       ? [
-        '- Hand the change in as a patch (see WHEN YOU ARE DONE). If you push a',
-        '  branch instead, push only to YOUR FORK. Do not push to the upstream',
+        '- Hand the change in as a patch unless step 1 under WHEN YOU ARE DONE',
+        '  says a branch fits better. The choice is yours, never the user\'s.',
+        '  If you push a branch, push only to YOUR FORK. Do not push to the upstream',
         '  repository — you do not have access to it, and Homeroom opens the pull',
         '  request for you.',
         '- A fork is needed only to push a branch. Homeroom has no write access to',
@@ -1055,6 +1062,11 @@ function buildWorkOrder({
   // production runs. A branch stays the fallback for a change over the patch
   // limit, or for an agent that already pushes to its fork. An update has no
   // patch path at all (a patch opens a second proposal), so it keeps the push.
+  //
+  // #3687: which of the two is the AGENT's call, and the text says so. Given
+  // a default and an exception and no owner for the choice, Claude Code on
+  // the web asked the user "patch or branch?", which a non-developer cannot
+  // answer and should never be asked.
   const patchFirst = hasTask && !update;
   lines.push('', 'WHEN YOU ARE DONE', '');
   if (patchFirst) {
@@ -1067,7 +1079,10 @@ function buildWorkOrder({
       '   you already push to your fork, push a branch instead (any branch name):',
       `${CMD}git push -u origin HEAD`,
       `${CMD}git rev-parse --abbrev-ref HEAD`,
-      '   The second command prints the branch name you just pushed. You need it.'
+      '   The second command prints the branch name you just pushed. You need it.',
+      '   Patch or branch is YOUR decision, by the rule above. Make it yourself and',
+      '   never ask the user which to use: most users are not developers, and the',
+      '   question only confuses them.'
     );
   } else {
     lines.push(

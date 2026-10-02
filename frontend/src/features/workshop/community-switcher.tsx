@@ -204,8 +204,12 @@ export function SwitcherBody(): ReactNode {
           style={all ? { background: 'rgba(0,0,0,0.06)' } : undefined}
           onClick={() => goToCommunity(null)}
         >
+          {/* THE TAB'S OWN FACE for All communities (#3663): the people
+              glyph in a square ring, not a dark tile, which in a list
+              holding Homeroom's own read as a second Homeroom. app.css sizes
+              the glyph to the tile, as it does the tab's. */}
           <span className="community-switcher-tile community-switcher-tile-all" aria-hidden="true">
-            <UserGroupIcon className="w-6 h-6" />
+            <UserGroupIcon />
           </span>
           <span className="community-switcher-text">
             <span className="community-switcher-name">All communities</span>

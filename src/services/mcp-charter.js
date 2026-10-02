@@ -66,7 +66,7 @@ const CHARTER_SECTIONS = Object.freeze([
   {
     id: 'read-this-first',
     title: 'Read this first',
-    brief: 'Call get_connector_guidance first: no arguments, and it returns the full operating charter these truncated instructions are a summary of.',
+    brief: 'Call get_connector_guidance first (no arguments) for the full charter these instructions summarise.',
     text: 'You are reading the full charter, so this section is here for the copy of it that lives in the server instructions: those instructions are truncated by several clients at 2048 characters, and this charter is the untruncated text. get_connector_guidance takes no arguments, is read-only, and can be called at any point — at the start of a conversation, or later when a step is not going the way the instructions implied.',
   },
   {
@@ -93,7 +93,7 @@ const CHARTER_SECTIONS = Object.freeze([
     // already deep enough in the flow to be holding a checkout.
     id: 'you-may-be-both',
     title: 'When you are the coding agent as well',
-    text: 'The section above is about this connector, not about you. If you are yourself the user\'s coding agent — a Claude Code or Codex session that also holds this connector — then you are both parties to the hand-off, and the steps written as "give this to the user\'s coding agent" are yours to carry out rather than to relay. Call prepare_work for the request you are building and read the work order it returns: it names the repository, the fork, the branch and the exact base commit your branch has to start from, and that base commit is not discoverable from inside a checkout — the branch you were handed may have been cut from something far older. Then push and call submit_work yourself with that task id. That is the expected path, not an overreach: the task belongs to the Homeroom account this connector is signed in as, not to the chat that created it. Do not relay a work order to the user as though somebody else were going to build it.',
+    text: 'The section above is about this connector, not about you. If you are yourself the user\'s coding agent — a Claude Code or Codex session that also holds this connector — then you are both parties to the hand-off, and the steps written as "give this to the user\'s coding agent" are yours to carry out rather than to relay. Call prepare_work for the request you are building and read the work order it returns: it names the repository, the fork, the branch and the exact base commit your branch has to start from, and that base commit is not discoverable from inside a checkout — the branch you were handed may have been cut from something far older. Then hand the change in as the work order says, a patch by default, and call submit_work yourself with that task id; whether to send a patch or a branch is your decision, never a question for the user. That is the expected path, not an overreach: the task belongs to the Homeroom account this connector is signed in as, not to the chat that created it. Do not relay a work order to the user as though somebody else were going to build it.',
   },
   {
     id: 'repository-instruction-boundary',
@@ -117,7 +117,7 @@ const CHARTER_SECTIONS = Object.freeze([
   {
     id: 'where-to-start',
     title: 'Where to start, and the duplicate check',
-    brief: 'Start from list_apps, and list_requests before filing anything — page `nextCursor` until it is null, or the duplicate check is not done.',
+    brief: 'Start from list_apps, and list_requests before filing anything — page `nextCursor` until null, or the duplicate check is not done.',
     // The get_request pointer (#1223) is charter-only: list_requests' own
     // description carries it at the point of use, and the brief below has no
     // budget left to spend on a clause a caller reads next to the clipped
@@ -143,8 +143,12 @@ const CHARTER_SECTIONS = Object.freeze([
   {
     id: 'work-order-handling',
     title: 'Getting something built',
-    brief: 'After prepare_work: with tools, execute workOrder, then submit_work yourself; otherwise relay guidance as a numbered list, in order, as written, and reproduce workOrder character for character.',
-    text: 'To get something BUILT, call prepare_work first. It returns TWO things for two possible situations. If this conversation has repository, filesystem, shell or code-editing tools, you are the coding agent: do not relay `guidance` or send the user elsewhere. Read and execute `workOrder` yourself, implement and test in this conversation, then call submit_work with the branch or patch you produced. If this conversation lacks those tools, `guidance` is the human\'s next steps: relay them in order, as written, as a numbered list, and reproduce `workOrder` character for character inside a fenced code block, EXACTLY as returned — do not re-wrap, re-indent, renumber, translate, summarise or "fix" anything in it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction. Do not add steps of your own. The work order hands the change in as a patch through submit_work, which needs no GitHub write access; a branch pushed to the user\'s own fork is the fallback for a large change. Homeroom has no write access to their GitHub account. prepare_work needs a linked GitHub identity; if it answers github_not_linked, send the user to the settings link and stop. If it answers github_link_unavailable, do not send them to Settings. Explain the handoff is unavailable and offer start_platform_build only if the user explicitly chooses the paid platform build.',
+    // The patch-or-branch clause in the brief (#3687) is there because a
+    // capable host that never reads this section asked the user which of the
+    // two to send, a question most users cannot answer. Paid for by the two
+    // trims to read-this-first and where-to-start, not by a raised budget.
+    brief: 'After prepare_work: with tools, execute workOrder, then submit_work yourself (patch by default; you choose, not the user); otherwise relay guidance as a numbered list, in order, as written, and reproduce workOrder character for character.',
+    text: 'To get something BUILT, call prepare_work first. It returns TWO things for two possible situations. If this conversation has repository, filesystem, shell or code-editing tools, you are the coding agent: do not relay `guidance` or send the user elsewhere. Read and execute `workOrder` yourself, implement and test in this conversation, then call submit_work with the patch or branch you produced. If this conversation lacks those tools, `guidance` is the human\'s next steps: relay them in order, as written, as a numbered list, and reproduce `workOrder` character for character inside a fenced code block, EXACTLY as returned — do not re-wrap, re-indent, renumber, translate, summarise or "fix" anything in it, strip its <untrusted-content> tags, or retype the branch name or the 40-character commit id, and never append a correction. Do not add steps of your own. The work order hands the change in as a patch through submit_work, which needs no GitHub write access; a branch pushed to the user\'s own fork is the fallback for a patch over about 250 KB, or for an agent that already pushes there. Which of the two to send is the coding agent\'s decision, never the user\'s: make it yourself by that rule and do not ask the user to choose, because most of them are not developers and the question only confuses them. Homeroom has no write access to their GitHub account. prepare_work needs a linked GitHub identity; if it answers github_not_linked, send the user to the settings link and stop. If it answers github_link_unavailable, do not send them to Settings. Explain the handoff is unavailable and offer start_platform_build only if the user explicitly chooses the paid platform build.',
   },
   {
     // Charter-only, deliberately. It binds a reader who has already BUILT

@@ -291,6 +291,103 @@ async function sendDm(pool, { bot, userId, content, metadata = null, idempotency
   };
 }
 
+// ── Typing, while the bot answers ────────────────────────────────────────
+
+// #3684: from the moment the bot starts on a person's message until its
+// answer is sent, it shows as typing in their DM. It is the same
+// `conversation_typing` event a person's composer sends (routes/
+// conversations.js), to the same audience, so the Messages screen draws
+// "homeroom_bot is typing…" with nothing new. A reader drops a typing line
+// it has not heard again within 6 seconds (frontend/src/features/messages/
+// store.ts), and a model's answer can take minutes, so the bot says it again
+// every TYPING_RENEW_MS. It stops when the answer is sent or the handling
+// fails, and at the latest TYPING_MAX_MS after it started whatever the
+// handling is still doing, so the bot is never left typing forever: once
+// nothing renews it, every reader clears the line on its own.
+const TYPING_RENEW_MS = 4000;
+const TYPING_MAX_MS = 3 * 60 * 1000;
+
+// conversation id -> { holders: Map<holder, deadline>, timer }. A person can
+// write again while the bot still answers their last message (the model's
+// turns run one after another): the line stays up until the last answer is
+// out, rather than going off between them.
+const typingNow = new Map();
+// conversation id -> the send in flight: a conversation's typing events go
+// out in order, so a quick answer's "stopped" never overtakes its "typing".
+const typingSends = new Map();
+
+async function pushTyping(pool, botId, conversationId, typing, ws) {
+  try {
+    await conversations.withLockedAudience(pool, { id: botId }, conversationId, (audience) => {
+      ws.pushConversationEvent(audience, {
+        type: 'conversation_typing', conversationId, userId: botId, typing,
+      }, { excludeUserId: botId });
+    });
+  } catch (err) {
+    // Ephemeral: a missed typing event costs nothing the answer needs.
+    log.warn('homeroom-bot-dm', 'Typing event failed', { conversationId, typing, err: err.message });
+  }
+}
+
+function sendTyping(pool, botId, conversationId, typing, ws) {
+  const prior = typingSends.get(conversationId) || Promise.resolve();
+  const next = prior.then(() => pushTyping(pool, botId, conversationId, typing, ws));
+  typingSends.set(conversationId, next);
+  next.then(() => { if (typingSends.get(conversationId) === next) typingSends.delete(conversationId); });
+  return next;
+}
+
+/**
+ * Show the bot typing in one conversation until the returned stop() is
+ * called, or TYPING_MAX_MS passes. Never throws.
+ */
+function startTyping(pool, { botId, conversationId, ws = null }) {
+  const id = Number(conversationId);
+  if (!botId || !Number.isSafeInteger(id) || id <= 0) return async () => {};
+  const io = ws || require('./ws');
+  let entry = typingNow.get(id);
+  if (!entry) {
+    const created = { holders: new Map(), timer: null };
+    created.end = () => {
+      clearInterval(created.timer);
+      if (typingNow.get(id) === created) typingNow.delete(id);
+      return sendTyping(pool, botId, id, false, io);
+    };
+    created.timer = setInterval(() => {
+      const now = Date.now();
+      for (const [holder, deadline] of created.holders) if (now >= deadline) created.holders.delete(holder);
+      if (!created.holders.size) {
+        log.warn('homeroom-bot-dm', 'Stopped typing: the answer took too long', { conversationId: id });
+        created.end();
+        return;
+      }
+      // One renewal at a time: a slow database never queues them up.
+      if (!typingSends.has(id)) sendTyping(pool, botId, id, true, io);
+    }, TYPING_RENEW_MS);
+    created.timer.unref?.();
+    typingNow.set(id, created);
+    sendTyping(pool, botId, id, true, io);
+    entry = created;
+  }
+  const holder = Symbol('typing');
+  entry.holders.set(holder, Date.now() + TYPING_MAX_MS);
+  return async () => {
+    // Already timed out, or another answer is still being written.
+    if (!entry.holders.delete(holder) || entry.holders.size) return;
+    await entry.end();
+  };
+}
+
+/** Run `work` with the bot typing in the conversation, and stop when it settles. */
+async function whileTyping(pool, { botId, conversationId, ws = null }, work) {
+  const stop = startTyping(pool, { botId, conversationId, ws });
+  try {
+    return await work();
+  } finally {
+    await stop();
+  }
+}
+
 // ── Who a request is for ─────────────────────────────────────────────────
 
 /**
@@ -753,6 +850,7 @@ async function answerOnRequest(pool, { bot, user, target, message, deps = {} }) 
  *     file a new request. With that switched off, it is the answer to the
  *     newest open question, or else the bot's short help.
  * Whichever it is, what the bot says back quotes the message (#3707).
+ * The bot shows as typing in the DM until its answer is sent (#3684).
  */
 async function noteUserMessage(pool, config, { user, conversationId, message, deps = {} }) {
   if (!user?.id || !message?.id || user.isSynthetic) return null;
@@ -766,6 +864,13 @@ async function noteUserMessage(pool, config, { user, conversationId, message, de
       bot, userId: user.id, replyToId: message.id, content: NOT_ENABLED_TEXT, idempotencyKey: `hrbot-notyet-${user.id}-${hour}`,
     });
   }
+  // #3684: typing from here until the answer is sent (whileTyping above).
+  return whileTyping(pool, { botId: bot.id, conversationId, ws: deps.ws },
+    () => answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }));
+}
+
+/** What noteUserMessage does with a message from somebody on the list, while the bot types. */
+async function answerUserMessage(pool, config, { bot, user, settings, conversationId, message, deps }) {
   const mayor = deps.mayor || require('./homeroom-bot-mayor');
   const quoted = message?.reply?.id || null;
   if (quoted) {
@@ -999,6 +1104,10 @@ module.exports = {
   noteProjectMade,
   importedAt,
   sendDm,
+  TYPING_RENEW_MS,
+  TYPING_MAX_MS,
+  startTyping,
+  whileTyping,
   recordRequester,
   requesterOf,
   weeklySpentCents,
