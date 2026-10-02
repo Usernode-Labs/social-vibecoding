@@ -82,6 +82,13 @@
  * would make the root the containing block for its fixed fake-glass layer,
  * which would then draw at strip size and snap back when the motion ended.
  * The children carry the slide (app.css).
+ *
+ * ── The app goes into it, and comes back out of it (#3618) ──────────
+ *
+ * Closing an app shrinks it into this strip, and Resume grows it back out:
+ * the press notes the strip as the zoom's origin before the router opens the
+ * app (./resume-motion.ts has the argument and the fallbacks). The pill is
+ * the accent's, because Resume is an action.
  */
 
 import { useEffect, useRef, useState } from 'react';
@@ -95,6 +102,7 @@ import { AppIconContent, appIconKind } from '../apps/app-card-view';
 import { navStore } from './nav-store.js';
 import { parkedStore, readParked, setParked } from './parked-store.js';
 import { enterPeek, leavePeek } from './rail-peek';
+import { noteResumeOrigin } from './resume-motion';
 
 type ParkedApp = { slug: string; name: string; iconUrl: string | null; iconEmoji: string | null };
 
@@ -221,6 +229,7 @@ export function ParkedStrip() {
               event.preventDefault();
               // A leaving strip is inert; there is no app to resume.
               if (!app) return;
+              noteResumeOrigin(app.slug, ref.current);
               window.App?.openAppTab?.(app.slug, 'app');
             }}
           >

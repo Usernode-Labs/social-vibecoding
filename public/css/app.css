@@ -19364,6 +19364,9 @@ html.un-ios {
   font-size: 15px;
   font-weight: 600;
 }
+/* RESUME IS AN ACTION, so it is drawn in the accent, filled (#3618). It was
+   the header's periwinkle, which is the header's own ink and nothing else's,
+   at a tint light enough that the strip's one action read as a tag. */
 .platform-parked-pill {
   flex: none;
   display: inline-flex;
@@ -19371,9 +19374,9 @@ html.un-ios {
   height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid var(--brand-line);
-  background: var(--brand-tint);
-  color: var(--brand-ink);
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
 }
@@ -19445,6 +19448,49 @@ html.un-kb #platform-parked {
 @media (prefers-reduced-motion: reduce) {
   .platform-parked-enter, .platform-parked-leave,
   .platform-parked-enter > *, .platform-parked-leave > * { animation: none; }
+}
+
+/* ── THE APP YOU CLOSED, ON ITS WAY INTO RESUME (#3618) ──────────────
+   frontend/src/features/nav/resume-motion.ts carries the argument: a
+   stand-in for the app (its page colour, its icon) pinned where the app was,
+   shrinking into the Resume control in the rail or the strip. Above the page
+   and the bars, at the kit's zoom layer and under every kit overlay; never a
+   target; gone when the motion ends. The script never runs it with reduced
+   motion; the rule below is the belt to that. */
+.resume-ghost {
+  position: fixed;
+  z-index: 9960;
+  pointer-events: none;
+  transform-origin: 0 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The app's own page colour when its frame reported one (set inline);
+     the page ground otherwise — a card lifted off whatever is behind it,
+     never the wallpaper it would vanish into. */
+  background: var(--bg-primary);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 12px 40px rgba(0, 0, 0, .18);
+  will-change: transform, opacity;
+}
+.resume-ghost-tile {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: 700;
+}
+.resume-ghost-tile > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+@media (prefers-reduced-motion: reduce) {
+  .resume-ghost { display: none; }
 }
 
 
@@ -20023,6 +20069,27 @@ html.un-kb #platform-parked {
     border-radius: 999px;
     /* The unread count's own fill in Messages (`.messages-unread`). */
     background: var(--accent);
+  }
+
+  /* RESUME ON A RUNNING APP YOU LEFT (#3618). The Active row's one action,
+     filled in the accent so the apps waiting for you are the thing the rail
+     points at (recents-list.tsx). It says what the green dot said, so the
+     dot steps aside for it; the row you are in keeps neither. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .platform-recent-resume ~ .platform-recent-live {
+    display: none;
   }
 
   /* ── ACTIVE (#3074) ──────────────────────────────────────────────────
