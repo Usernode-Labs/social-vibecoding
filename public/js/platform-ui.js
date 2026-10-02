@@ -342,7 +342,13 @@
         is the page's alone, so the blocking listener the kit keeps bound
         at the top is there before the next finger lands, as it always was.
         v1 of the kit is frozen (additive only), which is why this is the
-        platform's seam and not a change to attachPullToRefresh. */
+        platform's seam and not a change to attachPullToRefresh.
+
+        `opts` reach the kit as given, beside the reader above. A page whose
+        chrome sits INSIDE its scroller passes the kit's additive
+        `pullProperty` and a `topEl` function, so that chrome holds still and
+        only the content under it slides: the project page's tab band
+        (app-view.js; pull-to-refresh under the tabs, evan, 2026-10-01). */
     pullToRefresh(scrollEl, onRefresh, opts) {
       const un = kit();
       if (!un || typeof un.attachPullToRefresh !== 'function' || !scrollEl) {

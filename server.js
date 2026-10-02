@@ -43,6 +43,7 @@ const { adminRoutes } = require('./src/routes/admin');
 const { adminSupportRoutes } = require('./src/routes/admin-support');
 const { adminUserMergeRoutes } = require('./src/routes/admin-user-merge');
 const { dashboardRoutes } = require('./src/routes/dashboard');
+const { uiTelemetryRoutes } = require('./src/routes/ui-telemetry');
 const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
 const { collaboratorRoutes } = require('./src/routes/collaborators');
@@ -262,6 +263,10 @@ app.use((req, res, next) => {
           || /^\/api\/sessions\/[^/]+\/proposal-handoff\/(?:context|build|commits)$/.test(req.path))) {
     return next();
   }
+  // The browser diagnostics collector owns a stricter 32 KiB parser in
+  // routes/ui-telemetry.js. Leave its stream untouched here so that lower
+  // bound is enforced before JSON decoding.
+  if (req.method === 'POST' && req.path === '/api/ui-telemetry/batch') return next();
   // Private conversation uploads carry raw bytes and own a bounded 21 MB
   // parser in routes/conversations.js. In particular, a .json file may have
   // application/json content-type; letting this global parser consume it
@@ -619,6 +624,7 @@ app.use(adminRoutes(config));
 app.use(adminSupportRoutes(config));
 app.use(adminUserMergeRoutes(config));
 app.use(dashboardRoutes(config));
+app.use(uiTelemetryRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));

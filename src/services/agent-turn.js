@@ -80,6 +80,10 @@ function runtimeModelMetadataForModel(model, requestedModelId) {
     supportsReasoning: model ? model.supportsReasoning === true : null,
     reasoningEfforts: efforts,
     supportsTools: model ? model.supportsTools === true : null,
+    // #3426: false (text only) unless the catalog says the model takes images.
+    supportsImages: model ? model.supportsImages === true : null,
+    // #3557: likewise for PDFs, which Claude Code's Read tool sends as documents.
+    supportsFiles: model ? model.supportsFiles === true : null,
   };
 }
 

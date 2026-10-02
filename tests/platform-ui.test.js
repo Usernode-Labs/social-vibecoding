@@ -66,6 +66,25 @@ test('pull-to-refresh reads the active page offset after its scroller changes', 
   assert.equal(options.getScrollTop(), 0, 'refresh arms only once the page reaches the top');
 });
 
+// pull-to-refresh under the tabs (evan, 2026-10-01): a project page opts into
+// the kit's `pullProperty` and a `topEl` function so its tabs hold still while
+// the page under them moves. The seam hands both to the kit untouched, beside
+// its own offset reader, and a caller that passes neither gets neither.
+test('pull-to-refresh passes the page\'s own kit options through', () => {
+  let options;
+  const { kit } = stubKit();
+  kit.attachPullToRefresh = (el, refresh, opts) => { options = opts; return { detach() {} }; };
+  const { PlatformUI } = makeSandbox({ kit });
+  const band = {};
+  const topEl = () => band;
+  PlatformUI.pullToRefresh({ scrollTop: 0 }, async () => {}, { pullProperty: '--dev-ptr-pull', topEl });
+  assert.equal(options.pullProperty, '--dev-ptr-pull');
+  assert.equal(options.topEl, topEl, 'the function itself, for the kit to ask at every pull');
+  assert.equal(typeof options.getScrollTop, 'function');
+  PlatformUI.pullToRefresh({ scrollTop: 0 }, async () => {});
+  assert.deepEqual(Object.keys(options), ['getScrollTop'], 'Home, Discover and Standings pass nothing new');
+});
+
 // #3517: the Workshop's Needs you feed is a snap scroller inside the Dev
 // scroller, fitted to the window, so the outer offset is always 0 and a
 // swipe down to go back a card was read as a pull: the whole screen slid

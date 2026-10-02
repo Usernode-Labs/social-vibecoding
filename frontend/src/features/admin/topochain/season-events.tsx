@@ -7,8 +7,8 @@ import { EventDetail, publishRoute } from './challenges.tsx';
 import { BTN } from './tokens.ts';
 import {
   CheckField, EmptyState, ErrorState, Field, FormActions, FormError, FormGrid, Input, List,
-  Options, Pager, Panel, ScreenHeader, Select, Skeleton, Textarea, fmt, isoToLocalInput,
-  localInputToIso,
+  Options, Pager, Panel, ProgrammeCsvLink, ScreenHeader, Select, Skeleton, Textarea, fmt,
+  isoToLocalInput, localInputToIso,
 } from './ui.tsx';
 import type { Column, PageMeta } from './ui.tsx';
 
@@ -419,6 +419,7 @@ function EventList({ onManage }: { onManage: (id: number) => void }) {
                 if (e.key === 'Enter') commitSearch((e.target as HTMLInputElement).value);
               }}
             />
+            <ProgrammeCsvLink id="admin-topo-se-export" />
             {write ? (
               <button
                 id="admin-topo-se-new"

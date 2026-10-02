@@ -243,7 +243,10 @@ test('signing UP from an invite page follows the link server-side; signing IN is
   // Only an account the email code just created: signing up from the link is
   // the consent. A forced navigation that plants the cookie cannot make an
   // existing account join anything without the shell's confirm.
-  assert.match(auth, /const invite = verified\.created\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId\)\s+: \(communityInvites\.clearInviteCookie\(res\), null\);\s+if \(verified\.next === 'signed-in'\)/);
+  // A link that joined them on the spot (its maker's skip let them in) has
+  // its "Find people to build with" counted before the answer (#3564); that
+  // one line sits between the redeem and the branch, and nothing else may.
+  assert.match(auth, /const invite = verified\.created\s+\? await communityInvites\.redeemCarried\(pool, req, res, verified\.userId\)\s+: \(communityInvites\.clearInviteCookie\(res\), null\);\s+(?:\/\/[^\n]*\n\s*)*if \(invite && invite\.status === 'joined'\) await challengeScorer\.scoreOnJoin\(pool, config\);\s+if \(verified\.next === 'signed-in'\)/);
   const login = auth.slice(auth.indexOf("log.info('auth', 'Login successful'"), auth.indexOf("log.info('auth', 'Login successful'") + 900);
   assert.match(login, /communityInvites\.clearInviteCookie\(res\);/, 'a password sign-in drops the carried copy');
   assert.doesNotMatch(login, /redeemCarried/);

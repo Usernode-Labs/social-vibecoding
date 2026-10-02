@@ -393,6 +393,19 @@ function guardedRouter({ app, sessionUserId }) {
 const PRIVATE_COLLAB = { id: 9, slug: 'rss-reader-4113da', name: 'RSS reader', community_id: 48, collab_visibility: 'private', view_visibility: 'public' };
 const PUBLIC_COLLAB = { ...PRIVATE_COLLAB, collab_visibility: 'public' };
 
+test('promoteAsBot hands the route the bot\'s own proposal ceiling, only when it has one (#3576)', async () => {
+  const { BOT_PROMOTED_CEILING, effectiveSessionCaps } = require('../src/services/session-caps');
+  const users = [];
+  const router = express.Router();
+  router.post('/api/sessions/:id/promote', (req, res) => { users.push(req.user); res.json({ ok: true }); });
+  await live.promoteAsBot({ config: {}, bot: BOT, sessionId: 5001, router, ceiling: 20 });
+  await live.promoteAsBot({ config: {}, bot: BOT, sessionId: 5001, router });
+  assert.equal(users[0][BOT_PROMOTED_CEILING], 20);
+  assert.equal(effectiveSessionCaps({}, users[0]).promotedSessions, 20);
+  assert.ok(!(BOT_PROMOTED_CEILING in users[1]), 'no ceiling given, the per-user cap stands');
+  assert.equal(effectiveSessionCaps({}, users[1]).promotedSessions, 5);
+});
+
 test('the bot proposes its own build on an app it is not a collaborator or member of', async () => {
   for (const app of [PRIVATE_COLLAB, PUBLIC_COLLAB]) {
     const { router, reached } = guardedRouter({ app, sessionUserId: BOT.id });
@@ -633,7 +646,7 @@ test('each verdict says its own thing; a verdict held by a cap says only that it
   assert.deepEqual(h.posts.map((p) => p.kind), ['held_question_tripwire', 'held_proposals_per_app'],
     'the caps hold the question and the build, and say so in one line (#3152)');
   assert.ok(!/Which feed/.test(h.posts[0].text), 'the held question itself is not posted');
-  assert.match(h.posts[1].text, /would build this, but it already has 2 proposals open on this app/);
+  assert.match(h.posts[1].text, /would build this, but it already has 5 proposals open on this app/);
   assert.match(h.posts[1].text, /come back to this issue when one of them is merged or closed/);
 
   live.buildAndPropose = async (args) => {
@@ -741,6 +754,62 @@ test('a live build\'s outcome is recorded on its run, in the shadow build\'s col
   assert.doesNotMatch(rec.slice(0, rec.indexOf('\n}\n')), /build_at|build_queued_at/);
 });
 
+test('a ready verdict is held before it is built when the bot is at its ceiling across apps (#3576)', async (t) => {
+  let perApp = 0;
+  let total = 0;
+  const pool = {
+    async query(sql) {
+      const s = String(sql);
+      if (/FROM chat_sessions\s+WHERE app_id = \$1/.test(s)) return { rows: [{ cnt: perApp }] };
+      if (/FROM chat_sessions\s+WHERE user_id = \$1/.test(s)) {
+        assert.match(s, /status IN \('promoted', 'merging'\) AND is_headless = FALSE/, 'counted as the Propose route counts');
+        return { rows: [{ cnt: total }] };
+      }
+      return { rows: [{ cnt: 0 }] };
+    },
+  };
+  const settings = { liveApps: ['a', 'b', 'c', 'd'] };
+  assert.equal(bot.PROPOSALS_PER_APP_CAP, 5);
+  assert.equal(bot.botProposalCeiling(settings), 20, '5 per live app');
+  assert.equal(bot.botProposalCeiling(null), 5, 'never below one app\'s cap');
+  total = 19;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), null);
+  total = 20;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), 'proposals_total');
+  perApp = 5;
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'ready', settings), 'proposals_per_app', 'the app\'s own cap is named first');
+  assert.equal(await bot.simulateCaps(pool, BOT, 9, 'question', settings), null, 'only a build is held by them');
+
+  // Held, it says so and builds nothing; the line names the ceiling.
+  const h = actHarness();
+  const realPost = live.post;
+  const realBuild = live.buildAndPropose;
+  t.after(() => { live.post = realPost; live.buildAndPropose = realBuild; });
+  live.post = async (args) => { h.posts.push({ kind: args.kind, text: args.text }); return { githubCreatedAt: '2026-09-25T17:00:05Z' }; };
+  const built = [];
+  live.buildAndPropose = async (args) => { built.push(args.proposalCeiling); return { ok: true, sessionId: 5001, prNumber: 42 }; };
+  assert.equal(await bot.actOnVerdict({
+    pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
+    parsed: { verdict: 'ready', buildNote: 'x' }, capSuppressed: 'proposals_total', runId: 900, seed: 's',
+    seedReadAt: '2026-09-25T17:00:00Z', postedAt: [], turnBudgetMs: 1000, model: 'm', proposalCeiling: 20, deps: h.deps,
+  }), 'held');
+  assert.deepEqual(built, []);
+  assert.equal(h.posts[0].kind, 'held_proposals_total');
+  assert.match(h.posts[0].text, /already has 20 proposals open across Homeroom/);
+  // Not held, the build carries the ceiling to its promote.
+  assert.equal(await bot.actOnVerdict({
+    pool: h.pool, config: {}, bot: BOT, app: APP, repo: REPO, issueNumber: 12, issue: { title: 'x' },
+    parsed: { verdict: 'ready', buildNote: 'x' }, capSuppressed: null, runId: 900, seed: 's',
+    seedReadAt: '2026-09-25T17:00:00Z', postedAt: [], turnBudgetMs: 1000, model: 'm', proposalCeiling: 20, deps: h.deps,
+  }), 'proposed');
+  assert.deepEqual(built, [20]);
+  assert.match(BOT_SRC, /quietHold: item\.reason === APP_AGAIN_REASON,\n\s+proposalCeiling: botProposalCeiling\(settings\),/);
+  assert.match(BOT_SRC, /simulateCaps\(pool, bot, app\.id, parsed\.verdict, settings\)/);
+  assert.match(BOT_SRC, /live\.promoteAsBot\(\{\n\s+config, bot, sessionId, router: liveD\.votesRouter, ceiling: botProposalCeiling\(/,
+    'a build recovery finishes is proposed under the same ceiling');
+  assert.match(LIVE_SRC, /router: deps\.votesRouter \|\| null, ceiling: proposalCeiling,/);
+});
+
 test('the held lines name the limit and never promise more than the refresh does', () => {
   assert.match(live.heldText({ cap: 'proposals_per_app', verdict: 'ready', limit: 2 }), /already has 2 proposals open on this app/);
   const q = live.heldText({ cap: 'question_tripwire', verdict: 'question', limit: 10 });
@@ -778,4 +847,19 @@ test('the dashboard says what a live build came to, and never calls it a shadow 
   assert.match(fn, /Live build did not become a proposal: \$\{why\}\./);
   assert.match(fn, /data-live-build="built"/);
   assert.doesNotMatch(fn, /Shadow|href=/, 'the proposal link below the note is the one link');
+});
+
+test('#3426: a request with a screenshot tells each bot turn to look at it, and what to do if it cannot', () => {
+  const seed = 'Issue #47: Can not comment\n\n**Screenshot:**\n![Screenshot](https://app.onhomeroom.com/issue-images/1ed1d30f045b9362b7d7f78e41d984f9)';
+  const note = live.screenshotNote(seed).join('\n');
+  assert.match(note, /Download each one/);
+  assert.match(note, /view_image, or the Read\ntool/);
+  assert.match(note, /do not try to decode the file another way/);
+  assert.deepEqual(live.screenshotNote('Issue #3: no pictures here'), [], 'nothing said without one');
+  assert.deepEqual(live.screenshotNote(null), []);
+  const args = { seed, buildNote: 'x' };
+  assert.ok(live.buildPrompt(args).includes(note), 'the build reads it');
+  assert.ok(live.specPrompt(args).includes(note), 'and the spec');
+  assert.match(BOT_SRC, /seed, live\.screenshotNote\(seed\)\.join\('\\n'\)\.trim\(\), triagePrompt\(\)/, 'and the triage');
+  assert.ok(!live.buildPrompt({ seed: 'Issue #3', buildNote: 'x' }).includes('Download each one'));
 });

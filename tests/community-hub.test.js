@@ -277,7 +277,12 @@ test('#3499: the band and the Discussion pane bleed to the screen\'s edges, not 
   assert.equal(Number(pane[1]), side, 'and so does the Discussion pane, to the band\'s width');
 });
 
-test('#3522, #3514: on a phone the band pins where it rests, and a pull stretches it from the header', () => {
+test('#3522: on a phone the band pins where it rests', () => {
+  // Renamed in place (pull-to-refresh under the tabs, evan, 2026-10-01): this
+  // test also pinned #3514's half, "and a pull stretches it from the header",
+  // the community-coloured gap under the header and the hook that sized it.
+  // A pull no longer moves the band, so that gap never opens; the test below
+  // pins what a pull does now, and that the old paint and hook are gone.
   const CSS = read('public/css/app.css');
   const phone = CSS.slice(CSS.indexOf('@media (max-width: 699.98px) {\n  #dev-workshop { --ws-band-top'));
   assert.ok(phone.length > 0, 'a phone block for the band');
@@ -292,11 +297,36 @@ test('#3522, #3514: on a phone the band pins where it rests, and a pull stretche
   // The two numbers the offsets are built from.
   assert.match(CSS, /^#dev-body:has\(> #dev-workshop\) \{ padding: 8px /m, '#dev-body\'s 8px top padding');
   assert.match(CSS, /^\.dev-ws-tabs\.dev-ws-band \{\s*margin: -18px /m, 'the band\'s 18px tuck');
-  // A pull paints only the gap it opens, in the community's colour.
-  assert.match(CSS, /html\[data-community-tint\] :has\(> #dev-forum-scroll\) > \.un-ptr-layer \{\s*background: linear-gradient\(var\(--community-tint\), var\(--community-tint\)\) top left \/ 100% var\(--ptr-gap, 0px\) no-repeat;/);
+});
+
+test('a pull to refresh moves only the page under the tabs (pull-to-refresh under the tabs, evan, 2026-10-01)', () => {
+  // "When you pull down on a community page, the tabs move down too? I think
+  // the tabs should be fixed, and only the page under them move and reveal
+  // the refresh." The kit slid the whole of #dev-forum-scroll, and the sticky
+  // band lives in it. Measured at 390x844 with an iPhone agent and real touch
+  // drags (Hub, Workshop and All items; installed and phone-browser layouts):
+  // before, header 0 / band +76.5 / tab body +76.5 at a 76.5px pull; after,
+  // header 0 / band 0 / tab body +76.5, the spinner between band and page.
+  const CSS = read('public/css/app.css');
+  const APP_VIEW = read('public/js/app-view.js');
+  // The project page opts into the kit's two options, and no other pull does.
+  assert.match(APP_VIEW, /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{\s*pullProperty: '--dev-ptr-pull',\s*topEl: \(\) => devScroll\.querySelector\('\.dev-ws > \.dev-ws-band'\),\s*\}\);/,
+    'the scroller carries the pull as a property, and the spinner hangs from the band');
+  assert.equal((APP_VIEW.match(/pullProperty:/g) || []).length, 1);
+  assert.doesNotMatch(read('public/js/app.js'), /pullProperty/, 'Home, Discover and Standings keep the kit\'s own pull');
+  // What slides: everything after the band, and with no band (the Workshop
+  // still loading) everything in the scroller. No fallback in the var(), so
+  // at rest the declaration is invalid at computed-value time and leaves
+  // `transform: none`: no stacking context or containing block until a pull.
+  assert.match(CSS, /\n#dev-forum-scroll \.dev-ws > \.dev-ws-band ~ \*,\n#dev-forum-scroll:not\(:has\(\.dev-ws-band\)\) > \* \{\n  transform: translateY\(var\(--dev-ptr-pull\)\);\n\}/);
+  assert.doesNotMatch(CSS, /var\(--dev-ptr-pull,/, 'no fallback: a 0px one would transform the tab body at rest');
+  // #3514's paint for the gap under the header, and the hook that sized it,
+  // are gone with the gap: a pull no longer opens one there.
+  assert.doesNotMatch(CSS, /var\(--ptr-gap/, 'nothing paints by the old gap');
+  assert.doesNotMatch(CSS, /> \.un-ptr-layer \{/, 'the kit\'s layer paints only its spinner again');
   const ws = read('frontend/src/features/dev-board/workshop/workshop.tsx');
-  assert.match(ws, /function usePullGap\(hostRef[\s\S]*?closest<HTMLElement>\('#dev-forum-scroll'\)[\s\S]*?attributeFilter: \['style'\][\s\S]*?root\.style\.removeProperty\('--ptr-gap'\);/, 'the gap is read off the kit\'s transform, and cleared on the way out');
-  assert.match(ws, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);\s*usePullGap\(hostRef\);/);
+  assert.doesNotMatch(ws, /function usePullGap|usePullGap\(hostRef\)|setProperty\('--ptr-gap'/, 'nor reads the kit\'s transform back');
+  assert.match(ws, /usePinnedStrip\(bar, hostRef, stripSticks, tab\);\s*\/\/ NO PULL HOOK HERE ANY MORE/);
 });
 
 test('#3520: a short growing tab keeps one pixel to scroll, so the installed app bounces it', () => {
@@ -329,6 +359,8 @@ test('#3520: a short growing tab keeps one pixel to scroll, so the installed app
   // short tab, and the installed shell's still document.
   assert.match(CSS, /#dev-forum-scroll:has\(> #dev-body > #dev-workshop\) \{ display: flex; flex-direction: column; \}/);
   assert.match(CSS, /html, body \{\s*height: 100dvh;\s*overflow: hidden;[\s\S]*?overscroll-behavior-y: none;\s*\}/);
-  // And the pull at the top binds to that same scroller on every tab.
-  assert.match(read('public/js/app-view.js'), /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\)\);/);
+  // And the pull at the top binds to that same scroller on every tab. (The
+  // call takes options now: the tabs hold still during a pull, pinned in the
+  // test above. Still that scroller, so still its one pixel of range.)
+  assert.match(read('public/js/app-view.js'), /PlatformUI\.pullToRefresh\(devScroll, \(\) => AppView\._loadDevFeed\(\), \{/);
 });

@@ -144,6 +144,10 @@ function heldText({ cap, verdict, limit }) {
     return `Homeroom bot would build this, but it already has ${limit} proposals open on this app. `
       + 'It will come back to this issue when one of them is merged or closed.';
   }
+  if (cap === 'proposals_total') {
+    return `Homeroom bot would build this, but it already has ${limit} proposals open across Homeroom. `
+      + 'It will come back to this issue when one of them is merged or closed.';
+  }
   const what = verdict === 'question' ? 'a question about' : 'a note on';
   return `Homeroom bot has ${what} this request, but it has already posted ${limit} questions and notes `
     + 'on this app in the last day. It will come back to this issue once some of those are a day old.';
@@ -206,10 +210,30 @@ function lastActivity() {
   };
 }
 
+// #3426: a reporter's screenshot (feedback's `/issue-images/<id>` line) is
+// often the only description of what they mean, and the bot used to guess
+// past it: recipebot #47 ("Can not comment", a phone screenshot) was built
+// on an assumption. Said only when the thread has one, in each turn that
+// reads the request: triage, spec and build.
+const ISSUE_IMAGE_URL = /https?:\/\/[^\s)]+\/issue-images\/[A-Za-z0-9_-]+/;
+
+function screenshotNote(seed) {
+  if (!ISSUE_IMAGE_URL.test(String(seed || ''))) return [];
+  return [
+    'The request includes a screenshot (an `/issue-images/<id>` link above). Download each one, for example',
+    '`curl -sS -o /tmp/issue-shot-1.png <url>`, and look at it with your image tool (view_image, or the Read',
+    'tool) before you decide anything: it is often the clearest description of what the reporter means. If the',
+    'tool says this model cannot take images, do not try to decode the file another way (by hand, as ASCII art',
+    'or with OCR): treat what it shows as unknown, and say so.',
+    '',
+  ];
+}
+
 function specPrompt({ seed, buildNote }) {
   return [
     seed,
     '',
+    ...screenshotNote(seed),
     'You are the Homeroom bot. Your triage of this request concluded it is ready to build, with this plan:',
     '',
     clipText(buildNote, 4000) || '(no plan recorded: work from the request itself)',
@@ -963,7 +987,7 @@ let votesRouter = null;
  * Run POST /api/sessions/:id/promote as the bot, in-process. Resolves the
  * status and JSON the route answered with; never throws.
  */
-function promoteAsBot({ config, bot, sessionId, router = null }) {
+function promoteAsBot({ config, bot, sessionId, router = null, ceiling = null }) {
   const target = router || (votesRouter ||= require('../routes/votes').voteRoutes(config));
   const url = `/api/sessions/${Number(sessionId)}/promote`;
   return new Promise((resolve) => {
@@ -979,6 +1003,10 @@ function promoteAsBot({ config, bot, sessionId, router = null }) {
       user: {
         id: bot.id, username: bot.username, is_admin: false, is_synthetic: true,
         [require('./app-access').HOMEROOM_BOT_PROPOSAL]: true,
+        // Its own ceiling on proposals up for a vote, in place of the
+        // per-user cap (#3576). Symbol-keyed for the same reason.
+        ...(Number.isInteger(ceiling) && ceiling > 0
+          ? { [require('./session-caps').BOT_PROMOTED_CEILING]: ceiling } : {}),
       },
       get() { return undefined; },
       header() { return undefined; },
@@ -1041,6 +1069,7 @@ function buildPrompt({ seed, buildNote, spec = null }) {
   return [
     seed,
     '',
+    ...screenshotNote(seed),
     'You are the Homeroom bot, building this request so the app\'s group can review it as a proposal.',
     'Your triage of the request concluded it is ready to build, with this plan:',
     '',
@@ -1160,7 +1189,7 @@ async function draftSpec({
 async function buildAndPropose({
   pool, config, bot, app, repo, issueNumber, issue, seed, buildNote,
   turnBudgetMs, model, deps, propose = true, onSpec = null, specBudgetMs = SPEC_TURN_MAX_MS,
-  onSession = null, presetSpec = null,
+  onSession = null, presetSpec = null, proposalCeiling = null,
 }) {
   const { worker, sessions, agentTurn, sessionLifecycle, activeWorkers } = deps;
   const title = clipText(issue?.title || `Issue #${issueNumber}`, 120);
@@ -1389,7 +1418,9 @@ async function buildAndPropose({
     pool, bot, sessionId: session.id, spec: spec.ok ? spec.specMd : null,
     buildText: result.lastResultText, model,
   });
-  const promoted = await promoteAsBot({ config, bot, sessionId: session.id, router: deps.votesRouter || null });
+  const promoted = await promoteAsBot({
+    config, bot, sessionId: session.id, router: deps.votesRouter || null, ceiling: proposalCeiling,
+  });
   if (promoted.status !== 200 || !promoted.body?.ok) {
     const why = promoted.body?.error || promoted.body?.message || `promotion answered ${promoted.status}`;
     // Built but not proposed: the branch holds the work. Left paused, not
@@ -1436,6 +1467,7 @@ module.exports = {
   specUserFacing,
   buildDescription,
   buildPrompt,
+  screenshotNote,
   buildAndPropose,
   draftSpec,
   specPrompt,

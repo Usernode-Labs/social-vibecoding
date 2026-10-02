@@ -8,9 +8,11 @@
 // worker-local file. The runner tails that file into the shots trace.
 
 const fs = require('node:fs');
+const path = require('node:path');
 const { spawn } = require('node:child_process');
 const { Transform } = require('node:stream');
 const { performance } = require('node:perf_hooks');
+const boundary = require('./shots-boundary');
 
 const MARKER = '__USERNODE_SHOTS_BROWSER__ ';
 const MAX_LINE_BYTES = 2 * 1024 * 1024;
@@ -104,7 +106,42 @@ function resultShape(message, bytes, truncated) {
   };
 }
 
-function createObserver({ persona, origins, hints = {}, emit, now = () => performance.now() }) {
+// The page Playwright says the browser is on. Most tool results end with a
+// "### Page state" block naming it; a tab list marks the current tab. A
+// screenshot's own result names neither, so the observer keeps the last one.
+function reportedPageUrl(text) {
+  const pages = [...String(text || '').matchAll(/^- Page URL: (\S+)$/gm)];
+  if (pages.length) return pages[pages.length - 1][1];
+  const current = /^- \d+: \(current\) \[.*\] \((\S+)\)$/m.exec(String(text || ''));
+  return current ? current[1] : null;
+}
+
+// Where browser_take_screenshot wrote its file. Read from the raw line too:
+// a result over the capture limit still begins with this text.
+function savedScreenshotPath(text) {
+  const match = /saved it as ([^"\\\n]+?\.(?:png|jpeg))(?:\\n|\n|"|$)/.exec(String(text || ''));
+  return match ? match[1] : null;
+}
+
+function createObserver({
+  persona, origins, hints = {}, emit, now = () => performance.now(),
+  outputDir = null, provenance = boundary,
+}) {
+  // What the shots bridge needs to publish only shots of the app: the site
+  // each screenshot was taken on, and every site a recorded session showed.
+  let pageUrl = null;
+  const sessionOrigins = new Set();
+  const notePage = (url) => {
+    if (!url) return;
+    pageUrl = url;
+    const origin = provenance.webOrigin(url);
+    if (origin) sessionOrigins.add(origin);
+  };
+  const insideOutput = (file) => {
+    if (!outputDir || !file) return false;
+    const resolved = path.resolve(file);
+    return path.dirname(resolved) === path.resolve(outputDir);
+  };
   const active = new Map();
   const routes = new Map();
   let callOrdinal = 0;
@@ -156,10 +193,31 @@ function createObserver({ persona, origins, hints = {}, emit, now = () => perfor
       if (!call) return;
       active.delete(key);
       const { startedAt, ...event } = call;
+      const shape = resultShape(message, bytes, truncated);
       emit({ kind: 'browser_call_end', ...event,
         durationMs: Math.max(0, Math.round(now() - startedAt)),
-        ...resultShape(message, bytes, truncated),
+        ...shape,
       });
+      try {
+        const text = message
+          ? (Array.isArray(message.result?.content) ? message.result.content : [])
+            .filter((block) => block?.type === 'text').map((block) => block.text).join('\n')
+          : line;
+        if (message) notePage(reportedPageUrl(text));
+        const succeeded = shape.outcome === 'ok' || (!message && truncated);
+        if (call.tool === 'browser_take_screenshot' && succeeded) {
+          const file = savedScreenshotPath(text);
+          if (insideOutput(file)) provenance.stampScreenshot(outputDir, path.resolve(file), pageUrl);
+        }
+        if (call.tool === 'browser_close' && shape.outcome === 'ok') {
+          // The session's clip is written as it closes: these are its pages.
+          // A close with no page since the last one (a second close) ended no
+          // session, and leaves the last record as it was.
+          if (outputDir && sessionOrigins.size) provenance.recordSession(outputDir, sessionOrigins);
+          sessionOrigins.clear();
+          pageUrl = null;
+        }
+      } catch { /* Provenance that cannot be written is provenance that is missing: the bridge refuses the shot. */ }
     },
     pending() {
       for (const call of active.values()) {
@@ -184,7 +242,19 @@ function createObserver({ persona, origins, hints = {}, emit, now = () => perfor
   };
 }
 
-function start({ persona, args, binary = 'mcp-server-playwright',
+// The Playwright MCP command. The worker image's own install unless the
+// local dry run names another (scripts/shots-dry-run.js), as a JSON array.
+function browserCommand(value = process.env.SHOTS_BROWSER_MCP_COMMAND) {
+  try {
+    const parsed = JSON.parse(value || 'null');
+    if (Array.isArray(parsed) && parsed.length && parsed.every((part) => typeof part === 'string' && part)) {
+      return parsed;
+    }
+  } catch { /* fall through to the installed server */ }
+  return ['mcp-server-playwright'];
+}
+
+function start({ persona, args, binary = null,
   stdin = process.stdin, stdout = process.stdout, stderr = process.stderr,
   diagnosticFile = process.env.SHOTS_BROWSER_DIAGNOSTIC_FILE,
   origins = JSON.parse(process.env.SHOTS_ALLOWED_ORIGINS || '[]'),
@@ -195,8 +265,12 @@ function start({ persona, args, binary = 'mcp-server-playwright',
     try { fs.appendFileSync(diagnosticFile, `${MARKER}${JSON.stringify(event)}\n`); }
     catch { /* Diagnostics must never prevent shots navigation. */ }
   };
-  const observer = createObserver({ persona, origins, hints, emit });
-  const child = spawn(binary, args || [], { stdio: ['pipe', 'pipe', 'pipe'] });
+  const list = args || [];
+  const outputAt = list.indexOf('--output-dir');
+  const outputDir = outputAt >= 0 ? list[outputAt + 1] || null : null;
+  const observer = createObserver({ persona, origins, hints, emit, outputDir });
+  const [command, ...prefix] = binary ? [binary] : browserCommand();
+  const child = spawn(command, [...prefix, ...list], { stdio: ['pipe', 'pipe', 'pipe'] });
   child.stdin.on('error', () => { /* Child exit is reported by the close handler. */ });
   const inputTap = lineTap((line, meta) => observer.request(line, meta));
   stdin.pipe(inputTap).pipe(child.stdin);
@@ -231,4 +305,6 @@ if (require.main === module) {
   start({ persona, args: process.argv.slice(3) });
 }
 
-module.exports = { MARKER, lineTap, createObserver, start };
+module.exports = {
+  MARKER, lineTap, createObserver, start, reportedPageUrl, savedScreenshotPath, browserCommand,
+};

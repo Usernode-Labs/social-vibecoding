@@ -455,11 +455,16 @@ carry most of them.
 
   A state that is already done gets no fill. "Joined" is grey with a check;
   a filled green pill made the settled thing the loudest thing on screen.
-- **Say it in words, and let zero say nothing.** A count on a row is a
-  phrase ("2 in progress · 3 to vote"), not a glyph and a bare number that
-  need a legend. A zero is hidden (`hidden`, kept in the DOM when a declared
-  check selects on it). Show a status dot only when something is wrong,
-  never a green dot on every running app.
+- **Say it in words or a very obvious glyph, and let zero say nothing.** A
+  count on a row is a phrase ("2 in progress · 3 to vote") or a number
+  beside a glyph so obvious that nobody needs a legend to read it, like
+  the people glyph before a community's member count on the join screen.
+  Very obvious is the bar: if a person could not say what the number counts
+  at first glance, use words. A glyph-and-number still gives a screen reader
+  the words (an `sr-only` phrase such as "1,284 members"). A zero is hidden
+  (`hidden`, kept in the DOM when a declared check selects on it). Show a
+  status dot only when something is wrong, never a green dot on every
+  running app.
 - **At most one pill on a list row.** Use `AppPills limit={1}`. Pass the
   heading's own words to a row's label so the row does not repeat them.
 

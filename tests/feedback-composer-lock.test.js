@@ -47,14 +47,14 @@ test('the lock is readOnly, applied to both fields through one helper', () => {
 
 test('both send paths lock, and both entry points unlock', () => {
   // Filed and queued-for-later both end the composer …
-  const submitted = SRC.slice(SRC.indexOf("feedbackBtn.textContent = 'Submitted'") - 400);
+  const submitted = SRC.slice(SRC.indexOf("feedbackBtn.textContent = 'Posted'") - 400);
   assert.match(submitted.slice(0, 400), /setComposerLocked\(true\)/);
   const saved = SRC.slice(SRC.indexOf("feedbackBtn.textContent = 'Saved'") - 400);
   assert.match(saved.slice(0, 400), /setComposerLocked\(true\)/);
   // … and reopening or resetting must hand back an editable one, or the next
   // piece of feedback cannot be typed at all.
   const open = SRC.slice(SRC.indexOf('Feedback._open ='));
-  assert.match(open.slice(0, 300), /setComposerLocked\(false\)/);
+  assert.match(open.slice(0, 500), /setComposerLocked\(false\)/);
   const reset = SRC.slice(SRC.indexOf('Feedback._reset ='));
   assert.match(reset.slice(0, 1200), /setComposerLocked\(false\)/);
 });

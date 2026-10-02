@@ -4,6 +4,8 @@ import { ChevronDownIcon } from '@/components/ui/icons';
 import { AppIconContent, AppIconLink, appIconKind } from '../apps/app-card-view';
 import { GlobalChatSettingsEditor } from '../settings/sections/global-chat';
 import { DevelopmentAISettingsEditor } from './development-settings-editor';
+// Publishes window.Notifications, whose rowView words each notification row.
+import '../notifications/notifications.js';
 
 import {
   clientAction,
@@ -130,11 +132,34 @@ function displayValue(key: string, value: unknown) {
   return text(value, 80);
 }
 
+// #3233: a notification is worded the way the notification sheet words it,
+// not as its raw `kind` and `detail` ("App Quota Changed", "0:2"). Null when
+// the row is not one the sheet can read, so the generic fields still show.
+interface NotificationCopy { label: string; subject: string }
+function notificationCopy(item: JsonObject): NotificationCopy | null {
+  const rowView = typeof window === 'undefined' ? null : window.Notifications?._rowView;
+  if (!rowView || !text(item.kind, 80)) return null;
+  try {
+    const view = rowView(item) as {
+      label?: unknown;
+      segments?: Array<{ t?: unknown; v?: unknown }>;
+    };
+    const label = text(view?.label, 120);
+    if (!label) return null;
+    const subject = text((view.segments || [])
+      .map((segment) => (segment.t === 'who' ? `@${String(segment.v ?? '')}` : String(segment.v ?? '')))
+      .join(' '), 180);
+    return { label, subject };
+  } catch {
+    return null;
+  }
+}
+
 function itemTitle(result: GlobalChatResult, item: JsonObject) {
   if (result.renderer === 'notification') {
     const kind = text(item.kind, 80);
     const place = first(item, ['appName', 'app_name', 'conversationTitle', 'conversation_title'], 100);
-    const label = kind ? humanize(kind) : 'Notification';
+    const label = notificationCopy(item)?.label || (kind ? humanize(kind) : 'Notification');
     return place ? `${label} · ${place}` : label;
   }
   const rendererKeys: Record<string, string[]> = {
@@ -157,6 +182,10 @@ function itemTitle(result: GlobalChatResult, item: JsonObject) {
 }
 
 function itemSummary(result: GlobalChatResult, item: JsonObject, title: string) {
+  if (result.renderer === 'notification') {
+    const copy = notificationCopy(item);
+    if (copy) return copy.subject && copy.subject !== title ? copy.subject : '';
+  }
   const rendererKeys: Record<string, string[]> = {
     notification: [
       'messageContent', 'message_content', 'voteReason', 'vote_reason', 'detail',

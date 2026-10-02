@@ -229,6 +229,13 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
+      "fingerprint": "249b0f87f80d3e02d98f",
+      "count": 1,
+      "preview": "`WITH cohorts AS ( SELECT id AS user_id, date_trunc('week', created_at AT TIME ZONE 'UTC')::date AS cohort_wk FROM users WHERE TRUE ${adminFilter('id', includeA"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
       "fingerprint": "24c21179da1659de72be",
       "count": 1,
       "preview": "`WITH weeks AS ( SELECT generate_series( date_trunc('week', NOW()) - INTERVAL '11 weeks', date_trunc('week', NOW()), INTERVAL '1 week' )::date AS wk ), per_give"
@@ -239,6 +246,13 @@
       "fingerprint": "260634e93c907012a1aa",
       "count": 1,
       "preview": "`WITH days AS ( SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d ), weeks AS (SELECT generate_series(0, 3) AS w), ${rollupCt"
+    },
+    {
+      "source": "src/routes/dashboard.js",
+      "kind": "structural-template",
+      "fingerprint": "2c5b5898f202955d3743",
+      "count": 1,
+      "preview": "`WITH activity AS (${activityDaysSql(includeAdmins)}) SELECT COUNT(DISTINCT user_id) FILTER (WHERE day >= ${UTC_TODAY_SQL} - 6)::int AS wau, COUNT(DISTINCT user"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -264,13 +278,6 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "40a6ce13391b54b29031",
-      "count": 1,
-      "preview": "`WITH days AS ( SELECT generate_series(CURRENT_DATE - 89, CURRENT_DATE, INTERVAL '1 day')::date AS d ), activity AS ( SELECT DISTINCT user_id, day FROM (${activ"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
       "fingerprint": "63258cb606f0efd83fcf",
       "count": 1,
       "preview": "`WITH spine AS ( SELECT generate_series( CURRENT_DATE - 29, CURRENT_DATE, INTERVAL '1 day' )::date AS day ), agg AS ( SELECT lu.date AS day, SUM(lu.total_cost_c"
@@ -288,13 +295,6 @@
       "fingerprint": "6f5a10269c46c586d157",
       "count": 1,
       "preview": "`SELECT COUNT(*)::int AS total FROM pr_kudos WHERE TRUE ${adminFilter('giver_user_id', includeAdmins)}`"
-    },
-    {
-      "source": "src/routes/dashboard.js",
-      "kind": "structural-template",
-      "fingerprint": "74e233870d372d53f404",
-      "count": 1,
-      "preview": "`WITH activity AS (${activityDaysSql(includeAdmins)}) SELECT COUNT(DISTINCT user_id) FILTER (WHERE day >= CURRENT_DATE - 6)::int AS wau, COUNT(DISTINCT user_id)"
     },
     {
       "source": "src/routes/dashboard.js",
@@ -348,16 +348,16 @@
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "d4da12286fe69ae2c5c6",
+      "fingerprint": "d5accaf0d7be85f38b5e",
       "count": 1,
-      "preview": "`WITH cohorts AS ( SELECT id AS user_id, date_trunc('week', created_at)::date AS cohort_wk FROM users WHERE TRUE ${adminFilter('id', includeAdmins)} ), activity"
+      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
     },
     {
       "source": "src/routes/dashboard.js",
       "kind": "structural-template",
-      "fingerprint": "d5accaf0d7be85f38b5e",
+      "fingerprint": "e6e828361a105e86586a",
       "count": 1,
-      "preview": "`SELECT COALESCE(SUM(total_cost_cents) FILTER (WHERE date = CURRENT_DATE), 0)::float AS cents, COALESCE(SUM(total_cost_cents) FILTER (WHERE date >= date_trunc('"
+      "preview": "`WITH days AS ( SELECT generate_series(${UTC_TODAY_SQL} - 89, ${UTC_TODAY_SQL}, INTERVAL '1 day')::date AS d ), activity AS ( SELECT DISTINCT user_id, day FROM "
     },
     {
       "source": "src/routes/debug.js",
@@ -446,6 +446,13 @@
     {
       "source": "src/routes/profile.js",
       "kind": "structural-template",
+      "fingerprint": "0334b42a4d62d9ecdbf9",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${done.sql(3)})::int AS done FROM challenges c JOIN season_events se ON se.id = c.season_event_id LEFT JO"
+    },
+    {
+      "source": "src/routes/profile.js",
+      "kind": "structural-template",
       "fingerprint": "30d76681d24c561144ce",
       "count": 1,
       "preview": "`UPDATE users SET ${setClauses.join(', ')}, updated_at = NOW() WHERE id = $1`"
@@ -453,16 +460,9 @@
     {
       "source": "src/routes/profile.js",
       "kind": "structural-template",
-      "fingerprint": "61dae27dd0995ef20a4a",
+      "fingerprint": "66bcfae63b9fce4c0b73",
       "count": 1,
       "preview": "`SELECT c.id, c.season_event_id, c.goal, c.task, c.reward, c.schedule_start, c.schedule_end, c.cta_label, c.cta_link, c.metric_type, c.metric_target, c.metric_l"
-    },
-    {
-      "source": "src/routes/profile.js",
-      "kind": "structural-template",
-      "fingerprint": "637f78fe7afd6e0a2a5b",
-      "count": 1,
-      "preview": "`SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done FROM challenges c JOIN season_events se ON se.id = c.season_event_id LEFT JOIN"
     },
     {
       "source": "src/routes/proposal-handoff.js",
@@ -677,16 +677,16 @@
     {
       "source": "src/routes/topochain/admin/users.js",
       "kind": "structural-template",
-      "fingerprint": "57fd149df51e5ddab236",
+      "fingerprint": "82cee40867caa7ceba3c",
       "count": 1,
-      "preview": "`INSERT INTO users (username, password, password_set, email, telegram, discord, display_name, accept_logs, is_admin, created_at, updated_at) VALUES ($1, $2, FAL"
+      "preview": "`UPDATE users SET exclude_podium = NOT exclude_podium, updated_at = NOW() WHERE id = $1 RETURNING ${USER_SELECT}`"
     },
     {
       "source": "src/routes/topochain/admin/users.js",
       "kind": "structural-template",
-      "fingerprint": "82cee40867caa7ceba3c",
+      "fingerprint": "b055c1befa7d4a0abef3",
       "count": 1,
-      "preview": "`UPDATE users SET exclude_podium = NOT exclude_podium, updated_at = NOW() WHERE id = $1 RETURNING ${USER_SELECT}`"
+      "preview": "`INSERT INTO users (username, password, password_set, email, telegram, discord, display_name, accept_logs, is_admin, created_at, updated_at, needs_username_choi"
     },
     {
       "source": "src/routes/topochain/admin/users.js",
@@ -841,6 +841,13 @@
       "fingerprint": "c0f8e5747ee725a64c53",
       "count": 1,
       "preview": "`SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status, cs.created_at, cs.promoted_at, cs.merge_conflict_state, cs.behind_main, cs"
+    },
+    {
+      "source": "src/routes/workshop-overview.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "1c94b614e78d495202fa",
+      "count": 1,
+      "preview": "OWED_BY_COMMUNITY_SQL"
     },
     {
       "source": "src/routes/workshop-overview.js",
@@ -1312,6 +1319,20 @@
       "preview": "`SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE id = $1`"
     },
     {
+      "source": "src/services/shots-demo-states.js",
+      "kind": "runtime-built-identifier",
+      "fingerprint": "4ec7c53222c8a758c722",
+      "count": 1,
+      "preview": "sql"
+    },
+    {
+      "source": "src/services/shots-demo-states.js",
+      "kind": "runtime-expression",
+      "fingerprint": "8face6269db1d474eb87",
+      "count": 1,
+      "preview": "TAKEN_SQL[table]"
+    },
+    {
       "source": "src/services/shots-state.js",
       "kind": "structural-template",
       "fingerprint": "5b50577c563dc7e02307",
@@ -1335,7 +1356,7 @@
     {
       "source": "src/services/topochain/challenge-onboarding.js",
       "kind": "structural-template",
-      "fingerprint": "120b9f894f181c7eda95",
+      "fingerprint": "f22572e0f628a0273eeb",
       "count": 1,
       "preview": "`/* challenge onboarding */ SELECT c.id, c.season_event_id, c.challenge_template_id, c.display_order, c.enabled, c.completed, COALESCE(c.schedule_start, ct.sche"
     },
@@ -1450,6 +1471,48 @@
       "fingerprint": "ffdbcfbaa56765b4a618",
       "count": 1,
       "preview": "`UPDATE chat_sessions SET headless_status = $4, headless_outcome = COALESCE($5, headless_outcome), headless_step = NULL, headless_turn_id = NULL, last_activity_"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "2b5c5a4747c0e3700097",
+      "count": 1,
+      "preview": "`WITH ui AS ( SELECT e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${base} ), attempts AS ( SELE"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "4acb3539b5bd10b13659",
+      "count": 1,
+      "preview": "`WITH ui AS ( SELECT e.id AS row_id, e.user_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${base} ), at"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "b24b8d9d293e9c2acb9d",
+      "count": 1,
+      "preview": "`SELECT COUNT(*)::int AS receipts, COUNT(DISTINCT e.user_id)::int AS reporting_users, COALESCE(SUM((e.metadata->>'submitted')::int), 0)::int AS submitted, COALE"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "b35c0cd5a84f6769816b",
+      "count": 1,
+      "preview": "`WITH coded AS ( SELECT e.id, e.user_id, e.metadata, e.created_at, CASE WHEN e.metadata->>'kind' IN ('action_outcome','server_failure') AND e.metadata ? 'attemp"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "e64aea5725fe67bcbf0d",
+      "count": 1,
+      "preview": "`WITH ui AS ( SELECT e.id AS row_id, e.user_id, e.app_id, e.metadata FROM events e JOIN users u ON u.id = e.user_id WHERE e.event_type = 'ui_experience' AND ${b"
+    },
+    {
+      "source": "src/services/ui-telemetry.js",
+      "kind": "structural-template",
+      "fingerprint": "f016cfeaacc400db8ba3",
+      "count": 1,
+      "preview": "`SELECT e.metadata->>'screen' AS screen, COUNT(*)::int AS visits, COUNT(DISTINCT e.user_id)::int AS users FROM events e JOIN users u ON u.id = e.user_id WHERE e"
     },
     {
       "source": "src/services/user-merge.js",

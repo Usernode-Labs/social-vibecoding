@@ -781,21 +781,23 @@ async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, pr
     });
     return 'github_unreadable';
   }
-  if (existing === summary || existing.startsWith(`${summary}\n\n`)) return null;
+  const alreadySynced = existing === summary || existing.startsWith(`${summary}\n\n`);
   const prev = previousSummary ? previousSummary.trim() : '';
   let rest = existing;
   if (prev && existing.startsWith(`${prev}\n\n`)) rest = existing.slice(prev.length + 2);
   else if (prev && existing === prev) rest = '';
-  const body = rest ? `${summary}\n\n${rest}` : summary;
-  if (body === existing) return null;
-  try {
-    await gh.updatePR(owner, repo, session.pr_number, { body });
-  } catch (err) {
-    log.warn('proposal-update', 'summary stored but the pull request body could not be rewritten', {
-      sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
-    });
-    return 'github_write_failed';
+  const body = alreadySynced ? existing : (rest ? `${summary}\n\n${rest}` : summary);
+  if (body !== existing) {
+    try {
+      await gh.updatePR(owner, repo, session.pr_number, { body });
+    } catch (err) {
+      log.warn('proposal-update', 'summary stored but the pull request body could not be rewritten', {
+        sessionId: Number(session.id), prNumber: session.pr_number, err: err.message,
+      });
+      return 'github_write_failed';
+    }
   }
+  if (alreadySynced && session.pr_body === body) return null;
   try {
     await pool.query(
       'UPDATE chat_sessions SET pr_body = $1, pr_summary_source_body_hash = $2 WHERE id = $3',
@@ -806,6 +808,7 @@ async function syncSummaryIntoBody({ pool, gh, owner, repo, session, summary, pr
     log.warn('proposal-update', 'pull request body rewritten but the mirror write failed', {
       sessionId: Number(session.id), err: err.message,
     });
+    return 'github_mirror_failed';
   }
   return null;
 }
@@ -1635,9 +1638,21 @@ async function advanceAppRepoBranch(ctx) {
   // the pull request, sees the head this push just moved, and runs the
   // existing imported-head machinery — advance the tracked SHA, clear the
   // tally, post the re-review note, re-run the SHA-pinned checks. Nothing
-  // about it is reimplemented here. 'unchanged' means GitHub had not caught
-  // up with the push yet, which is honest to report as "not rebuilt": the
-  // sweeper takes it from there.
+  // about it is reimplemented here.
+  //
+  // 'unchanged' means GitHub's pull request still reads the commit before
+  // this push — it updates a PR's head a few seconds after the branch moves.
+  // Left there, the proposal showed the previous commit's verdict as current
+  // until the sweep came round, minutes later (PR #3615 sat on a stale red
+  // check for about five minutes). But the branch is in the app's own repository and
+  // the platform has just written it, so the mirror can read the new head
+  // straight off it: `reconcileImportedHead` is the re-pin the merge queue
+  // uses after ITS pushes, through the same applyHeadChange. `fresh`, because
+  // a coalesced fetch that started before the push would answer with the
+  // old tip (#2619). The rebuild runs in the background, as it does for the
+  // queue's re-pin: a submit should not hold the proposal lock across a
+  // minutes-long build. If the mirror cannot answer either, the sweeper
+  // still takes it from there, and that is reported as "not rebuilt".
   if (String(session.source) === 'imported') {
     let synced = 'skipped';
     try {
@@ -1647,23 +1662,44 @@ async function advanceAppRepoBranch(ctx) {
         sessionId, err: err.message,
       });
     }
-    const applied = synced === 'updated';
+    let repinned = null;
+    if (synced === 'unchanged') {
+      repinned = await prImportSync.reconcileImportedHead({
+        config, pool, session, checks: 'background', notify: true, fresh: true,
+      }).catch((err) => {
+        log.error('proposal-update', 'imported head re-pin failed after a successful push', {
+          sessionId, err: err.message,
+        });
+        return null;
+      });
+    }
+    const viaMirror = !!(repinned && repinned.reconciled && repinned.changed);
+    const applied = synced === 'updated' || viaMirror;
+    // A move the classifier calls mechanical keeps the approvals and can carry
+    // a green verdict. Only the re-pin reports which it was, so only it can
+    // say so; the sync's answer is the one this tail has always reported.
+    const cleared = applied && !(viaMirror && repinned.votesKept);
+    const rebuilding = applied && !(viaMirror && repinned.checksCarry);
+    let votesClearing = votesCleared > 0 ? 'on_sync' : 'none';
+    if (applied) votesClearing = cleared ? 'now' : 'none';
     log.info('proposal-update', 'advanced an imported proposal on its app-repo branch', {
       sessionId, owner, repo, targetBranch, previousHeadSha: liveHead,
-      headSha: verified.headSha, votesCleared: applied ? votesCleared : 0, synced,
-      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'), votesAtRisk: votesCleared,
+      headSha: verified.headSha, votesCleared: cleared ? votesCleared : 0, synced,
+      repinned: repinned ? (viaMirror ? 'mirror' : (repinned.reason || 'unchanged')) : 'not_needed',
+      votesClearing, votesAtRisk: votesCleared,
     });
     return {
       ...landed,
-      votesCleared: applied ? votesCleared : 0,
-      // `votesCleared` is what THIS call cleared. On the mirror path the head
-      // is advanced by the next pr-import sweep, which is when the tally
-      // resets — so a 0 here with votesClearing 'on_sync' means "not yet",
-      // not "never". votesAtRisk is the count that will go.
-      votesClearing: applied ? 'now' : (votesCleared > 0 ? 'on_sync' : 'none'),
+      votesCleared: cleared ? votesCleared : 0,
+      // `votesCleared` is what THIS call cleared. When neither GitHub nor the
+      // mirror could see the push yet, the head is advanced by the next
+      // pr-import sweep, which is when the tally resets — so a 0 here with
+      // votesClearing 'on_sync' means "not yet", not "never". votesAtRisk is
+      // the count that will go.
+      votesClearing,
       votesAtRisk: votesCleared,
-      checksRerun: applied,
-      previewRebuilding: applied,
+      checksRerun: rebuilding,
+      previewRebuilding: rebuilding,
     };
   }
 
@@ -2203,6 +2239,7 @@ module.exports = {
   applyLinkedIssues,
   // #3344's author summary, likewise.
   applyProposedSummary,
+  syncSummaryIntoBody,
   // The post-creation issue association seam shared by the UI + connector.
   updateLinkedIssues,
 };

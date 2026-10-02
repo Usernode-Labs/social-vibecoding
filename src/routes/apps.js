@@ -21,12 +21,14 @@ const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
 const { appCreateLimiter, appAllowanceRequestLimiter, issueCreateLimiter, githubLookupLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
+const appOpenings = require('../services/app-openings');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 const contributors = require('../services/contributors');
 const discoveryCuration = require('../services/discovery-curation');
 const communities = require('../services/communities');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 const governance = require('../services/governance');
 const activeUsers = require('../services/active-users');
 const createOptions = require('../services/create-options');
@@ -3138,6 +3140,17 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           [appId, req.user.id]
         );
       }
+      // The state row can later be hidden or deleted. Record this explicit
+      // user toggle in the best-effort append-only analytics log so a
+      // successfully captured favorite day survives a later preference.
+      if (favorited) {
+        events.record(pool, {
+          type: events.EVENT_TYPES.APP_FAVORITED,
+          userId: req.user.id,
+          appId,
+          metadata: { source: 'user_favorite_toggle' },
+        });
+      }
       res.json({ ok: true, is_favorited: favorited });
     } catch (err) {
       log.error('apps', 'Failed to toggle favorite', { message: err.message });
@@ -3276,6 +3289,10 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
       }
       if (joined) {
         await communities.join(pool, app, req.user.id);
+        // "Find people to build with" counts the join now, not on the
+        // rule's next pass (#3564; challengeScorer.scoreOnJoin). Never
+        // throws, so the join answers the same either way.
+        await challengeScorer.scoreOnJoin(pool, config);
       } else {
         const result = await communities.leave(pool, app, req.user.id);
         if (!result.ok) return res.status(result.status).json({ error: result.error });
@@ -3358,6 +3375,40 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
     }
   });
 
+  // A successful App-tab entry, distinct from the later activity heartbeat.
+  // This write is awaited because the browser keeps an idempotent retry queue:
+  // only a 2xx means the durable row exists. `getAppForUser` supplies the same
+  // visibility, suspension and viewer-block guard as the app detail request.
+  router.post('/api/apps/:slug/openings', sameOriginBrowserOnly, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+    let opening;
+    try {
+      opening = appOpenings.parseOpening(req.body);
+    } catch (err) {
+      if (err instanceof appOpenings.OpeningValidationError) {
+        return res.status(400).json({ error: err.message });
+      }
+      throw err;
+    }
+
+    try {
+      const appRow = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!appRow) return res.status(404).json({ error: 'App not found' });
+
+      const result = await appOpenings.record(pool, {
+        userId: req.user.id,
+        appId: appRow.id,
+        opening,
+      });
+      return res.status(result.duplicate ? 200 : 201).json({ ok: true, ...result });
+    } catch (err) {
+      log.error('apps', 'Failed to record app opening', { message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/apps/:slug/activity', sameOriginBrowserOnly, async (req, res) => {
     const modern = req.body && Object.prototype.hasOwnProperty.call(req.body, 'batchId');
     const legacySeconds = modern ? null : activitySeconds(req.body?.seconds);
@@ -3417,7 +3468,7 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
          ON CONFLICT (app_id, user_id, date)
          DO UPDATE SET seconds_spent = LEAST(
            app_activity.seconds_spent + EXCLUDED.seconds_spent, $4)
-         RETURNING (xmax = 0) AS inserted`,
+         RETURNING (xmax = 0) AS inserted, seconds_spent`,
         [appRows[0].id, req.user.id, seconds, ACTIVITY_MAX_PER_DAY]
       );
 
@@ -3428,6 +3479,20 @@ function appRoutes(config, { pool = getPool(config) } = {}) {
           appId: appRows[0].id,
         });
       }
+
+      // "Try an app" counts the heartbeat that takes this person's time in
+      // an app they did not make across TRY_APPS_MIN_SECONDS, not the rule's
+      // next pass (#3570; challengeScorer.scoreOnAppTime). Every other
+      // heartbeat is answered without a scoring pass, and nearly all without
+      // even a read: today's total, returned above, says whether this one can
+      // be the crossing at all. Never throws.
+      await challengeScorer.scoreOnAppTime(pool, config, {
+        appId: appRows[0].id,
+        ownerId: appRows[0].created_by,
+        userId: req.user.id,
+        seconds,
+        daySeconds: activityRows[0]?.seconds_spent,
+      });
 
       res.json({ ok: true });
     } catch (err) {

@@ -310,7 +310,8 @@ test('issue and governance topic bodies are not rebuilt as proposals without a s
   const av = context();
   const v = av._topicViewFor('session', failing);
   const previousWindow = global.window;
-  global.window = { AppView: { _topicViewFor() { throw new Error('Non-session topic rebuilt as proposal'); } } };
+  global.window = { addEventListener() {},
+    AppView: { _topicViewFor() { throw new Error('Non-session topic rebuilt as proposal'); } } };
   try {
     const { ChangeDetail } = loadTsx('frontend/src/features/dev-board/topic/topic-head.tsx');
     const html = renderToHtml(createElement(ChangeDetail, { card: v.card, body: { ...v.body, comments: true }, item: null }));

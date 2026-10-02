@@ -98,7 +98,7 @@ const SESSION_KINDS = ['session_done', 'auto_solve_done', 'stale_pr', 'check_fai
 // the mark-read scoping test below sends as a request body.
 const DEMO_KINDS = [...SESSION_KINDS, 'session_stalled'];
 
-test('staging + ?demo=1: eleven mock rows prepend, and only the unread ones bump unread', async () => {
+test('staging + ?demo=1: twelve mock rows prepend, and only the unread ones bump unread', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const { server, port } = await startServer(mod);
@@ -108,11 +108,12 @@ test('staging + ?demo=1: eleven mock rows prepend, and only the unread ones bump
     const body = await res.json();
 
     const mocks = body.notifications.filter((n) => n.id >= 990000);
-    assert.equal(mocks.length, 11, 'exactly eleven mock rows injected');
+    assert.equal(mocks.length, 12, 'exactly twelve mock rows injected');
     assert.deepEqual(
       [...new Set(mocks.map((n) => n.kind))].sort(),
-      [...DEMO_KINDS, 'conversation_message', 'platform_limit'].sort(),
-      'every session-related kind is covered, plus the message row and a platform limit alert'
+      [...DEMO_KINDS, 'conversation_message', 'platform_limit', 'app_quota_changed'].sort(),
+      'every session-related kind is covered, plus the message row, a platform limit alert '
+      + 'and an app allowance change (#3233)'
     );
     assert.equal(
       mocks.filter((n) => n.kind === 'session_done').length, 4,
@@ -150,14 +151,14 @@ test('staging + ?demo=1: eleven mock rows prepend, and only the unread ones bump
     // "See more notifications" button: without it the button does not
     // render at all and the caught-up state is unreachable, so the two things
     // a reviewer is asked to look at are both invisible.
-    assert.equal(mocks.filter((n) => !n.readAt).length, 10,
-      'ten unread rows feed the badges');
+    assert.equal(mocks.filter((n) => !n.readAt).length, 11,
+      'eleven unread rows feed the badges');
     const readMocks = mocks.filter((n) => n.readAt);
     assert.equal(readMocks.length, 1, 'exactly one already-read row');
     assert.match(readMocks[0].sessionTitle, /\[Mock\]/,
       'and it is obviously fake, like the rest');
     assert.ok(
-      mocks.filter((n) => n.kind !== 'conversation_message' && n.kind !== 'platform_limit')
+      mocks.filter((n) => !['conversation_message', 'platform_limit', 'app_quota_changed'].includes(n.kind))
         .every((n) => n.appSlug === 'staging-demo'),
       'obviously-fake app attribution on every APP-scoped row',
     );
@@ -166,16 +167,22 @@ test('staging + ?demo=1: eleven mock rows prepend, and only the unread ones bump
     assert.equal(limit.appSlug, null);
     assert.equal(limit.detail, 'apps_warn:40:50');
     assert.equal(limit.readAt, null, 'unread, so it shows on the Unread tab the sheet opens on');
+    // #3233: the allowance change is the account's, too, and carries a
+    // readable "<old>:<new>" detail for the sheet to put in words.
+    const quota = mocks.find((n) => n.kind === 'app_quota_changed');
+    assert.equal(quota.appSlug, null);
+    assert.equal(quota.detail, '0:2');
+    assert.equal(quota.readAt, null);
     assert.equal(
       mocks.find((n) => n.kind === 'auto_solve_done').detail, 'failed',
       'the auto-solve mock exercises the failed variant'
     );
     // Real rows survive after the mocks; unread bumped by the UNREAD mock
     // count so the client's badge subtraction stays honest. Counting all
-    // eleven would claim the read row as unread — inflating the badge by one
+    // twelve would claim the read row as unread — inflating the badge by one
     // and leaving "Mark all read" enabled with nothing left to mark.
     assert.ok(body.notifications.some((n) => n.id === 1), 'real rows still present');
-    assert.equal(body.unread, 2 + 10);
+    assert.equal(body.unread, 2 + 11);
   } finally {
     server.close();
   }
@@ -219,7 +226,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   const pool = makeMockPool();
   const mod = loadRoutes('staging', pool);
   const rows = mod.stagingMockNotifications();
-  assert.equal(rows.length, 11);
+  assert.equal(rows.length, 12);
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     // `readAt` is null on every row EXCEPT the one that exists to be read —
@@ -233,7 +240,8 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
     // shape closed when they are both set, so a mock carrying them would be
     // describing something the real pipeline never emits.
     assert.equal(r.appName,
-      r.kind === 'conversation_message' || r.kind === 'platform_limit' ? null : 'Staging demo app');
+      ['conversation_message', 'platform_limit', 'app_quota_changed'].includes(r.kind)
+        ? null : 'Staging demo app');
     assert.ok('sessionTitle' in r, '#971: every mock row carries the sessionTitle field');
   }
 

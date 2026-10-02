@@ -609,6 +609,7 @@ test('Codex dispatch forwards OpenRouter model metadata without exposing its key
         supportsReasoning: true,
         reasoningEfforts: ['low', 'medium', 'high'],
         supportsTools: true,
+        supportsImages: true,
       },
       openrouterApiKey: 'sk-or-must-not-appear-in-argv',
       openrouterApiBase: 'https://openrouter.ai/api/v1',
@@ -624,9 +625,16 @@ test('Codex dispatch forwards OpenRouter model metadata without exposing its key
       'AGENT_MODEL_SUPPORTS_REASONING=1',
       'AGENT_MODEL_REASONING_EFFORTS=low,medium,high',
       'AGENT_MODEL_SUPPORTS_TOOLS=1',
+      // #3426: the catalog builder declares image input from this.
+      'AGENT_MODEL_SUPPORTS_IMAGES=1',
     ]) {
       assert.ok(dispatch.args.includes(expected), `${expected} reaches the runner`);
     }
+    // Text only unless the catalog said images, on both OpenRouter runtimes.
+    const workerSrc = require('node:fs').readFileSync(require.resolve('../src/services/worker'), 'utf8');
+    assert.equal((workerSrc.match(/safeEnv\.AGENT_MODEL_SUPPORTS_IMAGES = agentModelMetadata\?\.supportsImages === true \? '1' : '';/g) || []).length, 2);
+    // #3557: PDFs only on the Claude Code runtime, whose Read tool sends them.
+    assert.equal((workerSrc.match(/safeEnv\.AGENT_MODEL_SUPPORTS_FILES = agentModelMetadata\?\.supportsFiles === true \? '1' : '';/g) || []).length, 1);
     assert.ok(dispatch.args.includes('OPENROUTER_API_KEY'),
       'Docker copies the secret from the host environment by name');
     assert.ok(!dispatch.args.some((arg) => String(arg).includes('sk-or-must-not-appear-in-argv')),

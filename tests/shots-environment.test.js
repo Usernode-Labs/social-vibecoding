@@ -7,6 +7,7 @@ const environment = require('../src/services/shots-environment');
 const runtime = require('../src/services/application-runtime');
 const dbManager = require('../src/services/db-manager');
 const fixtures = require('../src/services/shots-fixtures');
+const demoStates = require('../src/services/shots-demo-states');
 
 test('shots resource names are deterministic, side-specific, and bounded', () => {
   const runId = '0123456789abcdef0123456789abcdef';
@@ -66,6 +67,7 @@ test('each paired reset serializes clones and adds the same member and full-admi
     hostedApp: fixtures.ensureHostedAppFixture,
     inspect: fixtures.canCopyMemberAgentSession, copy: fixtures.copyMemberAgentSession,
     copyAdmin: fixtures.copyFullAdminAgentSession,
+    inspectDemo: demoStates.inspectDemoStates, installDemo: demoStates.installDemoStates,
   };
   const runId = '2'.repeat(32);
   const slug = 'usernode-2d5619';
@@ -116,6 +118,18 @@ test('each paired reset serializes clones and adds the same member and full-admi
       adminSides.push(side);
       return { id: fixtures.FULL_ADMIN_SESSION_PROFILE, persona: 'full_admin', path: '/#messages/agent/990897', side };
     };
+    // Each side can hold some demo states; only those BOTH can hold are
+    // written, and both sides are written together.
+    const [runs, preview, list] = demoStates.STATE_IDS;
+    demoStates.inspectDemoStates = async ({ side }) => (side === 'base' ? [runs, preview, list] : [list, runs]);
+    const demoCalls = [];
+    demoStates.installDemoStates = async (inputs, stateIds) => {
+      demoCalls.push({ sides: Object.keys(inputs), dbs: [inputs.base.databaseUrl, inputs.head.databaseUrl], stateIds });
+      return {
+        installed: stateIds.map((id) => ({ id, persona: 'member', shows: [{ state: id, path: '/#messages' }] })),
+        skipped: [],
+      };
+    };
     const progress = [];
     const captureDigest = `capture@sha256:${'c'.repeat(64)}`;
     const deployment = await environment.resetPair({
@@ -129,7 +143,14 @@ test('each paired reset serializes clones and adds the same member and full-admi
       'clone_base', 'clone_base_copy_template', 'clone_base_scrub_private',
       'clone_head', 'clone_head_copy_template', 'clone_head_scrub_private',
     ]);
-    assert.equal(deployment.availableFixtures.length, 4);
+    assert.deepEqual(demoCalls, [{
+      sides: ['base', 'head'],
+      dbs: [`postgres://fixture@db/${pair.sides.base.dbName}`, `postgres://fixture@db/${pair.sides.head.dbName}`],
+      stateIds: [runs, list],
+    }]);
+    assert.deepEqual(deployment.availableFixtures.slice(4).map((fixture) => fixture.id), [runs, list]);
+    assert.ok(progress.includes('seed_shots_demo_states'));
+    assert.equal(deployment.availableFixtures.length, 6);
     assert.equal(deployment.availableFixtures[0].persona, 'full_admin');
     assert.deepEqual(deployment.availableFixtures[0].appMembership,
       { appId: 42, slug, status: 'member' });
@@ -147,7 +168,8 @@ test('each paired reset serializes clones and adds the same member and full-admi
     assert.ok(progress.includes('seed_hosted_app_fixture'));
     assert.equal(deployment.fixtureFingerprint, crypto.createHash('sha256')
       .update(`source-fingerprint\n${fixtures.FULL_ADMIN_PROFILE}`
-        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}+${fixtures.PROFILE}+${fixtures.FULL_ADMIN_SESSION_PROFILE}`).digest('hex'));
+        + `+${fixtures.HOSTED_APP_PROFILE}@${captureDigest}+${fixtures.PROFILE}+${fixtures.FULL_ADMIN_SESSION_PROFILE}`
+        + `+${runs}+${list}`).digest('hex'));
   } finally {
     runtime.remove = original.remove;
     runtime.deploy = original.deploy;
@@ -158,6 +180,8 @@ test('each paired reset serializes clones and adds the same member and full-admi
     fixtures.ensureHostedAppFixture = original.hostedApp;
     fixtures.canCopyMemberAgentSession = original.inspect;
     fixtures.copyMemberAgentSession = original.copy;
+    demoStates.inspectDemoStates = original.inspectDemo;
+    demoStates.installDemoStates = original.installDemo;
     fixtures.copyFullAdminAgentSession = original.copyAdmin;
   }
 });

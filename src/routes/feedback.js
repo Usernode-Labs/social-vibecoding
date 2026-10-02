@@ -11,6 +11,7 @@ const { placeBounty } = require('../services/bounties');
 const { getPool } = require('../db/pool');
 const { sniffImageType } = require('../services/attachments');
 const { feedbackTitleLimiter, feedbackSubmitLimiter, issueScreenshotLimiter } = require('../middleware/rate-limits');
+const challengeScorer = require('../services/topochain/challenge-scorer');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
@@ -786,6 +787,12 @@ function feedbackRoutes(config) {
           user: req.user, app: appContext, owner: issueOwner, repo: issueRepo,
           issueNumber: issue.number, title, description: description.trim(),
         });
+        // "Suggest an improvement" counts the report just recorded, now
+        // rather than on the rule's next pass: #3568 was this step still
+        // reading "Not started" after somebody had sent one
+        // (challengeScorer.scoreOnFeedback). After the receipt, which is
+        // what it reads; never throws, so the answer is the same either way.
+        await challengeScorer.scoreOnFeedback(pool, config);
         const firstFeedback = await firstFeedbackMoment(pool, {
           user: req.user, app: appContext, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
         });
@@ -853,6 +860,8 @@ function feedbackRoutes(config) {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo,
         issueNumber: issue.number, title, description: description.trim(),
       });
+      // The same count for platform feedback (#3568).
+      await challengeScorer.scoreOnFeedback(pool, config);
       const firstFeedback = await firstFeedbackMoment(pool, {
         user: req.user, app: null, owner: issueOwner, repo: issueRepo, issueNumber: issue.number,
       });

@@ -160,7 +160,7 @@ interface Payload {
   queue: { depth: number; items: QueueItem[] };
   runs: Run[];
   apps: { slug: string; name: string }[];
-  caps: { proposalsPerApp: number; questionsPerAppPerDay: number };
+  caps: { proposalsPerApp: number; proposalsTotal: number; questionsPerAppPerDay: number };
   builds: BuildLane;
   mentionOptOuts: { total: number; items: MentionOptOut[] };
 }
@@ -228,7 +228,8 @@ function ProposalLink({ run, children }: { run: Run; children: string }) {
 }
 
 const CAP_LABEL: Record<string, string> = {
-  proposals_per_app: 'would be held: 2 bot proposals already open on this app',
+  proposals_per_app: 'would be held: 5 bot proposals already open on this app',
+  proposals_total: 'would be held: the bot is at its ceiling of proposals open across Homeroom',
   question_tripwire: 'would be held: question tripwire for this app tripped today',
 };
 
@@ -933,7 +934,7 @@ function HomeroomBotSection() {
         <p className={`${AdminUI.muted} mt-3`} id="admin-homeroom-bot-identity">
           {`${bot
             ? `Runs as ${bot.username} on ${bot.model || 'the platform default model'}, ${bot.hasIncludedKey ? 'with its included OpenRouter key' : 'with no OpenRouter key yet (the first pass mints one)'}.`
-            : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before posting anything the live rules would hold a verdict at ${payload?.caps.proposalsPerApp ?? 2} open bot proposals per app and ${payload?.caps.questionsPerAppPerDay ?? 10} questions per app per day; rows below say when they would have.`}
+            : 'The bot user is not set up yet; the dashboard creates it on load, so check the logs if this persists.'} Before posting anything the live rules would hold a verdict at ${payload?.caps.proposalsPerApp ?? 5} open bot proposals per app (${payload?.caps.proposalsTotal ?? 5} across all its live apps) and ${payload?.caps.questionsPerAppPerDay ?? 10} questions per app per day; rows below say when they would have.`}
         </p>
 
         <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-loop">

@@ -375,8 +375,16 @@ html.un-kb .platform-safe-sheet {
    Messages and Android Messages both shrink the content area by the keyboard's
    height and pin the composer above it rather than covering or panning.
    The scroller loses that height instead of being covered, so the transcript
-   stays visible, the composer sits above the keys, and nothing needs to pan,
-   which leaves the settled pin inert rather than destructive.
+   stays visible, the composer sits above the keys, and the settled pin is
+   no longer destructive.
+
+   It is NOT inert, and a column needs it (#3571). iOS pans the page on the
+   tap, before this padding exists, by the most it can: the keyboard's
+   height. The padding then lifts the composer by that height again inside
+   the panned page, so it ends near the top edge, above the screen. The pin
+   (attachKeyboardAvoidance, via attachScreenFx on the legacy-mounted chats)
+   puts the pan back once the keyboard settles. A React column that no
+   controller mounts attaches it itself: lib/composer-keyboard.ts.
 
    Transition shape copied from the kit's own `.un-kb-avoid`: none while the
    keyboard is up so the bar tracks it exactly, eased on the way out so the
@@ -3277,6 +3285,46 @@ html[data-browser-scroller] body {
   isolation: isolate;
   background: var(--home-ground) !important;
 }
+/* ── THE BOTTOM STILL BOUNCES, SO SAFARI CAN TUCK ITS BAR AWAY (#3565) ──
+   "On mobile Safari, if already scrolled to the bottom of the page, cannot
+   scroll down more to make the address bar shrink."
+
+   Safari tucks its toolbar away when a drag moves the page. At the end of
+   an ordinary page there is nothing left to scroll, but the drag still
+   moves the rubber band, and that is enough. This document has no rubber
+   band. `html, body { overscroll-behavior-y: none }` above was written for
+   the bounded shell, whose document never scrolls, to keep the browser's own
+   refresh out of the kit's pull (#737). #1518 made the document the scroller
+   in a phone browser, and on <html> that one rule now switches off the
+   viewport's bounce at BOTH ends: WebKit's main scroll view bounces
+   vertically unless the root's `overscroll-behavior-y` is `none` (WKWebView
+   `_updateScrollViewForTransaction` -> `_setBouncesInternal`). So at the
+   foot of Home, Discover or a project page, with the bar showing, an upward
+   drag moved nothing and the bar stayed.
+
+   The TOP keeps `none`. The kit's pull-to-refresh lives there, and a native
+   bounce or the browser's own refresh would join it. There is no per-edge
+   `overscroll-behavior`, so the edge is told apart by where the page is:
+   lib/browser-scroll.ts marks <html> `data-browser-past-top` while the
+   document sits PAST_TOP_PX (64px) or more below its top, and only then does
+   the viewport take `contain`. That is not `none`, so the far edge bounces
+   (WebKit applies a change to the root's value from the next commit; its
+   own fast/scrolling/ios/overscroll-behavior-on-body.html flips it the other
+   way mid-page). `contain` rather than `auto` so Chrome's refresh stays off
+   if a flick ever outruns the mark to the top. A pull that starts at the
+   top always meets `none`, exactly as before, and a page with less than
+   64px to scroll keeps `none` everywhere. On Android the bottom edge gets
+   the system's stretch back, as on any other page. Body takes the value too
+   only because the rule it overrides names both; WebKit reads <html>.
+
+   Phones only: a narrow desktop window also pages the document, and its
+   trackpad has no toolbar to tuck away. */
+@media (pointer: coarse) {
+  html[data-browser-scroller][data-browser-past-top],
+  html[data-browser-scroller][data-browser-past-top] body {
+    overscroll-behavior-y: contain;
+  }
+}
 /* Body padding reserves these fixed strips at the start of a page. Sticky
    headers must keep reserving them after that padding scrolls away. */
 html[data-browser-scroller] body.has-install-strip {
@@ -3447,6 +3495,82 @@ html[data-browser-scroller="auth-landing-scroll"] #app-viewer {
 #auth-landing-scroll {
   overscroll-behavior-y: contain;
   overflow-x: hidden;
+}
+
+/* ── EVERY PAGE BOUNCES, HOWEVER LITTLE IT HOLDS (#3566) ───────────────
+   "Should be able to over scroll on home page down, doesn't feel as native
+   because can't", and after #3591 (#3565) gave Home's foot its bounce back
+   in a phone browser, All communities still did not.
+
+   A page's rubber band comes from one of two places, and a screen has one
+   only if its own place gives it:
+
+   - THE DOCUMENT, in a phone browser, for the screens browser-scroll.ts
+     PAGES (Home, Discover, Leaderboard, Profile, Settings, a project page).
+     #3591's `data-browser-past-top` gives its foot `contain`, which bounces.
+   - ITS OWN SCROLLER everywhere else: every screen in the installed app
+     and the native WebView, and in a phone browser the screens the document
+     does not page (All communities, Your changes / requests / votes, the
+     Messages list). Those roots are `overflow-y: auto` and the bounce is
+     iOS's, which rubber-bands a scroller only when it CAN scroll. One with
+     no range hands the drag to the document, which the bounded shell holds
+     still on purpose (`html, body`: `overflow: hidden`,
+     `overscroll-behavior-y: none`), so neither end moves.
+
+   Measured at 390x664 (iPhone agent, touch), in the phone browser and the
+   installed layout alike: #workshop-screen 572/572 and 620/620
+   (scrollHeight/clientHeight) with two cards on it, #profile-proposals-
+   screen the same, and .messages-list-scroll 457/457 with one conversation.
+   No range, so no bounce at either end. Home, Discover, Profile, Settings
+   and Leaderboard bounced in the installed app only because this account's
+   were longer than the screen; a new account's short page would not.
+
+   SO EVERY PAGE SCROLLER HAS AT LEAST ONE PIXEL TO SCROLL, by #3544's
+   mechanism for a project's short tabs (see "A SHORT TAB STILL HAS
+   SOMETHING TO SCROLL" further down): a 1px box hung 1px below the
+   scroller's bottom edge, which puts that pixel into its scrollable
+   overflow whatever the content does. Absolute and offset from the
+   scroller's own padding box, so neither a flex chain that fills the
+   screen (Home's `.home-body-fill`, an open Settings section) nor a
+   percentage floor can take it back. Past the fold of a long page it is a
+   transparent pixel in the middle of the content and changes nothing.
+
+   A PAGE SAYS IT IS ONE with `data-page-bounce` on its scroller: Home,
+   Discover, All communities, Leaderboard, Profile, Your changes / requests
+   / votes, Settings, Admin, and the Messages list. Every screen root among
+   them is already its own containing block (`position: relative`, inline);
+   the Messages list was not, and becomes one here: its rows are their own
+   containing blocks, and nothing in it was positioned against anything
+   further out (measured).
+
+   ONLY WHERE THE SCROLLER IS THE PAGE: `html:not([data-browser-scroller])`.
+   When the document pages a screen the root is `overflow: visible`, and the
+   pixel would only lengthen the page; that bounce is #3591's. ONLY ON A
+   TOUCH SCREEN: with a mouse, a pixel of range would put a scrollbar on a
+   window that has nothing to scroll.
+
+   NOT the Communities Needs you feed (`[data-workshop-pane="needs"]`): it
+   is fitted to the screen on purpose (#3516) and scrolls inside, like a
+   project's Needs you and Discussion, which #3544 leaves fitted too. NOT the
+   chats (a Messages thread, Global Chat, an agent session): a transcript
+   opens on its newest line and stays there; it is not a page. A project
+   page is #3544's rule. tests/page-overscroll.test.js holds App.SCREEN_IDS
+   against the attribute, so a new screen root carries it or is named there
+   with its reason. */
+@media (pointer: coarse) {
+  html:not([data-browser-scroller]) [data-page-bounce] {
+    position: relative;
+  }
+  html:not([data-browser-scroller]) [data-page-bounce]::after {
+    content: '';
+    position: absolute; left: 0; bottom: -1px;
+    width: 1px; height: 1px;
+    pointer-events: none;
+  }
+  /* A rule of its own, so an engine without `:has()` drops only this. */
+  html:not([data-browser-scroller]) [data-page-bounce]:has([data-workshop-pane="needs"])::after {
+    content: none;
+  }
 }
 
 /* ── `.touch-target-32`: the kit's hit-slop, sized for a dense row ──────
@@ -5849,6 +5973,15 @@ body:has(#platform-header.hidden) #app-frame-host {
   gap: 6px;
 }
 
+/* #3559: a status row's sentence, and only its sentence (StatusLine in
+   frontend/src/features/dev-chat/transcript.tsx). It is a flex item, so it
+   was held at the width of its longest word: a step naming a link or a
+   branch pushed the row past the transcript's edge, and the transcript,
+   which scrolls, then slid sideways on a phone. `anywhere` lets the word
+   break inside the row, and lowers the item's min-content with it, which
+   `break-word` would not. The stamp and the clock beside it keep theirs. */
+.dc-status-text { min-width: 0; overflow-wrap: anywhere; }
+
 /* #2597: the venue caption under a running row's heading.
    The heading says what is happening ("Coding agent is running"); this says
    where, in the same muted second-line treatment .dc-cc-note already gives
@@ -6023,7 +6156,10 @@ body:has(#platform-header.hidden) #app-frame-host {
   line-height: 1.45;
 }
 .dc-failure-body { flex: 1; min-width: 0; }
-.dc-failure-text { display: block; min-width: 0; }
+/* #3559: the body may shrink (min-width: 0) but its text did not follow it.
+   A failure that quotes a link, which a build error often does, ran past the
+   card and widened the whole transcript; `anywhere` breaks it in the card. */
+.dc-failure-text { display: block; min-width: 0; overflow-wrap: anywhere; }
 .dc-failure-text a { color: var(--accent); }
 
 /* THE STOP PAIR. Both are "the run did not finish", so both are this card
@@ -6105,6 +6241,11 @@ body:has(#platform-header.hidden) #app-frame-host {
 .dc-pr-title { font-size: 13px; color: var(--text); font-weight: 500; }
 
 .dc-pr-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+/* #3605: the lifecycle badge, once proposed, opens the vote page. The badge
+   keeps its own look; the wrapper only adds the link cues. */
+.dc-pr-status-link { display: inline-flex; padding: 0; border: 0; background: none; cursor: pointer; border-radius: 9999px; }
+.dc-pr-status-link:hover .ms-badge { text-decoration: underline; }
+.dc-pr-status-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* #699: expandable report body on the platform-issue draft card. The
    <summary> holds the 300-char preview plus a "Show full report" cue;
@@ -7525,11 +7666,17 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 /* Sibling of .dc-cc-attached-log for the post-turn ccOutput
    markdown summary (rather than a monospaced live-log). Same
    indent + muted color, but body font and a bit more room for
-   structured markdown elements (paragraphs, lists, code blocks). */
+   structured markdown elements (paragraphs, lists, code blocks).
+   #3559: it scrolls down, so it scrolled sideways too, and the agent's
+   summary is where a long path in backticks turns up: the block slid under
+   a finger on a phone. The log beside it breaks its words already; this
+   breaks the summary's inside the block, and a fenced code block, which
+   never wraps, still scrolls sideways inside its own box. */
 .dc-cc-attached-md {
   font-size: 12px;
   line-height: 1.5;
   color: var(--text-secondary);
+  overflow-wrap: anywhere;
   max-height: 360px;
   overflow-y: auto;
   margin: 0 12px 12px;
@@ -14053,6 +14200,18 @@ div:is(.dev-card-dense, .dev-card-topic)[data-edge="neutral"]   { --dev-edge: va
 .dev-vote-sheet .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
 .dev-vote-sheet .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
 .dev-vote-sheet .dev-vote-reason-cancel, .dev-vote-sheet .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
+/* The Needs you feed's vote sheet (#3613) draws the same picker inline, at
+   the same tap-target size: the switch, the line box, Cancel and the send. */
+.dev-ws-vote-form { display: flex; flex-direction: column; gap: 4px; }
+.dev-ws-vote-form .dev-vote-switch-opt { height: 44px; padding: 0 14px; font-size: 15px; }
+.dev-ws-vote-form .dev-vote-switch-opt svg { width: 16px; height: 16px; }
+.dev-ws-vote-form .dev-vote-switch-opt .dev-vote-n { font-size: 12.5px; }
+.dev-ws-vote-form .dev-vote-switch-label { padding: 0 4px 4px; font-size: 14px; }
+.dev-ws-vote-form .dev-vote-reason { margin-top: 10px; gap: 6px; }
+.dev-ws-vote-form .dev-vote-reason-label { padding: 0 2px 2px; font-size: 14px; }
+.dev-ws-vote-form .dev-vote-reason-box { padding: 10px 12px; border-radius: 12px; font-size: 16px; }
+.dev-ws-vote-form .dev-vote-reason-actions { padding-top: 10px; gap: 8px; }
+.dev-ws-vote-form .dev-vote-reason-cancel, .dev-ws-vote-form .dev-vote-reason-send { height: 44px; padding: 0 18px; border-radius: 12px; font-size: 15px; }
 /* "Still yes?": the viewer's Yes was on an earlier version of the proposal
    (#1688). Amber, because it is a question the card is asking them. */
 .dev-vote-btn-prior, .dev-vote-btn-prior:hover { background: var(--state-attention-bg); color: var(--state-attention); }
@@ -15248,6 +15407,8 @@ div.dev-card-topic [data-work-note] { font-size: 12.5px; line-height: 1.45; marg
   border: 0; border-radius: 9999px; background: var(--bg-tertiary); color: var(--text-primary); cursor: pointer;
 }
 .dev-details-card > .dev-topic-details-body { margin: 0; padding: 0; background: none; font-size: 13.5px; line-height: 1.5; }
+.dev-description-dialog { margin: auto; border: 0; border-radius: 20px; width: min(680px, calc(100% - 24px)); max-height: 85dvh; }
+.dev-description-dialog::backdrop { background: rgba(20, 20, 26, .5); }
 @media (max-width: 480px) {
   .dev-topic-hero { padding: 14px 14px 16px; }
   .dev-topic-hero-title { font-size: 22px; }
@@ -16955,6 +17116,19 @@ html[data-browser-scroller] .dev-ws { min-height: var(--ws-area); }
 .dev-ws-hero-actions { display: flex; align-items: center; gap: 8px; }
 .dev-ws-hero-actions:empty { display: none; }
 .dev-ws-hero-desc { margin: 0; font-size: 15px; line-height: 21px; color: var(--text-primary); }
+/* Two lines at most (#3572), with an ellipsis: the measure the create
+   screen's limit was taken against (services/create-options.js
+   DESCRIPTION_MAX), so a description made there shows whole on a phone,
+   and a longer one from a repository's own dapp.json no longer pushes the
+   hub's actions down the screen. The same three-property clamp as
+   `.home-discover-blurb`. */
+.dev-ws-hero-desc {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
 .dev-ws-hero-line { margin: 0; font-size: 13px; line-height: 18px; color: var(--text-muted); }
 /* WHO IS HERE, IN THE HERO (#3268). The people row: up to five faces, then
    "Public community · 23 members". The activity line under the actions: this
@@ -17151,18 +17325,44 @@ html[data-community-tint] body:has(#app-view:not(.hidden)) #platform-header #hea
   }
   #dev-workshop .dev-ws-pane-head { top: calc(var(--ws-band-top) + 58px); }
 }
-/* A PULL TO REFRESH KEEPS THE BAND ON THE HEADER (#3514). The kit slides the
-   whole page down to show its spinner, band included, and what it uncovered
-   between the coloured header and the coloured band was the plain page: the
-   four tabs came loose from the header they belong to. The layer the spinner
-   sits in hangs from the scroller's top edge, which is where the gap opens,
-   so it is painted in the community's colour exactly as tall as the gap
-   (`--ptr-gap`, which workshop.tsx usePullGap reads off the kit's transform)
-   and no further: the layer is 240px, and painted whole it would show
-   through the page's transparent hero below the band. Header, gap and band
-   read as one band that stretches. */
-html[data-community-tint] :has(> #dev-forum-scroll) > .un-ptr-layer {
-  background: linear-gradient(var(--community-tint), var(--community-tint)) top left / 100% var(--ptr-gap, 0px) no-repeat;
+/* A PULL TO REFRESH MOVES ONLY THE PAGE UNDER THE TABS (pull-to-refresh
+   under the tabs, evan, 2026-10-01). "When you pull down on a community
+   page, the tabs move down too? I think the tabs should be fixed, and only
+   the page under them move and reveal the refresh."
+
+   The kit's pull slid the whole of #dev-forum-scroll, and the band lives in
+   it, so the header stayed and the band rode down with the page. #3514 then
+   painted the gap that opened between them in the community's colour (a
+   `--ptr-gap` that workshop.tsx read back off the kit's transform), so the
+   two read as one band stretching. That rule is gone with the gap it
+   painted: nothing opens under the header any more.
+
+   app-view.js now opts the scroller into the kit's `pullProperty`: the
+   scroller holds still and carries the pull as `--dev-ptr-pull`, and this
+   slides what comes after the band (the tab body, and All items' back bar
+   with it) by exactly that much. The header, the band and anything above
+   the band stay where they are. The gap opens between the band and the
+   page, and shows the page's own plane, as the air around its cards does:
+   every box from the tab body up to the scroller is transparent, so the
+   kit's layer behind them (anchored at the band's bottom edge, where the
+   spinner hangs) is what shows, and it paints only the spinner.
+
+   UNSET AT REST, so at rest this is no rule at all: `var()` with no
+   fallback and nothing to read is invalid at computed-value time, which
+   leaves `transform: none`, so no stacking context and no containing block
+   where there was none before. A fallback of 0px would make both permanent
+   on the tab body (none of these boxes has a transform of its own for this
+   to override).
+
+   NO BAND (the Workshop still loading, an app that could not load): the
+   kit hangs the spinner from the scroller's top instead (app-view.js's
+   `topEl` finds no band), and everything in the scroller slides, as it all
+   did. AT EVERY WIDTH, outside the phone block above: the kit only pulls on
+   a touch device, and an iPad's row of tabs holds still the same way (the
+   row the band becomes from 768px is the same `.dev-ws-band`). */
+#dev-forum-scroll .dev-ws > .dev-ws-band ~ *,
+#dev-forum-scroll:not(:has(.dev-ws-band)) > * {
+  transform: translateY(var(--dev-ptr-pull));
 }
 
 /* ON A WIDE WINDOW THE TABS ARE THE PANEL'S FIRST ROW (#852 review: they
@@ -17516,6 +17716,35 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      surface the cards already use — the same reason tabs.tsx's track is white
      rather than the recessed grey a control gets on a card. */
 
+  /* #3583: WHERE THE BAND PINS, which is the header's foot, and how far that
+     is from the top of whatever scrolls the page.
+
+     On a computer, and in the installed app and the native WebView, that is
+     #dev-forum-scroll, and the header's foot overlaps its top edge by 7px
+     (the header's `-mb-2`, 8px, less `.dc-lift`'s 1px hairline). The strip
+     pinned at 0 rose into the header by that much, and at z-index 30 over
+     the header's 10 its band painted there: a white slab biting the
+     coloured header, which is half of what #3583's screenshot shows.
+
+     Where the DOCUMENT scrolls instead (a tablet in its browser, a window
+     under 768px: lib/browser-scroll.ts) the scrollport is the whole window
+     and the header is sticky over it, so 0 was the top of the SCREEN: the
+     strip pinned there drew straight over the header and hid it. There it
+     is the header's own height, as everything else that sticks under the
+     header in that mode is measured (#browse-search-bar). */
+  #dev-workshop { --ws-pin-top: 7px; }
+  html[data-browser-scroller="dev-forum-scroll"] #dev-workshop {
+    --ws-pin-top: calc(var(--browser-banner-h) + var(--platform-header-h) + var(--platform-safe-top));
+  }
+  /* Under 768px the strip is still the coloured band, tucked 18px up under
+     the header's foot, so it rests 15px above the foot (that tuck, less
+     #dev-body's 10px, plus the 7px the foot overlaps the page), and it pins
+     exactly there, the way a phone's does (#3522): it never moves, and its
+     tabs never drop. */
+  @media (max-width: 767.98px) {
+    .dev-ws-tabs.dev-ws-band { top: calc(var(--ws-pin-top, 0px) - 15px); }
+  }
+
   /* EVERYTHING PINS UP HERE, as one band: the tab strip (on All items, its
      back bar) and the head under it, with the grouping, the search and the
      filters. The controls belong WITH the list you are
@@ -17523,7 +17752,8 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
 
      THE HEAD KEEPS THE BASE RULE'S `position: sticky` and only changes where
      it comes to rest: under the pinned strip, at the strip's measured height
-     plus the column gap. `top: 0` would slide it under the strip.
+     plus the column gap, counted from where the strip pins (`--ws-pin-top`,
+     #3583). `top: 0` would slide it under the strip.
 
      ABOVE THE STRIP IN PAINT ORDER at rest. The grouping tabs used to hang
      from the head into the strip's band as an "ear" (gone with #852), which
@@ -17534,7 +17764,7 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
      hundred lines BELOW this block, and on equal specificity the later one
      wins — a bare-class override here would apply to nothing. */
   #dev-workshop .dev-ws-pane-head {
-    top: var(--dev-ws-head-top, 0px);
+    top: calc(var(--ws-pin-top, 0px) + var(--dev-ws-head-top, 0px));
     z-index: 31;
   }
   .dev-ws-tabs {
@@ -17574,9 +17804,10 @@ html[data-browser-scroller] .dev-ws[data-ws-tab="discussion"] {
        above, `top: 0` was reset to `auto` by the shorthand three lines later:
        the strip stayed `sticky`, pinned to nothing, and scrolled away while
        the head it is supposed to travel with stayed. Measured — the strip's
-       top went to -890 on a 900px scroll. `top: 0` is the scroller's own top;
-       there is no chrome inside it to clear. */
-    top: 0;
+       top went to -890 on a 900px scroll. It was `top: 0`, the scroller's
+       own top, on the reasoning that there was no chrome inside it to clear;
+       there is, the header's foot (#3583, `--ws-pin-top` above). */
+    top: var(--ws-pin-top, 0px);
     /* QA 2026-09-24 Q7: ABOVE THE CARDS, BELOW THE HEAD. Pinned with no
        z-index, the strip sat at the floor of the stacking order, and the
        pane and its cards come later in the tree, so everything that scrolled up past it painted over
@@ -19217,6 +19448,9 @@ html.un-ios {
   font-size: 15px;
   font-weight: 600;
 }
+/* RESUME IS AN ACTION, so it is drawn in the accent, filled (#3618). It was
+   the header's periwinkle, which is the header's own ink and nothing else's,
+   at a tint light enough that the strip's one action read as a tag. */
 .platform-parked-pill {
   flex: none;
   display: inline-flex;
@@ -19224,9 +19458,9 @@ html.un-ios {
   height: 28px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid var(--brand-line);
-  background: var(--brand-tint);
-  color: var(--brand-ink);
+  border: 0;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-size: 13px;
   font-weight: 600;
 }
@@ -19298,6 +19532,49 @@ html.un-kb #platform-parked {
 @media (prefers-reduced-motion: reduce) {
   .platform-parked-enter, .platform-parked-leave,
   .platform-parked-enter > *, .platform-parked-leave > * { animation: none; }
+}
+
+/* ── THE APP YOU CLOSED, ON ITS WAY INTO RESUME (#3618) ──────────────
+   frontend/src/features/nav/resume-motion.ts carries the argument: a
+   stand-in for the app (its page colour, its icon) pinned where the app was,
+   shrinking into the Resume control in the rail or the strip. Above the page
+   and the bars, at the kit's zoom layer and under every kit overlay; never a
+   target; gone when the motion ends. The script never runs it with reduced
+   motion; the rule below is the belt to that. */
+.resume-ghost {
+  position: fixed;
+  z-index: 9960;
+  pointer-events: none;
+  transform-origin: 0 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The app's own page colour when its frame reported one (set inline);
+     the page ground otherwise — a card lifted off whatever is behind it,
+     never the wallpaper it would vanish into. */
+  background: var(--bg-primary);
+  box-shadow: inset 0 0 0 1px var(--app-sheet-line), 0 12px 40px rgba(0, 0, 0, .18);
+  will-change: transform, opacity;
+}
+.resume-ghost-tile {
+  width: 72px;
+  height: 72px;
+  border-radius: 18px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 36px;
+  font-weight: 700;
+}
+.resume-ghost-tile > img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+@media (prefers-reduced-motion: reduce) {
+  .resume-ghost { display: none; }
 }
 
 
@@ -19878,6 +20155,27 @@ html.un-kb #platform-parked {
     background: var(--accent);
   }
 
+  /* RESUME ON A RUNNING APP YOU LEFT (#3618). The Active row's one action,
+     filled in the accent so the apps waiting for you are the thing the rail
+     points at (recents-list.tsx). It says what the green dot said, so the
+     dot steps aside for it; the row you are in keeps neither. */
+  .platform-recent-resume {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    height: 22px;
+    padding: 0 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .platform-recent-resume ~ .platform-recent-live {
+    display: none;
+  }
+
   /* ── ACTIVE (#3074) ──────────────────────────────────────────────────
      frontend/src/features/nav/recents.ts (buildActive) carries the argument:
      the running apps, in a section of their own at the top of the list, above
@@ -20276,13 +20574,13 @@ html.un-kb #platform-parked {
 }
 
 
-/* ── The rail, peeked back over an open app (#2718) ──────────────────
-   frontend/src/features/nav/tab-bar.tsx carries the argument: an app covers
-   the rail, which is what makes it feel like a program rather than a page,
-   and on a laptop the pointer is already at the left edge half the time. The
-   navigation comes back on hover and stops spending width while you work —
-   WeChat's floating capsule, an auto-hiding dock and Slack's own collapsed
-   rail are all this move. */
+/* ── The rail, peeked back over a folded rail (#2718, #2764) ─────────
+   frontend/src/features/nav/tab-bar.tsx carries the argument: a rail the
+   viewer folded comes back on hover and stops spending width while they
+   work — an auto-hiding dock and Slack's own collapsed rail are this move.
+   NOT over a running app (#3138): an app's own controls put the pointer at
+   the left edge all the time, so the hot zone is not rendered there and the
+   way out is the header's ✕. */
 
 /* THE HOT ZONE, and the only thing that can start a peek. Narrow enough that
    it never intercepts a pointer heading for the app's own left edge, wide

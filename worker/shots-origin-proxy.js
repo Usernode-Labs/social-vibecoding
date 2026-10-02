@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 'use strict';
 
-// Mandatory egress boundary for shots-browser MCP servers. Playwright's
-// allowed-origins option is useful filtering but explicitly is not a security
-// boundary; this proxy independently rejects HTTP requests and CONNECT
-// tunnels outside the paired internal origins and their authenticated,
-// public deployed-app catalog. The catalog arrives after browser bootstrap.
+// Mandatory egress boundary for shots-browser MCP servers. The browsers send
+// everything through here. The paired internal origins and the
+// authenticated, public deployed-app catalog (which arrives after browser
+// bootstrap) are reached as before. Anything else is the public internet: a
+// web port, and a name whose every address is public, connected to at the
+// address that was checked (shots-boundary.js). The network the worker runs
+// in is never reachable from the browser.
 
 const fs = require('node:fs');
 const http = require('node:http');
@@ -14,6 +16,7 @@ const net = require('node:net');
 const crypto = require('node:crypto');
 const { performance } = require('node:perf_hooks');
 const { parseHostedOriginsFile } = require('./shots-hosted-origins');
+const { vetPublicDestination } = require('./shots-boundary');
 
 const DIAGNOSTIC_MARKER = '__USERNODE_SHOTS_BROWSER__ ';
 
@@ -127,7 +130,8 @@ const platformAssetsOrigin = (() => {
 })();
 const childAppPair = process.env.SHOTS_PLATFORM_ASSETS === '1';
 // A legacy child app still on the Tailwind CDN script renders with it in
-// staging and production; the same one host is reachable for a child-app pair.
+// staging and production. It is an ordinary public host now; its use is
+// still counted, since apps are meant to move off it.
 const LEGACY_TAILWIND_CDN = 'cdn.tailwindcss.com:443';
 const FORWARDED_ASSET_HEADERS = Object.freeze(['accept', 'accept-encoding', 'if-none-match', 'if-modified-since', 'user-agent']);
 const RETURNED_ASSET_HEADERS = Object.freeze(['content-type', 'content-length', 'content-encoding', 'cache-control', 'etag', 'last-modified']);
@@ -234,7 +238,19 @@ function identityToken(persona, target, headers) {
   return personaTokens[persona] || null;
 }
 
+// A destination outside the pair and the catalog: reachable only when public.
+// The refusal is counted by reason, never with the destination.
+async function vetOutside(hostname, targetPort) {
+  const vetted = await vetPublicDestination(hostname, targetPort);
+  if (!vetted.ok) diagnostic({ kind: 'egress_blocked', blockReason: vetted.reason });
+  return vetted;
+}
+
 const handleRequest = (persona) => (req, res) => {
+  handleRequestAsync(persona, req, res).catch(() => { if (!res.headersSent) reject(res, 502); else res.destroy(); });
+};
+
+async function handleRequestAsync(persona, req, res) {
   // The control plane answers on the shared listener only.
   if (req.url === controlPath) return persona ? reject(res) : controlRequest(req, res);
   let target;
@@ -244,7 +260,15 @@ const handleRequest = (persona) => (req, res) => {
     try { target = new URL(req.url || '/', `http://${req.headers.host}`); }
     catch { return reject(res, 400); }
   }
-  if (!permittedOrigin(target.origin)) return reject(res);
+  // The pair and the catalog are reached by name, as they always were; any
+  // other destination only at the public address that was checked.
+  let vetted = null;
+  if (!permittedOrigin(target.origin)) {
+    if (!['http:', 'https:'].includes(target.protocol)) return reject(res);
+    vetted = await vetOutside(target.hostname,
+      Number(target.port) || (target.protocol === 'https:' ? 443 : 80));
+    if (!vetted.ok) return reject(res);
+  }
   if (origins.has(target.origin) && req.method === 'GET'
       && controlledFailures.has(`${target.pathname}${target.search}`)) {
     controlledFailureHits += 1;
@@ -253,7 +277,7 @@ const handleRequest = (persona) => (req, res) => {
     return res.destroy();
   }
   const side = target.origin === originList[0] ? 'base'
-    : target.origin === originList[1] ? 'head' : 'hosted';
+    : target.origin === originList[1] ? 'head' : vetted ? 'outside' : 'hosted';
   if (routesPlatformAsset(target, req.method)) return forwardPlatformAsset(req, res, target, side);
   const isDocument = req.headers['sec-fetch-dest'] === 'document';
   const ordinal = isDocument ? ++documentOrdinal : null;
@@ -268,7 +292,14 @@ const handleRequest = (persona) => (req, res) => {
   if (isDocument) diagnostic({ kind: 'document_request', documentOrdinal: ordinal, side,
     ...(persona ? { identityAttached: !!token } : {}) });
   const transport = target.protocol === 'https:' ? https : http;
-  const upstream = transport.request(target, { method: req.method, headers }, (upstreamResponse) => {
+  // Pin a public destination to the address that was checked, so a second
+  // lookup cannot answer with an internal one.
+  const pinned = vetted ? {
+    lookup: (_hostname, options, callback) => (options?.all
+      ? callback(null, [{ address: vetted.address, family: vetted.family }])
+      : callback(null, vetted.address, vetted.family)),
+  } : {};
+  const upstream = transport.request(target, { method: req.method, headers, ...pinned }, (upstreamResponse) => {
     let bodyBytes = 0;
     upstreamResponse.on('data', (chunk) => { bodyBytes += chunk.length; });
     if (isDocument) res.once('finish', () => diagnostic({
@@ -288,27 +319,42 @@ const handleRequest = (persona) => (req, res) => {
     reject(res, 502);
   });
   req.pipe(upstream);
-};
+}
 
 // A CONNECT tunnel is opaque, so no persona adds anything to one: the pair's
 // origins are plain HTTP inside the cluster.
 const handleConnect = (req, client, head) => {
+  let upstream = null;
+  client.on('error', () => upstream?.destroy());
+  connectTunnel(req, client, head, (socket) => { upstream = socket; })
+    .catch(() => client.destroy());
+};
+
+async function connectTunnel(req, client, head, onUpstream) {
   const authority = String(req.url || '').toLowerCase();
-  const legacyCdn = childAppPair && authority === LEGACY_TAILWIND_CDN;
-  if (!legacyCdn && !permittedAuthority(authority)) return reject(client);
-  if (legacyCdn) diagnostic({ kind: 'legacy_tailwind_cdn' });
   const split = authority.lastIndexOf(':');
-  const host = authority.slice(0, split);
+  if (split <= 0) return reject(client);
+  const host = authority.slice(0, split).replace(/^\[(.*)\]$/, '$1');
   const targetPort = Number(authority.slice(split + 1));
-  const upstream = net.connect(targetPort, host, () => {
+  // The pair and the catalog by name; anything else at its checked address.
+  let address = host;
+  if (!permittedAuthority(authority)) {
+    const vetted = await vetOutside(host, targetPort);
+    if (!vetted.ok) return reject(client);
+    if (authority === LEGACY_TAILWIND_CDN) diagnostic({ kind: 'legacy_tailwind_cdn' });
+    address = vetted.address;
+  }
+  if (client.destroyed) return undefined;
+  const upstream = net.connect(targetPort, address, () => {
     client.write('HTTP/1.1 200 Connection Established\r\n\r\n');
     if (head?.length) upstream.write(head);
     upstream.pipe(client);
     client.pipe(upstream);
   });
+  onUpstream(upstream);
   upstream.on('error', () => client.destroy());
-  client.on('error', () => upstream.destroy());
-};
+  return undefined;
+}
 
 function listener(persona) {
   const server = http.createServer(handleRequest(persona));

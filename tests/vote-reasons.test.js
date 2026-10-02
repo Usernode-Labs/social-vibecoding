@@ -486,12 +486,14 @@ function loadIssueVotes(pool) {
     appAccess: require.resolve('../src/services/app-access'),
     activeUsers: require.resolve('../src/services/active-users'),
     adminApproval: require.resolve('../src/services/admin-approval'),
+    events: require.resolve('../src/services/events'),
     subject: require.resolve('../src/routes/issues'),
   };
   const orig = {};
   for (const [k, id] of Object.entries(ids)) orig[k] = require.cache[id];
 
   const systemMessages = [];
+  const eventCalls = [];
   stub(ids.pool, { getPool: () => pool });
   stub(ids.ws, {
     ...realWs,
@@ -511,6 +513,10 @@ function loadIssueVotes(pool) {
     getActiveUserStats: async () => ({ active: 3, majority: 2 }),
   });
   stub(ids.adminApproval, { isAppLocked: async () => false, hasAdminUpVote: async () => true });
+  stub(ids.events, {
+    EVENT_TYPES: { ISSUE_VOTE_CAST: 'issue_vote_cast' },
+    record: (_pool, event) => { eventCalls.push(event); },
+  });
 
   delete require.cache[ids.subject];
   const router = require(ids.subject).issueRoutes({ databaseUrl: 'postgres://test', jwtSecret: 's' });
@@ -520,7 +526,7 @@ function loadIssueVotes(pool) {
     }
     delete require.cache[ids.subject];
   };
-  return { router, systemMessages, restore };
+  return { router, systemMessages, eventCalls, restore };
 }
 
 function issueRouteHandler(router, routePath, method = 'post') {
@@ -546,7 +552,7 @@ async function castIssueVote(body, { existing = [], row } = {}) {
   const pool = makeIssuePool([
     [/FROM issues i JOIN apps a ON a\.id = i\.app_id/, [GOV_ROW(row)]],
     [/SELECT vote FROM issue_votes WHERE issue_id/, existing],
-    [/INSERT INTO issue_votes/, []],
+    [/INSERT INTO issue_votes/, [{ id: 91 }]],
     [/DELETE FROM issue_votes/, []],
   ]);
   const ctx = loadIssueVotes(pool);
@@ -586,12 +592,16 @@ test('issue vote: a No with a line is recorded, and the proposal\'s thread quote
   assert.deepEqual(systemMessages[0].thread, { type: 'governance', ref: 61 });
 });
 
-test('issue vote: a Yes needs no line, and without one the thread line reads exactly as before', async () => {
-  const { res, pool, systemMessages } = await castIssueVote({ vote: 'up' });
+test('issue vote: a Yes needs no line, emits a durable action, and the thread reads as before', async () => {
+  const { res, pool, systemMessages, eventCalls } = await castIssueVote({ vote: 'up' });
   assert.equal(res.statusCode, 200);
   assert.deepEqual(pool.issued(/INSERT INTO issue_votes/).params, [61, 3, 'up', null],
     'no line: null, never the empty string');
   assert.equal(systemMessages[0].content, 'evan voted up on close proposal for issue #?');
+  assert.deepEqual(eventCalls, [{
+    type: 'issue_vote_cast', userId: 3, appId: 9,
+    metadata: { vote: 'up', issueId: 61, issueVoteId: 91 },
+  }], 'a later flip or retraction cannot erase the day this vote was cast');
 });
 
 test('issue vote: a Yes may carry a line, and then the thread quotes that too', async () => {
@@ -611,11 +621,12 @@ test('issue vote: a paragraph is refused by the shared cap, and nothing is writt
 });
 
 test('issue vote: re-casting the same side still RETRACTS, and is never asked for a line', async () => {
-  const { res, pool } = await castIssueVote({ vote: 'down' }, { existing: [{ vote: 'down' }] });
+  const { res, pool, eventCalls } = await castIssueVote({ vote: 'down' }, { existing: [{ vote: 'down' }] });
   assert.equal(res.statusCode, 200);
   assert.deepEqual(res.body, { ok: true, toggled: true });
   assert.ok(pool.issued(/DELETE FROM issue_votes/), 'the vote is taken back');
   assert.equal(pool.issued(/INSERT INTO issue_votes/), undefined);
+  assert.deepEqual(eventCalls, [], 'taking a vote back does not fabricate another cast');
 });
 
 // #3410: the state check is about the vote, never about the issue's

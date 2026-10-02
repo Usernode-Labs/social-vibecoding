@@ -41,7 +41,10 @@ test('#3079: the pill says the thinking level after the model, muted, centred, o
   const high = pill('High');
   assert.match(high, /aria-label="Model: GPT-5, thinking High"/);
   assert.match(high, /^<button[^>]*class="inline-flex h-10 [^"]*items-center /, 'the label block is centred in the pill');
-  assert.match(high, /<span class="flex min-w-0 items-baseline gap-1\.5"><span class="truncate">GPT-5<\/span><span class="shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-model-effort="true">High<\/span><\/span>/,
+  // #3574: the block is one clipped, wrapping line, so a level with no room
+  // beside the name wraps out of sight rather than squeezing the name
+  // (tests/agent-session-model-pill-room.test.js).
+  assert.match(high, /<span class="flex h-6 min-w-0 flex-wrap items-baseline justify-center gap-x-1\.5 overflow-hidden leading-6"><span class="truncate">GPT-5<\/span><span class="shrink-0 text-xs font-normal text-zinc-500 dark:text-zinc-400" data-agent-session-model-effort="true">High<\/span><\/span>/,
     'the two words share a baseline; the level is small, in paired muted ink');
 
   const none = pill('');
@@ -94,7 +97,7 @@ test('#3078: the Homeroom tab says who builds it and lists the models once, unde
   const body = renderToHtml(createElement(parts.ModelSheetBody, {
     options: parts.modelList([
       { value: 'openrouter:z-ai/glm-5', label: 'GLM 5', detail: 'about $0.42 for a typical change' },
-      { value: 'anthropic:claude-sonnet-5', label: 'Sonnet 5' },
+      { value: 'anthropic:claude-sonnet-5-5', label: 'Sonnet 5.5' },
     ]),
     value: 'openrouter:z-ai/glm-5', onPick() {}, credit: null,
     effort: { value: '', options: [{ value: '', label: 'High', isDefault: true }], onPick() {} },
@@ -102,7 +105,7 @@ test('#3078: the Homeroom tab says who builds it and lists the models once, unde
   assert.match(body, /^<div[^>]*><p[^>]*>The Mayor builds it here, on your Homeroom credits\.<\/p>/);
   assert.equal((body.match(/>Model<\/p>/g) || []).length, 1, 'one list');
   assert.doesNotMatch(body, />Claude Code<|>Codex</, 'no agent headings: those are the other tabs');
-  assert.ok(body.indexOf('Sonnet 5') < body.indexOf('GLM 5'), 'Claude first, as before');
+  assert.ok(body.indexOf('Sonnet 5.5') < body.indexOf('GLM 5'), 'Claude first, as before');
   assert.match(body, /about \$0\.42 for a typical change/, 'each model\'s cost line');
   assert.match(body, /data-agent-session-effort[^>]*>[\s\S]*?Thinking level[\s\S]*?High</, 'the thinking level row, as before');
 });
