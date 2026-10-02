@@ -16,7 +16,7 @@ const catalog = require('../services/bench/catalog');
 const lane = require('../services/bench/lane');
 const runner = require('../services/bench/runner');
 const grading = require('../services/bench/grading');
-const { benchGradingLimiter } = require('../middleware/rate-limits');
+const { benchGradingLimiter, benchRunLimiter } = require('../middleware/rate-limits');
 const { sameOriginBrowserOnly } = require('../middleware/same-site-browser');
 const report = require('../services/bench/report');
 const core = require('../services/bench/core');
@@ -312,6 +312,82 @@ function homeroomBenchRoutes(config) {
       user: req.user,
       regrade: { github: runner.guardedGithub(github) },
     });
+  }));
+
+  // ── The run's doors, for the same connector (#3654) ─────────────────
+  //
+  // List, read, launch and cancel a run from an admin's Claude session, by
+  // the same services the console's Runs screen calls. Gated like the
+  // judge's doors above: requireAdminWrite first, on the reads too, and the
+  // two writes rate limited per person and refused to a browser on another
+  // origin. What the read hands out is aggregates only (report.runAggregates):
+  // the same session grades blind items, so nothing in it names one trial.
+  //
+  // A launch here must name its cap (no default), and a cap over
+  // CONNECTOR_CONFIRM_CAP_USD needs `confirmLargeCap: true`: the tool asks the
+  // person first, and this is the wall behind that.
+  const CONNECTOR_CONFIRM_CAP_USD = 100;
+
+  router.get('/api/bot-bench/runs', requireAdminWrite, handler('Bench runs (connector)', async (req) => {
+    const limit = Math.min(Math.max(Number(req.query?.limit) || 20, 1), 50);
+    const runs = await lane.listRuns(pool, { limit });
+    const list = await suites.listSuites(pool);
+    return {
+      runs: runs.map((r) => ({
+        id: r.id, suiteId: r.suite_id, suiteName: r.suite_name, suiteVersion: r.suite_version, status: r.status,
+        models: r.models, baseline: r.baseline_model, stages: r.stages, repeats: r.repeats, concurrency: r.concurrency,
+        capUsd: r.cap_usd, spentUsd: r.spent_usd, note: r.note, startedBy: r.started_by,
+        createdAt: r.created_at, startedAt: r.started_at, finishedAt: r.finished_at, counts: r.counts || {},
+      })),
+      suites: list.map((s) => ({
+        id: s.id, name: s.name, version: s.version, frozen: !!s.frozen_at, isDefault: !!s.is_default, counts: s.counts || {},
+      })),
+      launcher: lane.launcherDefaults({ suites: list, coreSuiteId: await core.coreSuiteId(pool) }),
+      confirmAboveUsd: CONNECTOR_CONFIRM_CAP_USD,
+    };
+  }));
+
+  router.get('/api/bot-bench/runs/:id', requireAdminWrite, handler('Bench run aggregates (connector)', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
+    const out = await report.runAggregates(pool, id, {
+      slice: String(req.query?.slice || 'verdict'),
+      agreement: await grading.agreement(pool, { runId: id }),
+    });
+    if (!out) return { ok: false, status: 404, error: 'Run not found' };
+    return out;
+  }));
+
+  router.post('/api/bot-bench/runs', requireAdminWrite, benchRunLimiter, sameOriginBrowserOnly, handler('Launch bench run (connector)', async (req) => {
+    const b = req.body || {};
+    if (b.capUsd == null || !Number.isFinite(Number(b.capUsd))) return { ok: false, status: 400, error: 'Name the cap: capUsd is required' };
+    if (Number(b.capUsd) > CONNECTOR_CONFIRM_CAP_USD && b.confirmLargeCap !== true) {
+      return { ok: false, status: 400, error: `A cap over $${CONNECTOR_CONFIRM_CAP_USD} needs confirmLargeCap` };
+    }
+    const out = await lane.launchRun(pool, {
+      suiteId: b.suiteId, models: b.models, stages: b.stages, repeats: b.repeats, repeatStages: b.repeatStages,
+      capUsd: b.capUsd, concurrency: b.concurrency, note: b.note,
+    }, { actorId: req.user.id });
+    if (!out.ok) return out;
+    log.info('bench', 'Run launched', {
+      by: req.user.username, via: 'connector', runId: out.run.id, trials: out.trials, estimateUsd: out.estimateUsd, capUsd: out.run.cap_usd,
+    });
+    return {
+      ok: true,
+      run: { id: out.run.id, status: out.run.status, capUsd: Number(out.run.cap_usd), suiteId: out.run.suite_id, models: out.run.models, stages: out.run.stages, repeats: out.run.repeats },
+      trials: out.trials,
+      notApplicable: out.notApplicable,
+      estimateUsd: out.estimateUsd,
+      suiteFrozen: out.suiteFrozen,
+    };
+  }));
+
+  router.post('/api/bot-bench/runs/:id/cancel', requireAdminWrite, benchRunLimiter, sameOriginBrowserOnly, handler('Cancel bench run (connector)', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid run id' };
+    const out = await lane.cancelRun(pool, id);
+    if (out.ok) log.info('bench', 'Run cancelled', { by: req.user.username, via: 'connector', runId: id });
+    return out;
   }));
 
   return router;

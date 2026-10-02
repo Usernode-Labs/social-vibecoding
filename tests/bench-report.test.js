@@ -128,3 +128,29 @@ test('the chart: the frontier filled and joined, each point named in words, a ti
     assert.match(area, new RegExp(`id="${id}"`));
   }
 });
+
+// #3654: the connector's view of a run (report.runAggregates) groups failure
+// reasons, and a reason must not point back at one trial: numbers, bench
+// branches and SHAs are taken out, so reasons that differ only in those group.
+test('failure reasons group without naming a trial', () => {
+  const { reasonText, statusAndReasons, CONNECTOR_SLICE_KEYS, SLICE_KEYS } = require('../src/services/bench/report');
+  assert.equal(reasonText('branch: could not push bench/r12-t345-x at 4f2c9e1d (HTTP 502) for issue #4242'),
+    'branch: could not push bench/… at <sha> (HTTP N) for issue #N');
+  assert.equal(reasonText('unparseable: no verdict block'), 'unparseable: no verdict block', 'a plain reason is kept as it is');
+  assert.equal(reasonText(null), '(no reason recorded)');
+  assert.equal(reasonText('x'.repeat(500)).length, 200);
+  const out = statusAndReasons([
+    { status: 'ok', error: null },
+    { status: 'infra_fail', error: 'worker: timed out after 30000ms' },
+    { status: 'infra_fail', error: 'worker:  timed out after 45000ms' },
+    { status: 'model_fail', error: 'unparseable: no verdict block' },
+    { status: 'pending', error: null },
+  ]);
+  assert.deepEqual(out.statuses, { ok: 1, infra_fail: 2, model_fail: 1, pending: 1 });
+  assert.deepEqual(out.failureReasons, [
+    { status: 'infra_fail', reason: 'worker: timed out after Nms', count: 2 },
+    { status: 'model_fail', reason: 'unparseable: no verdict block', count: 1 },
+  ]);
+  assert.equal(out.moreReasons, 0);
+  assert.deepEqual(CONNECTOR_SLICE_KEYS, SLICE_KEYS.filter((k) => k !== 'app_slug'));
+});
