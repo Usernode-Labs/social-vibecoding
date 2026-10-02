@@ -119,3 +119,18 @@ test('every stage has a binary rubric with named criteria', () => {
     assert.ok(r.criteria.every((c) => /^[a-z_]+$/.test(c.id) && c.text), stage);
   }
 });
+
+test('a reference is one accepted answer, not a template: the judge, the build rubric and the charter all say so', () => {
+  // The merged PR attached to a build task is one way people accepted, not
+  // the only right one, and it can be flawed: a judge told to match it
+  // anchors on it, passing copies of its flaws and failing sound
+  // alternatives. Judge against the request.
+  assert.match(grading.INSTRUCTIONS, /REFERENCE is one accepted answer, not the only right one/);
+  assert.match(grading.INSTRUCTIONS, /Never fail a candidate only for differing from the reference/);
+  const implementsRequest = grading.RUBRICS.build.criteria.find((c) => c.id === 'implements_request');
+  assert.doesNotMatch(implementsRequest.text, /and the reference.*asks/, 'the reference is not part of what the diff must do');
+  assert.match(implementsRequest.text, /not a template to match/);
+  const charter = require('../src/services/mcp-charter');
+  const section = JSON.stringify(charter).includes('benchmark-grading') ? JSON.stringify(charter) : '';
+  assert.match(section, /A reference is one accepted answer, not the only right one/);
+});
