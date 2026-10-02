@@ -9633,6 +9633,56 @@ BEGIN
 END $$;
 ALTER TABLE homeroom_bot_runs ADD COLUMN IF NOT EXISTS build_model TEXT;
 
+-- #3654: the Homeroom bot's benchmark (services/bench/). A SUITE is a set of
+-- tasks drawn from real runs; it is a version (name + version), and freezing
+-- it makes its tasks immutable (services/bench/suites.js refuses every write
+-- to a frozen suite's tasks; "edit" makes the next version). `frozen` is the
+-- versioned core, `rotating` the set refreshed from recent runs.
+CREATE TABLE IF NOT EXISTS bench_suites (
+  id          SERIAL PRIMARY KEY,
+  name        TEXT NOT NULL,
+  version     INTEGER NOT NULL DEFAULT 1,
+  kind        TEXT NOT NULL DEFAULT 'frozen',
+  parent_id   INTEGER REFERENCES bench_suites(id) ON DELETE SET NULL,
+  notes       TEXT,
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  frozen_at   TIMESTAMPTZ,
+  CONSTRAINT bench_suites_kind_check CHECK (kind IN ('frozen', 'rotating')),
+  UNIQUE (name, version)
+);
+COMMENT ON TABLE bench_suites IS 'staging:private';
+
+-- One task: a stage of one recorded run (or a merged pull request), the
+-- snapshot it replays, tags to slice results by, and the reference a
+-- candidate is graded against. `label_token` is the opaque id a labelling
+-- session sees instead of the task's own id. Private: tasks come from any
+-- app, private ones included, and the reference is written from them.
+CREATE TABLE IF NOT EXISTS bench_tasks (
+  id                SERIAL PRIMARY KEY,
+  suite_id          INTEGER NOT NULL REFERENCES bench_suites(id) ON DELETE CASCADE,
+  stage             TEXT NOT NULL,
+  source_run_id     INTEGER REFERENCES homeroom_bot_runs(id) ON DELETE SET NULL,
+  snapshot_id       INTEGER NOT NULL REFERENCES homeroom_bot_run_snapshots(id) ON DELETE CASCADE,
+  app_id            INTEGER REFERENCES apps(id) ON DELETE CASCADE,
+  issue_number      INTEGER,
+  tags              JSONB NOT NULL DEFAULT '{}',
+  reference         JSONB NOT NULL DEFAULT '{}',
+  reference_source  TEXT,
+  labeled_by        INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  labeled_at        TIMESTAMPTZ,
+  label_token       TEXT NOT NULL UNIQUE,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT bench_tasks_stage_check
+    CHECK (stage IN ('triage', 'spec', 'build', 'followup', 'checks_fix', 'dm')),
+  CONSTRAINT bench_tasks_reference_source_check
+    CHECK (reference_source IS NULL OR reference_source IN ('human', 'opus', 'merged_pr'))
+);
+CREATE INDEX IF NOT EXISTS idx_bench_tasks_suite ON bench_tasks(suite_id, stage);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bench_tasks_suite_run_stage
+  ON bench_tasks(suite_id, source_run_id, stage) WHERE source_run_id IS NOT NULL;
+COMMENT ON TABLE bench_tasks IS 'staging:private';
+
 -- The bot's own knobs, admin-tunable from its console section. `mode` is
 -- `off` (the loop idles), `shadow` (triage and record only) or `live`
 -- (still refused by the settings route). Acting for real is per app

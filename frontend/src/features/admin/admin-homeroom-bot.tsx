@@ -158,6 +158,7 @@ interface Run {
   // #3654: the verdict a labeller says was right, the build's model, and the
   // stages this run can be replayed at by the benchmark.
   label_verdict?: LabelVerdict | null;
+  dm_answered_at?: string | null;
   build_model?: string | null;
   replayStages?: string[];
   buildUrl: string | null;
@@ -518,6 +519,85 @@ function RunLabel({ run, canWrite, busy, onSave }: {
         disabled={busy || !dirty}
         onClick={() => onSave((verdict || null) as LabelVerdict | null, note.trim() ? note.trim() : null)}
       >Save label</button>
+    </div>
+  );
+}
+
+// #3654: the benchmark stages a run can become a task at, from the
+// snapshots it recorded (services/bench/suites.js SNAPSHOT_STAGE).
+function benchStagesFor(run: Run): string[] {
+  const have = new Set(run.replayStages || []);
+  const out: string[] = [];
+  if (have.has('triage')) out.push('triage');
+  if (have.has('triage') && run.verdict === 'question' && run.dm_answered_at) out.push('dm');
+  if (have.has('build')) out.push('build', 'spec');
+  if (have.has('followup')) out.push('followup');
+  if (have.has('checks_fix')) out.push('checks_fix');
+  return out;
+}
+
+interface SuiteOption { id: number; name: string; version: number; frozen_at: string | null }
+
+/**
+ * #3654: "Add to a benchmark suite" on a run row. Only a run that recorded
+ * a snapshot can be replayed, so a run from before snapshots says so instead.
+ * The suites are read when the row first asks for them.
+ */
+function AddToSuite({ run, busy }: { run: Run; busy: boolean }) {
+  const stages = benchStagesFor(run);
+  const [suitesList, setSuites] = useState<SuiteOption[] | null>(null);
+  const [suiteId, setSuiteId] = useState('');
+  const [stage, setStage] = useState(stages[0] || '');
+  const [note, setNote] = useState('');
+  useEffect(() => {
+    if (!stages.length) return undefined;
+    let alive = true;
+    fetch('/api/admin/homeroom-bot/bench/suites')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return;
+        const open = (d.suites || []).filter((x: SuiteOption) => !x.frozen_at);
+        setSuites(open);
+        if (open[0]) setSuiteId(String(open[0].id));
+      })
+      .catch(() => { if (alive) setSuites([]); });
+    return () => { alive = false; };
+  }, [run.id]);
+  if (!stages.length) {
+    return <p className={AdminUI.muted} data-bench-add="unavailable">Not replayable: this run recorded no snapshot, so it cannot become a benchmark task.</p>;
+  }
+  const add = async () => {
+    setNote('');
+    const res = await fetch(`/api/admin/homeroom-bot/bench/suites/${suiteId}/tasks`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: run.id, stage }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setNote(res.ok && data.added?.length ? 'Added to the suite.' : `Not added: ${data.error || data.refused?.[0]?.error || `HTTP ${res.status}`}`);
+  };
+  return (
+    <div className="flex flex-wrap items-end gap-2" data-bench-add={run.id}>
+      <div>
+        <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-bench-suite-${run.id}`}>Benchmark suite</label>
+        <select
+          id={`admin-homeroom-bot-bench-suite-${run.id}`} className={`${AdminUI.select} mt-1`}
+          value={suiteId} onChange={(e) => setSuiteId(e.target.value)} disabled={!suitesList?.length}
+        >
+          {suitesList == null ? <option value="">Loading…</option> : null}
+          {suitesList && !suitesList.length ? <option value="">No open suite: make one under Benchmark</option> : null}
+          {(suitesList || []).map((x) => <option key={x.id} value={x.id}>{`${x.name} v${x.version}`}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-bench-stage-${run.id}`}>As a</label>
+        <select
+          id={`admin-homeroom-bot-bench-stage-${run.id}`} className={`${AdminUI.select} mt-1`}
+          value={stage} onChange={(e) => setStage(e.target.value)}
+        >
+          {stages.map((st) => <option key={st} value={st}>{`${st.replace('_', ' ')} task`}</option>)}
+        </select>
+      </div>
+      <button type="button" className={AdminUI.btn.outlineSm} disabled={busy || !suiteId} onClick={add}>Add to suite</button>
+      {note ? <span className={AdminUI.muted}>{note}</span> : null}
     </div>
   );
 }
@@ -1509,6 +1589,7 @@ function HomeroomBotSection() {
                             run={run} canWrite={canWrite} busy={busy !== ''}
                             onSave={(v, n) => label(run, v, n)}
                           />
+                          {canWrite ? <AddToSuite run={run} busy={busy !== ''} /> : null}
                           <div className={`${AdminUI.muted} flex flex-wrap gap-x-4 gap-y-1`}>
                             {run.mode === 'live' ? <span>live: acted on the issue</span> : null}
                             <span>determined: {run.determined == null ? '–' : run.determined ? 'yes' : 'no'}</span>
