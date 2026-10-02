@@ -3,6 +3,7 @@ import {
   memo, useDeferredValue, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
+import { useComposerKeyboardAvoidance } from '../../lib/composer-keyboard';
 
 import { groupsWithPrevious } from '@/components/ui/chat';
 import {
@@ -1566,6 +1567,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
   const snap = useMessagesSnapshot();
   const channels = useChannelHandles();
   const scroller = useRef<HTMLDivElement>(null);
+  const keyboardScrollerRef = useComposerKeyboardAvoidance(scroller);
   const previousLast = useRef<number | null>(null);
   const initialScroll = useRef<number | null>(null);
   const conversationId = snap.route.conversationId;
@@ -1721,7 +1723,7 @@ function ConversationThread({ embedded = false }: { embedded?: boolean } = {}) {
           (`platform-kb-column` above), and the kit's class would pad the
           inside of this scroller on top of that — the inset twice over, as
           dead space under the last message. */}
-      <div ref={scroller} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
+      <div ref={keyboardScrollerRef} className="messages-thread-scroll platform-safe-scroll" aria-live="polite">
         {/* Only a thread with nothing to show yet says it is loading (#2907).
             A refresh of the visible thread — the realtime echo of every send
             is one — re-reads it silently: this row drawn above the messages
@@ -1797,6 +1799,7 @@ function ReplyThreadPanel() {
   const rootId = snap.route.threadRootId;
   const thread = snap.thread && snap.thread.rootId === rootId ? snap.thread : null;
   const scroller = useRef<HTMLDivElement>(null);
+  const keyboardScrollerRef = useComposerKeyboardAvoidance(scroller);
   const count = useRef(0);
   useEffect(() => {
     if (conversationId && rootId && !snap.loadingThread && snap.active?.id === conversationId) {
@@ -1828,7 +1831,7 @@ function ReplyThreadPanel() {
           <XIcon aria-hidden="true" />
         </button>
       </header>
-      <div ref={scroller} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
+      <div ref={keyboardScrollerRef} className="messages-thread-scroll messages-reply-scroll platform-safe-scroll" aria-live="polite">
         {/* The root's Reply quotes it into THIS thread's composer (#2387): its
             own threadRootId is null, being the main stream's message. */}
         {root ? <MessageRow message={{ ...root, thread: null, threadRootId: rootId }} conversationId={conversationId} channels={channels} kind={kind} inThread /> : null}
