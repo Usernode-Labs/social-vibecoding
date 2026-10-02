@@ -57,8 +57,11 @@ test('every screen root maps to a navigation code the server accepts', () => {
   const codes = new Set(Object.values(App._NAV_CODE_FOR_SCREEN));
   codes.add('app');
   codes.add('project');
-  assert.deepEqual([...codes].sort(), [...serverTelemetry.NAV_SCREENS].sort(),
-    'the shell and the collector name the same twelve screens');
+  // The first-run sheets and the tour report themselves; the rest are the
+  // screen roots this hook names.
+  const overlays = ['username_sheet', 'terms_sheet', 'join_sheet', 'tour'];
+  assert.deepEqual([...codes, ...overlays].sort(), [...serverTelemetry.NAV_SCREENS].sort(),
+    'the shell and the collector name the same screens');
   for (const id of App.SCREEN_IDS) {
     if (id === 'app-view' || id === 'admin-screen') continue;
     assert.ok(App._NAV_CODE_FOR_SCREEN[id], `${id} is reported`);

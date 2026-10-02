@@ -17,6 +17,7 @@
   const NAV_SCREENS = new Set([
     'home', 'discover', 'communities', 'challenges', 'profile', 'my_proposals',
     'settings', 'messages', 'assistant', 'agent_session', 'app', 'project',
+    'username_sheet', 'terms_sheet', 'join_sheet', 'tour',
   ]);
   const SCREENS = new Set([
     'shell_boot', 'app_detail', 'app_discussion', 'feedback_dialog',

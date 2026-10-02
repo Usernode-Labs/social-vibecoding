@@ -542,6 +542,8 @@ export function OnboardingTour() {
     setIndex(clampIndex(at));
     setConfirming(false);
     setOpen(true);
+    // A step of the person's path (#3369); never the screenshot state.
+    if (!isTourShot()) (window as any).UITelemetry?.navigate?.('tour');
   }, []);
 
   // ── A reload under a tour comes back to it ───────────────────────────
@@ -608,7 +610,7 @@ export function OnboardingTour() {
         joinPending: firstRunPending(),
       })) return;
       backfilledFor.current = userId;
-      void markDoneOnServer(userId);
+      void markDoneOnServer(userId, { ended: 'backfill' });
     };
     check();
     document.addEventListener('sv:session', check);
@@ -935,7 +937,9 @@ export function OnboardingTour() {
     (first ?? cardRef.current)?.focus?.();
   }, [live, index, confirming]);
 
-  const finish = useCallback(() => {
+  // `ended` says how (#3369): Next on the last step, or Skip. The account
+  // keeps it with the furthest step reached, the first time only.
+  const finish = useCallback((ended: 'finish' | 'skip' = 'finish') => {
     // The screenshot route writes nothing, here or on the account.
     if (isTourShot()) {
       setConfirming(false);
@@ -947,13 +951,15 @@ export function OnboardingTour() {
     // And on the account, so no other browser or device offers it again.
     // Fire-and-forget: a write that fails costs a repeat tour elsewhere,
     // never this one.
-    void markDoneOnServer(userId);
+    void markDoneOnServer(userId, { ended, step: indexRef.current });
     clearStep(userId);
     setConfirming(false);
     setOpen(false);
     // The steps may have scrolled Home; hand the viewer back the top of the
     // page they started on.
     backToTopOfHome();
+    // Back on the screen under the tour: the next step of the path (#3369).
+    (window as any).App?._renotifyNavigation?.();
   }, [userId]);
 
   const goBack = useCallback(() => setIndex(stepFrom(indexRef.current, -1)), []);
@@ -964,7 +970,7 @@ export function OnboardingTour() {
     // advances from there, so step 4 always arrives with the menu it points
     // into.
     if (nextOpensMenu(at)) void AppContext.open();
-    else if (isLastStep(at)) finish();
+    else if (isLastStep(at)) finish('finish');
     else setIndex(stepFrom(at, 1));
   }, [finish]);
 
@@ -1118,7 +1124,7 @@ export function OnboardingTour() {
               id="home-tour-confirm-skip"
               type="button"
               size="sm"
-              onClick={finish}
+              onClick={() => finish('skip')}
             >
               Skip the tour
             </Button>

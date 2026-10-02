@@ -281,11 +281,16 @@ async function answerJoin(pool, user, body, { showSelfHosted = false, acceptInvi
     }
   }
 
+  // Joined or skipped is kept for the admin Journey page (#3369): the
+  // memberships alone cannot tell "Skip for now" from a Join that kept only
+  // what was already ticked.
   await pool.query(
     `UPDATE users
-        SET needs_communities_choice = FALSE, communities_onboarded_at = NOW()
+        SET needs_communities_choice = FALSE, communities_onboarded_at = NOW(),
+            getting_started_seen = COALESCE(getting_started_seen, '{}'::jsonb)
+                                   || jsonb_build_object('join_answer', $2::text)
       WHERE id = $1 AND needs_communities_choice = TRUE`,
-    [user.id]
+    [user.id, skip ? 'skipped' : 'joined']
   );
   return { ok: true, joined, left };
 }
@@ -618,11 +623,29 @@ async function closeCard(pool, userId, opts = {}) {
  * first finish is the one recorded, and a replay finished later changes
  * nothing.
  */
-async function markTourDone(pool, userId) {
+// How the tour ended, for the admin Journey page (#3369): Next on the last
+// step, Skip, or a browser copying an older local "done" onto the account.
+// Kept with the furthest step, the first time only, beside tour_done_at.
+const TOUR_ENDS = Object.freeze(new Set(['finish', 'skip', 'backfill']));
+const TOUR_MAX_STEP = 20;
+
+function parseTourEnd(body) {
+  const ended = body && TOUR_ENDS.has(body.ended) ? body.ended : null;
+  const step = body && Number.isInteger(body.step) && body.step >= 0 && body.step <= TOUR_MAX_STEP
+    ? body.step : null;
+  return { ended, step };
+}
+
+async function markTourDone(pool, userId, body) {
+  const { ended, step } = parseTourEnd(body);
   await pool.query(
-    `UPDATE users SET tour_done_at = NOW()
+    `UPDATE users
+        SET tour_done_at = NOW(),
+            getting_started_seen = CASE WHEN $2::text IS NULL THEN getting_started_seen
+              ELSE COALESCE(getting_started_seen, '{}'::jsonb)
+                   || jsonb_build_object('tour_ended', $2::text, 'tour_step', $3::int) END
       WHERE id = $1 AND tour_done_at IS NULL`,
-    [userId]
+    [userId, ended, step]
   );
   return { ok: true };
 }

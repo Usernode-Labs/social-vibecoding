@@ -5328,6 +5328,14 @@ const App = {
     } catch (_) { /* telemetry never breaks navigation */ }
   },
 
+  // A first-run sheet or the tour closed: the person is back on the screen
+  // under it, which is the next step of their path. Same gate as any step.
+  _renotifyNavigation() {
+    const screen = App._revealedScreen || 'home-screen';
+    const inApp = screen === 'app-view' && App.currentTab === 'app';
+    App._reportNavigation(screen, inApp);
+  },
+
   // How a person arrived, marked just before the navigation it explains.
   _markNavigationVia(via) {
     try { window.UITelemetry?.markNextVia?.(via); } catch (_) { /* best effort */ }

@@ -25,9 +25,14 @@ const JOURNEY_SCREENS = Object.freeze(new Set([
 // app; `project` is the platform's own surface about one app (its hub,
 // Workshop, discussion, a change). Named roots only: never an address, a
 // conversation or anything inside an app.
+//
+// The first-run sheets and the welcome tour are steps too: drawn over a
+// screen, they are where a newcomer is, and "shown, not answered" is read
+// from them. Each reports itself; closing one re-reports the screen under it.
 const NAV_SCREENS = Object.freeze(new Set([
   'home', 'discover', 'communities', 'challenges', 'profile', 'my_proposals',
   'settings', 'messages', 'assistant', 'agent_session', 'app', 'project',
+  'username_sheet', 'terms_sheet', 'join_sheet', 'tour',
 ]));
 const SCREENS = Object.freeze(new Set([...JOURNEY_SCREENS, ...NAV_SCREENS]));
 // How a person arrived at a navigation screen. `returned` marks the screen
