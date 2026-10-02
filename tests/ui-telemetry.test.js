@@ -523,8 +523,11 @@ test('server eligibility excludes only fixed service handles, including paired s
   const authSource = fs.readFileSync(path.join(__dirname, '../src/routes/auth.js'), 'utf8');
   const appSource = fs.readFileSync(path.join(__dirname, '../public/js/app.js'), 'utf8');
   assert.match(authSource,
-    /uiTelemetryEligible:\s*uiTelemetry\.isEligibleUser\(req\.user\)/,
-    '/api/auth/me exposes the server-owned eligibility decision');
+    /uiTelemetryEligible:\s*await uiTelemetry\.isRecordable\(pool, req\.user\)/,
+    '/api/auth/me exposes the server-owned eligibility decision, objections included (#3369)');
+  const service = fs.readFileSync(path.join(__dirname, '../src/services/ui-telemetry.js'), 'utf8');
+  assert.match(service, /async function isRecordable\(pool, user\) \{\s*if \(!isEligibleUser\(user\)\) return false;/,
+    'a service identity stays ineligible before any list is read');
   assert.match(appSource, /detail: \{ user: App\.user, verifiedSession: true \}/,
     'session reconciliation identifies its authoritative /api/auth/me result');
   assert.match(appSource,

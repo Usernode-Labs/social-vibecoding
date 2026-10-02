@@ -3,6 +3,7 @@
 const crypto = require('node:crypto');
 const events = require('./events');
 const usernames = require('./usernames');
+const leftOut = require('./journey-left-out');
 
 const MAX_BATCH_EVENTS = 25;
 const MAX_BODY_BYTES = 32 * 1024;
@@ -73,6 +74,14 @@ class TelemetryValidationError extends Error {}
 // one, because human full/view admins still produce useful journey evidence.
 function isEligibleUser(user) {
   return !!user?.id && !usernames.isServiceIdentity(user.username);
+}
+
+// Eligible, and has not objected to being recorded (#3369: an admin adds
+// them to the Journey page's left-out list as "objected"). This is the answer
+// /api/auth/me sends as uiTelemetryEligible and the collector enforces.
+async function isRecordable(pool, user) {
+  if (!isEligibleUser(user)) return false;
+  return !(await leftOut.hasObjected(pool, user.id));
 }
 
 function plainObject(value) {
@@ -323,10 +332,9 @@ function requestOpaqueId(req, header) {
   return typeof value === 'string' && ID_RE.test(value) ? value : null;
 }
 
-function recordServerFailure(pool, req, { screen, action, status, message }) {
-  if (!isEligibleUser(req?.user) || !SCREENS.has(screen) || !ACTIONS.has(action)) {
-    return Promise.resolve();
-  }
+async function recordServerFailure(pool, req, { screen, action, status, message }) {
+  if (!isEligibleUser(req?.user) || !SCREENS.has(screen) || !ACTIONS.has(action)) return;
+  if (!(await isRecordable(pool, req.user))) return;
   const metadata = {
     eventId: crypto.randomUUID(),
     visitId: requestOpaqueId(req, 'x-ui-visit-id') || crypto.randomUUID(),
@@ -597,6 +605,7 @@ module.exports = {
   daysWindow,
   insertBatch,
   isEligibleUser,
+  isRecordable,
   parseBatch,
   recordServerFailure,
   safeServerError,

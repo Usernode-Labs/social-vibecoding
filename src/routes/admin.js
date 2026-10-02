@@ -29,6 +29,7 @@ const homeroomBot = require('../services/homeroom-bot');
 const shotsExport = require('../services/shots-export');
 const welcomeDm = require('../services/welcome-dm');
 const onboarding = require('../services/onboarding');
+const journeyLeftOut = require('../services/journey-left-out');
 const usernames = require('../services/usernames');
 // The CSV writer the topochain admin's two exports share: quoting plus the
 // spreadsheet formula-injection guard, documented where it is defined.
@@ -782,6 +783,51 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'First run reset failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Journey: people left out (#3369) ──────────────────────
+  //
+  // Test accounts, and people who objected to being recorded, kept out of
+  // the Journey page's numbers (services/journey-left-out.js). Any admin can
+  // read the list; only a full admin changes it. Adding someone as
+  // "objected" erases their UI telemetry and stops it being collected.
+
+  const leftOutFail = (res, err, what) => {
+    if (err instanceof journeyLeftOut.LeftOutError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    log.error('admin', `Journey left-out ${what} failed`, { message: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  };
+
+  router.get('/api/admin/journey/left-out', async (req, res) => {
+    try {
+      res.json({ people: await journeyLeftOut.list(pool) });
+    } catch (err) {
+      leftOutFail(res, err, 'read');
+    }
+  });
+
+  router.post('/api/admin/journey/left-out', requireAdminWrite, async (req, res) => {
+    try {
+      const result = await journeyLeftOut.add(pool, req.body || {}, { actorId: req.user.id });
+      log.info('admin', 'Journey left-out entry saved', {
+        userId: result.entry.userId, reason: result.entry.reason, erased: result.erased, by: req.user.username,
+      });
+      res.json({ ok: true, entry: result.entry, erased: result.erased });
+    } catch (err) {
+      leftOutFail(res, err, 'add');
+    }
+  });
+
+  router.delete('/api/admin/journey/left-out/:userId', requireAdminWrite, async (req, res) => {
+    try {
+      await journeyLeftOut.remove(pool, req.params.userId, { actorId: req.user.id });
+      log.info('admin', 'Journey left-out entry removed', { userId: Number(req.params.userId), by: req.user.username });
+      res.json({ ok: true });
+    } catch (err) {
+      leftOutFail(res, err, 'remove');
     }
   });
 
