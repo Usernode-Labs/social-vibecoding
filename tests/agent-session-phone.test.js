@@ -29,22 +29,85 @@ const { loadTsx, createElement, renderToHtml } = require('./lib/render-tsx');
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 const panel = read('frontend/src/features/agent-session/index.tsx');
 
-test('#3016: the session bar wraps on every surface, and the panel cannot outgrow the screen', () => {
+test('#3016: the panel cannot outgrow the screen, and the bar\'s pill row cannot widen it', () => {
   const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
-  assert.match(bar, /<div className="flex flex-wrap items-center gap-x-2 gap-y-2 [^"]*" data-agent-session-bar>/,
-    'wrapping is not the embedded variant\'s alone any more');
-  assert.doesNotMatch(bar, /embedded \? 'flex-wrap' : ''/);
-  assert.match(bar, /data-agent-session-change-pill\s+className=\{`inline-flex shrink-0 items-center whitespace-nowrap /,
-    'the change pill stays one line');
-  // Changes and the ⋯ end whichever row they land on. Build left the bar
-  // for the composer's "Build with" (#3078).
+  // Build left the bar for the composer's "Build with" (#3078).
   assert.doesNotMatch(bar, /VenuePicker/);
-  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/);
-  assert.doesNotMatch(bar, /data-agent-session-changes-button\s+className="[^"]*sm:ml-0/, 'nothing before it to push it right any more');
+  assert.match(bar, /<div className="flex min-w-0 flex-nowrap [^"]*" data-agent-session-pills>/,
+    'the row may shrink below its content, so a long name cannot make the conversation wider than a phone');
+  assert.match(bar, /data-agent-session-changes-button\s+className="ml-auto [^"]*whitespace-nowrap[^"]*"/,
+    'Changes ends the pills and starts the controls at the row\'s right');
 
   assert.match(panel, /<div ref=\{root\} className=\{`relative flex min-h-0 min-w-0 flex-1 /,
     'the panel shrinks below its content, so nothing inside can widen the screen');
   assert.match(panel, /className="relative flex min-h-0 min-w-0 flex-1 flex-col" data-agent-session-chat/);
+});
+
+// #3577: "In agent chat fit top pills on one line." At 390px the focus pill,
+// the change pill and Changes came to 376px of a 358px row, so #3016's wrap
+// put the ⋯ on a second line by itself; in the Messages pane the pills split
+// around the title. The pills are one row that never wraps now, and the two
+// that NAME things give way, in order, instead of the row breaking.
+test('#3577: the session bar\'s pills are one row that never wraps; the naming pills give way, the controls do not', () => {
+  const bar = panel.slice(panel.indexOf('function SessionBar('), panel.indexOf('function SessionMenu('));
+  const classOf = (attr) => {
+    const m = bar.match(new RegExp(`${attr}\\s+className=(?:"([^"]*)"|\\{\`([^\`]*)\`\\})`));
+    assert.ok(m, `${attr} has a className`);
+    return (m[1] || m[2]).split(/\s+/);
+  };
+
+  // The bar is a block: the Messages pane's title is its own line, and the
+  // pills are one flex row under it that cannot wrap.
+  assert.match(bar, /<div className="border-b border-zinc-200 px-4 py-2 dark:border-zinc-800" data-agent-session-bar>/);
+  assert.doesNotMatch(bar, /flex-wrap/, 'nothing in the bar wraps any more');
+  assert.match(bar, /\{embedded \? \(\s*<div className="mb-2 min-w-0">/, 'the pane\'s title sits above the pills');
+  const row = bar.match(/<div className="([^"]*)" data-agent-session-pills>/);
+  assert.ok(row, 'the pills have a row of their own');
+  for (const cls of ['flex', 'min-w-0', 'flex-nowrap', 'items-center', '[container-type:inline-size]']) {
+    assert.ok(row[1].split(/\s+/).includes(cls), `the pill row carries ${cls}`);
+  }
+  // Every pill and control is a direct child of that row, in this order, so
+  // the declared checks' sibling chains (focus ~ change ~ Changes ~ ⋯) hold.
+  const order = ['data-agent-session-focus', 'data-agent-session-change-pill', 'data-agent-session-changes-button',
+    '<OpenAppButton target={target} />', '{action}', '<SessionMenu session={session} />'];
+  const rowSrc = bar.slice(bar.indexOf('data-agent-session-pills>'));
+  let at = -1;
+  for (const marker of order) {
+    const next = rowSrc.indexOf(marker);
+    assert.ok(next > at, `${marker} follows in the row`);
+    at = next;
+  }
+
+  // The focus pill gives way first: zero basis, grows into what is left up
+  // to its own width, and keeps its mark.
+  const focus = classOf('data-agent-session-focus');
+  for (const cls of ['basis-0', 'grow', 'max-w-fit', 'min-w-[2.75rem]', 'whitespace-nowrap']) {
+    assert.ok(focus.includes(cls), `focus pill: ${cls}`);
+  }
+  assert.match(bar, /<span className="min-w-0 max-w-\[7rem\] truncate">\{about\?\.focusApp\?\.name \|\| 'Any app'\}<\/span>/,
+    'its name truncates; the pill\'s old 10rem cap, less its mark');
+
+  // The change pill: no grow, a floor, a truncating label; the PR number
+  // drops out in a phone-width row, and the whole text is the tooltip.
+  const change = classOf('data-agent-session-change-pill');
+  assert.ok(change.includes('min-w-[3.5rem]') && change.includes('whitespace-nowrap'));
+  assert.ok(!change.includes('grow') && !change.includes('shrink-0'), 'it gives way only after the focus pill');
+  assert.match(bar, /title=\{changeText\}/);
+  assert.match(bar, /<span className="\[@container\(max-width:24rem\)\]:hidden">\{` · PR #\$\{active\.prNumber\}`\}<\/span>/);
+
+  // The controls hold their width.
+  assert.ok(classOf('data-agent-session-changes-button').includes('shrink-0'));
+  assert.match(panel, /data-agent-session-menu\s+className="inline-flex h-7 w-7 shrink-0 /);
+  // Open app keeps its mark and drops its words in a narrow row.
+  assert.match(panel, /<span className="truncate \[@container\(max-width:32rem\)\]:hidden">Open app<\/span>/);
+  assert.match(panel, /aria-label="Open app"/, 'and keeps its name when the words are hidden');
+});
+
+test('#3577: rendered, Open app keeps its accessible name and narrows its padding in a narrow row', () => {
+  const { OpenAppButton } = loadTsx('frontend/src/features/agent-session/index.tsx');
+  const html = renderToHtml(createElement(OpenAppButton, { target: { slug: 'notes-ab12', name: 'Notes' } }));
+  assert.match(html, /aria-label="Open app"/);
+  assert.match(html, /\[@container\(max-width:32rem\)\]:px-2/);
 });
 
 test('#3016: an empty message box is sized to its hint, measured without an input event', () => {

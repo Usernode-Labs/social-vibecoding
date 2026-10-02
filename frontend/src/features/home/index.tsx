@@ -109,7 +109,7 @@ export function HomeScreen() {
   useVisibilityHiddenClass(screenRef, 'home-screen', true);
 
   return (
-    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }}>
+    <main ref={screenRef} id="home-screen" className="flex-1 overflow-y-auto" style={{ position: 'relative' }} data-page-bounce="">
       {/*
           Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
           child of the scroller and NOT sticky: it occupies real scroll space

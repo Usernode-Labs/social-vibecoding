@@ -46,7 +46,8 @@
  *                                        play the iOS-homescreen expand /
  *                                        collapse out of a tile ({ el,
  *                                        fromEl | fromRect, after?,
- *                                        fallback? } — fn reveals the
+ *                                        fallback?, duration? } — fn
+ *                                        reveals the
  *                                        incoming screen, `after` conceals
  *                                        the outgoing one; the LIVE el is
  *                                        transform-animated, no snapshot)
@@ -2986,7 +2987,10 @@
    * rect, then restores it and the document's scroll offset before pinning;
    * without it the zoom would
    * animate to the shared-layout rect and snap at the end. zoom-out
-   * ignores `outEl`. When the zoom can't run (no usable source rect,
+   * ignores `outEl`. `duration` (ms, or a function returning ms or null,
+   * asked once the source is resolved) shortens or lengthens the move; the
+   * fade scales with it, and leaving it out keeps the homescreen timing.
+   * When the zoom can't run (no usable source rect,
    * reduced motion, missing el) it falls back to opts.fallback ('push'
    * for zoom-in, 'pop' for zoom-out, or 'none') with the combined
    * mutation.
@@ -3045,6 +3049,15 @@
       ? src.getBoundingClientRect()
       : src;
     return zoomRectUsable(rect, window.innerHeight) ? rect : null;
+  }
+
+  // The move's length for this zoom: the caller's `duration` when it names a
+  // positive number of ms (or a function that returns one), else `fallbackMs`.
+  function zoomDuration(opts, fallbackMs) {
+    var d = opts.duration;
+    try { if (typeof d === 'function') d = d(); } catch (e) { d = null; }
+    d = Number(d);
+    return isFinite(d) && d > 0 ? Math.round(d) : fallbackMs;
   }
 
   function zoomTransition(fn, type, opts) {
@@ -3127,14 +3140,15 @@
       el.style.opacity = '0.3';
       el.style.borderRadius = ZOOM_RADIUS;
       void el.offsetHeight; // flush the start pose before enabling the transition
-      el.style.transition = 'transform 380ms ' + ZOOM_EASE
-        + ', opacity 220ms ease, border-radius 380ms ease';
+      var inMs = zoomDuration(opts, 380);
+      el.style.transition = 'transform ' + inMs + 'ms ' + ZOOM_EASE
+        + ', opacity ' + Math.min(220, inMs) + 'ms ease, border-radius ' + inMs + 'ms ease';
       el.style.transform = 'none';
       el.style.opacity = '1';
       el.style.borderRadius = '0px';
       zoomCleanup = finish;
       el.addEventListener('transitionend', onEnd);
-      setTimeout(finish, 500); // safety if transitionend never fires
+      setTimeout(finish, inMs + 120); // safety if transitionend never fires
       return promise;
     }
 
@@ -3152,15 +3166,17 @@
       return promise;
     }
     void el.offsetHeight;
-    el.style.transition = 'transform 340ms ' + ZOOM_EASE
-      + ', opacity 200ms ease 60ms, border-radius 340ms ease';
+    var outMs = zoomDuration(opts, 340);
+    el.style.transition = 'transform ' + outMs + 'ms ' + ZOOM_EASE
+      + ', opacity ' + Math.round(outMs * 200 / 340) + 'ms ease '
+      + Math.round(outMs * 60 / 340) + 'ms, border-radius ' + outMs + 'ms ease';
     el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
       + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
     el.style.opacity = '0';
     el.style.borderRadius = ZOOM_RADIUS;
     zoomCleanup = finish;
     el.addEventListener('transitionend', onEnd);
-    setTimeout(finish, 480); // safety if transitionend never fires
+    setTimeout(finish, outMs + 140); // safety if transitionend never fires
     return promise;
   }
 

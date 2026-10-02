@@ -62,6 +62,17 @@
  * unchanged, and like every row it arrives one commit after mount. There is
  * no close button: a frame goes the way it always has.
  *
+ * ── Resume, where a running app is waiting (#3618) ───────────────────
+ *
+ * An Active row whose app is NOT on screen carries a Resume pill in the
+ * accent: it is the one action the row stands for, and before it the row read
+ * as one more grey line in a list of places. The app you are in has none —
+ * resuming where you already are is not an action. The pill is a label inside
+ * the row's anchor (the row is the target, as the phone strip's pill is), and
+ * aria-hidden, because the row's name already says the app is still open.
+ * It is also where a closed app shrinks to and where a resumed one grows out
+ * of (./resume-motion.ts): pressing the row notes it as the zoom's origin.
+ *
  * ── A channel opens its project's Discussion tab (#3555) ─────────────
  *
  * A channel is a tab of its project's page (#3494), so its row lands there,
@@ -93,6 +104,7 @@ import type { AgentChat } from '../messages/inbox';
 import { useMessagesSnapshot } from '../messages/store';
 import { navStore } from './nav-store.js';
 import { readRecentApps, recentAppsStore } from './recent-apps-store.js';
+import { noteResumeOrigin } from './resume-motion';
 import {
   buildActive, buildRecents, currentAppOnScreen, groupRecents, type RecentItem, type RecentKind,
 } from './recents';
@@ -114,12 +126,17 @@ const KIND_NAMES: Record<RecentKind, string> = {
   agent: 'Agent chat',
 };
 
-function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string): void {
+function onAppClick(event: MouseEvent<HTMLAnchorElement>, slug: string, resume = false): void {
   const nav = (window as unknown as {
     NavLink?: { isNativeClick?: (e: unknown) => boolean };
   }).NavLink;
   if (nav?.isNativeClick?.(event)) return;
   event.preventDefault();
+  // #3618: a running app grows back out of the Resume pill that was pressed.
+  if (resume) {
+    const row = event.currentTarget;
+    noteResumeOrigin(slug, row.querySelector('.platform-recent-resume') || row);
+  }
   // The router's "this app, this tab" entry point, which is what the Resume
   // strip used (./parked-strip.tsx): it switches tabs for an app that is
   // still open and navigates for any other.
@@ -167,7 +184,7 @@ function AppTile({ app }: { app: NonNullable<RecentItem['app']> }) {
   );
 }
 
-function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
+function RecentRow({ item, live, resume = false }: { item: RecentItem; live: boolean; resume?: boolean }) {
   const Glyph = GLYPHS[item.kind];
   const app = item.app && (item.app.iconUrl || item.app.iconEmoji) ? item.app : null;
   const unread = item.unread ? ', unread' : '';
@@ -183,7 +200,7 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
       {...(live ? { 'data-live': 'true' } : null)}
       {...(item.current ? { 'aria-current': 'true' as const, 'data-current': 'true' } : null)}
       onClick={item.app
-        ? (event) => onAppClick(event, item.app!.slug)
+        ? (event) => onAppClick(event, item.app!.slug, resume)
         : item.discussion ? (event) => onDiscussionClick(event, item.discussion!.slug) : undefined}
     >
       {/* #2779: an agent session working (a spinner) or finished unseen (a
@@ -194,6 +211,8 @@ function RecentRow({ item, live }: { item: RecentItem; live: boolean }) {
         ? <AgentActivityIcon activity={item.activity} className="platform-recent-glyph" />
         : app ? <AppTile app={app} /> : <Glyph className="platform-recent-glyph" aria-hidden="true" />}
       <span className="platform-recent-label">{item.label}</span>
+      {/* #3618: the action the row stands for, on a running app you left. */}
+      {resume ? <span className="platform-recent-resume" aria-hidden="true">Resume</span> : null}
       {/* #2902: still loaded — resuming it shows it exactly as it was left. */}
       {live ? <LiveAppDot className="platform-recent-live" /> : null}
       {item.unread ? <span className="platform-recent-dot" aria-hidden="true" /> : null}
@@ -268,7 +287,7 @@ export function ActiveApps({ items }: { items: RecentItem[] }) {
   return (
     <div className="platform-active" role="group" aria-labelledby="platform-active-head">
       <h2 id="platform-active-head" className="platform-recents-head">Active</h2>
-      {items.map((item) => <RecentRow key={item.key} item={item} live />)}
+      {items.map((item) => <RecentRow key={item.key} item={item} live resume={!item.current} />)}
     </div>
   );
 }

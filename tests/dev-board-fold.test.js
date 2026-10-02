@@ -1402,14 +1402,18 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   // Sonnet 5.5 in place of Sonnet 5 is pinned on the #2117 flat-list check,
   // which already reads the same <select> on the same session.
   //
-  // 831 → 832: +1 (#3521): the create dialog's "Start from a template" now
+  // 831 → 832: +1 (#3620): Back from a project's Workshop tab returns to its
+  // Hub. It has a route of its own (?shot=tab-back presses the tab and goes
+  // Back in the page), so it could not share another check's route.
+  //
+  // 832 → 833: +1 (#3521): the create dialog's "Start from a template" now
   // opens four starters under its row, a state no check could reach before
-  // (the row was a dimmed Soon). Reached by ?shot=create-template. 832
-  // leaves 28 slots against 860.
+  // (the row was a dimmed Soon). Reached by ?shot=create-template. 833
+  // leaves 27 slots against 860.
   //
   // A mismatch says what the count is, what it is pinned at, and what to do
   // (tests/lib/check-cap.js) — it used to print only `812 !== 811`.
-  checkCap.assertPinned(DAPP.tests.length, 832);
+  checkCap.assertPinned(DAPP.tests.length, 833);
 });
 
 test('a tap on the merge-requirements checklist opens the checklist, not the fold (#2128)', () => {
