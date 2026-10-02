@@ -79,6 +79,32 @@ test('execInWorker issues the grant after the prompt is written and revokes it o
   assert.match(helper, /catch \(err\) \{[\s\S]*return null;/, 'best effort: a turn never fails for want of it');
 });
 
+test('a benchmark trial\'s turn gets no read grant: the platform now would give the answer away', async (t) => {
+  const poolMod = require('../src/db/pool');
+  const oauth = require('../src/services/mcp-oauth');
+  const realPool = poolMod.getPool;
+  const realIssue = oauth.issueDelegatedAccess;
+  t.after(() => { poolMod.getPool = realPool; oauth.issueDelegatedAccess = realIssue; });
+  let owner = null;
+  const issued = [];
+  poolMod.getPool = () => ({
+    async query(sql) {
+      assert.match(String(sql), /JOIN users u ON u\.id = cs\.user_id/);
+      return { rows: [{ user_id: 5, app_id: 9, ...owner }] };
+    },
+  });
+  oauth.issueDelegatedAccess = async (_pool, opts) => { issued.push(opts); return { accessToken: 'svmcd_x', grantId: 1 }; };
+
+  owner = { username: 'homeroom_bench', user_is_synthetic: true };
+  assert.equal(await worker._mintHomeroomReadGrantForTests(77, 'scout'), null);
+  assert.equal(await worker._mintHomeroomReadGrantForTests(77, 'build'), null);
+  assert.equal(issued.length, 0);
+
+  owner = { username: 'homeroom_bot', user_is_synthetic: true };
+  assert.deepEqual(await worker._mintHomeroomReadGrantForTests(78, 'build'), { token: 'svmcd_x', grantId: 1 }, 'the live bot keeps its tools');
+  assert.equal(issued[0].kind, 'worker_read');
+});
+
 test('the bridge offers exactly the worker_read tools the platform allows', () => {
   const src = fs.readFileSync(BRIDGE, 'utf8');
   const list = src.match(/HOMEROOM_READ_TOOLS = Object\.freeze\(\[([\s\S]*?)\]\)/)[1];

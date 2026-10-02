@@ -245,6 +245,34 @@ test('a follow-up trial answers or revises on its own branch at the proposal\'s 
   assert.deepEqual(side, []);
 });
 
+test('every worker a stage starts is sealed at the trial\'s base commit; the bot\'s own workers never are', async (t) => {
+  spySideEffects(t);
+  const results = {
+    triage: { lastResultText: 'no block' },
+    spec: { lastResultText: '# The spec' },
+    build: (opts) => (opts.mode === 'scout' ? { lastResultText: '# Spec' } : { pushOk: true, ahead: 1, sha: 'c'.repeat(40) }),
+    followup: { lastResultText: '```json\n{"action":"person","reply":"x"}\n```' },
+    checks_fix: { lastResultText: '```json\n{"action":"person","reply":"x"}\n```' },
+  };
+  for (const [stage, result] of Object.entries(results)) {
+    const h = harness({ result });
+    // eslint-disable-next-line no-await-in-loop
+    await runner.runStage(ctx(h, stage));
+    assert.ok(h.calls.ensured.length >= 1, `${stage} started a worker`);
+    for (const opts of h.calls.ensured) assert.equal(opts.pinnedBase, BASE, `${stage}: sealed at the snapshot's base`);
+  }
+  // A snapshot with no base is built at main's tip as it was when the trial
+  // started, and sealed there.
+  const h = harness({ result: results.build });
+  const noBase = ctx(h, 'build');
+  noBase.snapshot = { ...noBase.snapshot, baseSha: null };
+  await runner.runStage(noBase);
+  assert.deepEqual(h.calls.ensured.map((o) => o.pinnedBase), ['f'.repeat(40)]);
+  // The live bot's build (no runner, no wrapper) passes no pinned base.
+  const src = require('node:fs').readFileSync(require.resolve('../src/services/homeroom-bot-live.js'), 'utf8');
+  assert.doesNotMatch(src, /pinnedBase/);
+});
+
 test('the catalog: a model entered for some stages only, a prompt too big for a context window, an estimate', () => {
   const kimi = { id: 'moonshotai/kimi-k2.7-code', label: 'Kimi', stages: ['build', 'spec'], contextTokens: 262_144 };
   assert.match(catalog.notApplicableReason(kimi, 'triage', 1000), /entered for build and spec only/);
