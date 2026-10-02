@@ -16,8 +16,13 @@ const waitingSource = fs.readFileSync(path.join(__dirname, '../frontend/src/feat
 const opener = source.match(/const openLandingApp = useCallback\(\s*(async \(app: PublicApp\) => \{[\s\S]*?\n    \}),\s*\[clearViewerCover, refreshHeader, st\],\s*\);/);
 assert.ok(opener, 'extract the real viewer callback, not a copy of its gate');
 const compiled = esbuild.transformSync(`globalThis.openApp = ${opener[1]};`, { loader: 'ts' }).code;
+// The callback's one import, from the real module: the name every frame URL
+// carries the platform theme under.
+const { FRAME_THEME_PARAM } = loadTsx('frontend/src/features/app-frame/app-frame-policy.js');
 
-function harness({ signedIn = false, token = 'app-token', mint } = {}) {
+// `theme` is what AppView.resolvedTheme() answers (the theme the shell
+// painted); left out, the shell exposes no resolvedTheme at all.
+function harness({ signedIn = false, token = 'app-token', mint, theme } = {}) {
   const remembered = [];
   const domReads = [];
   const historyEntries = [];
@@ -29,6 +34,7 @@ function harness({ signedIn = false, token = 'app-token', mint } = {}) {
   const st = { timers: [], launchId: 0 };
   const sandbox = {
     URL,
+    FRAME_THEME_PARAM,
     location,
     hasSession: () => signedIn,
     legacy: () => ({
@@ -39,6 +45,7 @@ function harness({ signedIn = false, token = 'app-token', mint } = {}) {
           tokenMints.push(slug);
           return mint ? mint(slug) : token;
         },
+        ...(theme ? { resolvedTheme: () => theme } : {}),
       },
       PlatformUI: { toast: (message, opts) => toasts.push({ message, opts }) },
     }),
@@ -161,6 +168,41 @@ test('a public app without a launch URL does not open an empty viewer', async ()
   await h.open({ slug: 'no-url', requires_login: false });
   assert.deepEqual(h.domReads, []);
   assert.equal(h.historyEntries.length, 0);
+});
+
+// #3257 follow-up: the guest viewer's frame URL carries the platform theme
+// the way the signed-in app frame's does (AppView.buildAppIframeSrc), so an
+// app that follows it paints in the viewer's Homeroom theme from the first
+// frame instead of the OS's until the bridge's ask is answered.
+test('a guest viewer\'s public app opens with the platform theme on its URL', async () => {
+  const h = harness({ theme: 'dark' });
+  await h.open({
+    slug: 'public-app',
+    name: 'Public app',
+    url: 'https://app.example/?mode=compact#today',
+    requires_login: false,
+  });
+  assert.equal(h.frame.src, 'https://app.example/?mode=compact&un-theme=dark#today',
+    'the app\'s own query and fragment are kept, and no token is added');
+  assert.deepEqual(h.tokenMints, []);
+  assert.equal(h.historyEntries.length, 1);
+});
+
+test('an account-required app in the guest viewer carries the theme next to its token', async () => {
+  const h = harness({ signedIn: true, token: 'a+b/c', theme: 'light' });
+  await h.open({ slug: 'account-app', url: 'https://app.example/?mode=compact#today', requires_login: true });
+  assert.equal(h.frame.src, 'https://app.example/?mode=compact&token=a%2Bb%2Fc&un-theme=light#today');
+});
+
+test('the guest viewer replaces a stale un-theme rather than adding a second one', async () => {
+  const h = harness({ theme: 'dark' });
+  await h.open({ slug: 'public-app', url: 'https://app.example/?un-theme=light', requires_login: false });
+  assert.deepEqual(new URL(h.frame.src).searchParams.getAll('un-theme'), ['dark']);
+});
+
+test('the guest viewer\'s theme parameter is the one the shell\'s other frames use', () => {
+  assert.equal(FRAME_THEME_PARAM, 'un-theme');
+  assert.equal(FRAME_THEME_PARAM, require('../public/js/app-view.js').THEME_PARAM);
 });
 
 test('the waiting room promises no app access it cannot deliver (QA 2026-09-24 Q12)', () => {
