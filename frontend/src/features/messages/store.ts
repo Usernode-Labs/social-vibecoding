@@ -97,8 +97,10 @@ const pendingByConversation = new Map<number, PendingSend[]>();
  * idempotency key so the server never stores it twice — and `sentKeys` maps a
  * confirmed server id back to the client key the row was drawn under, so the
  * row keeps its React key and is updated in place rather than remounted.
+ * `after` is the newest server id the transcript held when the row was drawn:
+ * the server's copy of that send can only be newer (withLocalRows).
  */
-const unsent = new Map<string, { conversationId: number; payload: PendingSend }>();
+const unsent = new Map<string, { conversationId: number; payload: PendingSend; after: number }>();
 const sentKeys = new Map<number, string>();
 const typingSentAt = new Map<number, number>();
 const typingExpiry = new Map<string, number>();
@@ -335,7 +337,8 @@ export async function loadConversations(force = false): Promise<void> {
   const request = ++listRequest;
   publish({ loadingList: true, error: null, demo: browserDemo() });
   try {
-    const conversations = await api.listConversations();
+    // A forced read follows a change, so it asks the server (api.ts ReadOptions).
+    const conversations = await api.listConversations({ fresh: force });
     if (request !== listRequest) return;
     for (const item of conversations) leftConversations.delete(item.id);
     publish({
@@ -430,11 +433,17 @@ export async function loadThread(conversationId: number, force = false): Promise
     nextBefore: preserveVisibleThread ? state.nextBefore : null,
     nextAfter: preserveVisibleThread ? state.nextAfter : null,
   });
+  // A FORCED READ RE-READS WHAT IS ON SCREEN BECAUSE SOMETHING CHANGED — a
+  // realtime event, a send, a reconnect — so it goes to the server, past the
+  // service worker's offline copy (#3705, #3706; api.ts ReadOptions). That
+  // copy was the page from before the change, and drawing it lost the very
+  // message the event was about.
+  const read = { fresh: force };
   try {
     // Invitation metadata is deliberately readable before acceptance, but
     // retained history is not. Resolve membership first and never request
     // message bytes for an invitee.
-    const active = await api.getConversation(conversationId);
+    const active = await api.getConversation(conversationId, read);
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     // Old Preview links resolve to the viewer's persisted sample thread.
     // Use its canonical address for messages, writes, drafts and WS events.
@@ -449,17 +458,17 @@ export async function loadThread(conversationId: number, force = false): Promise
     const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null; focusMessageId?: number | null } = !member
       ? { messages: [], nextBefore: null, nextAfter: null }
       : anchor
-        ? await api.listMessagesAround(conversationId, anchor).then((around) => ({
+        ? await api.listMessagesAround(conversationId, anchor, read).then((around) => ({
           messages: around.messages, nextBefore: around.nextBefore, nextAfter: around.nextAfter,
           threadRootId: around.focus.threadRootId, focusMessageId: around.focus.messageId,
-        })).catch(() => api.listMessages(conversationId).then((latest) => ({ ...latest, nextAfter: null })))
-        : { ...(await api.listMessages(conversationId)), nextAfter: null };
+        })).catch(() => api.listMessages(conversationId, null, read).then((latest) => ({ ...latest, nextAfter: null })))
+        : { ...(await api.listMessages(conversationId, null, read)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     if (focus && page.focusMessageId && page.focusMessageId !== focus) {
       openAddress(`#messages/${conversationId}/m/${page.focusMessageId}`);
       return;
     }
-    const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id));
+    const messages = withLocalRows(conversationId, [...page.messages].sort((a, b) => a.id - b.id), member && !page.nextAfter);
     if (focus) focusLoaded = focus;
     publish({ active, messages, nextBefore: page.nextBefore, nextAfter: page.nextAfter, loadingThread: false, online: true });
     upsertConversation(active);
@@ -489,26 +498,46 @@ export async function loadThread(conversationId: number, force = false): Promise
 }
 
 /**
- * A page read from the server, with the viewer's still-local rows kept.
+ * A page read from the server, with the viewer's own rows it cannot know of
+ * kept.
  *
  * Confirmed rows get back the client key they were first drawn under. A
  * local row (pending or failed) stays at the end unless the page already
  * holds it: the realtime echo can land before the POST that caused it
- * returns, and then the server's copy — the viewer's, same words, not yet
- * claimed by another local row — IS that row, so it takes its key and the
- * local one goes.
+ * returns, and then the server's copy — the viewer's, same words, NEWER than
+ * anything the transcript held when the row was drawn, not yet claimed by
+ * another local row — IS that row, so it takes its key and the local one
+ * goes. Newer, because the same words are sent again and again in the
+ * Homeroom bot's DM, whose suggested answers are "Yes" and "File it" every
+ * time (#3706): matched on the words alone, the OLDEST such message on the
+ * page took the new row's key, the next confirmation took that old message
+ * off the screen, and two rows went on sharing one React key.
+ *
+ * And a row the POST already confirmed stays when the page is older than it
+ * (#3706): a page that reaches the present and holds nothing as new was read
+ * before the send landed — a refresh already in flight, or a cached copy —
+ * and taking its word took the sender's message away until a reload. A
+ * later page that holds it, or anything newer, settles it as usual.
  */
-function withLocalRows(conversationId: number, page: ConversationMessage[]): ConversationMessage[] {
+function withLocalRows(conversationId: number, page: ConversationMessage[], reachesPresent = true): ConversationMessage[] {
   const me = currentUser().id;
   const claimed = new Set(sentKeys.values());
   const messages = page.map((item) => {
     const key = sentKeys.get(item.id);
     return key ? { ...item, clientKey: key } : item;
   });
+  const newest = newestServerId(messages);
   const local: ConversationMessage[] = [];
   for (const row of state.messages) {
-    if (row.id >= 0 || row.conversationId !== conversationId || !row.clientKey || claimed.has(row.clientKey)) continue;
-    const match = messages.find((item) => !item.clientKey && item.sender.id === me && item.content === row.content);
+    if (row.conversationId !== conversationId || !row.clientKey) continue;
+    if (row.id > 0) {
+      if (reachesPresent && row.id > newest && sentKeys.get(row.id) === row.clientKey) local.push(row);
+      continue;
+    }
+    if (claimed.has(row.clientKey)) continue;
+    const after = unsent.get(row.clientKey)?.after || 0;
+    const match = messages.find((item) => !item.clientKey && item.id > after
+      && item.sender.id === me && item.content === row.content);
     if (match && row.pending) {
       sentKeys.set(match.id, row.clientKey);
       match.clientKey = row.clientKey;
@@ -516,7 +545,12 @@ function withLocalRows(conversationId: number, page: ConversationMessage[]): Con
     }
     local.push(row);
   }
-  return messages.concat(local);
+  return messages.concat(local.sort(transcriptOrder));
+}
+
+/** The newest message the server has given these rows, or 0. */
+function newestServerId(rows: ConversationMessage[]): number {
+  return rows.reduce((top, item) => Math.max(top, item.id), 0);
 }
 
 async function refreshActiveAfterMembershipChange(conversationId: number): Promise<void> {
@@ -1242,7 +1276,7 @@ export async function send(input: { content: string; attachmentIds?: string[]; o
     reactions: [], attachments: input.attachments || [], objects: [], pending: true, clientKey: pending.idempotencyKey,
     threadRootId,
   };
-  unsent.set(pending.idempotencyKey, { conversationId, payload: pending });
+  unsent.set(pending.idempotencyKey, { conversationId, payload: pending, after: newestServerId(state.messages) });
   setDraft(scope, '');
   setReply(scope, null);
   if (threadRootId && state.thread) {
@@ -1517,7 +1551,8 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
       : { conversationId, rootId, root: findRow(rootId) || null, messages: [], loading: true, error: null, nextBefore: null },
   });
   try {
-    const page = await api.listThread(conversationId, rootId);
+    // Forced: a re-read after a change, from the server (see loadThread).
+    const page = await api.listThread(conversationId, rootId, null, { fresh: force });
     if (request !== replyThreadRequest || state.route.threadRootId !== rootId) return;
     if (page.root?.id && page.root.id !== rootId) {
       openAddress(threadAddress(conversationId, page.root.id));
@@ -1648,7 +1683,37 @@ function eventConversationId(event: ConversationEvent): number | null {
 
 /** Is this conversation's thread drawn — on this screen, or in its community's page (#3494)? */
 function onScreen(conversationId: number): boolean {
-  return (state.route.open || !!state.route.embedded) && state.route.conversationId === conversationId;
+  return showing() && state.route.conversationId === conversationId;
+}
+
+/** Is anything of this store's on screen: the Messages screen, or a room embedded in its community's page? */
+function showing(): boolean {
+  return state.route.open || !!state.route.embedded;
+}
+
+/**
+ * Re-read everything this store draws, from the server (#3705): the inbox
+ * and, when one is on screen, the conversation and the thread open beside it.
+ *
+ * Two callers, both of which used to stop at the inbox. A reconnect of the
+ * events socket (App.resyncCurrentView): a message that arrived while it was
+ * down — a phone locked, a network handed over — had its event dropped, and
+ * the conversation open in front of the reader never read it. And the service
+ * worker's late-answer correction (App.refreshActiveScreen): a conversation
+ * opened on a slow link is drawn from the worker's offline copy after a
+ * second, and the worker's word that the server has since said otherwise had
+ * nothing on this screen listening to it.
+ */
+export async function resync(): Promise<void> {
+  void loadAppDiscussions();
+  const reads = [loadConversations(true)];
+  const conversationId = state.route.conversationId;
+  if (conversationId && onScreen(conversationId)) {
+    reads.push(loadThread(conversationId, true));
+    const rootId = state.route.threadRootId;
+    if (rootId && state.thread?.rootId === rootId) reads.push(loadReplyThread(conversationId, rootId, true));
+  }
+  await Promise.all(reads);
 }
 
 export function handleEvent(raw: ConversationEvent): void {
@@ -1822,6 +1887,9 @@ export const messagesController = {
     void loadAppDiscussions();
     return loadConversations(true);
   },
+  // #3705: the inbox AND the conversation on screen (see resync).
+  resync,
+  showing,
 };
 
 export function initializeMessagesStore(): () => void {

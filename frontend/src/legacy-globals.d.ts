@@ -303,6 +303,10 @@ declare global {
         /** Repaint one row's save state — the notifications drawer's unsave. */
         paintSaved(messageId: number, saved: boolean): void;
         refresh(): Promise<void> | void;
+        /** #3705: the inbox and the conversation on screen, from the server. */
+        resync(): Promise<void> | void;
+        /** The Messages screen, or a room embedded in its community's page, is on screen. */
+        showing(): boolean;
       };
       /**
        * features/agent-session/store.ts (#2779). `new` is the conversation

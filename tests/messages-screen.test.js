@@ -119,17 +119,22 @@ test('the conversation list loads only after auth and reconciles on reconnect', 
     'the auth listener is cleaned up if the island unmounts first');
   const resyncStart = app.indexOf('  resyncCurrentView() {');
   const resync = app.slice(resyncStart, app.indexOf('// #1038:', resyncStart));
-  assert.match(resync, /window\.UsernodeReact\?\.messages\?\.refresh\?\.\(\)/);
-  assert.doesNotMatch(resync, /_inMessages[\s\S]*messages\?\.refresh/,
+  // #3705: `resync` — the list, and the conversation on screen with it.
+  assert.match(resync, /window\.UsernodeReact\?\.messages\?\.resync\?\.\(\)/);
+  assert.doesNotMatch(resync, /_inMessages[\s\S]*messages\?\.resync/,
     'reconnect refreshes the conversation list even when the Messages screen is closed');
+  const storeResync = store.slice(store.indexOf('export async function resync('),
+    store.indexOf('\n}', store.indexOf('export async function resync(')));
+  assert.match(storeResync, /const reads = \[loadConversations\(true\)\];/,
+    'the list is re-read whatever is on screen');
 });
 
 test('an invitation resolves metadata before deciding whether history may be fetched', () => {
   const fn = store.slice(store.indexOf('export async function loadThread('),
     store.indexOf('export async function loadOlder('));
-  const detailAt = fn.indexOf('await api.getConversation(conversationId)');
+  const detailAt = fn.indexOf('await api.getConversation(conversationId, read)');
   const statusAt = fn.indexOf("active.membershipStatus === 'member'");
-  const messagesAt = fn.indexOf('await api.listMessages(conversationId)');
+  const messagesAt = fn.indexOf('await api.listMessages(conversationId, null, read)');
   assert.ok(detailAt > -1 && detailAt < statusAt && statusAt < messagesAt);
   assert.match(screen, /Accepting gives you access to the complete retained conversation history/);
   assert.match(api, /if \(raw === null \|\| \(action === 'decline'/,
