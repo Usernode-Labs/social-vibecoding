@@ -197,6 +197,59 @@ test('a recording supersedes the provisional list wholesale', () => {
     'the recording wins: the gate saw the real tally, the columns are a snapshot');
 });
 
+// ── #3669: a vote cast AFTER the recording neither bumps the epoch nor
+// moves the head, so the recording is current by every test above — and the
+// card kept saying "Votes waiting, 0 of 1" after the vote landed, until the
+// background run re-stamped and another refresh read it. The live approval
+// columns the serializers attach are the reconciliation.
+
+test('a waiting approvals recording loses to a live tally that has since met the bar', () => {
+  const t = requirements.trace().context({ locked: false, selfHosted: false });
+  t.pass('integration').pass('checks').stop('approvals', 'waiting', { note: '0 of 1' });
+  const block = requirements.readRequirements({
+    merge_requirements: t.toRecord(),
+    // The same live columns the /promoted and by-id serializers attach:
+    // the approver's vote counted since the run.
+    votes_required: 1, qualified_yes_count: 1, qualified_no_count: 0,
+  });
+  const approvals = block.gates.find((g) => g.key === 'approvals');
+  assert.equal(approvals.state, 'done', 'the vote has landed');
+  assert.equal(approvals.detail && approvals.detail.note, '1 of 1');
+  assert.equal(block.gates.find((g) => g.key === 'integration').state, 'done',
+    'only the contradicted step is rewritten');
+});
+
+test('a live tally below the bar leaves a waiting recording standing, and done wins as before', () => {
+  const waiting = requirements.trace().context({ locked: false, selfHosted: false });
+  waiting.stop('approvals', 'waiting', { note: '0 of 1' });
+  const below = requirements.readRequirements({
+    merge_requirements: waiting.toRecord(),
+    votes_required: 1, qualified_yes_count: 0,
+  });
+  assert.equal(below.gates.find((g) => g.key === 'approvals').state, 'waiting');
+  assert.equal(below.gates.find((g) => g.key === 'approvals').detail.note, '0 of 1',
+    'the recording detail stands when the columns agree');
+
+  const done = requirements.trace().context({ locked: false, selfHosted: false });
+  done.pass('approvals');
+  const stillDone = requirements.readRequirements({
+    merge_requirements: done.toRecord(),
+    // Columns that would have produced a different provisional list.
+    votes_required: 3, yes_count: 0,
+  });
+  assert.equal(stillDone.gates.find((g) => g.key === 'approvals').state, 'done',
+    'a done recording keeps winning: the gate saw the real tally');
+});
+
+test('without live approval columns nothing is reconciled', () => {
+  const t = requirements.trace().context({ locked: false, selfHosted: false });
+  t.stop('approvals', 'waiting', { note: '0 of 1' });
+  const block = requirements.readRequirements({ merge_requirements: t.toRecord() });
+  const approvals = block.gates.find((g) => g.key === 'approvals');
+  assert.equal(approvals.state, 'waiting');
+  assert.equal(approvals.detail.note, '0 of 1');
+});
+
 // ── #2100 / #2095: a recording is about one (head, epoch) ──────────────
 //
 // "Merging now" stayed on the card after a head move had released the claim,

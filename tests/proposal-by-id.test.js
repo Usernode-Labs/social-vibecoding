@@ -37,7 +37,7 @@ function stub(id, exports) {
 // `gateApp` is what appAccess.getAppForUser resolves to (null → no access).
 // `staging` flips USERNODE_ENV to 'staging' before the module is required,
 // so its module-load-time IS_STAGING const is true for the demo path.
-function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = false } = {}) {
+function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = false, db = null } = {}) {
   const routes = [];
   const ids = {
     express: 'express',
@@ -76,6 +76,12 @@ function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = fa
     getPool: () => ({
       async query(sql, params) {
         captured.calls.push({ sql, params });
+        // Test-specific answers first (e.g. the governance queries the
+        // #3669 enrichment issues); fall through to the defaults below.
+        if (db) {
+          const rows = db(sql, params);
+          if (rows !== undefined) return { rows };
+        }
         // The by-id merged SELECT — return the configured row (or none).
         if (/cs\.id = \$3/.test(sql) && /cs\.status IN/.test(sql)) {
           return { rows: row ? [row] : [] };
@@ -89,7 +95,11 @@ function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = fa
   stub(ids.docker, {});
   stub(ids.resolver, { checkAndResolveConflicts: async () => {}, isResolving: () => false });
   stub(ids.ws, { broadcast() {}, getReactionsForMessages: async () => ({}) });
+  // The #3669 enrichment calls the real gate math (mergeGate / atLeastGate /
+  // oppositionWindowMs / requiredVotes); only the DB-reading electorate
+  // functions are stubbed. The real module loads hermetically.
   stub(ids.activeUsers, {
+    ...require('../src/services/active-users'),
     getActiveUserStats: async () => ({ active: 3, majority: 2 }),
     isUserActive: async () => true,
     listActiveUserIds: async () => [],
@@ -124,7 +134,11 @@ function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = fa
   delete require.cache[ids.subject];
   for (const [k, id] of Object.entries(ids)) {
     if (k === 'express') continue;
-    if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
+    if (orig[k]) require.cache[id] = orig[k];
+    // No prior entry: leave the stub in place. The route handlers resolve
+    // some collaborators lazily at request time (governance → active-users,
+    // main-watch), after this function returns — removing the stub would
+    // load the real module against this suite's stub pool.
   }
 
   return { routes, captured };
@@ -242,4 +256,61 @@ test('?results=failing: the proposal page counts its passing checks; without it 
   const whole = await callById(again, { id: 4242 });
   assert.equal(whole.payload.proposal.test_results.length, 13);
   assert.ok(!('test_results_omitted' in whole.payload.proposal));
+});
+
+test('#3669: a promoted row carries the governance fields the vote pill and ledger read', async () => {
+  // AppView._refreshTopicLive refetches THIS endpoint after a vote and
+  // merges the response key-wise into the held board row, so a response
+  // without qualified_* / votes_required kept the pre-vote pill ("0 of 1
+  // approval") standing until a full reload. The endpoint now enriches a
+  // promoted row exactly as /promoted does — and the ledger's stale
+  // pre-vote recording ("Votes waiting, 0 of 1") is reconciled against the
+  // live tally, since a vote supersedes neither the epoch nor the head.
+  const requirements = require('../src/services/merge-requirements');
+  const governance = require('../src/services/governance');
+  // A 1-approval invited-approver app, like the issue's reporter had.
+  const preVote = requirements.trace().context({ locked: false, selfHosted: false });
+  preVote.stop('approvals', 'waiting', { note: '0 of 1' });
+  preVote.pass('integration').pass('checks');
+  const row = {
+    id: 4242, pr_number: 88, status: 'promoted', pr_title: 'A promoted change',
+    approval_epoch: 1, requires_explicit_approval: false,
+    promoted_at: '2026-10-01T00:00:00Z',
+    merge_requirements: preVote.toRecord(),
+    merge_requirements_at: '2026-10-01T00:00:00Z',
+    created_at: '2026-10-01T00:00:00Z',
+  };
+  const { routes } = loadVotes({
+    row,
+    db: (sql) => {
+      if (/approver_policy, approvals_required FROM apps/.test(sql)) {
+        return [{ approver_policy: 'invited', approvals_required: 1 }];
+      }
+      if (/FROM app_approvers/.test(sql)) return [{ user_id: 7 }];
+      // The approver's yes vote, counted live off pr_votes.
+      if (/FROM pr_votes/.test(sql) && /user_id = ANY/.test(sql)) {
+        return [{ yes: 1, no: 0 }];
+      }
+      return undefined;
+    },
+  });
+  // governance caches per app for 10s in-process; earlier suites on this
+  // app id must not answer this test's config query.
+  governance.invalidateGovernance(1);
+  const { payload, statusCode } = await callById(routes, { id: 4242 });
+  assert.equal(statusCode, 200);
+  const p = payload.proposal;
+  assert.equal(p.votes_required, 1, 'the configured threshold');
+  assert.equal(p.approval_policy, 'invited');
+  assert.equal(p.approvals_required, 1);
+  assert.equal(p.qualified_yes_count, 1, 'the approver vote counts, live');
+  assert.equal(p.qualified_no_count, 0);
+
+  // The ledger: the pre-vote recording is not superseded (same epoch, same
+  // head) but its waiting approvals step loses to the live columns.
+  assert.ok(p.mergeRequirements, 'ledger attached');
+  assert.equal(p.mergeRequirements.provisional, false);
+  const approvals = p.mergeRequirements.gates.find((g) => g.key === 'approvals');
+  assert.equal(approvals.state, 'done', 'the vote has landed');
+  assert.equal(approvals.detail && approvals.detail.note, '1 of 1');
 });

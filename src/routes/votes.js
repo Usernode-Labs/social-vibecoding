@@ -4637,6 +4637,67 @@ function voteRoutes(config) {
           : null;
       }
 
+      // #3669: the proposal page's own read must carry the same per-row
+      // governance fields the list rows do. AppView._refreshTopicLive
+      // refetches THIS endpoint right after a vote and merges the response
+      // into the held board row key-wise, so a response without
+      // qualified_* / votes_required left the pre-vote pill standing
+      // ("0 of 1 approval") until a full board reload. Promoted/merging
+      // rows get the identical enrichment /promoted applies; merged rows
+      // keep their historical snapshot, and active rows have no vote to
+      // describe.
+      if (proposal && (proposal.status === 'promoted' || proposal.status === 'merging')
+        && proposal.votes_required == null) {
+        const governance = require('../services/governance');
+        const gov = await governance.getGovernance(pool, gatedApp.id);
+        const electorate = await governance.getElectorate(pool, gatedApp.id, gov);
+        const q = electorate.approverIds
+          ? await governance.qualifiedCounts(pool, 'pr', proposal.id, electorate.approverIds)
+          : { yes: proposal.yes_count, no: proposal.no_count };
+        const gate = governance.computeGate(
+          gov, electorate.active, q.yes, q.no,
+          proposal.promoted_at || proposal.created_at, null,
+          { explicitApproval: !!proposal.requires_explicit_approval }
+        );
+        proposal.votes_required = gate.required;
+        proposal.merge_window_ends_at = gate.windowEndsAt;
+        proposal.contested = gate.contested;
+        proposal.reject_window_ends_at = gate.rejectionEndsAt;
+        proposal.rejection_armed = gate.rejectionArmed;
+        proposal.approval_policy = gate.policy;
+        proposal.approvals_required = gate.approvalsRequired;
+        proposal.requires_explicit_approval = !!proposal.requires_explicit_approval;
+        proposal.qualified_yes_count = gate.qualifiedYes;
+        proposal.qualified_no_count = gate.qualifiedNo;
+        // #3234: display only — the threshold as it stood when voting opened.
+        proposal.votes_required_at_promote = governance.requiredAtPromote(
+          gov, proposal.active_users_at_promote, q.no
+        );
+
+        // The ledger too (services/merge-requirements.js): the card's
+        // "Waiting on the group" line reads the checkAndMerge recording,
+        // which a vote does not supersede — withLiveApprovals reconciles
+        // its waiting approvals step against the columns just attached.
+        const mainCheck = await require('../services/main-watch').mergePause(pool, gatedApp.id);
+        proposal.freshness = require('../services/proposal-freshness').readFreshness(proposal);
+        proposal.integration = require('../services/integration').readIntegration(proposal);
+        proposal.shotsEnforced = !!config.shots?.enforce
+          && !!(proposal.shots_detail && typeof proposal.shots_detail === 'object');
+        proposal.mergeRequirements = require('../services/merge-requirements').readRequirements({
+          ...proposal,
+          shotsEnforced: proposal.shotsEnforced,
+          app_main_check_state: mainCheck.state,
+          app_main_check_sha: mainCheck.sha,
+          app_main_check_resumed_sha: mainCheck.resumedSha,
+          // The pause is its own fact (main_check_paused_sha), and a red
+          // names its test; the ledger says both rather than re-deriving.
+          app_main_check_paused: mainCheck.paused,
+          app_main_check_paused_sha: mainCheck.pausedSha,
+          app_main_check_confirming: mainCheck.confirming,
+          app_main_check_failing_test: mainCheck.failingTest,
+        });
+      }
+
       // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in
       // the DB, so resolve a mock id straight from the generators. This lets
       // a staging tester deep-link a mock Completed proposal that never
