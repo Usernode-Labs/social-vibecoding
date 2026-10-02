@@ -549,7 +549,7 @@ function NorthStarCard({ s, scope, onOpen, onDetails }: { s: Summary; scope: Sco
           {lockstep.length ? <Chips people={lockstep} onOpen={onOpen} /> : null}
         </div>
       </div>}
-      {g.homeroom ? (
+      {g.homeroom && !scope.cohort ? (
         <p className={`${JUI.fine} mt-3`}>Homeroom itself, not counted: {g.homeroom.changes} live, {g.homeroom.people} people.</p>
       ) : null}
     </Card>
