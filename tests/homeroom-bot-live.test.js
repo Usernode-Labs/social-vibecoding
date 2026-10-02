@@ -732,7 +732,8 @@ test('a live build\'s outcome is recorded on its run, in the shadow build\'s col
   });
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'proposed');
   assert.deepEqual(recorded(), [900, true, 'no spec (the spec ran past its time limit); the build worked from the plan',
-    'homeroom_bot/s5001', 'b'.repeat(40), 2, 0.3, 5001, null], 'a proposal built without a spec says why');
+    'homeroom_bot/s5001', 'b'.repeat(40), 2, 0.3, 5001, null, 'm'],
+    'a proposal built without a spec says why; #3654: and the model it was built on');
 
   live.buildAndPropose = async () => ({ ok: false, sessionId: 5002, error: 'the build ran past its time limit', costUsd: 0.2 });
   assert.equal(await act(h, { verdict: 'ready', buildNote: 'x' }), 'build_failed');
@@ -747,7 +748,7 @@ test('a live build\'s outcome is recorded on its run, in the shadow build\'s col
 
   // Recorded before anything is said: a post that throws cannot lose it.
   const src = BOT_SRC.slice(BOT_SRC.indexOf('async function announceBuilt'));
-  assert.match(src.slice(0, 200), /\{\n  await recordLiveBuild\(pool, runId, built\);/);
+  assert.match(src.slice(0, 200), /\{\n  await recordLiveBuild\(pool, runId, built, built\.model \|\| null\);/);
   // Never the lane's markers: build_at is how the lane and its restart
   // recovery (runOfSession) tell a build of theirs under way.
   const rec = BOT_SRC.slice(BOT_SRC.indexOf('async function recordLiveBuild'));

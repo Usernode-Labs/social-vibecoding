@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminUI } from './admin-console.js';
 import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals';
 import { UserFieldRow, userHandle } from './admin-user-field';
+import { BenchmarkArea } from './admin-homeroom-bench';
 
 // Homeroom bot (#admin/homeroom-bot) — #2684, slice 1.
 //
@@ -44,6 +45,8 @@ interface Settings {
   userWeeklyCents: number;
   // The projects it is building for them, live like liveApps.
   firstVersionApps: string[];
+  // #3654: the model each stage runs on; blank is the platform default.
+  models?: Record<ModelStage, string>;
   // #3624 stage 2: live work at once across the platform and per person,
   // and whether a DM to the bot is read by its model.
   liveAtOnce: number;
@@ -68,6 +71,18 @@ interface DmChat {
   people: number;
   costUsd: number;
 }
+
+// #3654: the stages that each run on a model of their own. `followup` is
+// both kinds of follow-up turn: replies, and the proposal's failing checks.
+type ModelStage = 'triage' | 'spec' | 'build' | 'followup';
+const MODEL_STAGES: { key: ModelStage; label: string }[] = [
+  { key: 'triage', label: 'Triage' },
+  { key: 'spec', label: 'Spec' },
+  { key: 'build', label: 'Build' },
+  { key: 'followup', label: 'Follow-ups and check fixes' },
+];
+// The server's own rule (MODEL_ID_RE in services/homeroom-bot.js).
+const MODEL_ID_RE = /^[a-z0-9][a-z0-9._-]{0,60}\/[a-z0-9][a-z0-9._:-]{0,100}$/i;
 
 // #3624: one person on the DM list, with what their requests cost this week.
 interface DmUser {
@@ -100,6 +115,8 @@ interface Bot {
   weeklySpentCents: number;
   hasIncludedKey: boolean;
   model: string | null;
+  // #3654: what each stage runs on now, the default filled in.
+  models?: Record<ModelStage, string | null>;
 }
 
 interface Totals {
@@ -162,11 +179,20 @@ interface Run {
   build_queued_at: string | null;
   // The spec the bot wrote before building, live or shadow.
   build_spec_md: string | null;
+  // #3654: the verdict a labeller says was right, the build's model, and the
+  // stages this run can be replayed at by the benchmark.
+  label_verdict?: LabelVerdict | null;
+  dm_answered_at?: string | null;
+  build_model?: string | null;
+  replayStages?: string[];
   buildUrl: string | null;
   app_slug: string;
   app_name: string;
   issueUrl: string | null;
 }
+
+type LabelVerdict = 'question' | 'ready' | 'person' | 'empty' | 'answer' | 'revise';
+const LABEL_VERDICTS: LabelVerdict[] = ['question', 'ready', 'person', 'empty', 'answer', 'revise'];
 
 interface Refusal {
   app: string;
@@ -201,6 +227,7 @@ function retryAt(loop: LastPass): string {
 interface Payload {
   settings: Settings;
   modes: string[];
+  defaultModel?: string | null;
   bot: Bot | null;
   loop: LastPass | null;
   totals: Totals;
@@ -473,6 +500,137 @@ function VerdictBody({ run }: { run: Run }) {
 }
 
 /** The build lane in one line: what is waiting, running, done, and why it idles. */
+/**
+ * #3654: the labeller's half of a rating: the verdict that was right, and a
+ * note. Saved together and only on Save, so a Yes/No tap in the table never
+ * touches them (the server changes only the fields a request carries).
+ */
+function RunLabel({ run, canWrite, busy, onSave }: {
+  run: Run;
+  canWrite: boolean;
+  busy: boolean;
+  onSave: (labelVerdict: LabelVerdict | null, note: string | null) => void;
+}) {
+  const [verdict, setVerdict] = useState<string>(run.label_verdict || '');
+  const [note, setNote] = useState<string>(run.rating_note || '');
+  const dirty = verdict !== (run.label_verdict || '') || note !== (run.rating_note || '');
+  if (!canWrite) {
+    return run.label_verdict
+      ? <p className={AdminUI.muted} data-label-verdict={run.label_verdict}>{`Right verdict, per its labeller: ${VERDICT_LABEL[run.label_verdict]}`}</p>
+      : null;
+  }
+  return (
+    <div className="flex flex-wrap items-end gap-2" data-run-label={run.id}>
+      <div>
+        <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-label-${run.id}`}>Right verdict</label>
+        <select
+          id={`admin-homeroom-bot-label-${run.id}`}
+          className={`${AdminUI.select} mt-1`}
+          value={verdict}
+          onChange={(e) => setVerdict(e.target.value)}
+        >
+          <option value="">Not labelled</option>
+          {LABEL_VERDICTS.map((v) => <option key={v} value={v}>{VERDICT_LABEL[v]}</option>)}
+        </select>
+      </div>
+      <div className="flex-1 min-w-[12rem]">
+        <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-note-${run.id}`}>Note</label>
+        <input
+          id={`admin-homeroom-bot-note-${run.id}`}
+          className={`${AdminUI.input} mt-1`}
+          maxLength={1000}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+      </div>
+      <button
+        type="button" className={AdminUI.btn.primarySm}
+        disabled={busy || !dirty}
+        onClick={() => onSave((verdict || null) as LabelVerdict | null, note.trim() ? note.trim() : null)}
+      >Save label</button>
+    </div>
+  );
+}
+
+// #3654: the benchmark stages a run can become a task at, from the
+// snapshots it recorded (services/bench/suites.js SNAPSHOT_STAGE).
+function benchStagesFor(run: Run): string[] {
+  const have = new Set(run.replayStages || []);
+  const out: string[] = [];
+  if (have.has('triage')) out.push('triage');
+  if (have.has('triage') && run.verdict === 'question' && run.dm_answered_at) out.push('dm');
+  if (have.has('build')) out.push('build', 'spec');
+  if (have.has('followup')) out.push('followup');
+  if (have.has('checks_fix')) out.push('checks_fix');
+  return out;
+}
+
+interface SuiteOption { id: number; name: string; version: number; frozen_at: string | null }
+
+/**
+ * #3654: "Add to a benchmark suite" on a run row. Only a run that recorded
+ * a snapshot can be replayed, so a run from before snapshots says so instead.
+ * The suites are read when the row first asks for them.
+ */
+function AddToSuite({ run, busy }: { run: Run; busy: boolean }) {
+  const stages = benchStagesFor(run);
+  const [suitesList, setSuites] = useState<SuiteOption[] | null>(null);
+  const [suiteId, setSuiteId] = useState('');
+  const [stage, setStage] = useState(stages[0] || '');
+  const [note, setNote] = useState('');
+  useEffect(() => {
+    if (!stages.length) return undefined;
+    let alive = true;
+    fetch('/api/admin/homeroom-bot/bench/suites')
+      .then((r) => r.json())
+      .then((d) => {
+        if (!alive) return;
+        const open = (d.suites || []).filter((x: SuiteOption) => !x.frozen_at);
+        setSuites(open);
+        if (open[0]) setSuiteId(String(open[0].id));
+      })
+      .catch(() => { if (alive) setSuites([]); });
+    return () => { alive = false; };
+  }, [run.id]);
+  if (!stages.length) {
+    return <p className={AdminUI.muted} data-bench-add="unavailable">Not replayable: this run recorded no snapshot, so it cannot become a benchmark task.</p>;
+  }
+  const add = async () => {
+    setNote('');
+    const res = await fetch(`/api/admin/homeroom-bot/bench/suites/${suiteId}/tasks`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ runId: run.id, stage }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setNote(res.ok && data.added?.length ? 'Added to the suite.' : `Not added: ${data.error || data.refused?.[0]?.error || `HTTP ${res.status}`}`);
+  };
+  return (
+    <div className="flex flex-wrap items-end gap-2" data-bench-add={run.id}>
+      <div>
+        <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-bench-suite-${run.id}`}>Benchmark suite</label>
+        <select
+          id={`admin-homeroom-bot-bench-suite-${run.id}`} className={`${AdminUI.select} mt-1`}
+          value={suiteId} onChange={(e) => setSuiteId(e.target.value)} disabled={!suitesList?.length}
+        >
+          {suitesList == null ? <option value="">{'Loading…'}</option> : null}
+          {suitesList && !suitesList.length ? <option value="">No open suite: make one under Benchmark</option> : null}
+          {(suitesList || []).map((x) => <option key={x.id} value={x.id}>{`${x.name} v${x.version}`}</option>)}
+        </select>
+      </div>
+      <div>
+        <label className={AdminUI.label} htmlFor={`admin-homeroom-bot-bench-stage-${run.id}`}>As a</label>
+        <select
+          id={`admin-homeroom-bot-bench-stage-${run.id}`} className={`${AdminUI.select} mt-1`}
+          value={stage} onChange={(e) => setStage(e.target.value)}
+        >
+          {stages.map((st) => <option key={st} value={st}>{`${st.replace('_', ' ')} task`}</option>)}
+        </select>
+      </div>
+      <button type="button" className={AdminUI.btn.outlineSm} disabled={busy || !suiteId} onClick={add}>Add to suite</button>
+      {note ? <span className={AdminUI.muted}>{note}</span> : null}
+    </div>
+  );
+}
+
 function buildLaneLine(b: BuildLane | undefined): string {
   if (!b) return '';
   const parts = [
@@ -679,6 +837,15 @@ function HomeroomBotSection() {
   // #3624: the per-person weekly cap in dollars; null until edited. The DM
   // list keeps its own draft, in DmPeople.
   const [userCapDraft, setUserCapDraft] = useState<string | null>(null);
+  // #3654: the bot itself, or its Benchmark. The address carries it
+  // (#admin/homeroom-bot/benchmark), read once on mount; the tabs replace
+  // the address rather than push it, so they never re-route the console.
+  const [tab, setTab] = useState<'bot' | 'benchmark'>(() => (
+    typeof location !== 'undefined' && /^#admin\/homeroom-bot\/benchmark\b/.test(location.hash) ? 'benchmark' : 'bot'));
+  const showTab = (next: 'bot' | 'benchmark') => {
+    setTab(next);
+    try { history.replaceState(null, '', next === 'benchmark' ? '#admin/homeroom-bot/benchmark' : '#admin/homeroom-bot'); } catch { /* non-fatal */ }
+  };
   const alive = useRef(true);
   useEffect(() => () => { alive.current = false; }, []);
 
@@ -736,6 +903,26 @@ function HomeroomBotSection() {
     const data = await write(`/api/admin/homeroom-bot/runs/${run.id}/rating`, 'POST', { rating },
       rating ? `#${run.issue_number} rated.` : `#${run.issue_number} rating cleared.`);
     if (data) load();
+  };
+
+  // #3654: the right verdict and a note, without touching the Yes/No.
+  const label = async (run: Run, labelVerdict: LabelVerdict | null, note: string | null) => {
+    const data = await write(`/api/admin/homeroom-bot/runs/${run.id}/rating`, 'POST', { labelVerdict, note },
+      `#${run.issue_number} labelled.`);
+    if (data) load();
+  };
+
+  // #3654: one stage's model; blank goes back to the platform default.
+  const saveModel = async (stage: ModelStage, value: string) => {
+    const id = value.trim();
+    if ((settings?.models?.[stage] || '') === id) return;
+    if (id && !MODEL_ID_RE.test(id)) {
+      setStatus({ text: 'A model is an OpenRouter id such as z-ai/glm-5.3-flash, or blank for the default.', tone: 'err' });
+      return;
+    }
+    const name = MODEL_STAGES.find((m) => m.key === stage)?.label || stage;
+    await saveSettings({ models: { [stage]: id } as Record<ModelStage, string> },
+      id ? `${name} now runs on ${id}.` : `${name} is back on the platform default.`);
   };
 
   // A plain link, not a fetch: the endpoint streams the file and the browser
@@ -878,8 +1065,31 @@ function HomeroomBotSection() {
     </div>
   );
 
+  const tabs = (
+    <div className="flex gap-1" role="tablist" aria-label="Homeroom bot" id="admin-homeroom-bot-tabs">
+      {(['bot', 'benchmark'] as const).map((key) => (
+        <button
+          key={key} type="button" role="tab" id={`admin-homeroom-bot-tab-${key}`}
+          aria-selected={tab === key}
+          className={tab === key ? AdminUI.btn.primarySm : AdminUI.btn.outlineSm}
+          onClick={() => showTab(key)}
+        >{key === 'bot' ? 'The bot' : 'Benchmark'}</button>
+      ))}
+    </div>
+  );
+
+  if (tab === 'benchmark') {
+    return (
+      <div className="space-y-4" id="admin-homeroom-bot">
+        {tabs}
+        <BenchmarkArea canWrite={canWrite} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4" id="admin-homeroom-bot">
+      {tabs}
       <div className={`${AdminUI.card} p-4`}>
         <div className={AdminUI.cardHeader}>
           <h2 className={AdminUI.cardTitle}>Homeroom bot</h2>
@@ -1018,6 +1228,29 @@ function HomeroomBotSection() {
               A warning, not a stop. The bot only learns what a turn read once the
               turn is over, so a turn past this keeps its verdict and the overrun is
               logged. The minute limit above is what actually ends a runaway turn.
+            </p>
+          </div>
+
+          <div id="admin-homeroom-bot-models">
+            <p className={AdminUI.label}>Models</p>
+            {MODEL_STAGES.map((m) => (
+              <div className="mt-2" key={m.key}>
+                <label className={`${AdminUI.muted} block`} htmlFor={`admin-homeroom-bot-model-${m.key}`}>{m.label}</label>
+                <input
+                  id={`admin-homeroom-bot-model-${m.key}`}
+                  className={`${AdminUI.input} mt-1`}
+                  defaultValue={settings?.models?.[m.key] || ''}
+                  key={`model-${m.key}-${settings?.models?.[m.key] || ''}`}
+                  placeholder={payload?.defaultModel || 'platform default'}
+                  spellCheck={false}
+                  disabled={!canWrite}
+                  onBlur={(e) => saveModel(m.key, e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+                />
+              </div>
+            ))}
+            <p className={`${AdminUI.muted} mt-2`} id="admin-homeroom-bot-models-note">
+              {`An OpenRouter model id per stage. Blank runs the platform default${payload?.defaultModel ? ` (${payload.defaultModel})` : ''}. A change applies from the next turn, and each run records the model it ran on.`}
             </p>
           </div>
 
@@ -1523,12 +1756,19 @@ function HomeroomBotSection() {
                         <div className="space-y-2">
                           <div className={AdminUI.muted}>{ratingLabel}</div>
                           <VerdictBody run={run} />
+                          <RunLabel
+                            key={`label-${run.id}-${run.label_verdict || ''}-${run.rating_note || ''}`}
+                            run={run} canWrite={canWrite} busy={busy !== ''}
+                            onSave={(v, n) => label(run, v, n)}
+                          />
+                          {canWrite ? <AddToSuite run={run} busy={busy !== ''} /> : null}
                           <div className={`${AdminUI.muted} flex flex-wrap gap-x-4 gap-y-1`}>
                             {run.mode === 'live' ? <span>live: acted on the issue</span> : null}
                             <span>determined: {run.determined == null ? '–' : run.determined ? 'yes' : 'no'}</span>
                             {run.missing_fact ? <span>missing: {run.missing_fact}</span> : null}
                             {run.cap_suppressed ? <span>{CAP_LABEL[run.cap_suppressed] || run.cap_suppressed}</span> : null}
                             {run.model ? <span>{run.model}</span> : null}
+                            {run.build_model && run.build_model !== run.model ? <span>{`built on ${run.build_model}`}</span> : null}
                             {run.duration_ms != null ? <span>{Math.round(run.duration_ms / 1000)}s</span> : null}
                             {run.rating_note ? <span>note: {run.rating_note}</span> : null}
                           </div>

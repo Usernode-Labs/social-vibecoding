@@ -167,6 +167,9 @@ async function migrate(config) {
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
   await seedStagingDbExports(pool);
+  // #3654: the Homeroom bot console's Benchmark area (services/bench/demo.js).
+  // Its tables are staging:private, so a preview would otherwise show none.
+  await require('../services/bench/demo').seedStagingBench(pool);
   // After the proposal seeds above: the platform-env fixture stamps a
   // failing verdict onto an existing staging proposal.
   await seedStagingPlatformEnv(pool, config);
