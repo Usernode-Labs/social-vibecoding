@@ -200,7 +200,7 @@ test('the weekly allowance message is keyed by the platform week, which starts o
 
 // ── The bot's posts carry the news to the DM ─────────────────────────────
 
-test('a post with `dm` is relayed to the requester\'s DM after it is posted; one without is not', async (t) => {
+test('a post with `dm` is relayed to the requester\'s DM; one without is not', async (t) => {
   const relayed = [];
   const real = dm.relayIssuePost;
   dm.relayIssuePost = async (args) => { relayed.push(args); return null; };

@@ -9,7 +9,9 @@
 // lands in its requester's DM with its suggested answers, an answer given
 // there is posted on the request and closes the question, the weekly
 // allowance is summed per requester, and a project's description is filed
-// as its first-version request once it runs.
+// as its first-version request once it runs. #3698: the bot's post on a
+// request tags its requester exactly when their DM did not reach them, so
+// the news reaches them once, and never somebody who blocked the bot.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -43,6 +45,16 @@ require.cache[wsId] = {
     async sendSystemMessage(_pool, appId, content, msgType, metadata, thread) {
       systemMessages.push({ appId, content, thread });
       return { id: systemMessages.length };
+    },
+    // The bot's message in a request's thread, written as the real one
+    // writes it, so a mention notification has a row to point at (#3698).
+    async sendBotMessage(db, appId, { user: from, content, metadata = null, thread, msgType = 'message' }) {
+      const { rows: [row] } = await db.query(
+        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, created_at`,
+        [appId, from.id, content, msgType, JSON.stringify(metadata || {}), thread.type, thread.ref],
+      );
+      return { id: row.id, createdAt: row.created_at };
     },
     pushIssueUpdate(data) { issueUpdates.push(data); },
   },
@@ -577,5 +589,103 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     assert.equal(text.content, dm.NOT_ENABLED_TEXT);
     assert.equal(text.reply.id, hi.message.id);
     assert.ok(!events.slice(from).some((e) => e.payload.type === 'conversation_typing'), 'no typing for a canned line');
+  });
+
+  await t.test('#3698: the post on a request tags its requester exactly when their DM did not reach them, never one who blocked the bot', async () => {
+    const live = require('../src/services/homeroom-bot-live');
+    const io = require('../src/services/ws');
+    const github = { async createIssueComment() { return { id: 1, created_at: '2026-10-02T12:00:00Z' }; } };
+    const repo = { owner: 'usernode-bot', repo: 'seed-swap' };
+    const told = await user('told');
+    const failed = await user('failed');
+    const gone = await user('gone');
+    const blocker = await user('blocker');
+    const unrecorded = await user('unrecorded');
+    await setting('homeroom_bot_dm_users', JSON.stringify([told, failed, gone, blocker, unrecorded].map((p) => p.username)));
+
+    // One request per requester, its news posted the way a live verdict
+    // posts it: tagging whoever filed it and whoever took part (Sam).
+    let issueNumber = 3698;
+    const postFor = async (requester, db = pool) => {
+      issueNumber += 1;
+      await pool.query(
+        `INSERT INTO homeroom_bot_requesters (app_id, issue_number, user_id, issue_title) VALUES ($1, $2, $3, 'Tags')`,
+        [app.id, issueNumber, requester.id],
+      );
+      const posted = await live.post({
+        pool: db, github, ws: io, app, repo, issueNumber, kind: 'spec', text: 'Building it now.',
+        sender: bot, senderId: bot.id, mentions: [requester.username, sam.username], dm: { building: true },
+      });
+      assert.equal(posted.thread, true);
+      const { rows: [thread] } = await pool.query(
+        `SELECT id, content FROM chat_messages WHERE app_id = $1 AND thread_type = 'issue' AND thread_ref = $2`,
+        [app.id, issueNumber],
+      );
+      // Everything that rang for the requester (nothing else ever did), and
+      // what rang for Sam on this post.
+      const { rows: bells } = await pool.query(
+        'SELECT kind, chat_message_id, conversation_message_id FROM notifications WHERE user_id = $1 ORDER BY id',
+        [requester.id],
+      );
+      const { rows: samBells } = await pool.query(
+        'SELECT kind FROM notifications WHERE user_id = $1 AND chat_message_id = $2', [sam.id, thread.id],
+      );
+      assert.deepEqual(samBells.map((b) => b.kind), ['mention'], 'everybody else on the post is tagged as before');
+      const { rows: dms } = await pool.query(
+        `SELECT m.id FROM conversation_messages m
+           JOIN conversation_members cm ON cm.conversation_id = m.conversation_id AND cm.user_id = $1
+          WHERE m.sender_id = $2`,
+        [requester.id, bot.id],
+      );
+      return { thread, bells, dms: dms.map((r) => r.id) };
+    };
+    const onlyDm = (seen, why) => {
+      assert.equal(seen.thread.content, `@${sam.username} Building it now.`, `${why}: not tagged on the request`);
+      assert.equal(seen.dms.length, 1, `${why}: told in the DM`);
+      assert.deepEqual(seen.bells, [{ kind: 'conversation_message', chat_message_id: null, conversation_message_id: seen.dms[0] }],
+        `${why}: one bell, the DM's`);
+    };
+    const onlyMention = (seen, who, why) => {
+      assert.equal(seen.thread.content, `@${who.username} @${sam.username} Building it now.`, `${why}: tagged on the request`);
+      assert.deepEqual(seen.dms, [], `${why}: nothing in a DM`);
+      assert.deepEqual(seen.bells, [{ kind: 'mention', chat_message_id: seen.thread.id, conversation_message_id: null }],
+        `${why}: one bell, the post's mention`);
+    };
+
+    // The DM reached them: it is where the news rings, and only there.
+    onlyDm(await postFor(told), 'told in the DM');
+
+    // The relay failed: the post's mention is how the news reaches them.
+    const relay = dm.relayIssuePost;
+    dm.relayIssuePost = async () => { throw new Error('relay down'); };
+    try {
+      onlyMention(await postFor(failed), failed, 'the relay threw');
+    } finally {
+      dm.relayIssuePost = relay;
+    }
+
+    // They left the bot's DM: the bot does not open it again for news, so
+    // the post tags them.
+    const { conversationId } = await conversations.ensureAdmittedDirect(pool, bot.id, gone.id);
+    assert.ok(await conversations.leave(pool, gone, conversationId));
+    onlyMention(await postFor(gone), gone, 'left the bot\'s DM');
+
+    // They blocked the bot: nothing from it, here or in a DM.
+    await pool.query('INSERT INTO user_blocks (blocker_id, blocked_user_id) VALUES ($1, $2)', [blocker.id, bot.id]);
+    const blocked = await postFor(blocker);
+    assert.equal(blocked.thread.content, `@${sam.username} Building it now.`, 'not tagged');
+    assert.deepEqual(blocked.dms, [], 'no DM');
+    assert.deepEqual(blocked.bells, [], 'and nothing rings');
+
+    // The DM reached them but could not be recorded after: it still did,
+    // so the post must not ring a second time.
+    const flaky = {
+      query: (sql, params) => (/INSERT INTO homeroom_bot_dm_messages/.test(String(sql))
+        ? Promise.reject(new Error('could not record')) : pool.query(sql, params)),
+      connect: () => pool.connect(),
+    };
+    onlyDm(await postFor(unrecorded, flaky), 'told, but not recorded');
+
+    await setting('homeroom_bot_dm_users', '[]');
   });
 });

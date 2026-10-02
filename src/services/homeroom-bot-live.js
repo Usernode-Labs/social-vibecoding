@@ -824,17 +824,6 @@ async function post({
   // Everybody this post tags (mentionTargets); `mention` is the one-person
   // form the older callers pass.
   let tagged = [...new Set([...(mentions || []), ...(mention ? [mention] : [])].filter(Boolean))];
-  // #3624: a requester the bot tells in a DM is not also tagged here: the
-  // DM is where the news reaches them, and it would ring twice.
-  if (dm && sender && tagged.length) {
-    try {
-      const recipient = await require('./homeroom-bot-dm').dmRecipient(pool, app.id, issueNumber);
-      if (recipient) tagged = tagged.filter((n) => String(n).toLowerCase() !== recipient.username.toLowerCase());
-    } catch (err) {
-      log.warn('homeroom-bot', 'Could not check the DM recipient (tagging as before)', { app: app.slug, issueNumber, err: err.message });
-    }
-  }
-  const handles = tagged.map((n) => `@${n}`).join(' ');
   // #3288: with a sender (the bot's own user), the thread posts are ordinary
   // messages from it, drawn as its bubbles. `msgType` then no longer picks
   // the row's kind: the proposal link is a message whose `metadata.vote`
@@ -858,6 +847,33 @@ async function post({
   } catch (err) {
     log.warn('homeroom-bot', 'GitHub comment failed (continuing)', { app: app.slug, issueNumber, kind, err: err.message });
   }
+  // #3624: the same news, in the requester's DM with the bot, when they
+  // are somebody it talks to there. A post that carries `dm` is one worth
+  // telling them about; the issue stays the record either way.
+  // #3698: told BEFORE the thread post, so what the DM actually did decides
+  // whether the post tags them (homeroom-bot-dm.js untaggedRequester). It
+  // does not when the DM reached them (it rang there; a tag would ring
+  // twice) or they blocked the bot. It does when the DM came to nothing
+  // (they left the bot's DM, it was refused, the relay failed), so the news
+  // still reaches them, once.
+  if (dm && sender) {
+    const dmSvc = require('./homeroom-bot-dm');
+    let told = null;
+    try {
+      told = await dmSvc.relayIssuePost({ pool, ws, app, issueNumber, kind, runId, postId, bot: sender, dm });
+    } catch (err) {
+      log.warn('homeroom-bot', 'DM relay failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
+    }
+    if (tagged.length) {
+      try {
+        const quiet = await dmSvc.untaggedRequester(pool, { appId: app.id, issueNumber, bot: sender, told });
+        if (quiet) tagged = tagged.filter((n) => String(n).toLowerCase() !== quiet.toLowerCase());
+      } catch (err) {
+        log.warn('homeroom-bot', 'Could not check the DM recipient (tagging as before)', { app: app.slug, issueNumber, err: err.message });
+      }
+    }
+  }
+  const handles = tagged.map((n) => `@${n}`).join(' ');
   // The person who filed the issue is named in the thread only. On GitHub a
   // platform username is never written as an @mention (#723: it would
   // notify whoever owns that handle there), and GitHub already notifies the
@@ -915,18 +931,6 @@ async function post({
     ...(tagged.length ? { mentioned: tagged, notified } : {}),
     ...(proposalSessionId ? { proposalThread: !!proposalMessage } : {}),
   });
-  // #3624: the same news, in the requester's DM with the bot, when they
-  // are somebody it talks to there. A post that carries `dm` is one worth
-  // telling them about; the issue stays the record either way.
-  if (dm && sender) {
-    try {
-      await require('./homeroom-bot-dm').relayIssuePost({
-        pool, ws, app, issueNumber, kind, runId, postId, bot: sender, dm,
-      });
-    } catch (err) {
-      log.warn('homeroom-bot', 'DM relay failed (post kept)', { app: app.slug, issueNumber, kind, err: err.message });
-    }
-  }
   return { postId, githubCreatedAt: comment?.created_at || null, github: !!comment, thread: !!message };
 }
 
