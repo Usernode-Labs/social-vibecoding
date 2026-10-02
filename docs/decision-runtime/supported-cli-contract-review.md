@@ -1,197 +1,169 @@
-# Supported CLI contract and retention review
+# Bounded CLI support assessment
 
-**Current support decision (2 October):** [fresh experimental stores only](experimental-retention-decision.md).
-Historical reducers, dependency bytes, golden sources and exported test traces are
-in the verified offline archive. Three partial handlers and twelve replay-only
-reducers are removed. Current complete work recovers with admission disabled;
-startup refuses unsupported stores instead of stranding removed work.
-The earlier review below records why this gate was required; its unknown-store
-removal gate is superseded by that explicit decision. Production and legacy
-safeguards remain. Public HTTPS/private identity and installation proof remain.
+Reviewed against accepted `511e84e35769b31950d5fa45cfaf7e340d3ccbd4` and its
+explicit canonical integration at `d9cf30cd73a0810be72b199f8b2a194f8c56b793`.
+Read-only canonical fetch on 2 October returned
+`74276a2fb7002da251e1b3975ae22b81dbc765e3`; the relevant capture, identity,
+preview and CLI owners are unchanged. Newer unrelated main changes were not merged.
+Admission remains default-off. This assessment does not authorize installation,
+caller expansion, rollout, production access, push or deployment.
 
-Reviewed 2 October 2026 at accepted local `d24b0c0dd15fd22ee9654243e423ce449777d925`;
-canonical main `4c0ef27fb7381e9ecb89e2732e6c2c784b9395c6` was fetched and inspected.
-The subsequent pinned integration is `d9cf30cd73a0810be72b199f8b2a194f8c56b793`
-at merge `6730b091306c0dcbcf22579548dc2dd273b2f1f7`; see the
-[packaged proof contract](packaged-cli-entrypoints-contract.md) for its new evidence.
-This original section is a code/retention review, not permission to expand
-admission. Existing protections and default-off admission remain.
+## Support conclusion
 
-## The contract we intend to support
+The bounded implementation has demonstrated complete preparation, separate
+activation, durable checks/gate ownership and repeated use with safe predecessor
+release. This is a tested **native CLI Kubernetes/kpack, fresh-store, recorded
+image/schema/protocol contract**, not support for every platform caller or an
+arbitrary installed environment. Docker and other callers retain their old owners.
 
-The first supported cohort is native `cli_handoff`, Kubernetes/kpack, with the
-preview lifecycle enabled. New admission accepts the uploaded exact head and
-commits its complete preparation request in the same aggregate transaction.
-Recovery follows persisted enrollment even with admission disabled. It cannot
-fall back to a synchronous or competing builder.
+Ordinary private-project screenshot permission is a **product gap**, not a missing
+TLS/RBAC installation step. The shipped non-admin screenshot account is not a
+member of ordinary private projects. Its valid app-scoped JWT does not confer
+membership. The private edge rejects it; the read-only assertion admin's access
+cannot stand in for a successful ordinary screenshot. The earlier explicitly
+membered fixture proves authorized capture only. The current unmodified-membership
+proof is recorded in the [HTTPS contract](https-private-capture-contract.md).
+Required assertions/unit checks can still pass while optional screenshot artifacts
+are unavailable. That verdict is preserved policy, not proof of capture success.
+The first CLI gate including ordinary private projects therefore remains open.
+Do not expand migration on the strength of admin assertions or fixture grants.
 
-| Owner | Required behavior and persisted authority |
+The shipped sequence is concrete: authenticated CLI admission authorizes the session
+author; [`visuals`](../../src/services/visuals.js) then looks up the separate seeded
+`usernode-capture` account and calls `mintCaptureToken`.
+[`seedCaptureUser`](../../src/db/migrate.js) provides platform access, not per-project
+membership. [`/__caddy/access`](../../src/routes/internal.js) verifies the JWT and
+calls [`isViewMember`](../../src/services/app-access.js), which requires membership
+or admin status for a private app. The author’s authority is never transferred.
+The child’s shipped auth exchange is reached only after that edge check passes.
+
+## Intended owners and guarantees
+
+| Boundary | Owner / demonstrated guarantee |
 | --- | --- |
-| CLI admission | Session authorization and head guards; `cli_preview_handoffs` identifies the current flow and required preparation/continuation. |
-| Preparation worker | `native-preview-kubernetes-prepare` v1; source, `template-v1` clone, `kpack-v1` Build, `kubernetes-v1` candidate. Persisted identities/specifications and verified OID/UID/digest determine adoption, not existence alone or current configuration. |
-| Activation continuation | `native-cli-preview-continuation` v1; a separate action authorizes changing the stable route. Desired/observed binding and conditional UID/target checks protect the serving preview and successors. Candidate completion durably admits this continuation. |
-| Checks lifecycle/harvester | For durable-marked runs, the original run, manifest, companion requirement and retirement journal own Jobs and inputs. Live heartbeat is joined; orphan work is inspected. Unknown creation/output stays discoverable and explicitly blocked; an absent Job or manifest does not authorize competing execution. |
-| Checks settlement | `cli-checks-settlement` v1; accepted run/revision receipt, verdict, history/graduation and `native-cli-check-gate` v1 requests commit atomically. App history coordinates across sessions. Lost replies adopt the committed verdict. |
-| Gate delivery | Standalone worker initializes dependencies before polling. Missing GitHub initialization/credentials retains retry ownership; successful policy invocation is distinct from domain no-op and actual merge. Existing merge/bot services own their policy, claims and external deduplication. |
-| Retirement | `native-preview-retire` v1 plus existing checks retirement. Retire only the recorded resources; dependency release is distinct from proving every creator stopped. Keep unresolved late-creation locators, including after supersession. |
+| Admission | Authenticated CLI route and CLI reducer. Exact uploaded head and complete preparation work commit together; lost replies return the same identity. |
+| Preparation | Shared standalone execution worker and named source/clone/Build/runtime services. Verified database OID, Build UID/digest and runtime UIDs determine adoption; existence alone is insufficient. Preparation preserves serving. |
+| Activation | Separately authorized preview action and durable CLI continuation. Desired/observed binding, conditional external writes and retained locks protect serving/successors. |
+| Checks | Existing lifecycle, manifest and harvester. Original capture/unit Jobs, expected companion creation, inputs and destructive retirement progress remain recoverable. Unknown outcomes retain an explicit reconciliation owner. |
+| Settlement | Shared decision runtime and settlement reducer. Run/revision receipt, verdict, app-wide history/graduation and required gate requests commit together. Caught mapping errors roll back earlier composition writes too. |
+| Required gate delivery | Shared worker invokes existing merge/bot policy services, with explicit dependency bootstrap and deduplication. Missing prerequisites retain retry ownership. Policy no-op, invocation and actual merge are different outcomes. |
+| Retirement | Existing preview retirement plus checks consumer lifecycle. Published predecessors release active runtime/database/check dependencies only after consumers finish; unresolved creators retain discoverable work. |
 
-The distinct `proposal-review-announce-return` v1 workflow remains the demonstrated
-shared-runtime reuse checkpoint. It is not another preview format. Live reducer
-versions are preview **10**, CLI **3**, review **2**, settlement **1**. Work contract,
-reducer, clone/build/runtime operation and manifest versions are different axes.
-A work contract v1 does not require executing reducer v1.
+These are enforced boundaries, not just a naming convention. Domain actions,
+guards, pure reducers and persistence mappings remain explicit; shared transaction,
+aggregate locking, receipt/trace persistence, work claims and scheduling are reused.
+The distinct review workflow demonstrates reuse without copied runtime machinery.
+Shared aggregate coordination is required even when machines have separate names.
 
-Sources: [CLI owner](../../src/services/cli-preview-handoff/work.js),
+Sources: [decision runtime](../../src/services/decision-runtime/index.js),
+[execution worker](../../src/services/execution/worker.js),
+[CLI work](../../src/services/cli-preview-handoff/work.js),
 [preparation](../../src/services/preview-flow/work.js),
-[checks recovery](../../src/services/cli-preview-handoff/checks.js),
 [settlement](../../src/services/cli-preview-handoff/settlement.js),
-[retirement](../../src/services/check-retirement.js).
-Operation contracts supply the detailed guarantees and recorded evidence.
+[checks retirement](../../src/services/check-retirement.js).
 
-This is the contract for new complete admission and durable-marked checks runs.
-Retained unmarked manifests are an exception, not silently upgraded enrollment.
-[`check-harvest`](../../src/services/check-harvest.js) selects uncertainty,
-settlement and journalled retirement by `manifest.durableCli`; an older unmarked
-manifest can still take legacy cancellation, redrive and best-effort settlement.
-[`staging-recovery`](../../src/services/staging-recovery.js) intercepts the redrive
-for an enrolled session and rejoins its durable owner, preventing fallback to a
-competing builder. That does not retroactively give the old run durable cleanup
-or atomic settlement. Inventory and reconcile those records before promising the
-current checks guarantees for a retained store. Never add a marker to unknown
-creation or recount an old verdict's history just to make it look current.
+## What the evidence establishes
 
-## Retention rules and removal decisions
-
-Product support should cover the current contract above. An older development
-checkpoint is supported for **specific retained obligations or replay evidence**,
-not because it once existed. Unknown stores do not become a permanent promise;
-they need a named owner/store decision before removal. No formats are removed in
-this review because that list has not been established.
-
-| Item | Actual requirement / bounded removal |
-| --- | --- |
-| Three early handlers: `native-preview-prepare`, `native-preview-template-prepare`, `native-preview-kpack-prepare`, all v1 | Recovery-only; no new admission emits them. No live retained instance was established by this review. Keep temporarily for the unknown-store gate. Remove their registry entries and exclusive one-shot observation/runtime-start branches once named stores have no unfinished work or dependent resource obligations, or those obligations have been safely drained. Do not relabel old payloads as complete preparation. |
-| Preview frozen v1–v9, CLI v1–v2, review v1 | Replay-only. Decision application uses the live reducer; validated duplicate actions return stored receipts. In-repository historical expectations use preview v1/v3/v4/v8/v9, CLI v1/v2; review v1 is retained in the dispatcher. Preview v9 imports v8. These are removable from the worker runtime after the relevant goldens/retained traces and exact source/dependencies are preserved in an independently reproducible replay archive. They are not needed merely because an old work row exists. |
-| Preview v2/v5/v6/v7 | No explicit historical golden found in the reviewed suites. That is a removal candidate, not proof that exported traces are absent. Apply the same named-export/archive gate; do not invent permanent support or delete unknown evidence silently. |
-| Old action parsers and receipts | Separate from frozen reducers: `transaction.apply` validates input before looking up a receipt. Keep old request shapes while supported callers or retained requests can retry them. A replay archive alone does not preserve live request retry compatibility. |
-| Old desired runtime placement; unmarked manifests or manifests without companion/retirement fields | These are persisted data, not flags. Do not rewrite desired specs or assume an absent field means no obligation. Prune only after an inventory of the corresponding resource/run records proves the branch unused or reconciliation closes it safely. |
-| `legacy-reducer`, `candidate-native`, staging/lifecycle/retention locks and harvest timers | Still live policy or shared safeguards for other callers. Keep. `onClonePrepared` is also used by synchronous `candidate-native`; it cannot be removed with the early durable handlers. The complete path still writes some creation checkpoints, so their names alone do not establish obsolescence. |
-
-`execution/store.claim` selects registered workflow names. Removing a handler can
-leave its work unclaimed; an unsupported contract version of a **registered** kind
-instead becomes blocked. Neither outcome closes cleanup. [Runtime receipt lookup](../../src/services/decision-runtime/index.js)
-does not execute the frozen replay dispatcher. Retain current live reducers and
-the supported operation/manifest mappings regardless of archived replay removal.
-Optional operation fields are not automatically old compatibility: new admission
-reserves a build before authorizing its `runScript`, and reserves a runtime before
-selecting its desired spec. Keep those legitimate current lifecycle phases.
-
-One replay dependency needs particular care: CLI `versions/v2.js` imports the
-live preview enabling conditions. Its filename alone does not freeze behavior.
-Archive the dependency at the retained trace's producing revision, and run the
-v2 golden plus retained traces against it. The current golden alone does not prove
-every historical v2 trace. Live-policy edits must not silently change historical replay.
-
-### What was actually inventoried
-
-- Read-only bounded scan of the repository's decision docs/test fixtures found no
-  standalone decision-trace JSON/JSONL exports. Generated test assertions and logs
-  are evidence, not a census of supported databases or exports.
-- All **14** discovered `preview-recovery-test-*` setup journals in the local
-  temporary directory say `torn-down`. Earlier ledger entries record verified
-  fixture teardown; no retired cluster was reconnected.
-- All **seven** discovered PostgreSQL fixture manifests passed metadata validation;
-  read-only local Docker selection by each fixture's exact ownership label found
-  no container. No database was connected and no rows were counted. The fixture-scoped resources are gone; this is not a global retained-row inventory.
-- Other developer stores, interrupted schemas outside those fixtures, backups and
-  trace exports outside the bounded search are **unknown**. Production is outside
-  this review. Canonical main has no new runtime directories; that is source
-  evidence, not proof about any deployed/custom branch or database.
-
-Before pruning, record the named supported store/export list. For each verified
-disposable store, take a consistent read-only inventory of all work kinds/versions/
-statuses and referenced attempts/events; flows/resources and creation/cleanup
-progress; desired/observed bindings; handoffs and receipts; all four decision
-journals by reducer version; and `check_runs`/`preview_operations` retirement
-obligations, including `durableCli`, companion and retirement journal presence. Include succeeded and blocked work and deleted session IDs. Export
-counts, references and checksums without credentials. A terminal work status or
-database release does not establish creator closure. A missing store is unknown,
-not an empty inventory. A fresh-store-only support decision is valid; excluded
-stores must be reconciled before running the new worker against them, rather than
-receiving permanent compatibility by default. Old terminal verdicts without settlement receipts must
-not be reconciled by recounting history whose write status is unknown.
-
-For first support on a fresh isolated store, prove it is empty of historical
-formats before admission and pin the supported image/schema tuple. If other
-retained stores are to be supported, list them and drain/adopt under their original
-contracts. Historical replay should be a versioned offline artifact with goldens,
-source and dependency checksums that survives PR squash; a Git SHA alone is not
-the archive. There is no time-based expiry of unresolved work or tombstones.
-
-## Actual standalone and capture boundary
-
-[`main`/`runWorker`](../../scripts/preview-preparation-worker.js) loads config and
-the normal pool; initializes GitHub/LLM; registers preview, CLI/gate and review
-handlers; and runs independent bounded discovery. It does **not** run web startup,
-migrations, a web server or legacy recovery timers. Its shutdown joins operations,
-then has a fail-stop deadline; a process exit does not prove external work stopped.
-`Dockerfile.kubernetes` ships the entry point, but its default command is still the
-web server. The subsequent [packaged proof](packaged-cli-entrypoints-contract.md)
-now runs that default CMD, worker `main` and migration as separate non-root
-containers, with real HTTP admission/restarts and real resource observations.
-Earlier bootstrap/service-factory tests remain separate evidence. Supervised
-installation and least-privilege RBAC are still unproved.
-
-Capture chooses runtime partly from environment (`captureRuntimeMode`), while Job
-admission uses config. Both must say Kubernetes. `runCheckJob` enforces digest-pinned
-capture/unit images; it does not establish that their code/protocol matches the
-backend revision. The worker needs separate app/build/check namespace access and
-database/clone privileges; capture/unit Pods use the configured worker ServiceAccount
-with token automount disabled. Current fixture API access does not prove least-
-privilege worker RBAC. Packaged non-root behavior is now demonstrated only for
-the recorded disposable image/source tuple.
-
-[`visuals`](../../src/services/visuals.js) targets public **HTTPS** preview origins.
-Non-admin capture identity signs screenshots; the view-only admin identity signs
-assertions. Tokens use app-scoped RS256 identity authority; missing identity/key
-can degrade to unauthenticated capture. [The existing fixture](../../tests/lib/cli-checks-fixture.js)
-substitutes internal Service HTTP, capture users, GitHub metadata, warming and
-notifications. Real Chromium/Jobs/PNG and recovery were demonstrated; private app
-access, Secure cookie exchange, TLS/assets and an actual HTTP admission restart were
-not by that earlier fixture. Packaged HTTP admission/restarts are now proved;
-private identities/TLS remain unproved. A missing capture identity must not be mistaken for proof of private access.
-
-### Bounded verification steps before first CLI support
-
-| Step | Work needed | Acceptance evidence |
+| Evidence | Verified behavior | Boundary |
 | --- | --- | --- |
-| Current canonical reconciliation | **Complete against explicit pin** | `d9cf30cd7` merged at `6730b0913`; preserved benchmark/approval behavior, refreshed CI and unchanged writer inventory. Focused PostgreSQL, SQL, actual checks/retirement and packaged proof pass; see the integration record. No rollout. |
-| Supported-store and replay decision | Inventory + archive/removal implementation | Named store/export list, read-only results, historical goldens reproduced from the archive. Remove only proven-unused early handler branches and runtime replay copies; keep unresolved recovery and parser shapes. Inventory/replay removal is not a new machine version. |
-| Retained unmarked checks, if any | Inventory + focused reconciliation verification; a bounded fix only if needed | Seed an original unmarked manifest in verified disposable PostgreSQL, with delayed/absent Jobs and an old terminal verdict, then restart/supersede. Prove no competing capture or builder, no lost cleanup locator, no history recount and no false required-gate completion. A legacy branch failing that proof requires draining or a bounded reconciliation correction before supporting that retained format; changing the marker alone is not the correction. |
-| Packaged standalone entry point | **Core proof complete**; remaining installation/permission verification | Shipped image/default web CMD, worker `main` and migration run non-root. Real HTTP admission and four loss boundaries recover with admission disabled and stable identities; original checks retire and required bot delivery invokes its substituted policy boundary once. The recorded image tuple passes. Prove least-privilege/denied permissions and supervision separately; cluster-admin fixture access does not cover them. No product fix was needed. |
-| Image/protocol tuple | Verification; small preflight change if required | Record exact backend SHA/schema, capture and unit image digests and relevant protocol cases. Run stdin Secret transport, repeat/advisory/console/malformed/partial output and unit completion against those images. There is currently no negotiated protocol/version handshake; support the tested tuple, not arbitrary mixed old/new images. Keep images of running Jobs available for recovery. |
-| Public origin and private identities | Disposable fixture extension + actual verification | Local ingress/TLS and trusted local CA, real asset routes and generated identity keys; a small DB-using private app and self-app staging exchange. No internal HTTP rewrite. Verify screenshot non-admin/assertion view-only admin behavior, denied cross-app/expired tokens and anonymous access, missing key/identity behavior, static assets and credential isolation. Restart while Jobs run; adopt their output rather than recreate Jobs or reissue their execution. |
+| Focused disposable PostgreSQL | Atomicity, deduplication, aggregate coordination, traces, fair retry/discovery, settlement rollback/history coordination and retirement journals. | Failure injection is identified in individual contracts; it does not prove external service behavior. |
+| Actual preparation and cleanup | Source → clone → kpack → candidate; interruption/lost replies adopt stable identities; clone retirement fences old access and delayed consumers. | Local builder/runtime and physically verified disposable PostgreSQL/Kubernetes/registry. |
+| Packaged entry points | Actual Dockerfile default web CMD, separate worker `main`, migration and non-root containers; real HTTP admission/restarts through admission, candidate, activation and verdict commit. | Metadata/template/unit inputs, health proxy and loss barriers are fixture substitutions. Worker supervision and least-privilege RBAC are not proved. |
+| HTTPS/identity | Real TLS with normal browser certificate verification, shipped forward-auth/staging exchange, Secure/HttpOnly cookies, assets and original-Job recovery. | Fixture TLS router and tiny identity surface, not production ingress or a complete self-app. Authorized-member success and ordinary non-member denial are separate cases. |
+| Ordinary repeated use | Five revisions on one session, overlapping checks/supersession/restarts; exactly ten original Jobs; four predecessors' runtime/clone/check inputs released, fifth serving protected. | Creator tombstones and terminal Build/Job/registry artifacts remain. Five-revision matrix uses internal HTTP; separate HTTPS evidence is not silently attributed to it. |
+| Gate delivery | Required work persists and invokes the policy boundary once after dependency recovery. | Real GitHub/merge/bot effects are substituted; actual external delivery is unproved. |
 
-These steps do not require another workflow, caller cohort or generic executor.
-Optional shots/media/notification delivery remains separate from required gating.
-Canonical changes since integrated `d600eb4308b0d283ba050addf4c19c915078086c` leave
-the reviewed capture/runtime/JWT/Job/worker-image adapters unchanged. Relevant drift
-is benchmark orphan recovery in `server.js` (`a3ebbf92c`) and fresh live approval
-enrichment in `votes.js`/`merge-requirements.js` (`c1c0a2e8e`); these survive the subsequent pinned integration. The original review did not
-establish freshness; the later reconciliation does so against the explicit pin. GitHub delivery is substituted, Linux CI execution is unverified, and
-the first supported CLI gate and full migration remain open.
+See [packaged proof](packaged-cli-entrypoints-contract.md),
+[HTTPS evidence](https-private-capture-contract.md),
+[published predecessor release](published-predecessor-retirement-contract.md) and
+[atomic settlement](idempotent-check-settlement-contract.md) for exact identities,
+injected dependencies and failure sequences. No successful clone, Build or runtime
+observation is substituted in the actual-resource preparation proofs.
 
+## Ownership and code actually removed
 
-### Current HTTPS evidence and ordinary-use gate
+- Selected CLI synchronous preparation and alternate rebuild/restart builders are
+  replaced by atomic admission and the persisted owner. Enrolled work cannot fall
+  back to a competing builder. Candidate completion replaces a detached web promise
+  with a durable continuation.
+- Enrolled restart recapture, best-effort gating settlement and detached required
+  merge/bot kicks are replaced by original-Job recovery, atomic settlement and
+  durable gate delivery. Checks retirement persists evidence before dropping its
+  manifest; the manifest is no longer its only consumer-release locator.
+- Blanket published-predecessor retention and admission accounting that counted
+  creator tombstones forever are replaced by consumer evidence and separately
+  persisted dependency release. The two-attempt budget counts unreleased dependencies.
+- Four preparation capability flags/config shim, three partial work handlers and
+  their exclusive one-shot branches are removed. New durable admission has one
+  complete format. Twelve historical reducer source copies/live replay dispatch
+  are removed after independent archive verification.
 
-The [disposable HTTPS/private-capture proof](https-private-capture-contract.md) now
-runs real TLS, edge/session exchange, private assets and original-Job restart
-recovery. The non-admin fixture member and read-only assertion admin retain their
-separate permissions; missing/invalid credentials are rejected. The fixture TLS
-router/tiny staging document and explicit membership are named substitutions,
-not installed-production or automatic-private-membership proof. Least-privilege
-RBAC, supervision, production ingress/certificates and protocol limits remain.
-The first supported CLI slice additionally requires successive session revisions,
-overlapping checks/supersession and safe published-predecessor retirement with
-resource release after consumers finish. Final owners and disappearing competing
-mechanisms are explicit in the roadmap; no new workflows precede this proof.
+No new cleanup executor was added. No global legacy timer, lock, safeguard or
+production compatibility branch was removed. The [retirement inventory](migration-retirement-inventory.md)
+names retained mechanisms and their removal gates; replaced cohort ownership is
+not evidence that other callers are ready for cutover.
+
+## Retained stores and replay
+
+The explicit support decision is **fresh experimental stores only**. No historical
+experimental store is supported implicitly. Known disposable fixtures were retired
+with ownership verification; other developer stores/backups are unknown and
+unsupported, not presumed reconciled. Startup refuses removed work kinds and
+historical traces before claiming work. Keep records for named inventory and
+reconciliation if an unsupported store is discovered; do not relabel its work or
+forget external cleanup obligations.
+
+The [offline archive](../../archives/experimental-replay-c01dc0687/README.md) preserves
+exact reducers/dependencies, original golden sources and exported test traces.
+Its 153 cases replay without npm, a checkout, credentials or a database. They are
+test exports, not production exports. Current live reducer versions are preview
+**11**, CLI **3**, review **2**, settlement **1**. Work contract versions and
+operation-spec versions are separate axes. Exact preview v10 policy is already
+archived; a development checkpoint does not automatically earn a live compatibility
+branch. Existing action retry shapes, unmarked legacy manifests and unknown old
+verdict/history safeguards remain for their existing callers/data.
+
+## Guarantees that remain bounded
+
+Durable work is **at least once**; decision receipts do not make arbitrary external
+requests exactly once. Adoption requires verified identities/specifications.
+Expired claims and observed absence do not establish that external creation ended.
+Unresolved creator obligations stay discoverable even after dependencies are released.
+Long-held session/retention/lifecycle locks remain where stable/shared resources or
+legacy callers still need them. Conservative unknown-consumer blocking is intentional.
+
+Action/module boundaries and the writer audit enforce this cohort's authority;
+there is no separate PostgreSQL role preventing every legacy/direct SQL writer.
+Fair shared execution/discovery is proved for enrolled work, not every old platform
+timer. Optional screenshots/media/notifications are distinct from durable required
+gates; terminal artifacts and receipt/creator compaction are not collected here.
+These limits neither justify removing safeguards nor require another framework.
+
+## Remaining requirements, without adding capabilities
+
+1. **Private screenshot permission — policy/implementation decision.** The current
+   shipped identity has no ordinary private-project permission. A bounded remedy
+   must define who authorizes which run/origin and revoke/reconcile it safely;
+   blanket membership/admin screenshots would change privacy policy. Preserve the
+   negative proof until a narrowly authorized replacement is demonstrated.
+2. **Installation prerequisites — verification before any supported installation.**
+   Separately launch/supervise the worker; run migrations before admission; provide
+   explicit identity keys and matching capture runtime config; verify namespace,
+   clone and least-privilege RBAC permissions; install public HTTPS/asset routing and
+   trusted certificates. Local cluster-admin fixture access does not establish these.
+3. **Supported tuple — release verification.** Keep the tested backend/schema,
+   digest-pinned capture/unit images and parser/Secret-stdin protocol together.
+   Keep original Job images available for recovery. There is no negotiated version
+   handshake and no arbitrary mixed-version compatibility promise. GitHub CI/Linux
+   installation and actual GitHub delivery require separate authorization/evidence.
+
+Narrower locks, stronger optional media/notification delivery, artifact GC,
+creator-tombstone compaction and Temporal reconsideration are optional follow-ups.
+Unknown creation and live consumer protection are essential correctness safeguards,
+not optional hardening. Their conservative retention remains explicit.
+
+**Review recommendation:** retain the contained/default-off slice and resolve the
+private permission policy before expanding the promised CLI contract. The shared
+foundation and second-workflow checkpoints are complete; full caller migration,
+production installation and rollout are not. No additional machine or framework
+is needed to conclude this assessment.

@@ -1,120 +1,82 @@
 # Lifecycle migration: current roadmap
 
-2 October 2026. Accepted product `c01dc0687` incorporates explicitly pinned
-canonical main `d9cf30cd73a0810be72b199f8b2a194f8c56b793` at merge
-`6730b091306c0dcbcf22579548dc2dd273b2f1f7`. Benchmark orphan recovery,
-sealed-checkout validity and fresh live approval behavior are preserved.
-See the [integration record](canonical-integration.md),
-[supported CLI/retention review](supported-cli-contract-review.md) and
-[packaged entry-point contract](packaged-cli-entrypoints-contract.md).
-PostgreSQL-only tests additionally require [verified disposable ownership](postgres-test-isolation.md);
-a URL or test flag does not authorize mutations.
-The Kubernetes/kpack native CLI cohort remains default-off. No production
-compatibility or rollout is claimed. Checkpoint numbers identify historical
-evidence; progress means guarantees demonstrated **and replaced machinery removed**.
+2 October 2026. Accepted checkpoint `511e84e35`; canonical main
+`d9cf30cd73a0810be72b199f8b2a194f8c56b793` integrated at `6730b0913`.
+Read-only freshness check returned `74276a2fb7002da251e1b3975ae22b81dbc765e3`;
+relevant identity/capture/preview/CLI owners are unchanged. No automatic main merge.
+The native CLI Kubernetes/kpack cohort remains **default-off**. Progress means
+guarantees demonstrated **and competing ownership removed**, not growing checkpoint
+numbers. No production compatibility, installation or rollout is claimed.
 
-## Demonstrated guarantees
+## Completed guarantees
 
-- **Shared decisions:** validated actions, guards, pure reducers, data-only effects,
-  aggregate coordination, deduplication, atomic writes and replayable traces.
-  Caught operation errors roll back the composition. A distinct review flow proves reuse.
-- **Shared execution:** required work committed with decisions, a separate worker,
-  stable work/claim identities, fair retries and bounded discovery. The review
-  workflow uses the same delivery machinery without copying it.
-- **Recoverable preparation:** actual source → clone → kpack Build → Kubernetes
-  candidate in disposable fixtures. Recovery adopts verified database OIDs,
-  Build UID/digest and runtime UIDs, including partial creation and lost replies.
-  New admission now emits only that complete contract; four capability flags and
-  the CLI configuration shim are removed. Complete work recovers with admission
-  disabled. Historical partial formats and replay dispatch are removed after
-  verified offline archival under the fresh-store-only decision.
-- **Separate activation:** preparation preserves serving; desired/observed bindings
-  and conditional operations protect successors under retained locks.
-- **Durable CLI handoff and checks:** atomic head/admission and candidate-to-
-  continuation handoff; enrolled rebuilds join that owner. Actual browser/unit Jobs
-  are recovered without launching competing executions; stale results are rejected.
-- **Idempotent enrolled check settlement:** one accepted run/revision receipt;
-  verdict, history/graduation, trace and required gate requests commit together.
-  Same-app history coordinates across sessions; lost replies adopt the verdict.
-  Stale reporters cannot consume the valid owner's settlement slot. The shared
-  worker owns required delivery; optional artifacts are separate. Standalone SDK
-  initialization is explicit; unavailable GitHub retains retry ownership instead
-  of falsely completing delivery. GitHub policy calls remain substituted evidence.
-- **Repeated CLI use:** five actual revisions; published predecessors release their
-  runtime/clone/check inputs through the existing owner. Consumer reservations and
-  release receipts survive manifest removal; unresolved creation stays discoverable.
-- **Recoverable retirement:** existing connections/delayed Pods cannot regain a
-  retired clone; checks cleanup resumes after destructive steps. Unknown creation
-  stays discoverable. Enrolled synchronous preparation, restart recapture, adapter
-  input release and premature manifest removal are replaced; legacy owners remain.
+| Deliverable | Status / evidence |
+| --- | --- |
+| Reusable decision foundation | Validated actions, guards, pure reducers, data-only effects, aggregate coordination, atomic state/work/receipt/trace writes. Caught operation errors invalidate the whole transaction. A distinct review workflow proves reuse. |
+| Reusable execution foundation | Separate worker, stable identities, bounded/fair claims/retries and discovery. The review workflow reuses scheduling/recovery without a second engine. Temporal adoption is deferred. |
+| Complete recoverable preparation | Actual source → clone → kpack → Kubernetes candidate. Partial creation, interruption and lost replies adopt verified OIDs, Build UID/digest and runtime UIDs. Preparation preserves serving; activation has separate authority. |
+| Durable CLI continuation/checks | Atomic head/admission and candidate-to-continuation handoff. Enrolled rebuild/restart paths join the same owner. Original browser/unit Jobs and destructive retirement steps recover; unknown creation/output retains reconciliation ownership. |
+| Atomic gating settlement | Accepted run/revision receipt, verdict, app-wide history/graduation and required follow-ups commit together. Recovery neither recounts history nor overwrites committed verdicts with errors. Worker dependencies initialize explicitly; unavailable GitHub retains retry ownership. Policy calls are substituted evidence. |
+| Ordinary repeated use | **Complete locally at `511e84e35`:** five revisions on one session, overlapping checks/supersession/restarts, four predecessors' active dependencies released, fifth serving and legacy sentinel protected. Original Jobs do not compete; unresolved creators remain discoverable. |
+| New admission and retention consolidation | One complete preparation format; four capability flags/config shim and three partial handlers removed. Fresh experimental stores only. Twelve historical reducer copies/live dispatch removed after independently verified replay archive. Legacy protections remain. |
+| Canonical/focused verification | Explicit pin integrated with newer approval/recovery behavior preserved. Writer inventory, focused PostgreSQL/SQL and disposable checks/retirement proof pass. Actual packaged default web CMD, standalone worker and migration run non-root. GitHub CI/Linux installation is not proved locally. |
+| HTTPS/identity boundary | Real TLS, shipped forward-auth/session exchange, private assets and original-Job restart recovery proved for an explicitly authorized account. Ordinary private-project screenshot permission is assessed separately without a fixture grant. |
 
-Evidence and fixture substitutions are recorded in the operation contracts and
-local ledger. Earlier internal-HTTP evidence and the newer local TLS-router proof have distinct
-boundaries. Seeded templates, selected source/manifest inputs and injected loss
-points do not prove production installation compatibility.
+Exact evidence/substitutions: [support assessment](supported-cli-contract-review.md),
+[packaged entry points](packaged-cli-entrypoints-contract.md),
+[HTTPS/private capture](https-private-capture-contract.md),
+[published predecessor release](published-predecessor-retirement-contract.md).
+All test mutation paths require verified disposable destination ownership; a URL
+or test flag is insufficient. See [PostgreSQL preflight](postgres-test-isolation.md).
 
 ## Remaining mandatory work
 
-| Deliverable | Kind | Scope / completion evidence |
+| Deliverable | Kind | Completion evidence |
 | --- | --- | --- |
-| Current CLI contract | **Consolidation, support decision and archive/removal implemented** | [Fresh-store-only decision](experimental-retention-decision.md): no supported historical store; local physical fixtures are retired. Offline sources/dependencies, goldens and test traces replay independently. Three partial handlers and twelve replay-only reducers are removed. Startup refuses unsupported work/traces; legacy protections remain. |
-| Canonical main and CI | **Pinned reconciliation and focused verification complete** | Pinned `d9cf30cd7` is integrated; current focused PostgreSQL, SQL, writer and actual checks/retirement evidence is recorded in the integration contract. GitHub CI/Linux installation is not demonstrated by local coverage. |
-| Unknown outcomes and idempotent gating | **Implementation and contained verification complete** | [Unknown outcomes](unknown-check-outcomes-contract.md), [atomic settlement/dependency delivery](idempotent-check-settlement-contract.md). Permanent evidence loss remains explicitly blocked with the original reconciliation owner. Unmarked retained manifests and old terminal verdicts without receipts remain inventory/reconciliation limits; never recount unknown history. No new implementation gate for these accepted corrections. |
-| Capture/standalone boundaries | **Packaged HTTP/main/schema/non-root and authorized-private HTTPS proof complete**; remaining compatibility verification | [Packaged proof](packaged-cli-entrypoints-contract.md) records actual clone/Build/runtime/Jobs, stable identities, normal check-heartbeat recovery and durable bot delivery. The source/image tuple is recorded; GitHub/bot effects remain substituted. [HTTPS/private proof](https-private-capture-contract.md) uses real TLS, edge/session exchange, assets and original Jobs. Its fixture router, tiny identity surface and explicitly granted membership are substitutions. Least-privilege RBAC, supervision, protocol edge cases and production ingress/certificate compatibility remain. Authorized private capture requires explicit non-admin membership in the fixture; ordinary private-project permission provisioning is a separate concrete admission-policy check, not proved by that seed. No new workflow/cohort. |
-| Repeated CLI use and published predecessor retirement | **Bounded implementation and actual verification complete locally** | [Release contract](published-predecessor-retirement-contract.md): five distinct revisions on one session, overlapping checks/supersession and worker restarts; four predecessor runtime/clone/check inputs actually released while serving/successor identities remain protected. The existing retirement owner replaces blanket cohort retention; the two-attempt budget counts unreleased dependencies. Creator obligations and legacy protections remain. Terminal artifacts are explicitly retained; no new executor or rollout. |
-| Migrate remaining writers | New implementation + consolidation + verification; **after CLI gate** | Hosted/imported/manual/promotion/fleet/head-invalidation/teardown/recovery paths, with explicit policies. Prove Docker separately; retire competing owners and allowlist entries after handling retained work. |
-| Correlated status and owner integration | New implementation + verification; full migration | Explain revision, owner, obligation and rejection. Preserve separate shots/governance/merge/release authority and required handoffs. |
+| Ordinary private-project screenshots | **Product permission decision / bounded implementation**, not an installation assumption | Shipped screenshot identity has no automatic membership or run-scoped grant. Do not substitute admin screenshots or manually member the fixture. Demonstrate narrowly authorized private capture before promising this use case; preserve denied-credential and privacy tests. |
+| Supported installation | **Verification of installation prerequisites**, bounded corrections only if proof fails | Separate supervised worker/migration/web processes, least-privilege RBAC and clone privileges, public HTTPS/assets, identity keys, matching runtime configuration and available Job images. Disposable cluster-admin/TLS-router evidence does not prove a production installation. No production access is authorized. |
+| Supported image/schema/protocol tuple | **Release verification** | Pin backend/schema/capture/unit digests and exercised transport/parser cases. No negotiated version handshake or arbitrary mixed-version guarantee. Actual GitHub delivery and GitHub CI require separate authorization/evidence. |
+| Remaining preview/check writers | **Implementation + consolidation + verification**, after the CLI gate | Hosted/imported/manual/promotion/fleet/head-invalidation/teardown/recovery callers; prove Docker separately. Drain/adopt retained obligations and remove competing owners/allowlist entries before claiming cutover. |
+| Correlated status and owner integration | **Implementation + verification**, full migration | Explain revision, owner, obligation and rejection; preserve distinct shots/governance/merge/release authority and required handoffs. |
 
-## Completion gates
+The current assessment is a consolidated review, not another capability checkpoint.
+The shared foundation and second-workflow reuse gates are already demonstrated.
+Fresh-store retention/archive decisions are complete; unknown external developer
+stores are unsupported until named inventory/reconciliation, not permanent formats.
 
-**First supported CLI slice:** only native CLI Kubernetes/kpack is covered by
-the intended supported contract. The first five deliverables must pass, including
-ordinary repeated use and safe retirement of published predecessors. Recovery
-with admission off must retain one owner, without competing builders or stranded required work.
-Document conservative retention, long-held locks and best-effort optional artifacts.
-This completes support for the bounded implementation, **not production rollout**.
+## Completion gates and final owners
 
-**Full preview/check migration:** the CLI gate plus the final two deliverables,
-all listed callers in both runtimes, one owner per operation and compatible
-cutover/restart/rollback rehearsal. Drain/adopt obligations before removing old
-writers/recovery authority. Shared reuse remains required and demonstrated.
-This scope does not require rewriting every platform lifecycle.
+**First supported CLI slice:** the contained native CLI Kubernetes/kpack contract,
+complete real preparation, durable checks/gates and repeated-use retirement proofs,
+plus an explicitly verified permission/installation/image tuple. The ordinary
+private screenshot gap currently prevents promising all private projects.
+Recovery with admission off must retain one owner; no competing builder, detached
+required continuation, restart recapture or best-effort required settlement remains.
+Completing this gate does **not** authorize production rollout.
 
-## Final owners and essential acceptance criteria
+Admission belongs to the authenticated route and validated machine actions.
+The shared decision runtime commits authority and required work. The standalone
+worker owns preparation, conditional activation, checks continuation and required
+gate delivery. Named services reconcile resources. Existing checks lifecycle/
+manifest/harvester owns original Jobs and inputs; preview retirement releases
+predecessors after verified consumer completion, keeping unresolved creators.
 
-For this CLI cohort, the authenticated route owns admission only. Validated
-machine actions own lifecycle permission; the shared transaction runtime commits
-state, receipts and required work together. The standalone worker owns preparation,
-conditional activation, checks continuation and required gate delivery. Named
-clone/Build/runtime services inspect external resources. The existing checks
-lifecycle/manifest/harvester owns original Jobs and inputs, including retirement.
-Preview retirement owns published predecessors and releases their dependencies
-only after consumers finish; unresolved creators retain discoverable obligations.
+**Full migration:** the CLI gate plus remaining callers in both runtimes, one owner
+per operation, correlated outcomes and cutover/restart/rollback verification.
+Remove legacy writers only after their callers and retained obligations are handled.
+This does not require rewriting every platform lifecycle.
 
-Acceptance requires several real successive revisions on one session, including
-overlapping check runs, supersession and restart. Record resource identities,
-serving and successor protection, terminal resource release and any unresolved
-creation. One successful preparation or a collection of isolated failures is not
-this proof. No duplicate builder, detached required continuation, restart recapture,
-best-effort settlement or competing cohort cleanup owner may remain. Safeguards
-for unenrolled callers stay until their own cutover. The existing conservative published-predecessor guard already requires bounded
-implementation before ordinary repeated use can pass. Correctness failures found
-by the proof require a fix; hypothetical extra workflows/frameworks do not.
+## Optional follow-ups and retained limitations
 
-## Optional follow-ups
+Narrower locks, database-role enforcement beyond module/CI boundaries, stronger
+optional media/notification delivery, source-fetch optimization, terminal artifact
+GC and creator/receipt compaction are optional follow-ups. Current locks and
+unknown-creation/consumer protections are essential safeguards until replacements
+are proved. Terminal experimental Builds/Jobs and registry output/cache are retained;
+active dependency release does not establish creator closure or artifact collection.
 
-- Temporal adoption under the preserved [comparison and reconsideration conditions](c0-backend-comparison.md).
-- Database-role enforcement beyond the required module/action/CI boundary.
-- Source-fetch optimization, narrower locks, automated creator-closure/compaction,
-  and stronger delivery of optional media/diagnostics/notifications. Each needs
-  its own proof; current protections and locators remain until then.
-- Broader turn, merge and release lifecycle refactors after this migration.
-
-**Authorized private HTTPS capture:** demonstrated in the disposable fixture.
-**Next correctness gate:** repeated revisions, overlapping checks/supersession
-and safe published-predecessor retirement, including removal of competing cohort
-ownership. Remaining installation boundaries stay explicit. The fresh-only support decision and offline archive/removal are
-implemented. Unsupported historical stores require inventory and reconciliation
-before reuse. New callers remain behind the first supported CLI gate. Global
-legacy inventory and full installation compatibility remain unproved.
-GitHub CI requires separate push authorization; this roadmap does not authorize it.
+Temporal reconsideration conditions remain in the [backend comparison](c0-backend-comparison.md).
+Broader turn/merge/release refactors follow this migration rather than extending its
+acceptance criteria. The [retirement inventory](migration-retirement-inventory.md)
+records exactly what is gone and what remains. No new workflow/framework or caller
+migration is proposed before the current review.

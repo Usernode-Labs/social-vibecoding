@@ -34,7 +34,6 @@ async function seed(f, { privateIdentity = false } = {}) {
   await template.connect();
   try {
     if (privateIdentity) {
-      await f.pool.query("UPDATE users SET has_platform_access = true WHERE username IN ('usernode-capture', 'usernode-capture-admin')");
       await template.query(fs.readFileSync(path.join(__dirname, '../../src/db/schema.sql'), 'utf8'));
       const users = (await f.pool.query("SELECT id, username, password, is_admin, admin_readonly, has_platform_access FROM users WHERE username IN ('usernode-capture', 'usernode-capture-admin')")).rows;
       assert.equal(users.length, 2);
@@ -60,7 +59,6 @@ async function seed(f, { privateIdentity = false } = {}) {
   [f.fixture.preparationSource.repoUrl, user.id])).rows[0];
   if (privateIdentity) {
     await f.pool.query("UPDATE apps SET view_visibility = 'private', collab_visibility = 'private' WHERE id = $1", [app.id]);
-    await f.pool.query("INSERT INTO app_collaborators (app_id,user_id) SELECT $1,id FROM users WHERE username = 'usernode-capture'", [app.id]);
   }
   const session = (await f.pool.query(`INSERT INTO chat_sessions
     (app_id, user_id, branch_name, status, source, handoff_base_sha, handoff_uploaded_sha)

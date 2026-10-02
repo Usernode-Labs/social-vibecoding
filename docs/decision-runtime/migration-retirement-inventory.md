@@ -21,13 +21,13 @@ and [packaged proof](packaged-cli-entrypoints-contract.md).
 | Web activation/cleanup, build retention and global harvest/recovery timers | **Retained for other callers**, with enrolled/bounded ownership exclusions. Shared worker owns this cohort. | No global timer removal follows from this slice. Legacy oldest-50 harvest fairness remains a separate limitation. |
 | Attempt/Build/runtime/retired-role tombstones and recurring retirement | **Retained** for unresolved late creation. Database release does not prove Kubernetes creator closure. | Explicit creator termination/reconciliation; never age or observed absence alone. |
 
-The supported historical experimental-store list is empty. The bounded local
-inventory found 19 kind fixture journals retired, and earlier PostgreSQL tmpfs
-containers absent from the explicit local daemon. Only the new correction fixture
-was live. Other developer stores/backups remain unknown and unsupported, not
-presumed empty. No production destination was accessed. Startup refuses removed
-work kinds (including succeeded records) and historical traces before claiming.
-It does not mutate or automatically adopt unsupported stores.
+The supported historical experimental-store list is empty. Bounded local inventories
+and ownership-verified teardown records cover the disposable fixtures only. Other
+developer stores/backups remain unknown and unsupported, not presumed empty.
+Startup refuses removed work kinds (including succeeded records) and historical
+traces before claiming; it neither mutates nor adopts unsupported stores. No
+production destination was accessed. See the support decision for historical
+inventory counts and the individual contracts/ledger for subsequent fixtures.
 
 Sources: [current preparation](../../src/services/preview-flow/work.js),
 [store support guard](../../src/services/preview-flow/experimental-support.js),
@@ -35,14 +35,12 @@ Sources: [current preparation](../../src/services/preview-flow/work.js),
 [CLI owner](../../src/services/cli-preview-handoff/work.js),
 [legacy writers](../../src/services/preview-flow/legacy-writers.json).
 
-Canonical main was pinned and integrated at `d9cf30cd7`. The subsequent freshness
-check fetched `708faeedf`; relevant capture/auth/runtime paths are unchanged.
-This bounded removal stays on accepted `c01dc0687`. A later canonical update is a
-separate integration gate. Authorized private HTTPS proof is now recorded in its contract;
-this inventory does not establish production compatibility or authorize rollout.
-Repeated-use and published-predecessor retirement proof is the current
-correctness gate; no additional workflow expansion precedes it.
-
+Canonical main `d9cf30cd73a0810be72b199f8b2a194f8c56b793` is integrated.
+Read-only fetch on 2 October returned `74276a2fb7002da251e1b3975ae22b81dbc765e3`;
+relevant identity/capture/preview/CLI owners are unchanged. No later main merge or
+production installation is implied. Five-revision predecessor release is complete
+at accepted `511e84e35`; ordinary private permission is a separate product gap,
+not a pending predecessor implementation.
 
 ## Ordinary-use replacement gate
 
@@ -52,20 +50,20 @@ The final owner map is in the roadmap. The CLI route must not prepare or launch
 checks in a detached promise; enrolled rebuild/restart paths must not become a
 second builder/capture owner. Required settlement/gates stay with the shared worker;
 Job/input retirement stays with the existing manifest/lifecycle/harvester. Published
-preview retirement must release clone/build/runtime dependencies after consumers
-finish while retaining unresolved creation. This is mandatory verification, with
+preview retirement releases runtime/clone/check-input dependencies after consumers
+finish while retaining unresolved creation and immutable build artifacts. This is mandatory verification, with
 bounded fixes if needed; it is now demonstrated by the separate five-revision proof.
 Global legacy locks, timers and safeguards are not removal candidates for this
 cohort alone. Removal evidence must name the competing owner actually eliminated.
 
 
-This HTTPS verification slice removes the internal-HTTP substitution from its
-proof path only. No product lifecycle owner, timer, lock or reducer is removed;
-the older HTTP harness remains for its earlier matrix. All three new actual
-fixtures and the PostgreSQL-only container have been verified and retired.
-Ordinary-use/published-predecessor replacement is now separately demonstrated
-by the five-revision matrix, not inferred from authorized private capture. Production and unenrolled callers remain protected.
-
+The earlier authorized-private HTTPS proof removed internal HTTP rewriting from
+that proof path, without removing product lifecycle owners/locks/timers. The
+current ordinary-private assessment removes the fixture's manual capture membership
+and platform-access override. It tests shipped migration/identity/authorization
+behavior, not a new grant mechanism. No privacy check is weakened. The earlier
+successfully authorized case remains historical evidence at `a7d5a946f`; it does
+not establish permission for ordinary private projects.
 
 The old blanket published-predecessor retention is replaced for the bounded CLI
 cohort by preparation/continuation identity and durable consumer release evidence.

@@ -14,59 +14,80 @@ async function verifyPrivatePermissions(f, tls, app) {
   const saved = {
     privateKey: process.env.IFRAME_JWT_PRIVATE_KEY,
     publicKey: process.env.IFRAME_JWT_PUBLIC_KEY,
+    edgeKey: process.env.EDGE_JWT_SECRET,
   };
   process.env.IFRAME_JWT_PRIVATE_KEY = f.environment.IFRAME_JWT_PRIVATE_KEY;
   process.env.IFRAME_JWT_PUBLIC_KEY = f.environment.IFRAME_JWT_PUBLIC_KEY;
+  process.env.EDGE_JWT_SECRET = f.environment.EDGE_JWT_SECRET;
   let tokens;
+  let nonMemberCookie;
   try {
     const users = (await f.pool.query("SELECT * FROM users WHERE username IN ('usernode-capture','usernode-capture-admin')")).rows;
-    const normal = users.find(user => user.username === 'usernode-capture');
-    const admin = users.find(user => user.username === 'usernode-capture-admin');
+    const screenshotUser = users.find(user => user.username === 'usernode-capture');
+    const assertionUser = users.find(user => user.username === 'usernode-capture-admin');
+    assert.equal(screenshotUser.is_admin, false);
+    assert.equal(screenshotUser.has_platform_access, true, 'Packaged migration seeds platform access');
+    assert.equal(assertionUser.is_admin, true);
+    assert.equal(assertionUser.admin_readonly, true);
+    const membership = (await f.pool.query(`SELECT count(*)::int AS n FROM app_collaborators
+      WHERE app_id = $1 AND user_id = $2`, [app.id, screenshotUser.id])).rows[0];
+    assert.equal(membership.n, 0, 'No fixture grant may conceal ordinary private capture denial');
+    nonMemberCookie = `__usernode_access=${jwt.signEdgeCookie({
+      uid: screenshotUser.id, appId: app.id, host: tls.destination.hostname,
+    })}`;
     tokens = visuals.selectCaptureTokens({
-      captureToken: visuals.mintCaptureToken(normal, app.id),
-      adminToken: visuals.mintCaptureToken(admin, app.id),
+      captureToken: visuals.mintCaptureToken(screenshotUser, app.id),
+      adminToken: visuals.mintCaptureToken(assertionUser, app.id),
     });
     const rejectedTokens = [
       undefined,
       'malformed',
-      jwt.signAppIdentityToken({ appId: app.id + 1, user: normal }),
-      jwt.signAppIdentityToken({ appId: app.id, user: normal, ttl: -1 }),
+      tokens.screenshotToken,
+      jwt.signAppIdentityToken({ appId: app.id + 1, user: assertionUser }),
+      jwt.signAppIdentityToken({ appId: app.id, user: assertionUser, ttl: -1 }),
       jwt.signAppIdentityToken({ appId: app.id, user: { id: 999999, username: 'unknown' } }),
     ];
-
     for (const token of rejectedTokens) {
       assert.equal((await tls.request('/api/proof/identity', { token, method: 'POST' })).status, 404);
       assert.equal((await tls.request('/usernode-bridge/v1/bridge.js', { token, method: 'POST' })).status, 404);
     }
-    const mismatch = jwt.signAppIdentityToken({ appId: app.id, user: { ...normal, username: 'wrong' } });
+    // A valid admin identity reaches the clone; its mismatching local username
+    // must still be rejected by the shipped staging authentication middleware.
+    const mismatch = jwt.signAppIdentityToken({ appId: app.id, user: { ...assertionUser, username: 'wrong' } });
     assert.equal((await tls.request('/api/proof/identity', { token: mismatch })).status, 401);
   } finally {
-    const signingEnvironment = [
+    for (const [key, value] of [
       ['IFRAME_JWT_PRIVATE_KEY', saved.privateKey],
       ['IFRAME_JWT_PUBLIC_KEY', saved.publicKey],
-    ];
-    for (const [key, value] of signingEnvironment) {
+      ['EDGE_JWT_SECRET', saved.edgeKey],
+    ]) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }
   }
 
-  // The real edge cookie and clone session are independently scoped authorities.
-  const first = await tls.request(`/api/proof/identity?token=${tokens.screenshotToken}`);
+  // A valid screenshot JWT does not delegate the CLI author's membership.
+  const denied = await tls.request(`/api/proof/identity?token=${tokens.screenshotToken}`);
+  assert.equal(denied.status, 302);
+  assert.ok(denied.headers.location.includes('/__access/authorize'));
+  assert.equal(denied.headers['set-cookie'], undefined);
+  assert.equal((await tls.request('/api/proof/identity', { cookie: nonMemberCookie, method: 'POST' })).status, 404,
+    'Even a correctly signed edge cookie cannot replace current membership');
+
+  // The distinct assertion admin passes existing visibility policy and the
+  // real edge/clone exchanges. This cannot count as successful screenshot access.
+  const first = await tls.request(`/api/proof/identity?token=${tokens.testsToken}`);
   assert.equal(first.status, 302);
   assert.match(first.headers['set-cookie'][0], /__usernode_access=.*HttpOnly.*Secure/);
   const edgeCookie = first.headers['set-cookie'][0].split(';')[0];
   const exchanged = await tls.request(first.headers.location, { cookie: edgeCookie });
   assert.equal(exchanged.status, 200, exchanged.body);
-  assert.equal(JSON.parse(exchanged.body).isAdmin, false);
+  assert.equal(JSON.parse(exchanged.body).isAdmin, true);
+  assert.equal(JSON.parse(exchanged.body).canAdminWrite, false);
   const sessionCookie = exchanged.headers['set-cookie'][0];
   assert.match(sessionCookie, /session=.*HttpOnly.*Secure/);
   const cookie = `${edgeCookie}; ${sessionCookie.split(';')[0]}`;
   assert.equal((await tls.request('/api/proof/identity', { cookie })).status, 200);
-  assert.equal((await tls.request('/api/proof/admin', { cookie })).status, 403);
-
-  // Reusing a screenshot cookie must not downgrade the assertion identity.
-  const assertion = await tls.request('/api/proof/admin', { token: tokens.testsToken, cookie });
-  assert.equal(assertion.status, 200, assertion.body);
+  assert.equal((await tls.request('/api/proof/admin', { cookie })).status, 200);
   assert.equal((await tls.request('/api/proof/admin', { token: tokens.testsToken, method: 'POST' })).status, 403);
 
   const assets = [
@@ -75,7 +96,9 @@ async function verifyPrivatePermissions(f, tls, app) {
     '/usernode-tailwind/v1/tailwind.js',
   ];
   for (const asset of assets) {
-    assert.equal((await tls.request(asset)).status, 302);
+    const deniedAsset = await tls.request(asset, { token: tokens.screenshotToken });
+    assert.equal(deniedAsset.status, 302);
+    assert.equal(deniedAsset.headers['set-cookie'], undefined);
     const loaded = await tls.request(asset, { cookie });
     assert.equal(loaded.status, 200, `${asset}: ${loaded.body.slice(0, 100)}`);
     assert.ok(loaded.body.length > 100);
@@ -83,10 +106,12 @@ async function verifyPrivatePermissions(f, tls, app) {
   fs.writeFileSync(path.join(f.directory, 'https-permissions.json'), JSON.stringify({
     tls: true,
     secureCookies: true,
+    captureMembership: false,
     screenshotsNonAdmin: true,
+    ordinaryPrivateCapture: 'denied_by_shipped_membership_policy',
     assertionsReadOnly: true,
-    rejected: ['missing', 'malformed', 'wrong-app', 'expired', 'unknown-user', 'username-mismatch'],
-    privateAssets: true,
+    rejected: ['missing', 'malformed', 'non-member-capture', 'wrong-app', 'expired', 'unknown-user', 'username-mismatch'],
+    privateAssets: 'denied-to-capture; accessible-to-authorized-assertion-identity',
   }));
 }
 
@@ -186,7 +211,7 @@ test('packaged web HTTP admission and standalone worker recover persisted phase 
   const verdict = (await f.pool.query('SELECT check_state, test_results FROM chat_sessions WHERE id = $1', [session.id])).rows[0];
   assert.ok(['passing', 'failing'].includes(verdict.check_state));
   assert.equal(verdict.test_results.find(result => result.index === -3)?.status, 'pass');
-  if (verdict.check_state === 'failing') {
+  if (!httpsCapture && verdict.check_state === 'failing') {
     assert.ok(verdict.test_results.some(result => result.consoleErrors?.some(error =>
       error.source?.endsWith('/favicon.ico'))), 'Keep the sample app’s actual console failure');
   }
@@ -209,7 +234,7 @@ test('packaged web HTTP admission and standalone worker recover persisted phase 
     const originals = JSON.parse(fs.readFileSync(path.join(f.directory, 'https-original-jobs.json')));
     assert.equal(jobs.capture.uid, originals.capture.uid);
     assert.equal(jobs.unitSuite.uid, originals.unitSuite.uid);
-    assert.equal(verdict.check_state, 'passing', JSON.stringify(verdict.test_results));
+    assert.equal(verdict.check_state, 'passing', 'Existing policy keeps optional media separate from required assertions/unit checks');
     const pods = await f.clients.core.listNamespacedPod({ namespace: f.fixture.isolation.namespace.name,
       labelSelector: `job-name=${jobs.capture.name}` });
     assert.equal(pods.items.length, 1);
@@ -217,14 +242,16 @@ test('packaged web HTTP admission and standalone worker recover persisted phase 
     const output = await f.clients.core.readNamespacedPodLog({ namespace: f.fixture.isolation.namespace.name,
       name: pods.items[0].metadata.name, container: 'capture' });
     const frames = require('../src/services/visuals').parseShots(output);
-    const png = frames.shots.find(shot => shot.kind === 'after' && shot.media === 'png');
-    assert.ok(png && png.status === 200, 'Original Job emits a real authenticated HTTPS screenshot');
-    assert.equal(png.buf.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
-    fs.writeFileSync(path.join(f.directory, 'https-screenshot.png'), png.buf, { mode: 0o600 });
+    fs.writeFileSync(path.join(f.directory, 'https-capture-output.log'), output, { mode: 0o600 });
+    assert.equal(frames.shots.some(shot => shot.kind === 'after' && shot.status === 200), false,
+      'The non-member capture cannot publish a successful private screenshot');
     const traffic = fs.readFileSync(path.join(f.evidence, 'https.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
-    assert.ok(traffic.some(event => event.kind === 'identity' && event.detail.path === '/proof' && event.detail.username === 'usernode-capture'));
+    assert.equal(traffic.some(event => event.kind === 'identity' && event.detail.username === 'usernode-capture'), false,
+      'The private gate rejects capture before reaching the app');
     assert.ok(traffic.some(event => event.kind === 'identity' && event.detail.path === '/proof' && event.detail.username === 'usernode-capture-admin' && !event.detail.canWrite));
     assert.ok(traffic.filter(event => event.kind === 'edge').every(event => event.detail.tls));
+    assert.equal((await f.pool.query(`SELECT count(*)::int AS n FROM app_collaborators c
+      JOIN users u ON u.id = c.user_id WHERE c.app_id = $1 AND u.username = 'usernode-capture'`, [app.id])).rows[0].n, 0);
   }
   await f.stop(worker);
   await f.stop(web);
@@ -258,6 +285,7 @@ test('packaged web HTTP admission and standalone worker recover persisted phase 
   fs.writeFileSync(path.join(f.directory, 'result.json'), JSON.stringify({
     freshInventory,
     verdict: verdict.check_state,
+    capturePermission: httpsCapture ? 'non-member-denied; optional screenshot unavailable despite passing checks' : 'public',
     policy,
     tuple: {
       revision: f.revision,
