@@ -217,8 +217,11 @@ async function pastJobs(pool, { userId, limit = HISTORY_LIMIT }) {
 async function viewable(pool, user, items) {
   const slugs = [...new Set(items.map((item) => item.appSlug).filter(Boolean))];
   if (!slugs.length) return items;
+  // The columns checkAppAccess reads (app-access.js ACCESS_COLUMNS), written
+  // out so the query stays static SQL.
   const { rows } = await pool.query(
-    `SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE slug = ANY($1::text[])`,
+    `SELECT id, slug, created_by, self_hosted, collab_visibility, view_visibility, moderation_suspended_at
+       FROM apps WHERE slug = ANY($1::text[])`,
     [slugs],
   );
   const allowed = new Set();
