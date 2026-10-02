@@ -8,7 +8,8 @@
  * this panel:
  *
  *   - THIS WEEK, the Friday card, for a few days after it is made: what went
- *     live and who made it, and what is waiting on votes;
+ *     live and what is waiting on votes, a few titles of each and a count
+ *     of the rest, naming nobody (#3678);
  *   - SETTINGS CHANGED in the last week: who can see it, the approval rule,
  *     its admins, the lock, a new approver, and who did it (or that a vote
  *     carried it, for a change made in dapp.json).

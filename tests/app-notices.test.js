@@ -44,9 +44,11 @@ test('each settings change reads as a line, and a change a vote carried names no
   assert.equal(row('pr_merged', {}), null, 'only the settings kinds');
 });
 
-test('the Friday card is shown while it is fresh, as its own sentence', () => {
+test('the Friday card is shown while it is fresh, as its own sentence, naming nobody', () => {
   assert.equal(notices.weekCard(null), null);
   assert.equal(notices.weekCard({ metadata: { mergedTotal: 0, openTotal: 0 }, created_at: at }), null);
+  // #3678: a card stored before the change still carries each change's
+  // author and backers; neither the line nor the card's data passes them on.
   const card = notices.weekCard({
     created_at: at,
     metadata: {
@@ -57,8 +59,10 @@ test('the Friday card is shown while it is fresh, as its own sentence', () => {
   });
   assert.equal(card.at, at.toISOString());
   assert.equal(card.mergedTotal, 1);
-  assert.match(card.line, /^This week on Tiers: 1 change went live: Custom tier colors \(evan, backed by alice\)\./);
-  assert.deepEqual(card.merged, [{ title: 'Custom tier colors', author: 'evan' }]);
+  assert.equal(card.line, 'This week on Tiers: 1 change went live: Custom tier colors. One proposal is waiting for eyes: Dark mode (PR #42).');
+  assert.deepEqual(card.merged, [{ title: 'Custom tier colors' }]);
+  assert.doesNotMatch(JSON.stringify(card), /evan|alice|\bbo\b/);
+  assert.doesNotMatch(JSON.stringify(notices.DEMO_NOTICES.week), /staging-demo-builder|author/, 'the staging demo card names nobody either');
 });
 
 test('the reads: this app, the settings kinds, the last week; the latest card of the last three days', async () => {
@@ -109,11 +113,11 @@ test('the panel: nothing to say draws nothing; otherwise the card first, then ea
   assert.equal(noticeMeta({ kind: 'lock', by: 'ada', at: null }), 'by @ada');
   assert.equal(noticeMeta({ kind: 'approver', by: null, at: null }), '', 'the line already names them');
   const html = renderToHtml(createElement(NoticesPanel, { notices: {
-    week: { at: null, line: 'This week on Tiers: 1 change went live: Custom tier colors (evan).', mergedTotal: 1, openTotal: 0 },
+    week: { at: null, line: 'This week on Tiers: 1 change went live: Custom tier colors.', mergedTotal: 1, openTotal: 0 },
     settings: [{ kind: 'lock', text: 'Locked: merges also need an admin’s yes vote', by: 'ada', at: null }],
   } }));
   assert.match(html, /^<section class="dev-ws-strip" data-ws-notices=""><div class="dev-ws-head"><span class="dev-ws-head-title">Lately in this project<\/span><\/div><ul class="dev-ws-notices">/);
-  assert.match(html, /<li class="dev-ws-notice" data-ws-notice="week"><span class="dev-ws-notice-text"><b>This week\.<\/b> 1 change went live: Custom tier colors \(evan\)\.<\/span><\/li><li class="dev-ws-notice" data-ws-notice="lock">/,
+  assert.match(html, /<li class="dev-ws-notice" data-ws-notice="week"><span class="dev-ws-notice-text"><b>This week\.<\/b> 1 change went live: Custom tier colors\.<\/span><\/li><li class="dev-ws-notice" data-ws-notice="lock">/,
     'the card first, its "This week on <app>:" lead-in said once');
   assert.match(html, /<span class="dev-ws-notice-meta">by @ada<\/span>/);
   // Loaded in an effect, so the first render is nothing.

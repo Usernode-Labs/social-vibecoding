@@ -25,7 +25,7 @@
  * Nothing here is written: the panel reads what is already on the record.
  */
 
-const { contentLine } = require('./weekly-digest');
+const { contentLine, MAX_LISTED } = require('./weekly-digest');
 const { describeGovernance, describeAdmins } = require('./app-manifest');
 
 const SETTINGS_DAYS = 7;
@@ -108,7 +108,11 @@ function settingsLine(row) {
   }
 }
 
-/** The Friday card as the panel draws it, or null. */
+/**
+ * The Friday card as the panel draws it, or null. Titles only (#3678): a
+ * card stored before then still carries each change's author and backers in
+ * its metadata, and none of them leaves here.
+ */
 function weekCard(row) {
   const digest = row && row.metadata;
   if (!digest || (!digest.mergedTotal && !digest.openTotal)) return null;
@@ -117,7 +121,7 @@ function weekCard(row) {
     line: contentLine(digest),
     mergedTotal: Number(digest.mergedTotal) || 0,
     openTotal: Number(digest.openTotal) || 0,
-    merged: Array.isArray(digest.merged) ? digest.merged.map((m) => ({ title: m.title, author: m.author || null })) : [],
+    merged: Array.isArray(digest.merged) ? digest.merged.slice(0, MAX_LISTED).map((m) => ({ title: m.title })) : [],
   };
 }
 
@@ -146,10 +150,10 @@ const DEMO_NOTICES = Object.freeze({
   }],
   week: {
     at: null,
-    line: 'This week on Staging demo: 1 change went live: Staging demo change (staging-demo-builder). One proposal is waiting for eyes: Staging demo proposal.',
+    line: 'This week on Staging demo: 1 change went live: Staging demo change. One proposal is waiting for eyes: Staging demo proposal.',
     mergedTotal: 1,
     openTotal: 1,
-    merged: [{ title: 'Staging demo change', author: 'staging-demo-builder' }],
+    merged: [{ title: 'Staging demo change' }],
     demo: true,
   },
 });
