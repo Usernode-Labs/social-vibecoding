@@ -393,6 +393,14 @@ test('create: mode, import check and POST /api/apps all moved', () => {
   assert.match(src, /dialog\.closeForNavigation\(\);\s*\(window\.App\?\.navigateToApp/,
     'nor does opening the new project');
   assert.doesNotMatch(src, /dialog\.close\(\);\s*(?:openMessages|\(window\.App\?\.navigateToApp)/);
+  // "Set secrets" too: the secrets dialog pushes its own back-button record
+  // as it opens, and a plain close's queued back() would land on that record
+  // and close it again. (tests/dialog-suspend-exit.test.js runs the fork
+  // dialog's twin of this card.)
+  const setSecrets = src.slice(src.indexOf('onSetSecrets={() => {'), src.indexOf('onRetry={() => {'));
+  assert.match(setSecrets, /dialog\.closeForNavigation\(\);[\s\S]*window\.Secrets\?\.open/,
+    'opening the secrets dialog does not spend the record under its own');
+  assert.doesNotMatch(setSecrets, /dialog\.close\(\);/);
   // Close resets the form, so a half-finished import is never inherited.
   assert.match(src, /formRef\.current\?\.reset\(\)/);
   // The home screen's "+" still opens it by name.

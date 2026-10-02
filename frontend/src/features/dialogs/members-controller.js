@@ -439,10 +439,13 @@ const MembersDialog = {
           const data = await res.json().catch(() => ({}));
           if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
           // Leaving an app yourself: you may have just lost access —
-          // bounce home rather than leave a dead view up.
+          // bounce home rather than leave a dead view up. Home's address is
+          // written BEFORE the dialog closes: a close first queues a
+          // history.back() that lands after it and puts the viewer back on
+          // the app they just left (#3683).
           if (Number(btn.dataset.removeUser) === me.id && !me.isAdmin) {
-            AppView.hideMembersModal();
             App.navigateHome();
+            AppView.hideMembersModal();
             return;
           }
           AppView.loadCollaborators();

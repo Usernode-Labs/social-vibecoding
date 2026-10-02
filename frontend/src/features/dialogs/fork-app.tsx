@@ -131,8 +131,9 @@ export function ForkAppDialog() {
       const slug = data.app?.slug;
       if (!slug) {
         // A malformed success cannot be followed. Preserve the old fallback
-        // rather than rendering a progress card with no app to poll.
-        dialog.close();
+        // rather than rendering a progress card with no app to poll. Going
+        // Home writes an address right after the close (#3683).
+        dialog.closeForNavigation();
         window.PlatformUI?.toast?.(
           'Your fork is being created. It will appear in your apps when it is ready.',
         );
@@ -165,13 +166,18 @@ export function ForkAppDialog() {
             mode="fork"
             progress={progress}
             onOpenApp={() => {
+              // Both buttons write history right after the close: the fork's
+              // address, or the back-button record the secrets dialog pushes
+              // as it opens. A plain close queues a history.back() that lands
+              // after either one and undoes it, so the button seemed to do
+              // nothing (#3683; create-app.tsx's progress card is the same).
               const slug = forked.slug;
-              dialog.close();
+              dialog.closeForNavigation();
               (window.App?.openAppTab as ((s: string, t: string) => void) | undefined)?.(slug, 'app');
             }}
             onSetSecrets={() => {
               const slug = forked.slug;
-              dialog.close();
+              dialog.closeForNavigation();
               (window.Secrets?.open as ((s: string) => void) | undefined)?.(slug);
             }}
             onRetry={() => {

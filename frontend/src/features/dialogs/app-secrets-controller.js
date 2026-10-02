@@ -164,6 +164,15 @@ const Secrets = {
     island.close();
   },
 
+  // `close`, for a click whose default action then follows a link. A plain
+  // close queues a history.back() that lands after the link's address and
+  // undoes it (#3683); see DialogController.closeForNavigation.
+  closeForNavigation() {
+    const island = dialogController();
+    if (!island) return Secrets._reset();
+    island.closeForNavigation();
+  },
+
   /** The state half of the old `close`, run by the island once it is hidden. */
   _reset() {
     Secrets.currentSlug = null;
@@ -291,9 +300,10 @@ const Secrets = {
       btn.addEventListener('click', () => Secrets.handleProposeClear(btn.dataset.key));
     });
     // A "View proposal" link navigates to the app's vote panel, so the
-    // modal has to get out of the way first.
+    // modal has to get out of the way first, without undoing the link's own
+    // navigation (see closeForNavigation).
     list.querySelectorAll('[data-action="view-proposal"]').forEach((el) => {
-      el.addEventListener('click', () => Secrets.close());
+      el.addEventListener('click', () => Secrets.closeForNavigation());
     });
 
     Secrets.renderDeclareSection(data);
