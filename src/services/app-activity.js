@@ -103,6 +103,13 @@ function maybePurgeActivityReceipts(pool, now = Date.now()) {
   return receiptCleanup;
 }
 
+// The cleanup a commit starts is not awaited: it runs on another pooled
+// connection and can finish at any later point. A test awaits it before it
+// ages a receipt that it expects its own purge call to delete.
+function _awaitReceiptCleanupForTests() {
+  return receiptCleanup || Promise.resolve(0);
+}
+
 /**
  * Store one parsed modern batch. Receipt, day totals and first-day events are
  * one transaction, so retrying after a committed response was lost is a no-op.
@@ -190,4 +197,5 @@ module.exports = {
   parseActivityRequest,
   purgeActivityReceipts,
   recordActivityBatch,
+  _awaitReceiptCleanupForTests,
 };
