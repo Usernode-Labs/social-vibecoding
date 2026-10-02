@@ -354,3 +354,53 @@ test('C10 unit resource receipt remains scoped to its admitted run after superse
   assert.equal((await read(old)).unitSuite.job.uid, 'original-uid');
   await assert.rejects(checkRuns.observeUnitJob(f.pool, next, 2, { name: 'next-unit', uid: 'next-uid' }), /lost its recovery manifest/);
 });
+
+test('C11 retirement journal requires the claimed owner and prior progress', { skip: !isolated }, async t => {
+  const f = await fixture(t);
+  const runs = require('../src/services/check-runs');
+  const runId = randomUUID();
+  const manifest = { durableCli: true, launched: true, unitSuite: { version: 1, state: 'submitted' } };
+  assert.equal(await runs.record(f.pool, { runId, sessionId: 1, commitSha: HEAD, manifest }), true);
+  const identified = { version: 1, namespace: f.config.kubernetes.workerNamespace,
+    jobs: [{ kind: 'unit-suite', job: { name: 'job', uid: 'job-uid' },
+      input: { name: 'input', uid: 'input-uid' }, stage: 'identified' }] };
+  await runs.recordRetirement(f.pool, runId, 1, null, identified);
+  const stopping = structuredClone(identified);
+  stopping.jobs[0].stage = 'deleting-job';
+  await runs.recordRetirement(f.pool, runId, 1, identified, stopping);
+  await assert.rejects(runs.recordRetirement(f.pool, runId, 1, identified, identified), /ownership/);
+  assert.deepEqual((await runs.read(f.pool, runId, 1)).manifest.retirement, stopping);
+  await f.pool.query('UPDATE check_runs SET owner = $2 WHERE run_id = $1', [runId, 'successor-owner']);
+  await assert.rejects(runs.recordRetirement(f.pool, runId, 1, stopping, identified), /ownership/);
+  await assert.rejects(runs.recordRetirement(f.pool, runId, 999, stopping, identified), /ownership/);
+  const stored = (await runs.read(f.pool, runId, 1)).manifest;
+  assert.deepEqual(stored.retirement, stopping);
+  assert.deepEqual(stored.unitSuite, manifest.unitSuite, 'Journal updates retain admission/provenance');
+});
+
+test('C11 retirement failure preserves a settled live verdict and recovery locator', { skip: !isolated }, async t => {
+  const f = await fixture(t);
+  await f.pool.query('ALTER TABLE chat_sessions ADD COLUMN imported_pr_head_sha TEXT');
+  const runs = require('../src/services/check-runs');
+  const retirement = require('../src/services/check-retirement');
+  const { createLifecycle } = require('../src/services/preview-lifecycle');
+  let runId;
+  t.mock.method(retirement, 'retire', async (_config, pool, sessionId, id) => {
+    runId = id;
+    await runs.recordRetirement(pool, id, sessionId, null, { version: 1,
+      namespace: f.config.kubernetes.workerNamespace, jobs: [] });
+    throw new Error('Injected cleanup acknowledgment loss');
+  });
+  const lifecycle = createLifecycle({ poolFor: () => f.pool,
+    checks: () => ({ cancelPreviewChecks: async () => {} }) });
+  await assert.rejects(lifecycle.run(f.config, await f.session(), HEAD, 'capture', async operation => {
+    operation.durableChecks = true;
+    await runs.record(f.pool, { runId: operation.runId, sessionId: 1, commitSha: HEAD,
+      manifest: { durableCli: true, launched: true, unitSuite: { version: 1, state: 'not-required' } } });
+    await operation.pool.query("UPDATE chat_sessions SET check_state = 'passing' WHERE id = 1");
+    return { state: 'passing' };
+  }, { onError: async () => assert.fail('Cleanup cannot rewrite a persisted verdict') }), /acknowledgment loss/);
+  assert.equal((await f.session()).check_state, 'passing');
+  assert.equal((await runs.read(f.pool, runId, 1)).manifest.retirement.version, 1);
+  assert.equal((await f.pool.query('SELECT state FROM preview_operations WHERE session_id = 1')).rows[0].state, 'running');
+});

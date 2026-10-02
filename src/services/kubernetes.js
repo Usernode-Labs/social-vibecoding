@@ -1700,6 +1700,162 @@ async function cancelPreviewChecks(config, sessionId, previewRunId = null, { rel
   }));
 }
 
+// Enrolled retirement keeps identities after foreground deletion. The caller
+// persists every phase; an API acknowledgment never substitutes for inspection.
+async function retireCheckResources(config, sessionId, previewRunId, {
+  journal = null, unitReceipt = null, persist,
+}) {
+  if (!previewRunId || typeof persist !== 'function') {
+    throw new Error('Checks retirement requires an exact run and durable journal');
+  }
+  const { batch, core } = getClients();
+  const namespace = config.kubernetes.workerNamespace;
+  if (journal && (journal.version !== 1 || journal.namespace !== namespace)) {
+    throw new Error('Checks retirement namespace or version conflicts');
+  }
+  let state = journal || { version: 1, namespace, jobs: [] };
+  const stages = new Set(['identified', 'deleting-job', 'stopped', 'deleting-input', 'released']);
+  if (!Array.isArray(state.jobs) || state.jobs.some(item =>
+    !['capture', 'unit-suite'].includes(item.kind) || !stages.has(item.stage)
+      || !item.job?.uid || !item.job.name?.startsWith(`sv-${item.kind}-s${sessionId}-`)
+      || item.input?.name !== withSuffix(item.job.name, 'input'))) {
+    throw new Error('Invalid checks retirement resource journal');
+  }
+  if (new Set(state.jobs.map(item => item.kind)).size !== state.jobs.length) {
+    throw new Error('Duplicate checks retirement resource kind');
+  }
+  const knownUnit = state.jobs.find(item => item.kind === 'unit-suite');
+  if (unitReceipt && knownUnit
+      && (knownUnit.job.name !== unitReceipt.name || knownUnit.job.uid !== unitReceipt.uid)) {
+    throw new Error('Unit Job ownership conflicts with its retirement journal');
+  }
+
+  async function save(next) {
+    await persist(next);
+    state = next;
+  }
+
+  async function readResource(api, method, name) {
+    try { return await api[method]({ namespace, name }); }
+    catch (error) { if (isNotFound(error)) return null; throw error; }
+  }
+
+  function verifyJob(job, receipt = null) {
+    const metadata = job.metadata;
+    if (metadata.labels?.['app.kubernetes.io/managed-by'] !== MANAGED_BY
+        || metadata.labels?.['social.usernode.io/session-id'] !== String(sessionId)
+        || metadata.labels?.['social.usernode.io/preview-run-id'] !== previewRunId
+        || !metadata.uid || (receipt && metadata.uid !== receipt.uid)) {
+      throw new Error('Checks Job ownership conflicts with retirement');
+    }
+  }
+
+  function verifyInput(secret, job) {
+    const metadata = secret.metadata;
+    const inputRun = metadata.labels?.['social.usernode.io/preview-run-id'];
+    const owners = (metadata.ownerReferences || []).filter(owner => owner.kind === 'Job');
+    const referenced = owners.some(owner => owner.uid === job.uid && owner.name === job.name);
+    const conflicting = owners.some(owner => owner.uid !== job.uid || owner.name !== job.name);
+    if (!metadata.uid || metadata.labels?.['social.usernode.io/session-id'] !== String(sessionId)
+        || (inputRun && inputRun !== previewRunId) || conflicting
+        || (inputRun !== previewRunId && !referenced)) {
+      throw new Error('Checks input ownership conflicts with retirement');
+    }
+  }
+
+  const selector = `app.kubernetes.io/managed-by=${MANAGED_BY},social.usernode.io/session-id=${sessionId}`
+    + `,social.usernode.io/preview-run-id=${previewRunId}`;
+  const listed = await batch.listNamespacedJob({ namespace, labelSelector: selector });
+  const discovered = [...state.jobs];
+  for (const job of listed.items || []) {
+    const name = job.metadata.name;
+    const kind = name.startsWith(`sv-capture-s${sessionId}-`) ? 'capture'
+      : name.startsWith(`sv-unit-suite-s${sessionId}-`) ? 'unit-suite' : null;
+    if (!kind) continue;
+    verifyJob(job);
+    if (kind === 'unit-suite' && unitReceipt
+        && (unitReceipt.name !== name || unitReceipt.uid !== job.metadata.uid)) {
+      throw new Error('Unit Job ownership conflicts with its observed receipt');
+    }
+    const known = discovered.find(item => item.kind === kind);
+    if (known) {
+      if (known.job.name !== name || known.job.uid !== job.metadata.uid) {
+        throw new Error('Checks Job identity changed during retirement');
+      }
+      continue;
+    }
+    const identity = { name, uid: job.metadata.uid };
+    const inputName = withSuffix(name, 'input');
+    const input = await readResource(core, 'readNamespacedSecret', inputName);
+    if (input) verifyInput(input, identity);
+    discovered.push({
+      kind,
+      job: identity,
+      input: { name: inputName, uid: input?.metadata.uid || null },
+      stage: 'identified',
+    });
+  }
+  // Capture every discovered identity before any destructive operation. In
+  // particular Job garbage collection can remove the input immediately.
+  await save({ ...state, jobs: discovered });
+
+  async function advance(index, stage) {
+    const jobs = state.jobs.map((item, position) => position === index ? { ...item, stage } : item);
+    await save({ ...state, jobs });
+  }
+
+  for (let index = 0; index < state.jobs.length; index += 1) {
+    const receipt = state.jobs[index];
+    let job = await readResource(batch, 'readNamespacedJob', receipt.job.name);
+    if (job) verifyJob(job, receipt.job);
+    if (!job && receipt.stage === 'identified') {
+      throw new Error('Checks Job disappeared before retirement was authorized');
+    }
+
+    const podsStopped = async () => {
+      const pods = await core.listNamespacedPod({ namespace,
+        labelSelector: `job-name=${receipt.job.name}` });
+      return (pods.items || []).every(pod => ['Succeeded', 'Failed'].includes(pod.status?.phase));
+    };
+    const terminal = job && (job.status?.succeeded || job.status?.failed);
+    if (job && (!terminal || !await podsStopped())) {
+      await advance(index, 'deleting-job');
+      await deleteIfPresent(batch, 'deleteNamespacedJob', receipt.job.name, namespace, {
+        propagationPolicy: 'Foreground',
+        body: { propagationPolicy: 'Foreground', preconditions: { uid: receipt.job.uid } },
+      });
+    }
+
+    const deadline = Date.now() + 60000;
+    for (;;) {
+      job = await readResource(batch, 'readNamespacedJob', receipt.job.name);
+      if (job) verifyJob(job, receipt.job);
+      const stoppedJob = !job || job.status?.succeeded || job.status?.failed;
+      if (stoppedJob && await podsStopped()) break;
+      if (Date.now() >= deadline) throw new Error(`Preview checks still stopping: ${receipt.job.name}`);
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    // Reconfirm consumers even when resuming after a stored stop receipt.
+    // A completed Job is retained for logs; an absent retired Job is not rebuilt.
+    if (!['stopped', 'deleting-input', 'released'].includes(state.jobs[index].stage)) {
+      await advance(index, 'stopped');
+    }
+    const input = await readResource(core, 'readNamespacedSecret', receipt.input.name);
+    if (input) {
+      verifyInput(input, receipt.job);
+      if (!receipt.input.uid || input.metadata.uid !== receipt.input.uid) {
+        throw new Error('Checks input identity changed during retirement');
+      }
+      await advance(index, 'deleting-input');
+      await deleteIfPresent(core, 'deleteNamespacedSecret', receipt.input.name, namespace, {
+        body: { preconditions: { uid: receipt.input.uid } },
+      });
+    }
+    if (state.jobs[index].stage !== 'released') await advance(index, 'released');
+  }
+  return state;
+}
+
 // Read-only observations may be abandoned on supersession. Creation/deletion
 // requests are always awaited, so a late mutation cannot escape ownership.
 function observeCheck(promise, signal) {
@@ -1776,7 +1932,7 @@ async function runCheckJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
   onStdoutLine = null, cmd, memory = '2g', cpus = '4', maxBuffer = 64 * 1024 * 1024,
   salvagePartial = false, signal = null, previewRunId = null,
-  onJobCreated = null, retainInputOnUncertain = false,
+  onJobCreated = null, retainInputForRetirement = false,
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
@@ -1850,7 +2006,6 @@ async function runCheckJob(config, {
     body.spec.template.metadata.labels['social.usernode.io/preview-run-id'] = previewRunId;
   }
   let inputSecretCreated = false;
-  let jobTerminated = false;
   // Follow state lives outside the try so the finally can close the stream.
   let following = false;
   let followAbort = null;
@@ -1960,7 +2115,6 @@ async function runCheckJob(config, {
       const job = await observeCheck(batch.readNamespacedJob({ name, namespace }), signal);
       signal?.throwIfAborted();
       if (job.status?.failed || job.status?.conditions?.some(c => c.type === 'Failed' && c.status === 'True')) {
-        jobTerminated = true;
         const pods = await observeCheck(core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` }), signal);
         const pod = pods.items?.[0];
         const err = new Error(`${kind} Job ${name} failed`);
@@ -1974,7 +2128,6 @@ async function runCheckJob(config, {
         throw err;
       }
       if (job.status?.succeeded) {
-        jobTerminated = true;
         let terminalOutput;
         try { terminalOutput = await observeCheck(readOutput(), signal); }
         catch (err) { err.captureLogFailed = !unitSuite; throw err; }
@@ -2031,7 +2184,7 @@ async function runCheckJob(config, {
     if (followAbort && typeof followAbort.abort === 'function') {
       try { followAbort.abort(); } catch { /* already closed */ }
     }
-    if (inputSecretCreated && (!retainInputOnUncertain || jobTerminated)) {
+    if (inputSecretCreated && !retainInputForRetirement) {
       await deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace)
         .catch(() => {});
     }
@@ -2322,7 +2475,7 @@ module.exports = {
   dnsName, withSuffix, labels, appResourceName, createBuild, deployApplication, getApplicationStatus, inspectApplication,
   getApplicationLogs, getDebugLogs, restartApplication, deleteApplication, deleteBuilds, deleteFailedBuilds, ensureWorker,
   listManagedBuilds, readBuild, deleteBuildSnapshot,
-  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, findCheckJobs, collectCheckJob,
+  runCaptureJob, runUnitSuiteJob, cancelPreviewChecks, retireCheckResources, findCheckJobs, collectCheckJob,
   execInWorker, _getClients: getClients,
   getWorkerStatus, getWorkerContractVersion, getWorkerRuntimeMetadata, deleteWorker, eraseWorker, listWorkers, cloneWorkerVolume,
   listWorkerVolumes, isQuotaExceeded,

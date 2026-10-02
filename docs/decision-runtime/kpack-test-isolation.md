@@ -272,3 +272,16 @@ artifacts disappear with the dedicated node. The [C10 contract](unit-companion-c
 separates actual unit Jobs/input cleanup from fixture source/transport and delayed
 POST/reply-loss injections. The unit source differs from the public application
 source; this does not prove the production worker image or arbitrary app suites.
+
+## C11 destructive checks retirement
+
+The same serial `test-checks` entry also runs the retirement matrix. Every child
+requires known scenario values and the verified dedicated cluster/database/unit
+image before opening pools or mutating anything. It exercises real Job/Pod/Secret
+and manifest/lifecycle effects, injecting SIGKILL or lost acknowledgments only
+at confirmed external/SQL boundaries. A small consumer command and one-second
+fixture-only termination grace isolate retirement; the separate C9/C10 tests keep
+actual browser/Git/npm execution. No successful resource or stop observation is
+substituted. See the [C11 contract](checks-retirement-contract.md) for exact scope
+and remaining creator/output/scheduling limitations. Setup/ownership-verified
+teardown is unchanged; no ambient credentials or additional infrastructure.

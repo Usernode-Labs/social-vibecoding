@@ -11,7 +11,11 @@ async function main() {
   const env = sanitizedEnvironment();
   await verifyIsolatedBuildFixture({ env, requireUnitSuite: process.argv[2] === '--checks' });
   const selections = {
-    '--checks': ['tests/cli-preview-checks-integration.test.js', 'tests/cli-preview-unit-integration.test.js'],
+    '--checks': [
+      'tests/cli-preview-checks-integration.test.js',
+      'tests/cli-preview-unit-integration.test.js',
+      'tests/checks-retirement-integration.test.js',
+    ],
     '--handoff': ['tests/cli-preview-handoff-postgres.test.js', 'tests/cli-preview-handoff-integration.test.js'],
     '--preparation': ['tests/complete-preview-preparation-integration.test.js'],
     '--release': ['tests/retired-database-release-integration.test.js'],

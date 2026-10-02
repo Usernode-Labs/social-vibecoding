@@ -167,3 +167,29 @@ exemption. Legacy unenrolled manifests keep historical semantics. No reducer
 version or queue payload changed, and no timer/lock was removed. Remove old-format
 handling only after auditing retained manifests. External creation closure and
 Job-output retention remain explicit limitations; missing work remains discoverable.
+
+## C11: retirement itself survives loss
+
+| Old mechanism removed for enrolled sessions | Replacement / removal gate |
+| --- | --- |
+| Adapter-owned best-effort input deletion, even on terminal execution | Input release belongs to the existing manifest/lifecycle/harvester retirement owner. Job outcome shaping and legacy adapter cleanup remain. |
+| Clearing the live manifest on verdict settlement before coordinated cleanup | Keep it until recorded resource retirement completes; lifecycle resumes final release after loss. |
+| Inferring unconfirmed creation solely from a Job deleted by cleanup | Version-1 per-Job retirement identity/progress in the same manifest, strict owner/prior-journal writes, UID-preconditioned deletion and fresh consumer inspection. |
+| Naked enrolled live-error cancellation before any cleanup receipt | Guarded error publication precedes the same journalled retirement service used by harvest. Superseded cleanup cannot publish to the new head. |
+
+No new work kind, queue, timer or execution owner. `operation.durableChecks` is an
+in-memory selection of the already persisted `durableCli` contract, not a new
+rollout flag. `retainInputForRetirement` expresses the adapter's single cleanup
+owner; remove this split when every caller supports the same manifest contract.
+The retirement journal uses the existing JSON manifest; no reducer version or
+schema support obligation was added. Older retained durable manifests without a
+journal begin one only from actually observed resources; truly missing expected
+creation stays unresolved. Audit/drain before retiring compatibility with their
+older companion decisions. Shared locks, legacy cancellation/re-drive and global
+harvest ticker/fairness remain. The new path supplies foreground propagation in
+DeleteOptions itself as well as the SDK query: the isolated fixture demonstrated
+that the query alone could leave an orphaned Pod. Consumer-stop checks remain.
+
+The next migration decision must address a concrete retained limitation or remove
+an inventory item. This checkpoint does not authorize broader rollout, another
+executor/workflow or claiming overall migration completion.

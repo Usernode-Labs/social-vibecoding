@@ -429,7 +429,7 @@ for (const graduated of [false, true]) {
     t.mock.method(history, 'loadGraduated', async () => new Set(graduated
       ? [appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH)] : []));
     t.mock.method(kubernetes, 'runUnitSuiteJob', async (_config, options) => {
-      assert.equal(options.retainInputOnUncertain, true);
+      assert.equal(options.retainInputForRetirement, true);
       throw Object.assign(new Error('exit 1'), { captureJobTerminated: true,
         stdout: `${SENTINEL}\n# tests 2\n# pass 1\n# fail 1\nnot ok 2 - regression\n` });
     });

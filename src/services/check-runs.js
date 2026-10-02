@@ -11,15 +11,15 @@
 //
 // This module is the half that survives the process: one row per run,
 // written just before the Jobs are created, heartbeated while they run, and
-// deleted when the verdict lands. The manifest carries every input the
-// verdict needs that is not in the Job's own output (services/check-harvest.js
+// deleted after settlement and consumer/input retirement. The manifest carries
+// every input the verdict needs that is not in the Job's own output (services/check-harvest.js
 // is the reader). The heartbeat is how an orphan is recognised — not by the
 // Pod's absence, which the platform cannot see from inside, but by a row
 // nobody has touched for CHECK_RUN_ORPHAN_MS.
 //
-// Everything here is best-effort and never throws into the checks pipeline:
-// legacy callers may run without a manifest. The enrolled CLI caller requires
-// record() to return true before dispatching Jobs; it fails closed otherwise.
+// Legacy record/heartbeat/finish remain best-effort. Enrolled CLI admission
+// requires record() success; resource observations and retirement journal writes
+// are strict. Failure leaves the manifest available for the existing harvester.
 
 const os = require('os');
 const log = require('./logger');
@@ -79,6 +79,23 @@ async function observeUnitJob(pool, runId, sessionId, { name, uid }) {
       AND manifest->'unitSuite'->>'state' = 'submitted'`,
   [runId, sessionId, JSON.stringify({ state: 'observed', job: { name, uid } })]);
   if (rowCount !== 1) throw new Error('Unit Job observation lost its recovery manifest');
+}
+
+async function read(pool, runId, sessionId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM check_runs WHERE run_id = $1 AND session_id = $2', [runId, sessionId]);
+  return rows[0] || null;
+}
+
+// Retirement is mandatory for enrolled runs. Never delete a resource after a
+// failed journal write, even if the failure was only a lost database reply.
+async function recordRetirement(pool, runId, sessionId, previous, retirement) {
+  const { rowCount } = await pool.query(`UPDATE check_runs
+    SET manifest = jsonb_set(manifest, '{retirement}', $4::jsonb)
+    WHERE run_id = $1 AND session_id = $2 AND owner = $3
+      AND COALESCE(manifest->'retirement', 'null'::jsonb) = $5::jsonb`,
+  [runId, sessionId, selfOwner(), JSON.stringify(retirement), JSON.stringify(previous || null)]);
+  if (rowCount !== 1) throw new Error('Checks retirement lost its manifest ownership');
 }
 
 async function heartbeat(pool, runId) {
@@ -173,6 +190,8 @@ module.exports = {
   selfOwner,
   record,
   observeUnitJob,
+  read,
+  recordRetirement,
   heartbeat,
   finish,
   startHeartbeat,

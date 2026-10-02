@@ -462,7 +462,7 @@ async function maybeRunUnitSuite({
       onStdoutLine: observe,
       signal, previewRunId,
       onJobCreated,
-      retainInputOnUncertain: !!requirement,
+      retainInputForRetirement: !!requirement,
       image: UNIT_SUITE_IMAGE,
       cmd: ['bash', '-c', RUN_SCRIPT],
       env: {

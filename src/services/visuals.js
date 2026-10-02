@@ -1920,6 +1920,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   if (lifecycle.enabled(config) && !lifecycle.current()) {
     try {
       const completed = await lifecycle.run(config, session, commitHash, 'capture', async (operation, fresh) => {
+        operation.durableChecks = !!opts.recoverExisting;
         const runtime = require('./application-runtime');
         const state = fresh.staging_runtime_name && await runtime.inspect(config,
           { runtimeKind: 'kubernetes', runtimeName: fresh.staging_runtime_name });
@@ -2082,8 +2083,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   const runId = operation?.runId || crypto.randomUUID();
   const harvestable = config.captureRuntime === 'kubernetes';
   let stopHeartbeat = () => {};
-  let cliLaunchRecorded = false;
-  let captureSettled = false;
   try {
     const buildTimings = (stagingResult && stagingResult.timings) || null;
     if (buildTimings) {
@@ -2619,7 +2618,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         },
       });
       if (opts.recoverExisting && !recorded) throw new Error('Required CLI checks launch manifest could not be persisted');
-      cliLaunchRecorded = !!opts.recoverExisting && recorded;
     }
 
     // Repo unit suite (aggregate `npm test` check). Launched BEFORE the
@@ -2749,6 +2747,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
           timeoutMs: RUN_TIMEOUT_MS,
           maxBuffer: RUN_MAX_BUFFER,
           salvagePartial: true,
+          retainInputForRetirement: !!opts.recoverExisting,
         }));
       } else {
         ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
@@ -2815,7 +2814,6 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       stdout, stderr: captureStderr, runPartial, runPartialReason, unitOutcome,
     });
     traceStatus = settled.traceStatus;
-    captureSettled = true;
     return settled.result;
   } catch (err) {
     closeProgress();
@@ -2856,13 +2854,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       status: traceStatus,
       summary: `checks ${traceStatus} in ${Math.round(totalMs / 1000)}s`,
     });
-    // Legacy runs clear their locator on exit. Enrolled CLI runs retain a
-    // submitted launch until settlement, so retirement can still discover it.
+    // Legacy runs clear their locator on exit. Enrolled runs leave manifest
+    // release to lifecycle retirement, after all destructive cleanup is known.
     stopHeartbeat();
-    // An acknowledged launch manifest can outlive a failed creation reply or
-    // settlement. Keep that locator for retirement/harvest, even if the live
-    // lifecycle records an error. Observed absence cannot close submission.
-    if (harvestable && (!cliLaunchRecorded || captureSettled)) {
+    // Keep the locator across failed creation replies and interrupted cleanup.
+    if (harvestable && !opts.recoverExisting) {
       await checkRuns.finish(operation?.cleanupPool || pool, runId);
     }
     _inFlight.delete(key);

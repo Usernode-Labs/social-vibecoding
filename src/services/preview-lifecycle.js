@@ -213,6 +213,24 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
         task.then(() => operation.tasks.delete(task), () => operation.tasks.delete(task));
         return task;
       };
+
+      async function retireRunChecks() {
+        if (!operation.durableChecks) {
+          await checks().cancelPreviewChecks(config, session.id);
+          return;
+        }
+        const checkRuns = require('./check-runs');
+        const record = await checkRuns.read(pool, operation.runId, operation.sessionId);
+        // A required manifest precedes external submission. No record means
+        // this invocation failed before dispatch; it cannot own any Jobs.
+        if (!record) return;
+        const retired = await require('./check-retirement').retire(
+          config, pool, operation.sessionId, operation.runId);
+        if (!retired.complete) return false;
+        await checkRuns.finish(pool, operation.runId);
+        return true;
+      }
+
       active.set(operation.sessionId, operation);
       let polling = false;
       const timer = setInterval(async () => {
@@ -222,11 +240,15 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
         finally { polling = false; }
       }, pollMs);
       timer.unref();
+      let executionSettled = false;
       try {
         await operation.check();
         const result = await context.run(operation, () => fn(operation, { ...session, ...fresh }));
         await Promise.all([...operation.tasks]);
-        await checks().cancelPreviewChecks(config, session.id);
+        executionSettled = true;
+        if (await retireRunChecks() === false) {
+          throw new Error('Checks retirement awaits unconfirmed creation');
+        }
         await operation.check();
         await operation.pool.query(`UPDATE preview_operations SET state = 'completed', result = $3,
           finished_at = NOW(), updated_at = NOW() WHERE session_id = $1 AND run_id = $2 AND state = 'running'`,
@@ -235,13 +257,17 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
       } catch (err) {
         operation.abort(err);
         await Promise.allSettled([...operation.tasks]);
-        // Confirm termination before releasing the lifecycle lock, including
-        // when only one member of the concurrent capture/unit pair failed.
-        await checks().cancelPreviewChecks(config, session.id);
+        // Retirement failure does not invalidate a verdict already persisted
+        // by enrolled execution. Leave its locator/lifecycle for recovery.
+        if (operation.durableChecks && executionSettled) throw err;
+        // Legacy callers stop first. Enrolled errors publish under the current
+        // run guard before journalled deletion, so a restart can retire known
+        // resources without needing logs it already deleted.
+        if (!operation.durableChecks) await retireRunChecks();
         if (!isCancelled(err) && onError) {
-          // The signal has stopped consumers. Error publication still needs a
-          // current run/revision check under the session row lock; a successor
-          // (including a retry of the same SHA) must never receive our error.
+          // Error publication needs a current run/revision check under the
+          // session row lock. A successor, including a retry of the same SHA,
+          // must never receive our error.
           const failurePool = guardedPool(pool, {
             check: (client, locked) => operation.check(client, locked, true),
           });
@@ -250,6 +276,7 @@ function createLifecycle({ poolFor = getPool, lock = withResourceUse, checks = (
             if (!isCancelled(publicationError)) throw publicationError;
           }
         }
+        if (operation.durableChecks) await retireRunChecks();
         await statePool.query(`UPDATE preview_operations SET state = $3, finished_at = NOW(), updated_at = NOW()
           WHERE session_id = $1 AND run_id = $2 AND state = 'running'`,
         [session.id, operation.runId, isCancelled(err) ? 'superseded' : 'error']);

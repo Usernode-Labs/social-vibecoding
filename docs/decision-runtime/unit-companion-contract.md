@@ -78,3 +78,9 @@ or output-retention protocol is added. A companion that never appears, or whose
 output/consumer closure becomes uncertain after disappearance, remains discoverable
 and requires reconciliation. A recorded live infrastructure-error verdict is not
 automatically rejudged after cleanup; an explicit recheck owns that policy.
+
+
+C11 replaces terminal adapter input release with the same manifest-owned retirement
+used by harvest/live errors. Its per-Job/input journal distinguishes authorized
+interrupted deletion from unexplained disappearance, while retaining genuine
+submission/output uncertainty above. See `checks-retirement-contract.md`.

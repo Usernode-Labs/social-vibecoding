@@ -16,9 +16,9 @@ resource lock. A recorded run with a live heartbeat is joined by waiting. An orp
 is claimed and read by the existing harvester, retaining its run ID, Job UIDs and
 logs. No new Job is admitted while that run is recoverable. A submitted but
 absent capture Job retains its locator, including after supersession: absence
-cannot establish creator closure. A Job already observed and then gone uses the
-existing re-drive policy after retirement; unreadable output produces the existing
-error verdict. An already-persisted current verdict closes as completed, allowing
+cannot establish creator closure. Unexplained Job disappearance retains uncertainty;
+known interrupted retirement resumes from its persisted identities/progress (C11).
+Unreadable observed output produces the existing error verdict. An already-persisted current verdict closes as completed, allowing
 a later explicit recheck; actual supersession closes as cancelled. Missing manifests in older C8 work retain the existing
 lifecycle cancellation/re-drive behavior. New enrolled launches must persist both
 provisional and full manifests before creating Jobs; a failed write cannot silently
@@ -98,3 +98,12 @@ manifests lacking the durable marker retain their historical re-drive behavior.
 CLI reducer v2 adds the closure guard; v1 replay is frozen only for retained traces,
 subject to the plan's retention audit. Work payload/kind remains v1 and no new
 workflow, rollout or caller migration is introduced.
+
+
+C11 extends input and manifest ownership through destructive retirement. See
+`checks-retirement-contract.md`: terminal execution does not independently delete
+its input, verdict settlement does not clear the manifest, and both live errors
+and harvest use the same journalled retirement owner. Cleanup errors cannot
+rewrite an already persisted verdict. Known deletion can be resumed without the
+Job output; genuinely unconfirmed creation/output stays discoverable. No new
+executor, timer, rollout or production compatibility claim.

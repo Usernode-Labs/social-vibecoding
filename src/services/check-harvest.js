@@ -154,7 +154,16 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
   }
 
   const retireConsumers = async () => {
-    if (retireJobs || manifest.durableCli) {
+    if (manifest.durableCli) {
+      const retired = await require('./check-retirement').retire(config, pool, sessionId, runId);
+      if (!retired.complete) {
+        const error = new Error(retired.why);
+        error.code = 'CHECK_RETIREMENT_PENDING';
+        throw error;
+      }
+      return;
+    }
+    if (retireJobs) {
       await kubernetes.cancelPreviewChecks(config, sessionId, runId, { releaseInputs: true });
     }
   };
@@ -183,15 +192,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
     else await settlement.catch(() => {});
   };
   const moot = async (why) => {
-    if (manifest.durableCli && manifest.launched) {
-      const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: runId });
-      if (!(manifest.shotsOnly && !manifest.media) && !jobs.capture) {
-        return { outcome: 'waiting', why: 'retired capture creation unconfirmed', ...base };
-      }
-      const missing = missingUnitCompanion(jobs);
-      if (missing) return { outcome: 'waiting', why: `retired ${missing}`, ...base };
-    }
-    log.info('check-harvest', 'Orphaned run is moot — clearing its manifest', { ...base, why });
+    log.info('check-harvest', 'Orphaned run is moot — retiring its resources', { ...base, why });
     await retireConsumers();
     const currentSession = manifest.durableCli ? await loadSession(pool, sessionId) : null;
     const alreadySettled = currentSession && LIVE_STATUSES.has(currentSession.status)
@@ -305,6 +306,7 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       // its output with it, and only a fresh run can judge this head.
       const again = stillCurrent(await loadSession(pool, sessionId), commitSha);
       if (!again.current) return await moot(again.why);
+      if (manifest.durableCli) return { outcome: 'waiting', why: 'capture outcome unconfirmed', ...base };
       return await redrive(session, 'capture Job gone before it could be read');
     }
 
@@ -409,7 +411,13 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
     return { outcome: 'settled', state: settled.result.state, ...base };
   } catch (err) {
     if (lifecycle.isCancelled(err) || controller.signal.aborted) {
-      return await moot('superseded').catch(() => ({ outcome: 'moot', why: 'superseded', ...base }));
+      return await moot('superseded').catch(error => ({
+        outcome: error.code === 'CHECK_RETIREMENT_PENDING' ? 'waiting' : 'failed',
+        why: error.message, ...base,
+      }));
+    }
+    if (err.code === 'CHECK_RETIREMENT_PENDING') {
+      return { outcome: 'waiting', why: err.message, ...base };
     }
     log.warn('check-harvest', 'Harvest failed (non-fatal); the stale sweep keeps the row', { ...base, err: err.message });
     if (operation) await lifecycle.settleAdopted(config, operation, { error: err }).catch(() => {});

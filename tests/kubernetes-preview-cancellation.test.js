@@ -198,7 +198,7 @@ for (const failure of ['job reply', 'receipt write']) {
     t.after(() => kubernetes._setClientsForTest(null));
     await assert.rejects(kubernetes.runUnitSuiteJob(config, {
       sessionId: 42, env: { REPO_URL: 'private-clone-input' }, previewRunId: 'old',
-      retainInputOnUncertain: true,
+      retainInputForRetirement: true,
       onJobCreated: async receipt => {
         assert.equal(receipt.uid, 'actual-unit-uid');
         throw new Error('receipt persistence failed');
@@ -209,7 +209,7 @@ for (const failure of ['job reply', 'receipt write']) {
   });
 }
 
-test('C10 an observed terminal unit failure still releases its input normally', async t => {
+test('C11 observed terminal unit failure leaves enrolled input to journalled retirement', async t => {
   let receipt;
   const deleted = [];
   kubernetes._setClientsForTest({
@@ -229,9 +229,9 @@ test('C10 an observed terminal unit failure still releases its input normally', 
   });
   t.after(() => kubernetes._setClientsForTest(null));
   await assert.rejects(kubernetes.runUnitSuiteJob(config, {
-    sessionId: 42, env: { REPO_URL: 'private-input' }, previewRunId: 'old', retainInputOnUncertain: true,
+    sessionId: 42, env: { REPO_URL: 'private-input' }, previewRunId: 'old', retainInputForRetirement: true,
     onJobCreated: async observed => { receipt = observed; },
   }), error => error.captureJobTerminated === true);
   assert.equal(receipt.uid, 'unit-uid');
-  assert.equal(deleted.length, 1);
+  assert.equal(deleted.length, 0);
 });
