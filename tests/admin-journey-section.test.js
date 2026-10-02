@@ -72,13 +72,13 @@ test('a missing record reads "not recorded yet", and Hear back reads "coming"', 
     'a count that is not recorded never renders as a number');
   assert.match(src, /typeof v === 'number' \? \([\s\S]{0,900}?not recorded yet<\/span>/,
     'a stage that is not recorded draws a dashed "not recorded yet" bar, not an empty one');
-  assert.match(src, /\{coming \? 'coming' : String\(v\)\}/, 'a loop step that is coming says so on its node');
+  assert.match(src, /\{coming \? 'coming' : String\(v \?\? 0\)\}/, 'a loop step that is coming says so on its node');
   assert.match(src, /const coming = isComing\(v\);/);
   assert.match(src, /\(v as Coming\)\.status === 'coming'/);
 });
 
 test('six chart cards, every mark counted, no percentage printed, no links from data', () => {
-  for (const id of ['groups', 'checks', 'mile', 'stages', 'loop', 'next']) {
+  for (const id of ['groups', 'checks', 'mile', 'stages', 'loop', 'invite', 'next', 'coverage', 'team']) {
     assert.ok(src.includes(`id="admin-journey-${id}"`), `the ${id} card`);
   }
   for (const line of src.split('\n').filter((l) => l.includes('%'))) {
@@ -86,7 +86,9 @@ test('six chart cards, every mark counted, no percentage printed, no links from 
   }
   assert.match(src, /<Trend trend=\{trend\} shown=\{g\.week\} \/>/, 'the North Star carries its eight weeks');
   assert.match(src, /const UNIT_MAX = 24;/, 'small totals are drawn as countable units');
-  assert.match(src, /role="img" aria-label="The change loop, turns at each step"/, 'the loop is drawn as a ring');
+  assert.match(src, /<Ring label="The change loop, turns at each step"/, 'the change loop is drawn as a ring');
+  assert.match(src, /<Ring label="The invite loop, people at each step"/, 'and so is the invite loop, on a card of its own');
+  assert.match(src, /className=\{JUI\.mileGrid\}/, 'the first-mile staircase and tracks share one grid');
   assert.ok(!/<canvas|from '[^']*chart/i.test(src), 'no chart library: plain elements and one SVG');
   assert.ok(!/<a[\s>]|href=/.test(src), 'nothing is rendered as an anchor');
   assert.match(src, /location\.hash = `#admin\/support\/\$\{p\.userId\}`/,

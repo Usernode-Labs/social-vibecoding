@@ -10,11 +10,14 @@ import { mountLegacyPortal, unmountLegacyPortal } from '../../lib/legacy-portals
 // One read surface over the endpoints slice 1 shipped under
 // /api/admin/journey/* (src/services/journey.js), drawn as six chart cards
 // so it reads at a glance: the North Star (active groups, with eight weeks
-// of trend and the week's lifecycle as units), whether the number can be
-// trusted, the first mile per admit cohort (one track per newcomer), the
-// seven stages, the change loop as a ring with the open turns' ages, and
-// where newcomers go next. Names are chips that open one person; a stage
-// bar opens its names. Nothing expands inside the page.
+// of trend, the week's lifecycle as units, and the votes behind it), the
+// seven stages, the first mile per admit cohort (one track per newcomer,
+// under the staircase it sums to), the change loop and the invite loop as
+// rings, and where newcomers go next. Each check sits on the card whose
+// reading it qualifies: group votes and lockstep under the North Star, the
+// team's share of live changes beside the change loop, navigation coverage
+// under the paths. Names are chips that open one person; a stage bar opens
+// its names. Nothing expands inside the page.
 //
 // Three rules from the endpoints are kept on screen, and the section test
 // pins them:
@@ -127,6 +130,7 @@ const JUI = Object.freeze({
   chipTap: 'hover:bg-zinc-200 dark:hover:bg-zinc-700',
   chipDashed: 'border border-dashed border-zinc-300 dark:border-zinc-600 bg-transparent dark:bg-transparent text-zinc-500 dark:text-zinc-400',
   cohort: 'inline-flex items-center rounded-full px-3 py-1 text-xs font-medium transition-colors',
+  mileGrid: 'grid items-center gap-x-1 gap-y-1.5 grid-cols-[repeat(9,minmax(0,1fr))_2.5rem] sm:grid-cols-[7.5rem_repeat(9,minmax(0,1fr))_2.5rem]',
   pathStep: 'rounded bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 text-zinc-700 dark:text-zinc-300',
 });
 
@@ -325,6 +329,8 @@ type Loops = {
   };
 };
 
+type InvitePair = Loops['invite']['pairs'][number];
+
 function isComing(v: unknown): v is Coming {
   return !!v && typeof v === 'object' && (v as Coming).status === 'coming';
 }
@@ -349,18 +355,18 @@ type NextSteps = {
 
 const UNIT_MAX = 24;
 
-function UnitBar({ n, of, fill }: { n: number; of: number; fill: string }) {
+function UnitBar({ n, of, fill, rest = JUI.empty }: { n: number; of: number; fill: string; rest?: string }) {
   if (of <= 0) return <div className={`h-2 rounded-sm ${JUI.empty}`} />;
   if (of > UNIT_MAX) {
     return (
-      <div className={`h-2 rounded-sm overflow-hidden ${JUI.empty}`}>
+      <div className={`h-2 rounded-sm overflow-hidden ${rest}`}>
         <div className={`h-2 ${fill}`} style={{ width: `${Math.round((n / of) * 100)}%` }} />
       </div>
     );
   }
   return (
     <div className="flex gap-0.5">
-      {Array.from({ length: of }, (_, i) => <span key={i} className={`h-2 flex-1 rounded-sm ${i < n ? fill : JUI.empty}`} />)}
+      {Array.from({ length: of }, (_, i) => <span key={i} className={`h-2 flex-1 rounded-sm ${i < n ? fill : rest}`} />)}
     </div>
   );
 }
@@ -448,16 +454,19 @@ function Trend({ trend, shown }: { trend: Array<{ week: string; count: number }>
   );
 }
 
-function NorthStarCard({ s, onOpen }: { s: Summary; onOpen: OpenPerson }) {
+function NorthStarCard({ s, onOpen, onDetails }: { s: Summary; onOpen: OpenPerson; onDetails: () => void }) {
   const g = s.groups;
   const trend = g.trend || [];
   const prev = trend.length > 1 ? trend[trend.length - 2].count : null;
   const delta = prev == null ? null : g.count - prev;
   const by = (k: string) => g.groups.filter((x) => x.lifecycle === k).length;
   const right: Array<[string, number]> = [['still_active', by('still_active')], ['back', by('back')], ['new', by('new')]];
+  const vote = s.trust.withoutGroupVote;
+  const lockstep = s.trust.lockstep.possible || [];
   return (
     <Card id="admin-journey-groups" title="Active groups"
-      note={`week of ${weekLabel(g.week)}${g.finished ? '' : ', so far'}`}>
+      note={`week of ${weekLabel(g.week)}${g.finished ? '' : ', so far'}`}
+      action={<button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={onDetails}>Details</button>}>
       <div className="flex items-end justify-between gap-4">
         <div>
           <div id="admin-journey-north-star" className={JUI.headline}>{g.count}</div>
@@ -500,6 +509,24 @@ function NorthStarCard({ s, onOpen }: { s: Summary; onOpen: OpenPerson }) {
         ))}
         {!g.groups.length && !g.wentQuiet.length && !g.oneShort.length ? <Empty>No project had a group this week.</Empty> : null}
       </div>
+      {/* The votes behind the number: a group is real only when its yes
+          votes are. Both qualify this count, so they sit under it. */}
+      <div id="admin-journey-checks" className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+        <div>
+          <div className="flex justify-between text-sm mb-1">
+            <span>Live changes with a yes from someone else</span>
+            <span className="tabular-nums">{vote.of - vote.count} / {vote.of}</span>
+          </div>
+          <UnitBar n={vote.of - vote.count} of={vote.of} fill="bg-violet-500" rest="bg-amber-400" />
+        </div>
+        <div className="flex items-center gap-2 text-sm">
+          <span aria-hidden="true" className={lockstep.length ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}>
+            {lockstep.length ? '!' : '✓'}
+          </span>
+          <span>{lockstep.length ? 'Voting in lockstep' : 'Nobody voting in lockstep'}</span>
+          {lockstep.length ? <Chips people={lockstep} onOpen={onOpen} /> : null}
+        </div>
+      </div>
       {g.homeroom ? (
         <p className={`${JUI.fine} mt-3`}>Homeroom itself, not counted: {g.homeroom.changes} live, {g.homeroom.people} people.</p>
       ) : null}
@@ -507,38 +534,10 @@ function NorthStarCard({ s, onOpen }: { s: Summary; onOpen: OpenPerson }) {
   );
 }
 
-// ── Health ─────────────────────────────────────────────────────────────
-
-function HealthCard({ s, onOpen, onDetails }: { s: Summary; onOpen: OpenPerson; onDetails: () => void }) {
-  const t = s.trust;
-  const lockstep = t.lockstep.possible || [];
-  const row = (label: string, n: number, of: number, fill: string) => (
-    <div className="mb-3">
-      <div className="flex justify-between text-sm mb-1"><span>{label}</span><span className="tabular-nums">{n} / {of}</span></div>
-      <UnitBar n={n} of={of} fill={fill} />
-    </div>
-  );
-  return (
-    <Card id="admin-journey-checks" title="Can we trust it"
-      action={<button type="button" className={`${AdminUI.btn.link} text-xs`} onClick={onDetails}>Details</button>}>
-      {row('Live without a group vote', t.withoutGroupVote.count, t.withoutGroupVote.of, 'bg-amber-400')}
-      {row('Made by the team', t.teamShare.team, t.teamShare.of, 'bg-violet-500')}
-      {row('Navigation recorded', s.coverage.withNavigation, s.coverage.activePeople, 'bg-emerald-500')}
-      <div className="flex items-center gap-2 text-sm">
-        <span aria-hidden="true" className={lockstep.length ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}>
-          {lockstep.length ? '!' : '✓'}
-        </span>
-        <span>Voting in lockstep</span>
-        {lockstep.length ? <Chips people={lockstep} onOpen={onOpen} /> : <span className={JUI.fine}>nobody</span>}
-      </div>
-    </Card>
-  );
-}
-
 // ── First mile ─────────────────────────────────────────────────────────
 
 const MILE_SHORT: Record<string, string> = {
-  admitted: 'admit', mail_sent: 'mail', code_asked: 'code', account: 'acct', access: 'access',
+  admitted: 'admit', mail_sent: 'mail', code_asked: 'code', account: 'acct', access: 'in',
   opened: 'open', username: 'name', join: 'join', first_act: 'act',
 };
 
@@ -573,28 +572,32 @@ function FirstMileCard({ s, onOpen }: { s: Summary; onOpen: OpenPerson }) {
       ) : null}
       {mile ? (n ? (
         <>
-          <div className="flex items-end gap-1 h-16" aria-label="How many reached each step">
+          {/* One grid for the staircase and every track, so each bar stands
+              over its own column of cells. On a phone the name takes a row
+              of its own and the nine columns keep the full width. */}
+          <div className={JUI.mileGrid}>
+            <span className="hidden sm:block" />
             {mile.steps.map((st, i) => (
-              <div key={st.key} className="flex flex-1 flex-col items-center justify-end h-full" data-journey-mile-step={st.key}>
-                <span className="text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{st.passed}</span>
-                <div className={`w-full rounded-sm ${i === mile.steps.length - 1 ? 'bg-emerald-500' : 'bg-violet-300 dark:bg-violet-400/50'}`}
+              <div key={st.key} className="flex flex-col items-stretch justify-end h-16" data-journey-mile-step={st.key}>
+                <span className="text-center text-[11px] leading-none mb-0.5 text-zinc-500 dark:text-zinc-400">{st.passed}</span>
+                <div className={`rounded-sm ${i === mile.steps.length - 1 ? 'bg-emerald-500' : 'bg-violet-300 dark:bg-violet-400/50'}`}
                   style={{ height: `${Math.max(4, Math.round((st.passed / n) * 100))}%` }} />
               </div>
             ))}
-          </div>
-          <div className="flex gap-1 mt-1">
-            {mile.steps.map((st) => <span key={st.key} className="flex-1 min-w-0 text-center text-[10px] leading-tight text-zinc-500 dark:text-zinc-400">{MILE_SHORT[st.key] || st.key}</span>)}
-          </div>
-          <div className="mt-4 space-y-2">
+            <span />
+            <span className="hidden sm:block" />
+            {mile.steps.map((st) => (
+              <span key={st.key} className="min-w-0 text-center text-[10px] leading-tight tracking-tight text-zinc-500 dark:text-zinc-400">{MILE_SHORT[st.key] || st.key}</span>
+            ))}
+            <span />
+            <span className="col-span-full h-2" />
             {mile.people.map((p, i) => {
               const done = p.steps.every((st) => st.state === 'done' || st.state === 'skipped' || st.state === 'unknown');
               return (
-                <div key={`${p.userId ?? p.name}-${i}`} className="flex items-center gap-2">
-                  <span className="w-28 shrink-0 min-w-0"><PersonChip person={p} onOpen={onOpen} /></span>
-                  <div className="flex flex-1 gap-0.5">
-                    {p.steps.map((st) => <span key={st.key} title={MILE_STEPS[st.key]} className={`h-2.5 flex-1 rounded-sm ${STEP_FILL[st.state] || STEP_FILL.not_yet}`} />)}
-                  </div>
-                  <span className={`w-12 shrink-0 text-right text-xs tabular-nums ${p.stuckAt ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
+                <div key={`${p.userId ?? p.name}-${i}`} className="contents">
+                  <span className="col-span-10 sm:col-span-1 min-w-0 mt-1 sm:mt-0"><PersonChip person={p} onOpen={onOpen} /></span>
+                  {p.steps.map((st) => <span key={st.key} title={MILE_STEPS[st.key]} className={`h-2.5 rounded-sm ${STEP_FILL[st.state] || STEP_FILL.not_yet}`} />)}
+                  <span className={`text-right text-xs tabular-nums ${p.stuckAt ? 'text-amber-700 dark:text-amber-400' : 'text-emerald-700 dark:text-emerald-400'}`}>
                     {p.stuckAt ? `${p.daysSince} d` : done ? '✓' : ''}
                   </span>
                 </div>
@@ -649,15 +652,21 @@ function StagesCard({ week, onNames }: { week: string | null; onNames: (n: Names
 
 // ── Change loop ────────────────────────────────────────────────────────
 
-function LoopRing({ loops }: { loops: Loops }) {
-  const cx = 160; const cy = 105; const r = 68;
-  const steps = loops.change.steps;
+// A loop drawn as a loop: its steps around a ring, clockwise, each with
+// its count. The step that closes it is green; a step not built yet is a
+// dashed node that says "coming".
+function Ring({ label, steps, value, names, closes }: {
+  label: string; steps: string[]; value: (key: string) => number | Coming | undefined;
+  names: Record<string, string>; closes: string;
+}) {
+  const cx = 160; const cy = 112; const r = 68;
   const at = (i: number, rad: number) => {
     const a = ((-90 + (i * 360) / steps.length) * Math.PI) / 180;
     return { x: cx + rad * Math.cos(a), y: cy + rad * Math.sin(a), cos: Math.cos(a) };
   };
+  // Wider than the ring: a side label as long as "Invited someone" has to fit.
   return (
-    <svg viewBox="0 0 320 210" className="w-full max-w-sm mx-auto" role="img" aria-label="The change loop, turns at each step">
+    <svg viewBox="-75 0 470 228" className="w-full max-w-md mx-auto" role="img" aria-label={label}>
       <circle cx={cx} cy={cy} r={r} fill="none" className="stroke-zinc-200 dark:stroke-zinc-700" strokeWidth={2} />
       {steps.map((key, i) => {
         const mid = ((-90 + ((i + 0.5) * 360) / steps.length) * Math.PI) / 180;
@@ -670,21 +679,21 @@ function LoopRing({ loops }: { loops: Loops }) {
       {steps.map((key, i) => {
         const p = at(i, r);
         const l = at(i, r + 32);
-        const v = loops.change.atStep[key];
+        const v = value(key);
         const coming = isComing(v);
-        const live = key === 'go_live';
+        const closing = key === closes;
         const anchor = l.cos > 0.3 ? 'start' : l.cos < -0.3 ? 'end' : 'middle';
         return (
           <g key={key} data-journey-loop-step={key}>
             <circle cx={p.x} cy={p.y} r={20} strokeWidth={1.5} strokeDasharray={coming ? '3 3' : undefined}
               className={coming ? 'fill-white dark:fill-zinc-900 stroke-zinc-400 dark:stroke-zinc-500'
-                : live ? 'fill-emerald-100 dark:fill-emerald-500/25 stroke-emerald-500' : 'fill-violet-100 dark:fill-violet-500/25 stroke-violet-500'} />
-            <text x={p.x} y={p.y + (coming ? 3.5 : 5)} textAnchor="middle" fontSize={coming ? 10 : 15} fontWeight={coming ? 400 : 600}
+                : closing ? 'fill-emerald-100 dark:fill-emerald-500/25 stroke-emerald-500' : 'fill-violet-100 dark:fill-violet-500/25 stroke-violet-500'} />
+            <text x={p.x} y={p.y + (coming ? 4 : 6)} textAnchor="middle" fontSize={coming ? 11 : 17} fontWeight={coming ? 400 : 600}
               className={coming ? 'fill-zinc-500 dark:fill-zinc-400' : 'fill-zinc-900 dark:fill-zinc-100'}>
-              {coming ? 'coming' : String(v)}
+              {coming ? 'coming' : String(v ?? 0)}
             </text>
-            <text x={l.x} y={l.y + 4} textAnchor={anchor} fontSize={12} className="fill-zinc-500 dark:fill-zinc-400">
-              {LOOP_STEPS[key] || key}
+            <text x={l.x} y={l.y + 5} textAnchor={anchor} fontSize={15} className="fill-zinc-500 dark:fill-zinc-400">
+              {names[key] || key}
             </text>
           </g>
         );
@@ -693,15 +702,24 @@ function LoopRing({ loops }: { loops: Loops }) {
   );
 }
 
-function LoopCard({ week, onOpen }: { week: string | null; onOpen: OpenPerson }) {
-  const { data, failed } = useJourney<Loops>(`/api/admin/journey/loops${week ? `?week=${week}` : ''}`);
-  if (!data) return <Card id="admin-journey-loop" title="Change loop"><Loading failed={failed} what="the loops" /></Card>;
+function LoopCard({ data, failed, s }: { data: Loops | null; failed: boolean; s: Summary }) {
+  if (!data) return <Card id="admin-journey-loop" title="Change loop"><Loading failed={failed} what="the change loop" /></Card>;
   const open = data.change.open;
   const maxDays = Math.max(1, ...open.map((t) => t.days || 0));
-  const inv = data.invite;
+  const team = s.trust.teamShare;
   return (
     <Card id="admin-journey-loop" title="Change loop" note="turns at each step">
-      <LoopRing loops={data} />
+      <Ring label="The change loop, turns at each step" steps={data.change.steps}
+        value={(k) => data.change.atStep[k]} names={LOOP_STEPS} closes="go_live" />
+      {/* Who made what went live this week: the loop is meant to be turned
+          by people, so the team's share sits beside it. */}
+      <div className="mt-1 mb-4" id="admin-journey-team">
+        <div className="flex justify-between text-sm mb-1">
+          <span>Went live this week</span>
+          <span className="tabular-nums">{team.of - team.team} by people · {team.team} by the team</span>
+        </div>
+        <UnitBar n={team.of - team.team} of={team.of} fill="bg-violet-500" rest="bg-zinc-300 dark:bg-zinc-600" />
+      </div>
       <div className={`${JUI.label} mt-2 mb-1.5`}>Open turns, days waiting</div>
       {open.length ? (
         <div className="space-y-2" id="admin-journey-turns">
@@ -725,27 +743,36 @@ function LoopCard({ week, onOpen }: { week: string | null; onOpen: OpenPerson })
           <Legend items={[['bg-violet-300 dark:bg-violet-400/50', 'someone holds it'], ['bg-amber-400', 'nobody holds it']]} />
         </div>
       ) : <Empty>No open turns.</Empty>}
-      <div className={`${JUI.label} mt-4 mb-1.5`}>Invite loop</div>
-      <div className="flex items-center gap-1">
-        {inv.steps.map((key, i) => (
-          <div key={key} className="contents">
-            {i ? <span aria-hidden="true" className="text-zinc-300 dark:text-zinc-600">›</span> : null}
-            <div className="flex-1 text-center">
-              <div className="text-lg font-semibold tabular-nums">{inv.counts[key]}</div>
-              <div className="text-[11px] leading-tight text-zinc-500 dark:text-zinc-400">{INVITE_STEPS[key] || key}</div>
-            </div>
-          </div>
-        ))}
-      </div>
+    </Card>
+  );
+}
+
+// ── Invite loop ────────────────────────────────────────────────────────
+
+const INVITE_DONE: Array<[keyof InvitePair, string]> = [['arrived', 'arrived'], ['didSomething', 'did something'], ['invitedSomeone', 'invited someone']];
+
+function InviteCard({ data, failed, onOpen }: { data: Loops | null; failed: boolean; onOpen: OpenPerson }) {
+  if (!data) return <Card id="admin-journey-invite" title="Invite loop"><Loading failed={failed} what="the invite loop" /></Card>;
+  const inv = data.invite;
+  return (
+    <Card id="admin-journey-invite" title="Invite loop" note="people bringing people">
+      <Ring label="The invite loop, people at each step" steps={inv.steps}
+        value={(k) => inv.counts[k]} names={INVITE_STEPS} closes="invited_someone" />
       {inv.pairs.length ? (
-        <div className="mt-2 space-y-1">
+        <div className="space-y-1.5 mt-1">
           {inv.pairs.map((p, i) => (
-            <div key={i} className="flex items-center gap-1.5 text-xs">
-              <PersonChip person={p.host} onOpen={onOpen} /><span aria-hidden="true">→</span><PersonChip person={p.invitee} onOpen={onOpen} />
+            <div key={i} className="flex flex-wrap items-center gap-1.5">
+              <PersonChip person={p.host} onOpen={onOpen} />
+              <span aria-hidden="true" className="text-zinc-500 dark:text-zinc-400">→</span>
+              <PersonChip person={p.invitee} onOpen={onOpen} />
+              <span className="flex gap-0.5 ml-1" aria-label={INVITE_DONE.filter(([k]) => p[k]).map(([, l]) => l).join(', ') || 'not arrived'}>
+                {INVITE_DONE.map(([k]) => <span key={k} className={`h-2.5 w-5 rounded-sm ${p[k] ? 'bg-emerald-500' : JUI.empty}`} />)}
+              </span>
             </div>
           ))}
+          <p className={JUI.fine}>The three cells: arrived, did something, invited someone.</p>
         </div>
-      ) : null}
+      ) : <Empty>Nobody came in through an invite link this week.</Empty>}
     </Card>
   );
 }
@@ -756,7 +783,7 @@ const NEXT_FILLS = ['bg-violet-500', 'bg-violet-300 dark:bg-violet-400/60', 'bg-
 const OTHER_FILL = 'bg-zinc-300 dark:bg-zinc-600';
 const LEFT_FILL = 'bg-red-300 dark:bg-red-400/70';
 
-function NextCard() {
+function NextCard({ s }: { s: Summary }) {
   const { data: cohorts } = useJourney<Cohorts>('/api/admin/journey/cohorts');
   const [scope, setScope] = useState<string | null>(null);
   const { data, failed } = useJourney<NextSteps>(`/api/admin/journey/next-steps${scope ? `?admitted=${scope}` : ''}`);
@@ -805,6 +832,15 @@ function NextCard() {
           </p>
         </div>
       ) : <Empty>No navigation recorded for these people yet.</Empty>) : <Loading failed={failed} what="the next steps" />}
+      {/* How much of the week these paths can see: a gap is an old shell or a
+          broken hook, not people who stopped exploring. */}
+      <div className="mt-4 pt-3 border-t border-zinc-100 dark:border-zinc-800" id="admin-journey-coverage">
+        <div className="flex justify-between text-sm mb-1">
+          <span>Navigation recorded</span>
+          <span className="tabular-nums">{s.coverage.withNavigation} / {s.coverage.activePeople} active people</span>
+        </div>
+        <UnitBar n={s.coverage.withNavigation} of={s.coverage.activePeople} fill="bg-emerald-500" />
+      </div>
     </Card>
   );
 }
@@ -1117,6 +1153,8 @@ function addDays(iso: string, n: number): string {
 function JourneySection() {
   const [week, setWeek] = useState<string | null>(null);
   const { data: s, failed, reload } = useJourney<Summary>(`/api/admin/journey/summary${week ? `?week=${week}` : ''}`);
+  // Both loops come from one read, so the two cards share it.
+  const { data: loops, failed: loopsFailed } = useJourney<Loops>(`/api/admin/journey/loops${week ? `?week=${week}` : ''}`);
   const [dialog, setDialog] = useState<DialogKey | null>(null);
   const [names, setNames] = useState<NamesList | null>(null);
   const [person, setPerson] = useState<number | null>(null);
@@ -1151,12 +1189,12 @@ function JourneySection() {
       </div>
       {s ? (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
-          <NorthStarCard s={s} onOpen={openPerson} />
-          <HealthCard s={s} onOpen={openPerson} onDetails={() => setDialog('checks')} />
-          <FirstMileCard s={s} onOpen={openPerson} />
+          <NorthStarCard s={s} onOpen={openPerson} onDetails={() => setDialog('checks')} />
           <StagesCard week={week} onNames={setNames} />
-          <LoopCard week={week} onOpen={openPerson} />
-          <NextCard />
+          <div className="xl:col-span-2"><FirstMileCard s={s} onOpen={openPerson} /></div>
+          <LoopCard data={loops} failed={loopsFailed} s={s} />
+          <InviteCard data={loops} failed={loopsFailed} onOpen={openPerson} />
+          <div className="xl:col-span-2"><NextCard s={s} /></div>
         </div>
       ) : <div className={JUI.card}><Loading failed={failed} what="the journey" /></div>}
       {dialog === 'checks' && s ? <ChecksDialog s={s} onOpen={openPerson} onClose={closeDialog} /> : null}
