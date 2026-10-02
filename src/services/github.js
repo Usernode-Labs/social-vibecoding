@@ -2262,9 +2262,14 @@ async function fetchPublicIssue(owner, repo, number) {
 // recent answers were invisible despite the seed's "most recent" wording.)
 //
 // NEVER throws: every outcome resolves to
-// `{ comments: [{ author, body, createdAt }], truncated, note? }` — on any
-// failure the list is empty, `truncated` false, and `note` names why. No
+// `{ comments: [{ author, body, createdAt, id? }], truncated, note? }` — on
+// any failure the list is empty, `truncated` false, and `note` names why. No
 // caching: it's an on-demand read.
+//
+// `id` is GitHub's own comment id, when it sent one (#3693): what the
+// Homeroom bot recorded for each comment it posted (homeroom_bot_posts), so
+// the request page can leave out the bot's comments its Homeroom thread
+// already carries. clipIssueComments does not pass it on.
 async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MAX } = {}) {
   const n = Number(number);
   if (!owner || !repo || !Number.isInteger(n) || n <= 0) {
@@ -2311,6 +2316,7 @@ async function fetchIssueComments(owner, repo, number, { max = ISSUE_COMMENTS_MA
           author: (c && c.user && c.user.login) || '',
           body: (c && c.body) || '',
           createdAt: (c && c.created_at) || '',
+          ...(c && c.id != null ? { id: c.id } : {}),
         });
       }
       // Hit the total cap mid-thread: stop and flag the rest as omitted.
