@@ -35,7 +35,7 @@ export interface RowFold {
   open: boolean;
   onToggle: () => void;
   /**
-   * Where the open card's "Open card" pill sits. A kanban column asks for
+   * Where the open card's "View details" pill sits. A kanban column asks for
    * the action band: the facts-line seat moves the card's actions up beside
    * it, which ~300px cannot hold (see fold.tsx).
    */

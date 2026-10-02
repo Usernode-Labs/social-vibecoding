@@ -29,7 +29,7 @@
  * is the COLUMN's state — one per column, so a board with four open cards
  * is still four columns of rows — and it lives in the component, so the
  * WS-driven republishes that repaint the board leave it alone. The open card
- * is the card the column always drew, with the "Open card" pill as the last
+ * is the card the column always drew, with the "View details" pill as the last
  * pill of its action band (the facts-line seat moves the actions up beside
  * it, which a column cannot hold), leading to the item's own page — the
  * same link with the same label the Workshop's card carries since #1884
@@ -135,7 +135,7 @@ function Column(
   //
   // A LAYOUT effect, not a plain one: a plain effect runs after the browser
   // has painted the card with the slot empty, so the kudos pill popped in a
-  // frame later and shoved "Open card" along the band — the flicker at the
+  // frame later and shoved the card pill along the band — the flicker at the
   // bottom-left of every merged card on open. Before paint, the card is
   // whole on its first frame, and the band's fold measurement (which
   // watches its own subtree) re-folds around the filled slot in the same
@@ -187,7 +187,7 @@ function Column(
               canPost,
               open: unfolded || openKey === row.key,
               onToggle: () => setOpenKey((k) => (k === row.key ? null : row.key)),
-              // "Open card" rides in the action band here, not on the facts
+              // "View details" rides in the action band here, not on the facts
               // line: a column is too narrow for the actions that seat moves
               // up beside it (fold.tsx). Where it LEADS is no longer a
               // per-surface choice — the item's own page, on both — so there

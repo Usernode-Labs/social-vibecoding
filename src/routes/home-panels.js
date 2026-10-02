@@ -694,7 +694,7 @@ function demoChallengesPanel(opts) {
       ['Join a community (staging demo)', 'Join any community that is not Homeroom.', '500 pts', true],
       ['Try an app (staging demo)', 'Open an app somebody else made and try it.', '500 pts', false],
       ['Vote on an app (staging demo)', 'Vote on a change somebody proposed.', '250 pts', false],
-      ['Send feedback (staging demo)', 'Tell a community what would make it better.', '250 pts', false],
+      ['Send feedback (staging demo)', "When you're ready, tell a community what would make it better.", '250 pts', false],
     ].map(([goal, task, reward, done], i) => ({
       id: 900720 + i,
       label: 'ONBOARDING',

@@ -125,7 +125,7 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
   assert.equal(count(html, /class="dev-ws-rowwrap dev-ws-rowwrap-open"/g), cards, 'every wrapper open');
   assert.equal(count(html, /class="dev-ws-row hover/g), 0, 'and no folded row drawn beside a card');
   assert.equal(count(html, /class="gc-vote-item [^"]*dev-card-dense"/g), cards, 'the dense card, once per item');
-  // "Open card", on every open card, in the action band after the card's
+  // "View details", on every open card, in the action band after the card's
   // own pills and before the hamburger — the seat the Workshop's open card
   // uses too, so the two surfaces draw one card. Not on the facts line:
   // that seat moves the card's actions up beside it, which a ~300px column
@@ -138,14 +138,14 @@ test('?cards=open draws every card at full size, hooks intact: the board as it w
   // transcript, and the page is one tap away. It also works on every kind —
   // the in-place body exists for issues and proposals only, so on a
   // session, a merged change or a governance item the toggle did nothing.
-  assert.equal(count(html, /class="gc-vote-btn dev-ws-open-btn"/g), cards, 'each open card offers Open card');
-  assert.equal(count(html, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/[a-z]+\/\d+" data-ws-open-card="[a-z-]+:\d+">Open card<\/a>/g), cards,
+  assert.equal(count(html, /class="gc-vote-btn dev-ws-open-btn"/g), cards, 'each open card offers View details');
+  assert.equal(count(html, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/[a-z]+\/\d+" data-ws-open-card="[a-z-]+:\d+">View details<\/a>/g), cards,
     'as a link to the item\u2019s page');
   assert.equal(count(html, /class="gc-card-actions"[^>]*>(?:(?!<\/div>)[\s\S])*?class="gc-vote-btn dev-ws-open-btn"/g), cards,
     'and it sits inside the action band');
   assert.ok(!/dev-card-status-end"[^>]*>(?:(?!<\/span>)[\s\S])*?dev-ws-open-btn/.test(html), 'not on the facts line');
   assert.ok(!/dev-ws-open-btn"[^>]*aria-expanded/.test(html), 'and never the in-place toggle here');
-  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Start work<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>Open card<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
+  assert.match(html, /class="gc-card-actions"><button class="gc-vote-btn"(?=[^>]*data-fold="1")[^>]*data-act="chooseIssueWork">Start work<\/button><button class="gc-vote-btn"(?=[^>]*data-fold="2")[^>]*data-act="markIssueInProgress">[^<]*<\/button><a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/issues\/1575"[^>]*>View details<\/a><button [^>]*dev-card-menu-btn"[^>]*data-card-menu=/,
     'the card\u2019s own pills come first, each marked foldable, then the link, then the hamburger');
   // A card with nothing in its status band still drops the band (#1139):
   // the toggle is not in it.
@@ -186,14 +186,14 @@ test('the column owns which card is open, one per column, through the shared fol
   assert.match(KANBAN, /onToggle: \(\) => setOpenKey\(\(k\) => \(k === row\.key \? null : row\.key\)\),/);
   assert.match(KANBAN, /slug=\{v\.slug \|\| ''\}/);
   assert.match(KANBAN, /unfolded=\{!!v\.unfolded\}/);
-  assert.match(KANBAN, /detail: 'actions',/, 'the Board seats Open card in the action band');
+  assert.match(KANBAN, /detail: 'actions',/, 'the Board seats View details in the action band');
   assert.match(KANBAN, /sessionLink: false,/, 'and draws no session line under a column card');
   assert.match(LIST_ROWS, /detail=\{fold\.detail\} sessionLink=\{fold\.sessionLink\}/);
-  // #1884 round two: "Open card" LEADS to the item's page on both surfaces,
+  // #1884 round two: "View details" LEADS to the item's page on both surfaces,
   // so there is no mode to pass and no branch to take — one anchor, one
   // label, whichever screen the card was reached from.
   assert.ok(!/OpenMode|expand[?:]/.test(FOLD), 'no open mode left to choose');
-  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>\s*: undefined;/);
+  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>View details<\/a>\s*: undefined;/);
   // #1886: no page link under the sheet any more — the Workshop's pill is
   // the page link once the card is open. The one line the sheet still draws
   // is #1887's, on a card about the viewer's OWN session: the session is a
@@ -388,7 +388,7 @@ test('the declared checks that read a board card’s anatomy run with the cards 
   const unfold = DAPP.tests.find((t) => /shot=board-unfold/.test(t.path || ''));
   assert.ok(unfold, 'one check taps a row open');
   assert.match(unfold.expectSelector, /\.dev-ws-rowwrap-open > \.dev-ws-sheet > \.gc-vote-item\.dev-card-dense\[data-edge\] \.gc-card-actions > a\.dev-ws-open-btn\[href\*="\/dev\/"\]/,
-    'and reads the card it unfolded into, with its Open card toggle in the action band');
+    'and reads the card it unfolded into, with its View details pill in the action band');
   assert.ok(!/cards=open/.test(unfold.path), 'without cards=open, or the tap would prove nothing');
 
   // The ⋯ menu capture needs a card up to have a trigger to tap.
@@ -1581,7 +1581,7 @@ test('the band’s pills wear the Vote button’s Yes tint; the hamburger holds 
 test('every pill is foldable: the band shows as many as fit its line and the menu lists the rest', () => {
   const CARD = read('frontend/src/features/dev-board/card/dev-card.tsx');
   // The band capped at three text pills, and then the first pill was exempt
-  // from folding (`i > 0`). With "Open card", the hamburger and Preview all
+  // from folding (`i > 0`). With "View details", the hamburger and Preview all
   // fixed at the band's right, a narrow column may leave no room before
   // them, so the fold may take the first pill too; only a kudos host stays.
   assert.match(CARD, /fold=\{a\.kudos == null \? i \+ 1 : undefined\}\s+hidden=\{folds && foldIndex >= foldable - folded\.n\}/);
@@ -1666,7 +1666,7 @@ test('the open card’s meta line is tabbed in under the title, as the row’s i
   assert.match(CSS, /#dev-kanban \.dev-kanban-col > \.space-y-2 > :not\(\[hidden\]\) ~ :not\(\[hidden\]\) \{ margin-top: 4px; \}/);
 });
 
-test('Open card is one anchor to the item\u2019s page, on every surface and every kind', () => {
+test('View details is one anchor to the item\u2019s page, on every surface and every kind', () => {
   // It used to be two controls wearing one word. On the Board it linked out;
   // on the Workshop it opened the topic screen's sections in place and only
   // relabelled to "Open page ›" on a second tap — and for a session, a merged
@@ -1676,7 +1676,7 @@ test('Open card is one anchor to the item\u2019s page, on every surface and ever
   const AppView = makeAppView({ search: '?cards=open&demo=1' });
   const html = kanbanHtml(AppView);
   for (const kind of ['issues/1575', 'proposals/34']) {
-    assert.match(html, new RegExp(`<a class="gc-vote-btn dev-ws-open-btn" href="#app/demo-app/dev/${kind}"[^>]*>Open card</a>`),
+    assert.match(html, new RegExp(`<a class="gc-vote-btn dev-ws-open-btn" href="#app/demo-app/dev/${kind}"[^>]*>View details</a>`),
       `${kind}: a real link, labelled the same word`);
   }
   // A real anchor, not a button that navigates: it middle-clicks, it copies,

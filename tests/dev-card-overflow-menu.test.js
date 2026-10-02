@@ -246,7 +246,7 @@ test('proposal, foreign, plain collaborator', () => {
   // so ⋯ no longer offers a second way to give the same kudos.
   assert.ok(!labels.some((l) => /kudos/i.test(l)), 'kudos is on the face, not in ⋯');
   assert.match(proposalCardHtml(AppView, PR()), /gc-card-actions[^>]*><span class="contents" data-kudos-host=/);
-  assert.ok(labels.some((l) => /Set priority/.test(l)));
+  assert.ok(labels.some((l) => /Decide how urgent it is/.test(l)));
 });
 
 test('proposal, platform admin: Admin merge is offered and marked danger', () => {
@@ -379,9 +379,9 @@ test('merged proposal: completed-task attributes stay editable for collaborators
 
   const unset = menuLabels(AppView, mergedCardHtml(AppView, 
     PR({ status: 'merged', chat_count: 0 }), 3));
-  assert.ok(unset.includes('Set priority…'));
-  assert.ok(unset.includes('Assign someone…'));
-  assert.ok(unset.includes('Set category…'));
+  assert.ok(unset.includes('Decide how urgent it is…'));
+  assert.ok(unset.includes('Decide who takes it…'));
+  assert.ok(unset.includes('Decide what kind of work it is…'));
 
   // The completed task's detail header has no overflow menu, so all three
   // unset controls remain directly visible there.
@@ -783,7 +783,7 @@ test('the ✨ that used to live inside the Explore label is now its icon', () =>
 // ── A folded kudos slot in ⋯ ──────────────────────────────────────────
 
 // The board band's fold (dev-card.tsx useFoldedActions) hands the kudos
-// spec over only when not even its clap fit beside Open card, Preview and
+// spec over only when not even its clap fit beside the card pill, Preview and
 // ⋯. The row is the slot's own face, acting through the slot's own button,
 // so Kudos keeps every rule it has.
 test('a folded kudos slot is a ⋯ row: the slot’s line, acting through its button', () => {

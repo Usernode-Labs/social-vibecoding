@@ -1213,7 +1213,7 @@ export function metaLineNodes(m: DevCardModel): ReactNode[] {
  * is `lead` — the change page's Vote button, which opens the band.
  *
  * The old cap of three text pills is gone: the line is the cap now. That
- * is the seat both surfaces use for "Open card" (card/fold.tsx), so an
+ * is the seat both surfaces use for "View details" (card/fold.tsx), so an
  * open card on the Board and on the Workshop is one drawing — and the
  * change page's hero (topic/topic-head.tsx) is the same band again, under
  * a Needs-you title instead of a card's.
@@ -1460,7 +1460,7 @@ export function slotFace(room: number, faces: SlotFace[]): SlotFace | null {
  * own. It is measured through that host and yields LAST, in stages — the
  * whole line, the name alone, the clap alone (`data-thanks` on the band) —
  * and with no room for even the clap it folds into ⋯ like any pill
- * (`data-folded` on the host, `_kudosMenuItem` for the row). "Open card",
+ * (`data-folded` on the host, `_kudosMenuItem` for the row). "View details",
  * Preview and the hamburger are the fixed controls it yields to: they never
  * leave the row, whatever the column's width.
  */
@@ -1477,7 +1477,7 @@ function useFoldedActions(
   // button for a frame.
   const [measured, setMeasured] = useState(false);
   // Every pill but a kudos host may fold — the first included. The fixed
-  // children ("Open card", the hamburger, Preview) sit at the band's right
+  // children ("View details", the hamburger, Preview) sit at the band's right
   // and a narrow column may leave no room before them. The topic head hands
   // its labelled Preview over as an action spec too (ActionButton draws it
   // as the fixed control, with no fold mark), so it is not a fold either:

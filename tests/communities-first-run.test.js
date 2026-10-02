@@ -428,7 +428,7 @@ test('the card offers the tour as its first row, with a Start button until it is
   assert.match(svc, /return !!\(u && u\.getting_started_gate && u\.communities_onboarded_at && !u\.getting_started_closed_at\);/);
   assert.match(fn, /const \{ rows: userRows \} = await pool\.query\(CARD_SQL, \[userId\]\);[\s\S]{0,80}const show = cardShows\(u\);/);
   assert.match(fn, /const steps = \[\{[\s\S]*?id: 'tour',\s*kind: 'tour',\s*action: 'tour',\s*title: TOUR_STEP\.title,\s*detail: TOUR_STEP\.detail,\s*done: tourDone,\s*href: null,/);
-  assert.match(svc, /title: 'Take the 1-minute tour',\s*\n\s*detail: 'See how Homeroom works\.',/);
+  assert.match(svc, /title: 'See how Homeroom works',\s*\n\s*detail: 'A short tour of the app, started when you press Start\.',/);
   // Client: a row that is not a button, holding one until the tour is done;
   // pressed, it asks for the tour the way Settings' Replay does, and the
   // tour's own write reloads the card, which ticks the row.

@@ -9894,7 +9894,6 @@ const DevChat = {
       pr: s.pr_number || null,
       prTitle: s.pr_number
         ? `Open this change's proposal card (PR #${s.pr_number}). Every change in this chat goes to PR #${s.pr_number}. `
-          + 'Use “Start a new change” for separate work.'
         : '',
       newChangeTitle: 'This chat is one change → one pull request. A PR opens after the first build.',
       life: DevChat._headerLife(session),
@@ -10095,7 +10094,7 @@ const DevChat = {
   // A session maps to exactly one branch + one PR. Once that PR exists
   // and especially once it's been proposed to the group, continuing to
   // chat here adds MORE changes to the same PR — which bundles unrelated
-  // work into one votable unit. Surface a nudge to "Start a new change"
+  // work into one votable unit. Surface a nudge to a fresh change
   // (a fresh session) so each PR stays focused. Shown when the session
   // already has a PR and it's past the active-editing stage
   // (promoted / merging / merged). Active sessions with a PR don't get

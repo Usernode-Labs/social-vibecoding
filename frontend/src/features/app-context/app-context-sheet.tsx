@@ -851,7 +851,7 @@ export function AppsSwitcherSheet(): ReactNode {
               >
                 <RowBody
                   icon={<PlusIcon className="text-violet-600 dark:text-violet-400" />}
-                  label="Start a new change"
+                  label="Ask the Mayor for a change"
                 />
               </button>
             )}

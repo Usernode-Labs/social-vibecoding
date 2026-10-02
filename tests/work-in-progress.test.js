@@ -161,7 +161,7 @@ test('the mark\'s menu: the app\'s own rows first, then Agent sessions, the sess
     && at('app-menu-row-about') < at('app-menu-sessions')
     && at('app-menu-sessions') < at('improve-row-new-session')
     && at('improve-row-new-session') < at('app-menu-continue'),
-    'Go to community and About are the app\'s section; Agent sessions follow, led by Start a new change');
+    'Go to community and About are the app\'s section; Agent sessions follow, led by Ask the Mayor for a change');
   assert.match(sheet, /<div className=\{SECTION\}>Agent sessions<\/div>/, 'it was "Continue"');
   assert.doesNotMatch(sheet, />Continue</);
   // Each session says what app it is on and where it stands, under its title.

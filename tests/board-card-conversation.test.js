@@ -255,7 +255,7 @@ test('the comment and thread CSS is scoped to both card hosts, at the weight it 
 test('the three controls #1884 names are the same three on every surface', () => {
   // The request lists them: a Reply input, open on its own page, recent
   // comments. Two were missing from the Board and are added by the rows
-  // above. The third was on both — but "Open card" LED somewhere different
+  // above. The third was on both — but the card pill LED somewhere different
   // depending on the surface, which is the same complaint one control
   // further down, so it is settled here too.
   //
@@ -263,8 +263,8 @@ test('the three controls #1884 names are the same three on every surface', () =>
   // more: one component, one set of props, and nothing in it branching on
   // which screen drew the card.
   assert.ok(!/OpenMode|expand[?:]|'inline'/.test(FOLD),
-    'no open mode: "Open card" is the item\u2019s page, whichever surface drew it');
-  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/);
+    'no open mode: the card pill is the item\u2019s page, whichever surface drew it');
+  assert.match(FOLD, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>View details<\/a>/);
   // The reply box and the comment tail are the ROW's to carry, and both
   // surfaces build rows through the one helper (asserted above).
   assert.match(FOLD, /\{row\.commentsFor != null \? \(/);

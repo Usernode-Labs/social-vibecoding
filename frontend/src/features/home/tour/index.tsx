@@ -127,7 +127,7 @@
  * Only when somebody asks (#3240). It used to open by itself on the first
  * sign-in that reached Home, straight after "What communities do you want to
  * join?", and the two screens said the same things back to back. Now the
- * first row of Home's Getting started card, "Take the 1-minute tour"
+ * first row of Home's Getting started card, "See how Homeroom works"
  * (../getting-started.tsx), and Settings' "Replay the tour" are the ways in,
  * and both ask through ./tour-request.ts. That path ignores whether the
  * tour was finished before and waits only for Home to be on screen, which is

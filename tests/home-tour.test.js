@@ -110,8 +110,8 @@ test('every step points at a REAL control, and nothing is illustrated', () => {
   // The whole Shortcuts section, heading included, so the card never sits on
   // the heading the step is about (#3240); the grid is the fallback.
   assert.deepEqual([...byId.apps.targets], ['#home-apps-section', '#app-list']);
-  assert.match(byId.apps.body, /people for a private community, a lock for one that is just yours/,
-    'the step names the tile marks the grid draws');
+  assert.match(byId.apps.body, /A small mark says where each one lives/,
+    'the step says what the tile marks are for');
   // The way into Settings is the Me tab, whose screen carries
   // #profile-row-settings (#2718).
   assert.deepEqual([...byId.settings.targets], ['#platform-tab-me']);
@@ -744,7 +744,7 @@ test('the first render is the hidden overlay, with nothing measured', () => {
   assert.match(html, /Are you sure\? You can reopen this from Settings\./);
   // Step 1 is what a step-less render shows, on both sides of hydration.
   assert.match(html, /1 of 5/);
-  assert.match(html, /Homeroom is made of communities/);
+  assert.match(html, /Communities build projects together/);
   // No geometry in the markup: the hole and the card position are style
   // writes through refs, and a measured pixel in the prerender would be a
   // hydration mismatch waiting for the first viewport that differs.
@@ -820,11 +820,8 @@ test('the communities step names what the screen names (#3567)', () => {
   const step = steps.TOUR_STEPS[0];
   assert.equal(step.id, 'communities');
   assert.equal(step.title, 'Communities');
-  assert.match(step.body, /communities that build projects together/);
-  assert.match(step.body, /propose a change, and the group votes it in/);
-  for (const audience of ['Just you', 'a Private community', 'a Public community']) {
-    assert.ok(step.body.includes(audience), `names ${audience}`);
-  }
+  assert.match(step.body, /Communities build projects together/);
+  assert.match(step.body, /proposing changes and voting them in/);
   assert.doesNotMatch(step.body, /\bapps?\b/, 'a thing being built is a project');
 });
 

@@ -24,7 +24,7 @@
 //   1. the route: `new` is still the one session ref that is a word, and the
 //      old address lands on an unsent agent session, replacing itself;
 //   2. the entry points: New change (AppView.createProposal), the
-//      out-of-credits hand-off and the banner's "Start a new change" open an
+//      out-of-credits hand-off and the banner's button open an
 //      agent session and create nothing;
 //   3. the placeholder: no id, no owner, nothing said about a venue or a PR,
 //      and NO request of any kind while it is on screen;
@@ -389,7 +389,7 @@ test('the out-of-credits hand-off opens the agent session on its "Build with" ta
   assert.deepEqual(plain(calls.createSession), []);
 });
 
-test('the banner\'s "Start a new change" opens an agent session on the same app', () => {
+test('the banner\'s button opens an agent session on the same app', () => {
   const { DevChat, sandbox, sessionRequests } = makeDevChat();
   const started = [];
   const switched = [];

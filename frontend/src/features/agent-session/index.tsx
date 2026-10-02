@@ -1374,7 +1374,7 @@ function EmptyState({ about, request }: { about: About; request: DraftRequest | 
         ) : null}
         <p className="mt-2 max-w-sm text-sm text-zinc-600 dark:text-zinc-300">
           {app ? <>On <strong>{app}</strong>. </> : null}
-          Send the message below to start. The Mayor reads the request, plans the change with you, and puts it up for a vote when you say so.
+          Send the message below to start. Chat with the Mayor: it reads the request, builds the change with you, and puts what it built up for a vote when you say so.
         </p>
       </section>
     );
@@ -1387,7 +1387,7 @@ function EmptyState({ about, request }: { about: About; request: DraftRequest | 
       <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">New agent session</h3>
       <p className="mt-1 max-w-sm text-sm text-zinc-600 dark:text-zinc-300">
         {app ? <>Started from <strong>{app}</strong>. </> : null}
-        Start a change on any app. The Mayor plans it, builds it, and puts it up for a vote when you say so.
+        Chat with the Mayor: it asks what change you want, builds it, and puts what it built up for a vote when you say so.
       </p>
     </section>
   );

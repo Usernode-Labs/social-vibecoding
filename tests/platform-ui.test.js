@@ -491,10 +491,10 @@ test('the Improve row is retired; what it led to is in the menu', () => {
   const band = INDEX.match(/<div id="improve-quick-actions"[\s\S]*?<\/div>/);
   assert.ok(band, 'missing #improve-quick-actions');
   assert.ok(band[0].includes('id="improve-row-feedback"'), 'Ask for a change is the band\'s button');
-  // New change is Start a new change under Agent sessions (UI overhaul).
+  // New change is Ask the Mayor for a change under Agent sessions (UI overhaul).
   assert.ok(!band[0].includes('id="improve-row-new-session"'), 'and alone in it');
   const sessions = INDEX.match(/<div id="app-menu-sessions"[\s\S]*?id="improve-row-new-session"/);
-  assert.ok(sessions, 'Start a new change leads the Agent sessions section');
+  assert.ok(sessions, 'Ask the Mayor for a change leads the Agent sessions section');
   assert.ok(!/\bhidden\b/.test(band[0].slice(0, band[0].indexOf('>'))),
     'the band itself ships visible');
 
@@ -710,7 +710,7 @@ test('the menu\'s action leads it, shaped like the pill that used to open it', (
   // element claiming it.
   assert.ok(!read('frontend/src/features/app-context/app-context-sheet.tsx')
     .includes('id="improve-row-feedback"'), 'and not in two places');
-  // New change survives as Start a new change, a row under Agent sessions
+  // New change survives as Ask the Mayor for a change, a row under Agent sessions
   // in the menu's list (UI overhaul), with the same handler.
   const sheet = read('frontend/src/features/app-context/app-context-sheet.tsx');
   assert.match(sheet, /id="improve-row-new-session"/, 'New change survives');

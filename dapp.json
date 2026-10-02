@@ -1518,16 +1518,16 @@
       "expectSelector": ".dev-ws-hero #dev-plus-menu [data-plus=\"import-pr\"]"
     },
     {
-      "name": "The hub's ⋯ menu leads with Start a new change and Ask for a change, then names its settings group (#1900, #852 review)",
+      "name": "The hub's ⋯ menu leads with Ask the Mayor for a change and Ask for a change, then names its settings group (#1900, #852 review)",
       "path": "/?demo=1&ws=status&shot=plus-menu#app/usernode-2d5619/dev",
       "expectSelector": "#dev-plus-menu > button[data-plus=\"new-change\"]:first-child + button[data-plus=\"issue\"] ~ [data-plus-group=\"settings\"]",
       "expectText": "Ask for a change"
     },
     {
-      "name": "Start a new change leads the menu's Agent sessions, where New change went (#1490, #2718 review, UI overhaul)",
+      "name": "Ask the Mayor for a change leads the menu's Agent sessions, where New change went (#1490, #2718 review, UI overhaul)",
       "path": "/?demo=1&shot=improve#app/usernode-2d5619/board",
       "expectSelector": "#apps-switcher-sheet[data-open] #app-menu-sessions > #improve-row-new-session",
-      "expectText": "Start a new change"
+      "expectText": "Ask the Mayor for a change"
     },
     {
       "name": "Ask for a change is the menu's one button, in exactly one place (#1490, #2718, UI overhaul)",
@@ -2307,7 +2307,7 @@
       "expectSelector": "#apps-switcher-sheet #switcher-nav > a#app-menu-row-workshop[data-context-row=\"workshop\"]"
     },
     {
-      "name": "The app-context sheet carries Start a new change under Agent sessions (Streamlined Concept, UI overhaul)",
+      "name": "The app-context sheet carries Ask the Mayor for a change under Agent sessions (Streamlined Concept, UI overhaul)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#app-menu-sessions #improve-row-new-session"
     },
@@ -2439,10 +2439,10 @@
       "expectSelector": "#dev-body #dev-workshop"
     },
     {
-      "name": "A retired ?view=kanban link lands on the stage pane, and a tap unfolds a row into its card, whose Open card leads to its page",
+      "name": "A retired ?view=kanban link lands on the stage pane, and a tap unfolds a row into its card, whose View details leads to its page",
       "path": "/?demo=1&view=kanban&shot=board-unfold#app/usernode-2d5619/dev",
       "expectSelector": "#dev-body #dev-workshop [data-ws-stage] .dev-ws-rowwrap-open > .dev-ws-sheet > .gc-vote-item.dev-card-dense[data-edge] .gc-card-actions > a.dev-ws-open-btn[href*=\"/dev/\"]",
-      "expectText": "Open card"
+      "expectText": "View details"
     },
     {
       "name": "The Workshop renders its themes into #dev-workshop; the deep link opens one, with its items as folded rows under stage lanes",
@@ -2603,7 +2603,7 @@
       "expectText": "Staging demo: mostly polish on Messages and Discover"
     },
     {
-      "name": "A project page's tabs are Hub, Discussion, Needs you and Workshop, in the community's colour",
+      "name": "A project page's tabs are Hub, Discussion, To vote and Workshop, in the community's colour",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": "html[data-community-tint] #dev-workshop [data-ws-band] > [role=\"tablist\"] > [data-ws-tab-btn=\"status\"][aria-selected=\"true\"] + [data-ws-tab-btn=\"discussion\"] + [data-ws-tab-btn=\"needs\"] + [data-ws-tab-btn=\"workshop\"]",
       "expectText": "Discussion"
@@ -2621,7 +2621,7 @@
       "expectText": "Communities"
     },
     {
-      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Start a new change leads the hero's ⋯ rather than ending the hub (#852 review)",
+      "name": "The hub's discussion is a preview (its last two messages and Open, the Discussion tab, with no composer), and Ask the Mayor for a change leads the hero's ⋯ rather than ending the hub (#852 review)",
       "path": "/?demo=1&ws=status#app/usernode-2d5619/workshop",
       "expectSelector": "#dev-workshop .dev-ws[data-ws-tab=\"status\"]:has(section[data-ws-channel=\"preview\"] button[data-ws-channel-open]):not(:has(section[data-ws-channel=\"preview\"] form)):not(:has([data-ws-start-change])) #dev-plus-menu > [data-plus=\"new-change\"]:first-child",
       "expectText": "Discussion"
@@ -3075,7 +3075,7 @@
       "name": "The welcome tour opens on what a community is: projects built together, changes proposed and voted in (#3567)",
       "path": "/?shot=welcome-tour",
       "expectSelector": "#home-tour:not(.hidden) #home-tour-card:not(.opacity-0) #home-tour-body:not(.hidden) #home-tour-title",
-      "expectText": "Homeroom is made of communities that build projects together"
+      "expectText": "Communities build projects together"
     },
     {
       "name": "Settings' About pane keeps the mobile app version and the platform version as separate rows",
@@ -3321,7 +3321,7 @@
       "expectText": "Go to community"
     },
     {
-      "name": "Agent sessions leads with Start a new change, sessions or none (UI overhaul; it was Continue)",
+      "name": "Agent sessions leads with Ask the Mayor for a change, sessions or none (UI overhaul; it was Continue)",
       "path": "/?shot=app-context&demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#apps-switcher-sheet[data-open] #switcher-nav > #app-menu-sessions > #improve-row-new-session:nth-child(2)",
       "expectText": "Agent sessions"

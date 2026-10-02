@@ -358,7 +358,7 @@ test('detail refresh uses the lifecycle endpoint and preserves demo context', as
   }
 });
 
-test('Open card links use one detail route regardless of ownership or origin', () => {
+test('View details links use one detail route regardless of ownership or origin', () => {
   const { openHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
   for (const hook of ['data-session-chip', 'data-shared-session-row', 'data-proposal-row']) {
     assert.equal(openHref('example', { attrs: { [hook]: '4073' } }), '#app/example/dev/proposals/4073');
@@ -515,7 +515,7 @@ test('an old ?conversation=workspace link lands on the dev session page', () => 
 
 test('the owner\u2019s underway session resolves to a body carrying its change id', () => {
   // This went through `_workshopCardBody`, the card-key adapter the Workshop's
-  // in-place open used. #1884 round two sends "Open card" to the item's page
+  // in-place open used. #1884 round two sends the card pill to the item's page
   // on both surfaces, so that adapter is gone and the claim is made where it
   // always actually lived — `_topicViewFor`, which the page itself builds
   // from.

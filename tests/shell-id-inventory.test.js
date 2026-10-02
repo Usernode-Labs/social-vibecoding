@@ -754,8 +754,8 @@ const ADDED_IDS = {
   // it is. `Improve.setVersionState` and the store field stay; the second
   // renderer is what went. It never reached tests/baselines, so it leaves
   // this map without entering RETIRED_IDS.
-  'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change". Since the UI overhaul it is "Start a new change", the first row under Agent sessions in the Homeroom menu (#app-menu-sessions), not a button beside Ask for a change.',
-  'app-menu-sessions': 'UI overhaul: the Homeroom menu\'s Agent sessions section (it was "Continue"), rendered on the menu pane whether or not you have sessions, because it leads with "Start a new change" (#improve-row-new-session). Your sessions (#app-menu-continue) arrive after mount, inside it.',
+  'improve-row-new-session': 'Starts a dev session — the Dev "+" menu\'s "Propose a change". Since the UI overhaul it leads the Agent sessions section in the Homeroom menu (#app-menu-sessions) as "Ask the Mayor for a change", not a button beside Ask for a change.',
+  'app-menu-sessions': 'UI overhaul: the Homeroom menu\'s Agent sessions section (it was "Continue"), rendered on the menu pane whether or not you have sessions, because it leads with "Ask the Mayor for a change" (#improve-row-new-session). Your sessions (#app-menu-continue) arrive after mount, inside it.',
   'settings-theme-section': 'The Theme settings pane\'s inner node, matching every other section\'s wrapper/inner pair.',
   // ── THE UI OVERHAUL: the home screen's four areas ────────────────
   // Your apps, Discover, Challenges, Create app — stacked, in that order.

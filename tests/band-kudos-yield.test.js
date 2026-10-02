@@ -1,6 +1,6 @@
 'use strict';
 
-// The board card's action band: the kudos slot gives way, never Open card,
+// The board card's action band: the kudos slot gives way, never the card pill,
 // Preview or ⋯ (dev-card.tsx useFoldedActions, kudos.js, app-view.js,
 // app.css).
 //
@@ -8,7 +8,7 @@
 // ones that do not fit into ⋯ — but the kudos slot is a legacy-filled host
 // with no box of its own, so the fold counted it as 0px and it could fold
 // nothing: on a narrow column "Thank <author> for putting this up" pushed
-// the fixed controls after it (Open card, Preview, ⋯) onto the hidden row.
+// the fixed controls after it (the card pill, Preview, ⋯) onto the hidden row.
 // Now the slot is measured through its host and yields last, in stages:
 //
 //   1. the ladder: the widest face that fits the room the fixed controls
@@ -66,7 +66,7 @@ test('slotFaces: the whole line, the name alone, the clap alone — widest first
 
 test('slotFace: the widest face that fits the room, or none, at a few band widths', () => {
   const faces = slotFaces(pill(218, 112));
-  // Open card 78 + Preview 85 + ⋯ 28 with two gaps = 203px of fixed
+  // The card pill 78 + Preview 85 + ⋯ 28 with two gaps = 203px of fixed
   // controls; the slot needs its own gap on top. Room = band − 203 − 6.
   const room = (band) => band - 203 - 6;
   assert.equal(slotFace(room(440), faces).stage, 'full', 'a wide column keeps the line');

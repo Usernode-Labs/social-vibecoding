@@ -75,7 +75,7 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   const { pageParent, pageTitle } = loadTsx('frontend/src/features/dev-board/workshop/workshop.tsx');
   const band = loadTsx('frontend/src/features/dev-board/workshop/project-band.tsx');
   assert.deepEqual(band.PROJECT_TABS.map((t) => [t.key, t.label]),
-    [['status', 'Hub'], ['discussion', 'Discussion'], ['needs', 'Needs you'], ['workshop', 'Workshop']]);
+    [['status', 'Hub'], ['discussion', 'Discussion'], ['needs', 'To vote'], ['workshop', 'Workshop']]);
   assert.equal(band.litTab('all'), 'workshop', 'the Workshop tab stays lit over All items');
   assert.equal(pageParent('all'), 'workshop', 'All items goes back to the Workshop');
   assert.deepEqual(['needs', 'workshop', 'all', 'discussion'].map(pageTitle), ['Needs you', 'Workshop', 'All items', 'Discussion']);
@@ -87,13 +87,13 @@ test('a project page is four tabs, Hub, Discussion, Needs you and Workshop, with
   // can do, the fortnight), what landed since your last visit, Needs you (a
   // quiet line when no vote is owed, #3408), the discussion's last two
   // messages (or Share it, for Just you), and your work. One column at every
-  // width. Start a new change ended it until #852's review moved it into the
+  // width. The start row ended it until #852's review moved it into the
   // hero's ⋯ (tests/improve-action-deduplication.test.js).
   const hub = LANDER.slice(LANDER.indexOf("{tab === 'status' ? ("), LANDER.indexOf("{tab === 'discussion' ? ("));
   const order = ['<CommunityCard', '<SinceSummaryCard', '<NeedsCard', '<ChannelCard', '<ShareItCard', '<YourWorkCard'].map((x) => hub.indexOf(x));
   assert.ok(order.every((n) => n >= 0), `all six on the hub: ${JSON.stringify(order)}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order, 'hero, summary, Needs you, discussion, Share it, your work');
-  assert.doesNotMatch(hub, /data-ws-start-change/, 'no Start a new change at its foot');
+  assert.doesNotMatch(hub, /data-ws-start-change/, 'no start row at its foot');
   assert.match(hub, /\{owesVote\(v\.queue\)\s*\? <NeedsCard [^\n]*\n\s*: <NothingToVote queue=\{v\.queue\} onOpen=\{\(\) => openTab\('needs'\)\} \/>\}/,
     'Needs you only while a vote is owed; one quiet line in its place otherwise (#3408)');
   assert.match(hub, /<SinceSummaryCard slug=\{slug\} since=\{v\.since \? v\.since\.baseline : 0\} onMore=\{\(\) => openTab\('workshop'\)\} \/>/,

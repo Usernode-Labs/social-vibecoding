@@ -98,7 +98,7 @@ test('the Getting started buttons: default app, where Vote goes, and the Worksho
        ('ONBOARDING', 'Join a community', 'Find people to build with.', '500 pts'),
        ('ONBOARDING', 'Try an app', 'Open an app and try it.', '500 pts'),
        ('ONBOARDING', 'Vote on an app', 'Help decide what ships next.', '250 pts'),
-       ('ONBOARDING', 'Suggest an improvement', 'Tell a community what would make it better.', '250 pts')
+       ('ONBOARDING', 'Suggest an improvement', 'When you''re ready, tell a community what would make it better.', '250 pts')
      RETURNING id, goal`);
   const tplOf = (goal) => templates.find((r) => r.goal === goal).id;
   const { rows: challengeRows } = await pool.query(

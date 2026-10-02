@@ -214,12 +214,12 @@ test('_attrChipSpecs: omitUnset and the field ORDER', () => {
 test('the setting entry points move into ⋯, wording by set/unset', () => {
   const AppView = makeAppView();
   const unset = menuLabels(AppView, issueCardHtml(AppView, ISSUE()));
-  assert.ok(unset.includes('Set priority…'));
-  assert.ok(unset.includes('Set category…'));
-  assert.ok(unset.includes('Assign someone…'));
+  assert.ok(unset.includes('Decide how urgent it is…'));
+  assert.ok(unset.includes('Decide what kind of work it is…'));
+  assert.ok(unset.includes('Decide who takes it…'));
   const set = menuLabels(AppView, issueCardHtml(AppView, ISSUE(ATTRS)));
-  assert.ok(set.includes('Change priority…'));
-  assert.ok(set.includes('Change assignee…'));
+  assert.ok(set.includes('Decide how urgent it is…'));
+  assert.ok(set.includes('Decide who takes it…'));
 });
 
 test('read-only viewers get no attribute rows at all', () => {

@@ -3682,7 +3682,7 @@ const AppView = {
       if (e.target.closest('a, button, input, form')) return;
       const sessionChip = e.target.closest('[data-session-chip]');
       if (sessionChip) {
-        // Open card always reads the change; building is a separate action.
+        // The card pill always reads the change; building is a separate action.
         AppView.openTopic('proposal', parseInt(sessionChip.dataset.sessionChip, 10));
         return;
       }
@@ -4205,7 +4205,7 @@ const AppView = {
    * under it — for one item.
    *
    * Lifted out of `_renderTopicHead` so the Workshop can draw the same thing
-   * INSIDE a folded row it has unfolded (#1787 round four): "Open card" used
+   * INSIDE a folded row it has unfolded (#1787 round four): the card pill used
    * to leave the lander for a screen the reader then had to come back from,
    * and every part of that screen except the comment threads — which the
    * Workshop's sheet already carries — fits under the card in place.
@@ -5397,7 +5397,7 @@ const AppView = {
     else delete AppView._foldedCardActions[key];
   },
   // The kudos slot, folded off the band (useFoldedActions: not even its clap
-  // fit beside Open card, Preview and ⋯): the slot's current face as a ⋯ row
+  // fit beside the card pill, Preview and ⋯): the slot's current face as a ⋯ row
   // — "Thank <author> for putting this up", or "Give kudos" once it is the
   // count pill — acting through the slot's own button, which stays rendered
   // on the band's clipped row, so Kudos keeps every rule it has (give or
@@ -5459,7 +5459,7 @@ const AppView = {
     const rows = folded.length ? folded.map((a) => AppView._foldedMenuItem(a)).concat(list) : list;
     if (!own) return rows;
     return [{
-      label: 'Open card',
+      label: 'View details',
       icon: 'open',
       title: 'The card on its own page',
       act: () => { window.location.hash = own; },
@@ -12708,7 +12708,7 @@ const AppView = {
     if (served.includes('awaiting_approval')) return `${conflict} · fixed after the vote`;
     if (served.includes('budget')) return `${conflict} · resumes after the daily budget reset`;
     if (n || fresh.mergeability === 'conflict' || /conflict/.test(String((g.detail && g.detail.note) || ''))) {
-      return `${conflict} · queued to fix`;
+      return `${conflict} · the platform will fix it`;
     }
     // Not a conflict the columns can see (a recording from before direct
     // merges, say): the gate's own words, as a sentence.
@@ -15836,13 +15836,13 @@ const AppView = {
     }
     let title;
     if (field === 'priority') {
-      title = 'Vote on this card\'s priority';
+      title = 'The group votes on how urgent this card is';
     } else if (field === 'category') {
       title = (!s.top && AppView._placedCategoryFor(targetType, targetRef))
-        ? 'Placed automatically. Tap to vote for a different category'
-        : 'Vote on this card\'s category';
+        ? 'Placed automatically. Tap to vote for a different kind of work'
+        : 'The group votes on what kind of work this card is';
     } else {
-      title = s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task';
+      title = 'The group votes on who should take this';
     }
     return {
       t: 'attr', key: `attr:${field}`, field, targetType, targetRef,
@@ -15896,9 +15896,9 @@ const AppView = {
     if (AppView.readOnly || (opts && opts.readonly)) return [];
     const it = item || {};
     const labels = {
-      priority: ['Set priority…', 'Change priority…'],
-      category: ['Set category…', 'Change category…'],
-      assignee: ['Assign someone…', 'Change assignee…'],
+      priority: ['Decide how urgent it is…', 'Decide how urgent it is…'],
+      category: ['Decide what kind of work it is…', 'Decide what kind of work it is…'],
+      assignee: ['Decide who takes it…', 'Decide who takes it…'],
     };
     // No separate grouping row: the card's own CATEGORY chip is the
     // affordance now — tapping it opens this same popover — so a fourth row
@@ -15911,10 +15911,10 @@ const AppView = {
         // chip it produces are recognisably the same thing.
         icon: field,
         title: field === 'assignee'
-          ? 'Suggest or vote on who should take this'
+          ? 'The group votes on who should take this'
           : (field === 'category'
-            ? 'Vote on which category this card belongs to'
-            : `Vote on this card's ${field}`),
+            ? 'The group votes on what kind of work this card is'
+            : `The group votes on how urgent this card is`),
         act: () => AppView._openAttrMenuPopover(field, targetType, targetRef),
       };
     });

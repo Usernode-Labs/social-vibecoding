@@ -401,7 +401,7 @@ test('no slug, no link — the banner still renders the rest', () => {
 
   const html = bannersHtml({ sync: null, newChange: got, credits: null, creditsLow: null });
   assert.doesNotMatch(html, /dc-open-card-link/);
-  assert.match(html, /id="dc-new-change-btn"/, 'and Start a new change is still there');
+  assert.match(html, /id="dc-new-change-btn"/, "and the banner's start button is still there");
 });
 
 test('the link is an anchor to the hash route, not a button', () => {

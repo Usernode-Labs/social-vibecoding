@@ -1394,7 +1394,7 @@ test('#2573: the status tab offers to start an app with nothing open and nothing
   assert.match(html, /Start working on this app/, 'with the heading the request names');
   assert.match(html, /Nothing is open and nothing has shipped yet/, 'and one line saying why');
   assert.match(html, /data-ws-start-here-btn=""[^>]*>Start a new change</,
-    'and the action, labelled as the Homeroom menu labels it');
+    'and the action, as the banner labels it');
 
   // AT THE TOP OF THE HUB, ahead of the no-items note and the hub's own
   // cards. The note answers what the board HOLDS and points at the ⋯;
@@ -1404,7 +1404,7 @@ test('#2573: the status tab offers to start an app with nothing open and nothing
   assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'and the prompt leads, under the tabs');
   // The hub's own last line is the same action (#852), and stands down under
   // the banner that already leads with it.
-  assert.ok(!html.includes('data-ws-start-change'), 'one Start a new change, not two');
+  assert.ok(!html.includes('data-ws-start-change'), 'one start door, not two');
 });
 
 test('#2573: the prompt stands down for an app with open work, or with a history', () => {
@@ -1471,13 +1471,12 @@ test('#2573: the button is offered on the gate the Improve panel offers New chan
 
 // The entry point is BORROWED, not rebuilt: two copies of "navigate to the
 // app, then create a proposal" is the duplication this reuses away.
-test('#2573: the banner presses the same Start a new change the menu does', () => {
+test('#2573: the banner presses the same start door the menu does', () => {
   assert.match(WORKSHOP, /import \{ Improve \} from '\.\.\/\.\.\/improve\/improve-controller\.js'/);
   assert.match(WORKSHOP, /onClick=\{\(\) => Improve\.startSession\(\)\}/);
   // The other one was the Improve panel's row, then the mark menu's button;
-  // since the UI overhaul it is "Start a new change" under the menu's Agent
-  // sessions. Same method, which is the whole point of asserting both: two
-  // controls saying "start a new change" have to mean it.
+  // since the UI overhaul it is "Ask the Mayor for a change" under the menu's
+  // Agent sessions. Same method, which is the whole point of asserting both.
   assert.match(SHEET_TSX, /id="improve-row-new-session"[\s\S]*?onClick=\{\(\) => Improve\.startSession\(\)\}/,
     'which is the method the menu\'s row calls');
 });
@@ -1588,13 +1587,13 @@ test('the hub is ordered for a returning member: the tabs, then what is owed; th
   const html = workshopHtml(AppView);
   // THE HUB (#852): the tabs, then (after the hero and the summary card,
   // which wait on their own reads, none in this render) the votes you owe as
-  // one row, and your work when you have some. Start a new change is the
+  // one row, and your work when you have some. The start row is the
   // hero's ⋯ now (#852 review). The since list, your work in full and the
   // board are the Workshop page's.
   const order = ['data-ws-band', 'data-ws-hub-needs'].map((k) => html.indexOf(k));
   assert.ok(order.every((i) => i >= 0), `each is drawn: ${JSON.stringify(order)}`);
   assert.deepEqual(order.slice().sort((a, b) => a - b), order, 'the tabs, then what is owed');
-  assert.ok(!html.includes('data-ws-start-change'), 'no Start a new change at the foot');
+  assert.ok(!html.includes('data-ws-start-change'), 'no start row at the foot');
   assert.ok(!html.includes('data-ws-workshop-door'), 'no door to the Workshop: it opens from the summary card');
   assert.ok(!html.includes('data-ws-since=""') && !html.includes('data-ws-mine=""') && !html.includes('data-ws-dashboard'),
     'the since list, your work in full and the board are the Workshop page\'s');
@@ -1940,8 +1939,8 @@ test('the card\u2019s facts line keeps its chips instead of flattening them', ()
   assert.ok(!/dev-card-band-break|dev-card-status-end/.test(CSS));
 });
 
-test('Open card goes to the item\u2019s page, from the Workshop as from the Board', () => {
-  // This used to assert the opposite: "Open card" built the topic screen's
+test('View details goes to the item\u2019s page, from the Workshop as from the Board', () => {
+  // This used to assert the opposite: "View details" built the topic screen's
   // sections from `_workshopCardBody` and opened them in place, and the pill
   // only became the link on a second tap ("Open page \u203a", #1886). #1884
   // round two retires that. One word meant an in-place open on the Workshop
@@ -1961,7 +1960,7 @@ test('Open card goes to the item\u2019s page, from the Workshop as from the Boar
   const unfolded = FOLD.slice(FOLD.indexOf('export function UnfoldedRow'), FOLD.indexOf('export function voteSpecs'));
   assert.match(unfolded, /actionEnd=\{placement \? openBtn : undefined\}/, 'the band seat, on both surfaces');
   assert.match(unfolded, /detail: placement = 'actions',/, 'and it is the default, so the Workshop passes nothing');
-  assert.match(unfolded, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>Open card<\/a>/,
+  assert.match(unfolded, /const openBtn = placement && href\s*\? <a className="gc-vote-btn dev-ws-open-btn" href=\{href\} data-ws-open-card=\{row\.key\}>View details<\/a>/,
     'one anchor, one label');
   assert.ok(!/TopicBodySections|readAppView|useState/.test(unfolded),
     'nothing left that built or held an in-place body');
@@ -1975,7 +1974,7 @@ test('the open card collapses on a click at the card, not at what it opened', ()
   // two regions below the card are excluded alongside the controls.
   // `details` is the merge-requirements checklist (#2128): a disclosure the
   // reader taps open, not a place to fold from. (There were three regions
-  // until #1884 round two sent "Open card" to the item's page on both
+  // until #1884 round two sent "View details" to the item's page on both
   // surfaces; the ledger is on that page now, not under the card.)
   const view = FOLD.slice(FOLD.indexOf('function CardRowView'));
   for (const sel of ['a', 'button', 'input', 'textarea', 'select', 'form', 'details',
@@ -2182,7 +2181,7 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   // and since #1884 round two the pill IS that link on its first tap, here
   // as on the Board, rather than opening the sections in place and becoming
   // the link on a second.
-  assert.match(open, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="mine:my-session:51">Open card<\/a>/,
+  assert.match(open, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="mine:my-session:51">View details<\/a>/,
     'the open card carries the pill, and it is the page link');
   assert.ok(!open.includes('Open on its own page'), 'no page link under the sheet');
   assert.ok(!open.includes('Open page ›'), 'and no second step to reach one');
@@ -2218,13 +2217,13 @@ test('#1887: a card about your own session opens the CARD, with the session a li
   assert.ok(!/switchTab\('dev', parseInt\((?:sessionChip|el)\.dataset\.sessionChip, 10\), 'sessions'\)/.test(APP_VIEW_SRC),
     'no card hook navigates to the session any more');
 
-  // On the Board the open card's "Open card" is the change's page as well,
+  // On the Board the open card's pill is the change's page as well,
   // and there is no line under the card: that page carries the workspace.
   const board = makeAppView({ location: { search: '?cards=open', hash: '', href: 'http://localhost/?cards=open' } });
   seed(board);
   board._mySessions = [{ ...mine }];
   const bh = kanbanHtml(board);
-  assert.match(bh, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="my-session:51">Open card<\/a>/);
+  assert.match(bh, /<a class="gc-vote-btn dev-ws-open-btn" href="#app\/demo-app\/dev\/proposals\/51" data-ws-open-card="my-session:51">View details<\/a>/);
   assert.ok(!bh.includes('/dev/sessions/51'), 'the Board links the session from nowhere');
 
   // Declared: the deep link, on the Workshop, reaching the link. RETARGETED
@@ -2270,7 +2269,7 @@ test('#3081: an agent session\'s change card opens the AGENT SESSION, not its ol
   assert.match(open, /<div class="dev-ws-sheet-actions"><a href="#messages\/agent\/7301" class="dev-ws-link" data-ws-open-session="mine:my-session:52">Open session ›<\/a><\/div>/,
     'the link under the open card is the agent session');
   assert.ok(!open.includes('/dev/sessions/52'), 'and nothing on the card leads to the old dev chat');
-  assert.match(open, /href="#app\/demo-app\/dev\/proposals\/52" data-ws-open-card="mine:my-session:52">Open card<\/a>/,
+  assert.match(open, /href="#app\/demo-app\/dev\/proposals\/52" data-ws-open-card="mine:my-session:52">View details<\/a>/,
     'the change page is still the pill');
 
   const { sessionHref } = loadTsx('frontend/src/features/dev-board/card/fold.tsx');
@@ -2285,7 +2284,7 @@ test('#3081: an agent session\'s change card opens the AGENT SESSION, not its ol
   assert.equal(plainSession.attrs['data-session-agent'], undefined);
 });
 
-test('the band is Open card\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {
+test('the band is View details\u2019s one seat: the facts-line seat and its inline-actions path are gone', () => {
   // `statusLead` put a caller's control at the right end of the facts line
   // and moved the card's own pills up beside it. Nothing passed one once the
   // Workshop's open card took the band seat, and with the facts as a row of
@@ -2784,7 +2783,7 @@ test('the declared checks cover the lander, its strips and an unfolded row', () 
   assert.match(votes.path, /[?&]ws=needs/, 'and the URL names the tab');
   const unfolded = byName(/A Workshop row unfolds into the Activity sheet/);
   assert.ok(unfolded && /shot=feed-comments/.test(unfolded.path), 'the unfolded-row checks ride the capture deep link');
-  // NOT extended with a `:has()` for the Open card toggle, though it was
+  // NOT extended with a `:has()` for the View details pill, though it was
   // once. That selector resolves in this repo's own Chromium against the
   // component's real markup — verified — and failed 6 of 6 runs on the
   // proposal gate, where the plain chain around it had passed for two
@@ -3445,7 +3444,7 @@ test('an empty board still gets the All items pane, and the note names the ⋯ a
   assert.doesNotMatch(status, /Press <span[^>]*>⋯<\/span> on the hub/, 'so on the hub it does not say where');
 });
 
-test('bug g: the empty-board note says what the ⋯ holds, and sends "make one yourself" to Start a new change', () => {
+test('bug g: the empty-board note says what the ⋯ holds, and sends "make one yourself" to the menu\'s start row', () => {
   // The second half: "Press + to propose a change or file an issue". The "+"
   // has had no propose row since New change moved to Improve (#1490) and
   // then to the Homeroom menu's New change button — an owner decision
@@ -3465,8 +3464,8 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
     return AppView;
   };
   const NOTE = (tail) => new RegExp(`data-ws-empty=""[^>]*>Nothing on the board yet\\. Press <span[^>]*>⋯<\\/span>${tail}<\\/div>`);
-  // The menu's New change is "Start a new change" since the UI overhaul.
-  const START = '; to make one yourself, use Start a new change in the Homeroom menu\\.';
+  // The menu's New change is "Ask the Mayor for a change" since this change.
+  const START = '; to make one yourself, use Ask the Mayor for a change in the Homeroom menu\\.';
 
   // ALL ITEMS, where no banner offers New change: the whole sentence, and
   // where the ⋯ is, since it is the hub's.
@@ -3483,7 +3482,7 @@ test('bug g: the empty-board note says what the ⋯ holds, and sends "make one y
   // with its own New change, so the note stops at the "+" rather than sending
   // the reader to a menu for the button just above it.
   const status = workshopHtml(fresh, 'status');
-  assert.match(status, /data-ws-start-here-btn=""[^>]*>Start a new change</, 'the banner offers Start a new change');
+  assert.match(status, /data-ws-start-here-btn=""[^>]*>Start a new change</, 'the banner offers its start action');
   assert.match(status, NOTE(' to ask for a change\\.'), 'and the note under it names the ⋯ alone');
   assert.doesNotMatch(status, /propose a change/);
   // ...and "What you are working on", on the Workshop tab beside it, states
@@ -4533,7 +4532,7 @@ test('the sheets move, stop above the keyboard, and More opens the card page', (
   // sent the first row's click to the wrong descriptor on a desktop.
   assert.match(appView, /_cardMenuItems\(key, own\)/);
   assert.match(appView, /_cardMenuItems\(open\.key, open\.own\)/);
-  assert.match(appView, /label: 'Open card',/);
+  assert.match(appView, /label: 'View details',/);
 });
 
 test('the lander fills its scroller without a percentage in the floor', () => {
@@ -4997,7 +4996,7 @@ test('#2182: "What you are working on" stays on screen with nothing in it, and s
   // and the "+" has no propose row — starting a change is the Homeroom
   // menu's New change (an owner decision, #2740 review). It names that door
   // now, by the name the header gives the menu.
-  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item in All items, or use Start a new change in the Homeroom menu\.<\/p>/,
+  assert.match(html, /data-ws-lane="mine"><p class="[^"]*" data-ws-mine-empty="">You have no work going on\. Pick up an open item in All items, or use Ask the Mayor for a change in the Homeroom menu\.<\/p>/,
     'with the note in the lane');
   assert.doesNotMatch(html, /start something from the \+ button/, 'and not the door that cannot open');
   // A read-only viewer has neither door (no New change, no board writes), so
@@ -5072,7 +5071,7 @@ test('#1933: a card names the category it was placed in, and tapping it votes', 
   // The title says the placement is the MODEL'S and can be voted away — the
   // question the old flat badge left a reader with and could not answer.
   assert.match(issue.title, /Placed automatically/);
-  assert.match(issue.title, /vote for a different category/);
+  assert.match(issue.title, /vote for a different kind of work/);
 });
 
 test('#1933: under the "By category" pane the chip is dropped, because the heading already says it', () => {

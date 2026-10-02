@@ -293,7 +293,7 @@ test('issue card: the state-driven primary + the in-progress toggle; kudos / clo
   assert.ok(!menuHas(AppView, html, /^Generate proposal$/), 'AI building is in the Start work chooser');
   assert.ok(menuHas(AppView, html, /Pledge kudos/), 'Pledge kudos in ⋯');
   assert.ok(menuHas(AppView, html, /Propose to close/), 'Propose to close in ⋯');
-  assert.ok(menuHas(AppView, html, /Set priority/), 'Set priority… in ⋯');
+  assert.ok(menuHas(AppView, html, /Decide how urgent it is/), 'the priority row names its outcome in ⋯');
   // Promoted, so it is NOT also a menu row — one action, one place.
   assert.ok(!menuHas(AppView, html, /Claim this issue/),
     'the claim toggle is on the face, so not duplicated in ⋯');

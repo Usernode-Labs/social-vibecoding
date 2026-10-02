@@ -1,5 +1,5 @@
 /**
- * A project's four tabs: Hub · Discussion · Needs you · Workshop.
+ * A project's four tabs: Hub · Discussion · To vote · Workshop.
  *
  * All items is a page under the Workshop (its "See all"), with a way back,
  * so while it is up the Workshop tab stays lit.
@@ -20,7 +20,7 @@ export type ProjectTabKey = 'status' | 'discussion' | 'workshop' | 'needs' | 'al
 export const PROJECT_TABS: ReadonlyArray<{ key: ProjectTabKey; label: string }> = [
   { key: 'status', label: 'Hub' },
   { key: 'discussion', label: 'Discussion' },
-  { key: 'needs', label: 'Needs you' },
+  { key: 'needs', label: 'To vote' },
   { key: 'workshop', label: 'Workshop' },
 ];
 
@@ -31,13 +31,13 @@ export function litTab(tab: ProjectTabKey): ProjectTabKey {
 
 /**
  * The tabs. A tablist with roving focus: the arrows move between tabs, and
- * the selected one is the one Tab reaches. Needs you carries how many votes
+ * the selected one is the one Tab reaches. To vote carries how many votes
  * wait on you; the Workshop a dot while All items' search or filters are on
  * (#2915), which narrow that page alone.
  *
  * The label and its count or dot are one `.dev-ws-ctab-text`, so a cell
  * centres the WORD and the count hangs off its corner (app.css) rather than
- * pushing it aside: "Needs you" and its "86" are wider together than a
+ * pushing it aside: "To vote" and its "86" are wider together than a
  * phone's quarter. It keeps the old strip's box, `.dev-ws-tabs` around a
  * `.dev-ws-tabtrack`, for the hooks that measure it. Its colour is the root's
  * `--community-tint`, which the header sets (features/header/community-tint.ts).

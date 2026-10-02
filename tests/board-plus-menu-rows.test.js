@@ -51,7 +51,7 @@ test('every action row has a glyph, and every glyph is decoration', () => {
   // label pair, because tests/dev-plus-menu.test.js reads the two branches
   // separately to prove the self-hosted wording never leaks into the other.
   // "Make it private" (a public community's, on the hub) left the hero for
-  // this menu in the UI overhaul's follow-up, and "Start a new change" left
+  // this menu in the UI overhaul's follow-up, and the start row left
   // the foot of the hub for its top (#852 review).
   assert.equal(rows.length, 11,
     'new-change, issue, import-pr, make-private, app-settings, featured-illustration, members x2, rename, secrets, fork');

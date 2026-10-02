@@ -8,7 +8,7 @@
 // issue" any more. The row opens the same dialog (App.openFeedbackModal, with
 // the open app preselected), leads the first group, and is gated only on the
 // writeable board — not on canCollaborate, which is import's gate. New change
-// stayed Improve's alone until #852's review, which moved "Start a new change"
+// stayed Improve's alone until #852's review, which moved the start row
 // off the foot of the hub and into the hub's ⋯, leading it (the Homeroom
 // menu keeps its row): the same method, Improve.startSession, from both.
 const test = require('node:test');
@@ -226,11 +226,11 @@ for (const touch of [false, true]) {
   });
 }
 
-test('Ask for a change and Start a new change each exist once, and the read-only gate holds', () => {
+test('Ask for a change and Ask the Mayor for a change each exist once, and the read-only gate holds', () => {
   // ONE BUTTON AND ONE ROW (UI overhaul). The menu's well held two buttons,
   // Give feedback and New change, and people found both confusing. The
   // button is Ask for a change now (the same dialog), and New change is
-  // "Start a new change" under Agent sessions in the menu's list, because
+  // "Ask the Mayor for a change" under Agent sessions in the menu's list, because
   // what it opens is an agent session.
   //
   // WHAT THIS FILE IS ABOUT is unchanged: each action exists ONCE and calls
@@ -244,7 +244,7 @@ test('Ask for a change and Start a new change each exist once, and the read-only
   assert.ok(!MENU.includes('giveFeedback'),
     'the menu does not keep a second caller of the same method');
   assert.equal(MENU.split('id="improve-row-new-session"').length - 1, 1);
-  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,240}label="Start a new change"/);
+  assert.match(MENU, /id="improve-row-new-session"[\s\S]{0,160}onClick=\{\(\) => Improve\.startSession\(\)\}[\s\S]{0,240}label="Ask the Mayor for a change"/);
   // A read-only viewer may not start a change, as the button's gate was.
   assert.match(MENU, /\{readOnly \? null : \(\s*<button\s+id="improve-row-new-session"/);
   // #852 review: the hub's ⋯ leads with it too, calling the same method, and

@@ -213,7 +213,7 @@ test('the first run: join screen and Getting started, against the full schema', 
        ('ONBOARDING', 'Join a community', 'Find people to build with.', '500 pts', NULL),
        ('ONBOARDING', 'Try an app', 'Open an app and try it.', '500 pts', NULL),
        ('ONBOARDING', 'Vote on a change', 'Help decide what ships next.', '250', '#communities'),
-       ('ONBOARDING', 'Suggest an improvement', 'Tell a community what would make it better.', '250 pts', NULL),
+       ('ONBOARDING', 'Suggest an improvement', 'When you''re ready, tell a community what would make it better.', '250 pts', NULL),
        ('PERSISTENT', 'Make your first proposal', 'Propose a change.', '1,000 pts', NULL),
        ('WEEKLY', 'Test three apps this week', 'Leave a note on each.', '600 pts', NULL)
      RETURNING id, goal`);
@@ -245,9 +245,9 @@ test('the first run: join screen and Getting started, against the full schema', 
     assert.equal(card.show, true);
     assert.deepEqual(card.steps.map((s) => s.kind), ['tour', 'challenge', 'challenge', 'challenge', 'challenge']);
     assert.deepEqual(card.steps.map((s) => s.title),
-      ['Take the 1-minute tour', 'Join a community', 'Try an app', 'Vote on a change', 'Suggest an improvement']);
-    assert.deepEqual(card.steps.map((s) => s.detail), ['See how Homeroom works.', 'Find people to build with.',
-      'Open an app and try it.', 'Help decide what ships next.', 'Tell a community what would make it better.']);
+      ['See how Homeroom works', 'Join a community', 'Try an app', 'Vote on a change', 'Suggest an improvement']);
+    assert.deepEqual(card.steps.map((s) => s.detail), ['A short tour of the app, started when you press Start.', 'Find people to build with.',
+      'Open an app and try it.', 'Help decide what ships next.', "When you're ready, tell a community what would make it better."]);
     assert.deepEqual(card.steps.map((s) => s.reward), [null, '500 pts', '500 pts', '250', '250 pts'],
       'the admin\'s words, as written');
     assert.equal(card.steps[1].challenge_id, challengeOf('Join a community'));

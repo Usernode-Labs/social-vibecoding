@@ -132,7 +132,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // why the copy says "here" rather than repeating a label.
     id: 'communities',
     title: 'Communities',
-    body: 'Homeroom is made of communities that build projects together. Anyone in one can propose a change, and the group votes it in. A community is Just you, a Private community or a Public community. Yours are here.',
+    body: 'Communities build projects together, by proposing changes and voting them in. Yours are here.',
     targets: ['#platform-tab-workshop'],
   },
   {
@@ -141,7 +141,7 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // for a section that has not rendered its box yet.
     id: 'apps',
     title: 'Shortcuts',
-    body: 'The apps you keep close. A small mark says where each one lives: people for a private community, a lock for one that is just yours. The last tile starts a new project.',
+    body: 'The apps you keep close. A small mark says where each one lives.',
     targets: ['#home-apps-section', '#app-list'],
   },
   {
@@ -166,10 +166,10 @@ export const TOUR_STEPS: readonly TourStep[] = [
     // (`#improve-quick-actions`, ../../improve/actions.tsx). It was Give
     // feedback and New change side by side, and people found both
     // confusing; the step says what the button does and where making the
-    // change yourself went (Start a new change, under Agent sessions).
+    // change yourself went (Ask the Mayor for a change, under Agent sessions).
     id: 'menu-actions',
     title: 'Ask for a change',
-    body: 'Post a request the members can see, vote on and pick up. To make a change yourself, use Start a new change under Agent sessions.',
+    body: 'Post a request the members can see, vote on and pick up. To make a change yourself, use Ask the Mayor for a change under Agent sessions.',
     targets: ['#improve-quick-actions', '#improve-row-feedback'],
     needsPanel: true,
   },

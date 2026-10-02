@@ -15,7 +15,7 @@
  * representation of the card, so opening it swaps it for the card whole
  * rather than growing a hybrid with the row as a head and the card
  * de-chromed under it (#1799 did that; it read as a third object belonging
- * to neither size). The open card carries an "Open card" pill at the end of
+ * to neither size). The open card carries a "View details" pill at the end of
  * its action band, and that pill is the item's full-screen route — the same
  * link, with the same label, on both surfaces (#1884 round two). It used to
  * open the topic screen's sections in place on the Workshop and relabel to
@@ -64,7 +64,7 @@ import type { ActionSpec, BadgeSpec, DevCardModel, ListRow } from './model';
 export type CardRow = Extract<ListRow, { t: 'card' }>;
 
 /**
- * Where the open card's "Open card" pill sits. `'actions'`: at the end of
+ * Where the open card's "View details" pill sits. `'actions'`: at the end of
  * the action band, the card's own actions staying where they are — both
  * surfaces today. `false`: no pill at all.
  */
@@ -319,14 +319,14 @@ export function UnfoldedRow({
    * Whether the sheet draws #1887's "Open session ›" line under it. The
    * Workshop does; the Board's columns do not, and have no rule to style it
    * with — the one surface difference left in this component, and all that
-   * remained of the retired `expand` mode once "Open card" stopped
+   * remained of the retired `expand` mode once "View details" stopped
    * branching on which screen it was drawn from.
    */
   sessionLink?: boolean;
   /** Folds the card back to its row: what the fold mark at the card's top right does. */
   onFold?: () => void;
 }): ReactNode {
-  // ── "Open card" goes to the item's own page, on both surfaces ───────
+  // ── "View details" goes to the item's own page, on both surfaces ─────
   //
   // It used to do two different things under one word. On the Board it was a
   // link out. On the Workshop it opened a THIRD size in place — the card,
@@ -357,7 +357,7 @@ export function UnfoldedRow({
   // used to seat it on the facts line (`statusLead`), which moved the card's
   // primary actions up beside it — right on a sheet 760px wide, but in a
   // kanban column of ~300px that ran "Create proposal · Claim this issue ·
-  // Open card · Preview" past the band's clip and defeated the fold the
+  // View details · Preview" past the band's clip and defeated the fold the
   // Board's card does by measuring its band. The band seat works at both
   // widths: the pills stay where the column has always drawn them and the
   // band's own measurement folds them into the menu around the toggle. So
@@ -365,7 +365,7 @@ export function UnfoldedRow({
   // point of the fold.
   //
   // The one thing the fold cannot do: the item's own page, for a link
-  // somebody wants to share. "Open card" IS that link, on both surfaces —
+  // somebody wants to share. "View details" IS that link, on both surfaces —
   // one anchor, one destination, and a real one, so it middle-clicks and
   // copies like any other. It used to be a second line under the sheet on
   // the Workshop ("Open on its own page ›") beside a pill that also said
@@ -383,7 +383,7 @@ export function UnfoldedRow({
   // here, and the button that folds the card.
   const card: DevCardModel = { ...row.card, rail: { ...row.card.rail, chevron: false } };
   const openBtn = placement && href
-    ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>Open card</a>
+    ? <a className="gc-vote-btn dev-ws-open-btn" href={href} data-ws-open-card={row.key}>View details</a>
     : undefined;
   return (
     <div className="dev-feed-entry dev-ws-sheet" data-ws-sheet={row.key}>
@@ -428,7 +428,7 @@ export function CardRowView({
   row, slug, canPost, open, onToggle, detail, sessionLink,
 }: {
   row: CardRow; slug: string; canPost: boolean; open: boolean; onToggle: () => void;
-  /** Where "Open card" sits on the open card: the action band, on both surfaces. */
+  /** Where "View details" sits on the open card: the action band, on both surfaces. */
   detail?: DetailPlacement;
   /** Whether the sheet draws #1887's session link under it (the Workshop does). */
   sessionLink?: boolean;

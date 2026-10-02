@@ -198,7 +198,7 @@ test('the owner gets the identical sanitised payload, flagged is_owner', async (
     const { res, body } = await get(server, '/api/sessions/5/transcript');
     assert.strictEqual(res.status, 200);
     assert.strictEqual(body.session.is_owner, true);
-    // Forking your own chat is meaningless — "Start a new change" is that.
+    // Forking your own chat is meaningless — the menu's start row is that.
     assert.strictEqual(body.session.can_fork, false);
     // Same sanitiser: the owner's preview shows what OTHERS see, so there
     // is no second, laxer rendering path to keep in sync.

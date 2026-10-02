@@ -152,13 +152,13 @@ const EMPTY_SINCE: NonNullable<DevWorkshopView['since']> = {
 /**
  * THE PAGES OF A PROJECT: four tabs under its coloured header, and one page.
  *
- *   Hub · Discussion · Needs you · Workshop
+ *   Hub · Discussion · To vote · Workshop
  *
  * The HUB is the community's page: who is here and who it is for, what you
  * can do (Open app, Invite, the ⋯, Joined), how lively it has been, what
- * landed since you were last here, Needs you, the discussion's last two
- * messages, your work, and Start a new change. DISCUSSION is its channel,
- * whole. NEEDS YOU is one decision per screen. The WORKSHOP is your work in
+ * landed since you were last here, To vote, the discussion's last two
+ * messages, your work, and the start row. DISCUSSION is its channel,
+ * whole. TO VOTE is one decision per screen. The WORKSHOP is your work in
  * full, what moved since your last visit filed under each week, and All
  * items' numbers, whose See all opens ALL ITEMS: the whole board, with the
  * approval rule every change goes through above its categories. All items is
@@ -499,7 +499,7 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  * stopped being true: the "+" was only in All items' search row, so on
  * Current status it pointed at nothing on screen, and it has had no propose
  * row since New change moved to Improve (#1490) and then to the Homeroom
- * menu (#2740 review), where it is "Start a new change" under Agent sessions
+ * menu (#2740 review), where it is "Ask the Mayor for a change" under Agent sessions
  * since the UI overhaul — an owner decision this note does not undo. The "+"
  * became the hero's ⋯, on the hub, so the note names what it holds (and, on
  * All items, where it is), and sends "make one yourself" to the row that
@@ -508,14 +508,14 @@ function digestNote(meta: DevWorkshopView['meta'], written: boolean): string {
  *
  * Gated on the same facts as what it names: "import a PR" only where the ⋯
  * carries that row (`canCollaborate`), and nothing to press at all for a
- * read-only viewer, whose ⋯ holds Fork alone and whose menu has no Start a
- * new change (both from `AppView.readOnly`, the flag that row and the ⋯'s
+ * read-only viewer, whose ⋯ holds Fork alone and whose menu has no start
+ * row (both from `AppView.readOnly`, the flag that row and the ⋯'s
  * writable rows are each gated on).
  *
  * UNDER THE START-HERE BANNER it stops at the ⋯. On the hub an empty
  * board is nearly always an app nobody has started, and #2573's banner right
- * above the note carries its own Start a new change button — so sending the reader
- * to the Homeroom menu for the same button would be the note talking past
+ * above the note carries its own start button — so sending the reader
+ * to the Homeroom menu for the same action would be the note talking past
  * the screen it is on. All items has no banner, so there it says the whole
  * thing.
  */
@@ -529,7 +529,7 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
   const { readOnly, canCollaborate } = useDevActions();
   const where = onHub ? '' : ' on the hub';
   const adds = canCollaborate ? ' to ask for a change or import a PR' : ' to ask for a change';
-  const start = underStartHere ? '.' : '; to make one yourself, use Start a new change in the Homeroom menu.';
+  const start = underStartHere ? '.' : '; to make one yourself, use Ask the Mayor for a change in the Homeroom menu.';
   return (
     <div className="text-xs text-zinc-500 dark:text-zinc-400 mb-2" data-ws-empty="">
       {filtered ? (
@@ -570,10 +570,10 @@ function EmptyNote({ filtered, loadFailed, underStartHere = false, onHub = false
  * The search and filters narrow All items alone now (#2915) and the count is
  * the whole app's, so the two conditions above are the whole claim.
  *
- * ── Why the button is not a second "Start a new change" ─────────────────
+ * ── Why the button is not a second start row ─────────────────
  *
- * It is `Improve.startSession()`, the one the Homeroom menu's Start a new
- * change row calls (it was the Improve panel's New change) — imported, not re-implemented, so the navigate-then-create
+ * It is `Improve.startSession()`, the one the Homeroom menu's start row
+ * calls (it was the Improve panel's New change) — imported, not re-implemented, so the navigate-then-create
  * sequence that entry point owns (features/improve/improve-controller.js)
  * can never drift from this copy of it. The gate is the same store field the
  * panel gates that row on, for the same reason: a viewer who may not start a
@@ -2662,7 +2662,7 @@ export function NeedsFeed({ rows, total, models, slug, canPost, onDone, doneLabe
     el,
   ), []);
   const menuKey = row ? row.card.rail.menuKey : undefined;
-  // The card's own page, offered under More as "Open card": here the item IS
+  // The card's own page, offered under More as "View details": here the item IS
   // the screen, so there is no card face to tap for it (app-view.js's
   // _toggleCardMenu reads it off the trigger).
   const cardHref = row ? openHref(rowSlug(row, slug), row.card) : null;
@@ -3878,7 +3878,7 @@ export function DevWorkshop(): ReactNode {
           #3408); the discussion's last two messages and its tab, or, for a
           project that is just yours and has nobody to talk to yet, the Share
           it card, which is how it grows; your own work, two rows and the
-          rest in place; and Start a new change. See ./since-summary-card.tsx
+          rest in place; and the start row. See ./since-summary-card.tsx
           and ./hub-cards.tsx. */}
       {slug ? (
         <SinceSummaryCard slug={slug} since={v.since ? v.since.baseline : 0} onMore={() => openTab('workshop')} />
@@ -3901,7 +3901,7 @@ export function DevWorkshop(): ReactNode {
           onAll={() => setWorkAll(!workAll)}
         />
       ) : null}
-      {/* Start a new change was the hub's last line; it is the hero's ⋯
+      {/* The start row was the hub's last line; it is the hero's ⋯
           now (../actions-row.tsx), as well as the Homeroom menu's. */}
       </>
       ) : null}
@@ -3953,13 +3953,13 @@ export function DevWorkshop(): ReactNode {
                 the line sent a viewer to a menu that could not do what it
                 promised. A read-only viewer has neither door, so is told
                 the fact and nothing to press — and so is a viewer under the
-                start-here banner, whose Start a new change is at the top of this
+                start-here banner, whose start button is at the top of this
                 very tab and whose board has no open item to pick up. */}
             {!v.mine.rows.length ? (
               <p className="text-xs text-zinc-500 dark:text-zinc-400" data-ws-mine-empty="">
                 {actions.readOnly || startHere
                   ? 'You have no work going on.'
-                  : 'You have no work going on. Pick up an open item in All items, or use Start a new change in the Homeroom menu.'}
+                  : 'You have no work going on. Pick up an open item in All items, or use Ask the Mayor for a change in the Homeroom menu.'}
               </p>
             ) : null}
             {/* THE FIRST THREE on the Workshop tab (#852 review), and the

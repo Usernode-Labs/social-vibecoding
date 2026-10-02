@@ -94,8 +94,8 @@ test('unassigned task: renders the placeholder avatar + "Unassigned", still a bu
   assert.match(html, /^<button/);
   assert.match(html, /attr-avatar-empty/);
   assert.match(html, /Unassigned/);
-  // The empty-state tooltip is the assign CTA.
-  assert.match(html, /Assign someone to this task/);
+  // The empty-state tooltip says who decides.
+  assert.match(html, /The group votes on who should take this/);
 });
 
 test('readonly (merged) assignee: renders a <span>, not a button, but keeps the avatar', () => {
