@@ -8,15 +8,22 @@ import { AdminUI } from './admin-console.js';
 // #3654. Rendered by admin-homeroom-bot.tsx under its Benchmark tab, so it
 // lives in that section's host and needs no host of its own.
 //
-// Four cards, top to bottom, in the order the work goes:
+// Five cards, top to bottom, in the order the work goes:
 //
+//   Core v1  the default suite, made from its checked-in definition
+//            (services/bench/core.js): how it was materialized (ready and
+//            skipped per stage, and why each skip), how many of its tasks
+//            are labelled, and Freeze once every one is. Freezing is never
+//            automatic.
 //   Suites   the versioned task sets (frozen core, rotating set), how full
 //            each is against the first version's targets, freeze / new
 //            version, the tasks of the one selected, the stratified
 //            sampler, and importing a merged pull request as a build task.
 //   Run      the launcher: suite, models (with what the catalog says of
 //            each: context window, price, the stages it is entered for),
-//            stages, repeats, the dollar cap ($50 unless changed).
+//            stages, repeats, the dollar cap ($50 unless changed). It starts
+//            on Core v1 with every candidate model, three repeats for triage
+//            and one for the rest (lane.launcherDefaults).
 //   Runs     progress, spend against the cap, cancel.
 //   Results  per stage and model: accuracy, pass^k, cost per attempt and per
 //            success, p50/p95 time, timeouts and platform faults apart,
@@ -68,6 +75,24 @@ interface Report {
   rows: Row[]; paired: Paired[]; pareto: Point[];
   slice: { key: string; keys: string[]; groups: { stage: Stage; model: string; value: string; n: number; accuracy: number | null }[] };
   agreement: { n: number; agreement: number | null; tpr: number | null; tnr: number | null };
+}
+interface CoreStatus {
+  definition: { key: string; name: string; version: number; expected: Record<string, number>; valid: boolean };
+  materialization: {
+    status: 'running' | 'done' | 'failed';
+    summary: {
+      ready?: number; error?: string;
+      stages?: Record<string, { ready: number; skipped: number }>;
+      skipped?: { ref: string; stage: string | null; app: string | null; reason: string; transient?: boolean }[];
+    };
+    finishedAt: string | null;
+  } | null;
+  suite: { id: number; name: string; version: number; frozen_at: string | null; total: number; labelled: number } | null;
+  running: boolean;
+  githubEnabled?: boolean;
+}
+interface LauncherDefaults {
+  suiteId: number | null; models: string[]; stages: string[]; repeats: number; repeatStages: string[]; capUsd: number;
 }
 interface Review {
   trialId: number;
@@ -159,8 +184,83 @@ export function ParetoChart({ points, models }: { points: Point[]; models: Model
   );
 }
 
-function SuitesCard({ canWrite, suites, onChanged, say }: {
-  canWrite: boolean; suites: Suite[]; onChanged: () => void; say: (text: string, tone?: Tone) => void;
+const REPEATED: Stage[] = ['triage', 'dm', 'followup', 'checks_fix'];
+
+/**
+ * Core v1, the default suite: whether it is made yet, what was skipped and
+ * why, how far labelling has got, and Freeze once every task has its
+ * reference. Pure over its props; the area loads the status.
+ */
+export function CorePanel({ status, canWrite, onMaterialize, onFreeze }: {
+  status: CoreStatus | null; canWrite: boolean; onMaterialize: () => void; onFreeze: (suiteId: number) => void;
+}) {
+  const name = status ? `${status.definition.name} v${status.definition.version}` : 'Core v1';
+  const m = status?.materialization || null;
+  const suite = status?.suite || null;
+  const running = !!status && (status.running || m?.status === 'running');
+  const skipped = m?.summary?.skipped || [];
+  const stages = m?.summary?.stages || {};
+  const allLabelled = !!suite && suite.total > 0 && suite.labelled === suite.total;
+  let state: string;
+  if (!status) state = 'Loading…';
+  else if (running) state = 'Being made now: each request is read as it stood when the bot read it, one at a time.';
+  else if (!m) state = status.githubEnabled === false
+    ? 'Not made: GitHub is not configured here, so its requests cannot be read.'
+    : 'Not made yet. It is made from its checked-in definition a little after the platform starts.';
+  else if (m.status === 'failed') state = `The last attempt failed: ${m.summary?.error || 'unknown error'}.`;
+  else state = `${m.summary?.ready ?? suite?.total ?? 0} tasks ready, ${skipped.length} skipped.`;
+  return (
+    <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bench-core">
+      <div className={AdminUI.cardHeader}>
+        <h3 className={AdminUI.cardTitle}>{name}</h3>
+        <span className={AdminUI.cardDescription}>The default suite: pick it and run</span>
+      </div>
+      <p className={AdminUI.muted}>
+        Real requests stratified across the bot&apos;s verdicts and apps, four adversarial ones, builds from merged pull
+        requests, the bot&apos;s red proposals and DM conversations. The bot&apos;s own verdict is never the reference.
+      </p>
+      <p className="mt-2 text-sm" id="admin-homeroom-bench-core-state">{state}</p>
+      {m?.status === 'done' && Object.keys(stages).length ? (
+        <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bench-core-stages">
+          {Object.entries(stages).map(([st, c]) => `${STAGE_LABEL[st as Stage] || st} ${c.ready} ready${c.skipped ? `, ${c.skipped} skipped` : ''}`).join(' · ')}
+        </p>
+      ) : null}
+      {skipped.length ? (
+        <details className="mt-2" id="admin-homeroom-bench-core-skipped">
+          <summary className={`${AdminUI.muted} cursor-pointer`}>{`Why ${skipped.length === 1 ? 'one task was' : `${skipped.length} tasks were`} skipped`}</summary>
+          <ul className="mt-1 space-y-1 text-sm">
+            {skipped.map((x) => (
+              <li key={x.ref} data-core-skipped={x.ref}>{`${x.ref}: ${x.reason}${x.transient ? ' (may work on a retry)' : ''}`}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      {suite ? (
+        <p className="mt-2 text-sm" id="admin-homeroom-bench-core-labelled">
+          {`${suite.labelled} of ${suite.total} labelled.`}
+          {suite.frozen_at ? ' Frozen: results on it compare.'
+            : allLabelled ? ' Every task has its reference; freeze it to start comparing results.'
+              : ' To label the rest, ask an admin\'s Claude session with the Homeroom connector to label the Core v1 tasks (list_bench_grading_queue, kind label).'}
+        </p>
+      ) : null}
+      {canWrite ? (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {suite && !suite.frozen_at && allLabelled ? (
+            <button type="button" className={AdminUI.btn.primarySm} id="admin-homeroom-bench-core-freeze" onClick={() => onFreeze(suite.id)}>{`Freeze ${name}`}</button>
+          ) : null}
+          {status && status.githubEnabled !== false && !running && !suite?.frozen_at && (!m || m.status === 'failed' || skipped.length) ? (
+            <button type="button" className={AdminUI.btn.outlineSm} id="admin-homeroom-bench-core-materialize" onClick={onMaterialize}>
+              {m?.status === 'done' ? 'Try the skipped tasks again' : `Materialize ${name} now`}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function SuitesCard({ canWrite, suites, coreSuiteId, onChanged, say }: {
+  canWrite: boolean; suites: Suite[]; coreSuiteId: number | null; onChanged: () => void; say: (text: string, tone?: Tone) => void;
 }) {
   const [selected, setSelected] = useState<number | null>(null);
   const [tasks, setTasks] = useState<Task[] | null>(null);
@@ -221,7 +321,7 @@ function SuitesCard({ canWrite, suites, onChanged, say }: {
                   {s.frozen_at ? <span className={AdminUI.badge.outline}>Frozen</span> : <span className={AdminUI.badge.secondary}>Open</span>}
                   {canWrite ? (
                     <span className="ml-2 inline-flex gap-1">
-                      {!s.frozen_at ? (
+                      {!s.frozen_at && !(s.id === coreSuiteId && s.labelled < s.total) ? (
                         <button type="button" className={AdminUI.btn.outlineSm}
                           onClick={() => act(() => send(`${BASE}/suites/${s.id}/freeze`, 'POST', {}), `${s.name} v${s.version} is frozen.`)}>Freeze</button>
                       ) : null}
@@ -279,7 +379,7 @@ function SuitesCard({ canWrite, suites, onChanged, say }: {
                       <td className={AdminUI.td}>{`${t.app_slug || 'an app no longer here'} #${t.issue_number ?? ''}`}{t.snapshot_source === 'import' ? <span className={`${AdminUI.badge.outline} ml-1`}>from a PR</span> : null}</td>
                       <td className={`${AdminUI.td} text-sm`}>{['verdict', 'repo_size', 'request_type', 'difficulty'].map((k) => t.tags?.[k]).filter(Boolean).join(' · ')}</td>
                       <td className={`${AdminUI.td} text-sm`}>
-                        {t.reference_source ? `${String(t.reference?.verdict || t.reference?.action || (t.reference?.reference_pr ? `PR #${t.reference.reference_pr}` : 'set'))} (by ${t.reference_source === 'opus' ? 'the judge' : t.reference_source === 'merged_pr' ? 'a merged PR' : 'a person'})` : 'Waiting for its label'}
+                        {t.reference_source ? `${String(t.reference?.verdict || t.reference?.action || (t.reference?.reference_pr ? `PR #${t.reference.reference_pr}` : 'set'))} (by ${t.reference_source === 'opus' ? 'the judge' : t.reference_source === 'merged_pr' ? 'a merged PR' : t.reference_source === 'authored' ? 'the suite\'s author' : 'a person'})` : 'Waiting for its label'}
                         {canWrite && !suite.frozen_at ? (
                           <button type="button" className={`${AdminUI.btn.ghost} ml-2 text-xs`}
                             onClick={() => act(() => send(`${BASE}/tasks/${t.id}`, 'DELETE'), 'Task removed.')}>remove</button>
@@ -366,16 +466,20 @@ function SuitesCard({ canWrite, suites, onChanged, say }: {
   );
 }
 
-function Launcher({ suites, models, defaults, hiddenChecks, onLaunched, say }: {
+export function Launcher({ suites, models, defaults, launcher, hiddenChecks, onLaunched, say }: {
   suites: Suite[]; models: Model[]; defaults: { capUsd: number; repeats: number; maxConcurrency: number };
-  hiddenChecks: string; onLaunched: () => void; say: (text: string, tone?: Tone) => void;
+  launcher: LauncherDefaults | null; hiddenChecks: string; onLaunched: () => void; say: (text: string, tone?: Tone) => void;
 }) {
-  const [suiteId, setSuiteId] = useState('');
-  const [chosen, setChosen] = useState<Record<string, boolean>>({});
+  // Starts on Core v1, every candidate model, its stages, three repeats for
+  // triage and one for the rest, the $50 cap (lane.launcherDefaults).
+  const [suiteId, setSuiteId] = useState(launcher?.suiteId ? String(launcher.suiteId) : '');
+  const [chosen, setChosen] = useState<Record<string, boolean>>(() => Object.fromEntries((launcher?.models || []).map((id) => [id, true])));
   const [extra, setExtra] = useState('');
-  const [stages, setStages] = useState<Record<string, boolean>>({ triage: true });
-  const [repeats, setRepeats] = useState(String(defaults.repeats));
-  const [cap, setCap] = useState(String(defaults.capUsd));
+  const [stages, setStages] = useState<Record<string, boolean>>(() => (launcher?.stages?.length
+    ? Object.fromEntries(launcher.stages.map((st) => [st, true])) : { triage: true }));
+  const [repeats, setRepeats] = useState(String(launcher?.repeats ?? defaults.repeats));
+  const [repeatAll, setRepeatAll] = useState(false);
+  const [cap, setCap] = useState(String(launcher?.capUsd ?? defaults.capUsd));
   const [concurrency, setConcurrency] = useState('1');
   useEffect(() => {
     if (!suiteId && suites.length) setSuiteId(String((suites.find((s) => s.frozen_at) || suites[0]).id));
@@ -387,6 +491,7 @@ function Launcher({ suites, models, defaults, hiddenChecks, onLaunched, say }: {
       const data = await send(`${BASE}/runs`, 'POST', {
         suiteId: Number(suiteId), models: ids, stages: Object.keys(stages).filter((k) => stages[k]),
         repeats: Number(repeats), capUsd: Number(cap), concurrency: Number(concurrency),
+        repeatStages: repeatAll ? REPEATED : (launcher?.repeatStages || ['triage']),
       });
       say(`Run ${data.run.id} launched: ${data.trials} trials (${data.notApplicable} not applicable), estimated $${data.estimateUsd} against a $${Number(data.run.cap_usd).toFixed(2)} cap.${data.suiteFrozen ? '' : ' The suite is not frozen, so these results describe a set that can still change.'}`);
       onLaunched();
@@ -432,8 +537,12 @@ function Launcher({ suites, models, defaults, hiddenChecks, onLaunched, say }: {
               </select>
             </div>
           </div>
+          <label className="flex items-center gap-1.5 text-sm mt-2">
+            <input type="checkbox" id="admin-homeroom-bench-launch-repeat-all" checked={repeatAll} onChange={(e) => setRepeatAll(e.target.checked)} />
+            <span>Repeat DM and follow-ups too</span>
+          </label>
           <p className={`${AdminUI.muted} mt-2`}>
-            Repeats apply to triage, DM and follow-ups (pass^k is read from them); builds and specs run once per model.
+            Repeats apply to triage (pass^k is read from them), and to DM and follow-ups when ticked; everything else runs once per model.
             Scheduling stops before a trial that would cross the cap, and the rest are skipped. The bench waits while the bot is using every build slot.
           </p>
           <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bench-hidden-checks">{`Build trials: ${hiddenChecks}.`}</p>
@@ -662,6 +771,8 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
   const [models, setModels] = useState<Model[]>([]);
   const [defaults, setDefaults] = useState({ capUsd: 50, repeats: 3, maxConcurrency: 2 });
   const [hiddenChecks, setHiddenChecks] = useState('');
+  const [launcher, setLauncher] = useState<LauncherDefaults | null>(null);
+  const [core, setCore] = useState<CoreStatus | null>(null);
   const [selectedRun, setSelectedRun] = useState<number | null>(null);
   const [status, setStatus] = useState<{ text: string; tone: Tone } | null>(null);
   const alive = useRef(true);
@@ -676,18 +787,42 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
       setRuns(r.runs || []);
       setDefaults(r.defaults || defaults);
       setHiddenChecks(r.hiddenChecks || '');
+      setLauncher(r.launcher || null);
       setModels(m.models || []);
       setSelectedRun((cur) => cur ?? (r.runs?.[0]?.id ?? null));
     } catch (err: any) { say(`Could not read the benchmark: ${err.message}`, 'err'); }
   }, [say]);
-  useEffect(() => { load(); }, [load]);
-  // A run in progress moves; a slow poll keeps its row honest.
+  const loadCore = useCallback(async () => {
+    try {
+      const data = await send(`${BASE}/core`, 'GET');
+      if (alive.current) setCore(data);
+    } catch (err: any) { say(`Could not read Core: ${err.message}`, 'err'); }
+  }, [say]);
+  useEffect(() => { load(); loadCore(); }, [load, loadCore]);
+  const coreRunning = !!core && (core.running || core.materialization?.status === 'running');
+  // A run in progress moves, and so does Core while it is being made; a
+  // slow poll keeps their rows honest.
   useEffect(() => {
     const handle = window.setInterval(() => {
       if ((runs || []).some((r) => r.status === 'queued' || r.status === 'running')) load();
+      if (coreRunning) { loadCore(); load(); }
     }, 20_000);
     return () => window.clearInterval(handle);
-  }, [runs, load]);
+  }, [runs, load, loadCore, coreRunning]);
+  const materializeCore = async () => {
+    try {
+      await send(`${BASE}/core/materialize`, 'POST', {});
+      say('Core is being made in the background; this card updates as it goes.');
+      loadCore();
+    } catch (err: any) { say(err.message, 'err'); }
+  };
+  const freezeCore = async (suiteId: number) => {
+    try {
+      await send(`${BASE}/suites/${suiteId}/freeze`, 'POST', {});
+      say('Core is frozen: results on it can be compared from now on.');
+      loadCore(); load();
+    } catch (err: any) { say(err.message, 'err'); }
+  };
 
   return (
     <div className="space-y-4" id="admin-homeroom-bench">
@@ -704,9 +839,11 @@ export function BenchmarkArea({ canWrite }: { canWrite: boolean }) {
         {status ? <p className={`mt-2 text-sm ${status.tone === 'err' ? 'text-red-600 dark:text-red-400' : 'text-emerald-700 dark:text-emerald-400'}`} role="status">{status.text}</p> : null}
       </div>
 
-      <SuitesCard canWrite={canWrite} suites={suites} onChanged={load} say={say} />
+      <CorePanel status={core} canWrite={canWrite} onMaterialize={materializeCore} onFreeze={freezeCore} />
+      <SuitesCard canWrite={canWrite} suites={suites} coreSuiteId={core?.suite?.id ?? null} onChanged={() => { load(); loadCore(); }} say={say} />
       {canWrite && suites.length ? (
-        <Launcher suites={suites} models={models} defaults={defaults} hiddenChecks={hiddenChecks} onLaunched={load} say={say} />
+        <Launcher key={launcher?.suiteId ?? 'none'} suites={suites} models={models} defaults={defaults} launcher={launcher}
+          hiddenChecks={hiddenChecks} onLaunched={load} say={say} />
       ) : null}
 
       <div className={`${AdminUI.card} p-4`} id="admin-homeroom-bench-runs">

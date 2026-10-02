@@ -120,13 +120,28 @@ async function suiteRow(pool, id) {
   return rows[0] || null;
 }
 
-/** Freeze a suite: its tasks are immutable from now on. */
+/**
+ * Freeze a suite: its tasks are immutable from now on. A suite materialized
+ * from a checked-in definition (Core v1, services/bench/core.js) is frozen
+ * only once every task has its reference: a frozen task can no longer be
+ * labelled, so freezing it unlabelled would leave it ungradable for good.
+ * Hand-made suites keep the old rule (any task at all).
+ */
 async function freezeSuite(pool, id) {
   const suite = await suiteRow(pool, id);
   if (!suite) return httpError(404, 'Suite not found');
   if (suite.frozen_at) return httpError(409, 'The suite is already frozen');
-  const { rows: [{ n }] } = await pool.query('SELECT COUNT(*)::int AS n FROM bench_tasks WHERE suite_id = $1', [suite.id]);
+  const { rows: [{ n, unlabelled, defined }] } = await pool.query(
+    `SELECT COUNT(*)::int AS n,
+            COUNT(*) FILTER (WHERE reference_source IS NULL)::int AS unlabelled,
+            EXISTS (SELECT 1 FROM bench_materializations WHERE suite_id = $1) AS defined
+       FROM bench_tasks WHERE suite_id = $1`,
+    [suite.id],
+  );
   if (!n) return httpError(409, 'A suite with no tasks cannot be frozen');
+  if (defined && unlabelled) {
+    return httpError(409, `${unlabelled} of ${n} tasks have no reference yet: label them before freezing (a frozen task cannot be labelled)`);
+  }
   const { rows } = await pool.query(
     'UPDATE bench_suites SET frozen_at = NOW() WHERE id = $1 AND frozen_at IS NULL RETURNING id, frozen_at',
     [suite.id],
@@ -311,6 +326,30 @@ async function addTaskFromRun(pool, { suiteId, runId, stage, config = {} } = {})
   }
 }
 
+/**
+ * Insert one task row as it is: the materializer's path (services/bench/
+ * core.js), which has already resolved the snapshot, tags and reference.
+ * `referenceSource` 'authored' is a reference written into the suite's
+ * definition by its author.
+ */
+async function insertTask(pool, {
+  suiteId, stage, sourceRunId = null, snapshotId, appId, issueNumber, tags = {}, reference = {}, referenceSource = null,
+}) {
+  if (!TASK_STAGES.includes(stage)) throw new Error(`unknown stage ${stage}`);
+  if (referenceSource != null && !['human', 'opus', 'merged_pr', 'authored'].includes(referenceSource)) {
+    throw new Error(`unknown reference source ${referenceSource}`);
+  }
+  const { rows } = await pool.query(
+    `INSERT INTO bench_tasks (suite_id, stage, source_run_id, snapshot_id, app_id, issue_number,
+                              tags, reference, reference_source, label_token)
+     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10)
+     RETURNING id, stage, tags, reference, reference_source`,
+    [suiteId, stage, sourceRunId, snapshotId, appId, issueNumber, JSON.stringify(tags), JSON.stringify(reference),
+      referenceSource, token()],
+  );
+  return rows[0];
+}
+
 async function removeTask(pool, { taskId }) {
   const task = await taskRow(pool, { taskId });
   if (!task) return httpError(404, 'Task not found');
@@ -375,13 +414,18 @@ function addedChecks(baseText, headText) {
  */
 async function importTaskFromPr(pool, {
   suiteId, appSlug, issueNumber, prNumber, config = {}, deps = {},
+  // Core v1 (services/bench/core.js): the base commit its definition names
+  // (the work order's, which GitHub's base.sha need not equal), a request
+  // that is the pull request's own description (a change with no issue),
+  // and tags/extra recorded beside the task.
+  baseSha: baseOverride = null, requestFromPr = false, tags: moreTags = {}, extra: moreExtra = {},
 } = {}) {
   const github = deps.github || require('../github');
   const threadContext = deps.threadContext || require('../thread-context');
   const sessions = deps.sessions || require('../../routes/sessions');
   const live = require('../homeroom-bot-live');
-  const n = Number(issueNumber);
   const pr = Number(prNumber);
+  const n = requestFromPr ? pr : Number(issueNumber);
   if (!Number.isInteger(n) || n <= 0 || !Number.isInteger(pr) || pr <= 0) {
     return httpError(400, 'issueNumber and prNumber must be positive integers');
   }
@@ -403,22 +447,35 @@ async function importTaskFromPr(pool, {
     return httpError(err.status === 404 ? 404 : 502, `Could not read PR #${pr}: ${err.message}`);
   }
   if (!pull?.merged_at || !pull.merge_commit_sha) return httpError(409, `PR #${pr} is not merged`);
-  const baseSha = pull.base?.sha || null;
+  const prBaseSha = pull.base?.sha || null;
+  const baseSha = (typeof baseOverride === 'string' && /^[0-9a-f]{40}$/i.test(baseOverride)) ? baseOverride.toLowerCase() : prBaseSha;
   if (!baseSha) return httpError(502, `PR #${pr} has no base commit`);
 
-  const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, n);
-  const issue = fetched?.issue || null;
-  if (!issue) return httpError(404, `Issue #${n} was not found`);
-  const cutoff = Date.parse(pull.created_at) || Date.now();
-  const before = (at) => !at || Date.parse(at) <= cutoff;
-  const [{ comments = [] } = {}, thread, botLogin] = await Promise.all([
-    github.fetchIssueComments(repo.owner, repo.repo, n).catch(() => ({ comments: [] })),
-    threadContext.loadIssueThread(pool, app.id, n),
-    live.botUsernameOf(github),
-  ]);
-  const keptComments = comments.filter((c) => before(c.createdAt));
-  const keptThread = (thread?.messages || []).filter((m) => before(m.createdAt));
-  const seed = sessions.buildHeadlessSeed(n, issue, keptComments, botLogin, keptThread);
+  let issue;
+  let keptComments = [];
+  let keptThread = [];
+  let seed;
+  const botLogin = await live.botUsernameOf(github);
+  if (requestFromPr) {
+    // No request of its own: the pull request's description is the task.
+    // The seed names no number, so it does not point the model at the
+    // merged pull request (the answer).
+    issue = { number: n, title: String(pull.title || ''), body: String(pull.body || ''), author: pull.user?.login || null, createdAt: pull.created_at || null };
+    seed = `Please work on this request: "${issue.title}".${issue.body ? `\n\n${issue.body}` : ''}`;
+  } else {
+    const fetched = await github.fetchPublicIssue(repo.owner, repo.repo, n);
+    issue = fetched?.issue || null;
+    if (!issue) return httpError(404, `Issue #${n} was not found`);
+    const cutoff = Date.parse(pull.created_at) || Date.now();
+    const before = (at) => !at || Date.parse(at) <= cutoff;
+    const [{ comments = [] } = {}, thread] = await Promise.all([
+      github.fetchIssueComments(repo.owner, repo.repo, n).catch(() => ({ comments: [] })),
+      threadContext.loadIssueThread(pool, app.id, n),
+    ]);
+    keptComments = comments.filter((c) => before(c.createdAt));
+    keptThread = (thread?.messages || []).filter((m) => before(m.createdAt));
+    seed = sessions.buildHeadlessSeed(n, issue, keptComments, botLogin, keptThread);
+  }
 
   let hidden = [];
   let files = [];
@@ -445,13 +502,16 @@ async function importTaskFromPr(pool, {
       build_note: '',
       thread: snapshots.frozenThread({ issueNumber: n, issue, comments: keptComments, threadMessages: keptThread, botLogin }),
     },
-    extra: { platformRepo, importedFrom: { prNumber: pr, mergeSha: pull.merge_commit_sha } },
+    extra: {
+      ...moreExtra, platformRepo, importedFrom: { prNumber: pr, mergeSha: pull.merge_commit_sha, prBaseSha },
+      ...(requestFromPr ? { requestFromPr: true } : {}),
+    },
   });
   if (!snapshotId) return httpError(500, 'Could not record the task\'s snapshot');
   const tags = {
     verdict: 'ready', app_slug: app.slug, repo_size: platformRepo ? 'large' : 'small',
     request_type: requestType(issue.title, issue.body), difficulty: null, known_outcome: 'merged',
-    prompt_chars: seed.length,
+    prompt_chars: seed.length, ...moreTags,
   };
   const reference = {
     reference_pr: pr, reference_sha: pull.merge_commit_sha, base_sha: baseSha,
@@ -464,7 +524,7 @@ async function importTaskFromPr(pool, {
      RETURNING id, stage, tags, reference, reference_source`,
     [suite.id, snapshotId, app.id, n, JSON.stringify(tags), JSON.stringify(reference), token()],
   );
-  return { ok: true, task: rows[0], hiddenChecks: hidden.length };
+  return { ok: true, task: rows[0], hiddenChecks: hidden.length, snapshotId };
 }
 
 // ── The stratified sampler ──────────────────────────────────────────────
@@ -609,6 +669,7 @@ module.exports = {
   taskRow,
   startingTask,
   addTaskFromRun,
+  insertTask,
   removeTask,
   setReference,
   addedChecks,

@@ -63,7 +63,7 @@ class BenchSideEffectError extends Error {
 
 const GITHUB_READS = Object.freeze([
   'isEnabled', 'getBotUsername', 'getBranchSha', 'getFileContent', 'compareFiles', 'listChangedFiles',
-  'getProposalDiff', 'fetchPublicIssue', 'fetchIssueComments', 'getPR',
+  'getProposalDiff', 'fetchPublicIssue', 'fetchIssueComments', 'getPR', 'getCommitAt',
 ]);
 
 function assertBenchBranch(branch) {

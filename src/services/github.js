@@ -778,6 +778,32 @@ async function getRepoHead(owner, repo) {
   };
 }
 
+// The commit a repository's default branch was at, at a moment in the past:
+// the newest commit on it dated at or before `until` (GitHub's `until` reads
+// the commit date). Read-only, for the benchmark's historical snapshots
+// (services/bench/backfill.js). Resolves { sha, committedAt, branch }, or
+// null when the branch has no commit that old.
+async function getCommitAt(owner, repo, until, { branch = null } = {}) {
+  const at = new Date(until);
+  if (Number.isNaN(at.getTime())) throw new Error('getCommitAt needs a valid time');
+  const octokit = await getOctokit(owner);
+  let ref = branch;
+  if (!ref) {
+    const { data: info } = await octokit.rest.repos.get({ owner, repo });
+    ref = info.default_branch || 'main';
+  }
+  const { data: commits } = await octokit.rest.repos.listCommits({
+    owner, repo, sha: ref, until: at.toISOString(), per_page: 1,
+  });
+  const top = Array.isArray(commits) && commits[0] ? commits[0] : null;
+  if (!top || typeof top.sha !== 'string') return null;
+  return {
+    sha: top.sha.toLowerCase(),
+    committedAt: (top.commit && top.commit.committer && top.commit.committer.date) || null,
+    branch: ref,
+  };
+}
+
 // Fast-forward a CLI handoff's platform branch to an exact pushed commit.
 // `force:false` is intentional even though callers preflight ancestry: it
 // closes the race if another writer moves the ref between compare + update.
@@ -2417,6 +2443,7 @@ module.exports = {
   getCommitTree,
   getBranchSha,
   getRepoHead,
+  getCommitAt,
   advanceBranchToSha,
   forceBranchToSha,
   createProposalCommit,
