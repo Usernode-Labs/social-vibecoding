@@ -65,7 +65,11 @@ const STAGE_RANGES = Object.freeze({
 });
 const BOOT_DELAY_MS = 90 * 1000;
 const DEFAULT_RATE_MS = 1000;
-const STALE_RUNNING_MINUTES = 120;
+// A pass beats at least this often while it works (see beat()); a running
+// row whose last beat is older than STALE_RUNNING_MINUTES was left by a
+// process that died mid-pass (a redeploy), so it may be claimed again.
+const HEARTBEAT_MS = 30 * 1000;
+const STALE_RUNNING_MINUTES = 10;
 const MAX_CANDIDATES = 500;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -225,6 +229,18 @@ async function botFollowups(pool) {
 
 function sleep(msec) {
   return msec > 0 ? new Promise((resolve) => { const t = setTimeout(resolve, msec); if (t.unref) t.unref(); }) : Promise.resolve();
+}
+
+/** Record that this pass is still alive, at most every HEARTBEAT_MS. Never throws. */
+async function beat(ctx) {
+  const now = Date.now();
+  if (!ctx.definition || now - (ctx.lastBeat || 0) < HEARTBEAT_MS) return;
+  ctx.lastBeat = now;
+  await ctx.pool.query(
+    `UPDATE bench_materializations SET heartbeat_at = NOW()
+      WHERE definition = $1 AND version = $2 AND status = 'running'`,
+    [ctx.definition.key, ctx.definition.version],
+  ).catch(() => {});
 }
 
 function skipped(reason, transient = false) {
@@ -496,6 +512,7 @@ async function resolveRecordedRun(ctx, spec, app, stage) {
 
 /** One task of the definition: resolved and inserted, or the reason it was not. Never throws. */
 async function materializeOne(ctx, spec) {
+  await beat(ctx);
   if (await hasRef(ctx.pool, ctx.suite.id, spec.ref)) return { ok: true, existed: true };
   let out;
   try {
@@ -594,6 +611,7 @@ async function materializeRule(ctx, rule) {
 /** A fallback build task from a shadow build, when its request is closed now. */
 async function shadowBuildTask(ctx, rule, r) {
   const ref = `${rule.ref}:shadow:${r.app_slug}#${r.issue_number}`;
+  await beat(ctx);
   if (await hasRef(ctx.pool, ctx.suite.id, ref)) return { ok: true, existed: true };
   const repo = require('../homeroom-bot').parseRepo(r.repo_url);
   if (!repo) return 'not_closed';
@@ -663,14 +681,16 @@ async function summarize(pool, suiteId, definition, skippedList) {
 /** Claim this definition's row, or null when there is nothing to do. */
 async function claim(pool, definition, force) {
   const { rows } = await pool.query(
-    `INSERT INTO bench_materializations (definition, version, status, attempts, started_at)
-     VALUES ($1, $2, 'running', 1, NOW())
+    `INSERT INTO bench_materializations (definition, version, status, attempts, started_at, heartbeat_at)
+     VALUES ($1, $2, 'running', 1, NOW(), NOW())
      ON CONFLICT (definition, version) DO UPDATE
-       SET status = 'running', attempts = bench_materializations.attempts + 1, started_at = NOW(), finished_at = NULL
+       SET status = 'running', attempts = bench_materializations.attempts + 1, started_at = NOW(),
+           heartbeat_at = NOW(), finished_at = NULL
      WHERE bench_materializations.status = 'failed'
         OR ($3::boolean AND bench_materializations.status = 'done')
         OR (bench_materializations.status = 'running'
-            AND bench_materializations.started_at < NOW() - make_interval(mins => $4))
+            AND COALESCE(bench_materializations.heartbeat_at, bench_materializations.started_at)
+                < NOW() - make_interval(mins => $4))
      RETURNING *`,
     [definition.key, definition.version, !!force, STALE_RUNNING_MINUTES],
   );
@@ -784,13 +804,19 @@ async function coreStatus(pool, { definition = loadDefinition() } = {}) {
     );
     suite = s || null;
   }
+  // A running row nobody has beaten for STALE_RUNNING_MINUTES was left by a
+  // process that died mid-pass: it is not running, and may be tried again.
+  const lastBeat = row ? new Date(row.heartbeat_at || row.started_at).getTime() : 0;
+  const stale = !!row && row.status === 'running' && !inProcess
+    && Date.now() - lastBeat > STALE_RUNNING_MINUTES * 60 * 1000;
   return {
     definition: { key: definition.key, name: definition.name, version: definition.version, expected: v.counts, valid: v.ok },
     materialization: row ? {
       status: row.status, summary: row.summary || {}, attempts: row.attempts, startedAt: row.started_at, finishedAt: row.finished_at,
+      heartbeatAt: row.heartbeat_at || null, stale,
     } : null,
     suite,
-    running: !!inProcess,
+    running: !!inProcess || (row?.status === 'running' && !stale),
   };
 }
 
@@ -833,6 +859,7 @@ module.exports = {
   DEFINITION_FILE,
   RULES,
   STAGE_RANGES,
+  STALE_RUNNING_MINUTES,
   loadDefinition,
   validateDefinition,
   pickDistinctApps,

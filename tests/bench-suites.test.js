@@ -2,7 +2,8 @@
 
 // #3654: the benchmark's suite pieces that need no database: the stratified
 // sampler, the hidden checks a merged pull request added, and the reference
-// a task starts from.
+// a task starts from. And the Suites card offers Delete only on the rows the
+// server says it would delete, and only to a full admin.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -94,4 +95,32 @@ test('a task never takes the bot\'s own verdict as its reference', () => {
   const dm = suites.startingTask('dm', { ...facts, verdict: 'question', answer_text: 'Dark blue' }, snap);
   assert.equal(dm.reference.dm_script.true_answer, 'Dark blue');
   assert.equal(suites.startingTask('triage', { ...facts, repo_url: 'https://github.com/Usernode-Labs/social-vibecoding' }, snap).tags.repo_size, 'large');
+});
+
+test('the Suites card offers Delete only on deletable rows, and only to a full admin', () => {
+  globalThis.window = globalThis.window || globalThis;
+  const { loadTsx, renderToHtml, createElement } = require('./lib/render-tsx');
+  const { SuitesCard } = loadTsx('frontend/src/features/admin/admin-homeroom-bench.tsx', {
+    stubs: {
+      './admin-console.js': {
+        AdminUI: new Proxy({}, { get: (_t, key) => (['btn', 'badge'].includes(key) ? new Proxy({}, { get: (_u, k) => `${key}-${String(k)}` }) : String(key)) }),
+      },
+    },
+  });
+  const row = (id, extra) => ({
+    id, name: `s${id}`, version: 1, kind: 'frozen', notes: null, frozen_at: null, counts: {}, total: 2, labelled: 0, created_by: null,
+    runs: 0, is_default: false, deletable: true, ...extra,
+  });
+  const list = [
+    row(1),
+    row(2, { frozen_at: '2026-10-01', deletable: false }),
+    row(3, { runs: 2, deletable: false }),
+    row(4, { is_default: true, deletable: false }),
+  ];
+  const render = (canWrite) => renderToHtml(createElement(SuitesCard, { canWrite, suites: list, coreSuiteId: 4, onChanged() {}, say() {} }));
+  const html = render(true);
+  const deletes = [...html.matchAll(/data-bench-suite-delete="(\d+)"[^>]*>Delete</g)].map((m) => Number(m[1]));
+  assert.deepEqual(deletes, [1], 'only the unfrozen suite with no runs that is not the default');
+  assert.match(html, /class="btn-destructiveSm" data-bench-suite-delete="1"/);
+  assert.doesNotMatch(render(false), /data-bench-suite-delete/, 'a view-only admin reads');
 });

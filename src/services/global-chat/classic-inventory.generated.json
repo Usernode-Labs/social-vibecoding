@@ -5706,6 +5706,21 @@
     },
     {
       "source": "src/routes/homeroom-bench.js",
+      "method": "DELETE",
+      "path": "/api/admin/homeroom-bot/bench/suites/:id",
+      "expression": null,
+      "status": "mapped",
+      "capabilityId": "admin.delete.admin.homeroom.bot.bench.suites.item.1cc53cb3",
+      "domain": "admin",
+      "risk": "external_write",
+      "confirmation": "required",
+      "renderer": "admin_record",
+      "transport": "server_loopback",
+      "mobileSupported": true,
+      "classicPath": "#admin"
+    },
+    {
+      "source": "src/routes/homeroom-bench.js",
       "method": "POST",
       "path": "/api/admin/homeroom-bot/bench/suites/:id/tasks",
       "expression": null,

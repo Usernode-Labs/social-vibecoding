@@ -98,6 +98,14 @@ function homeroomBenchRoutes(config) {
     return suites.newVersion(pool, id, { actorId: req.user.id });
   }));
 
+  // A suite made by mistake: refused when frozen, when it has runs, or when
+  // it is the default (Core) suite (services/bench/suites.js deleteSuite).
+  router.delete('/api/admin/homeroom-bot/bench/suites/:id', requireAdminWrite, handler('Delete bench suite', async (req) => {
+    const id = idParam(req.params.id);
+    if (!id) return { ok: false, status: 400, error: 'Invalid suite id' };
+    return suites.deleteSuite(pool, { suiteId: id, actorId: req.user.id });
+  }));
+
   // "Add to a benchmark suite": one run, or several (the sampler's picks).
   router.post('/api/admin/homeroom-bot/bench/suites/:id/tasks', requireAdminWrite, handler('Add bench task', async (req) => {
     const id = idParam(req.params.id);

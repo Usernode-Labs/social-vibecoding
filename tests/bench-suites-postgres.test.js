@@ -6,7 +6,10 @@
 // goes to the next version, which copies the tasks; the sampler draws only
 // runs that can be replayed and are not in the suite yet; a merged pull
 // request becomes a build task with the thread as it stood when the pull
-// request was opened and the checks it added as hidden checks.
+// request was opened and the checks it added as hidden checks. A suite made
+// by mistake can be deleted, with its tasks, unless it is frozen, has runs
+// or is the default (Core) suite; the list says which rows qualify, and the
+// route is a full admin's alone.
 //
 // Skips when no database is reachable, unless TEST_DATABASE_URL insists.
 
@@ -14,6 +17,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const http = require('node:http');
+const express = require('express');
 const { Pool } = require('pg');
 
 const suites = require('../src/services/bench/suites');
@@ -132,6 +137,55 @@ test('benchmark suites and tasks against the full PostgreSQL schema', { timeout:
       'an empty suite cannot be frozen');
   });
 
+  await t.test('a suite is deleted with its tasks unless frozen, run or the default', async () => {
+    const make = async (label, issue) => {
+      const { suite } = await suites.createSuite(pool, { name: label });
+      await suites.addTaskFromRun(pool, { suiteId: suite.id, runId: await run(todo, issue, 'ready'), stage: 'triage' });
+      return suite;
+    };
+    const frozen = await make('del-frozen', 40);
+    await suites.freezeSuite(pool, frozen.id);
+    const ran = await make('del-ran', 41);
+    await pool.query("INSERT INTO bench_runs (suite_id, models, stages) VALUES ($1, ARRAY['a/b'], ARRAY['triage'])", [ran.id]);
+    const core = await make('del-core', 42);
+    await pool.query("INSERT INTO bench_materializations (definition, version, suite_id, status) VALUES ('del-core', 1, $1, 'done')", [core.id]);
+    const doomed = await make('del-mistake', 43);
+    await suites.addTaskFromRun(pool, { suiteId: doomed.id, runId: await run(todo, 44, 'ready'), stage: 'triage' });
+    const keeper = await make('del-keeper', 45);
+
+    const listed = Object.fromEntries((await suites.listSuites(pool)).map((s) => [s.id, s]));
+    assert.deepEqual([frozen, ran, core, doomed, keeper].map((s) => listed[s.id].deletable), [false, false, false, true, true]);
+    assert.equal(listed[ran.id].runs, 1);
+    assert.equal(listed[core.id].is_default, true);
+
+    const tasksOf = async (id) => (await pool.query('SELECT COUNT(*)::int AS n FROM bench_tasks WHERE suite_id = $1', [id])).rows[0].n;
+    const missing = await suites.deleteSuite(pool, { suiteId: 999999 });
+    assert.equal(missing.status, 404);
+    const refusedFrozen = await suites.deleteSuite(pool, { suiteId: frozen.id });
+    assert.equal(refusedFrozen.status, 409);
+    assert.match(refusedFrozen.error, /answer key past runs were graded against/);
+    const refusedRan = await suites.deleteSuite(pool, { suiteId: ran.id });
+    assert.equal(refusedRan.status, 409);
+    assert.match(refusedRan.error, /it has runs/);
+    const refusedCore = await suites.deleteSuite(pool, { suiteId: core.id });
+    assert.equal(refusedCore.status, 409);
+    assert.match(refusedCore.error, /default suite; make a new version instead/);
+    for (const s of [frozen, ran, core]) {
+      // eslint-disable-next-line no-await-in-loop
+      assert.ok(await suites.suiteRow(pool, s.id), `${s.name} is kept`);
+      // eslint-disable-next-line no-await-in-loop
+      assert.equal(await tasksOf(s.id), 1, `${s.name}'s task is kept`);
+    }
+
+    const out = await suites.deleteSuite(pool, { suiteId: doomed.id, actorId: null });
+    assert.deepEqual(out, { ok: true, deleted: { suiteId: doomed.id, tasks: 2 } });
+    assert.equal(await suites.suiteRow(pool, doomed.id), null);
+    assert.equal(await tasksOf(doomed.id), 0);
+    assert.equal(await tasksOf(keeper.id), 1, 'another suite is untouched');
+    assert.equal((await pool.query('SELECT COUNT(*)::int AS n FROM bench_runs WHERE suite_id = $1', [ran.id])).rows[0].n, 1);
+    assert.equal((await suites.deleteSuite(pool, { suiteId: doomed.id })).status, 404);
+  });
+
   await t.test('the sampler draws replayable runs not in the suite yet; DM tasks need an answered DM', async () => {
     const { suite } = await suites.createSuite(pool, { name: 'sampled' });
     const ids = [];
@@ -216,4 +270,56 @@ test('benchmark suites and tasks against the full PostgreSQL schema', { timeout:
     assert.match(snap.texts.seed, /Like the platform\./);
     assert.doesNotMatch(snap.texts.seed, /Merged in #3630/, 'a comment after the PR opened would give the answer away');
   });
+});
+
+test('DELETE /bench/suites/:id is a full admin\'s alone', { timeout: 60000 }, async (t) => {
+  const pool = await freshDb(t, 'bench_suite_route');
+  if (!pool) return;
+  const poolMod = require('../src/db/pool');
+  const realGetPool = poolMod.getPool;
+  poolMod.getPool = () => pool;
+  t.after(() => { poolMod.getPool = realGetPool; });
+  const { homeroomBenchRoutes } = require('../src/routes/homeroom-bench');
+  const appX = express();
+  appX.use(express.json());
+  appX.use((req, _res, next) => {
+    const who = req.headers['x-test-user'];
+    if (who === 'admin') req.user = { id: null, username: 'evan', isAdmin: true, canAdminWrite: true };
+    if (who === 'viewer') req.user = { id: null, username: 'viewer', isAdmin: true, canAdminWrite: false };
+    if (who === 'member') req.user = { id: null, username: 'ann', isAdmin: false, canAdminWrite: false };
+    next();
+  });
+  appX.use(homeroomBenchRoutes({}));
+  const server = http.createServer(appX);
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  t.after(() => new Promise((r) => server.close(r)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const del = async (id, who) => {
+    const res = await fetch(`${base}/api/admin/homeroom-bot/bench/suites/${id}`, { method: 'DELETE', redirect: 'manual', headers: { 'x-test-user': who } });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+
+  const { suite } = await suites.createSuite(pool, { name: 'mistake' });
+  // A non-admin is turned away by adminMiddleware (a redirect home, as the
+  // router mounts it under the prefix); a view-only admin by requireAdminWrite.
+  for (const who of ['member', 'nobody']) {
+    // eslint-disable-next-line no-await-in-loop
+    assert.ok([302, 403].includes((await del(suite.id, who)).status), who);
+  }
+  const viewer = await del(suite.id, 'viewer');
+  assert.equal(viewer.status, 403);
+  assert.equal(viewer.body.error, 'Full admin access required');
+  assert.ok(await suites.suiteRow(pool, suite.id), 'a refused delete deletes nothing');
+  assert.equal((await del('x', 'admin')).status, 400);
+  const ok = await del(suite.id, 'admin');
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body, { ok: true, deleted: { suiteId: suite.id, tasks: 0 } });
+  const gone = await del(suite.id, 'admin');
+  assert.equal(gone.status, 404);
+  assert.equal(gone.body.error, 'Suite not found');
+  const { suite: frozen } = await suites.createSuite(pool, { name: 'kept' });
+  await pool.query('UPDATE bench_suites SET frozen_at = NOW() WHERE id = $1', [frozen.id]);
+  const refused = await del(frozen.id, 'admin');
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /frozen/);
 });
