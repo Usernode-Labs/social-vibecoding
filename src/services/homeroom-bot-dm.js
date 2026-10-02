@@ -21,7 +21,9 @@
 //     the description as the project's first-version request once the
 //     project is running, and the loop above takes it from there. (Anybody
 //     else's description is filed the same way, as the project's first
-//     request, and left to the group: the bot is not involved.)
+//     request, and left to the group: the bot is not involved.) A project
+//     they import, fork or create without a description is acted on for
+//     real too, with nothing filed first.
 //
 // Stage 2 (homeroom-bot-mayor.js): anything else a person writes in the DM
 // is read by the bot's model, which can say what the bot is working on for
@@ -109,23 +111,73 @@ async function botAccount(pool) {
   return rows[0] || null;
 }
 
+// How a project with nothing to build first came to be (homeroom_bot_dm_projects).
+const PROJECT_ORIGINS = Object.freeze(['import', 'fork', 'blank']);
+
 /**
- * The slugs of the projects the bot is building for somebody still on the
- * list. A first request the bot does not build (its creator was not on the
- * list when they made it) never makes a project live.
+ * The projects the bot acts on for real because somebody still on the list
+ * made them, oldest first, with who: one it builds from a description
+ * (origin 'description'), and one they imported, forked or created without
+ * one. A first request the bot does not build (its creator was not on the
+ * list when they made it) never makes a project live, and neither does
+ * anything made before its maker was on the list.
  */
-async function firstVersionAppSlugs(pool, settings) {
+async function projectsMadeFor(pool, settings) {
   const users = Array.isArray(settings?.dmUsers) ? settings.dmUsers : [];
   if (!users.length) return [];
   const { rows } = await pool.query(
-    `SELECT a.slug
-       FROM homeroom_bot_first_versions f
-       JOIN apps a ON a.id = f.app_id
-       JOIN users u ON u.id = f.user_id
-      WHERE f.bot_builds AND LOWER(u.username) = ANY($1::text[])`,
+    `SELECT a.slug, a.name, u.username, p.origin
+       FROM (
+         SELECT app_id, user_id, 'description' AS origin, created_at
+           FROM homeroom_bot_first_versions WHERE bot_builds
+         UNION ALL
+         SELECT app_id, user_id, origin, created_at FROM homeroom_bot_dm_projects
+       ) p
+       JOIN apps a ON a.id = p.app_id
+       JOIN users u ON u.id = p.user_id
+      WHERE LOWER(u.username) = ANY($1::text[])
+      ORDER BY p.created_at, a.id`,
     [users],
   );
-  return rows.map((r) => r.slug).filter((s) => typeof s === 'string');
+  return rows.filter((r) => typeof r.slug === 'string');
+}
+
+/** The slugs of projectsMadeFor: what readSettings calls firstVersionApps. */
+async function firstVersionAppSlugs(pool, settings) {
+  return [...new Set((await projectsMadeFor(pool, settings)).map((r) => r.slug))];
+}
+
+/**
+ * A project was just made with no description to build from
+ * (routes/apps.js): imported, forked, or created without one. When its
+ * maker is on the list it is recorded, and the bot acts on it for real
+ * while they stay there, as on a project it builds from a description.
+ * Nothing is filed and nothing is said in the DM: there is no first
+ * version to build. Resolves true when it was recorded.
+ */
+async function noteProjectMade(pool, { app, user, origin }) {
+  if (!app?.id || !user?.id || !PROJECT_ORIGINS.includes(origin)) return false;
+  const settings = await settingsModule().readSettings(pool);
+  if (!isDmUser(settings, user.username)) return false;
+  const { rowCount } = await pool.query(
+    `INSERT INTO homeroom_bot_dm_projects (app_id, user_id, origin) VALUES ($1, $2, $3)
+     ON CONFLICT (app_id) DO NOTHING`,
+    [app.id, user.id, origin],
+  );
+  if (rowCount) log.info('homeroom-bot-dm', 'Project made by somebody on the list is live for the bot', { app: app.slug, userId: user.id, origin });
+  return rowCount > 0;
+}
+
+/**
+ * When a project was imported by somebody on the list, or null: the issues
+ * it arrived with are left until something happens on them after this.
+ */
+async function importedAt(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT created_at FROM homeroom_bot_dm_projects WHERE app_id = $1 AND origin = 'import'`,
+    [appId],
+  );
+  return rows[0]?.created_at || null;
 }
 
 // ── Sending ──────────────────────────────────────────────────────────────
@@ -886,7 +938,11 @@ module.exports = {
   isDmUser,
   isEnabledFor,
   botAccount,
+  PROJECT_ORIGINS,
+  projectsMadeFor,
   firstVersionAppSlugs,
+  noteProjectMade,
+  importedAt,
   sendDm,
   recordRequester,
   requesterOf,

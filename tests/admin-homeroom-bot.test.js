@@ -570,6 +570,36 @@ test('the DM list is one person per row, like the live apps list, with what each
 });
 
 
+test('the live list also shows, read-only, the projects people on the DM list made, and whose (#3624)', () => {
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { BuiltForRows } = loadBotSection();
+  const items = [
+    { slug: 'chore-wheel', name: 'Chore wheel', username: 'ada', origin: 'description' },
+    { slug: 'old-blog', name: 'Old blog', username: 'sam', origin: 'import' },
+  ];
+  const props = { items, pausedApps: ['old-blog'], canWrite: true, onRetriage() {} };
+  const html = renderToHtml(createElement(BuiltForRows, props));
+  assert.match(html, /data-live-app-built-for="chore-wheel"[^>]*><select aria-label="Chore wheel, live for @ada" class="select"[^>]*disabled=""[^>]*><option value="chore-wheel"[^>]*>Chore wheel<\/option><\/select><span class="muted shrink-0">for @ada<\/span>/);
+  assert.match(html, /data-live-app-built-for="old-blog"[^>]*>[\s\S]*for @sam<\/span><\/div>/);
+  assert.match(html, /data-live-app-retriage="chore-wheel"[^>]*>Triage again</, 'its backlog can be taken on demand');
+  assert.doesNotMatch(html, /data-live-app-retriage="old-blog"/, 'not while the app is paused');
+  assert.doesNotMatch(html, /Remove/, 'nothing to remove: the row goes when its maker leaves the DM list');
+  const viewOnly = renderToHtml(createElement(BuiltForRows, { ...props, canWrite: false }));
+  assert.doesNotMatch(viewOnly, /data-live-app-retriage=/);
+  assert.equal(renderToHtml(createElement(BuiltForRows, { ...props, items: [] })), '');
+
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  assert.match(tsx, /const builtFor = \(payload\?\.builtFor \|\| \[\]\)\.filter\(\(p\) => !liveRows\.includes\(p\.slug\)\);/,
+    'an app also in the stored list shows once, as its editable row');
+  assert.match(tsx, /<BuiltForRows\s+items=\{builtFor\}\s+pausedApps=\{settings\?\.pausedApps \|\| \[\]\}\s+canWrite=\{canWrite\}\s+onRetriage=\{retriageApp\}\s+\/>/);
+  assert.match(tsx, /\{!liveRows\.length && !builtFor\.length \? \(\s*<p className=\{AdminUI\.muted\} id="admin-homeroom-bot-live-apps-none">/);
+  assert.doesNotMatch(tsx, /\(now: \$\{settings\.firstVersionApps/, 'the DM note no longer lists them in passing');
+  const src = read('src/services/homeroom-bot.js');
+  assert.match(src, /builtFor: await builtForList\(pool, settings\),/);
+  assert.match(src, /if \(!\[\.\.\.\(settings\.liveApps \|\| \[\]\), \.\.\.\(settings\.firstVersionApps \|\| \[\]\)\]\.includes\(slug\)\) \{/,
+    'Triage again works on them too');
+});
+
 test('how much the bot works on at once is set here, and what runs now is listed (#3624 stage 2)', async () => {
   const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
   for (const id of ['admin-homeroom-bot-live-at-once', 'admin-homeroom-bot-per-person', 'admin-homeroom-bot-concurrency']) {

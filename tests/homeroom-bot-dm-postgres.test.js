@@ -112,7 +112,7 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       { key: 'homeroom_bot_dm_users', value: '[]' },
       { key: 'homeroom_bot_user_weekly_cents', value: '5000' },
     ]);
-    for (const table of ['homeroom_bot_dm_messages', 'homeroom_bot_first_versions']) {
+    for (const table of ['homeroom_bot_dm_messages', 'homeroom_bot_first_versions', 'homeroom_bot_dm_projects']) {
       const { rows: [c] } = await pool.query(`SELECT obj_description('${table}'::regclass, 'pg_class') AS comment`);
       assert.equal(c.comment, 'staging:private', table);
     }
@@ -441,6 +441,48 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
     );
     assert.deepEqual(after, { status: 'filed', issue_number: 1 });
     await setting('homeroom_bot_dm_users', '[]');
+  });
+
+  await t.test('a project somebody on the list imports, forks or makes without a description is live too, with nothing filed', async () => {
+    await setting('homeroom_bot_dm_users', JSON.stringify([ada.username]));
+    const make = async (slug, by) => (await pool.query(
+      `INSERT INTO apps (name, slug, status, created_by) VALUES ($1, $1, 'creating', $2) RETURNING *`, [slug, by.id],
+    )).rows[0];
+    const imported = await make('ada-import', ada);
+    const forked = await make('ada-fork', ada);
+    const blank = await make('ada-blank', ada);
+    const samImport = await make('sam-import', sam);
+    assert.equal(await dm.noteProjectMade(pool, { app: imported, user: ada, origin: 'import' }), true);
+    assert.equal(await dm.noteProjectMade(pool, { app: forked, user: ada, origin: 'fork' }), true);
+    assert.equal(await dm.noteProjectMade(pool, { app: blank, user: ada, origin: 'blank' }), true);
+    assert.equal(await dm.noteProjectMade(pool, { app: imported, user: ada, origin: 'import' }), false, 'recorded once');
+    assert.equal(await dm.noteProjectMade(pool, { app: samImport, user: sam, origin: 'import' }), false, 'not on the list: nothing recorded');
+    assert.equal(await dm.noteProjectMade(pool, { app: samImport, user: ada, origin: 'template' }), false, 'an origin it does not know');
+
+    const settings = await homeroomBot.readSettings(pool);
+    assert.deepEqual(settings.firstVersionApps, ['chore-wheel', 'ada-import', 'ada-fork', 'ada-blank'],
+      'live while their maker is on the list, beside the project the bot builds from a description');
+    const made = await dm.projectsMadeFor(pool, settings);
+    assert.deepEqual(made.map((r) => [r.slug, r.username, r.origin]), [
+      ['chore-wheel', ada.username, 'description'],
+      ['ada-import', ada.username, 'import'],
+      ['ada-fork', ada.username, 'fork'],
+      ['ada-blank', ada.username, 'blank'],
+    ], 'with who made each and how, for the dashboard');
+    assert.ok(await dm.importedAt(pool, imported.id) instanceof Date, 'where an import\'s backlog ends');
+    assert.equal(await dm.importedAt(pool, forked.id), null, 'a fork arrives with no issues to hold back');
+    const { rows: filed } = await pool.query(
+      'SELECT app_id FROM homeroom_bot_first_versions WHERE app_id = ANY($1::int[])', [[imported.id, forked.id, blank.id]],
+    );
+    assert.deepEqual(filed, [], 'nothing to file as a first request');
+
+    // Triage again takes an import's backlog: past the live check (this one
+    // has no repository yet), where somebody else's import is refused.
+    assert.equal((await homeroomBot.retriageApp(pool, { slug: 'sam-import' })).status, 409);
+    assert.equal((await homeroomBot.retriageApp(pool, { slug: 'ada-import' })).status, 404);
+
+    await setting('homeroom_bot_dm_users', '[]');
+    assert.deepEqual((await homeroomBot.readSettings(pool)).firstVersionApps, [], 'off the list, back to shadow');
   });
 
   await t.test('a staging preview has a bot DM with a question open, at its own address, once', async () => {
