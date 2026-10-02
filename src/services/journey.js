@@ -554,12 +554,327 @@ async function firstMile(pool, { day, now = new Date(), leftOutIds = [] } = {}) 
   };
 }
 
+// ── Stages, per week ───────────────────────────────────────────────────
+//
+// One yes or no per real person for the week [$1, $2); Stay also reads the
+// week after, [$2, $5). $3 and $4 are the real-person parameters. Every
+// source is bounded by the week, so the scan is a fortnight at most, except
+// "came back to", which looks for an earlier day with the same app.
+
+// Did anything we record in [from, to). Written out twice (this week and the
+// next) so both stay static SQL.
+const ARRIVE_THIS_WEEK = `
+    SELECT aa.user_id FROM app_activity aa
+     WHERE aa.date >= ($1::timestamptz AT TIME ZONE 'UTC')::date AND aa.date < ($2::timestamptz AT TIME ZONE 'UTC')::date
+    UNION SELECT cmx.user_id FROM chat_messages cmx
+     WHERE cmx.created_at >= $1::timestamptz AND cmx.created_at < $2::timestamptz AND cmx.user_id IS NOT NULL
+    UNION SELECT cvx.sender_id FROM conversation_messages cvx
+     WHERE cvx.created_at >= $1::timestamptz AND cvx.created_at < $2::timestamptz
+    UNION SELECT csx.user_id FROM chat_session_messages smx JOIN chat_sessions csx ON csx.id = smx.session_id
+     WHERE smx.role = 'user' AND smx.created_at >= $1::timestamptz AND smx.created_at < $2::timestamptz
+    UNION SELECT pvx.user_id FROM pr_votes pvx WHERE pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz
+    UNION SELECT ivx.user_id FROM issue_votes ivx WHERE ivx.created_at >= $1::timestamptz AND ivx.created_at < $2::timestamptz
+    UNION SELECT frx.user_id FROM feedback_reports frx WHERE frx.created_at >= $1::timestamptz AND frx.created_at < $2::timestamptz
+    UNION SELECT ex.user_id FROM events ex
+     WHERE ex.event_type = 'ui_experience' AND ex.created_at >= $1::timestamptz AND ex.created_at < $2::timestamptz`;
+
+const ARRIVE_NEXT_WEEK = `
+    SELECT aa.user_id FROM app_activity aa
+     WHERE aa.date >= ($2::timestamptz AT TIME ZONE 'UTC')::date AND aa.date < ($5::timestamptz AT TIME ZONE 'UTC')::date
+    UNION SELECT cmx.user_id FROM chat_messages cmx
+     WHERE cmx.created_at >= $2::timestamptz AND cmx.created_at < $5::timestamptz AND cmx.user_id IS NOT NULL
+    UNION SELECT cvx.sender_id FROM conversation_messages cvx
+     WHERE cvx.created_at >= $2::timestamptz AND cvx.created_at < $5::timestamptz
+    UNION SELECT csx.user_id FROM chat_session_messages smx JOIN chat_sessions csx ON csx.id = smx.session_id
+     WHERE smx.role = 'user' AND smx.created_at >= $2::timestamptz AND smx.created_at < $5::timestamptz
+    UNION SELECT pvx.user_id FROM pr_votes pvx WHERE pvx.created_at >= $2::timestamptz AND pvx.created_at < $5::timestamptz
+    UNION SELECT ivx.user_id FROM issue_votes ivx WHERE ivx.created_at >= $2::timestamptz AND ivx.created_at < $5::timestamptz
+    UNION SELECT frx.user_id FROM feedback_reports frx WHERE frx.created_at >= $2::timestamptz AND frx.created_at < $5::timestamptz
+    UNION SELECT ex.user_id FROM events ex
+     WHERE ex.event_type = 'ui_experience' AND ex.created_at >= $2::timestamptz AND ex.created_at < $5::timestamptz`;
+
+// A change that counts as "made a change": the person's own, with a pull
+// request, and not one of the one-click or automatic kinds (maintenance,
+// a clone, a rename proposal).
+const OWN_CHANGE = `cs.pr_number IS NOT NULL
+      AND cs.source IS DISTINCT FROM 'maintenance'
+      AND cs.cloned_from_session_id IS NULL
+      AND COALESCE(cs.branch_name, '') NOT LIKE 'rename/%'`;
+
+const STAGES_SQL = `WITH real AS (
+    SELECT u.id, u.username FROM users u WHERE ${REAL_PERSON_SQL}
+  ), arrive AS (${ARRIVE_THIS_WEEK}
+  ), arrive_next AS (${ARRIVE_NEXT_WEEK}
+  ), found AS (
+    SELECT f.user_id FROM (
+      SELECT aa.user_id, aa.app_id, MIN(aa.date) AS first_day FROM app_activity aa GROUP BY aa.user_id, aa.app_id
+    ) f JOIN apps ap ON ap.id = f.app_id
+     WHERE f.first_day >= ($1::timestamptz AT TIME ZONE 'UTC')::date
+       AND f.first_day < ($2::timestamptz AT TIME ZONE 'UTC')::date
+       AND ap.created_by IS DISTINCT FROM f.user_id
+       AND EXISTS (SELECT 1 FROM app_activity a2 WHERE a2.user_id = f.user_id AND a2.app_id = f.app_id
+                     AND a2.date = f.first_day AND a2.seconds_spent >= 30)
+  ), came_back AS (
+    SELECT aa.user_id FROM app_activity aa
+     WHERE aa.date >= ($1::timestamptz AT TIME ZONE 'UTC')::date AND aa.date < ($2::timestamptz AT TIME ZONE 'UTC')::date
+       AND EXISTS (SELECT 1 FROM app_activity a2 WHERE a2.user_id = aa.user_id AND a2.app_id = aa.app_id AND a2.date < aa.date)
+    UNION SELECT cmx.user_id FROM chat_messages cmx
+     WHERE cmx.created_at >= $1::timestamptz AND cmx.created_at < $2::timestamptz AND cmx.msg_type = 'message'
+       AND EXISTS (SELECT 1 FROM chat_messages c2 WHERE c2.user_id = cmx.user_id AND c2.app_id = cmx.app_id
+                     AND c2.msg_type = 'message'
+                     AND (c2.created_at AT TIME ZONE 'UTC')::date < (cmx.created_at AT TIME ZONE 'UTC')::date)
+  ), activate AS (
+    SELECT frx.user_id, 'feedback' AS kind FROM feedback_reports frx
+     WHERE frx.created_at >= $1::timestamptz AND frx.created_at < $2::timestamptz
+    UNION SELECT i.created_by, 'feedback' FROM issues i
+     WHERE i.created_at >= $1::timestamptz AND i.created_at < $2::timestamptz AND i.created_by IS NOT NULL
+    UNION SELECT pvx.user_id, 'vote' FROM pr_votes pvx WHERE pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz
+    UNION SELECT ivx.user_id, 'vote' FROM issue_votes ivx WHERE ivx.created_at >= $1::timestamptz AND ivx.created_at < $2::timestamptz
+    UNION SELECT cs.user_id, 'change' FROM chat_sessions cs
+     WHERE cs.created_at >= $1::timestamptz AND cs.created_at < $2::timestamptz AND ${OWN_CHANGE}
+  ), belong AS (
+    SELECT pvx.user_id FROM pr_votes pvx JOIN chat_sessions cs ON cs.id = pvx.session_id JOIN real ra ON ra.id = cs.user_id
+     WHERE pvx.created_at >= $1::timestamptz AND pvx.created_at < $2::timestamptz AND pvx.user_id <> cs.user_id
+       AND COALESCE(cs.branch_name, '') NOT LIKE 'rename/%'
+    UNION SELECT k.giver_user_id FROM pr_kudos k JOIN chat_sessions cs ON cs.id = k.session_id JOIN real ra ON ra.id = cs.user_id
+     WHERE k.created_at >= $1::timestamptz AND k.created_at < $2::timestamptz AND k.giver_user_id <> cs.user_id
+    UNION SELECT cmx.user_id FROM chat_messages cmx JOIN chat_sessions cs ON cmx.thread_type = 'session' AND cmx.thread_ref = cs.id
+      JOIN real ra ON ra.id = cs.user_id
+     WHERE cmx.created_at >= $1::timestamptz AND cmx.created_at < $2::timestamptz AND cmx.msg_type = 'message'
+       AND cmx.user_id <> cs.user_id
+  ), used AS (
+    SELECT cs.user_id FROM chat_sessions cs
+     WHERE cs.status = 'merged' AND cs.merged_at >= $1::timestamptz AND cs.merged_at < $2::timestamptz
+       AND EXISTS (SELECT 1 FROM pr_votes pvx JOIN real ry ON ry.id = pvx.user_id
+                    WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                      AND pvx.approval_epoch = cs.approval_epoch)
+  ), invited AS (
+    SELECT inv.admitted_by AS user_id FROM users inv JOIN real ri ON ri.id = inv.id
+     WHERE inv.admitted_by IS NOT NULL AND inv.id IN (SELECT user_id FROM arrive)
+  )
+  SELECT r.id AS user_id, r.username,
+         r.id IN (SELECT user_id FROM arrive) AS arrive,
+         (r.id IN (SELECT user_id FROM found) OR r.id IN (SELECT user_id FROM came_back)) AS explore,
+         r.id IN (SELECT user_id FROM activate) AS activate,
+         ARRAY(SELECT DISTINCT ak.kind FROM activate ak WHERE ak.user_id = r.id ORDER BY ak.kind) AS activate_kinds,
+         r.id IN (SELECT user_id FROM belong) AS belong,
+         r.id IN (SELECT user_id FROM used) AS use,
+         r.id IN (SELECT user_id FROM arrive_next) AS arrive_next,
+         r.id IN (SELECT user_id FROM invited) AS invite
+    FROM real r
+   WHERE r.id IN (SELECT user_id FROM arrive)
+      OR r.id IN (SELECT user_id FROM activate)
+      OR r.id IN (SELECT user_id FROM used)
+      OR r.id IN (SELECT user_id FROM invited)
+   ORDER BY r.username`;
+
+const STAGES = Object.freeze(['arrive', 'explore', 'activate', 'belong', 'use', 'stay', 'invite']);
+
+/**
+ * The week's stages. Stay needs the following week to have ended: until it
+ * has, it is notRecorded ("known next Monday"), never a count.
+ */
+async function stages(pool, { week, now = new Date(), leftOutIds = [] } = {}) {
+  const nextEnd = new Date(week.end.getTime() + WEEK_MS);
+  const stayKnown = nextEnd.getTime() <= new Date(now).getTime();
+  const { rows } = await pool.query(STAGES_SQL,
+    [week.start, week.end, ...realPersonParams(leftOutIds), nextEnd]);
+  const people = rows.map((r) => {
+    const flags = {
+      arrive: r.arrive, explore: r.explore, activate: r.activate, belong: r.belong,
+      use: r.use, stay: stayKnown ? (r.arrive && r.arrive_next) : null, invite: r.invite,
+    };
+    // Where they stopped: the furthest stage reached this week, in order.
+    let furthest = null;
+    for (const key of STAGES) if (flags[key]) furthest = key;
+    return { userId: Number(r.user_id), name: r.username, ...flags, activateKinds: r.activate_kinds || [], stoppedAt: furthest };
+  });
+  const counts = {};
+  for (const key of STAGES) {
+    counts[key] = key === 'stay' && !stayKnown
+      ? notRecorded('Known once the following week has ended.')
+      : people.filter((p) => p[key]).length;
+  }
+  const stoppedAt = {};
+  for (const key of STAGES) {
+    stoppedAt[key] = people.filter((p) => p.stoppedAt === key).map((p) => ({ userId: p.userId, name: p.name }));
+  }
+  return { week: week.label, finished: week.finished, counts, stoppedAt, people };
+}
+
+// ── Active groups ──────────────────────────────────────────────────────
+//
+// Every change that went live, with its project, its real author and the
+// real people other than the author who said yes to the revision that
+// merged. Merged changes number in the low thousands in total, so the weeks
+// are bucketed here rather than in SQL. $1 is unused padding kept for the
+// shared parameter layout: the end of the window, $2 now, $3/$4 real people.
+const LIVE_CHANGES_SQL = `SELECT cs.id, cs.app_id, ap.slug, ap.name, ap.self_hosted,
+         cs.merged_at, cs.user_id AS author_id, u.username AS author,
+         ARRAY(SELECT pvx.user_id FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
+                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                  AND pvx.approval_epoch = cs.approval_epoch
+                  AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
+                  AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
+                  AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
+                  AND NOT (uy.id = ANY($4::int[]))
+                ORDER BY pvx.user_id) AS yes_ids,
+         ARRAY(SELECT uy.username FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
+                WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                  AND pvx.approval_epoch = cs.approval_epoch
+                  AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
+                  AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
+                  AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
+                  AND NOT (uy.id = ANY($4::int[]))
+                ORDER BY pvx.user_id) AS yes_names
+    FROM chat_sessions cs
+    JOIN apps ap ON ap.id = cs.app_id
+    JOIN users u ON u.id = cs.user_id
+   WHERE cs.status = 'merged' AND cs.merged_at IS NOT NULL
+     AND cs.merged_at < $1::timestamptz AND cs.merged_at <= $2::timestamptz
+     AND ${REAL_PERSON_SQL}`;
+
+// Changes put to the group and still waiting, with no yes yet from another
+// real person: the other half of "groups one short".
+const WAITING_SQL = `SELECT cs.id, ap.slug, ap.name, cs.user_id AS author_id, u.username AS author, cs.promoted_at
+    FROM chat_sessions cs
+    JOIN apps ap ON ap.id = cs.app_id
+    JOIN users u ON u.id = cs.user_id
+   WHERE cs.status IN ('promoted', 'merging') AND COALESCE(ap.self_hosted, FALSE) = FALSE
+     AND cs.promoted_at IS NOT NULL AND cs.promoted_at < $1::timestamptz AND cs.promoted_at <= $2::timestamptz
+     AND ${REAL_PERSON_SQL}
+     AND NOT EXISTS (SELECT 1 FROM pr_votes pvx JOIN users uy ON uy.id = pvx.user_id
+                      WHERE pvx.session_id = cs.id AND pvx.vote = 'yes' AND pvx.user_id <> cs.user_id
+                        AND pvx.approval_epoch = cs.approval_epoch
+                        AND uy.is_admin IS NOT TRUE AND uy.is_synthetic IS NOT TRUE
+                        AND uy.participation_restricted_at IS NULL AND uy.anonymised_at IS NULL
+                        AND NOT (LOWER(uy.username) LIKE ANY($3::text[]))
+                        AND NOT (uy.id = ANY($4::int[])))
+   ORDER BY cs.promoted_at`;
+
+/** Group the live changes of one week by project. */
+function groupsForWeek(changes, week) {
+  const byProject = new Map();
+  for (const c of changes) {
+    const at = new Date(c.merged_at).getTime();
+    if (at < week.start.getTime() || at >= week.end.getTime()) continue;
+    const g = byProject.get(c.slug) || {
+      slug: c.slug, name: c.name, selfHosted: !!c.self_hosted, changes: 0, crossYes: false, members: new Map(),
+    };
+    g.changes += 1;
+    g.members.set(Number(c.author_id), c.author);
+    (c.yes_ids || []).forEach((id, i) => g.members.set(Number(id), (c.yes_names || [])[i]));
+    if ((c.yes_ids || []).length) g.crossYes = true;
+    byProject.set(c.slug, g);
+  }
+  return [...byProject.values()].map((g) => ({
+    slug: g.slug,
+    name: g.name,
+    selfHosted: g.selfHosted,
+    changes: g.changes,
+    people: [...g.members.entries()].map(([userId, name]) => ({ userId, name })),
+    active: !g.selfHosted && isActiveGroup(g.members.size, g.crossYes),
+  }));
+}
+
+/**
+ * Active groups for `week` with the standard lifecycle against the week
+ * before and every earlier week; Homeroom's own project on a line of its own,
+ * never counted; and the groups one short.
+ */
+async function activeGroups(pool, { week, now = new Date(), leftOutIds = [] } = {}) {
+  const params = [week.end, now, ...realPersonParams(leftOutIds)];
+  const { rows: changes } = await pool.query(LIVE_CHANGES_SQL, params);
+  const before = previousWeek(week);
+  const thisWeek = groupsForWeek(changes, week);
+  const lastWeek = new Set(groupsForWeek(changes, before).filter((g) => g.active).map((g) => g.slug));
+  // Every week before the one before: was the project an active group then?
+  const earlierWeeks = new Map();
+  for (const c of changes) {
+    if (new Date(c.merged_at).getTime() >= before.start.getTime()) continue;
+    const key = weekStart(c.merged_at).getTime();
+    if (!earlierWeeks.has(key)) earlierWeeks.set(key, []);
+    earlierWeeks.get(key).push(c);
+  }
+  const earlier = new Set();
+  for (const [key, list] of earlierWeeks) {
+    groupsForWeek(list, { start: new Date(key), end: new Date(key + WEEK_MS) })
+      .filter((g) => g.active).forEach((g) => earlier.add(g.slug));
+  }
+  const active = thisWeek.filter((g) => g.active).map((g) => ({
+    ...g, lifecycle: groupLifecycle({ thisWeek: true, lastWeek: lastWeek.has(g.slug), earlier: earlier.has(g.slug) }),
+  }));
+  const wentQuiet = [...lastWeek].filter((slug) => !active.some((g) => g.slug === slug))
+    .map((slug) => {
+      const g = groupsForWeek(changes, before).find((x) => x.slug === slug);
+      return { slug, name: g ? g.name : slug, people: g ? g.people : [], lifecycle: 'went_quiet' };
+    });
+  const homeroom = thisWeek.find((g) => g.selfHosted) || null;
+  const { rows: waiting } = await pool.query(WAITING_SQL, params);
+  const oneShort = [
+    ...thisWeek.filter((g) => !g.selfHosted && !g.active && g.people.length === 1)
+      .map((g) => ({ slug: g.slug, name: g.name, people: g.people, why: 'one person had a change go live alone' })),
+    ...waiting.map((w) => ({ slug: w.slug, name: w.name, people: [{ userId: Number(w.author_id), name: w.author }],
+      why: 'a change is waiting for a yes from someone else', since: w.promoted_at })),
+  ];
+  return {
+    week: week.label,
+    finished: week.finished,
+    count: active.length,
+    groups: active,
+    wentQuiet,
+    homeroom: homeroom ? { changes: homeroom.changes, people: homeroom.people.length } : null,
+    oneShort,
+  };
+}
+
+// ── Coverage ───────────────────────────────────────────────────────────
+//
+// Is navigation actually arriving? Real people active this week by the
+// server's own records, against those with navigation recorded; and rows per
+// day per build, so a broken hook or an old cached shell shows as a gap in
+// the data, not as people who stopped exploring. $5 is the navigation codes.
+const COVERAGE_SQL = `WITH real AS (
+    SELECT u.id FROM users u WHERE ${REAL_PERSON_SQL}
+  ), active AS (${ARRIVE_THIS_WEEK}
+  ), nav AS (
+    SELECT e.user_id, (e.created_at AT TIME ZONE 'UTC')::date AS day, e.metadata->>'build' AS build
+      FROM events e
+     WHERE e.event_type = 'ui_experience' AND e.created_at >= $1::timestamptz AND e.created_at < $2::timestamptz
+       AND e.metadata->>'kind' = 'screen_visit' AND e.metadata->>'screen' = ANY($5::text[])
+  )
+  SELECT
+    (SELECT COUNT(*)::int FROM real r WHERE r.id IN (SELECT user_id FROM active)) AS active_people,
+    (SELECT COUNT(DISTINCT n.user_id)::int FROM nav n JOIN real r ON r.id = n.user_id) AS with_navigation,
+    COALESCE((SELECT json_agg(json_build_object('day', to_char(d.day, 'YYYY-MM-DD'), 'build', d.build, 'rows', d.rows)
+                ORDER BY d.day, d.build)
+       FROM (SELECT n.day, COALESCE(n.build, 'unknown') AS build, COUNT(*)::int AS rows
+               FROM nav n GROUP BY n.day, COALESCE(n.build, 'unknown')) d), '[]'::json) AS by_day`;
+
+async function coverage(pool, { week, leftOutIds = [] } = {}) {
+  const { NAV_SCREENS: nav } = require('./ui-telemetry');
+  const { rows } = await pool.query(COVERAGE_SQL,
+    [week.start, week.end, ...realPersonParams(leftOutIds), [...nav]]);
+  const r = rows[0] || {};
+  return {
+    week: week.label,
+    activePeople: r.active_people || 0,
+    withNavigation: r.with_navigation || 0,
+    byDay: r.by_day || [],
+  };
+}
+
 module.exports = {
   COHORTS_SQL,
+  COVERAGE_SQL,
+  LIVE_CHANGES_SQL,
+  WAITING_SQL,
   DAY_MS,
   FIRST_MILE_ADMITTED_SQL,
   FIRST_MILE_OTHER_WAY_SQL,
   FIRST_MILE_STEPS,
+  STAGES,
+  STAGES_SQL,
   FEW_MOVES,
   GROUP_MAX,
   GROUP_MIN,
@@ -569,7 +884,10 @@ module.exports = {
   RESERVED_PATTERNS,
   VISIT_GAP_MS,
   WEEK_MS,
+  activeGroups,
   cohorts,
+  coverage,
+  groupsForWeek,
   firstMile,
   firstMileCounts,
   firstMileSteps,
@@ -583,5 +901,6 @@ module.exports = {
   parseWeek,
   previousWeek,
   splitVisits,
+  stages,
   weekStart,
 };
