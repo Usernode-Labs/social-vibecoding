@@ -455,6 +455,7 @@ async function ensureFixtures(pool, user) {
 // has none.
 const BOT_DM_LEGACY_ID = 910005;
 const BOT_DM_QUESTION_KEY = 'staging-hrbot-question';
+const BOT_DM_OFFER_KEY = 'staging-hrbot-offer';
 
 async function ensureBotDmFixture(pool, user) {
   if (process.env.USERNODE_ENV !== 'staging' || !user?.id) return null;
@@ -480,6 +481,21 @@ async function ensureBotDmFixture(pool, user) {
         issueTitle: 'Staging demo, sort the list by date', mirrors: true, status: 'open',
         question: 'Should the newest items show first, or the oldest?',
         answers: ['Newest first', 'Oldest first', 'Let me pick each time'],
+      },
+    },
+  });
+  // #3624 stage 2: and a request it offers to file, with File it / Not now.
+  // A demo: no project stands behind it, so a tap files nothing here.
+  await conversations.sendMessage(pool, { id: bot.id }, opened.conversationId, {
+    content: 'Here is the request I\'d file for you.\n\n**Staging demo app** · new request: Staging demo, add a dark mode\n\n'
+      + 'Staging demo: a dark mode for the list, switched on from the settings screen.',
+    idempotency_key: BOT_DM_OFFER_KEY,
+  }, {
+    metadata: {
+      homeroomBot: {
+        kind: 'confirm', appName: 'Staging demo app', status: 'open', mirrors: false,
+        question: 'File this as a request on Staging demo app?',
+        answers: ['File it', 'Not now'],
       },
     },
   });

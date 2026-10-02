@@ -323,6 +323,21 @@ test('a question in the DM draws its answers, the default marked, and says an an
 
   const person = { ...message, sender: { id: 4, username: 'ada' } };
   assert.equal(renderToHtml(createElement(BotQuestion, { message: person, conversationId: 3 })), '', 'only the bot\'s own');
+
+  // #3624 stage 2: an offer to file a request takes the same buttons, but
+  // nothing is posted until File it, so no public note, no "suggested", and
+  // no Something else (typing is read by the bot).
+  const offer = { ...message, metadata: { homeroomBot: {
+    kind: 'confirm', appName: 'Seed swap', question: 'File this as a request on Seed swap?',
+    answers: ['File it', 'Not now'], status: 'open',
+  } } };
+  const offered = renderToHtml(createElement(BotQuestion, { message: offer, conversationId: 3 }));
+  assert.match(offered, /aria-label="File this request\?"/);
+  assert.match(offered, /<span>File it<\/span><\/button>/);
+  assert.match(offered, /<span>Not now<\/span>/);
+  assert.doesNotMatch(offered, /suggested|Something else|public discussion/);
+  const chose = { ...offer, metadata: { homeroomBot: { ...offer.metadata.homeroomBot, status: 'answered', answer: 'File it' } } };
+  assert.match(renderToHtml(createElement(BotQuestion, { message: chose, conversationId: 3 })), /You chose: File it/);
 });
 
 test('the Messages client keeps the bot\'s mark and its question, which it builds field by field', () => {

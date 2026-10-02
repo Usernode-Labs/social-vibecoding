@@ -44,6 +44,29 @@ interface Settings {
   userWeeklyCents: number;
   // The projects it is building for them, live like liveApps.
   firstVersionApps: string[];
+  // #3624 stage 2: live work at once across the platform and per person,
+  // and whether a DM to the bot is read by its model.
+  liveAtOnce: number;
+  perPerson: number;
+  dmChat: boolean;
+}
+
+// #3624 stage 2: one piece of work running now.
+interface Working {
+  appSlug: string;
+  appName: string;
+  issueNumber: number;
+  since: string;
+  lane: 'live' | 'background';
+  person: string | null;
+}
+
+// #3624 stage 2: the bot's answers in DMs this week.
+interface DmChat {
+  turns: number;
+  failed: number;
+  people: number;
+  costUsd: number;
 }
 
 // #3624: one person on the DM list, with what their requests cost this week.
@@ -156,7 +179,10 @@ interface LastPass {
   mode: string | null;
   busy: boolean;
   refreshed: boolean;
-  processed: number;
+  processed?: number;
+  // #3624 stage 2: a pass starts work and does not wait for it.
+  dispatched?: number;
+  inFlight?: number;
   paused: string | null;
   detail?: string | null;
   // How long the bot waits before trying again after a platform fault (#3122).
@@ -185,6 +211,8 @@ interface Payload {
   builds: BuildLane;
   mentionOptOuts: { total: number; items: MentionOptOut[] };
   dmUsers?: DmUser[];
+  workingNow?: Working[];
+  dmChat?: DmChat;
 }
 
 // Somebody who asked the bot to stop tagging them on one issue.
@@ -582,6 +610,52 @@ function DmPeople({ saved, spend, mode, userWeeklyCents, canWrite, busy, onSave 
         </div>
       ) : null}
     </>
+  );
+}
+
+/**
+ * #3624 stage 2: one whole-number setting saved when the field loses focus,
+ * like the other numbers on this screen.
+ */
+function NumberSetting({ id, label, value, min, max, canWrite, onSave }: {
+  id: string; label: string; value: number; min: number; max: number; canWrite: boolean;
+  onSave: (n: number) => void;
+}) {
+  return (
+    <div>
+      <label className={AdminUI.label} htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        type="number" min={min} max={max} step="1"
+        className={`${AdminUI.input} mt-1`}
+        defaultValue={value}
+        key={`${id}-${value}`}
+        disabled={!canWrite}
+        onBlur={(e) => {
+          const n = Number(e.target.value);
+          if (n !== value) onSave(n);
+        }}
+      />
+    </div>
+  );
+}
+
+/** What runs now, one line each: the app, the request, who it is for, since when. */
+function WorkingNow({ items }: { items: Working[] }) {
+  if (!items.length) {
+    return <p className={AdminUI.muted} id="admin-homeroom-bot-working-none">Nothing is running right now.</p>;
+  }
+  return (
+    <ul className="text-sm space-y-1" id="admin-homeroom-bot-working">
+      {items.map((w) => (
+        <li key={`${w.appSlug}#${w.issueNumber}`} className="flex flex-wrap items-center gap-2" data-working={`${w.appSlug}#${w.issueNumber}`}>
+          <span className={w.lane === 'live' ? AdminUI.badge.success : AdminUI.badge.default}>{w.lane === 'live' ? 'live' : 'background'}</span>
+          <span>{`${w.appName} #${w.issueNumber}`}</span>
+          {w.person ? <span className={AdminUI.muted}>{`for @${w.person}`}</span> : null}
+          <span className={AdminUI.muted}>{`since ${when(w.since)}`}</span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -1102,6 +1176,43 @@ function HomeroomBotSection() {
             </p>
           </div>
 
+          <div className="md:col-span-3" id="admin-homeroom-bot-at-once">
+            <p className={AdminUI.label}>How much at once</p>
+            <div className="grid gap-3 md:grid-cols-3 mt-1">
+              <NumberSetting
+                id="admin-homeroom-bot-live-at-once" label="Live requests at once"
+                value={settings?.liveAtOnce ?? 6} min={1} max={16} canWrite={canWrite}
+                onSave={(n) => {
+                  if (!Number.isInteger(n) || n < 1 || n > 16) { setStatus({ text: 'Live requests at once must be a whole number from 1 to 16.', tone: 'err' }); return; }
+                  saveSettings({ liveAtOnce: n }, `The bot now works on up to ${n} live request${n === 1 ? '' : 's'} at once.`);
+                }}
+              />
+              <NumberSetting
+                id="admin-homeroom-bot-per-person" label="Per person"
+                value={settings?.perPerson ?? 2} min={1} max={4} canWrite={canWrite}
+                onSave={(n) => {
+                  if (!Number.isInteger(n) || n < 1 || n > 4) { setStatus({ text: 'Per person must be a whole number from 1 to 4.', tone: 'err' }); return; }
+                  saveSettings({ perPerson: n }, `The bot now works on up to ${n} of one person's requests at once.`);
+                }}
+              />
+              <NumberSetting
+                id="admin-homeroom-bot-concurrency" label="Background apps at once"
+                value={settings?.concurrency ?? 1} min={1} max={4} canWrite={canWrite}
+                onSave={(n) => {
+                  if (!Number.isInteger(n) || n < 1 || n > 4) { setStatus({ text: 'Background apps at once must be a whole number from 1 to 4.', tone: 'err' }); return; }
+                  saveSettings({ concurrency: n }, `Shadow triage now runs on up to ${n} app${n === 1 ? '' : 's'} at once.`);
+                }}
+              />
+            </div>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-at-once-note">
+              Live requests, counted across the whole platform, are the ones on apps it acts on for real and the
+              projects it builds for people. It takes one request per app at a time, since it has one session per
+              app, and shares the slots between people in turns. Shadow triage of every other app runs in slots of
+              its own, so it never holds up live work. Each slot uses a worker from the same pool as people&apos;s
+              own coding sessions.
+            </p>
+          </div>
+
           <div className="md:col-span-3" id="admin-homeroom-bot-dm">
             <DmPeople
               saved={settings?.dmUsers || []}
@@ -1112,6 +1223,25 @@ function HomeroomBotSection() {
               busy={busy !== ''}
               onSave={saveDm}
             />
+            <label className="flex items-center gap-2 mt-3 text-sm" htmlFor="admin-homeroom-bot-dm-chat">
+              <input
+                id="admin-homeroom-bot-dm-chat" type="checkbox"
+                className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 text-violet-700 focus:ring-violet-500 dark:text-violet-400"
+                checked={settings?.dmChat !== false}
+                disabled={!canWrite || busy !== ''}
+                onChange={(e) => saveSettings({ dmChat: e.target.checked }, e.target.checked
+                  ? 'The bot now reads and answers their messages.'
+                  : 'The bot no longer reads their messages: a message answers its newest open question, as before.')}
+              />
+              <span>Read and answer their messages</span>
+            </label>
+            <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-dm-chat-note">
+              {payload?.dmChat
+                ? `This week: ${payload.dmChat.turns} answer${payload.dmChat.turns === 1 ? '' : 's'} to ${payload.dmChat.people} ${payload.dmChat.people === 1 ? 'person' : 'people'}, ${money(payload.dmChat.costUsd)}${payload.dmChat.failed ? `, ${payload.dmChat.failed} failed` : ''}. `
+                : ''}
+              It can say what it is working on for them, pass an answer on to its question, and offer to file a
+              new request, which it files only when they tap File it. Its answers count in their weekly allowance.
+            </p>
             <div className="flex flex-wrap items-center gap-2 mt-3">
               <label className={AdminUI.label} htmlFor="admin-homeroom-bot-user-cap">Each person's weekly allowance, dollars</label>
               <input
@@ -1147,7 +1277,7 @@ function HomeroomBotSection() {
 
         <p className={`${AdminUI.muted} mt-1`} id="admin-homeroom-bot-loop">
           {payload?.loop
-            ? `Last pass ${when(payload.loop.at)}: ${payload.loop.processed} triaged${payload.loop.refreshed ? ', queue refreshed' : ''}${
+            ? `Last pass ${when(payload.loop.at)}: ${payload.loop.dispatched ?? payload.loop.processed ?? 0} started, ${payload.loop.inFlight ?? 0} running${payload.loop.refreshed ? ', queue refreshed' : ''}${
               payload.loop.paused === 'budget' ? '; paused on the weekly cap'
                 : payload.loop.paused === 'infra' ? `; paused on a platform fault (${payload.loop.detail || 'see the logs'})${
                   retryAt(payload.loop) ? `, trying again at ${retryAt(payload.loop)}` : ''}`
@@ -1171,6 +1301,15 @@ function HomeroomBotSection() {
       </div>
 
       <div className={`${AdminUI.card} p-4`}>
+        <div className={AdminUI.cardHeader}>
+          <h3 className={AdminUI.cardTitle}>Working on now</h3>
+          <span className={AdminUI.cardDescription} id="admin-homeroom-bot-working-count">
+            {payload ? `${(payload.workingNow || []).length} running` : ''}
+          </span>
+        </div>
+        <div className="mb-4">
+          <WorkingNow items={payload?.workingNow || []} />
+        </div>
         <div className={AdminUI.cardHeader}>
           <h3 className={AdminUI.cardTitle}>Queue</h3>
           <span className={AdminUI.cardDescription} id="admin-homeroom-bot-queue-depth">
@@ -1438,4 +1577,4 @@ const AdminHomeroomBot = {
 if (typeof window !== 'undefined') (window as any).AdminHomeroomBot = AdminHomeroomBot;
 
 // DmPeople is exported for tests/admin-homeroom-bot.test.js, which renders it.
-export { AdminHomeroomBot, DmPeople };
+export { AdminHomeroomBot, DmPeople, WorkingNow };

@@ -569,3 +569,38 @@ test('the DM list is one person per row, like the live apps list, with what each
   assert.match(tsx, /if \(await onSave\(chosen\)\) setDraft\(null\);/, 'a successful save goes back to showing the saved list');
 });
 
+
+test('how much the bot works on at once is set here, and what runs now is listed (#3624 stage 2)', async () => {
+  const tsx = read('frontend/src/features/admin/admin-homeroom-bot.tsx');
+  for (const id of ['admin-homeroom-bot-live-at-once', 'admin-homeroom-bot-per-person', 'admin-homeroom-bot-concurrency']) {
+    assert.ok(tsx.includes(`id="${id}"`), id);
+  }
+  assert.match(tsx, /saveSettings\(\{ liveAtOnce: n \}/);
+  assert.match(tsx, /saveSettings\(\{ perPerson: n \}/);
+  assert.match(tsx, /saveSettings\(\{ dmChat: e\.target\.checked \}/);
+  assert.match(tsx, /id="admin-homeroom-bot-dm-chat"/);
+  assert.match(tsx, /<WorkingNow items=\{payload\?\.workingNow \|\| \[\]\} \/>/);
+
+  const { renderToHtml, createElement } = require('./lib/render-tsx');
+  const { WorkingNow } = loadBotSection();
+  const html = renderToHtml(createElement(WorkingNow, { items: [
+    { appSlug: 'todo', appName: 'Todo', issueNumber: 12, since: '2026-10-02T10:00:00Z', lane: 'live', person: 'ada' },
+    { appSlug: 'notes', appName: 'Notes', issueNumber: 3, since: '2026-10-02T10:05:00Z', lane: 'background', person: null },
+  ] }));
+  assert.match(html, /data-working="todo#12"[^>]*><span class="badge-success">live<\/span><span>Todo #12<\/span><span class="muted">for @ada<\/span>/);
+  assert.match(html, /data-working="notes#3"[^>]*><span class="badge-default">background<\/span><span>Notes #3<\/span><span class="muted">since /);
+  assert.match(renderToHtml(createElement(WorkingNow, { items: [] })), /id="admin-homeroom-bot-working-none"[^>]*>Nothing is running right now\./);
+
+  who = FULL_ADMIN;
+  const res = await call('PUT', '/api/admin/homeroom-bot/settings', { liveAtOnce: 8, perPerson: 3, dmChat: false });
+  assert.equal(res.status, 200);
+  assert.equal(settings.get('homeroom_bot_live_at_once'), '8');
+  assert.equal(settings.get('homeroom_bot_per_person'), '3');
+  assert.equal(settings.get('homeroom_bot_dm_chat'), 'off');
+  const bad = await call('PUT', '/api/admin/homeroom-bot/settings', { liveAtOnce: 99 });
+  assert.equal(bad.status, 400);
+  who = VIEW_ADMIN;
+  const refused = await call('PUT', '/api/admin/homeroom-bot/settings', { perPerson: 1 });
+  assert.equal(refused.status, 403);
+  who = FULL_ADMIN;
+});
