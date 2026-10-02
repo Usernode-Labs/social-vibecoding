@@ -18,7 +18,11 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 test('the prompt keeps the model to the tools, plain words and Homeroom\'s content rules', () => {
   const prompt = mayor.systemPrompt({ username: 'ada', perPerson: 2, today: new Date('2026-10-02T00:00:00Z') });
   assert.match(prompt, /talking with @ada in a direct message on Homeroom/);
-  assert.match(prompt, /call my_work\n  first and answer only from what it returns/);
+  assert.match(prompt, /or "what are you doing\?", call progress first/);
+  assert.match(prompt, /say it, for example "step 4 of 7: building it, 6 minutes so far"/);
+  assert.match(prompt, /For the whole list of their requests, call my_work\. For ANY question about their\n  work, answer only from what these return/);
+  assert.match(prompt, /Never guess how long something will take, and never say it is nearly done/);
+  assert.match(prompt, /Write a link in the text only when a tool returned it, exactly as returned/);
   assert.match(prompt, /Nothing is filed until they tap File it/);
   assert.match(prompt, /Finish every turn by calling reply exactly once/);
   assert.match(prompt, /Decline, in one friendly sentence, anything sexual, violent, about gambling/);
@@ -58,9 +62,9 @@ test('it reads the platform with the agent-session Mayor\'s connector reads, nev
   assert.match(read('src/services/mayor/mcp-shim.js'), /subject: String\(rateSubject \?\? agentSessionId\),/);
 });
 
-test('the tools: five lookups and actions and a reply, every one closed to extra arguments', () => {
+test('the tools: six lookups and actions and a reply, every one closed to extra arguments', () => {
   assert.deepEqual(mayor.TOOLS.map((t) => t.function.name),
-    ['my_work', 'request_detail', 'my_projects', 'answer_question', 'offer_request', 'reply']);
+    ['progress', 'my_work', 'request_detail', 'my_projects', 'answer_question', 'offer_request', 'reply']);
   for (const t of mayor.TOOLS) {
     assert.equal(t.type, 'function');
     assert.equal(t.function.parameters.additionalProperties, false, t.function.name);
@@ -69,12 +73,44 @@ test('the tools: five lookups and actions and a reply, every one closed to extra
   const reply = mayor.TOOLS.find((t) => t.function.name === 'reply').function.parameters;
   assert.deepEqual(reply.required, ['text']);
   assert.equal(reply.properties.cards.maxItems, mayor.MAX_CARDS);
+  assert.deepEqual(reply.properties.cards.items.properties.kind.enum, ['request', 'proposal', 'project'],
+    'a project still being set up has a card too');
+  const progress = mayor.TOOLS.find((t) => t.function.name === 'progress').function;
+  assert.match(progress.description, /the step it is on/);
+  assert.match(progress.description, /setting up a project for its first version, reading a request, a question waiting for their answer, writing the plan, building, the proposal's checks, the group's vote/);
+});
+
+test('#3685: a failed model request is asked once more, and only when that can help', () => {
+  const err = (code, status = null) => Object.assign(new Error(code), { code, status });
+  assert.deepEqual(mayor.retryPlan(err('output_limit')), { maxOutputTokens: mayor.RETRY_OUTPUT_TOKENS },
+    'cut off at its limit: more room');
+  assert.ok(mayor.RETRY_OUTPUT_TOKENS > 900);
+  for (const code of ['timeout', 'network', 'provider_unavailable', 'provider_error', 'invalid_response', 'stream_error']) {
+    assert.deepEqual(mayor.retryPlan(err(code)), {}, code);
+  }
+  assert.deepEqual(mayor.retryPlan(err('invalid_request', 404), { forced: true }), { toolChoice: 'auto' },
+    'a provider that refuses a forced reply is let choose');
+  assert.equal(mayor.retryPlan(err('invalid_request', 400)), null, 'a request it refuses is refused again');
+  for (const code of ['authentication', 'billing', 'rate_limited', undefined]) assert.equal(mayor.retryPlan(err(code)), null, String(code));
+  assert.equal(mayor.retryPlan(err('timeout'), { elapsedMs: 91_000 }), null, 'not once the turn has run long');
+  const src = read('src/services/homeroom-bot-mayor.js');
+  assert.match(src, /sessionId: `hrbot-dm-\$\{user\.id\}-\$\{message\.id\}\$\{route > 1 \? `-r\$\{route\}` : ''\}`/,
+    'a provider route is this turn\'s, and a retry takes a fresh one');
+});
+
+test('#3685: which messages ask how their work is going', () => {
+  for (const text of ['how far along are you?', 'Any update?', 'is it ready yet', 'what are you working on', 'How is it going?',
+    'what\'s the status of ear trainer', 'how long will it take', 'progress?', 'are you still building it?']) {
+    assert.match(text, mayor.PROGRESS_QUESTION, text);
+  }
+  for (const text of ['Hi, who are you?', 'Nope, all good, let me know when that is ready', 'add a dark mode', 'thanks!']) {
+    assert.doesNotMatch(text, mayor.PROGRESS_QUESTION, text);
+  }
 });
 
 test('a request\'s status, in the words the model repeats', () => {
   assert.equal(mayor.statusOf({ proposal_status: 'merged', started_at: 'x' }), 'approved and live', 'merged wins');
   assert.equal(mayor.statusOf({ started_at: 'x', open_question: 1 }), 'looking at it now');
-  assert.equal(mayor.statusOf({ started_at: 'x', building: true }), 'building it now');
   assert.equal(mayor.statusOf({ open_question: 1, proposal_status: 'promoted' }), 'waiting for their answer to your question');
   assert.equal(mayor.statusOf({ proposal_status: 'promoted', enqueued_at: 'x' }), 'proposal up for the group\'s vote');
   assert.equal(mayor.statusOf({ enqueued_at: 'x', queue_position: 4 }), 'waiting in your queue (number 4)');
