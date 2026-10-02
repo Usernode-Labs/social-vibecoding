@@ -337,6 +337,33 @@ async function resolveTriage(ctx, spec, app, repo) {
   return { ok: true, task, github: snap.origin === 'backfilled' };
 }
 
+/**
+ * Who filed a request, by every record the platform keeps of it. A request
+ * filed through Homeroom is authored on GitHub by the bot account, so the
+ * GitHub author alone names nobody: the bot's own requester row (DM era),
+ * the platform's issues row and feedback report (who pressed submit), and
+ * the body's "**Source:** Homeroom user (name)" line (routes/issues.js
+ * creatorFromSourceLine, the same fallback issue edits use) each name the
+ * person. A bare "Homeroom admin" with no name names nobody.
+ */
+async function requesterNames(pool, app, repo, issueNumber, body) {
+  const { rows } = await pool.query(
+    `SELECT u.username FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
+      WHERE q.app_id = $1 AND q.issue_number = $2
+     UNION
+     SELECT u.username FROM issues i JOIN users u ON u.id = i.created_by
+      WHERE i.app_id = $1 AND i.github_issue_number = $2
+     UNION
+     SELECT u.username FROM feedback_reports f JOIN users u ON u.id = f.user_id
+      WHERE f.issue_owner = $3 AND f.issue_repo = $4 AND f.issue_number = $2`,
+    [app.id, issueNumber, repo?.owner || null, repo?.repo || null],
+  );
+  const names = rows.map((r) => r.username).filter(Boolean);
+  const fromSource = require('../../routes/issues').creatorFromSourceLine(body);
+  if (fromSource && fromSource !== 'admin') names.push(fromSource);
+  return [...new Set(names)];
+}
+
 /** The requester's real answer to a question run: their DM answer, else their next reply on the request. */
 async function trueAnswer(ctx, spec, app, repo, run) {
   const { pool, github } = ctx;
@@ -352,14 +379,9 @@ async function trueAnswer(ctx, spec, app, repo, run) {
   }
   const read = await backfill.readIssue(github, repo, spec.issue_number);
   if (!read.ok) return read;
-  const { rows: who } = await pool.query(
-    `SELECT u.username FROM homeroom_bot_requesters q JOIN users u ON u.id = q.user_id
-      WHERE q.app_id = $1 AND q.issue_number = $2`,
-    [app.id, spec.issue_number],
-  );
+  const names = await requesterNames(pool, app, repo, spec.issue_number, read.issue.body);
   const botLogin = await require('../homeroom-bot-live').botUsernameOf(github);
   const author = read.issue.user || null;
-  const names = [who[0]?.username || null];
   if (author && (!botLogin || author.toLowerCase().replace(/\[bot\]$/, '') !== botLogin.toLowerCase().replace(/\[bot\]$/, ''))) names.push(author);
   if (!names.some(Boolean)) return skipped('the requester is not known, so their answer cannot be told from anyone else\'s');
   const thread = await backfill.threadMessagesAfter(pool, app.id, spec.issue_number, spec.as_of);
