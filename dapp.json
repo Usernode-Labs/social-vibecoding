@@ -2697,9 +2697,9 @@
       "expectSelector": "#dc-form.dc-card > .dc-card-row > #dc-attach-btn"
     },
     {
-      "name": "The in-composer selector is one flat list of models, with no provider headings (#2117, #2569)",
+      "name": "The in-composer selector is one flat list of models, with no provider headings, and offers Sonnet 5.5 in place of Sonnet 5 (#2117, #2569, #3579)",
       "path": "/?workspace=1#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"]:not(:has(optgroup)) option[value=\"anthropic:claude-opus-5-5\"]:checked",
+      "expectSelector": "select#dc-model-select[aria-label=\"Chat model and API key\"]:not(:has(optgroup)):not(:has(option[value=\"anthropic:claude-sonnet-5\"])):has(option[value=\"anthropic:claude-sonnet-5-5\"]) option[value=\"anthropic:claude-opus-5-5\"]:checked",
       "expectText": "Opus 5.5"
     },
     {

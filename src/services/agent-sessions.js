@@ -20,11 +20,27 @@
 
 const log = require('./logger');
 const appAccess = require('./app-access');
+const models = require('./models');
 
 const TITLE_MAX = 256;
 const LIST_LIMIT_MAX = 50;
 const MESSAGES_LIMIT_MAX = 200;
 const ENTRIES = Object.freeze(['improve', 'workshop', 'app', 'issue', 'feedback', 'proposal', 'messages', 'banner', 'global-chat']);
+
+// The stored choice as it is shown and run. A Claude model the platform has
+// retired (#3579: Sonnet 5, saved before Sonnet 5.5 replaced it) reads as its
+// successor, so the composer's picker ticks the model the conversation now
+// runs on rather than listing a name it no longer offers. The row keeps the
+// id it was written with until the owner picks again.
+function choiceFromRow(row) {
+  const backend = row.agent_backend;
+  let model = row.agent_model || null;
+  if (backend === 'claude_code' && model
+    && Object.prototype.hasOwnProperty.call(models.RETIRED_MODELS, model)) {
+    model = models.RETIRED_MODELS[model];
+  }
+  return { backend, model, reasoningEffort: row.agent_reasoning_effort || null };
+}
 
 class AgentSessionError extends Error {
   constructor(status, message) {
@@ -165,13 +181,7 @@ function shapeSession(row) {
       : null,
     focusContext: row.focus_context || {},
     // The composer's model choice; null follows the user's default.
-    agent: row.agent_backend
-      ? {
-        backend: row.agent_backend,
-        model: row.agent_model || null,
-        reasoningEffort: row.agent_reasoning_effort || null,
-      }
-      : null,
+    agent: row.agent_backend ? choiceFromRow(row) : null,
     activeChange: shapeChangeRow(row),
     // A lease its turn stopped renewing is not work in progress: the
     // process holding it died, and the next message takes it over.
@@ -333,11 +343,7 @@ async function getAgentChoice(pool, agentSessionId) {
   );
   const row = rows[0];
   if (!row || !row.agent_backend) return null;
-  return {
-    backend: row.agent_backend,
-    model: row.agent_model || null,
-    reasoningEffort: row.agent_reasoning_effort || null,
-  };
+  return choiceFromRow(row);
 }
 
 async function renameAgentSession(pool, { userId, id, title }) {

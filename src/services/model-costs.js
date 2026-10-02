@@ -44,7 +44,7 @@ const OVERRIDES_KEY = 'model_cost_estimate_overrides';
 // point.
 //
 // At the prices in this file that profile puts a change at about $0.30 on
-// GLM 5.3 Flash, $0.21 on DeepSeek v4.1 Flash, $6.20 on Sonnet 5, $12.40 on
+// GLM 5.3 Flash, $0.21 on DeepSeek v4.1 Flash, $6.20 on Sonnet 5.5, $12.40 on
 // Opus 5.5 and $31.00 on Fable 5.1.
 const TYPICAL_CHANGE = Object.freeze({
   inputTokens: 2_500_000,
@@ -73,9 +73,9 @@ const OPENROUTER_NOTES = Object.freeze({
 // no live catalogue entry is to hand (the picker has one; the admin console
 // does not, because it has no user's key to fetch a catalogue with).
 // Anthropic's come from services/models.js and services/llm.js, which agree:
-// Sonnet $2/$10, Opus 5.5 $4/$20, Fable $10/$50 per MTok in/out.
+// Sonnet 5.5 $2/$10, Opus 5.5 $4/$20, Fable $10/$50 per MTok in/out.
 const ANTHROPIC_PRICING = Object.freeze({
-  'claude-sonnet-5': { inputPricePerMillion: 2, outputPricePerMillion: 10 },
+  'claude-sonnet-5-5': { inputPricePerMillion: 2, outputPricePerMillion: 10 },
   'claude-opus-5-5': { inputPricePerMillion: 4, outputPricePerMillion: 20 },
   'claude-fable-5-1': { inputPricePerMillion: 10, outputPricePerMillion: 50 },
 });
@@ -83,8 +83,11 @@ const ANTHROPIC_PRICING = Object.freeze({
 // #2818: models the picker no longer offers, priced so a row of recorded
 // history on one (the admin console's observed columns) still shows what
 // it was estimated at. Not curated: nothing here is offered or noted.
+// #3579: Sonnet 5 joined when Sonnet 5.5 replaced it, at its own (equal)
+// published $2/$10.
 const RETIRED_PRICING = Object.freeze({
   'claude-opus-5': { inputPricePerMillion: 5, outputPricePerMillion: 25 },
+  'claude-sonnet-5': { inputPricePerMillion: 2, outputPricePerMillion: 10 },
 });
 
 const OPENROUTER_PRICING = Object.freeze({
