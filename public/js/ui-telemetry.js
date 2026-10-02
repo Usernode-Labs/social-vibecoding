@@ -48,6 +48,9 @@
   // screen is reported again, marked `returned`. Same 30 minutes the
   // Journey queries use to end a visit.
   const RETURN_AFTER_MS = 30 * 60 * 1000;
+  // A mark from markNextVia explains the navigation that follows it at once;
+  // one that no navigation used goes stale rather than mislabel a later step.
+  const NEXT_VIA_MS = 5000;
 
   function createUITelemetry(env) {
     env = env || {};
@@ -92,6 +95,7 @@
     let currentNav = null;
     let hiddenAt = null;
     let nextVia = null;
+    let nextViaAt = 0;
 
     function adminRoute() {
       try { return String(env.location?.hash || '').startsWith('#admin'); } catch (_) { return false; }
@@ -223,7 +227,8 @@
       context = context || {};
       const appSlug = safeAppSlug(context.appSlug);
       if (currentNav && currentNav.screen === screenCode && currentNav.appSlug === appSlug) return null;
-      const via = VIAS.has(context.via) ? context.via : (nextVia || 'own');
+      const marked = nextVia && clock() - nextViaAt <= NEXT_VIA_MS ? nextVia : null;
+      const via = VIAS.has(context.via) ? context.via : (marked || 'own');
       nextVia = null;
       currentNav = { screen: screenCode, appSlug };
       return emit('screen_visit', screenCode, { appSlug, via });
@@ -231,6 +236,7 @@
 
     function markNextVia(via) {
       nextVia = VIAS.has(via) ? via : null;
+      nextViaAt = clock();
     }
 
     function navHidden() {
@@ -577,6 +583,13 @@
       if (doc.readyState === 'loading') doc.addEventListener('DOMContentLoaded', recordBoot, { once: true });
       else setTimer(recordBoot, 0);
     }
+    // Back and Forward, where the browser says so (the Navigation API); a
+    // browser without it reports those steps as the person's own.
+    try {
+      env?.navigation?.addEventListener?.('navigate', (event) => {
+        if (event && event.navigationType === 'traverse') markNextVia('back');
+      });
+    } catch (_) { /* optional */ }
     if (env && typeof env.addEventListener === 'function') {
       env.addEventListener('pagehide', () => { abandonPending(); void flush(true); });
       env.addEventListener('online', () => schedule(0));

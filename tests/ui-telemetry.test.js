@@ -816,3 +816,16 @@ test('client reports navigation once per change, with how they got there, a hidd
   const sequences = events.map((e) => e.sequence);
   assert.deepEqual(sequences, [...sequences].sort((a, b) => a - b), 'the order of the path is kept');
 });
+
+test('a via mark explains only the navigation right after it', async () => {
+  const { api, sent, elapse } = clientHarness();
+  api.setUser({ id: 43, uiTelemetryEligible: true }, true);
+  api.markNextVia('nudged');
+  api.navigate('messages');
+  api.markNextVia('handed');
+  elapse(6000);
+  api.navigate('project', { appSlug: 'run-club' });
+  await api.flush(false);
+  assert.deepEqual(sent.flatMap((b) => b.body.events).map((e) => e.via), ['nudged', 'own'],
+    'a stale mark does not mislabel a later step');
+});

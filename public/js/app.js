@@ -3854,6 +3854,7 @@ const App = {
   // who invited them. In it — just now, or already — opens its hub. A dead
   // link says why, once.
   async _followInvite(token) {
+    App._markNavigationVia?.('handed');
     try { history.replaceState(null, '', App._rootUrl('')); } catch (_) {}
     App.restoreFromHash();
     const toast = (msg, error) => {
@@ -3912,6 +3913,12 @@ const App = {
     try {
       const rawHash = location.hash.replace('#', '');
       const pathRoute = App._appRouteFromPath(location.pathname);
+      // The first route of a page load that names a place came from an
+      // address: a link from outside, a bookmark or a typed URL (#3369).
+      if (!App._navAddressChecked) {
+        App._navAddressChecked = true;
+        if (rawHash || pathRoute) App._markNavigationVia?.('address');
+      }
       // A fragment names a non-app platform screen, so it outranks the clean
       // app pathname it was assigned from. Heal the mixed address in place;
       // all the existing hash-writing modules can stay small and correct.
@@ -5197,6 +5204,10 @@ const App = {
     // navigateToApp commits the destination while the click is still
     // synchronous (see its note), and switchTab re-syncs after assigning it.
     const inApp = screen === 'app-view' && App.currentTab === 'app';
+    // Navigation for the admin Journey page (#3369): this is the one place
+    // that settles which screen is showing, so it is where a step is
+    // reported. Optional call: several suites run this method alone.
+    App._reportNavigation?.(screen, inApp);
     // …UNLESS THE VIEWER PINNED IT (#3319). Settings → Theme's "Keep sidebar
     // open in apps" keeps the desktop rail docked beside a running app. Off
     // by default, and desktop only: below 768px the bar is the phone's
@@ -5254,6 +5265,72 @@ const App = {
     // whether it is on screen. Last, so the handle lands in the same callback
     // as the bar it rides on.
     App._syncParkedApp(inApp);
+  },
+
+  // ── Navigation telemetry (#3369) ───────────────────────────────────
+  //
+  // One code per screen root, the same list as NAV_SCREENS in
+  // src/services/ui-telemetry.js. The admin screen is never reported (the
+  // telemetry client stays silent on #admin), and neither is the signed-out
+  // shell, where `screen` is null.
+  //
+  // NOT UNDER A FIRST-RUN SHEET. A new account's Home is revealed beneath
+  // the username, terms and join sheets, and a Home "visited" there was never
+  // seen. CommunitiesFirstRun.settled() resolves once all three are done
+  // with (it waits on the other two), so the latest screen waits for it and
+  // is reported then.
+  _NAV_CODE_FOR_SCREEN: Object.freeze({
+    'home-screen': 'home',
+    'browse-screen': 'discover',
+    'workshop-screen': 'communities',
+    'leaderboard-screen': 'challenges',
+    'profile-screen': 'profile',
+    'profile-proposals-screen': 'my_proposals',
+    'settings-screen': 'settings',
+    'messages-screen': 'messages',
+    'global-chat-screen': 'assistant',
+    'agent-session-screen': 'agent_session',
+  }),
+
+  _navPending: null,
+  _navGateOpen: false,
+  _navGateWaiting: false,
+
+  _reportNavigation(screen, inApp) {
+    if (!screen || App.embeddedPanel) return;
+    const code = screen === 'app-view'
+      ? (inApp ? 'app' : 'project')
+      : App._NAV_CODE_FOR_SCREEN[screen];
+    if (!code) return;
+    App._navPending = {
+      code,
+      appSlug: screen === 'app-view' ? (App.currentApp || null) : null,
+    };
+    if (App._navGateOpen) {
+      App._flushNavigation();
+      return;
+    }
+    if (App._navGateWaiting) return;
+    App._navGateWaiting = true;
+    const gate = window.CommunitiesFirstRun?.settled?.();
+    Promise.resolve(gate).catch(() => {}).then(() => {
+      App._navGateOpen = true;
+      App._flushNavigation();
+    });
+  },
+
+  _flushNavigation() {
+    const step = App._navPending;
+    App._navPending = null;
+    if (!step) return;
+    try {
+      window.UITelemetry?.navigate?.(step.code, step.appSlug ? { appSlug: step.appSlug } : undefined);
+    } catch (_) { /* telemetry never breaks navigation */ }
+  },
+
+  // How a person arrived, marked just before the navigation it explains.
+  _markNavigationVia(via) {
+    try { window.UITelemetry?.markNextVia?.(via); } catch (_) { /* best effort */ }
   },
 
   // ── "Keep sidebar open in apps" (#3319) ─────────────────────────────

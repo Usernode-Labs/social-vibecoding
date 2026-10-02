@@ -810,6 +810,9 @@ const Notifications = {
   _onItemClick(id) {
     const item = Notifications.items.find((n) => n.id === id);
     if (!item) return false;
+    // Every notification tap, in-app or a native push (openById), comes
+    // through here: the screen it opens was reached by a nudge (#3369).
+    try { window.UITelemetry?.markNextVia?.('nudged'); } catch (_) { /* best effort */ }
     // Desktop: deliberately do NOT hide the anchored panel here — it stays
     // open over the navigated-to view so the user can keep clicking through
     // other notifications, and only dismisses via outside-click or the
