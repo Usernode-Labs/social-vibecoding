@@ -12,6 +12,7 @@ const { addHandoffColumns } = require('./lib/cli-handoff-fixture');
 const { addChecksTables } = require('./lib/cli-checks-fixture');
 const { createChecksSettlement, GATE } = require('../src/services/cli-preview-handoff/settlement');
 const { createExecutionStore } = require('../src/services/execution/store');
+const { createExecutionWorker } = require('../src/services/execution/worker');
 const { createSessionDecisionRuntime } = require('../src/services/decision-runtime');
 const history = require('../src/services/check-history');
 const { checkKey } = require('../src/services/app-manifest');
@@ -86,6 +87,130 @@ function loseCommitReply(pool) {
     },
   };
 }
+
+test('merge delivery remains retryable until GitHub initialization recovers and policy is invoked', { skip: !enabled }, async t => {
+  const f = await fixture(t);
+  const github = require('../src/services/github');
+  assert.equal(github.getInitializationStatus(), 'uninitialized');
+  t.after(() => github.init({}));
+  const input = await f.admit();
+  await f.pool.query("UPDATE chat_sessions SET status = 'promoted', reviewed_head_sha = $1 WHERE id = 1", [HEAD]);
+  await createChecksSettlement(f.pool, {}).settle(input);
+  const store = createExecutionStore(f.pool);
+  let calls = 0;
+
+  async function deliver() {
+    // A new execution owner represents worker restart. Only the policy call is
+    // substituted; SDK initialization, permission and delivery persistence are real.
+    const owner = createChecksSettlement(f.pool, {}, {
+      store,
+      async merge(appId) {
+        assert.equal(github.isEnabled(), true);
+        assert.equal(appId, 1);
+        calls++;
+      },
+    });
+    const worker = createExecutionWorker({ store, handlers: owner.handlers, concurrency: 1 });
+    await worker.tick();
+    await worker.drain();
+    return (await f.counts()).work[0];
+  }
+
+  const uninitialized = await deliver();
+  assert.equal(uninitialized.status, 'queued');
+  assert.equal(uninitialized.last_code, 'github_uninitialized');
+  assert.equal(calls, 0);
+
+  await github.init({});
+  await f.pool.query('UPDATE execution_work_requests SET due_at = NOW() WHERE id = $1', [uninitialized.id]);
+  const unavailable = await deliver();
+  assert.equal(unavailable.id, uninitialized.id);
+  assert.equal(unavailable.status, 'queued');
+  assert.equal(unavailable.last_code, 'github_unavailable');
+  assert.equal(calls, 0);
+  const retryMs = unavailable.due_at.getTime() - Date.now();
+  assert.ok(retryMs > 0 && retryMs <= 60000, 'Unavailable dependencies retain bounded retry scheduling');
+
+  // A local key initializes the real Octokit App without contacting GitHub.
+  const { privateKey } = require('node:crypto').generateKeyPairSync('rsa', {
+    modulusLength: 2048,
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+  });
+  await github.init({ githubAppId: '123', githubPrivateKey: privateKey });
+  await f.pool.query('UPDATE execution_work_requests SET due_at = NOW() WHERE id = $1', [uninitialized.id]);
+  const delivered = await deliver();
+  assert.equal(delivered.id, uninitialized.id);
+  assert.equal(delivered.status, 'succeeded');
+  assert.equal(delivered.last_code, 'gate_delivered');
+  assert.equal(calls, 1);
+  await deliver();
+  assert.equal(calls, 1, 'Completed work is not redelivered on restart');
+  const state = await f.counts();
+  assert.equal(state.sessions[0].check_state, 'passing');
+  assert.equal(state.history[0].pass_count, 3);
+  assert.equal(state.receipts.filter(row => row.run_id === input.runId).length, 1);
+  const attempts = (await f.pool.query('SELECT outcome, code FROM execution_work_attempts ORDER BY started_at')).rows;
+  assert.deepEqual(attempts, [
+    { outcome: 'retry', code: 'github_uninitialized' },
+    { outcome: 'retry', code: 'github_unavailable' },
+    { outcome: 'succeeded', code: 'gate_delivered' },
+  ]);
+});
+
+test('not-yet-in-review delivery remains an intentional domain no-op with GitHub unavailable', { skip: !enabled }, async t => {
+  const f = await fixture(t);
+  const input = await f.admit();
+  let calls = 0;
+  const owner = createChecksSettlement(f.pool, {}, {
+    github: {
+      isEnabled() { throw new Error('Domain no-op must precede dependency inspection'); },
+    },
+    async merge() { calls++; },
+  });
+  await owner.settle(input);
+  const store = createExecutionStore(f.pool);
+  const [attempt] = await store.claim(randomUUID(), [GATE], 1);
+  const outcome = await owner.handlers[GATE].run({ attempt });
+  assert.deepEqual(outcome, { outcome: 'succeeded', code: 'gate_not_in_review' });
+  await store.settle(attempt, outcome);
+  assert.equal(calls, 0);
+  assert.equal((await store.read(attempt.id)).last_code, 'gate_not_in_review');
+});
+
+test('dependency recovery rechecks supersession before invoking merge policy', { skip: !enabled }, async t => {
+  const f = await fixture(t);
+  const input = await f.admit();
+  await f.pool.query("UPDATE chat_sessions SET status = 'promoted', reviewed_head_sha = $1 WHERE id = 1", [HEAD]);
+  let ready = false;
+  let calls = 0;
+  const owner = createChecksSettlement(f.pool, {}, {
+    github: {
+      isEnabled() { return ready; },
+      getInitializationStatus() { return 'failed'; },
+    },
+    async merge() { calls++; },
+  });
+  await owner.settle(input);
+  const store = createExecutionStore(f.pool);
+  const [first] = await store.claim(randomUUID(), [GATE], 1);
+  const deferred = await owner.handlers[GATE].run({ attempt: first });
+  assert.equal(deferred.outcome, 'retry');
+  assert.equal(deferred.code, 'github_failed');
+  await store.settle(first, deferred);
+
+  await f.pool.query('UPDATE cli_preview_handoffs SET head_sha = $1 WHERE session_id = 1', [NEXT]);
+  await f.pool.query('UPDATE chat_sessions SET handoff_head_sha = $1, staging_commit_sha = $1 WHERE id = 1', [NEXT]);
+  await f.pool.query('UPDATE execution_work_requests SET due_at = NOW() WHERE id = $1', [first.id]);
+  ready = true;
+  const [restarted] = await store.claim(randomUUID(), [GATE], 1);
+  const obsolete = await owner.handlers[GATE].run({ attempt: restarted });
+  assert.equal(obsolete.outcome, 'succeeded');
+  assert.equal(obsolete.code, 'checks_superseded');
+  await store.settle(restarted, obsolete);
+  assert.equal(calls, 0);
+  assert.equal((await f.counts()).sessions[0].staging_commit_sha, NEXT);
+});
 
 test('partial history writes and caught mapping errors roll back the entire composition', { skip: !enabled }, async t => {
   const f = await fixture(t);

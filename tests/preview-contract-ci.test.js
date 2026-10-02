@@ -23,6 +23,7 @@ test('focused CI runs the shared runtime, admission, runtime and checks retireme
   assert.equal(new Set(SUITES).size, SUITES.length);
   for (const file of [
     'tests/disposable-postgres.test.js',
+    'tests/preview-worker-bootstrap.test.js',
     'tests/decision-runtime.test.js',
     'tests/execution-worker.test.js',
     'tests/review-work.test.js',
@@ -51,6 +52,8 @@ test('focused CI triggers for its suites, shared owners and operation contracts'
     'src/services/check-retirement.js',
     'src/services/check-history.js',
     'src/services/merge-queue.js',
+    'src/services/github.js',
+    'src/services/llm.js',
     'src/services/visuals.js',
     'src/services/kubernetes.js',
     'src/db/schema.sql',

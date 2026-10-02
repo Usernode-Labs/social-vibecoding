@@ -16,6 +16,16 @@ Passing/skipped settlements durably request the existing merge-queue policy chec
 
 Checks continuation is complete after verdict settlement and consumer retirement, with required gate requests durably admitted. Gate requests retain their own execution owner until delivered or obsolete. Screenshots, shots scheduling, notifications, display-only platform-variable refresh and PR body updates are optional and do not carry required gate ownership.
 
+## Standalone delivery prerequisites
+
+Before starting discovery or claiming work, the standalone worker explicitly initializes the GitHub and LLM SDK services used by its existing adapters and policy services. Initialization errors prevent startup; persisted requests remain available for a restarted worker. Missing GitHub App credentials are an unavailable prerequisite, not a decision that merge policy has nothing to do. No network request is required to initialize the SDK clients.
+
+For an authorized merge delivery, an uninitialized, unavailable or failed GitHub client keeps the request retryable with a bounded dependency reason and the shared executor's capped backoff. Recovery revalidates lifecycle authority before invoking policy. `gate_delivered` means that the policy service was actually invoked and returned successfully; it does not mean a merge occurred. The policy may intentionally decline to merge under its existing governance/check rules. Domain rejections such as supersession or not yet being in review remain successful no-ops with their own decision reason. Bot policy queue admission uses PostgreSQL and does not require GitHub availability. Optional SDK credentials do not change these domain policies.
+
+Fresh-process bootstrap tests and disposable-PostgreSQL delivery tests must cover missing initialization, missing credentials, recovery and successful policy invocation. GitHub requests and merge policy execution are substituted in this proof; SDK initialization and PostgreSQL claims, verdicts, history and delivery records are real. This does not establish external GitHub execution compatibility.
+
+Readiness establishes a constructed SDK client, not authenticated access to a repository. Exceptions propagated by the policy service retry delivery. Its internal candidate-error handling, backoff and subsequent merge triggers remain unchanged; a completed gate request does not prove every candidate operation inside that policy pass succeeded.
+
 ## Containment and evidence
 
 Only already-enrolled CLI capture runs use this mapping. Admission remains default-off; legacy callers retain their safeguards. No production destination is used by the proof. Tests must verify disposable PostgreSQL ownership before mutation, and actual Kubernetes evidence uses the existing dedicated fixture preflight.
@@ -35,10 +45,11 @@ Classification retains existing dispatch/advisory and bootstrap semantics. The a
 - [Strict shared history mapping](../../src/services/check-history.js)
 - [Live settlement](../../src/services/visuals.js) and [harvested settlement](../../src/services/check-harvest.js)
 - [PostgreSQL regressions](../../tests/cli-check-settlement-postgres.test.js) and [actual browser recovery](../../tests/cli-preview-checks-integration.test.js)
+- [Standalone bootstrap regressions](../../tests/preview-worker-bootstrap.test.js) and [worker startup](../../scripts/preview-preparation-worker.js)
 
 ## Bounded evidence
 
-Focused contract runner: 992 passed, including 11 real disposable-PostgreSQL
+Settlement checkpoint: focused contract runner, 992 passed, including 11 real disposable-PostgreSQL
 settlement regressions and strict existing-policy delivery tests. Actual checks/
 retirement matrix: 15 passed in the dedicated local cluster/database/registry;
 SIGKILL after verdict COMMIT preserved receipt, history and required gate work.
@@ -49,3 +60,14 @@ external merge/bot execution is claimed. Fixture metadata/private-origin transpo
 and failure timing remain substitutions. All fixture resources were retired with
 ownership verification. The local ledger records full evidence and the existing
 unrelated launcher failure in the broader mapped run.
+
+Standalone delivery correction: focused contract runner, 998 passed. Final targeted
+verification, 21 passed: 14 real disposable-PostgreSQL settlement/delivery cases,
+four fresh-process bootstrap cases and three CI guards. Delivery adopts the same
+request after missing initialization/credentials, invokes the substituted policy
+only after readiness, and rechecks supersession before invocation. Startup errors
+are injected; ready initialization uses the real SDK and a generated local key.
+No real GitHub requests or policy effects are included in this evidence.
+The affected mapped suites passed serially: 8,418 passed, 10 skipped, no failures.
+The ledger records why the existing manifest-forgery test requires serialization
+with other disposable-database suites. Ownership checks remain unchanged.

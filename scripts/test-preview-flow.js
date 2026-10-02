@@ -7,6 +7,7 @@ const { verifyDisposablePostgres, verifiedTestEnvironment } = require('../tests/
 
 const SUITES = [
   'tests/preview-contract-ci.test.js',
+  'tests/preview-worker-bootstrap.test.js',
   'tests/disposable-postgres.test.js',
   'tests/decision-runtime.test.js',
   'tests/execution-worker.test.js',

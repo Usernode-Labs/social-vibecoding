@@ -16,6 +16,12 @@ async function runWorker({
   previewOptions = {},
   onError = () => {},
 }) {
+  // This process does not pass through server.js startup. Initialize SDK
+  // dependencies before any execution can invoke an adapter or gate policy.
+  // Failure leaves durable work unclaimed for a later process to recover.
+  await require('../src/services/github').init(config);
+  await require('../src/services/llm').init(config);
+
   const { createDiscoveryPool } = require('../src/services/execution/discovery-pool');
   const discoveryPool = createDiscoveryPool(config.databaseUrl, discoveryOptions);
   const handoff = createCliHandoffWork(pool, config, { previewOptions });

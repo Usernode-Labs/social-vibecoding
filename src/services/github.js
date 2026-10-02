@@ -2,6 +2,7 @@ const log = require('./logger');
 
 let App;
 let app;
+let initializationStatus = 'uninitialized';
 
 // Neutralize `@handle` mentions in outgoing content so Homeroom never
 // pings a random GitHub account that happens to own a matching handle.
@@ -428,18 +429,27 @@ function confirmCreatedIssues(owner, repo, issues) {
 }
 
 async function init(config) {
+  app = null;
+  initializationStatus = 'initializing';
   if (!config.githubAppId || !config.githubPrivateKey) {
+    initializationStatus = 'unavailable';
     log.warn('github', 'GitHub App credentials not configured — GitHub features disabled');
     return;
   }
 
-  const mod = await import('@octokit/app');
-  App = mod.App;
+  try {
+    const mod = await import('@octokit/app');
+    App = mod.App;
+    app = new App({
+      appId: config.githubAppId,
+      privateKey: config.githubPrivateKey,
+    });
+    initializationStatus = 'ready';
+  } catch (error) {
+    initializationStatus = 'failed';
+    throw error;
+  }
 
-  app = new App({
-    appId: config.githubAppId,
-    privateKey: config.githubPrivateKey,
-  });
   log.info('github', 'GitHub App initialized', { appId: config.githubAppId });
 
   // The App credentials alone aren't enough: repo creation, branch pushes,
@@ -452,6 +462,10 @@ async function init(config) {
 
 function isEnabled() {
   return !!app;
+}
+
+function getInitializationStatus() {
+  return initializationStatus;
 }
 
 async function resolveInstallationId(owner) {
@@ -2427,6 +2441,7 @@ function noteIssueCreated(owner, repo, rawIssue, ttlMs = ISSUES_CREATED_OVERLAY_
 
 module.exports = {
   init,
+  getInitializationStatus,
   isEnabled,
   getBotUsername,
   getOctokit,

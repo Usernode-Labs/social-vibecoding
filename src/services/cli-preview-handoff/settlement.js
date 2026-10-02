@@ -3,6 +3,7 @@
 const { randomUUID } = require('node:crypto');
 const { createSessionDecisionRuntime } = require('../decision-runtime');
 const { createExecutionStore } = require('../execution/store');
+const { retryDelay } = require('../execution/worker');
 const { parseAction, reduce } = require('./settlement-reducer');
 
 const GATE = 'native-cli-check-gate';
@@ -10,6 +11,7 @@ const GATE = 'native-cli-check-gate';
 function createChecksSettlement(pool, config, {
   store = createExecutionStore(pool),
   recordHistory = require('../check-history').recordRunStrict,
+  github = require('../github'),
   merge = (appId) => require('../merge-queue').enqueue(config, appId, { propagateErrors: true }),
   bot = (sessionId) => require('../homeroom-bot').noteProposalChecks(pool, { sessionId, propagateErrors: true }),
 } = {}) {
@@ -161,14 +163,28 @@ function createChecksSettlement(pool, config, {
       ...attempt.input,
     });
     if (!permission.decision.accepted) return { outcome: 'succeeded', code: permission.decision.reason };
+
     const session = permission.current.session;
     // These services retain their own live policy and merge/queue ownership.
     // The durable obligation owns retry of delivery, not GitHub execution.
     if (attempt.input.gate === 'merge') {
-      if (require('../github').isEnabled()) await merge(session.app_id);
+      if (!github.isEnabled()) {
+        const status = github.getInitializationStatus();
+        const reason = ['uninitialized', 'initializing', 'unavailable', 'failed'].includes(status)
+          ? status : 'unavailable';
+
+        return {
+          outcome: 'retry',
+          code: `github_${reason}`,
+          delayMs: retryDelay(attempt.attempt_count, 1000, 60000),
+        };
+      }
+
+      await merge(session.app_id);
     } else {
       await bot(session.id);
     }
+
     return { outcome: 'succeeded', code: 'gate_delivered' };
   }
 

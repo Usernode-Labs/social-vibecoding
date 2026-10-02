@@ -18,6 +18,8 @@ on:
       - 'src/services/unit-suite.js'
       - 'src/services/check-history.js'
       - 'src/services/merge-queue.js'
+      - 'src/services/github.js'
+      - 'src/services/llm.js'
       - 'src/services/visuals.js'
       - 'src/services/application-runtime.js'
       - 'src/services/kubernetes.js'
