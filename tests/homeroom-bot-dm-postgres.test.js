@@ -205,7 +205,18 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
       content: 'Oldest first', reply_to_id: sent.messageId,
     });
     threadPosts.length = 0;
+    const from = events.length;
     const ack = await dm.noteUserMessage(pool, {}, { user: ada, conversationId: sent.conversationId, message: answer.message });
+    // #3684: the bot typed in her DM while it answered, through the same
+    // audience gate as a person's typing, and stopped once the answer was out.
+    const order = events.slice(from).filter((e) => e.payload.conversationId === sent.conversationId)
+      .map((e) => (e.payload.type === 'conversation_typing' ? `typing:${e.payload.typing}` : e.payload.type));
+    assert.equal(order[0], 'typing:true');
+    assert.equal(order.at(-1), 'typing:false');
+    assert.ok(order.lastIndexOf('conversation_message_created') < order.indexOf('typing:false'), 'stopped after the answer');
+    const typed = events.slice(from).find((e) => e.payload.type === 'conversation_typing');
+    assert.equal(typed.payload.userId, bot.id);
+    assert.ok(typed.memberIds.includes(ada.id), 'to her');
     assert.equal(threadPosts.length, 1, 'posted on the request');
     assert.equal(threadPosts[0].userId, ada.id, 'as her own message');
     assert.deepEqual(threadPosts[0].msg.thread, { type: 'issue', ref: 7 });
@@ -517,8 +528,10 @@ test('the Homeroom bot DM against the full PostgreSQL schema', { timeout: 180000
   await t.test('somebody not on the list who writes to the bot hears why it does not answer', async () => {
     const { conversationId } = await conversations.ensureAdmittedDirect(pool, bot.id, sam.id);
     const hi = await conversations.sendMessage(pool, sam, conversationId, { content: 'hi' });
+    const from = events.length;
     const said = await dm.noteUserMessage(pool, {}, { user: sam, conversationId, message: hi.message });
     const text = await conversations.getMessage(pool, sam, conversationId, said.messageId);
     assert.equal(text.content, dm.NOT_ENABLED_TEXT);
+    assert.ok(!events.slice(from).some((e) => e.payload.type === 'conversation_typing'), 'no typing for a canned line');
   });
 });
