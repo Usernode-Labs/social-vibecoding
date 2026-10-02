@@ -2,7 +2,10 @@
 
 Reviewed 2 October 2026 at accepted local `d24b0c0dd15fd22ee9654243e423ce449777d925`;
 canonical main `4c0ef27fb7381e9ecb89e2732e6c2c784b9395c6` was fetched and inspected.
-This is a code/retention review, not installation proof or permission to expand
+The subsequent pinned integration is `d9cf30cd73a0810be72b199f8b2a194f8c56b793`
+at merge `6730b091306c0dcbcf22579548dc2dd273b2f1f7`; see the
+[packaged proof contract](packaged-cli-entrypoints-contract.md) for its new evidence.
+This original section is a code/retention review, not permission to expand
 admission. Existing protections and default-off admission remain.
 
 ## The contract we intend to support
@@ -124,9 +127,11 @@ handlers; and runs independent bounded discovery. It does **not** run web startu
 migrations, a web server or legacy recovery timers. Its shutdown joins operations,
 then has a fail-stop deadline; a process exit does not prove external work stopped.
 `Dockerfile.kubernetes` ships the entry point, but its default command is still the
-web server. This effort has not demonstrated installed/supervised standalone operation or a
-packaged-worker end-to-end test. Fresh-process bootstrap tests substitute execution;
-actual-resource children run fixture service factories, not the packaged `main`.
+web server. The subsequent [packaged proof](packaged-cli-entrypoints-contract.md)
+now runs that default CMD, worker `main` and migration as separate non-root
+containers, with real HTTP admission/restarts and real resource observations.
+Earlier bootstrap/service-factory tests remain separate evidence. Supervised
+installation and least-privilege RBAC are still unproved.
 
 Capture chooses runtime partly from environment (`captureRuntimeMode`), while Job
 admission uses config. Both must say Kubernetes. `runCheckJob` enforces digest-pinned
@@ -134,7 +139,8 @@ capture/unit images; it does not establish that their code/protocol matches the
 backend revision. The worker needs separate app/build/check namespace access and
 database/clone privileges; capture/unit Pods use the configured worker ServiceAccount
 with token automount disabled. Current fixture API access does not prove least-
-privilege worker RBAC or packaged non-root filesystem behavior.
+privilege worker RBAC. Packaged non-root behavior is now demonstrated only for
+the recorded disposable image/source tuple.
 
 [`visuals`](../../src/services/visuals.js) targets public **HTTPS** preview origins.
 Non-admin capture identity signs screenshots; the view-only admin identity signs
@@ -143,16 +149,17 @@ can degrade to unauthenticated capture. [The existing fixture](../../tests/lib/c
 substitutes internal Service HTTP, capture users, GitHub metadata, warming and
 notifications. Real Chromium/Jobs/PNG and recovery were demonstrated; private app
 access, Secure cookie exchange, TLS/assets and an actual HTTP admission restart were
-not. A missing capture identity must not be mistaken for proof of private access.
+not by that earlier fixture. Packaged HTTP admission/restarts are now proved;
+private identities/TLS remain unproved. A missing capture identity must not be mistaken for proof of private access.
 
 ### Bounded verification steps before first CLI support
 
 | Step | Work needed | Acceptance evidence |
 | --- | --- | --- |
-| Current canonical reconciliation | Consolidation + focused verification | Integrate a pinned current canonical revision under a separate authorized integration slice; preserve benchmark recovery exclusions and fresh approval display/ledger behavior. Refresh writers/schema/CI, then run the contained failure matrix on that exact tuple. No rollout. |
+| Current canonical reconciliation | **Complete against explicit pin** | `d9cf30cd7` merged at `6730b0913`; preserved benchmark/approval behavior, refreshed CI and unchanged writer inventory. Focused PostgreSQL, SQL, actual checks/retirement and packaged proof pass; see the integration record. No rollout. |
 | Supported-store and replay decision | Inventory + archive/removal implementation | Named store/export list, read-only results, historical goldens reproduced from the archive. Remove only proven-unused early handler branches and runtime replay copies; keep unresolved recovery and parser shapes. Inventory/replay removal is not a new machine version. |
 | Retained unmarked checks, if any | Inventory + focused reconciliation verification; a bounded fix only if needed | Seed an original unmarked manifest in verified disposable PostgreSQL, with delayed/absent Jobs and an old terminal verdict, then restart/supersede. Prove no competing capture or builder, no lost cleanup locator, no history recount and no false required-gate completion. A legacy branch failing that proof requires draining or a bounded reconciliation correction before supporting that retained format; changing the marker alone is not the correction. |
-| Packaged standalone entry point | Isolated harness work; product fixes only if it fails | Start the actual image/`main`, after explicit schema migration, as a separate non-root process/Pod with generated local credentials, dedicated RBAC/namespaces and writable paths. Admit through the real CLI HTTP route with GitHub responses substituted. Kill/restart web and worker at admission, candidate completion, activation and verdict settlement; pause admission. Same work/run/OID/Build/runtime/Job identities survive, required gates remain owned and obsolete results stay fenced. Exercise denied permissions and missing dependencies without falling back. |
+| Packaged standalone entry point | **Core proof complete**; remaining installation/permission verification | Shipped image/default web CMD, worker `main` and migration run non-root. Real HTTP admission and four loss boundaries recover with admission disabled and stable identities; original checks retire and required bot delivery invokes its substituted policy boundary once. The recorded image tuple passes. Prove least-privilege/denied permissions and supervision separately; cluster-admin fixture access does not cover them. No product fix was needed. |
 | Image/protocol tuple | Verification; small preflight change if required | Record exact backend SHA/schema, capture and unit image digests and relevant protocol cases. Run stdin Secret transport, repeat/advisory/console/malformed/partial output and unit completion against those images. There is currently no negotiated protocol/version handshake; support the tested tuple, not arbitrary mixed old/new images. Keep images of running Jobs available for recovery. |
 | Public origin and private identities | Disposable fixture extension + actual verification | Local ingress/TLS and trusted local CA, real asset routes and generated identity keys; a small DB-using private app and self-app staging exchange. No internal HTTP rewrite. Verify screenshot non-admin/assertion view-only admin behavior, denied cross-app/expired tokens and anonymous access, missing key/identity behavior, static assets and credential isolation. Restart while Jobs run; adopt their output rather than recreate Jobs or reissue their execution. |
 
@@ -161,7 +168,6 @@ Optional shots/media/notification delivery remains separate from required gating
 Canonical changes since integrated `d600eb4308b0d283ba050addf4c19c915078086c` leave
 the reviewed capture/runtime/JWT/Job/worker-image adapters unchanged. Relevant drift
 is benchmark orphan recovery in `server.js` (`a3ebbf92c`) and fresh live approval
-enrichment in `votes.js`/`merge-requirements.js` (`c1c0a2e8e`); these must survive the
-next integration. This branch is **not** current canonical despite that adapter
-agreement. GitHub delivery is substituted, Linux CI execution is unverified, and
+enrichment in `votes.js`/`merge-requirements.js` (`c1c0a2e8e`); these survive the subsequent pinned integration. The original review did not
+establish freshness; the later reconciliation does so against the explicit pin. GitHub delivery is substituted, Linux CI execution is unverified, and
 the first supported CLI gate and full migration remain open.

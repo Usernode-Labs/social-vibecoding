@@ -674,6 +674,11 @@ function verifyDeletionInventory(state, containers, net, volumes, consumers) {
 
 async function teardown(state) {
   await daemon(state);
+  await require('../tests/lib/packaged-cli-fixture').retirePackagedResources(state,
+    args => docker(state, args));
+
+  // Recheck the daemon before the independent base-fixture deletion phase.
+  await daemon(state);
   const imagesToDelete = [];
   // Derived unit image must be removed before its capture base.
   const localImages = [
@@ -741,7 +746,18 @@ async function integration(state, mode = 'test') {
     PATH: process.env.PATH, TMPDIR: os.tmpdir(),
     KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: fixture.isolation.database.url,
   };
-  await verifyIsolatedBuildFixture({ env, requireUnitSuite: mode === 'test-checks' });
+  await verifyIsolatedBuildFixture({ env, requireUnitSuite: ['test-checks', 'test-packaged'].includes(mode) });
+  if (mode === 'test-packaged') {
+    const child = spawn(process.execPath, ['--test', '--test-force-exit', '--test-timeout=1800000',
+      'tests/packaged-cli-entrypoints-integration.test.js'], {
+      env: { ...env, RUN_ISOLATED_KPACK_TEST: '1', RUN_ISOLATED_PACKAGED_CLI_TEST: '1' }, stdio: 'inherit',
+    });
+    const [code] = await once(child, 'exit');
+    state.lastPackagedIntegration = { completedAt: new Date().toISOString(), exitCode: code };
+    save(state);
+    check(code === 0, 'packaged entry-point scenarios failed');
+    return;
+  }
   const option = { 'test-runtime': '--runtime', 'test-release': '--release', 'test-preparation': '--preparation', 'test-handoff': '--handoff', 'test-checks': '--checks' }[mode];
   const child = spawn(process.execPath, ['scripts/test-recoverable-preview-build.js', ...(option ? [option] : [])], { env, stdio: 'inherit' });
   const [code] = await once(child, 'exit');
@@ -764,8 +780,8 @@ async function main() {
     console.log(directory);
     return;
   }
-  check(['setup', 'setup-checks', 'setup-unit-checks', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks'].includes(mode) && argument,
-    'use init <local-socket>, setup/setup-checks/setup-unit-checks/test/test-runtime/test-release/test-preparation/test-handoff/test-checks/teardown <directory>');
+  check(['setup', 'setup-checks', 'setup-unit-checks', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged'].includes(mode) && argument,
+    'use init <local-socket>, setup/setup-checks/setup-unit-checks/test/test-runtime/test-release/test-preparation/test-handoff/test-checks/test-packaged/teardown <directory>');
   const directory = fs.realpathSync(argument);
   const state = JSON.parse(fs.readFileSync(path.join(directory, 'setup-state.json'), 'utf8'));
   check(state.version === 1 && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(state.fixtureId)
@@ -776,7 +792,7 @@ async function main() {
     if (mode === 'setup') await setup(state);
     else if (mode === 'setup-checks') await setupChecks(state);
     else if (mode === 'setup-unit-checks') await setupUnitChecks(state);
-    else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks'].includes(mode)) await integration(state, mode);
+    else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged'].includes(mode)) await integration(state, mode);
     else await teardown(state);
   } catch (error) {
     state.lastError = error.message;

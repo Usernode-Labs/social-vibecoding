@@ -1,16 +1,14 @@
 # Contained CLI consolidation and retirement inventory
 
-2 October 2026. Admission checkpoint `2bf702dbd` now incorporates canonical main
-`d600eb4308b0d283ba050addf4c19c915078086c`. This replaces the
-checkpoint-by-checkpoint inventory with current removal decisions. The
-[roadmap](roadmap.md) defines completion; earlier evidence remains in contracts,
-Git history and the local ledger. Admission consolidation below is implemented
-locally; old recovery/replay formats remain. The [integration record](canonical-integration.md)
-documents canonical reconciliation and current validation. No rollout or production change.
-Current accepted implementation is `d24b0c0dd`. The
-[supported CLI review](supported-cli-contract-review.md) pins current behavior,
-retention decisions and bounded boundary verification. Canonical
-`4c0ef27fb7381e9ecb89e2732e6c2c784b9395c6` was reviewed but is not integrated.
+2 October 2026. Accepted review `3f51e2b3f` incorporates pinned canonical main
+`d9cf30cd73a0810be72b199f8b2a194f8c56b793` at `6730b091306c0dcbcf22579548dc2dd273b2f1f7`.
+The [roadmap](roadmap.md) defines completion; earlier evidence remains in contracts,
+Git history and the local ledger. Admission consolidation is implemented;
+old recovery/replay formats remain pending an explicit supported-store/export decision.
+The [integration record](canonical-integration.md),
+[supported CLI review](supported-cli-contract-review.md) and
+[packaged proof contract](packaged-cli-entrypoints-contract.md) distinguish evidence
+from remaining verification. No rollout or production change.
 
 ## What is replaced for this cohort
 
@@ -36,7 +34,7 @@ is not permission to delete their global protection.
 | Web cleanup/activation recovery, build retention and global check harvest/recovery timers | Preview cleanup excludes `preparation_owner = bounded`; activation recovery excludes the enrolled desired flow. Worker census/continuation owns this cohort; global owners still cover other work. | Keep these exclusions and legacy owners. No global timer can be removed by this cohort consolidation. Legacy oldest-50 harvest fairness remains a separate limit. |
 | Attempt/Build/runtime/role tombstones, manifests and recurring retirement | Preserve unknown late creation and dependency fences. Database release is distinct from creator closure. | No age/absence-based expiry. Retain locators until creator termination/reconciliation is proven. Do not delete resource records because preparation work says `succeeded`. |
 | Enrolled verdict/history and detached merge/bot kicks | Replaced by `cli-checks-settlement` actions/receipts and `native-cli-check-gate` delivery using the existing shared decision/execution runtime. Live and harvested runs share one mapping. Optional artifacts retain separate best-effort ownership. | No new scheduler, timer or external merge owner. Keep legacy wrappers and existing merge/bot policies for other callers. Old terminal verdicts without receipts require retained-store reconciliation; never backfill by recounting unknown history. |
-| Worker reliance on web SDK initialization / silent merge-delivery success when GitHub is absent | **Removed** by `d24b0c0dd`: initialize SDKs before claiming; missing prerequisites retain the same durable request with bounded retry. Domain no-op and successful policy invocation are distinct. | Complete locally; fresh-process and disposable PostgreSQL evidence exists. External GitHub effects and packaged worker installation remain unproved. |
+| Worker reliance on web SDK initialization / silent merge-delivery success when GitHub is absent | **Removed** by `d24b0c0dd`: initialize SDKs before claiming; missing prerequisites retain the same durable request with bounded retry. Domain no-op and successful policy invocation are distinct. | Complete locally; fresh-process and disposable PostgreSQL evidence exists. Packaged HTTP/worker recovery is demonstrated; external GitHub effects and supervised/least-privilege installation remain unproved. |
 
 Sources: [admission/handlers](../../src/services/preview-flow/work.js),
 [CLI owner](../../src/services/cli-preview-handoff/work.js),
@@ -149,11 +147,12 @@ Review the net diff and explicit supported/retained contracts before PR readines
 Unknown checks resolution, atomic gating and standalone dependency initialization
 are implemented with contained verification. The contract/retention and boundary
 code review is now complete. Named supported-store/export inventory, reproducible
-replay archive/removal and actual packaged HTTP/worker/TLS/private-user verification
-remain open. Retained unmarked checks need the explicit reconciliation proof
+replay archive/removal and TLS/private-user/least-privilege installation verification
+remain open. Packaged HTTP/web/worker recovery is now demonstrated by the
+[bounded proof](packaged-cli-entrypoints-contract.md). Retained unmarked checks need the explicit reconciliation proof
 in that matrix if their stores are supported; enrollment alone does not upgrade
 their cleanup or settlement. The [review matrix](supported-cli-contract-review.md) defines their
-bounded evidence. Current canonical reconciliation is also still required.
+bounded evidence. Canonical reconciliation is complete against pinned `d9cf30cd7`.
 No execution owner, lock, timer, handler or replay version was removed in
 integration. No production deployment, worker installation or push is authorized;
 default-off code integration is not full migration completion.

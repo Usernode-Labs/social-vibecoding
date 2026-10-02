@@ -1,13 +1,12 @@
 # Lifecycle migration: current roadmap
 
-2 October 2026. Canonical main `d600eb4308b0d283ba050addf4c19c915078086c`
-integrated into accepted admission checkpoint `2bf702dbd8651f9877d492f0d21645c24a444668`.
-See the [integration record](canonical-integration.md) for fixes and evidence.
-Current accepted implementation: `d24b0c0dd`; the
-[supported CLI/retention review](supported-cli-contract-review.md) compares it with
-fetched canonical `4c0ef27fb7381e9ecb89e2732e6c2c784b9395c6`.
-That newer canonical revision is **not integrated**; adapter agreement does not
-close the canonical freshness gate.
+2 October 2026. Accepted review `3f51e2b3f` now incorporates explicitly pinned
+canonical main `d9cf30cd73a0810be72b199f8b2a194f8c56b793` at merge
+`6730b091306c0dcbcf22579548dc2dd273b2f1f7`. Benchmark orphan recovery,
+sealed-checkout validity and fresh live approval behavior are preserved.
+See the [integration record](canonical-integration.md),
+[supported CLI/retention review](supported-cli-contract-review.md) and
+[packaged entry-point contract](packaged-cli-entrypoints-contract.md).
 PostgreSQL-only tests additionally require [verified disposable ownership](postgres-test-isolation.md);
 a URL or test flag does not authorize mutations.
 The Kubernetes/kpack native CLI cohort remains default-off. No production
@@ -54,9 +53,9 @@ injected interruption points do not prove public-edge or installation compatibil
 | Deliverable | Kind | Scope / completion evidence |
 | --- | --- | --- |
 | Current CLI contract | **Review and new-admission consolidation complete**; remaining inventory/archive/removal | [Contract and retention decisions](supported-cli-contract-review.md) distinguish handlers, receipt retry and replay. Local fixture audit is complete; named supported stores/exports remain unknown. Remove only unused early dispatch and archive-only replay copies after that gate; keep legacy safeguards. |
-| Canonical main and CI | Earlier integration complete; **newer reconciliation + verification remaining** | `d600eb43` matrix is demonstrated. Reconcile current canonical benchmark recovery and live approval behavior; refresh schema/writers/CI and rerun on the pinned revision. GitHub CI/Linux installation is not demonstrated by local coverage. |
+| Canonical main and CI | **Pinned reconciliation and focused verification complete** | Pinned `d9cf30cd7` is integrated; current focused PostgreSQL, SQL, writer and actual checks/retirement evidence is recorded in the integration contract. GitHub CI/Linux installation is not demonstrated by local coverage. |
 | Unknown outcomes and idempotent gating | **Implementation and contained verification complete** | [Unknown outcomes](unknown-check-outcomes-contract.md), [atomic settlement/dependency delivery](idempotent-check-settlement-contract.md). Permanent evidence loss remains explicitly blocked with the original reconciliation owner. Unmarked retained manifests and old terminal verdicts without receipts remain inventory/reconciliation limits; never recount unknown history. No new implementation gate for these accepted corrections. |
-| Capture/standalone boundaries | **Code review complete; isolated harness work + verification remaining** | Follow the review's concrete matrix: packaged `main`/schema/non-root/RBAC and HTTP admission restarts; exact backend/capture/unit image tuple; local TLS/assets and private identity exchange. Product adapter/preflight changes only where those proofs expose a gap. No new workflow or cohort. |
+| Capture/standalone boundaries | **Packaged HTTP/main/schema/non-root restart proof complete**; remaining compatibility verification | [Packaged proof](packaged-cli-entrypoints-contract.md) records actual clone/Build/runtime/Jobs, stable identities, normal check-heartbeat recovery and durable bot delivery. The source/image tuple is recorded; GitHub/bot effects and internal origin transport remain substituted. Least-privilege RBAC, supervision, protocol edge cases, local TLS/assets and private identity exchange remain. No new workflow/cohort. |
 | Migrate remaining writers | New implementation + consolidation + verification; **after CLI gate** | Hosted/imported/manual/promotion/fleet/head-invalidation/teardown/recovery paths, with explicit policies. Prove Docker separately; retire competing owners and allowlist entries after handling retained work. |
 | Correlated status and owner integration | New implementation + verification; full migration | Explain revision, owner, obligation and rejection. Preserve separate shots/governance/merge/release authority and required handoffs. |
 
@@ -83,10 +82,10 @@ This scope does not require rewriting every platform lifecycle.
   its own proof; current protections and locators remain until then.
 - Broader turn, merge and release lifecycle refactors after this migration.
 
-**Next action:** reconcile the pinned current canonical revision, then prove the
-actual packaged standalone/HTTP boundary in the disposable fixture. Reconcile
+**Next action:** obtain the explicit named supported-store/export decision and
+verify the remaining public/private and installation boundaries. Reconcile
 unmarked checks only if a named supported store retains them. Close the
 named store/export and replay-archive decision before the removal slice. The
-contract/retention review is complete; global retained inventory and installation
-proof are not. New callers remain behind the first supported CLI gate. Running
+contract/retention review and packaged HTTP/worker coordination are complete;
+global retained inventory and full installation compatibility are not. New callers remain behind the first supported CLI gate. Running
 GitHub CI requires separate push authorization; this roadmap does not authorize it.

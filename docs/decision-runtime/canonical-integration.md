@@ -79,3 +79,53 @@ The [roadmap](roadmap.md) still requires an explicit retained-store/trace policy
 unknown checks outcome resolution, idempotent gating settlement and supported
 capture/worker boundary verification. Conservative late-creation retention remains.
 The first supported CLI gate and the full migration are not complete.
+
+## Pinned reconciliation after the supported-contract review
+
+Accepted `3f51e2b3f88b6261e046466ab6d1cbd7b78e0420` is reconciled with explicitly
+pinned canonical `d9cf30cd73a0810be72b199f8b2a194f8c56b793` at local merge
+`6730b091306c0dcbcf22579548dc2dd273b2f1f7`. All 15 newer canonical commits merge
+without content conflicts. This is a verified ancestry claim against that pin,
+not a promise to track a moving branch tip during the experiment.
+
+Preserved relevant newer behavior: benchmark orphan restart/adoption
+(`a3ebbf92c`), fresh live approval display and ledger (`c1c0a2e8e`), and sealed
+checkout/own-PR-diff benchmark validity (`d9cf30cd7`). Experiment operation
+identities, desired specifications, legacy ownership exclusions, conditional
+activation and retirement guards are unchanged. No schema, work contract or
+reducer version is introduced by this reconciliation.
+
+Current local evidence on the integrated product code:
+
+- Focused runner: **1,003 passed**, zero failures/skips, using verified disposable
+  PostgreSQL. Includes standalone dependency initialization, atomic settlement,
+  unknown outcomes, discovery fairness, ownership and retirement regressions.
+- SQL: **3,250 unique statements / 4,153 static variants** checked against the
+  shipped schema in disposable PostgreSQL.
+- Writer inventory: **16** explicit legacy statements remain, with unchanged
+  fingerprints; no new projection writer is allowed.
+- Actual checks/retirement: **15 passed**, zero failures/skips, in a fresh disposable
+  Kubernetes/PostgreSQL/registry fixture. Chromium, unit Jobs and destructive
+  retirement steps run; external GitHub and selected inputs remain substituted
+  as documented in their contracts.
+- New isolation/fixture/CI checks: **18 passed**. Direct invocation fails closed;
+  persisted test-container identity allows recovery after a lost creation reply
+  and rejects a successor identity (these two cleanup cases use injected Docker
+  inspection responses).
+- Canonical sealed-checkout regressions: **9 passed** after allowing their local
+  loopback test adapter. The first sandboxed invocation could not bind its local
+  adapter; no product correction was needed.
+
+The [packaged HTTP/web/worker proof](packaged-cli-entrypoints-contract.md) records
+its own actual evidence and substitutions. The fixture driver now exposes
+`test-packaged`; its container/image journal supports owned teardown after test
+interruption. New test isolation coverage joins focused CI; actual-resource
+execution remains explicit and local. GitHub CI was not run or authorized.
+
+No production timer, lock, handler, compatibility branch or replay support is
+removed. Unknown-check-outcome and atomic settlement/dependency initialization
+corrections are already accepted; the earlier “remaining work” paragraph above
+is historical. Current remaining gates are the roadmap's named supported-store/
+export decision, boundary compatibility and eventual bounded removals. Public
+TLS/private identity, least-privilege worker RBAC, installation supervision and
+production builder compatibility remain unproved.

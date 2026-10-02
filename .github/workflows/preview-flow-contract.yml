@@ -50,6 +50,7 @@ on:
       - 'scripts/test-recoverable-preview-build.js'
       - 'scripts/kpack-local-fixture.js'
       - 'tests/preview-*.test.js'
+      - 'tests/packaged-cli-*.test.js'
       - 'tests/decision-runtime.test.js'
       - 'tests/disposable-postgres.test.js'
       - 'tests/execution-worker.test.js'

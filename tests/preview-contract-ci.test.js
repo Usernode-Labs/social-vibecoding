@@ -24,6 +24,7 @@ test('focused CI runs the shared runtime, admission, runtime and checks retireme
   for (const file of [
     'tests/disposable-postgres.test.js',
     'tests/preview-worker-bootstrap.test.js',
+    'tests/packaged-cli-isolation.test.js',
     'tests/decision-runtime.test.js',
     'tests/execution-worker.test.js',
     'tests/review-work.test.js',
@@ -44,6 +45,9 @@ test('focused CI triggers for its suites, shared owners and operation contracts'
   const patterns = workflow.on.pull_request.paths;
   for (const file of [
     ...SUITES,
+    'tests/packaged-cli-entrypoints-integration.test.js',
+    'tests/lib/packaged-cli-preload.js',
+    'tests/lib/packaged-cli-fixture.js',
     'src/services/decision-runtime/index.js',
     'src/services/execution/store.js',
     'src/services/preview-flow/runtime-intent.js',
