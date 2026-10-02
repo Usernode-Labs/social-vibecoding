@@ -1879,11 +1879,42 @@ function ReplyThreadPanel() {
  */
 function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number }) {
   const snap = useMessagesSnapshot();
-  const host = useRef<HTMLDivElement | null>(null);
   const context = snap.discussionContext;
   const ready = !!context && context.slug === slug;
-  const readOnly = ready ? context.readOnly : true;
   const handle = snap.discussions.find((item) => item.slug === slug)?.channel || null;
+  const back = `#messages/app/${encodeURIComponent(slug)}`;
+  return (
+    <AppReplyThreadPane
+      slug={slug}
+      rootId={rootId}
+      ready={ready}
+      readOnly={ready ? context.readOnly : true}
+      where={handle ? `#${handle}` : (ready ? context.name : slug)}
+      close={(
+        <a className="messages-thread-action" href={back} aria-label="Close thread" title="Close thread">
+          <XIcon aria-hidden="true" />
+        </a>
+      )}
+    />
+  );
+}
+
+/**
+ * The pane itself, for the two places an app channel's reply thread opens:
+ * beside the channel here, and beside it in its project page's Discussion
+ * tab (#3653, ../dev-board/workshop/project-discussion.tsx), which closes it
+ * in place rather than by an address. `ready` holds the mount until the
+ * caller knows whether the viewer may write.
+ */
+export function AppReplyThreadPane({ slug, rootId, ready, readOnly, where, close }: {
+  slug: string;
+  rootId: number;
+  ready: boolean;
+  readOnly: boolean;
+  where: string;
+  close: ReactNode;
+}) {
+  const host = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = host.current;
     if (!el || !ready) return undefined;
@@ -1916,17 +1947,14 @@ function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number })
       if (chat?.activeThread?.type === 'message' && Number(chat.activeThread.ref) === rootId) chat.unmountThread?.();
     };
   }, [slug, rootId, ready, readOnly]);
-  const back = `#messages/app/${encodeURIComponent(slug)}`;
   return (
     <aside className="messages-reply-pane messages-reply-pane-app" aria-label="Thread" data-reply-thread={rootId}>
       <header className="messages-thread-header">
         <div className="min-w-0 flex-1">
           <div className="messages-thread-name">Thread</div>
-          <div className="messages-thread-sub">{handle ? `#${handle}` : (ready ? context.name : slug)}</div>
+          <div className="messages-thread-sub">{where}</div>
         </div>
-        <a className="messages-thread-action" href={back} aria-label="Close thread" title="Close thread">
-          <XIcon aria-hidden="true" />
-        </a>
+        {close}
       </header>
       {/* The host's class string is constant and its subtree is the group
           chat's — the one-owner rule, satisfied at this boundary. */}
@@ -1952,15 +1980,38 @@ function AppReplyThreadPanel({ slug, rootId }: { slug: string; rootId: number })
  * `messages-layout` carries the thread's surface tokens; it is not this
  * screen's strip, so none of the strip's own classes come with it.
  */
-export function EmbeddedConversation({ conversationId, active }: { conversationId: number; active: boolean }) {
+export function EmbeddedConversation({ conversationId, active, at = null }: {
+  conversationId: number;
+  active: boolean;
+  /**
+   * #3653: where a door into the room asked to land — a reply thread, or a
+   * message. Each one is taken ONCE, when the room is put in place or at
+   * once if it already is: a room put back later (the page shown again)
+   * opens as the reader left it, not at a door they followed before.
+   */
+  at?: { threadRootId: number | null; focusMessageId: number | null } | null;
+}) {
   const snap = useMessagesSnapshot();
   const here = !!snap.route.embedded && snap.route.conversationId === conversationId;
   const messagesOpen = snap.route.open;
+  const atRef = useRef(at);
+  atRef.current = at;
+  const taken = useRef<typeof at>(null);
+  const take = () => {
+    const next = atRef.current && atRef.current !== taken.current ? atRef.current : null;
+    if (next) taken.current = next;
+    return next;
+  };
   useEffect(() => {
     if (!active || messagesOpen) return undefined;
-    embed(conversationId);
+    embed(conversationId, take());
     return () => release(conversationId);
-  }, [active, messagesOpen, conversationId]);
+  }, [active, messagesOpen, conversationId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!active || messagesOpen) return;
+    const next = take();
+    if (next) embed(conversationId, next);
+  }, [at]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div className={`messages-layout messages-layout-embedded${here && snap.route.threadRootId ? ' messages-has-reply-thread' : ''}`}>
       {here ? <ConversationThread embedded /> : null}

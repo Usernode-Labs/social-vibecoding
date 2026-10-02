@@ -17,8 +17,10 @@
  *   app/<slug>/dev/issues/<n>      an issue
  *   app/<slug>/dev/sessions/<id>   a change — `new` is the unsent one
  *   app/<slug>/dev/shared/<id>     a change's shared page
- *   app/<slug>/dev/chat            the app's discussion, full screen
- *   messages/app/<slug>            the app's discussion, as an inbox thread
+ *   app/<slug>/dev/chat            the app's discussion, by its old
+ *   messages/app/<slug>            addresses (full screen, an inbox thread):
+ *                                  its project page's Discussion tab now
+ *                                  (#3653), so the Workshop's page and key
  *   messages/<id>                  a direct or group conversation, or a
  *                                  channel (#general)
  *   messages/channel/<handle>      a `#name` reference to a channel: a
@@ -53,7 +55,6 @@ export type PanelKind =
   | 'issue'
   | 'change'
   | 'new-change'
-  | 'discussion'
   | 'thread'
   | 'chat'
   | 'agent'
@@ -132,7 +133,9 @@ export function panelPage(route: string): PanelPage | null {
     if (tab === 'workshop' || tab === 'board' || tab === 'activity') {
       return { kind: 'workshop', slug, key: `${base}/workshop` };
     }
-    if (tab === 'group-chat') return { kind: 'discussion', slug, key: `${base}/dev/chat` };
+    // #3653: an app's discussion is its project page's Discussion tab, so
+    // its old addresses are that page: the router takes them there.
+    if (tab === 'group-chat') return { kind: 'workshop', slug, key: `${base}/workshop` };
     if (tab === 'individual-chat') {
       return parts[3] && NUMERIC.test(parts[3])
         ? { kind: 'change', slug, key: `${base}/dev/sessions/${parts[3]}` }
@@ -150,7 +153,7 @@ export function panelPage(route: string): PanelPage | null {
     if (sec === 'shared' && NUMERIC.test(id)) {
       return { kind: 'change', slug, key: `${base}/dev/shared/${id}` };
     }
-    if (sec === 'chat') return { kind: 'discussion', slug, key: `${base}/dev/chat` };
+    if (sec === 'chat') return { kind: 'workshop', slug, key: `${base}/workshop` };
     if (sec === 'issues' && NUMERIC.test(id)) {
       return { kind: 'issue', slug, key: `${base}/dev/issues/${id}` };
     }
@@ -163,8 +166,9 @@ export function panelPage(route: string): PanelPage | null {
   if (head === 'messages') {
     if (parts.length === 1) return { kind: 'messages', slug: null, key: 'messages' };
     if (parts[1] === 'app' && parts[2]) {
+      // #3653: the app's discussion, as above — its project page.
       const slug = decode(parts[2]);
-      return { kind: 'discussion', slug, key: `messages/app/${slug}` };
+      return { kind: 'workshop', slug, key: `app/${slug}/workshop` };
     }
     if (NUMERIC.test(parts[1] || '')) {
       return { kind: 'thread', slug: null, key: `messages/${parts[1]}` };
@@ -242,7 +246,6 @@ export function parentRoute(route: string): string | null {
   const page = panelPage(route);
   if (!page) return null;
   switch (page.kind) {
-    case 'discussion':
     case 'thread':
     case 'chat':
     case 'agent':
@@ -272,7 +275,6 @@ const KIND_TITLE: Record<PanelKind, string> = {
   issue: 'Issue',
   change: 'Change',
   'new-change': 'New change',
-  discussion: 'Discussion',
   thread: 'Messages',
   chat: 'Chat',
   agent: 'Agent session',
@@ -288,12 +290,13 @@ const FIXED_TITLE: ReadonlySet<PanelKind> = new Set<PanelKind>([
  * The header row's title for `route`, as the prototype draws it.
  *
  * The embedded document's own header title (`reported`) is the source where
- * it names the page: a conversation's name, the app a discussion belongs to,
- * an agent chat's title. The Workshop, the inbox and a piece of work — a
- * proposal, an issue, a change — take their kind instead: "Workshop",
- * "Messages", "Proposal", "Issue", "Change", "New change". On those the
- * header names only the APP (it draws the app's tile beside it on a phone),
- * which beside the app itself would say nothing.
+ * it names the page: a conversation's name, an agent chat's title. The
+ * Workshop, the inbox and a piece of work — a proposal, an issue, a change —
+ * take their kind instead: "Workshop", "Messages", "Proposal", "Issue",
+ * "Change", "New change". On those the header names only the APP (it draws
+ * the app's tile beside it on a phone), which beside the app itself would say
+ * nothing. An app's discussion is its project page now (#3653), so the
+ * Workshop's.
  */
 export function titleFor(route: string | null | undefined, reported?: string | null): string {
   const page = route ? panelPage(route) : null;

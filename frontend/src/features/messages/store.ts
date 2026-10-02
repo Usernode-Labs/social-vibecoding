@@ -3,7 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { navStore } from '../nav/nav-store.js';
 import * as api from './api';
 import { channelDirectory, normalizeHandle, type ChannelRef } from './channels';
-import { platformSlug, subscribePlatformSlug } from './channel-hub';
+import { platformHubServed, platformSlug, subscribePlatformSlug } from './channel-hub';
 import type { AppDiscussion, InboxFilter } from './inbox';
 import type {
   ConversationDetail,
@@ -288,6 +288,66 @@ export function openChannel(raw: string): void {
   resolvePendingChannel();
 }
 
+/**
+ * The address a `#handle` names, when the lists already know it — the
+ * router follows it at once rather than drawing the inbox on the way
+ * (#3653) — or null, and openChannel waits for the lists.
+ */
+export function channelTarget(raw: string): string | null {
+  const handle = normalizeHandle(raw);
+  if (!handle) return null;
+  return channels().find((item) => item.handle === handle)?.target || null;
+}
+
+/**
+ * #3653: A CHANNEL IS ITS COMMUNITY'S DISCUSSION TAB, #general included.
+ *
+ * #general is a conversation of this store, of kind `channel`, and the
+ * Homeroom community's room: Homeroom's Discussion tab draws it in place
+ * (EmbeddedConversation, #3494). Its address here, `#messages/<id>` (and a
+ * thread or a message in it), is what its notifications, message links and
+ * `#general` references open — and they opened it on this screen, with a
+ * chevron up to the hub, a page apart from the community it belongs to.
+ *
+ * The project whose tab it is: the platform's, once anything has said its
+ * slug (channelHub's answer). Null for any other conversation, while nothing
+ * knows the conversation is a channel or the platform's slug, and for a
+ * viewer the platform's page is not served to, whose room stays here.
+ */
+export function channelHubSlug(conversationId: number): string | null {
+  if (!validId(conversationId) || typeof window === 'undefined') return null;
+  const row = state.active && state.active.id === conversationId
+    ? state.active
+    : state.conversations.find((item) => item.id === conversationId) || null;
+  if (!row || row.kind !== 'channel' || !platformHubServed()) return null;
+  return platformSlug();
+}
+
+/**
+ * The conversation on this screen turned out to be a channel (its detail or
+ * the list landed, or the platform's slug did): take the reader to its tab,
+ * at the thread or the message the address named, replacing the address
+ * (App.openDiscussionInHub). The router does the same at once when it
+ * already knows; this is a cold link's half.
+ */
+function channelToHub(): boolean {
+  if (typeof window === 'undefined' || !state.route.open || state.route.embedded) return false;
+  const conversationId = state.route.conversationId;
+  if (!conversationId) return false;
+  const hub = channelHubSlug(conversationId);
+  const door = (window as { App?: { openDiscussionInHub?: (slug: string, target: unknown) => void } }).App?.openDiscussionInHub;
+  if (!hub || !door) return false;
+  // Only from this conversation's own address: a route that has already
+  // moved on is not this redirect's to take.
+  if (!new RegExp(`^#messages/${conversationId}(?:/|$)`).test(window.location.hash)) return false;
+  door(hub, {
+    conversationId,
+    threadRootId: state.route.threadRootId,
+    focusMessageId: state.route.focusMessageId,
+  });
+  return true;
+}
+
 function resolvePendingChannel(): void {
   if (!pendingChannel || typeof window === 'undefined') return;
   const found = channels().find((item) => item.handle === pendingChannel);
@@ -348,6 +408,7 @@ export async function loadConversations(force = false): Promise<void> {
       online: true,
     });
     resolvePendingChannel();
+    channelToHub();
   } catch (error) {
     if (request !== listRequest) return;
     publish({
@@ -453,6 +514,12 @@ export async function loadThread(conversationId: number, force = false): Promise
       openAddress(`#messages/${active.id}${suffix}`);
       return;
     }
+    // #3653: a channel opened on this screen goes to its community's tab as
+    // soon as this says it is one, before its messages are read here.
+    if (active.kind === 'channel' && state.route.open && !state.route.embedded) {
+      publish({ active });
+      if (channelToHub()) return;
+    }
     const member = active.membershipStatus === 'member';
     const anchor = focus || reading;
     const page: { messages: ConversationMessage[]; nextBefore: number | null; nextAfter: number | null; threadRootId?: number | null; focusMessageId?: number | null } = !member
@@ -465,6 +532,13 @@ export async function loadThread(conversationId: number, force = false): Promise
         : { ...(await api.listMessages(conversationId, null, read)), nextAfter: null };
     if (request !== threadRequest || state.route.conversationId !== conversationId) return;
     if (focus && page.focusMessageId && page.focusMessageId !== focus) {
+      // In its community's page the room has no address of its own (#3653):
+      // the message it lands on moves in place.
+      if (state.route.embedded) {
+        publish({ route: { ...state.route, focusMessageId: page.focusMessageId } });
+        void loadThread(conversationId);
+        return;
+      }
       openAddress(`#messages/${conversationId}/m/${page.focusMessageId}`);
       return;
     }
@@ -839,13 +913,33 @@ export function close(): void {
  * store back (route() never short-circuits an embedded route), and the page
  * gives it back when it leaves the screen (release).
  */
-export function embed(conversationId: number): void {
+export function embed(
+  conversationId: number,
+  at: { threadRootId?: number | null; focusMessageId?: number | null } | null = null,
+): void {
   if (!validId(conversationId) || state.route.open) return;
-  if (state.route.embedded && state.route.conversationId === conversationId) return;
+  // #3653: a door into the room can name a place in it — a reply thread to
+  // open beside it, or a message to land on — as its addresses here do.
+  const askedRoot = at?.threadRootId;
+  const askedFocus = at?.focusMessageId;
+  const root = validId(askedRoot) ? askedRoot : null;
+  const focus = validId(askedFocus) ? askedFocus : null;
+  if (state.route.embedded && state.route.conversationId === conversationId) {
+    // Already in place: the room stays, and moves to what the door names.
+    if (root && state.route.threadRootId !== root) {
+      publish({ thread: null, route: { ...state.route, threadRootId: root } });
+    }
+    if (focus && state.route.focusMessageId !== focus) {
+      focusLoaded = null;
+      publish({ route: { ...state.route, focusMessageId: focus } });
+      void loadThread(conversationId);
+    }
+    return;
+  }
   focusLoaded = null;
   unreadHold = null;
   publish({
-    route: { open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: null, focusMessageId: null },
+    route: { open: false, embedded: true, conversationId, appSlug: null, agent: null, threadRootId: root, focusMessageId: focus },
     thread: null, nextAfter: null, threadError: null, discussionContext: null, discussionError: null,
   });
   void loadConversations();
@@ -925,7 +1019,8 @@ export function channelHub(): string | null {
  * unsubscribe; the screen holds it for as long as it is mounted.
  */
 export function followPlatformSlug(): () => void {
-  return subscribePlatformSlug(() => { if (state.route.open) syncChrome(); });
+  // #3653: and once it is known, a channel on screen goes to that hub's tab.
+  return subscribePlatformSlug(() => { if (state.route.open && !channelToHub()) syncChrome(); });
 }
 
 export function syncChrome(): void {
@@ -1005,6 +1100,21 @@ function sidePanelTakes(target: string): boolean {
   }
 }
 
+/**
+ * #3653: a channel's address — an app's, or #general's — while its project
+ * page is the page on screen: the page turns to its Discussion tab, at the
+ * place the address names, instead of a second address for the page the
+ * reader is already on (App._discussionInPlace). False whenever that is not
+ * the moment, and the caller navigates, which the router takes to the tab.
+ */
+function turnsPageInPlace(href: string): boolean {
+  try {
+    return !!(window as { App?: { _discussionInPlace?: (href: string) => boolean } }).App?._discussionInPlace?.(href);
+  } catch {
+    return false;
+  }
+}
+
 export function open(conversationId?: number | null): void {
   if (typeof window === 'undefined') return;
   const target = validId(conversationId) ? `#messages/${conversationId}` : '#messages';
@@ -1026,6 +1136,7 @@ let revealedAppFocus: string | null = null;
  */
 export function openAddress(href: string): void {
   if (typeof window === 'undefined' || !/^#messages(?:\/|$)/.test(href)) return;
+  if (turnsPageInPlace(href)) return;
   if (sidePanelTakes(href)) return;
   if (window.location.hash !== href) { window.location.hash = href; return; }
   revealedAppFocus = null;
@@ -1055,6 +1166,7 @@ export function openDiscussion(slug: string): void {
   const safe = validSlug(slug);
   if (!safe) return;
   const target = `#messages/app/${encodeURIComponent(safe)}`;
+  if (turnsPageInPlace(target)) return;
   if (sidePanelTakes(target)) return;
   if (window.location.hash === target) route(null, safe);
   else window.location.hash = target;
@@ -1555,6 +1667,13 @@ export async function loadReplyThread(conversationId: number, rootId: number, fo
     const page = await api.listThread(conversationId, rootId, null, { fresh: force });
     if (request !== replyThreadRequest || state.route.threadRootId !== rootId) return;
     if (page.root?.id && page.root.id !== rootId) {
+      // In its community's page the thread has no address of its own
+      // (#3653): it moves to its canonical root in place.
+      if (state.route.embedded) {
+        publish({ thread: null, route: { ...state.route, threadRootId: page.root.id } });
+        void loadReplyThread(conversationId, page.root.id);
+        return;
+      }
       openAddress(threadAddress(conversationId, page.root.id));
       return;
     }
@@ -1883,6 +2002,9 @@ export const messagesController = {
   // `#` autocomplete (public/js/group-chat.js), and the link resolver.
   channels,
   openChannel,
+  // #3653: what the router asks before it draws a channel on this screen.
+  channelTarget,
+  channelHubSlug,
   refresh: () => {
     void loadAppDiscussions();
     return loadConversations(true);

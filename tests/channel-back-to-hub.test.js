@@ -242,6 +242,8 @@ test('a cold #general: the header arrow follows the slug to the hub, with the di
 
 test('the Messages screen follows the slug for as long as it is mounted', () => {
   assert.match(SCREEN, /useEffect\(\(\) => followPlatformSlug\(\), \[\]\);/);
+  // #3653: once the slug is known, a channel on this screen goes to that
+  // hub's Discussion tab (channelToHub); anything else re-syncs its chrome.
   assert.match(read('frontend/src/features/messages/store.ts'),
-    /export function followPlatformSlug\(\): \(\) => void \{\s*return subscribePlatformSlug\(\(\) => \{ if \(state\.route\.open\) syncChrome\(\); \}\);/);
+    /export function followPlatformSlug\(\): \(\) => void \{[^}]*return subscribePlatformSlug\(\(\) => \{ if \(state\.route\.open && !channelToHub\(\)\) syncChrome\(\); \}\);/);
 });

@@ -924,8 +924,9 @@ const Notifications = {
       return;
     }
     // (#86) Private spec share: persist the spec-panel open state for
-    // the app, then land on Dev → Chat — GroupChat's mount path
-    // (_restoreSpecPanelIfSaved) opens the read-only panel and fetches
+    // the app, then open its chat — its project page's Discussion tab
+    // since #3653 (App.switchTab turns the request there). GroupChat's
+    // mount path (_restoreSpecPanelIfSaved) opens the read-only panel and fetches
     // the version through the share-widened access check. GroupChat is
     // a same-script-scope global (const-declared, so not on window) —
     // hence the bare reference behind a typeof guard.
@@ -985,9 +986,9 @@ const Notifications = {
       // routing; an invalid topic ref falls through to the chat/proposals
       // navigation), so one dismiss covers the whole block.
       Notifications._dismissSheetForNav();
-      // Mentions/replies/reactions land on the app's discussion, in Messages
-      // (see _openAppDiscussion) — unless the message lives in a topic thread
-      // (#194 parity), in which case the click opens that
+      // Mentions/replies/reactions land on the app's discussion, its project
+      // page's Discussion tab (see _openAppDiscussion) — unless the message
+      // lives in a topic thread (#194 parity), in which case the click opens that
       // issue/proposal/governance discussion where the message is actually
       // visible. Vote nudges and kudos land on the Proposals tab where their
       // PR card lives (deep-linked when we know the session).
@@ -999,7 +1000,9 @@ const Notifications = {
       const chatKinds = new Set(['mention', 'reply', 'reaction', 'thread_reply']);
       // #2387: a message in a REPLY thread (thread_type 'message', its ref
       // the thread's first message) opens that thread beside the channel,
-      // at the address the server worked out for the row.
+      // at the address the server worked out for the row — which the router
+      // takes to the project page's Discussion tab, the thread open there
+      // (#3653).
       if (chatKinds.has(item.kind) && item.threadType === 'message' && item.threadRef != null) {
         const root = parseInt(item.threadRef, 10);
         const href = typeof item.href === 'string' && item.href.startsWith('#messages/app/')
@@ -1074,12 +1077,14 @@ const Notifications = {
     }
   },
 
-  // AN APP'S DISCUSSION IS A THREAD OF MESSAGES (#2718 review, #2763), so a
-  // row about a message in it opens it THERE: `#messages/app/<slug>`, two
-  // panes on a desktop, with the side panel taking it beside a running app
-  // (#2854). These rows opened the old full-screen `#app/<slug>/dev/chat`,
-  // whose back arrow climbed to the app's Workshop — a screen the reader
-  // had not come from.
+  // AN APP'S DISCUSSION IS ITS PROJECT PAGE'S DISCUSSION TAB (#3653), so a
+  // row about a message in it opens it THERE, under the page's own header
+  // and tabs. The door is the room's address, `#messages/app/<slug>`: the
+  // side panel takes it beside a running app (#2854), a page already open
+  // for the project turns to the tab in place, and the router takes it to
+  // the tab otherwise (app.js). These rows opened the room on a page of its
+  // own — the old full-screen `#app/<slug>/dev/chat`, then the Messages
+  // screen — each with a back button of its own.
   //
   // When the row names ONE message, the discussion opens on it rather than
   // at the newest: GroupChat scrolls it into view and flashes it, the same
