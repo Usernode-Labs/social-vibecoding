@@ -57,8 +57,9 @@ test('the scaffold loads no off-origin subresources at all', () => {
 
 test('the generated tailwind.config.js matches the scaffold markup', () => {
   const cfg = file(files(), 'tailwind.config.js');
-  // darkMode must be class-based: the scaffold sets <html class="dark">, and
-  // the default (media) would key dark: variants off the OS preference.
+  // darkMode must be class-based: the scaffold sets a "dark" class on <html>
+  // from the viewer's Homeroom theme (#3688), and the default (media) would
+  // key dark: variants off the OS preference, which is all a framed app sees.
   assert.match(cfg, /darkMode:\s*'class'/, 'config should set darkMode to class');
   // Required by the native UI kit so hover: styles do not stick after taps.
   assert.match(cfg, /hoverOnlyWhenSupported:\s*true/, 'config should set the hoverOnlyWhenSupported future flag');
