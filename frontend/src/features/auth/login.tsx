@@ -61,11 +61,11 @@ import { useMountedOnReveal } from '../../lib/mount-on-reveal';
 import { useVisibilityHiddenClass } from '../../lib/visibility-store';
 import { AuthBackButton, backToLanding } from './back-button';
 import { NativeLoginDetailsLink } from './native-login-details';
+import { SessionConfirmationNotice, useSessionConfirmation } from './session-confirmation';
 import {
   AUTH_SCREEN_IDS,
   blockedOffline,
   fetchSessionMint,
-  finishLogin,
   HANDLE_FIELD,
   hiddenFirst,
   hiddenLast,
@@ -469,6 +469,8 @@ export function LoginScreen() {
   const [emailResetStatus, setEmailResetStatus] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const completion = useSessionConfirmation();
+  const { finishLogin, clear: clearConfirmation } = completion;
 
   // Non-render state, mirroring the legacy module's fields one for one.
   const st = useRef({
@@ -660,6 +662,7 @@ export function LoginScreen() {
 
   const loginOnShow = useCallback(
     (openSignup?: boolean, seg?: string | null) => {
+      clearConfirmation();
       // Reset to the requested base view every time the route changes — login
       // ↔ signup share the screen element.
       if (openSignup) showOtpView();
@@ -749,13 +752,14 @@ export function LoginScreen() {
         void walletDetect();
       }
     },
-    [otpShowStep, showLoginBaseView, showOtpView, showRecovery, st, walletDetect],
+    [clearConfirmation, otpShowStep, showLoginBaseView, showOtpView, showRecovery, st, walletDetect],
   );
 
   // ── Password login ───────────────────────────────────────────────────
 
   const onLoginSubmit = useCallback(async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    clearConfirmation();
     setLoginError(null);
     setLoginDetails(null);
     if (blockedOffline(setLoginError)) return;
@@ -773,12 +777,12 @@ export function LoginScreen() {
         setLoginError(data.error || 'Login failed');
         return;
       }
-      finishLogin();
+      await finishLogin();
     } catch (error) {
       setLoginError(sessionMintFailureMessage(error));
       setLoginDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, []);
+  }, [clearConfirmation, finishLogin]);
 
   // ── Email-code sign-in (the #signup route) ───────────────────────────
   //
@@ -864,6 +868,7 @@ export function LoginScreen() {
   }, [cooldownUntil, otpRequestCode, st]);
 
   const onOtpVerify = useCallback(async () => {
+    clearConfirmation();
     setOtpError(null);
     setOtpDetails(null);
     const code = (otpCode.current?.value || '').trim();
@@ -906,8 +911,7 @@ export function LoginScreen() {
         return;
       }
       if (data.next === 'signed-in') {
-        setOtpStatus('Signed in!');
-        finishLogin();
+        await finishLogin();
         return;
       }
       otpShowStep('password');
@@ -924,9 +928,10 @@ export function LoginScreen() {
       setOtpError(sessionMintFailureMessage(error));
       setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, [otpShowStep, showLoginBaseView, st]);
+  }, [clearConfirmation, finishLogin, otpShowStep, showLoginBaseView, st]);
 
   const onOtpSetPassword = useCallback(async () => {
+    clearConfirmation();
     setOtpError(null);
     setOtpDetails(null);
     setOtpUsernameError(null);
@@ -974,18 +979,19 @@ export function LoginScreen() {
         setOtpError(data.error || 'Could not set the password');
         return;
       }
-      setOtpStatus('Signed in!');
-      finishLogin();
+      setOtpStatus(null);
+      await finishLogin();
     } catch (error) {
       setOtpStatus(null);
       setOtpError(sessionMintFailureMessage(error));
       setOtpDetails(error instanceof NativeLoginPreparationError ? error.details : null);
     }
-  }, [otpSignup, st]);
+  }, [clearConfirmation, finishLogin, otpSignup, st]);
 
   // ── Wallet sign-in ───────────────────────────────────────────────────
 
   const onWalletSignIn = useCallback(async () => {
+    clearConfirmation();
     setWalletError(null);
     if (blockedOffline(setWalletError)) return;
     setWalletStatus('Verifying identity...');
@@ -1028,8 +1034,8 @@ export function LoginScreen() {
       st.cachedChallenge = null;
 
       if (verifyRes.ok) {
-        setWalletStatus('Logged in!');
-        finishLogin();
+        setWalletStatus('');
+        await finishLogin();
         return;
       }
       fail(verifyData.error || 'Verification failed');
@@ -1043,11 +1049,12 @@ export function LoginScreen() {
       if (message && message.includes('denied')) fail('Signature request was denied.');
       else fail('Signature failed: ' + message);
     }
-  }, [st]);
+  }, [clearConfirmation, finishLogin, st]);
 
   // ── Wallet password reset (issue #282) ───────────────────────────────
 
   const onWalletReset = useCallback(async () => {
+    clearConfirmation();
     setRecoveryError(null);
     const value = recoveryNewPassword.current?.value || '';
     const confirm = recoveryConfirmPassword.current?.value || '';
@@ -1094,8 +1101,8 @@ export function LoginScreen() {
         setRecoveryError(data.error || 'Reset failed');
         return;
       }
-      setRecoveryStatus('Password reset! Signing you in...');
-      finishLogin();
+      setRecoveryStatus(null);
+      await finishLogin();
     } catch (e) {
       setRecoveryStatus(null);
       if (e instanceof NativeLoginPreparationError) {
@@ -1109,7 +1116,7 @@ export function LoginScreen() {
         setRecoveryError('Reset failed: ' + message);
       }
     }
-  }, [st]);
+  }, [clearConfirmation, finishLogin, st]);
 
   // ── Emailed password reset (magic link) ──────────────────────────────
 
@@ -1421,6 +1428,7 @@ export function LoginScreen() {
               Try again
             </button>
           </div>
+          <SessionConfirmationNotice completion={completion} />
           {/* Wallet auth status (shown when native bridge detected) */}
           <div id="wallet-auth" className={hiddenFirst(!(base && walletUi), 'space-y-4')}>
             <div id="wallet-status" className="text-center text-sm text-zinc-500 dark:text-zinc-400">

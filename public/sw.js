@@ -1606,6 +1606,10 @@ if (typeof module !== 'undefined' && module.exports) {
       return;
     }
 
+    // Explicit session confirmation must reach the server, even if an
+    // earlier user has an offline /me response in the API cache.
+    if (req.cache === 'no-store') return;
+
     const kind = classifyRequest(
       req.method, req.url, req.headers.get('accept'), req.mode, ORIGIN
     );

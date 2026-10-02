@@ -358,9 +358,12 @@
     // ── Reload-free login completion ─────────────────────────────────
     //
     // Called after ANY successful credential exchange (password form,
-    // OTP set-password, wallet verify, activation-code register). The
-    // session cookie is set; boot the authed shell in place.
+    // OTP set-password, wallet verify, activation-code register).
+    // Confirm the session before navigating. Failure stays on the form and
+    // returns a fixed diagnostic result to its React owner; retrying this
+    // method never sends credentials or mints another session.
     async finishLogin() {
+      let returnTo = '';
       // The login-return targets accepted by the platform. Both are separate
       // documents by design — real navigation stays.
       try {
@@ -370,8 +373,7 @@
             [...params.keys()].every((k) => k === 'return_to')) {
           const target = AuthScreens.returnToUrl(values[0]);
           if (target) {
-            window.location.href = target;
-            return;
+            returnTo = target;
           }
         }
       } catch (_) {}
@@ -382,32 +384,58 @@
       // sitting there ready for the next offline boot to paint.
       try { window.App?.clearSessionSnapshot?.(); } catch (_) {}
 
+      let stage = 'session-check';
+      let status = null;
+      let timedOut = false;
+      const controller = new AbortController();
+      const timer = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, 12000);
       try {
-        const res = await fetch('/api/auth/me');
-        if (!res.ok) throw new Error('me ' + res.status);
+        const res = await fetch('/api/auth/me', {
+          credentials: 'same-origin', cache: 'no-store', signal: controller.signal,
+        });
+        status = res.status;
+        if (!res.ok) {
+          return { stage, status, code: status === 401 || status === 403
+            ? 'session-rejected' : 'server-response' };
+        }
+        stage = 'session-response';
         const data = await res.json();
         const user = data && data.user;
-        if (!user) throw new Error('no user');
+        if (!user || typeof user !== 'object' || !user.id) {
+          return { stage, status, code: 'invalid-response' };
+        }
+        stage = 'open-session';
+
+        if (returnTo) {
+          window.location.href = returnTo;
+          return null;
+        }
 
         if (user.hasPlatformAccess === false) {
           // Gated account: the waiting room takes over (enterAuthed
           // routes there); keep the deep link pending for the release.
           fx(() => App.enterAuthed(user), 'push');
-          return;
+          return null;
         }
 
         const target = AuthScreens._pendingHash || '';
-        AuthScreens._pendingHash = '';
         history.replaceState(null, '', AuthScreens.deepLinkUrl(target));
         fx(() => {
-          AuthScreens.hideAll();
           App.enterAuthed(user);
         }, 'pop');
+        AuthScreens._pendingHash = '';
+        return null;
       } catch (e) {
-        // Cookie is set but the in-place boot failed (transient /me
-        // hiccup) — a plain reload recovers via the normal boot path.
-        console.warn('[auth-screens] in-place boot failed, reloading:', e);
-        window.location.href = AuthScreens.deepLinkUrl(AuthScreens._pendingHash || '');
+        // Never include exception messages or response bodies: either may
+        // carry personal data. The UI explains this bounded category.
+        return { stage, status, code: timedOut ? 'timeout'
+          : stage === 'session-check' ? 'network-error'
+            : stage === 'session-response' ? 'invalid-response' : 'client-error' };
+      } finally {
+        clearTimeout(timer);
       }
     },
 
