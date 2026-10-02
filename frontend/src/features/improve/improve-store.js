@@ -103,6 +103,29 @@ export function topicBackLabel(href) {
 }
 
 /**
+ * The Workshop chip a topic opened from Messages carries BESIDE its back
+ * chip (#3691), or null where there is none.
+ *
+ * #3103 sent such a card's one chip back to the conversation, which is
+ * right, and left the project the card belongs to with no way in from its
+ * page. So the page offers both: "‹ Messages", the way back, and
+ * "‹ Workshop", the board the chip would have gone to had the card been
+ * opened there. A topic opened from the Workshop has one chip, and it is
+ * already this one.
+ *
+ * The header and the native back-swipe keep reading `topicBackHref`: back
+ * from the card is still the conversation.
+ *
+ * @param {{ slug: string|null, tab: string|null, subTab: string|null, boardView: string, topicOrigin?: string|null }} route
+ * @returns {string|null}
+ */
+export function topicWorkshopHref(route) {
+  const back = topicBackHref(route);
+  if (!back || topicBackLabel(back) !== 'Messages') return null;
+  return boardHref(route.slug, route.boardView);
+}
+
+/**
  * One row in the panel's list. TWO KINDS share this shape (#1417):
  *
  *   'session'  a chat_sessions row — a real dev session with a container, a

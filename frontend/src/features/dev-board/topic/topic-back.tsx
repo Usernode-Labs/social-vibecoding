@@ -43,6 +43,18 @@
  * glyph; the accessible name says the whole thing. The native back-swipe
  * follows this chip too; see ../../header/native-back-navigation.ts.
  *
+ * ── Opened from Messages: two chips (#3691) ───────────────────────────
+ *
+ * A card opened from a Messages conversation goes back to it (#3103), so its
+ * chip reads "‹ Messages". That left the project the card belongs to with no
+ * way in from the card's own page, so a second chip, "‹ Workshop", follows
+ * it: the same pill, to the board the chip would have named had the card
+ * been opened there (`topicWorkshopHref`). The pair sits in a row
+ * (`.dev-topic-backs`) in the first chip's place. Back itself is unchanged:
+ * the header, the native back-swipe and the first chip all still read
+ * `topicBackHref`, the conversation. A card opened from the Workshop keeps
+ * its one chip, exactly as before.
+ *
  * Mounted client-side only (a legacy portal, never prerendered), so reading
  * the store during render cannot mismatch hydration.
  */
@@ -52,7 +64,7 @@ import type { MouseEvent, ReactNode } from 'react';
 import { ChevronLeftIcon } from '@/components/ui/icons';
 
 import { useStoreState } from '../../../lib/use-store-state';
-import { improveStore, topicBackHref, topicBackLabel } from '../../improve/improve-store.js';
+import { improveStore, topicBackHref, topicBackLabel, topicWorkshopHref } from '../../improve/improve-store.js';
 
 function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   const nav = (window as unknown as {
@@ -70,13 +82,8 @@ function onBackClick(event: MouseEvent<HTMLAnchorElement>): void {
   window.location.hash = href;
 }
 
-export function TopicBack(): ReactNode {
-  const { slug, tab, subTab, boardView, topicOrigin } = useStoreState(improveStore);
-  const href = topicBackHref({ slug, tab, subTab, boardView, topicOrigin });
-  if (!href) return null;
-  // #3103: a card opened from a Messages conversation goes back to it, and
-  // says so; everywhere else the chip is the Workshop's.
-  const label = topicBackLabel(href);
+/** One chip: the destination's name behind the chevron. */
+function TopicChip({ href, label }: { href: string; label: 'Messages' | 'Workshop' }): ReactNode {
   return (
     <a
       className="dev-topic-back un-touch-target"
@@ -87,5 +94,23 @@ export function TopicBack(): ReactNode {
       <ChevronLeftIcon className="dev-topic-back-icon" aria-hidden="true" />
       <span>{label}</span>
     </a>
+  );
+}
+
+export function TopicBack(): ReactNode {
+  const { slug, tab, subTab, boardView, topicOrigin } = useStoreState(improveStore);
+  const href = topicBackHref({ slug, tab, subTab, boardView, topicOrigin });
+  if (!href) return null;
+  // #3103: a card opened from a Messages conversation goes back to it, and
+  // says so; everywhere else the chip is the Workshop's.
+  const back = <TopicChip href={href} label={topicBackLabel(href)} />;
+  // #3691: and offers its project's Workshop beside that, styled the same.
+  const workshop = topicWorkshopHref({ slug, tab, subTab, boardView, topicOrigin });
+  if (!workshop) return back;
+  return (
+    <div className="dev-topic-backs">
+      {back}
+      <TopicChip href={workshop} label="Workshop" />
+    </div>
   );
 }
