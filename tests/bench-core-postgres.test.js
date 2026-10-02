@@ -67,7 +67,11 @@ function stubGithub({ calls }) {
       const closed = repo === 'clearskies-924851';
       return {
         issue: {
-          number: n, title: `Request ${n} is broken`, body: `The body of request ${n}.`, user: 'homeroom-bot[bot]',
+          number: n, title: `Request ${n} is broken`,
+          // #3517 was filed through Homeroom: the bot account is the GitHub
+          // author, and only the Source line names the person.
+          body: n === 3517 ? `**Source:** Homeroom user (amy)\n\nThe body of request ${n}.` : `The body of request ${n}.`,
+          user: 'homeroom-bot[bot]',
           createdAt: '2026-09-01T00:00:00Z', updatedAt: LATE, state: closed ? 'closed' : 'open', closedAt: null,
         },
       };
@@ -210,7 +214,11 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
     assert.match(reasons['triage:usernode-2d5619#2995'], /could not be read \(not found\)/);
     assert.match(reasons['build:usernode-2d5619#3620:pr3634'], /Could not read PR #3634/);
     assert.match(reasons['dm:workquest-escape-from-the-underclass-831ec5#1'], /requester is not known/);
-    assert.match(reasons['dm:usernode-2d5619#3517'], /requester is not known/);
+    assert.equal(reasons['dm:usernode-2d5619#3517'], undefined, 'a request filed through Homeroom names its requester in its Source line');
+    const { rows: [viaSource] } = await pool.query(
+      "SELECT reference FROM bench_tasks WHERE stage = 'dm' AND tags->>'core_ref' = 'dm:usernode-2d5619#3517'",
+    );
+    assert.equal(viaSource.reference.dm_script.true_answer, 'LATE ANSWER 3517', "the person's own reply after the question");
     assert.match(reasons['build:merged_bot_proposals'], /only 3 of 10/);
     assert.match(reasons['followup:bot_followups'], /only 1 of 3/);
     assert.deepEqual(summary.stages, {
@@ -218,7 +226,7 @@ test('Core v1 materializes from its definition against the full PostgreSQL schem
       build: { ready: 12, skipped: 2 },
       followup: { ready: 1, skipped: 1 },
       checks_fix: { ready: 2, skipped: 0 },
-      dm: { ready: 2, skipped: 3 },
+      dm: { ready: 3, skipped: 2 },
     });
     const { rows: [m] } = await pool.query("SELECT status, suite_id, attempts FROM bench_materializations WHERE definition = 'core-v1'");
     assert.deepEqual([m.status, m.suite_id, m.attempts], ['done', first.suiteId, 1]);
