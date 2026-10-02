@@ -1776,6 +1776,7 @@ async function runCheckJob(config, {
   sessionId, env, stdinPayload = null, timeoutMs = 180000,
   onStdoutLine = null, cmd, memory = '2g', cpus = '4', maxBuffer = 64 * 1024 * 1024,
   salvagePartial = false, signal = null, previewRunId = null,
+  onJobCreated = null, retainInputOnUncertain = false,
 }, kind) {
   const cfg = config.kubernetes;
   const unitSuite = kind === 'unit-suite';
@@ -1849,6 +1850,7 @@ async function runCheckJob(config, {
     body.spec.template.metadata.labels['social.usernode.io/preview-run-id'] = previewRunId;
   }
   let inputSecretCreated = false;
+  let jobTerminated = false;
   // Follow state lives outside the try so the finally can close the stream.
   let following = false;
   let followAbort = null;
@@ -1875,6 +1877,7 @@ async function runCheckJob(config, {
     }
     signal?.throwIfAborted();
     const createdJob = await batch.createNamespacedJob({ namespace, body });
+    if (onJobCreated) await onJobCreated({ name, uid: createdJob?.metadata?.uid });
     // A platform restart must not orphan private clone credentials. The Job's
     // TTL also garbage-collects its input Secret if normal cleanup cannot run.
     if (inputSecretName && createdJob?.metadata?.uid) {
@@ -1957,6 +1960,7 @@ async function runCheckJob(config, {
       const job = await observeCheck(batch.readNamespacedJob({ name, namespace }), signal);
       signal?.throwIfAborted();
       if (job.status?.failed || job.status?.conditions?.some(c => c.type === 'Failed' && c.status === 'True')) {
+        jobTerminated = true;
         const pods = await observeCheck(core.listNamespacedPod({ namespace, labelSelector: `job-name=${name}` }), signal);
         const pod = pods.items?.[0];
         const err = new Error(`${kind} Job ${name} failed`);
@@ -1970,6 +1974,7 @@ async function runCheckJob(config, {
         throw err;
       }
       if (job.status?.succeeded) {
+        jobTerminated = true;
         let terminalOutput;
         try { terminalOutput = await observeCheck(readOutput(), signal); }
         catch (err) { err.captureLogFailed = !unitSuite; throw err; }
@@ -2026,7 +2031,7 @@ async function runCheckJob(config, {
     if (followAbort && typeof followAbort.abort === 'function') {
       try { followAbort.abort(); } catch { /* already closed */ }
     }
-    if (inputSecretCreated) {
+    if (inputSecretCreated && (!retainInputOnUncertain || jobTerminated)) {
       await deleteIfPresent(core, 'deleteNamespacedSecret', inputSecretName, namespace)
         .catch(() => {});
     }

@@ -335,3 +335,22 @@ test('C9 completion requires the verdict and release of manifest/lifecycle owner
   historical.pre_state.checksOutstanding = true;
   assert.equal(replayDecision(historical).accepted, true, 'C8 traces preserve their original completion policy');
 });
+
+test('C10 unit resource receipt remains scoped to its admitted run after supersession', { skip: !isolated }, async t => {
+  const f = await fixture(t);
+  const checkRuns = require('../src/services/check-runs');
+  const old = randomUUID();
+  const next = randomUUID();
+  for (const runId of [old, next]) {
+    assert.equal(await checkRuns.record(f.pool, { runId, sessionId: 1, commitSha: runId === old ? HEAD : NEXT,
+      manifest: { durableCli: true, launched: true, unitSuite: { version: 1, state: 'submitted' } } }), true);
+  }
+  await f.pool.query('UPDATE chat_sessions SET checks_commit_sha = $1 WHERE id = 1', [NEXT]);
+  await checkRuns.observeUnitJob(f.pool, old, 1, { name: 'old-unit', uid: 'original-uid' });
+  const read = async runId => (await f.pool.query('SELECT manifest FROM check_runs WHERE run_id = $1', [runId])).rows[0].manifest;
+  assert.deepEqual((await read(old)).unitSuite, { version: 1, state: 'observed', job: { name: 'old-unit', uid: 'original-uid' } });
+  assert.equal((await read(next)).unitSuite.state, 'submitted');
+  await assert.rejects(checkRuns.observeUnitJob(f.pool, old, 1, { name: 'old-unit', uid: 'successor-uid' }), /lost its recovery manifest/);
+  assert.equal((await read(old)).unitSuite.job.uid, 'original-uid');
+  await assert.rejects(checkRuns.observeUnitJob(f.pool, next, 2, { name: 'next-unit', uid: 'next-uid' }), /lost its recovery manifest/);
+});

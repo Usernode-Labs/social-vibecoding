@@ -322,3 +322,28 @@ test('C9 capture destinations require a manifest and the dedicated immutable reg
   value.config.kubernetes.captureImage = `production.example/capture@sha256:${'b'.repeat(64)}`;
   assert.throws(() => validateDestinations(value, value.isolation.database.url), /dedicated namespace, account and registry/);
 });
+
+test('C10 unit destinations require dedicated immutable image and pinned local source', t => {
+  const f = fixture(t);
+  const value = f.value;
+  const prefix = value.config.kubernetes.repositoryPrefix.replace(/\/images$/, '');
+  const captureImage = `${prefix}/capture@sha256:${'a'.repeat(64)}`;
+  const image = `${prefix}/unit-suite@sha256:${'b'.repeat(64)}`;
+  value.checks = { captureImage };
+  Object.assign(value.config.kubernetes, { workerNamespace: value.isolation.namespace.name,
+    workerServiceAccount: 'recovery-builder', captureImage, workerImage: image });
+  value.config.captureRuntime = 'kubernetes';
+  value.config.workerRuntime = 'kubernetes';
+  assert.throws(() => validateDestinations(value, value.isolation.database.url), /unit image requires its dedicated checks manifest/);
+  value.checks.unitSuite = { image, revision: 'c'.repeat(40), repoUrl: 'file:///opt/unit-source.git' };
+  validateDestinations(value, value.isolation.database.url);
+  value.checks.unitSuite.repoUrl = 'https://production.example/private-repo';
+  assert.throws(() => validateDestinations(value, value.isolation.database.url), /unit checks/);
+});
+
+test('C10 companion proof refuses missing inputs before clients or schema mutation', async t => {
+  const f = fixture(t);
+  await assert.rejects(verifyIsolatedBuildFixture({ env: f.env, requireUnitSuite: true,
+    dependencies: { loadClients: () => assert.fail('Missing companion input must fail before clients') },
+  }), /dedicated unit-suite fixture required before mutation/);
+});

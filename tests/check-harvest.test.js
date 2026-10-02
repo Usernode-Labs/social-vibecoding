@@ -715,6 +715,7 @@ test('C9 a submitted CLI capture that is absent keeps its locator and never re-d
 test('C9 loss during owned input/lifecycle release retains the checks locator', async t => {
   const row = orphanRow();
   row.manifest.durableCli = true;
+  row.manifest.unitSuite = { version: 1, state: 'not-required', reason: 'no_runnable_script' };
   const pool = makePool({ session: sessionRow({ check_state: 'passing' }) });
   stub(t, kubernetes, {
     findCheckJobs: async () => ({ capture: { name: 'old' } }),
@@ -745,6 +746,7 @@ test('C9 supersession retains a submitted-but-absent capture for later retiremen
 test('C9 a persisted current verdict closes as completed, allowing later same-head rechecks', async t => {
   const row = orphanRow();
   row.manifest.durableCli = true;
+  row.manifest.unitSuite = { version: 1, state: 'not-required', reason: 'no_runnable_script' };
   const pool = makePool({ session: sessionRow({ check_state: 'failing' }) });
   const lifecycle = require('../src/services/preview-lifecycle');
   let settlement;
@@ -762,4 +764,89 @@ test('C9 a persisted current verdict closes as completed, allowing later same-he
   assert.equal((await harvest.adopt(config, pool, row)).outcome, 'moot');
   assert.deepEqual(settlement, { result: { state: 'failing' } });
   assert.deepEqual(pool.deleted, [row.run_id]);
+});
+
+for (const superseded of [false, true]) {
+  test(`C10 delayed expected unit creation retains ownership ${superseded ? 'after supersession' : 'for settlement'}`, async t => {
+    quietBroadcast(t);
+    const row = orphanRow();
+    row.manifest.durableCli = true;
+    row.manifest.unitSuite = { version: 1, state: 'submitted' };
+    const pool = makePool({ session: sessionRow(superseded ? { checks_commit_sha: 'next' } : {}) });
+    let arrived = false;
+    let settled;
+    const retired = [];
+    stub(t, kubernetes, {
+      findCheckJobs: async () => ({ capture: { name: 'capture', uid: 'capture-uid' },
+        unitSuite: arrived ? { name: 'unit', uid: 'unit-uid' } : null }),
+      collectCheckJob: async (_config, { kind }) => {
+        assert.equal(arrived, true, 'No verdict is collected while the expected companion is absent');
+        return { state: 'succeeded', stdout: kind === 'unit-suite' ? '# tests 2\n# pass 2\n# fail 0\n' : '', stderr: '' };
+      },
+      cancelPreviewChecks: async (_config, session, run, options) => retired.push({ session, run, options }),
+    });
+    stub(t, visuals, {
+      settleCaptureRun: async (_config, _pool, run) => {
+        assert.equal(superseded, false);
+        settled = run;
+        return { traceStatus: 'passing', result: { state: 'passing' } };
+      },
+      scheduleShots: () => {},
+    });
+    stub(t, stagingRecovery, { recheckSessionChecks: async () => assert.fail('No competing execution') });
+    assert.equal((await harvest.adopt(config, pool, row)).outcome, 'waiting');
+    assert.deepEqual(pool.deleted, []);
+    assert.deepEqual(retired, []);
+    arrived = true;
+    const result = await harvest.adopt(config, pool, row);
+    assert.equal(result.outcome, superseded ? 'moot' : 'settled');
+    if (!superseded) assert.equal(settled.unitOutcome.row.summary.tests, 2);
+    assert.deepEqual(pool.deleted, [row.run_id]);
+    assert.deepEqual(retired, [{ session: 42, run: row.run_id, options: { releaseInputs: true } }]);
+  });
+}
+
+for (const receipt of [undefined, { version: 9, state: 'not-required' }]) {
+  test(`C10 missing or unsupported unit decision is uncertain: ${JSON.stringify(receipt)}`, async t => {
+    const row = orphanRow();
+    row.manifest.durableCli = true;
+    row.manifest.unitSuite = receipt;
+    const pool = makePool({ session: sessionRow() });
+    stub(t, kubernetes, { findCheckJobs: async () => ({ capture: { name: 'capture' }, unitSuite: null }) });
+    assert.equal((await harvest.adopt(config, pool, row)).outcome, 'waiting');
+    assert.deepEqual(pool.deleted, []);
+  });
+}
+
+for (const superseded of [false, true]) {
+  test(`C10 conflicting observed unit UID blocks ${superseded ? 'retirement' : 'adoption'}`, async t => {
+    const row = orphanRow();
+    row.manifest.durableCli = true;
+    row.manifest.unitSuite = { version: 1, state: 'observed', job: { name: 'unit', uid: 'original' } };
+    const pool = makePool({ session: sessionRow(superseded ? { checks_commit_sha: 'next' } : {}) });
+    stub(t, kubernetes, {
+      findCheckJobs: async () => ({ capture: { name: 'capture' }, unitSuite: { name: 'unit', uid: 'successor' } }),
+      collectCheckJob: async () => assert.fail('Do not consume conflicting work'),
+      cancelPreviewChecks: async () => assert.fail('Preserve conflicting successor'),
+    });
+    const result = await harvest.adopt(config, pool, row);
+    assert.equal(result.outcome, 'failed');
+    assert.match(result.err, /ownership/);
+    assert.deepEqual(pool.deleted, []);
+  });
+}
+
+test('C10 unit disappearance during collection retains the required result and cleanup locator', async t => {
+  const row = orphanRow();
+  row.manifest.durableCli = true;
+  row.manifest.unitSuite = { version: 1, state: 'submitted' };
+  const pool = makePool({ session: sessionRow() });
+  stub(t, kubernetes, {
+    findCheckJobs: async () => ({ capture: { name: 'capture' }, unitSuite: { name: 'unit' } }),
+    collectCheckJob: async (_config, { kind }) => ({ state: kind === 'unit-suite' ? 'gone' : 'succeeded', stdout: '', stderr: '' }),
+    cancelPreviewChecks: async () => assert.fail('Consumer closure remains unknown'),
+  });
+  stub(t, visuals, { settleCaptureRun: async () => assert.fail('Expected result cannot become null') });
+  assert.equal((await harvest.adopt(config, pool, row)).outcome, 'waiting');
+  assert.deepEqual(pool.deleted, []);
 });

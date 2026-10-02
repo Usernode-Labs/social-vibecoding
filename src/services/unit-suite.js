@@ -105,6 +105,20 @@ function hasRunnableTestScript(rawPackageJson) {
   return true;
 }
 
+// Named admission inspection for the enrolled checks manifest. A lookup error
+// is uncertainty, whereas a successful lookup can establish no runnable suite.
+async function inspectRequirement({ repoOwner, repoName, ref, deferred = false }) {
+  if (deferred) return { version: 1, state: 'not-required', reason: 'checks_deferred' };
+  if (!isEnabled()) return { version: 1, state: 'not-required', reason: 'feature_disabled' };
+  if (!github.isEnabled() || !repoOwner || !repoName || !ref) {
+    return { version: 1, state: 'not-required', reason: 'source_unavailable' };
+  }
+  const rawPackage = await github.getFileContent(repoOwner, repoName, UNIT_CHECK_PATH, ref);
+  return hasRunnableTestScript(rawPackage)
+    ? { version: 1, state: 'submitted', source: { repoOwner, repoName, ref } }
+    : { version: 1, state: 'not-required', reason: 'no_runnable_script' };
+}
+
 // A `location:` value as a repo-relative file: the `:line:col` dropped and
 // the workspace prefix stripped. Absolute when the output never said where
 // the workspace was — still the right file, just longer.
@@ -388,19 +402,30 @@ async function storeExpectedTests(pool, appId, total) {
 // stdout line changes it, and once more with phase 'done' when the run
 // ends; the caller owns any throttling. Normal failures become check rows;
 // explicit cancellation propagates to the preview lifecycle owner.
-async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber, onProgress = null, signal = null, previewRunId = null }) {
-  if (!isEnabled() || !github.isEnabled() || !repoOwner || !repoName || !ref) return null;
-
-  let rawPkg = null;
-  try {
-    rawPkg = await github.getFileContent(repoOwner, repoName, UNIT_CHECK_PATH, ref);
-  } catch (err) {
-    log.warn('unit-suite', 'package.json fetch failed — skipping unit suite', {
-      sessionId, repo: `${repoOwner}/${repoName}`, ref, err: err.message,
-    });
-    return null;
+async function maybeRunUnitSuite({
+  config, pool, appId, sessionId, repoOwner, repoName, ref, prNumber,
+  onProgress = null, signal = null, previewRunId = null,
+  requirement = null, onJobCreated = null,
+}) {
+  let admission = requirement;
+  if (!admission) {
+    try { admission = await inspectRequirement({ repoOwner, repoName, ref }); }
+    catch (err) {
+      log.warn('unit-suite', 'package.json fetch failed — skipping unit suite', {
+        sessionId, repo: `${repoOwner}/${repoName}`, ref, err: err.message,
+      });
+      return null;
+    }
   }
-  if (!hasRunnableTestScript(rawPkg)) return null;
+  if (admission.version === 1 && admission.state === 'not-required') return null;
+  if (admission.version !== 1 || admission.state !== 'submitted') throw new Error('Invalid unit-suite admission');
+  if (requirement && (admission.source?.repoOwner !== repoOwner
+      || admission.source.repoName !== repoName || admission.source.ref !== ref)) {
+    throw new Error('Unit-suite source conflicts with its admitted revision');
+  }
+  if (requirement && config?.workerRuntime !== 'kubernetes') {
+    throw new Error('Enrolled unit-suite ownership requires Kubernetes');
+  }
 
   const checkKey = appManifest.checkKey(UNIT_CHECK_NAME, UNIT_CHECK_PATH);
   // Ungraduated on any doubt: the safe default is advisory, so a history
@@ -436,6 +461,8 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     const options = {
       onStdoutLine: observe,
       signal, previewRunId,
+      onJobCreated,
+      retainInputOnUncertain: !!requirement,
       image: UNIT_SUITE_IMAGE,
       cmd: ['bash', '-c', RUN_SCRIPT],
       env: {
@@ -458,6 +485,11 @@ async function maybeRunUnitSuite({ config, pool, appId, sessionId, repoOwner, re
     passed = true;
   } catch (err) {
     if (signal?.aborted) throw signal.reason;
+    if (requirement && !err.captureJobTerminated) {
+      throw Object.assign(new Error(`Unit-suite execution unconfirmed: ${err.message}`, { cause: err }), {
+        code: 'UNIT_SUITE_EXECUTION_UNCONFIRMED',
+      });
+    }
     readSummary(err.stdout);
     const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
     reason = failureDetail(err.stdout, err.stderr, { timedOut });
@@ -544,6 +576,7 @@ async function outcomeFromLog({
 }
 
 module.exports = {
+  inspectRequirement,
   maybeRunUnitSuite,
   outcomeFromLog,
   passedIn,

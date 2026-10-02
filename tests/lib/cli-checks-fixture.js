@@ -25,7 +25,10 @@ async function addChecksTables(pool) {
 }
 
 // Every override is fixture input or transport, never a successful Job/result.
-function actualChecksWorker(f, { onPhase = async () => {}, startupDelay = false } = {}) {
+function actualChecksWorker(f, {
+  onPhase = async () => {}, startupDelay = false,
+  unitSuite = false, delayUnitCreation = false,
+} = {}) {
   assert.ok(f.fixture.checks, 'Actual capture fixture must pass dedicated preflight');
   const undo = [];
   function replace(object, key, value) {
@@ -55,7 +58,7 @@ function actualChecksWorker(f, { onPhase = async () => {}, startupDelay = false 
       path: '/health', expectText: 'Ok',
     }] });
     // The pinned sample has no runnable npm test script. Preserve that policy.
-    if (filename === 'package.json') return JSON.stringify({ scripts: {} });
+    if (filename === 'package.json') return JSON.stringify({ scripts: unitSuite ? { test: 'node --test' } : {} });
     throw new Error(`Fixture forbids unconfigured GitHub content: ${filename}`);
   });
   const application = require('../../src/services/application-runtime');
@@ -79,6 +82,30 @@ function actualChecksWorker(f, { onPhase = async () => {}, startupDelay = false 
     env.TESTS = '@stdin';
     return original(config, { ...options, env, stdinPayload: translate(stdinPayload), cpus: '1', memory: '1g' });
   });
+  if (unitSuite) {
+    assert.ok(f.fixture.checks.unitSuite, 'Dedicated unit-suite inputs required');
+    replace(github, 'getCloneUrl', () => async () => f.fixture.preparationSource.repoUrl);
+    replace(kubernetes, 'runUnitSuiteJob', original => (config, options) => original(config, {
+      ...options,
+      env: { ...options.env, REPO_URL: f.fixture.checks.unitSuite.repoUrl,
+        GIT_REF: f.fixture.checks.unitSuite.revision,
+        UNIT_FIXTURE_TOKEN: 'isolated-secret' },
+      // Actual runner script follows the delay; no result or observation is substituted.
+      cmd: ['bash', '-c', `sleep 20; ${options.cmd[2]}`], cpus: '1', memory: '512m',
+    }));
+  }
+
+  async function waitForRunningJob(job, namespace, kind, pollMs) {
+    const deadline = Date.now() + 120000;
+    for (;;) {
+      const pods = await f.clients.core.listNamespacedPod({ namespace,
+        labelSelector: `job-name=${job.metadata.name}` });
+      if (pods.items.some(pod => pod.status?.containerStatuses?.some(status => status.state?.running))) return;
+      assert.ok(Date.now() < deadline, `Actual ${kind} container must start`);
+      await delay(pollMs);
+    }
+  }
+
   const batch = f.clients.batch;
   replace(batch, 'createNamespacedJob', original => async params => {
     assert.equal(params.namespace, f.fixture.isolation.namespace.name);
@@ -90,15 +117,28 @@ function actualChecksWorker(f, { onPhase = async () => {}, startupDelay = false 
         container.args = ['sleep 20; exec node /app/capture.js < /var/run/usernode-capture/tests.json'];
       }
       const job = await original.call(batch, params);
-      const deadline = Date.now() + 120000;
-      for (;;) {
-        const pods = await f.clients.core.listNamespacedPod({ namespace: params.namespace,
-          labelSelector: `job-name=${job.metadata.name}` });
-        if (pods.items.some(pod => pod.status?.containerStatuses?.some(status => status.state?.running))) break;
-        assert.ok(Date.now() < deadline, 'Actual capture container must start');
-        await delay(500);
-      }
+      await waitForRunningJob(job, params.namespace, 'capture', 500);
       await onPhase('checks_running', { name: job.metadata.name, uid: job.metadata.uid });
+      return job;
+    }
+    if (unitSuite && params.body.metadata.name.startsWith('sv-unit-suite-s')) {
+      if (delayUnitCreation) {
+        // Hold the actual POST after input creation. Capture can progress concurrently.
+        const deadline = Date.now() + 120000;
+        for (;;) {
+          const jobs = await kubernetes.findCheckJobs(f.config, {
+            sessionId: Number(params.body.metadata.labels['social.usernode.io/session-id']),
+            previewRunId: params.body.metadata.labels['social.usernode.io/preview-run-id'],
+          });
+          if (jobs.capture) break;
+          assert.ok(Date.now() < deadline, 'Capture must exist before delayed unit submission');
+          await delay(250);
+        }
+        await onPhase('unit_creation_submitted', { name: params.body.metadata.name, body: params.body });
+      }
+      const job = await original.call(batch, params);
+      await waitForRunningJob(job, params.namespace, 'unit', 250);
+      await onPhase('unit_running', { name: job.metadata.name, uid: job.metadata.uid });
       return job;
     }
     return original.call(batch, params);

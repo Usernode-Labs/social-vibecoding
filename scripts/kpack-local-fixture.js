@@ -467,7 +467,7 @@ async function setupChecks(state) {
     });
   }
   const fixture = JSON.parse(fs.readFileSync(filename));
-  fixture.checks = { captureImage: state.captureImage };
+  fixture.checks = { ...fixture.checks, captureImage: state.captureImage };
   fixture.config.captureRuntime = 'kubernetes';
   Object.assign(fixture.config.kubernetes, {
     workerNamespace: state.namespace.name,
@@ -481,6 +481,81 @@ async function setupChecks(state) {
     PREVIEW_FLOW_TEST_DATABASE_URL: state.database.url,
   } });
   console.log('[fixture] actual capture image and checks destinations verified');
+}
+
+async function setupUnitChecks(state) {
+  await setupChecks(state);
+  const context = path.join(state.directory, 'unit-context');
+  const source = path.join(context, 'source');
+  fs.mkdirSync(source, { recursive: true });
+  if (!state.unitRevision) {
+    fs.writeFileSync(path.join(source, 'package.json'), JSON.stringify({
+      name: 'isolated-unit-fixture', version: '1.0.0', scripts: { test: 'node --test' },
+    }));
+    fs.writeFileSync(path.join(source, 'package-lock.json'), JSON.stringify({
+      name: 'isolated-unit-fixture', version: '1.0.0', lockfileVersion: 3,
+      packages: { '': { name: 'isolated-unit-fixture', version: '1.0.0' } },
+    }));
+    fs.writeFileSync(path.join(source, 'unit.test.js'), `
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+test('real node assertion executes', () => assert.equal(2 + 2, 4));
+test('input Secret reaches the actual process', () => assert.equal(process.env.UNIT_FIXTURE_TOKEN, 'isolated-secret'));
+`);
+    await run(state, 'git', ['-C', source, 'init']);
+    await run(state, 'git', ['-C', source, 'add', 'package.json', 'package-lock.json', 'unit.test.js']);
+    await run(state, 'git', ['-C', source, '-c', 'user.name=Isolated fixture', '-c', 'user.email=fixture@invalid',
+      'commit', '-m', 'Pinned disposable unit fixture']);
+    state.unitRevision = await run(state, 'git', ['-C', source, 'rev-parse', 'HEAD']);
+    save(state);
+  }
+  if (!state.unitImage) {
+    const bare = path.join(context, 'unit-source.git');
+    if (!fs.existsSync(bare)) await run(state, 'git', ['clone', '--bare', source, bare]);
+    const dockerfile = path.join(context, 'Dockerfile');
+    fs.writeFileSync(dockerfile, `FROM ${state.captureLocalTag}
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git bash && rm -rf /var/lib/apt/lists/*
+COPY --chown=1000:1000 unit-source.git /opt/unit-source.git
+USER 1000:1000
+`);
+    state.unitLocalTag = `${state.clusterName}-unit:local`;
+    save(state);
+    const existing = await docker(state, ['image', 'ls', '--filter', `reference=${state.unitLocalTag}`, '-q', '--no-trunc']);
+    if (!existing) {
+      await docker(state, ['build', '--platform', 'linux/arm64', '--label', `${LABEL}=${state.fixtureId}`,
+        '-t', state.unitLocalTag, '-f', dockerfile, context], { timeout: 900000 });
+    }
+    const [image] = JSON.parse(await docker(state, ['image', 'inspect', state.unitLocalTag]));
+    check(image.Config.Labels?.[LABEL] === state.fixtureId
+      && (!state.unitLocalImageId || state.unitLocalImageId === image.Id), 'unit image ownership mismatch');
+    state.unitLocalImageId = image.Id;
+    save(state);
+    const archive = path.join(state.directory, 'unit-image.tar');
+    await docker(state, ['save', '-o', archive, state.unitLocalTag]);
+    const filename = path.join(state.directory, 'fixture.json');
+    const verified = await verifyIsolatedBuildFixture({ env: {
+      PATH: process.env.PATH, KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: state.database.url,
+    } });
+    await withRegistryForward(state, verified.clients, async port => {
+      const crane = path.join(state.directory, 'tools/crane');
+      const repo = `preview-recovery-${state.fixtureId}/unit-suite`;
+      await run(state, crane, ['push', archive, `127.0.0.1:${port}/${repo}:fixture`]);
+      const digest = await run(state, crane, ['digest', `127.0.0.1:${port}/${repo}:fixture`]);
+      state.unitImage = `${state.registry.host}/${repo}@${digest}`;
+      save(state);
+    });
+  }
+  const filename = path.join(state.directory, 'fixture.json');
+  const fixture = JSON.parse(fs.readFileSync(filename));
+  fixture.checks.unitSuite = { image: state.unitImage, revision: state.unitRevision, repoUrl: 'file:///opt/unit-source.git' };
+  fixture.config.workerRuntime = 'kubernetes';
+  fixture.config.kubernetes.workerImage = state.unitImage;
+  fs.writeFileSync(filename, JSON.stringify(fixture, null, 2), { mode: 0o600 });
+  await verifyIsolatedBuildFixture({ env: {
+    PATH: process.env.PATH, KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: state.database.url,
+  } });
+  console.log('[fixture] actual unit-suite image/source and destinations verified');
 }
 
 async function manifest(state) {
@@ -599,25 +674,31 @@ function verifyDeletionInventory(state, containers, net, volumes, consumers) {
 
 async function teardown(state) {
   await daemon(state);
-  let captureImageToDelete = null;
-  if (state.captureLocalTag) {
-    if (!state.captureLocalImageId) {
+  const imagesToDelete = [];
+  // Derived unit image must be removed before its capture base.
+  const localImages = [
+    [state.unitLocalTag, 'unitLocalImageId'],
+    [state.captureLocalTag, 'captureLocalImageId'],
+  ];
+  for (const [tag, idKey] of localImages) {
+    if (!tag) continue;
+    if (!state[idKey]) {
       // Recover a successful local build whose reply/state save was lost.
       // Only the exact fixture tag and its ownership label may be adopted.
-      const found = await docker(state, ['image', 'ls', '--filter', `reference=${state.captureLocalTag}`, '-q', '--no-trunc']);
+      const found = await docker(state, ['image', 'ls', '--filter', `reference=${tag}`, '-q', '--no-trunc']);
       if (found) {
         const [image] = JSON.parse(await docker(state, ['image', 'inspect', found]));
-        check(image.Config.Labels?.[LABEL] === state.fixtureId, 'capture image recovery ownership mismatch');
-        state.captureLocalImageId = image.Id;
+        check(image.Config.Labels?.[LABEL] === state.fixtureId, 'check image recovery ownership mismatch');
+        state[idKey] = image.Id;
         save(state);
       }
     }
     const images = (await docker(state, ['image', 'ls', '-q', '--no-trunc'])).split('\n');
-    if (state.captureLocalImageId && images.includes(state.captureLocalImageId)) {
-      const [image] = JSON.parse(await docker(state, ['image', 'inspect', state.captureLocalImageId]));
+    if (state[idKey] && images.includes(state[idKey])) {
+      const [image] = JSON.parse(await docker(state, ['image', 'inspect', state[idKey]]));
       check(image.Config.Labels?.[LABEL] === state.fixtureId
-        && image.RepoTags?.every(tag => tag === state.captureLocalTag), 'capture image deletion ownership mismatch');
-      captureImageToDelete = state.captureLocalImageId;
+        && image.RepoTags?.every(value => value === tag), 'fixture image deletion ownership mismatch');
+      imagesToDelete.push(state[idKey]);
     }
   }
   // Inventory by immutable IDs. Missing IDs may result from interrupted teardown;
@@ -641,7 +722,7 @@ async function teardown(state) {
   const [net] = state.networkId && netIds.includes(state.networkId)
     ? JSON.parse(await docker(state, ['network', 'inspect', state.networkId])) : [];
   verifyDeletionInventory(state, containers, net, volumes, consumers);
-  if (captureImageToDelete) await docker(state, ['image', 'rm', captureImageToDelete]);
+  for (const imageId of imagesToDelete) await docker(state, ['image', 'rm', imageId]);
   for (const container of containers) {
     await docker(state, ['rm', '-f', '-v', container.Id]);
     state.removedContainerIds = [...(state.removedContainerIds || []), container.Id];
@@ -660,7 +741,7 @@ async function integration(state, mode = 'test') {
     PATH: process.env.PATH, TMPDIR: os.tmpdir(),
     KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: fixture.isolation.database.url,
   };
-  await verifyIsolatedBuildFixture({ env });
+  await verifyIsolatedBuildFixture({ env, requireUnitSuite: mode === 'test-checks' });
   const option = { 'test-runtime': '--runtime', 'test-release': '--release', 'test-preparation': '--preparation', 'test-handoff': '--handoff', 'test-checks': '--checks' }[mode];
   const child = spawn(process.execPath, ['scripts/test-recoverable-preview-build.js', ...(option ? [option] : [])], { env, stdio: 'inherit' });
   const [code] = await once(child, 'exit');
@@ -683,8 +764,8 @@ async function main() {
     console.log(directory);
     return;
   }
-  check(['setup', 'setup-checks', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks'].includes(mode) && argument,
-    'use init <local-socket>, setup/setup-checks/test/test-runtime/test-release/test-preparation/test-handoff/test-checks/teardown <directory>');
+  check(['setup', 'setup-checks', 'setup-unit-checks', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks'].includes(mode) && argument,
+    'use init <local-socket>, setup/setup-checks/setup-unit-checks/test/test-runtime/test-release/test-preparation/test-handoff/test-checks/teardown <directory>');
   const directory = fs.realpathSync(argument);
   const state = JSON.parse(fs.readFileSync(path.join(directory, 'setup-state.json'), 'utf8'));
   check(state.version === 1 && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(state.fixtureId)
@@ -694,6 +775,7 @@ async function main() {
   try {
     if (mode === 'setup') await setup(state);
     else if (mode === 'setup-checks') await setupChecks(state);
+    else if (mode === 'setup-unit-checks') await setupUnitChecks(state);
     else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks'].includes(mode)) await integration(state, mode);
     else await teardown(state);
   } catch (error) {

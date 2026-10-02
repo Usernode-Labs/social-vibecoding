@@ -2575,6 +2575,13 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     closeProgress = progress.close;
     const progressObserver = progress.observeCapture;
 
+    const unitRequirement = opts.recoverExisting
+      ? await unitSuite.inspectRequirement({ repoOwner, repoName, ref: gitRef, deferred: shotsOnly })
+      : null;
+    if (unitRequirement?.state === 'submitted' && config.workerRuntime !== 'kubernetes') {
+      throw new Error('Enrolled unit-suite ownership requires Kubernetes');
+    }
+
     // The full manifest, written before either Job exists: everything the
     // verdict needs that the Jobs' own output does not carry, so a process
     // that dies from here on leaves a run another process can settle
@@ -2587,6 +2594,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         manifest: {
           launched: true,
           durableCli: !!opts.recoverExisting,
+          ...(unitRequirement ? { unitSuite: unitRequirement } : {}),
           trigger: trigger || null,
           debugRunId,
           startedAt: runStartedAt,
@@ -2618,15 +2626,20 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // capture container and awaited after it, so the suite runs in its own
     // one-shot container CONCURRENTLY with the browser checks and adds
     // ~zero wall clock unless it outlasts the whole capture run. The
-    // .catch collapses every failure mode to null (no row) — the checks
-    // run must never die because the unit-suite runner did.
+    // Legacy callers collapse launch errors to no row. Enrolled callers retain
+    // an explicit expected companion and propagate execution uncertainty.
     const unitSuitePromise = shotsOnly ? Promise.resolve(null) : unitSuite.maybeRunUnitSuite({
       config, pool, appId: app.id, sessionId: session.id,
       repoOwner, repoName, ref: gitRef,
       prNumber: Number(session.pr_number) || null,
       onProgress: progress.observeUnit,
       signal: operation?.signal, previewRunId: runId,
+      requirement: unitRequirement,
+      onJobCreated: unitRequirement?.state === 'submitted'
+        ? observation => checkRuns.observeUnitJob(operation?.cleanupPool || pool, runId, session.id, observation)
+        : null,
     }).catch((err) => {
+      if (opts.recoverExisting) throw err;
       log.warn('visuals', 'Unit-suite check failed to run (non-fatal)', {
         sessionId: session.id, err: err.message,
       });

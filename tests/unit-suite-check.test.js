@@ -400,3 +400,53 @@ for (const failed of [false, true]) {
     if (failed) assert.match(out.row.failureReason, /^\(file not reported\) \(1\): regression \| # tests 2/);
   });
 }
+
+const submittedRequirement = { version: 1, state: 'submitted', source: {
+  repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40),
+} };
+const enrolledUnitOptions = { config: { workerRuntime: 'kubernetes' },
+  pool: { query: async () => ({ rows: [] }) }, appId: 10, sessionId: 42,
+  repoOwner: 'example', repoName: 'repo', ref: 'a'.repeat(40), requirement: submittedRequirement };
+
+test('C10 admission records a reason for no suite and propagates failed inspection', async t => {
+  const github = require('../src/services/github');
+  t.mock.method(github, 'isEnabled', () => true);
+  t.mock.method(github, 'getFileContent', async () => '{"scripts":{}}');
+  const decision = await unitSuite.inspectRequirement(enrolledUnitOptions);
+  assert.deepEqual(decision, { version: 1, state: 'not-required', reason: 'no_runnable_script' });
+  github.getFileContent = async () => { throw new Error('metadata reply lost'); };
+  await assert.rejects(unitSuite.inspectRequirement(enrolledUnitOptions), /metadata reply lost/);
+});
+
+for (const graduated of [false, true]) {
+  test(`C10 observed ordinary unit failure preserves ${graduated ? 'blocking' : 'advisory'} graduation`, async t => {
+    const github = require('../src/services/github');
+    const history = require('../src/services/check-history');
+    const kubernetes = require('../src/services/kubernetes');
+    const appManifest = require('../src/services/app-manifest');
+    t.mock.method(github, 'getFileContent', async () => assert.fail('Persisted admission is used'));
+    t.mock.method(github, 'getCloneUrl', async () => 'https://fixture.invalid/unit');
+    t.mock.method(history, 'loadGraduated', async () => new Set(graduated
+      ? [appManifest.checkKey(unitSuite.UNIT_CHECK_NAME, unitSuite.UNIT_CHECK_PATH)] : []));
+    t.mock.method(kubernetes, 'runUnitSuiteJob', async (_config, options) => {
+      assert.equal(options.retainInputOnUncertain, true);
+      throw Object.assign(new Error('exit 1'), { captureJobTerminated: true,
+        stdout: `${SENTINEL}\n# tests 2\n# pass 1\n# fail 1\nnot ok 2 - regression\n` });
+    });
+    const result = await unitSuite.maybeRunUnitSuite(enrolledUnitOptions);
+    assert.equal(result.row.status, 'fail');
+    assert.equal(result.row.advisory, !graduated);
+  });
+}
+
+test('C10 an unconfirmed unit POST cannot masquerade as an ordinary test failure', async t => {
+  const github = require('../src/services/github');
+  const kubernetes = require('../src/services/kubernetes');
+  t.mock.method(github, 'getCloneUrl', async () => 'https://fixture.invalid/unit');
+  t.mock.method(kubernetes, 'runUnitSuiteJob', async () => { throw new Error('POST reply lost'); });
+  await assert.rejects(unitSuite.maybeRunUnitSuite(enrolledUnitOptions), { code: 'UNIT_SUITE_EXECUTION_UNCONFIRMED' });
+});
+
+test('C10 persisted admission cannot execute a conflicting source revision', async () => {
+  await assert.rejects(unitSuite.maybeRunUnitSuite({ ...enrolledUnitOptions, ref: 'b'.repeat(40) }), /admitted revision/);
+});

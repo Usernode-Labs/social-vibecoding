@@ -140,6 +140,19 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
   const sessionId = Number(row.session_id);
   const runId = row.run_id;
   const manifest = row.manifest || {};
+
+  function missingUnitCompanion(jobs) {
+    if (!manifest.durableCli || !manifest.launched) return null;
+    const decision = manifest.unitSuite;
+    if (decision?.version === 1 && decision.state === 'not-required') return null;
+    if (!jobs.unitSuite) return 'unit-suite creation unconfirmed';
+    const receipt = manifest.unitSuite?.job;
+    if (receipt && (receipt.name !== jobs.unitSuite.name || receipt.uid !== jobs.unitSuite.uid)) {
+      throw new Error('Unit Job ownership conflicts with its observed receipt');
+    }
+    return null;
+  }
+
   const retireConsumers = async () => {
     if (retireJobs || manifest.durableCli) {
       await kubernetes.cancelPreviewChecks(config, sessionId, runId, { releaseInputs: true });
@@ -170,9 +183,13 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
     else await settlement.catch(() => {});
   };
   const moot = async (why) => {
-    if (manifest.durableCli && manifest.launched && !(manifest.shotsOnly && !manifest.media)) {
+    if (manifest.durableCli && manifest.launched) {
       const jobs = await kubernetes.findCheckJobs(config, { sessionId, previewRunId: runId });
-      if (!jobs.capture) return { outcome: 'waiting', why: 'retired capture creation unconfirmed', ...base };
+      if (!(manifest.shotsOnly && !manifest.media) && !jobs.capture) {
+        return { outcome: 'waiting', why: 'retired capture creation unconfirmed', ...base };
+      }
+      const missing = missingUnitCompanion(jobs);
+      if (missing) return { outcome: 'waiting', why: `retired ${missing}`, ...base };
     }
     log.info('check-harvest', 'Orphaned run is moot — clearing its manifest', { ...base, why });
     await retireConsumers();
@@ -235,6 +252,8 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       if (manifest.durableCli) return { outcome: 'waiting', why: 'capture creation unconfirmed', ...base };
       return await redrive(session, 'capture Job not found');
     }
+    const missingUnit = missingUnitCompanion(jobs);
+    if (missingUnit) return { outcome: 'waiting', why: missingUnit, ...base };
 
     log.info('check-harvest', 'Adopting an orphaned checks run', {
       ...base, owner: row.owner,
@@ -277,6 +296,9 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
       progress.close();
     }
     if (controller.signal.aborted) return await moot('superseded while collecting');
+    if (manifest.durableCli && unit && ['gone', 'aborted'].includes(unit.state)) {
+      return { outcome: 'waiting', why: 'unit-suite outcome unconfirmed', ...base };
+    }
     if (capture && (capture.state === 'gone' || capture.state === 'aborted')) {
       // The Job vanished under us. A successor that cancelled it would have
       // moved the session on; if it has not, the TTL collected the Job and
@@ -289,10 +311,11 @@ async function adopt(config, pool, row, { reason = 'sweep', hold = null, retireJ
     // The unit-suite row, from the Job's own verdict. Graduation is read
     // now rather than from the manifest: the history could only have moved
     // towards graduated, and that is what a fresh run would see too. A Job
-    // that vanished contributes no row — the same as a runner that failed
-    // to launch in a live run.
+    // that vanished contributes no row for legacy runs. Enrolled runs retain
+    // uncertainty above; a timeout contributes the existing failure policy.
     let unitOutcome = null;
-    if (unit && (unit.state === 'succeeded' || unit.state === 'failed')) {
+    if (unit && (unit.state === 'succeeded' || unit.state === 'failed'
+        || (manifest.durableCli && unit.state === 'timeout'))) {
       let graduated = false;
       try {
         graduated = (await checkHistory.loadGraduated(pool, app.id))

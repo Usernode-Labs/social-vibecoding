@@ -222,10 +222,11 @@ are changed; teardown uses the existing immutable ownership verification.
 ## C9 actual capture/browser-check Job
 
 After normal fixture setup, provision the repository's capture image and run the
-fixed checks entry point:
+fixed checks entry point (now the combined C9/C10 suite; `setup-unit-checks` also
+prepares the capture image):
 
 ```sh
-node scripts/kpack-local-fixture.js setup-checks /absolute/path/to/preview-recovery-test-UUID
+node scripts/kpack-local-fixture.js setup-unit-checks /absolute/path/to/preview-recovery-test-UUID
 node scripts/kpack-local-fixture.js test-checks /absolute/path/to/preview-recovery-test-UUID
 ```
 
@@ -244,3 +245,30 @@ Chromium assertions, PNGs, Jobs/logs and SQL settlement are distinguished from
 manifest, internal HTTP transport, unauthenticated-user and timing substitutions
 in the C9 contract. The fixture app has no unit-suite script; no actual unit-suite
 Job proof is claimed. Local integration does not establish production compatibility.
+
+## C10 companion unit-suite Job
+
+The combined `test-checks` entry now requires both capture and unit fixture inputs.
+Use `setup-unit-checks` after ordinary setup (it also prepares the capture image):
+
+```sh
+node scripts/kpack-local-fixture.js setup-unit-checks /absolute/path/to/preview-recovery-test-UUID
+node scripts/kpack-local-fixture.js test-checks /absolute/path/to/preview-recovery-test-UUID
+```
+
+Setup creates a tiny pinned bare Git repository inside the private fixture and
+copies it into a non-root unit image with matching UID/GID ownership. The existing
+unit runner performs actual Git/npm execution. Its immutable image must use the
+same dedicated registry's `/unit-suite` repository; worker namespace/account must
+match the capture fixture, and the explicit unit source must be the pinned
+`file:///opt/unit-source.git`. `checks.unitSuite` records image/revision/source.
+Missing unit inputs fail before client/schema mutations in the runner, test and
+restarted unit-phase worker. Mismatched destinations fail the common preflight.
+No production worker image or credentials are loaded.
+
+Teardown verifies the UUID label, exact ID and sole fixture tag for both local
+images, then removes the derived unit image before its capture base. Registry
+artifacts disappear with the dedicated node. The [C10 contract](unit-companion-contract.md)
+separates actual unit Jobs/input cleanup from fixture source/transport and delayed
+POST/reply-loss injections. The unit source differs from the public application
+source; this does not prove the production worker image or arbitrary app suites.

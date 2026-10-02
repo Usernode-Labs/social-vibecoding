@@ -68,6 +68,19 @@ async function record(pool, { runId, sessionId, commitSha, manifest }) {
   }
 }
 
+// Resource observation survives supersession for cleanup. This never publishes
+// a verdict or replaces a successor's manifest, and does not store credentials.
+async function observeUnitJob(pool, runId, sessionId, { name, uid }) {
+  if (!name || !uid) throw new Error('Unit Job observation requires name and UID');
+  const { rowCount } = await pool.query(`UPDATE check_runs SET manifest = jsonb_set(
+      manifest, '{unitSuite}', (manifest->'unitSuite') || $3::jsonb)
+    WHERE run_id = $1 AND session_id = $2
+      AND manifest->'unitSuite'->>'version' = '1'
+      AND manifest->'unitSuite'->>'state' = 'submitted'`,
+  [runId, sessionId, JSON.stringify({ state: 'observed', job: { name, uid } })]);
+  if (rowCount !== 1) throw new Error('Unit Job observation lost its recovery manifest');
+}
+
 async function heartbeat(pool, runId) {
   if (!pool || !runId) return false;
   try {
@@ -159,6 +172,7 @@ module.exports = {
   ORPHAN_MS,
   selfOwner,
   record,
+  observeUnitJob,
   heartbeat,
   finish,
   startHeartbeat,

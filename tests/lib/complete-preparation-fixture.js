@@ -10,8 +10,8 @@ const { completePreparationWorker } = require('./complete-preparation-worker');
 const { SERVER_COMMAND } = require('./runtime-test-worker');
 const { selectRuntime, runtimeManifests } = require('../../src/services/preview-flow/runtime-intent');
 
-async function fixtureFor(t) {
-  const verified = await verifyIsolatedBuildFixture();
+async function fixtureFor(t, { requireUnitSuite = false } = {}) {
+  const verified = await verifyIsolatedBuildFixture({ requireUnitSuite });
   assert.ok(verified.fixture.preparationSource && verified.fixture.runtimeImage && verified.databaseAddress);
   require('../../src/services/kubernetes')._setClientsForTest(verified.clients);
   const db = await createExecutionDatabase(verified.fixture.isolation.database.url);

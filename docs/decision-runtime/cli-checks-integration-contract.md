@@ -79,8 +79,9 @@ favicon may cause a real failing verdict; acceptance verifies the actual termina
 policy outcome rather than forcing passing. Its page has no scroll, so optional
 video/GIF frames can fail while PNG evidence is produced.
 
-No runnable `npm test` exists in this fixture. Real unit-suite Job recovery,
-private-user JWT access, full platform/content review, enabled before/after shots,
+No runnable `npm test` exists in the C9 fixture. The companion decision and
+actual unit Job proof are extended by [C10](unit-companion-contract.md); C9 alone
+did not demonstrate them. Private-user JWT access, full platform/content review, enabled before/after shots,
 public ingress traffic and production compatibility are not demonstrated. Legacy
 post-verdict media/diagnostic delivery remains best-effort. Notification delivery
 is at least once. Existing global harvest scheduling and its oldest-50 selection

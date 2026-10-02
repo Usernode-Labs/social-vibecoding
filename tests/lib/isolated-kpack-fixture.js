@@ -86,12 +86,20 @@ function validateDestinations(fixture, databaseUrl, now = Date.now()) {
   }
   requireIsolation(!settings.captureRuntime || fixture.checks, 'capture configuration requires its dedicated checks manifest');
   requireIsolation(!runtime.captureImage || fixture.checks, 'capture image requires its dedicated checks manifest');
+  requireIsolation(!runtime.workerImage || fixture.checks?.unitSuite, 'unit image requires its dedicated checks manifest');
   if (fixture.checks) {
     requireIsolation(settings.captureRuntime === 'kubernetes'
       && runtime.workerNamespace === name && runtime.workerServiceAccount === 'recovery-builder'
       && runtime.captureImage === fixture.checks.captureImage
       && runtime.captureImage.startsWith(`${prefix}/capture@sha256:`)
       && DIGEST.test(runtime.captureImage), 'checks must use the dedicated namespace, account and registry');
+  }
+  if (fixture.checks?.unitSuite) {
+    const unit = fixture.checks.unitSuite;
+    requireIsolation(settings.workerRuntime === 'kubernetes' && runtime.workerImage === unit.image
+      && unit.image.startsWith(`${prefix}/unit-suite@sha256:`) && DIGEST.test(unit.image)
+      && /^[a-f0-9]{40}$/.test(unit.revision) && unit.repoUrl === 'file:///opt/unit-source.git',
+    'unit checks require the dedicated immutable image and pinned fixture source');
   }
   return isolation;
 }
@@ -300,10 +308,13 @@ async function verifyDatabase(isolation, databaseContainer, databaseUrl, ClientT
   }
 }
 
-async function verifyIsolatedBuildFixture({ env = process.env, databaseUrl, dependencies = {} } = {}) {
+async function verifyIsolatedBuildFixture({
+  env = process.env, databaseUrl, dependencies = {}, requireUnitSuite = false,
+} = {}) {
   sanitizedEnvironment(env);
   const fixture = JSON.parse(fs.readFileSync(env.KPACK_RECOVERY_TEST_CONFIG, 'utf8'));
   const isolation = validateDestinations(fixture, env.PREVIEW_FLOW_TEST_DATABASE_URL);
+  if (requireUnitSuite) requireIsolation(fixture.checks?.unitSuite, 'dedicated unit-suite fixture required before mutation');
   requireIsolation(fs.realpathSync(env.KPACK_RECOVERY_TEST_CONFIG) === path.join(fs.realpathSync(isolation.directory), 'fixture.json'),
     'configuration must belong to the dedicated fixture directory');
   const clients = (dependencies.loadClients || loadDedicatedClients)(isolation);

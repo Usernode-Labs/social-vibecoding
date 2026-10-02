@@ -180,3 +180,58 @@ test('C9 conflicting input ownership preserves a successor even with the old run
   assert.deepEqual(deleted, []);
   await assert.rejects(kubernetes.cancelPreviewChecks(config, 42, null, { releaseInputs: true }), /exact checks run/);
 });
+
+for (const failure of ['job reply', 'receipt write']) {
+  test(`C10 unconfirmed unit ${failure} preserves its actual input for recovery`, async t => {
+    const deleted = [];
+    let input;
+    kubernetes._setClientsForTest({
+      core: {
+        createNamespacedSecret: async ({ body }) => { input = body; return body; },
+        deleteNamespacedSecret: async ({ name }) => deleted.push(name),
+      },
+      batch: { createNamespacedJob: async () => {
+        if (failure === 'job reply') throw new Error('creation acknowledgment lost');
+        return { metadata: { uid: 'actual-unit-uid' } };
+      } },
+    });
+    t.after(() => kubernetes._setClientsForTest(null));
+    await assert.rejects(kubernetes.runUnitSuiteJob(config, {
+      sessionId: 42, env: { REPO_URL: 'private-clone-input' }, previewRunId: 'old',
+      retainInputOnUncertain: true,
+      onJobCreated: async receipt => {
+        assert.equal(receipt.uid, 'actual-unit-uid');
+        throw new Error('receipt persistence failed');
+      },
+    }), failure === 'job reply' ? /acknowledgment lost/ : /persistence failed/);
+    assert.equal(input.metadata.labels['social.usernode.io/preview-run-id'], 'old');
+    assert.deepEqual(deleted, []);
+  });
+}
+
+test('C10 an observed terminal unit failure still releases its input normally', async t => {
+  let receipt;
+  const deleted = [];
+  kubernetes._setClientsForTest({
+    core: {
+      createNamespacedSecret: async ({ body }) => body,
+      readNamespacedSecret: async () => ({ metadata: { uid: 'input-uid' } }),
+      replaceNamespacedSecret: async () => {},
+      listNamespacedPod: async () => ({ items: [{ metadata: { name: 'unit-pod' },
+        status: { phase: 'Failed', containerStatuses: [{ state: { terminated: { exitCode: 1 } } }] } }] }),
+      readNamespacedPodLog: async () => 'not ok 1 - ordinary failure\n',
+      deleteNamespacedSecret: async ({ name }) => deleted.push(name),
+    },
+    batch: {
+      createNamespacedJob: async () => ({ metadata: { uid: 'unit-uid' } }),
+      readNamespacedJob: async () => ({ status: { failed: 1 } }),
+    },
+  });
+  t.after(() => kubernetes._setClientsForTest(null));
+  await assert.rejects(kubernetes.runUnitSuiteJob(config, {
+    sessionId: 42, env: { REPO_URL: 'private-input' }, previewRunId: 'old', retainInputOnUncertain: true,
+    onJobCreated: async observed => { receipt = observed; },
+  }), error => error.captureJobTerminated === true);
+  assert.equal(receipt.uid, 'unit-uid');
+  assert.equal(deleted.length, 1);
+});

@@ -150,3 +150,20 @@ rejection are demonstrated. Unit-suite Job/private-user/public-edge/production
 compatibility remain unproved. A submitted Job that never appears stays pending
 for reconciliation; this safety containment is an explicit liveness limit. Default
 off, no broader caller migration or rollout. See the C9 contract and local ledger.
+
+
+## C10: explicit companion ownership in the same manifest
+
+| Old ownership removed for enrolled sessions | Replacement / retained boundary |
+| --- | --- |
+| Inferring “no unit suite” from an absent Job at recovery/retirement | Versioned `unitSuite` decision before either Job: explicit exemption or conservative submitted expectation. Missing expected/unknown Jobs retain the existing manifest. |
+| Best-effort unit admission after browser dispatch and swallowed infrastructure uncertainty | Named admission inspection before dispatch, frozen source identity, explicit enrolled checks error for unconfirmed execution. Ordinary unit failure retains graduation policy. Legacy callers retain their historical behavior. |
+| Unconditional unit input deletion on an uncertain creation/observation failure | Keep the input for the same run's existing UID-checked, consumer-stopping checks retirement owner. No new executor or recovery timer. |
+
+The manifest decision is part of the existing supported checks contract, not a
+new feature flag or workflow. Older durable C9 manifests without the field are
+unknown: a missing companion requires reconciliation rather than assuming an
+exemption. Legacy unenrolled manifests keep historical semantics. No reducer
+version or queue payload changed, and no timer/lock was removed. Remove old-format
+handling only after auditing retained manifests. External creation closure and
+Job-output retention remain explicit limitations; missing work remains discoverable.
