@@ -28,6 +28,36 @@ function candidateCondition(state, action) {
   return nativeHeadCondition(state.session, flow.startedStatus, action.headSha);
 }
 
+function predecessorConsumersReleased(state) {
+  const resource = state.resource;
+  const evidence = state.retirementEvidence;
+  if (resource?.preparationOwner !== 'bounded' || !resource.intent?.runtimeOperation?.desired
+      || !evidence || evidence.pendingRunIds.length) return false;
+
+  for (const consumer of Object.values(resource.consumerReleases || {})) {
+    const { retirement, requirements } = consumer;
+    if (consumer.headSha !== resource.receipt?.commitSha || !requirements
+        || !retirement || retirement.version !== 1
+        || !retirement.jobs.every(job => job.stage === 'released')) return false;
+    const released = kind => retirement.jobs.some(job => job.kind === kind);
+    if ((requirements.captureRequired && !released('capture'))
+        || (requirements.unitRequired && !released('unit-suite'))) return false;
+  }
+
+  const preparation = evidence.work.filter(work => work.workflow === 'native-preview-kubernetes-prepare');
+  if (preparation.length !== 1) return false;
+  const work = preparation[0];
+  if (work.version !== 1 || work.status !== 'succeeded'
+      || work.input.identity.flowId !== resource.flowId
+      || work.input.identity.headSha !== resource.receipt?.commitSha
+      || work.input.intent.attemptId !== resource.intent.attemptId) return false;
+
+  const continuations = evidence.work.filter(work => work.workflow === 'native-cli-preview-continuation');
+  return continuations.length > 0 && continuations.every(work => work.version === 1
+    && work.status === 'succeeded' && work.input.flowId === resource.flowId
+    && work.input.headSha === resource.receipt.commitSha);
+}
+
 function reduceCandidate(state, action, facts) {
   const runtimeDecision = require('./runtime-reducer').reduceRuntime(state, action);
   if (runtimeDecision) return runtimeDecision;
@@ -164,8 +194,8 @@ function reduceCandidate(state, action, facts) {
     const condition = nativeHeadCondition(state.session, action.startedStatus, action.headSha);
     if (condition) return rejection(state, condition);
     if (activationPending(binding)) return rejection(state, 'activation_pending');
-    // Until durable consumer retirement exists, permit one retained predecessor
-    // alongside the serving attempt. Do not accumulate published runtimes.
+    // Bound unreleased published dependencies. Creator tombstones remain outside
+    // this budget after their consumers/runtime/database are safely released.
     if (state.retainedPublishedAttempts >= 2) return rejection(state, 'consumer_retirement_required');
 
     const nextFlow = {
@@ -296,8 +326,23 @@ function reduceCandidate(state, action, facts) {
     }
     // Legacy consumers are not yet all represented as durable references. Keep
     // published predecessors, including the legacy resource handed over first.
-    if (resource.published && (attemptId || isolatedBinding)) {
+    if (resource.published && (attemptId || isolatedBinding) && !predecessorConsumersReleased(state)) {
       return rejection(state, 'consumer_retirement_required');
+    }
+
+    if (action.type === 'PreviewDependenciesReleased') {
+      const condition = enablingCondition(state, action);
+      if (condition) return rejection(state, condition);
+      if (!attemptId || resource.preparationOwner !== 'bounded') return rejection(state, 'bounded_owner_required');
+      if (!resource.cleanupStarted) return rejection(state, 'cleanup_not_requested');
+      return {
+        accepted: true,
+        reason: 'dependencies_released',
+        flow,
+        projection: 'unchanged',
+        effects: [],
+        dependenciesReleased: true,
+      };
     }
 
     const ownsPreparation = resource.preparationOwner === 'bounded'

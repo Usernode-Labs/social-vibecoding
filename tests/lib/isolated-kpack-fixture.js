@@ -350,3 +350,13 @@ module.exports = {
   verifyDatabase,
   verifyIsolatedBuildFixture,
 };
+
+// Ascending public history; all revisions serve the same real health app.
+const SUCCESSIVE_REVISIONS = Object.freeze([
+  '011ccd891271965260102db0dbaaa7690ffa0b96',
+  '9a6a678e6741a779c21eda77923157bd94a3e81a',
+  'f3de85e731fbd00592b2cd3123cb0fc0e74511c4',
+  '08857d3958b518904bf21ddef0f2e34b2433eb90',
+  '59de32fd44f50ba06926a43d90b567e33aa39236',
+]);
+module.exports.SUCCESSIVE_REVISIONS = SUCCESSIVE_REVISIONS;

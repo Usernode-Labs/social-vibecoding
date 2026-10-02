@@ -10073,6 +10073,8 @@ CREATE TABLE IF NOT EXISTS preview_flow_resources (
   preparation_owner TEXT CHECK (preparation_owner IS NULL OR preparation_owner = 'bounded'),
   clone_prepared BOOLEAN NOT NULL DEFAULT FALSE,
   published_at TIMESTAMPTZ,
+  dependencies_released_at TIMESTAMPTZ,
+  consumer_releases JSONB NOT NULL DEFAULT '{}',
   cleanup_started_at TIMESTAMPTZ,
   -- For isolated attempts this is the last successful absence observation,
   -- not proof that an external creator ended. Retain and reconcile the row.
@@ -10084,6 +10086,8 @@ CREATE TABLE IF NOT EXISTS preview_flow_resources (
   recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CHECK (intent IS NOT NULL OR receipt IS NOT NULL)
 );
+ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS dependencies_released_at TIMESTAMPTZ;
+ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS consumer_releases JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS clone_credential_enc TEXT;
 ALTER TABLE preview_flow_resources ADD COLUMN IF NOT EXISTS clone_prepared BOOLEAN NOT NULL DEFAULT FALSE;
 DROP INDEX IF EXISTS preview_flow_resources_pending_queue_idx;

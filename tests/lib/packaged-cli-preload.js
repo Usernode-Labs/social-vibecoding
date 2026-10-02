@@ -169,6 +169,14 @@ kubernetes._getClients = () => {
             assert.equal(tls.sessionId, Number(parameters.body.metadata.labels['social.usernode.io/session-id']));
             parameters.body.spec.template.spec.hostAliases = [{ ip: tls.address, hostnames: [tls.hostname] }];
           }
+          if (settings.holdChecks && method === 'createNamespacedJob'
+              && parameters.body.metadata.name.startsWith('sv-capture-')) {
+            // Actual pending consumer, held only to make supersession reproducible.
+            parameters.body.spec.template.spec.initContainers = [{
+              name: 'fixture-overlap', image: settings.environment.KUBERNETES_CAPTURE_IMAGE,
+              command: ['sh', '-c', 'sleep 120'],
+            }];
+          }
           const result = await mutate(parameters);
           if (method === 'createNamespacedJob') {
             record('job_created', {

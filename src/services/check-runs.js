@@ -50,6 +50,28 @@ function selfOwner() {
 async function record(pool, { runId, sessionId, commitSha, manifest }) {
   if (!pool || !runId || !sessionId) return false;
   try {
+    if (manifest?.durableCli && manifest.cliFlowId) {
+      // Consumer reservation and manifest admission are one database statement.
+      // A missing preview rolls back the INSERT rather than losing a consumer.
+      const consumer = { runId, headSha: commitSha, retirement: null };
+      const { rows } = await pool.query(`WITH resource AS (
+          SELECT flow_id FROM preview_flow_resources
+          WHERE flow_id = $6 AND session_id = $2 AND preparation_owner = 'bounded'
+            AND receipt->>'commitSha' = $3 AND dependencies_released_at IS NULL
+        ), recorded AS (
+          INSERT INTO check_runs (run_id, session_id, commit_sha, owner, manifest, started_at, heartbeat_at)
+          SELECT $1, $2, $3, $4, $5::jsonb, NOW(), NOW() FROM resource
+          ON CONFLICT (run_id) DO UPDATE SET manifest = EXCLUDED.manifest,
+            commit_sha = EXCLUDED.commit_sha, owner = EXCLUDED.owner, heartbeat_at = NOW()
+          RETURNING run_id
+        ) UPDATE preview_flow_resources SET consumer_releases =
+          jsonb_set(consumer_releases, ARRAY[$1::text], $7::jsonb)
+          WHERE flow_id IN (SELECT flow_id FROM resource) AND EXISTS (SELECT 1 FROM recorded)
+          RETURNING flow_id`,
+      [runId, sessionId, commitSha, selfOwner(), JSON.stringify(manifest), manifest.cliFlowId, JSON.stringify(consumer)]);
+      if (rows.length !== 1) throw new Error('Enrolled checks require their unreleased preview resource');
+      return true;
+    }
     await pool.query(
       `INSERT INTO check_runs (run_id, session_id, commit_sha, owner, manifest, started_at, heartbeat_at)
        VALUES ($1, $2, $3, $4, $5::jsonb, NOW(), NOW())
@@ -97,6 +119,24 @@ async function recordRetirement(pool, runId, sessionId, previous, retirement) {
       AND COALESCE(manifest->'retirement', 'null'::jsonb) = $5::jsonb`,
   [runId, sessionId, selfOwner(), JSON.stringify(retirement), JSON.stringify(previous || null)]);
   if (rowCount !== 1) throw new Error('Checks retirement lost its manifest ownership');
+}
+
+// Keep the existing retirement evidence after its temporary harvest manifest is
+// removed. This receipt cannot authorize cleanup by itself: pending manifests,
+// continuation ownership and both serving bindings are checked independently.
+async function recordPreviewRelease(pool, row, retirement, requirements) {
+  const flowId = row.manifest.cliFlowId;
+  if (!flowId) return; // Historical/legacy manifests have no enrolled preview.
+  const release = { runId: row.run_id, headSha: row.commit_sha, requirements, retirement };
+  const { rowCount } = await pool.query(`UPDATE preview_flow_resources r
+    SET consumer_releases = jsonb_set(consumer_releases, ARRAY[$3::text], $4::jsonb)
+    WHERE r.flow_id = $1 AND r.session_id = $2 AND r.preparation_owner = 'bounded'
+      AND r.receipt->>'commitSha' = $5
+      AND EXISTS (SELECT 1 FROM check_runs c WHERE c.run_id = $3::uuid
+        AND c.session_id = $2 AND c.owner = $6 AND c.manifest->'retirement' = $7::jsonb)`,
+  [flowId, row.session_id, row.run_id, JSON.stringify(release), row.commit_sha,
+    selfOwner(), JSON.stringify(retirement)]);
+  if (rowCount !== 1) throw new Error('Checks release lost its preview resource or retirement owner');
 }
 
 async function heartbeat(pool, runId) {
@@ -196,6 +236,7 @@ module.exports = {
   observeUnitJob,
   read,
   recordRetirement,
+  recordPreviewRelease,
   heartbeat,
   finish,
   startHeartbeat,

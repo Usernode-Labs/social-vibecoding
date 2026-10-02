@@ -212,7 +212,10 @@ function createRuntimeOperations({
       const api = operations(kind);
       await call(api.api, api.remove, {
         namespace: intent.namespace, name: object.metadata.name,
-        body: { preconditions: { uid: object.metadata.uid, resourceVersion: object.metadata.resourceVersion } },
+        body: {
+          preconditions: { uid: object.metadata.uid, resourceVersion: object.metadata.resourceVersion },
+          ...(kind === 'deployment' ? { propagationPolicy: 'Foreground' } : {}),
+        },
         ...(kind === 'deployment' ? { propagationPolicy: 'Foreground' } : {}),
       }).catch(error => {
         if (!absent(error)) throw error;

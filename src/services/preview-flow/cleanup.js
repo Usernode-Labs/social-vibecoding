@@ -101,6 +101,13 @@ function createCleanup({
       if (recoverableRuntime) {
         // Database release is a separate conclusion from Kubernetes creator
         // closure. Preserve the domain obligation and its original locators.
+        const release = await owner.apply({
+          type: 'PreviewDependenciesReleased',
+          actionId: randomUUID(),
+          sessionId,
+          flowId,
+        });
+        if (!release.decision.accepted) throw new Error(`Dependency release rejected: ${release.decision.reason}`);
         return { databaseReleased: true, runtimeObservedAbsent: true, creationEnded: false };
       }
       const completion = await owner.apply({

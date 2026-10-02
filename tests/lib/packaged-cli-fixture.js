@@ -63,6 +63,12 @@ async function packagedFixture(t, { httpsCapture = false } = {}) {
     'Dockerfile.kubernetes', 'package-lock.json', 'capture/capture.js',
     'src/routes/internal.js', 'src/middleware/auth.js', 'src/middleware/admin.js',
     'src/services/platform-jwt.js', 'src/services/visuals.js',
+    'src/db/schema.sql', 'src/services/check-runs.js', 'src/services/check-retirement.js',
+    'src/services/preview-flow/actions.js', 'src/services/preview-flow/candidate-reducer.js',
+    'src/services/preview-flow/reducer.js', 'src/services/preview-flow/store.js',
+    'src/services/preview-flow/cleanup.js', 'src/services/preview-flow/runtime-operation.js',
+    'tests/lib/packaged-cli-scenarios.js', 'tests/lib/isolated-kpack-fixture.js',
+    'tests/published-predecessor-integration.test.js',
     'tests/lib/packaged-cli-fixture.js', 'tests/lib/packaged-cli-preload.js',
     'tests/lib/https-private-edge.js', 'tests/lib/https-private-fixture.js',
     'tests/packaged-cli-entrypoints-integration.test.js', 'scripts/kpack-local-fixture.js',
@@ -184,8 +190,9 @@ async function packagedFixture(t, { httpsCapture = false } = {}) {
     PLATFORM_INTERNAL_URL: 'http://127.0.0.1:3000',
   };
 
-  async function start(role, { pause = null, admission = true, privateCapture = null } = {}) {
+  async function start(role, { pause = null, admission = true, privateCapture = null, sourceRevision = fixture.preparationSource.revision, holdChecks = false } = {}) {
     await verifyIsolatedBuildFixture({ requireUnitSuite: true });
+    assert.ok(require('./isolated-kpack-fixture').SUCCESSIVE_REVISIONS.includes(sourceRevision), 'Pinned disposable source revision required');
     let tlsDestination = null;
     const destinationFile = path.join(evidence, 'tls-destination.json');
     if (httpsCapture && role === 'worker' && fs.existsSync(destinationFile)) {
@@ -206,7 +213,8 @@ async function packagedFixture(t, { httpsCapture = false } = {}) {
       databaseIdentity: isolation.database.systemIdentifier,
       clusterIdentity: isolation.cluster.uid,
       namespace: isolation.namespace.name,
-      source: fixture.preparationSource,
+      source: { ...fixture.preparationSource, revision: sourceRevision },
+      holdChecks,
       unitSuite: fixture.checks.unitSuite,
       role, privateCapture, httpsCapture, tlsDestination,
       pause,

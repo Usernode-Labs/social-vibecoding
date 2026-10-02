@@ -1,6 +1,6 @@
 'use strict';
 
-const REDUCER_VERSION = 10;
+const REDUCER_VERSION = 11;
 
 // Domain state and guards remain separate from persistence and external I/O.
 function reduce(state, action, facts) {

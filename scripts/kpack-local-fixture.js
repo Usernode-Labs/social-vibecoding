@@ -787,11 +787,11 @@ async function integration(state, mode = 'test') {
     PATH: process.env.PATH, TMPDIR: os.tmpdir(),
     KPACK_RECOVERY_TEST_CONFIG: filename, PREVIEW_FLOW_TEST_DATABASE_URL: fixture.isolation.database.url,
   };
-  await verifyIsolatedBuildFixture({ env, requireUnitSuite: ['test-checks', 'test-packaged', 'test-https'].includes(mode) });
-  if (['test-packaged', 'test-https'].includes(mode)) {
+  await verifyIsolatedBuildFixture({ env, requireUnitSuite: ['test-checks', 'test-packaged', 'test-https', 'test-predecessors'].includes(mode) });
+  if (['test-packaged', 'test-https', 'test-predecessors'].includes(mode)) {
     const child = spawn(process.execPath, ['--test', '--test-force-exit', '--test-timeout=1800000',
-      'tests/packaged-cli-entrypoints-integration.test.js'], {
-      env: { ...env, RUN_ISOLATED_KPACK_TEST: '1', RUN_ISOLATED_PACKAGED_CLI_TEST: '1', ...(mode === 'test-https' ? { RUN_ISOLATED_HTTPS_CAPTURE_TEST: '1' } : {}) }, stdio: 'inherit',
+      mode === 'test-predecessors' ? 'tests/published-predecessor-integration.test.js' : 'tests/packaged-cli-entrypoints-integration.test.js'], {
+      env: { ...env, RUN_ISOLATED_KPACK_TEST: '1', RUN_ISOLATED_PACKAGED_CLI_TEST: '1', ...(mode === 'test-predecessors' ? { RUN_ISOLATED_PREDECESSOR_TEST: '1' } : {}), ...(mode === 'test-https' ? { RUN_ISOLATED_HTTPS_CAPTURE_TEST: '1' } : {}) }, stdio: 'inherit',
     });
     const [code] = await once(child, 'exit');
     state.lastPackagedIntegration = { completedAt: new Date().toISOString(), exitCode: code };
@@ -821,8 +821,8 @@ async function main() {
     console.log(directory);
     return;
   }
-  check(['setup', 'setup-https', 'setup-checks', 'setup-unit-checks', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged', 'test-https'].includes(mode) && argument,
-    'use init <local-socket>, setup/setup-https/setup-checks/setup-unit-checks/test/test-runtime/test-release/test-preparation/test-handoff/test-checks/test-packaged/test-https/teardown <directory>');
+  check(['setup', 'setup-https', 'setup-checks', 'setup-unit-checks', 'teardown', 'test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged', 'test-https', 'test-predecessors'].includes(mode) && argument,
+    'use init <local-socket>, setup/setup-https/setup-checks/setup-unit-checks/test/test-runtime/test-release/test-preparation/test-handoff/test-checks/test-packaged/test-https/test-predecessors/teardown <directory>');
   const directory = fs.realpathSync(argument);
   const state = JSON.parse(fs.readFileSync(path.join(directory, 'setup-state.json'), 'utf8'));
   check(state.version === 1 && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(state.fixtureId)
@@ -834,7 +834,7 @@ async function main() {
     else if (mode === 'setup-https') await setupHttps(state);
     else if (mode === 'setup-checks') await setupChecks(state);
     else if (mode === 'setup-unit-checks') await setupUnitChecks(state);
-    else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged', 'test-https'].includes(mode)) await integration(state, mode);
+    else if (['test', 'test-runtime', 'test-release', 'test-preparation', 'test-handoff', 'test-checks', 'test-packaged', 'test-https', 'test-predecessors'].includes(mode)) await integration(state, mode);
     else await teardown(state);
   } catch (error) {
     state.lastError = error.message;

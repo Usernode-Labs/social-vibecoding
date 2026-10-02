@@ -200,6 +200,11 @@ const actionSchema = z.discriminatedUnion('type', [
   }).strict(),
   z.object({
     ...actionEnvelopeFields,
+    type: z.literal('PreviewDependenciesReleased'),
+    flowId: z.string().uuid(),
+  }).strict(),
+  z.object({
+    ...actionEnvelopeFields,
     type: z.literal('PreviewCleanupCompleted'),
     flowId: z.string().uuid(),
     disposition: z.enum(['removed', 'replaced']),
@@ -217,7 +222,7 @@ function isPreparationRequest(action) {
 }
 
 function isResourceAction(action) {
-  return action.type === 'RequestPreviewCleanup' || action.type === 'PreviewCleanupCompleted'
+  return action.type === 'PreviewDependenciesReleased' || action.type === 'RequestPreviewCleanup' || action.type === 'PreviewCleanupCompleted'
     || action.type === 'CandidateRuntimeResourceObserved';
 }
 

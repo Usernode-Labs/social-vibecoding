@@ -39,6 +39,8 @@ function snapshot(sessionRow, flowRow, resourceRow, bindingRow, retainedPublishe
       intent: resourceRow.intent,
       receipt: resourceRow.receipt,
       published: !!resourceRow.published_at,
+      dependenciesReleased: !!resourceRow.dependencies_released_at,
+      consumerReleases: resourceRow.consumer_releases || {},
       cleanupStarted: !!resourceRow.cleanup_started_at,
       cleanupCompleted: !!resourceRow.cleanup_completed_at,
       disposition: resourceRow.cleanup_disposition,
@@ -84,11 +86,21 @@ async function readState(client, sessionRow, sessionId, { lock = false, resource
   const binding = await client.query('SELECT * FROM preview_bindings WHERE session_id = $1', [sessionId]);
   const retained = await client.query(`SELECT COUNT(*) AS count FROM preview_flow_resources
     WHERE session_id = $1 AND intent->>'attemptId' IS NOT NULL
-      AND published_at IS NOT NULL AND cleanup_completed_at IS NULL`, [sessionId]);
+      AND published_at IS NOT NULL AND dependencies_released_at IS NULL`, [sessionId]);
   const state = snapshot(sessionRow, flowRow, resourceRow, binding.rows[0], Number(retained.rows[0].count));
   const enrollment = (await client.query(`SELECT admission_id, head_sha FROM cli_preview_handoffs
     WHERE session_id = $1`, [sessionId])).rows[0];
   if (enrollment?.admission_id) state.cliAdmission = { actionId: enrollment.admission_id, headSha: enrollment.head_sha };
+  if (resourceRow?.published_at && resourceRow.preparation_owner === 'bounded') {
+    // Capture evidence, not permission. The reducer checks immutable enrollment,
+    // terminal continuations and consumers. Lock ordering remains session first.
+    const work = (await client.query(`SELECT id, workflow, contract_version AS version, status, input
+      FROM execution_work_requests WHERE session_id = $1
+        AND (input->'identity'->>'flowId' = $2 OR input->>'flowId' = $2)`,
+    [sessionId, resourceRow.flow_id])).rows;
+    const consumers = (await client.query('SELECT run_id FROM check_runs WHERE session_id = $1', [sessionId])).rows;
+    state.retirementEvidence = { work, pendingRunIds: consumers.map(row => row.run_id) };
+  }
   return state;
 }
 
@@ -192,6 +204,11 @@ function createPreviewFlow(pool, {
     } else if (resourceChange?.cleanup === 'complete') {
       await client.query(`UPDATE preview_flow_resources SET cleanup_completed_at = NOW(), cleanup_disposition = $2
         WHERE flow_id = $1`, [resourceChange.flowId, resourceChange.disposition]);
+    }
+
+    if (decision.dependenciesReleased) {
+      await client.query('UPDATE preview_flow_resources SET dependencies_released_at = COALESCE(dependencies_released_at, NOW()) WHERE flow_id = $1',
+        [action.flowId]);
     }
 
     if (decision.cloneChange) {

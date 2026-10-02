@@ -29,6 +29,7 @@ async function retire(config, pool, sessionId, runId) {
   else if (!manifest.launched) why = 'launch manifest incomplete';
   else if (captureRequired && !released('capture')) why = 'capture creation unconfirmed';
   else if (unitRequired && !released('unit-suite')) why = 'unit-suite creation unconfirmed';
+  if (why === null) await checkRuns.recordPreviewRelease(pool, row, result, { captureRequired, unitRequired });
   return { complete: why === null, why };
 }
 

@@ -43,6 +43,7 @@ function createInjectedRuntimeApi() {
       const key = `${kind}/${name}`;
       const object = objects.get(key);
       if (!object) throw { code: 404 };
+      if (kind === 'deployment') assert.equal(body.propagationPolicy, 'Foreground');
       assert.equal(body.preconditions.uid, object.metadata.uid);
       assert.equal(body.preconditions.resourceVersion, object.metadata.resourceVersion);
       deletes.push(kind);

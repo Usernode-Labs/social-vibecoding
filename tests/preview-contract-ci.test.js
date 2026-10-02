@@ -35,6 +35,7 @@ test('focused CI runs the shared runtime, admission, runtime and checks retireme
     'tests/cli-preview-checks.test.js',
     'tests/cli-check-settlement-postgres.test.js',
     'tests/check-retirement.test.js',
+    'tests/published-predecessor-retirement.test.js',
     'tests/check-harvest.test.js',
     'tests/check-history.test.js',
     'tests/merge-queue.test.js',
@@ -47,6 +48,7 @@ test('focused CI triggers for its suites, shared owners and operation contracts'
   for (const file of [
     ...SUITES,
     'tests/packaged-cli-entrypoints-integration.test.js',
+    'tests/published-predecessor-integration.test.js',
     'tests/lib/packaged-cli-preload.js',
     'tests/lib/packaged-cli-fixture.js',
     'archives/experimental-replay-c01dc0687/replay.cjs',

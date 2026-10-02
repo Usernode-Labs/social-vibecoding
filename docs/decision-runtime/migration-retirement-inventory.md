@@ -9,7 +9,7 @@ and [packaged proof](packaged-cli-entrypoints-contract.md).
 | --- | --- | --- |
 | Four preparation capability flags and CLI config shim | **Removed** at `2bf702dbd`. Sole new admission is complete Kubernetes/kpack preparation. | Complete; retain default-off admission/worker switches. |
 | Three partial preparation work kinds, selection flags, one-shot observation/start branches and unused completion flags | **Removed** after fresh-only decision and verified archive. Named clone/Build/runtime operations own preparation. | Complete locally; unsupported startup fails visibly, preserving records. |
-| Preview frozen v1–v9, CLI v1–v2, review v1 and live historical dispatch | **Twelve source copies removed from live runtime.** Exact dependencies, golden sources and 153 replay cases are archived independently of Git history. | Verified offline. Current preview v10/CLI v3/review v2 policies and replay remain. |
+| Preview frozen v1–v9, CLI v1–v2, review v1 and live historical dispatch | **Twelve source copies removed from live runtime.** Exact dependencies, golden sources and 153 replay cases are archived independently of Git history. | Verified offline. Current preview v11/CLI v3/review v2 policies and replay remain. Exact v10 policy is already archived; fresh-only support adds no historical live branch. |
 | Historical-format test admission/worker helpers; exclusive staging `preparedClone`/`onRuntimeStarting` | **Removed.** Relevant failures are ported to current complete admission and named operations. Original sources remain archive provenance. | Complete. Synchronous `onClonePrepared` is still required and retained. |
 | Enrolled synchronous preparation, alternate rebuild/restart owners, detached checks continuation | **Replaced** by atomic admission and durable candidate-to-continuation work. | Complete for this cohort; preserve unenrolled callers and ownership exclusions. |
 | Enrolled best-effort verdict/history and detached required merge/bot kicks | **Replaced** by atomic settlement and deduplicated gate delivery. Standalone initializes dependencies explicitly. | Complete locally; GitHub/bot calls remain substituted evidence. Optional artifacts have separate owners. |
@@ -40,7 +40,7 @@ check fetched `708faeedf`; relevant capture/auth/runtime paths are unchanged.
 This bounded removal stays on accepted `c01dc0687`. A later canonical update is a
 separate integration gate. Authorized private HTTPS proof is now recorded in its contract;
 this inventory does not establish production compatibility or authorize rollout.
-Repeated-use and published-predecessor retirement proof is the following
+Repeated-use and published-predecessor retirement proof is the current
 correctness gate; no additional workflow expansion precedes it.
 
 
@@ -54,7 +54,7 @@ second builder/capture owner. Required settlement/gates stay with the shared wor
 Job/input retirement stays with the existing manifest/lifecycle/harvester. Published
 preview retirement must release clone/build/runtime dependencies after consumers
 finish while retaining unresolved creation. This is mandatory verification, with
-bounded fixes if needed; it is not yet demonstrated by the single-revision proof.
+bounded fixes if needed; it is now demonstrated by the separate five-revision proof.
 Global legacy locks, timers and safeguards are not removal candidates for this
 cohort alone. Removal evidence must name the competing owner actually eliminated.
 
@@ -63,16 +63,28 @@ This HTTPS verification slice removes the internal-HTTP substitution from its
 proof path only. No product lifecycle owner, timer, lock or reducer is removed;
 the older HTTP harness remains for its earlier matrix. All three new actual
 fixtures and the PostgreSQL-only container have been verified and retired.
-Ordinary-use/published-predecessor replacement is still pending, not demonstrated
-by authorized private capture. Production and unenrolled callers remain protected.
+Ordinary-use/published-predecessor replacement is now separately demonstrated
+by the five-revision matrix, not inferred from authorized private capture. Production and unenrolled callers remain protected.
 
 
-The current candidate reducer intentionally retains every published predecessor
-(`consumer_retirement_required`) and refuses new preparation with two retained
-published attempts. This is a deferred containment safeguard, not a regression
-introduced by the HTTPS slice. Ordinary repeated use requires **new bounded cohort
-retirement authorization and actual verification**, not documentation alone.
-Keep the guard for legacy callers/unrepresented consumers; replace it for this
-cohort only after proving original check/creation obligations and consumers are
-retired. [Candidate policy](../../src/services/preview-flow/candidate-reducer.js)
-and [resource loading](../../src/services/preview-flow/store.js) contain the boundary.
+The old blanket published-predecessor retention is replaced for the bounded CLI
+cohort by preparation/continuation identity and durable consumer release evidence.
+The two-attempt budget now counts **unreleased dependencies**, not creator
+tombstones. The existing retirement owner records active dependency release and
+keeps the same recurring late-creation obligation. Legacy published protection
+remains; no new cleanup executor, work kind, product capability flag or timer was
+introduced. Actual five-revision proof passed: four predecessors released active dependencies,
+the fifth stayed serving, and the original recurring cleanup obligations remained.
+
+[Release contract](published-predecessor-retirement-contract.md),
+[candidate policy](../../src/services/preview-flow/candidate-reducer.js),
+[consumer admission/release](../../src/services/check-runs.js) and
+[existing retirement owner](../../src/services/preview-flow/cleanup.js).
+
+Essential correctness is safe consumer/runtime/database release and serving/
+successor protection. Registry output/cache, terminal experimental Builds and
+consumer/creator receipt compaction are retained limitations, not new workflow
+requirements for this slice. Shots own separate paired runtimes and databases
+(`shots-environment.js`) and can reuse the immutable preview image; this slice
+therefore makes no image/artifact deletion claim. Global Build retention selects
+another owner label and does not collect these experimental Builds.
